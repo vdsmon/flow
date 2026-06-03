@@ -27,15 +27,37 @@ def append_quarantine(sidecar: Path, raw_line: str, reason: str) -> None:
             os.fsync(fh.fileno())
 
 
+def _quarantined_raws(sidecar: Path) -> set[str]:
+    """Raw lines already recorded in the sidecar, so re-quarantine is idempotent."""
+    if not sidecar.exists():
+        return set()
+    raws: set[str] = set()
+    with sidecar.open("r", encoding="utf-8") as fh:
+        for line in fh:
+            with contextlib.suppress(json.JSONDecodeError):
+                rec = json.loads(line)
+                if isinstance(rec, dict) and isinstance(rec.get("raw"), str):
+                    raws.add(rec["raw"])
+    return raws
+
+
 def iter_jsonl(path: Path, quarantine_sidecar: Path) -> Iterator[dict[str, Any]]:
     """Yield each valid JSON object from `path`.
 
     Blank lines are skipped. A line that fails json.loads or decodes to a
     non-object is appended to `quarantine_sidecar` and skipped. The main file is
     never modified. Yields nothing if the file does not exist.
+
+    Quarantine is idempotent: a malformed line already in the sidecar is not
+    re-appended. Because the main file is never rewritten, the same bad line is
+    re-read on every pass (every append-dedup scan, compact, recall); without
+    this the sidecar would grow by one record per call, forever. The sidecar is
+    read lazily, only once a malformed line is actually hit, so a clean file
+    pays no extra I/O.
     """
     if not path.exists():
         return
+    seen_bad: set[str] | None = None
     with path.open("r", encoding="utf-8") as fh:
         for line in fh:
             stripped = line.rstrip("\n")
@@ -44,10 +66,15 @@ def iter_jsonl(path: Path, quarantine_sidecar: Path) -> Iterator[dict[str, Any]]
             try:
                 entry = json.loads(stripped)
             except json.JSONDecodeError as exc:
-                append_quarantine(quarantine_sidecar, stripped, f"json: {exc}")
-                continue
-            if not isinstance(entry, dict):
-                append_quarantine(quarantine_sidecar, stripped, "not an object")
+                reason: str | None = f"json: {exc}"
+            else:
+                reason = None if isinstance(entry, dict) else "not an object"
+            if reason is not None:
+                if seen_bad is None:
+                    seen_bad = _quarantined_raws(quarantine_sidecar)
+                if stripped not in seen_bad:
+                    append_quarantine(quarantine_sidecar, stripped, reason)
+                    seen_bad.add(stripped)
                 continue
             yield entry
 
