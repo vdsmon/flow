@@ -103,7 +103,11 @@ def _atomic_write_text(path: Path, content: str) -> None:
 
 
 def _git(args: list[str], cwd: Path, runner: Runner) -> str:
-    result = runner(["git", *args], cwd)
+    # core.quotePath=false so non-ASCII paths come back literal (UTF-8) instead of
+    # C-quoted/octal-escaped. The porcelain/ls-files/numstat parsers below compare
+    # raw output against planned paths; an escaped "caf\303\251.py" never matches
+    # "café.py" and the ownership gate false-flags a legit file as unowned.
+    result = runner(["git", "-c", "core.quotePath=false", *args], cwd)
     if result.returncode != 0:
         raise _GitError(f"git {' '.join(args)} failed: {result.stderr.strip()}")
     return result.stdout

@@ -117,6 +117,21 @@ def test_check_ownership_unplanned_sibling_in_new_dir_is_unowned(
     assert "pkg/mod.py" not in payload["unowned_changes"]
 
 
+def test_check_ownership_non_ascii_planned_file(tmp_repo: Path, tmp_path: Path) -> None:
+    # Regression: git C-quotes non-ASCII paths in --porcelain/ls-files output
+    # unless core.quotePath=false (e.g. "pkg/caf\303\251.py"). The quoted string
+    # never matches the literal planned entry, so the ownership gate false-flags a
+    # legit planned file as unowned and blocks the commit.
+    ticket_dir = tmp_repo / ".flow" / "runs" / "FT-1"
+    diff_extract.record_baseline("implement", ticket_dir, tmp_repo, files=["pkg/café.py"])
+    (tmp_repo / "pkg").mkdir()
+    (tmp_repo / "pkg" / "café.py").write_text("print('planned')\n", encoding="utf-8")
+    payload = diff_extract.check_ownership(ticket_dir, tmp_repo)
+    assert payload["ok"] is True
+    assert payload["unowned_changes"] == []
+    assert "pkg/café.py" in payload["changed"]
+
+
 def test_check_ownership_cli_exit_3(tmp_repo: Path, tmp_path: Path) -> None:
     ticket_dir = tmp_repo / ".flow" / "runs" / "FT-1"
     diff_extract.record_baseline("implement", ticket_dir, tmp_repo, files=["a.py"])
