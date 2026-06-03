@@ -14,6 +14,7 @@ import json
 import multiprocessing
 import sys
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
@@ -263,7 +264,8 @@ def test_classify_live(tmp_path: Path) -> None:
     _acquire(tmp_path, "run-1", boot="boot-A")
     result = lease.classify(tmp_path, NOW, current_boot="boot-A")
     assert result["state"] == "live"
-    assert result["holder"]["run_id"] == "run-1"  # type: ignore[index]
+    holder = cast(dict[str, Any], result["holder"])
+    assert holder["run_id"] == "run-1"
 
 
 def test_classify_expired_reboot_clearable(tmp_path: Path) -> None:

@@ -235,7 +235,9 @@ def test_is_shipped_unwraps_single_element_list_response() -> None:
     )
     result = adapter.is_shipped("bd-a1b2")
     assert result["state"] == "not_yet_observed"
-    assert result["evidence"]["commit_sha"] == "abc123def"
+    evidence = result["evidence"]
+    assert evidence is not None
+    assert evidence["commit_sha"] == "abc123def"
 
 
 def test_set_summary_postcondition_accepts_list_wrapped_show() -> None:

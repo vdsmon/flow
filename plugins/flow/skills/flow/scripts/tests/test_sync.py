@@ -22,6 +22,15 @@ class _FakeTracker:
         self._states[key] = {"normalized": "done", "native_status": "Done"}
         return {"success": True}
 
+    def comment(self, key: str, body: Any) -> None:
+        pass
+
+    def link(self, from_key: str, to_key: str, kind: str) -> None:
+        pass
+
+    def edit(self, key: str, fields: dict) -> None:
+        pass
+
 
 def _seed(workspace_root: Path, **kw: Any) -> None:
     pending_mutations.append_mutation(workspace_root, intent_at="2026-05-01T00:00:00Z", **kw)
