@@ -56,6 +56,7 @@ The live "which script does what" map. One line per script: purpose + CLI surfac
 | `flow_beads_create.py` | File a self-work (machinery) bead into flow's OWN beads, gated on maintainer mode; always targets flow's beads, never the run's tracker. | `--workspace-root --summary --description [--type --labels --parent]`; exit 4 = not maintainer |
 | `evolve_select.py` | Drainer core: select + partition the next batch of evolve beads to launch (`bd ready -l evolve`, drop in-flight, backpressure, coarse hot/anchor serialization). Pure, no side effects. | `--workspace-root [--cap --concurrency]`; exit 4 = not maintainer. Consumed by `/flow evolve --ship` |
 | `evolve_reap.py` | Drainer reaper: classify open evolve PRs for auto-merge (green + leaf/non-hot + mergeable → `merge`; else not_green/skipped_hot/blocked). Pure; the verb does the `gh pr merge`. | `--workspace-root`; exit 4 = not maintainer. Consumed by `/flow evolve --ship/--reap` |
+| `create_pr.py` | `create_pr` stage handler (GitHub): push branch + `gh pr create --draft --fill`, idempotent (reuse existing PR on resume). Prints `PR_URL=<url>`. | `--workspace-root [--base main --ticket KEY]`; exit 3 = protected branch. Wired `create_pr = "inline"` via `references/stage-create_pr.md` |
 
 ## Work-mode quality gate
 

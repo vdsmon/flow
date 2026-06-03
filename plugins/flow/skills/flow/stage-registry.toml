@@ -115,7 +115,7 @@ roles = []
 
 [[stage]]
 name = "create_pr"
-description = "Bare default skips PR creation. Workspaces that need PR-on-ship install a PR-capable skill (ship-it, gh-pr-create, etc) and wire it via init wizard. No inline fallback."
+description = "Bare default skips PR creation. GitHub workspaces can wire create_pr = \"inline\" (references/stage-create_pr.md → scripts/create_pr.py: push + gh pr create --draft --fill, idempotent). Other platforms install a PR-capable skill (ship-it for Bitbucket, etc) and wire skill:<name> via the init wizard."
 default_handler = "none"
 default_timeout_min = 20
 default_heartbeat_required = true
