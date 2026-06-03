@@ -12,7 +12,7 @@ description = "ruff check + ruff format --check + ty check (scripts + plugin hoo
 run = [
     "ruff check . ../../../hooks",
     "ruff format --check . ../../../hooks",
-    "ty check .",
+    "ty check . ../../../hooks",
 ]
 
 [tasks.test]
