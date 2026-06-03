@@ -1,0 +1,21 @@
+name: test
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: plugins/flow/skills/flow/scripts
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jdx/mise-action@v2
+      - name: lint (ruff + ty)
+        run: mise run lint
+      - name: test (pytest scripts + hooks)
+        run: mise run test
+      - name: prose↔CLI seam check
+        run: mise exec -- python3 seam_check.py

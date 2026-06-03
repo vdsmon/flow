@@ -1,0 +1,20 @@
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# Claude Code local/transient state
+.claude/settings.local.json
+.claude/scheduled_tasks.*
+.claude/shell-snapshots/
+.claude/todos/
+.claude/history/
+.claude/statsig/
+.claude/projects/
+.claude/worktrees/
+
+# Python caches + venv anywhere under the flow plugin (ruff, pytest, bytecode, venv)
+plugins/flow/**/.pytest_cache/
+plugins/flow/**/.ruff_cache/
+plugins/flow/**/__pycache__/
+plugins/flow/**/.venv/

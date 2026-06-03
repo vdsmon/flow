@@ -1,0 +1,27 @@
+{
+  "name": "flow",
+  "version": "0.23.0",
+  "description": "Ticket pipeline. /flow <ticket> plans in plan mode (ExitPlanMode = the one gate), then enters a worktree and runs the autonomous implement→PR tail in the same session; background it (/bg) anytime to run unattended. You spec and review the draft PR. Multi-tracker engine (Jira | beads), pluggable per-stage handlers, compounding memory layer (reflect-stage extraction + SessionStart recall).",
+  "author": {
+    "name": "Victor De Simone",
+    "email": "victorsmoliveira@gmail.com",
+    "url": "https://github.com/vdsmon"
+  },
+  "homepage": "https://github.com/vdsmon/claude-skills",
+  "repository": "https://github.com/vdsmon/claude-skills",
+  "license": "MIT",
+  "skills": "./skills",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/session-start.py\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

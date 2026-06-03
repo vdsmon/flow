@@ -1,0 +1,36 @@
+# Not a runtime artifact. Configures ruff + ty over this scripts/ dir only.
+# Runtime scripts are PEP 723 inline-deps uv scripts.
+
+[project]
+name = "flow-scripts"
+version = "0"
+description = "Lint + type-check config for plugins/flow/skills/flow/scripts/. Not a runtime package."
+requires-python = ">=3.12"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = ["tests/_fixtures"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "UP",  # pyupgrade
+    "SIM", # flake8-simplify
+    "RUF", # ruff-specific
+]
+ignore = [
+    "E501",  # line length handled by formatter
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.ty.src]
+# Type-check the scripts dir only. Adapters import each other directly.
+include = ["."]
+exclude = ["tests/_fixtures"]

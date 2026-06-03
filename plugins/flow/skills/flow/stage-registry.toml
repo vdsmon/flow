@@ -1,0 +1,157 @@
+# Canonical stage definitions.
+# Single source of truth. Dispatcher reads opaquely; adding a stage = append entry + drop
+# a reference doc under references/stage-<name>.md. Zero dispatcher code change.
+#
+# Closed vocabulary: external plugins map THEIR subcommands to these stage names via
+# .flow-bundle.toml manifests. They cannot introduce new stage NAMES without a flow
+# registry change.
+#
+# Field semantics:
+#   name                          - matches references/stage-<name>.md and pipeline.stages entries
+#   default_handler               - one of: "inline" | "subagent:<type>" | "skill:<name>[:<args>]" | "none"
+#   default_timeout_min           - workspace.toml [pipeline.timeouts] overrides per-stage
+#   default_heartbeat_required    - if true, handler manifests with supports_progress=false are rejected
+#   default_max_no_progress_min   - stricter than overall timeout; catches wedged-but-touching-file
+#   required_capabilities         - CAPABILITY_ENUM names; cross-checked at validate-workspace.py
+#   required_predecessors         - upstream stages that MUST appear earlier in pipeline.stages
+#   required                      - if true, MUST appear in pipeline.stages
+#   required_when_compounding     - if true AND [memory] compounding=true, MUST appear
+#   reference_doc                 - path relative to this skill dir; loaded by inline handler
+#   roles                         - open-ended strings the dispatcher recognises
+#                                   (records_diff_baseline | reflect_anchor | ship_observer | ...)
+#
+# Timeouts/heartbeats for plan / code_review / e2e / commit / create_pr / review_loop
+# are inferred defaults (the plan only specified ticket, implement, reflect explicitly).
+# Workspaces are free to override via [pipeline.timeouts].
+
+schema_version = 1
+
+[[stage]]
+name = "ticket"
+description = "Resolve ticket key, fetch ticket context via tracker"
+default_handler = "inline"
+default_timeout_min = 5
+default_heartbeat_required = false
+default_max_no_progress_min = 5
+required_capabilities = []
+required_predecessors = []
+required = false
+required_when_compounding = false
+reference_doc = "references/stage-ticket.md"
+roles = []
+
+[[stage]]
+name = "plan"
+description = "Architect plan, return for approval"
+default_handler = "subagent:Plan"
+default_timeout_min = 10
+default_heartbeat_required = false
+default_max_no_progress_min = 10
+required_capabilities = []
+required_predecessors = ["ticket"]
+required = false
+required_when_compounding = false
+reference_doc = "references/stage-plan.md"
+roles = []
+
+[[stage]]
+name = "implement"
+description = "Code + unit tests, TDD discipline. Subagent writes code, writes/updates unit tests, runs them, reports only when green."
+default_handler = "subagent:general-purpose"
+default_timeout_min = 30
+default_heartbeat_required = true
+default_max_no_progress_min = 10
+required_capabilities = []
+required_predecessors = ["ticket"]
+required_fields = ["planned_files"]
+required = false
+required_when_compounding = false
+reference_doc = "references/stage-implement.md"
+roles = ["records_diff_baseline"]
+
+[[stage]]
+name = "code_review"
+description = "Main agent reviews own diff. Lower quality vs delegating to a code-review skill; opt-in via init wizard."
+default_handler = "inline"
+default_timeout_min = 15
+default_heartbeat_required = false
+default_max_no_progress_min = 15
+required_capabilities = []
+required_predecessors = ["implement"]
+required = false
+required_when_compounding = false
+reference_doc = "references/stage-code_review.md"
+roles = []
+
+[[stage]]
+name = "e2e"
+description = "Opt-in. End-to-end / integration / smoke suite. Positioned AFTER code_review so review catches issues before slow e2e burns time."
+default_handler = "none"
+default_timeout_min = 30
+default_heartbeat_required = true
+default_max_no_progress_min = 15
+required_capabilities = []
+required_predecessors = ["code_review"]
+required_fields = ["e2e_recipe"]
+required = false
+required_when_compounding = false
+reference_doc = "references/stage-e2e.md"
+roles = []
+
+[[stage]]
+name = "commit"
+description = "Compose conventional commit (compose-commit.py skeleton, LLM fills body). Applies recorded implement-stage diff via git apply --cached; content-ownership gate refuses unrelated edits."
+default_handler = "inline"
+default_timeout_min = 5
+default_heartbeat_required = false
+default_max_no_progress_min = 5
+required_capabilities = []
+required_predecessors = ["implement"]
+required_fields = ["commit_type", "commit_summary"]
+required = false
+required_when_compounding = false
+reference_doc = "references/stage-commit.md"
+roles = []
+
+[[stage]]
+name = "create_pr"
+description = "Bare default skips PR creation. Workspaces that need PR-on-ship install a PR-capable skill (ship-it, gh-pr-create, etc) and wire it via init wizard. No inline fallback."
+default_handler = "none"
+default_timeout_min = 20
+default_heartbeat_required = true
+default_max_no_progress_min = 15
+required_capabilities = []
+required_predecessors = ["commit"]
+required_fields = ["pr_title"]
+required = false
+required_when_compounding = false
+reference_doc = "references/stage-create_pr.md"
+roles = []
+
+[[stage]]
+name = "review_loop"
+description = "Bare default skips CI / review-bot wait loop. Opt-in via init wizard if a wait-loop skill is installed."
+default_handler = "none"
+default_timeout_min = 60
+default_heartbeat_required = true
+default_max_no_progress_min = 20
+required_capabilities = []
+required_predecessors = ["create_pr"]
+required = false
+required_when_compounding = false
+reference_doc = "references/stage-review_loop.md"
+roles = []
+
+[[stage]]
+name = "reflect"
+description = "Closing-phase compounding extraction. Reads state.json + subagent reports + final diff. Writes durable knowledge entries; conditional CLAUDE.md / MEMORY.md updates. If no novel signal, writes zero entries (not a failure)."
+default_handler = "inline"
+default_timeout_min = 5
+default_heartbeat_required = false
+default_max_no_progress_min = 5
+required_capabilities = []
+required_predecessors = []
+required = false
+required_when_compounding = true
+reference_doc = "references/stage-reflect.md"
+roles = ["reflect_anchor", "ship_observer"]

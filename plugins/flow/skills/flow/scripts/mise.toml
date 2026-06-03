@@ -1,0 +1,23 @@
+# Pins toolchain versions for reproducibility.
+# Run from this directory: `mise run lint`, `mise run test`.
+
+[tools]
+python = "3.12"
+ruff = "0.15.10"
+ty = "0.0.13"
+"pipx:pytest" = "8.3.3"
+
+[tasks.lint]
+description = "ruff check + ruff format --check + ty check (scripts + plugin hooks)"
+run = [
+    "ruff check . ../../../hooks",
+    "ruff format --check . ../../../hooks",
+    "ty check .",
+]
+
+[tasks.test]
+description = "pytest scripts/tests/ + plugin hooks/tests/ -q"
+run = [
+    "pytest tests/ -q",
+    "pytest ../../../hooks/tests/ -q",
+]

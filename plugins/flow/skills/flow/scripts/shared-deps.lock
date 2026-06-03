@@ -1,0 +1,14 @@
+# shared-deps.lock — pinned (package, version) table for every dependency referenced
+# by ANY PEP 723 inline-deps block in this scripts/ directory.
+#
+# Generated and maintained by validate-deps-coherence.py (not yet built — phase ≥8).
+# Phase 1-2 state: tracker.py is a stdlib-only library module, no scripts ship yet.
+# This file is intentionally empty until the first script lands with a `# /// script`
+# block. Keeping the file present so future scripts have a clear coherence anchor.
+
+# format (TOML, once populated):
+# [packages]
+# rank-bm25 = "0.2.2"
+# tomli-w   = "1.0.0"
+
+[packages]

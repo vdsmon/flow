@@ -1,0 +1,83 @@
+# Script map (current)
+
+The live "which script does what" map. One line per script: purpose + CLI surface (subcommands / key flags) + the state it touches. For the phase-by-phase build history and the deferred-work log, see `dev-history.md`. For API/contract tables (Jira REST mapping, beads CLI surface, `.flow-bundle.toml` schema, `state.json` schema), see `inventory.md`.
+
+`lib` = imported module, no standalone CLI. Everything else is a thin CLI subprocessed from SKILL.md prose, a reference doc, or another script.
+
+## State machine + run safety (hot path)
+
+| Script | Role | Surface / touches |
+|--------|------|-------------------|
+| `dispatch_stage.py` | State-machine driver for `/flow do`. Does NOT run handlers; emits a handler-descriptor JSON for the prose layer. | `init` / `next` / `advance` / `finish` / `release` / `status`; reads+writes `state.json` |
+| `state.py` (lib) | Atomic `state.json` read/write under flock, backup rotation, quarantine recovery. | imported by dispatch_stage, flow_worktree, diff_extract |
+| `snapshot.py` (lib) | Canonical workspace snapshot at init; verify on each `next` (TOCTOU drift guard). | imported by dispatch_stage, validate_workspace, recover |
+| `lease.py` (lib) | Per-ticket run lease: acquire / refresh / release / expiry + takeover detection. | imported by dispatch_stage, recover, status |
+| `validate_workspace.py` | HARD GATE: schema-validate `workspace.toml` + `stage-registry.toml` on every run. | exit 1 = violations to stderr |
+
+## Bootstrap
+
+| Script | Role | Surface / touches |
+|--------|------|-------------------|
+| `init.py` | Transactional workspace bootstrap. Collects backend/bundle answers, writes `workspace.toml`, postcondition checks, atomic `.flow/.initialized`. | `--config <json>` (`--reconfigure` / `--resume`) |
+| `flow_worktree.py` | Post-approval worktree seeding: create worktree, seed `state.json` (plan completed), stamp frontmatter, point memory at main `.flow`, `mise trust`. | `create --ticket --plan-from --base --branch --main-root --planned-files --commit-type --commit-summary --e2e-recipe` |
+| `branch_ticket.py` | Resolve ticket key from current git branch (backend-aware regex). | `--workspace-root`; exit 0 match / 1 env / 3 no-match |
+| `bundle_discover.py` (lib) | Walk `~/.claude/plugins/*/` + `<repo>/.claude/plugins/*/` for `.flow-bundle.toml` manifests. | imported by init |
+
+## Tracker
+
+| Script | Role | Surface / touches |
+|--------|------|-------------------|
+| `tracker.py` (lib) | Tracker Protocol base + `make_tracker()` factory + `CAPABILITY_ENUM`. | imported by the adapters + tracker_cli |
+| `tracker_cli.py` | CLI wrapper around the Protocol (the only tracker surface the prose calls). | `get` / `state` / `transition` / `comment` / `is-shipped` / `list-assigned` |
+| `tracker_jira.py` (lib) | Jira Cloud REST v3 + Agile/1.0 adapter (Basic auth via `ATLASSIAN_EMAIL`/`ATLASSIAN_API_TOKEN`). | imported by tracker_cli |
+| `tracker_beads.py` (lib) | Beads `bd` CLI adapter (local-only tracker). | imported by tracker_cli |
+| `resolve_handler.py` | Resolve a `skill:<name>` handler: confirm bundle installed + manifest valid, return concrete `skill_name`/`skill_args`. | `--handler <string>`; exit 1 not-installed / 2 invalid |
+
+## Frontmatter / diff / commit
+
+| Script | Role | Surface / touches |
+|--------|------|-------------------|
+| `ticket_frontmatter.py` | TOML frontmatter r/w under flock + atomic rename (delimiter `+++`). | `read <path>` / `update <path> --set k=v` |
+| `lint_ticket.py` | HARD GATE: required frontmatter fields per stage. | `--stage --ticket-path --workspace-root` |
+| `diff_extract.py` | Git diff capture for implement/commit/reflect; baseline + ownership. | `since` / `since-stage` / `record-baseline` / `capture-implement-diff` |
+| `compose_commit.py` | Deterministic conventional-commit header skeleton (LLM fills body). | `--ticket --type --summary [--scope --files]` |
+
+## Memory / reflect / self-evolution
+
+| Script | Role | Surface / touches |
+|--------|------|-------------------|
+| `_memory_paths.py` (lib) | Namespace resolution + `.flow/<ns>/` path conventions. | imported widely |
+| `memory_append.py` | Single-writer `knowledge.jsonl` append with sha-keyed idempotency. | `--type --text --branch --ticket [--id]` |
+| `recall.py` | BM25 ranker over `knowledge.jsonl`; `--metric` forwards to `metric.py`. | `<query> [--branch --tickets --top-n]` ; `--metric ...` |
+| `recall_pending.py` (lib) | Promote SessionStart recall-pending entries into the per-ticket recall log. | imported by dispatch_stage |
+| `reflect_inputs.py` | Bundle the reflect-stage inputs (state + frontmatter + diff + subagent reports + friction + reflect_config). | `--ticket --ticket-dir --ticket-frontmatter --cwd` |
+| `observe_ship_event.py` | Sole writer of `ship-events/<ticket>.json` (atomic, dupe-safe). | `--ticket --evidence-json --run-id --workspace-root` |
+| `machinery_edit.py` | Flock-serialized applier for reflect lens-B self-edits to flow's OWN source. Refuses out-of-tree + snapshot-pinned paths. See `../references/self-evolution.md`. | `apply --skill-root --payload` |
+
+## Work-mode quality gate
+
+| Script | Role | Surface / touches |
+|--------|------|-------------------|
+| `metric.py` | Throughput calculator (shipped tickets/week from ship-event evidence). | (via `recall.py --metric`) |
+| `baseline_collect.py` | Pre-migration time-to-PR baseline file + stats. | `build --samples-json` / `show` |
+| `validate_postmortem.py` (lib) | Postmortem schema + week-over-week trend. | imports snapshot, state |
+| `pending_mutations.py` (lib) | Transient tracker-mutation queue (create/edit/transition/comment/link). | imported by sync |
+| `sync.py` | Drain `pending-mutations.jsonl` + reconcile against live tracker. | `--workspace-root` |
+
+## Status / recovery / friction
+
+| Script | Role | Surface / touches |
+|--------|------|-------------------|
+| `status.py` | Read-only run/stage/lease table (no network). | `[--ticket] --workspace-root [--json]` |
+| `recover.py` | Inspect + remediate a broken run. | `detect` / `takeover` / `retry` / `skip` / `abort` / `reload-snapshot` |
+| `flow_friction.py` | Append-only `friction.jsonl` log (the reflect/self-evolution feedstock). | `--ticket --run-id --stage --type --body [--detail]` |
+
+## Shared helpers (lib)
+
+`_atomicio.py` (atomic temp-write + fsync), `_workspace.py` (workspace.toml load), `_registry.py` (stage-registry parse), `_locking.py` (flock retry), `_jsonl.py` (JSONL sidecar parse).
+
+## Dev tooling
+
+| Script | Role | Surface / touches |
+|--------|------|-------------------|
+| `seam_check.py` | Validate every `${CLAUDE_SKILL_DIR}/scripts/*.py` invocation in SKILL.md + references against each script's real argparse surface. CI gate + `tests/test_seam_check.py` live-docs check. | `[--verbose]`; exit 1 on any unknown flag/subcommand |
