@@ -36,6 +36,12 @@ python3 seam_check.py      # prose↔CLI seam checker
 
 Runtime is stdlib-only (`python3`); the venv/mise is dev tooling only.
 
+## Working here (gotchas)
+
+- **Branch off `origin/main`, never local `main` (lags) or current HEAD.** This repo churns with many `.claude/worktrees`; cutting a feature branch off a stale/feature HEAD pollutes the PR with already-merged commits (→ DIRTY). Autonomous `/flow --auto` runs use `flow_worktree.py --base @default` (fetch + resolve default branch); do the same by hand.
+- **Live-testing plugin changes:** the `vdsmon-flow` marketplace tracks the **local main checkout** (`~/repos/personal/flow`), not `origin`. A launched `/flow` run loads that checkout's code. To exercise merged changes: advance the checkout to `origin/main`, then `claude plugin marketplace update vdsmon-flow` (`claude plugin details flow` shows the version).
+- **`gh pr merge` needs a real branch** — a detached HEAD fails with "could not determine current branch"; merge from a throwaway branch off `origin/main`.
+
 ## Invariants
 
 - **Prose↔CLI seam.** `SKILL.md` + `references/*.md` invoke `${CLAUDE_SKILL_DIR}/scripts/*.py`. After editing any of them, run `seam_check.py` (also gated by `tests/test_seam_check.py::test_live_docs_are_green`). It catches prose naming a flag/subcommand a script lacks — unit tests bypass argparse and miss it.
@@ -69,6 +75,8 @@ bd close <id>         # Complete work
 - Use `bd remember` for persistent knowledge — do NOT use MEMORY.md files
 
 **Architecture in one line:** issues live in a local Dolt DB; sync uses `refs/dolt/data` on your git remote; `.beads/issues.jsonl` is a passive export. See https://github.com/gastownhall/beads/blob/main/docs/SYNC_CONCEPTS.md for details and anti-patterns.
+
+Remote-durable bead state: `bd export -o .beads/issues.jsonl` then commit it on a branch/PR (never push `main`). The shared Dolt DB is local truth; the jsonl is the git-portable export.
 
 ## Session Completion
 
