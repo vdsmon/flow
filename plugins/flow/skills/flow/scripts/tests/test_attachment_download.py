@@ -9,7 +9,7 @@ import json
 import urllib.error
 from email.message import Message
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -52,8 +52,7 @@ def _att(**over: Any) -> t.Attachment:
         "created_at": "",
         "url": "https://api.atlassian.com/ex/jira/c/rest/api/3/attachment/content/10001",
     }
-    base.update(over)  # type: ignore[typeddict-item]
-    return base
+    return cast(t.Attachment, {**base, **over})
 
 
 def _jira(monkeypatch: pytest.MonkeyPatch, http: tj.HttpFn) -> tj.JiraAdapter:

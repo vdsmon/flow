@@ -3,8 +3,8 @@
 
 [tools]
 python = "3.12"
-ruff = "0.15.10"
-ty = "0.0.13"
+ruff = "0.15.15"
+ty = "0.0.42"
 "pipx:pytest" = "8.3.3"
 
 [tasks.lint]

@@ -529,7 +529,9 @@ def test_is_shipped_indeterminate_when_pr_required(monkeypatch: pytest.MonkeyPat
     adapter = _make_adapter(monkeypatch, http)
     ship = adapter.is_shipped("FT-1")
     assert ship["state"] == "indeterminate"
-    assert ship["evidence"]["requires_pr"] is True
+    evidence = ship["evidence"]
+    assert evidence is not None
+    assert evidence["requires_pr"] is True
 
 
 # ─── 401 / 404 error mapping ────────────────────────────────────────────────

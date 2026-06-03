@@ -80,7 +80,7 @@ def test_base_tolerates_unparseable_workspace(tmp_path: Path) -> None:
 
 
 def _memory_data(root: object) -> dict:
-    mem = {
+    mem: dict[str, object] = {
         "namespace": "demo",
         "auto_recall": True,
         "compounding": True,

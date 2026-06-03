@@ -39,11 +39,18 @@ import sys
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 
 import state
 
 Runner = Callable[..., subprocess.CompletedProcess[str]]
+
+
+class OwnershipResult(TypedDict):
+    ok: bool
+    planned_files: list[str]
+    changed: list[str]
+    unowned_changes: list[str]
 
 
 def _default_runner() -> Runner:
@@ -293,7 +300,7 @@ def check_ownership(
     ticket_dir: Path,
     cwd: Path,
     runner: Runner | None = None,
-) -> dict[str, object]:
+) -> OwnershipResult:
     """Refuse if the working tree has changes outside the baseline planned_files.
 
     Filename-level gate (the commit stage stages by patch from implement.diff, so
