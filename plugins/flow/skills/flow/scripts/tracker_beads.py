@@ -357,10 +357,22 @@ class BeadsAdapter:
 
     # ─── Lifecycle (mandatory) ───────────────────────────────────────────
 
+    def _unwrap_show(self, raw: Any) -> dict[str, Any] | None:
+        """bd >=1.0 `show --json` returns a single-element list; unwrap to the issue dict.
+
+        Tolerates a bare dict (older bd). Returns None for anything else (empty
+        list, junk) so strict callers can raise and graceful ones can fall back.
+        """
+        if isinstance(raw, list) and len(raw) == 1 and isinstance(raw[0], dict):
+            return raw[0]
+        if isinstance(raw, dict):
+            return raw
+        return None
+
     def get(self, key: str) -> Ticket:
-        raw = self._run_json(["show", key])
-        if not isinstance(raw, dict):
-            raise TrackerError(f"bd show {key} --json returned non-object: {raw!r}")
+        raw = self._unwrap_show(self._run_json(["show", key]))
+        if raw is None:
+            raise TrackerError(f"bd show {key} --json returned non-object")
         return self._ticket_from_json(raw)
 
     def list_assigned(self, filter: str = "open") -> list[TicketRef]:
@@ -390,8 +402,8 @@ class BeadsAdapter:
             if not target:
                 continue
             try:
-                ref_raw = self._run_json(["show", target])
-                if isinstance(ref_raw, dict):
+                ref_raw = self._unwrap_show(self._run_json(["show", target]))
+                if ref_raw is not None:
                     refs.append(self._ticket_ref_from_json(ref_raw))
             except _BeadsError:
                 # Dangling reference; skip rather than fail the whole listing.
@@ -548,9 +560,9 @@ class BeadsAdapter:
             raise _BeadsError(cp.returncode, cp.stderr, ["dep", "add"])
 
     def state(self, key: str) -> TicketState:
-        raw = self._run_json(["show", key])
-        if not isinstance(raw, dict):
-            raise TrackerError(f"bd show {key} --json returned non-object: {raw!r}")
+        raw = self._unwrap_show(self._run_json(["show", key]))
+        if raw is None:
+            raise TrackerError(f"bd show {key} --json returned non-object")
         return self._state_from_issue(raw)
 
     def project_requires_pr(self) -> bool:
@@ -569,7 +581,7 @@ class BeadsAdapter:
         `not_yet_observed` into a stored ship-event record.
         """
         try:
-            raw = self._run_json(["show", key])
+            raw = self._unwrap_show(self._run_json(["show", key]))
         except _BeadsError:
             return {
                 "state": "not_shipped",
@@ -577,7 +589,7 @@ class BeadsAdapter:
                 "evidence": None,
                 "source": "none",
             }
-        if not isinstance(raw, dict):
+        if raw is None:
             return {
                 "state": "indeterminate",
                 "shipped_at": None,
@@ -681,9 +693,9 @@ class BeadsAdapter:
         Field-specific normalization: labels list vs comma-string, priority
         int vs "P<n>" string, assignee "" vs None.
         """
-        raw = self._run_json(["show", key])
-        if not isinstance(raw, dict):
-            raise TrackerError(f"bd show {key} --json (post-write) returned non-object: {raw!r}")
+        raw = self._unwrap_show(self._run_json(["show", key]))
+        if raw is None:
+            raise TrackerError(f"bd show {key} --json (post-write) returned non-object")
         actual = raw.get(field_name)
         if field_name == "labels":
             actual_set = set(actual or [])
