@@ -495,7 +495,7 @@ def _run_bd_init(
 ) -> None:
     assert config.beads is not None
     result = runner(
-        ["bd", "init", "--prefix", config.beads.prefix],
+        ["bd", "init", "--prefix", config.beads.prefix, "--skip-agents", "--non-interactive"],
         cwd=config.workspace_root,
         check=False,
     )
