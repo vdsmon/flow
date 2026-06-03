@@ -72,4 +72,27 @@ def is_maintainer(workspace_root: Path) -> bool:
     return resolve_maintainer_repo(workspace_root) is not None
 
 
-__all__ = ["is_maintainer", "resolve_maintainer_repo"]
+def cli_main(argv: list[str]) -> int:
+    """Print the maintainer repo root (exit 0) or nothing (exit 1, user mode).
+
+    The gate `/flow evolve` checks before running a cold audit.
+    """
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Resolve maintainer mode for a workspace.")
+    parser.add_argument("--workspace-root", required=True)
+    args = parser.parse_args(argv)
+    repo = resolve_maintainer_repo(Path(args.workspace_root))
+    if repo is None:
+        return 1
+    print(repo)
+    return 0
+
+
+__all__ = ["cli_main", "is_maintainer", "resolve_maintainer_repo"]
+
+
+if __name__ == "__main__":
+    import sys
+
+    sys.exit(cli_main(sys.argv[1:]))
