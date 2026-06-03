@@ -109,17 +109,27 @@ def _dispatch_runner(
     return run, calls
 
 
+def test_fingerprint_is_format_invariant():
+    a = fbc.fingerprint("scripts/mise.toml: TY skips hooks")
+    b = fbc.fingerprint("scripts-mise-toml-ty-skips-hooks")
+    c = fbc.fingerprint("Scripts/Mise.toml   ty skips HOOKS")
+    assert a == b == c  # wording/format variance collapses to one key
+    assert len(a) == 12
+    assert fbc.fingerprint("a-different-finding") != a
+
+
 def test_dedup_new_creates_with_evid_label(tmp_path):
     repo = _marked_ws(tmp_path)
     run, calls = _dispatch_runner(list_items=[])
     key = fbc.create_bead(repo, "t", "b", dedup_key="quotepath-bug", labels=["evolve"], runner=run)
     assert key == "flow-new"
+    evid = f"evid:{fbc.fingerprint('quotepath-bug')}"
     assert calls[0][0][:2] == ["bd", "list"]  # dedup check first
-    assert "evid:quotepath-bug" in calls[0][0]
+    assert evid in calls[0][0]
     create_args = calls[1][0]
     assert create_args[:2] == ["bd", "create"]
     stamped = create_args[create_args.index("--labels") + 1]
-    assert "evid:quotepath-bug" in stamped and "evolve" in stamped
+    assert evid in stamped and "evolve" in stamped
 
 
 def test_dedup_existing_skips_create(tmp_path):

@@ -11,12 +11,14 @@ Used by the reflect sling-bead path and `/flow evolve`. Two guarantees:
 Stdlib-only. `bd` is invoked with cwd = the flow repo so it resolves that repo's
 .beads DB.
 
-Identity / convergence. With `--dedup-key <slug>` the bead is stamped with an
-`evid:<slug>` label and, before creating, flow's beads are checked for an existing
-bead carrying that label in ANY status (open or closed). If one exists the create
-is skipped (exit 5). Keying on a stable slug — not the wording — is what stops the
-audit refiling open work AND re-proposing findings already closed or rejected, so
-the loop converges instead of churning.
+Identity / convergence. `--dedup-key <s>` is reduced to a deterministic
+`evid:<fingerprint>` label (casefold + collapse non-alphanumerics, then sha256[:12]),
+so wording/format variance can't change it. Before creating, flow's beads are
+checked for that label in ANY status (open or closed); if one exists the create is
+skipped (exit 5). Anchor the key on the finding's primary file path (prose
+convention) so the same defect maps to the same fingerprint across runs — that is
+what stops the audit refiling open work AND re-proposing findings already closed or
+rejected, so the loop converges instead of churning.
 
 CLI:
   flow_beads_create.py --workspace-root <dir> --summary <s> --description <d>
@@ -32,7 +34,9 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import re
 import subprocess
 import sys
 from collections.abc import Callable
@@ -64,6 +68,20 @@ class DuplicateBead(Exception):
 _ALL_STATUSES = "open,in_progress,blocked,deferred,closed"
 
 
+def fingerprint(raw: str) -> str:
+    """Deterministic 12-hex fingerprint of a dedup key.
+
+    Casefold + collapse every non-alphanumeric run to a single space before
+    hashing, so wording/punctuation/separator variance ("scripts/mise.toml: TY
+    skips hooks" vs "scripts-mise-toml-ty-skips-hooks") yields the SAME key. That
+    plus the prose convention of anchoring the key on the finding's primary file
+    path is what keeps the audit's identity stable across runs instead of minting
+    a fresh slug each time.
+    """
+    norm = re.sub(r"[^a-z0-9]+", " ", raw.casefold()).strip()
+    return hashlib.sha256(norm.encode("utf-8")).hexdigest()[:12]
+
+
 def _default_runner() -> Runner:
     def run(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
         return subprocess.run(args, cwd=str(cwd), capture_output=True, text=True, check=False)
@@ -71,11 +89,9 @@ def _default_runner() -> Runner:
     return run
 
 
-def _find_by_dedup_key(repo: Path, dedup_key: str, run: Runner) -> str | None:
-    """Return the key of an existing bead labelled evid:<dedup_key>, or None."""
-    result = run(
-        ["bd", "list", "-l", f"evid:{dedup_key}", "--status", _ALL_STATUSES, "--json"], repo
-    )
+def _find_by_label(repo: Path, evid_label: str, run: Runner) -> str | None:
+    """Return the key of an existing bead carrying evid_label, or None."""
+    result = run(["bd", "list", "-l", evid_label, "--status", _ALL_STATUSES, "--json"], repo)
     if result.returncode != 0:
         raise BeadCreateError(f"bd list (dedup check) failed: {result.stderr.strip()}")
     try:
@@ -120,10 +136,11 @@ def create_bead(
     run = runner or _default_runner()
     labels = list(labels or [])
     if dedup_key:
-        existing = _find_by_dedup_key(repo, dedup_key, run)
+        evid_label = f"evid:{fingerprint(dedup_key)}"
+        existing = _find_by_label(repo, evid_label, run)
         if existing is not None:
             raise DuplicateBead(existing, dedup_key)
-        labels.append(f"evid:{dedup_key}")
+        labels.append(evid_label)
     args = ["bd", "create", summary, "--type", type, "--description", description]
     if labels:
         args += ["--labels", ",".join(labels)]
