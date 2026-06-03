@@ -56,11 +56,12 @@ import json
 import os
 import re
 import sys
-import tempfile
 import time
 import tomllib
 from pathlib import Path
 from typing import Any
+
+from _atomicio import atomic_write_text
 
 DELIM = "+++"
 LOCK_RETRY_COUNT = 3
@@ -103,23 +104,6 @@ def _toml_escape(value: str) -> str:
         else:
             out.append(ch)
     return '"' + "".join(out) + '"'
-
-
-def _atomic_write_text(path: Path, content: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(
-        mode="w",
-        encoding="utf-8",
-        dir=str(path.parent),
-        prefix=f".{path.name}.",
-        suffix=".tmp",
-        delete=False,
-    ) as tmp:
-        tmp.write(content)
-        tmp.flush()
-        os.fsync(tmp.fileno())
-        tmp_path = Path(tmp.name)
-    os.replace(tmp_path, path)
 
 
 class _Flock:
@@ -301,7 +285,7 @@ def update(path: Path, updates: dict[str, str]) -> None:
                 raise _SchemaInvalid(f"frontmatter at {path} does not parse: {exc}") from exc
         for key, raw_value in updates.items():
             existing[key] = _coerce_value(raw_value)
-        _atomic_write_text(path, _render_full(existing, body))
+        atomic_write_text(path, _render_full(existing, body))
 
 
 def _coerce_value(raw: str) -> Any:
