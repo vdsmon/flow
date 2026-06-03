@@ -23,3 +23,9 @@ plugins/flow/**/.venv/
 .dolt/
 *.db
 .beads-credential-key
+
+# flow transient run state (workspace.toml + .initialized stay tracked)
+.flow/runs/
+.flow/*.lock
+.flow/recall-pending.jsonl
+.flow/recall-pending.jsonl.lock
