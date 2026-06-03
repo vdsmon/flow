@@ -369,3 +369,41 @@ def test_bootstrap_accepts_non_ignored_planned_files(tmp_path: Path) -> None:
     )
     assert res["ticket"] == "FT-1"
     assert not any("gitignored" in w for w in res["warnings"])
+
+
+def _base_runner(symref_outputs):
+    """Runner answering `git symbolic-ref` from a queue; everything else ok."""
+    calls: list[list[str]] = []
+    seq = list(symref_outputs)
+
+    def run(args, cwd):
+        calls.append(args)
+        if args[:2] == ["git", "symbolic-ref"]:
+            rc, out = seq.pop(0) if seq else (1, "")
+            return subprocess.CompletedProcess(args, rc, out, "")
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    return run, calls
+
+
+def test_resolve_base_passthrough(tmp_path):
+    run, calls = _base_runner([])
+    assert fw._resolve_base("feature/x", tmp_path, run) == "feature/x"
+    assert calls == []  # a literal base never touches the network
+
+
+def test_resolve_base_default_resolves_origin_head(tmp_path):
+    run, calls = _base_runner([(0, "origin/main\n")])
+    assert fw._resolve_base("@default", tmp_path, run) == "origin/main"
+    assert ["git", "fetch", "--quiet", "origin"] in calls
+
+
+def test_resolve_base_default_retries_via_set_head(tmp_path):
+    run, calls = _base_runner([(1, ""), (0, "origin/dev\n")])
+    assert fw._resolve_base("@default", tmp_path, run) == "origin/dev"
+    assert any(a[:3] == ["git", "remote", "set-head"] for a in calls)
+
+
+def test_resolve_base_default_fallback(tmp_path):
+    run, _ = _base_runner([(1, ""), (1, "")])
+    assert fw._resolve_base("@default", tmp_path, run) == "origin/main"
