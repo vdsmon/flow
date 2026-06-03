@@ -16,7 +16,7 @@ BM25 pinned params:
     ticket match -> + TICKET_EXACT_BONUS  (stronger than branch)
   Tiebreak: ts DESC (ms precision); missing ts sorts last (oldest).
 
-`--metric tickets-per-week` deferred to phase 8d. Mvp = query mode only.
+`--metric <name>` dispatches to metric.py; everything else is BM25 query mode.
 
 Quarantine: malformed JSONL lines appended to sidecar
 `<file>.quarantine.<ts>` (per-invocation); main file untouched; scan
