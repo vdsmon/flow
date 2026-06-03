@@ -24,7 +24,7 @@ implement = "subagent:general-purpose"
 code_review = "inline"
 e2e = "none"
 commit = "inline"
-create_pr = "none"
+create_pr = "inline"
 review_loop = "none"
 reflect = "inline"
 
