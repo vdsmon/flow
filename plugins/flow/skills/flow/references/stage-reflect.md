@@ -93,9 +93,10 @@ The taxonomy is closed:
          --workspace-root . \
          --summary "<the finding title>" \
          --description "<the MACHINERY entry body + the file:line evidence that motivated it>" \
-         --type chore --labels evolve,machinery
+         --type chore --labels evolve,machinery \
+         --dedup-key "<stable slug for this finding, e.g. file-symptom like stage-commit-double-transition>"
        ```
-       Exit 0 → filed; it prints the bead key — note that key in the `MACHINERY:` entry so the two are linked. Exit 4 → not a maintainer setup: dormant, nothing filed, the knowledge entry stands alone. This is the normal user-mode path, NOT an error. Exit 2 → bd error: log and move on (the knowledge entry already captured the finding). Before filing, dedup: if an open `evolve` bead already names this finding, skip it rather than refiling every run.
+       The `--dedup-key` keys on the finding's stable identity, so reflect does not refile the same machinery friction every run (nor re-propose one already closed/rejected). Exit 0 → filed; it prints the bead key — note that key in the `MACHINERY:` entry so the two are linked. Exit 5 → a bead for this finding already exists (prints its key); reference that key in the entry and move on, do NOT refile. Exit 4 → not a maintainer setup: dormant, nothing filed, the knowledge entry stands alone. This is the normal user-mode path, NOT an error. Exit 2 → bd error: log and move on (the knowledge entry already captured the finding).
    - **NEVER at reflect-time:** the repo/PR artifacts (fixtures, docs, code in the ticket's tree). That is the post-PR-churn boundary, and it is the ONLY category reflect must not touch.
 
    The dividing question, asked once per finding: "Am I confident this edit is strictly correct AND cannot break a sibling agent running right now?" Yes -> apply it, and say so in the reflect output. No -> propose + record. When you apply, the `MACHINERY:` entry doubles as the changelog (name the file + the fix) so the change is findable and revertible.

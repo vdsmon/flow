@@ -62,3 +62,19 @@ def test_global_pointer_to_unmarked_repo_rejected(tmp_path, monkeypatch):
     gconf.write_text(f'[maintainer]\nrepo_root = "{target}"\n', encoding="utf-8")
     monkeypatch.setattr(maintainer, "_global_config_path", lambda: gconf)
     assert maintainer.resolve_maintainer_repo(other) is None
+
+
+def test_cli_maintainer_exit_0(tmp_path, monkeypatch, capsys):
+    _no_global(monkeypatch, tmp_path)
+    repo = _ws(tmp_path, "flow", MARKER)
+    rc = maintainer.cli_main(["--workspace-root", str(repo)])
+    assert rc == 0
+    assert capsys.readouterr().out.strip() == str(repo.resolve())
+
+
+def test_cli_user_exit_1(tmp_path, monkeypatch, capsys):
+    _no_global(monkeypatch, tmp_path)
+    repo = _ws(tmp_path, "proj", NOMARKER)
+    rc = maintainer.cli_main(["--workspace-root", str(repo)])
+    assert rc == 1
+    assert capsys.readouterr().out.strip() == ""

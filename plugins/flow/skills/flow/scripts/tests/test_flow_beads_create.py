@@ -90,3 +90,42 @@ def test_cli_not_maintainer_exit_4(tmp_path, monkeypatch):
     plain = _plain_ws(tmp_path)
     rc = fbc.cli_main(["--workspace-root", str(plain), "--summary", "t", "--description", "b"])
     assert rc == 4
+
+
+def _dispatch_runner(
+    list_items: list[dict] | None = None, create_id: str = "flow-new"
+) -> tuple[Callable[..., subprocess.CompletedProcess[str]], Recorder]:
+    """Fake runner answering `bd list` (dedup check) and `bd create` distinctly."""
+    import json
+
+    calls: Recorder = []
+
+    def run(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
+        calls.append((args, cwd))
+        if len(args) >= 2 and args[1] == "list":
+            return subprocess.CompletedProcess(args, 0, json.dumps(list_items or []), "")
+        return subprocess.CompletedProcess(args, 0, json.dumps({"id": create_id}), "")
+
+    return run, calls
+
+
+def test_dedup_new_creates_with_evid_label(tmp_path):
+    repo = _marked_ws(tmp_path)
+    run, calls = _dispatch_runner(list_items=[])
+    key = fbc.create_bead(repo, "t", "b", dedup_key="quotepath-bug", labels=["evolve"], runner=run)
+    assert key == "flow-new"
+    assert calls[0][0][:2] == ["bd", "list"]  # dedup check first
+    assert "evid:quotepath-bug" in calls[0][0]
+    create_args = calls[1][0]
+    assert create_args[:2] == ["bd", "create"]
+    stamped = create_args[create_args.index("--labels") + 1]
+    assert "evid:quotepath-bug" in stamped and "evolve" in stamped
+
+
+def test_dedup_existing_skips_create(tmp_path):
+    repo = _marked_ws(tmp_path)
+    run, calls = _dispatch_runner(list_items=[{"id": "flow-old"}])
+    with pytest.raises(fbc.DuplicateBead) as ei:
+        fbc.create_bead(repo, "t", "b", dedup_key="quotepath-bug", runner=run)
+    assert ei.value.existing_key == "flow-old"
+    assert len(calls) == 1  # only the list check; create never ran
