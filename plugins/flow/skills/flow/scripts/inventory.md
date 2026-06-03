@@ -271,7 +271,7 @@ Adapter wraps a subprocess runner; tests inject a fake.
 | `bd list`               | `--status`, `--assignee`, `--json`                 | ✓      | ✗       | `list_assigned`                             |
 | `bd dep list <key>`     | `--json`                                           | ✓      | ✗       | `list_linked`                               |
 | `bd create`             | `--title`, `--description`, `--type`, `--parent`, `--labels`, `--assignee`, `--json` | ✓ | ✓ | `create` |
-| `bd update <key>`       | `--title`, `--description`, `--labels`, `--assignee`, `--status` | ✗ | ✓ | setters, `transition` (non-close) |
+| `bd update <key>`       | `--title`, `--description`, `--set-labels`, `--assignee`, `--status` | ✗ | ✓ | setters, `transition` (non-close) |
 | `bd close <key>`        | —                                                  | ✗      | ✓       | `transition` to closed                      |
 | `bd reopen <key>`       | —                                                  | ✗      | ✓       | `transition` to open from closed            |
 | `bd priority <key> <n>` | —                                                  | ✗      | ✓       | `set_priority`                              |
