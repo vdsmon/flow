@@ -235,6 +235,35 @@ def _worktree_path(main_root: Path, branch: str, override: str | None) -> Path:
     return main.parent / f"{main.name}.worktrees" / branch.replace("/", "-")
 
 
+_DEFAULT_BASE = "@default"
+
+
+def _resolve_base(base: str, main_root: Path, runner: Runner) -> str:
+    """Resolve the worktree base ref.
+
+    `@default` resolves to the freshly-fetched default branch (`origin/<HEAD>`),
+    so an autonomous (`--auto`) run never inherits the launcher's current branch
+    or a stale local `main` — branching off either pollutes the PR with
+    already-merged commits. Any other value passes through unchanged (interactive
+    runs branch off their integration branch on purpose).
+    """
+    if base != _DEFAULT_BASE:
+        return base
+    _git(["fetch", "--quiet", "origin"], main_root, runner)
+    head = runner(
+        ["git", "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"], main_root
+    )
+    name = head.stdout.strip() if head.returncode == 0 else ""
+    if not name:
+        # origin/HEAD not populated locally; ask the remote, then retry.
+        runner(["git", "remote", "set-head", "origin", "--auto"], main_root)
+        head = runner(
+            ["git", "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"], main_root
+        )
+        name = head.stdout.strip() if head.returncode == 0 else ""
+    return name or "origin/main"
+
+
 def bootstrap(
     *,
     ticket: str,
@@ -267,6 +296,7 @@ def bootstrap(
     worktree = _worktree_path(main_root, branch, worktree_override)
     warnings: list[str] = []
 
+    base = _resolve_base(base, main_root, run)
     _git(["worktree", "add", "-b", branch, str(worktree), base], main_root, run)
 
     # A gitignored planned file is silently dropped from the commit and hard-fails
@@ -350,7 +380,12 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     p = sub.add_parser("create", help="Create a worktree + seed state for the tail.")
     p.add_argument("--ticket", required=True)
     p.add_argument("--plan-from", required=True, help="path to the approved plan file")
-    p.add_argument("--base", required=True, help="base branch/ref for the new worktree")
+    p.add_argument(
+        "--base",
+        required=True,
+        help="base branch/ref for the new worktree; '@default' = the freshly-fetched "
+        "default branch (use for --auto/autonomous runs so the launcher's branch never leaks in)",
+    )
     p.add_argument("--branch", required=True, help="new branch name (e.g. feature/FT-1-thing)")
     p.add_argument("--main-root", default=".", help="path to the main checkout (default cwd)")
     p.add_argument("--worktree-path", default=None, help="override the derived worktree path")

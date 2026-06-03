@@ -39,7 +39,7 @@ Everything from the bootstrap onward is shared.
    On approval you return to normal mode.
 
 6. (Normal mode) Persist the approved plan and bootstrap the worktree.
-   The tail branches off whatever `--base` you pass, so run `/flow spec` from your integration branch (the example uses the current branch):
+   The tail branches off whatever `--base` you pass. Interactive: branch off your integration branch (the example uses the current branch) — stacking on a feature branch is a feature. Autonomous (`--auto`): pass `--base @default` instead, so the run branches off the freshly-fetched default branch and never inherits the launcher's HEAD (see step 5's auto-approve branch).
    ```bash
    PLAN=/tmp/flow-plan-$KEY.md   # write the approved plan text here (Write tool)
    python3 ${CLAUDE_SKILL_DIR}/scripts/flow_worktree.py create \
@@ -119,6 +119,7 @@ It replaces interactive steps 1-5; steps 6-7 (bootstrap + enter worktree) are sh
    - **`NONE` (clean plan) AND the assessor rated >=90%** → auto-approve, no human gate.
      Derive `--planned-files` from the plan's "Files to change" list, and `--commit-type` + `--commit-summary` from the Goal.
      For `--e2e-recipe`, honor step 6's contract: when e2e is enabled (`workspace.toml [pipeline.handlers] e2e` is not `none`), pass the `--e2e-recipe "..."` value the user gave, else default it to `test-ci-only`; when the e2e handler is `none`, omit it.
+     **Base off `--base @default`, NOT the current branch.** An autonomous run (the drainer launches `claude --bg "/flow <key> --auto"` from whatever branch the cockpit is on) must branch off the freshly-fetched default branch, never the launcher's HEAD — else the PR inherits the launcher's unmerged/stale commits and lands DIRTY. `@default` makes `flow_worktree.py` fetch origin and resolve `origin/<HEAD>`.
      Go straight to shared step 6 — there is no `ExitPlanMode` to call, because you never entered plan mode.
    - **Clarifying questions present, a sub-90% rating with any user-reachable gap, OR a `BAIL` line** → the human is needed; `--auto` degrades to interactive exactly when intervention has value.
      `EnterPlanMode`, present the captured plan text AND the clarifying questions (or the bail reason) to the user, then run the normal interactive flow — steps 4-5 above: iterate the plan with the user, settle the e2e recipe, `ExitPlanMode` = the gate.
