@@ -16,10 +16,10 @@ Workspace config (`[tracker.beads]` block in `.flow/workspace.toml`):
 See `inventory.md` "Beads CLI surface" section for the full subcommand table,
 state normalization, transition synthesis, and stderr-to-failure-kind mapping.
 
-TODO (phase 8): transient-failure paths should append to
-`.flow/pending-mutations.jsonl` via `pending-mutations.py`. Adapter currently
-raises `TrackerError` immediately — the dispatcher's retry loop owns transient
-recovery until phase 8 ships.
+Transient-failure durability lives at the `tracker_cli.py transition`
+chokepoint (opt-in `--enqueue-on-transient`), not here. The adapter stays pure:
+it raises `TrackerError`; the CLI seam owns the enqueue to
+`.flow/pending-mutations.jsonl`.
 """
 
 from __future__ import annotations

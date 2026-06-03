@@ -34,11 +34,17 @@ import argparse
 import json
 import re
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import _workspace
+import pending_mutations
 from tracker import NotSupported, TrackerError, make_tracker
+
+
+def _now_iso() -> str:
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 class _WorkspaceConfigError(Exception):
@@ -138,11 +144,35 @@ def _cmd_transition(tracker_obj: Any, args: argparse.Namespace) -> int:
                 sys.stderr.write(f"tracker-cli transition: {exc}\n")
                 return 3
             fields[k] = v
-    result = tracker_obj.transition(args.key, selected_id, fields=fields or None)
+
+    def _enqueue() -> None:
+        if not args.enqueue_on_transient:
+            return
+        try:
+            pending_mutations.append_mutation(
+                Path(args.workspace_root).resolve(),
+                ticket=args.key,
+                op="transition",
+                args={"transition_id": selected_id, "fields": fields or None},
+                expected_postcondition={"normalized": args.to_state.lower()},
+                intent_at=_now_iso(),
+            )
+        except Exception as exc:
+            sys.stderr.write(f"tracker-cli transition: enqueue failed: {exc}\n")
+
+    try:
+        result = tracker_obj.transition(args.key, selected_id, fields=fields or None)
+    except TrackerError as exc:
+        _enqueue()
+        sys.stderr.write(f"tracker-cli transition: {exc}\n")
+        return 1
     sys.stdout.write(json.dumps(result, indent=2, sort_keys=True, default=str) + "\n")
     if result.get("success", False):
         return 0
-    return _FAILURE_KIND_EXIT.get(result.get("failure_kind"), 1)
+    code = _FAILURE_KIND_EXIT.get(result.get("failure_kind"), 1)
+    if code == 1:
+        _enqueue()
+    return code
 
 
 def _cmd_comment(tracker_obj: Any, args: argparse.Namespace) -> int:
@@ -219,6 +249,12 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         action="append",
         default=None,
         help="k=v pair (repeatable).",
+    )
+    p_trans.add_argument(
+        "--enqueue-on-transient",
+        action="store_true",
+        help="on a transient failure (exit 1), durably queue the transition to "
+        ".flow/pending-mutations.jsonl for /flow sync to reconcile.",
     )
 
     p_comment = sub.add_parser("comment", help="tracker.comment(key, body)")
