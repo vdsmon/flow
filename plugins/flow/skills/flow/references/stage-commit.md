@@ -98,10 +98,9 @@ The applied patch comes from the recorded `implement.diff` — NOT from `git add
    - Exit 2 → workspace config invalid.
      Surface stderr; do not retry.
      Mark the stage status=failed (workspace is misconfigured, not a tracker hiccup).
-   - Exit 3 → no transition to `in_review` available (workflow lacks it).
-     Try `--to-state done` as fallback.
-     If the fallback also returns exit 3, surface and continue with a warning (commit is in git).
-     Any other exit code from the fallback is handled by its own rule below.
+   - Exit 3 → no transition to `in_review` available (the tracker has no review state — e.g. beads exposes only `in_progress | blocked | closed`).
+     Do **NOT** fall back to `--to-state done`: closing the ticket at commit is premature in a PR-based flow (the PR is not merged yet, and `create_pr` / `review_loop` still run after this stage). Closing here strands the ticket as "done" while review is pending.
+     Instead leave the ticket in its current state (`in_progress`), log a warning naming the missing `in_review` transition, and continue (the commit is already in git; a human or a later merge step closes the ticket). The ticket stays open and truthful about where the work actually is.
    - Exit 4 → hard failure (`permission_denied` / `validator_failed` /
      `missing_required_field`).
      Do NOT swallow and do NOT try the `done` fallback.
@@ -123,8 +122,9 @@ The applied patch comes from the recorded `implement.diff` — NOT from `git add
 - `git apply --cached` fail → working tree drift. `/flow recover` in 8c.
 - `tracker_cli.py transition` exit 1 → transient; log warning, do not block.
   The commit is the source of truth.
-- `tracker_cli.py transition` exit 3 → no `in_review` transition; try `done`,
-  else warn and continue.
+- `tracker_cli.py transition` exit 3 → no `in_review` transition; do NOT
+  auto-close via `done` (premature in a PR flow) — leave the ticket
+  `in_progress`, warn, and continue.
 - `tracker_cli.py transition` exit 2 / 4 / 5 → hard stop. Surface
   `failure_kind` + `failure_detail`; mark stage status=failed.
 
