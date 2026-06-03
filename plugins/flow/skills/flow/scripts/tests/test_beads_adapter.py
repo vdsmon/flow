@@ -205,6 +205,56 @@ def test_get_propagates_bd_error_as_tracker_error() -> None:
         adapter.get("bd-ghost")
 
 
+# ─── bd >=1.0 `show --json` returns a single-element list, not a bare object ───
+# Regression for the never-run-in-production beads path: the five `show` callers
+# (get / state / _verify_field strict; list_linked / is_shipped graceful) must
+# unwrap `[ {issue} ]`. Pre-fix these failed against live bd 1.0.4.
+
+
+def test_get_unwraps_single_element_list_response() -> None:
+    issue = _issue_json(dependencies=[{"type": "blocks", "target": "bd-9999"}])
+    adapter, _ = _build_adapter([_cp(stdout=json.dumps([issue]))])
+    ticket = adapter.get("bd-a1b2")
+    assert ticket["key"] == "bd-a1b2"
+    assert ticket["summary"] == "Add cooldown to skill X"
+    assert ticket["links"][0]["to_key"] == "bd-9999"
+
+
+def test_state_unwraps_single_element_list_response() -> None:
+    adapter, _ = _build_adapter([_cp(stdout=json.dumps([_issue_json(status="open")]))])
+    state = adapter.state("bd-a1b2")
+    assert state["native_status"] == "open"
+
+
+def test_is_shipped_unwraps_single_element_list_response() -> None:
+    adapter, _ = _build_adapter(
+        [
+            _cp(stdout=json.dumps([_issue_json(status="closed", closure_reason="fixed")])),
+            _cp(stdout="abc123def\n"),  # git log result
+        ]
+    )
+    result = adapter.is_shipped("bd-a1b2")
+    assert result["state"] == "not_yet_observed"
+    assert result["evidence"]["commit_sha"] == "abc123def"
+
+
+def test_set_summary_postcondition_accepts_list_wrapped_show() -> None:
+    adapter, _ = _build_adapter(
+        [_cp(stdout=""), _cp(stdout=json.dumps([_issue_json(title="new title")]))]
+    )
+    adapter.set_summary("bd-a1b2", {"body": "new title", "fmt": "plain"})
+
+
+def test_list_linked_unwraps_list_wrapped_target() -> None:
+    deps_payload = [{"type": "blocks", "target": "bd-2"}]
+    adapter, _ = _build_adapter(
+        [_cp(stdout=json.dumps(deps_payload)), _cp(stdout=json.dumps([_issue_json(id="bd-2")]))]
+    )
+    refs = adapter.list_linked("bd-1")
+    assert len(refs) == 1
+    assert refs[0]["key"] == "bd-2"
+
+
 def test_list_assigned_emits_assignee_filter() -> None:
     issues = [_issue_json(id="bd-1"), _issue_json(id="bd-2", priority=0)]
     adapter, runner = _build_adapter([_cp(stdout=json.dumps(issues))])
