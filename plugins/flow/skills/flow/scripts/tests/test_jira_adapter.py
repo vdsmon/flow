@@ -639,6 +639,248 @@ def test_set_epic_link_uses_customfield_for_classic(monkeypatch: pytest.MonkeyPa
     assert body["fields"]["customfield_10014"] == "FT-1"
 
 
+# ─── Write / mutation methods ───────────────────────────────────────────────
+
+
+def _adf_summary_body() -> str:
+    """A well-formed ADF doc whose plain extraction is "hello world"."""
+    return json.dumps(
+        {
+            "type": "doc",
+            "version": 1,
+            "content": [
+                {
+                    "type": "paragraph",
+                    "content": [
+                        {"type": "text", "text": "hello "},
+                        {"type": "text", "text": "world"},
+                    ],
+                }
+            ],
+        }
+    )
+
+
+def test_create_plain_summary_builds_fields(monkeypatch: pytest.MonkeyPatch) -> None:
+    http = _FakeHttp([_Response({"key": "FT-123"})])
+    adapter = _make_adapter(monkeypatch, http)
+    key = adapter.create(
+        {"body": "do the thing", "fmt": "plain"},
+        {"body": "details", "fmt": "plain"},
+        "Task",
+    )
+    assert key == "FT-123"
+    sent = http.calls[0]
+    assert sent.method == "POST"
+    assert sent.full_url.endswith("/rest/api/3/issue")
+    fields = _body_dict(sent)["fields"]
+    assert fields["project"] == {"key": "FT"}
+    assert fields["issuetype"] == {"name": "Task"}
+    assert fields["summary"] == "do the thing"
+    assert fields["description"]["type"] == "doc"
+
+
+def test_create_adf_summary_extracts_plain(monkeypatch: pytest.MonkeyPatch) -> None:
+    http = _FakeHttp([_Response({"key": "FT-1"})])
+    adapter = _make_adapter(monkeypatch, http)
+    adapter.create(
+        {"body": _adf_summary_body(), "fmt": "adf"},
+        {"body": "details", "fmt": "plain"},
+        "Task",
+    )
+    fields = _body_dict(http.calls[0])["fields"]
+    assert fields["summary"] == "hello world"
+
+
+def test_create_without_optional_fields_omits_them(monkeypatch: pytest.MonkeyPatch) -> None:
+    http = _FakeHttp([_Response({"key": "FT-1"})])
+    adapter = _make_adapter(monkeypatch, http)
+    adapter.create(
+        {"body": "s", "fmt": "plain"},
+        {"body": "d", "fmt": "plain"},
+        "Task",
+    )
+    fields = _body_dict(http.calls[0])["fields"]
+    assert "parent" not in fields
+    assert "labels" not in fields
+    assert "assignee" not in fields
+
+
+def test_create_with_optional_fields_includes_them(monkeypatch: pytest.MonkeyPatch) -> None:
+    http = _FakeHttp([_Response({"key": "FT-1"})])
+    adapter = _make_adapter(monkeypatch, http)
+    adapter.create(
+        {"body": "s", "fmt": "plain"},
+        {"body": "d", "fmt": "plain"},
+        "Task",
+        parent="FT-1",
+        labels=["a", "b"],
+        assignee="acc-9",
+    )
+    fields = _body_dict(http.calls[0])["fields"]
+    assert fields["parent"] == {"key": "FT-1"}
+    assert fields["labels"] == ["a", "b"]
+    assert fields["assignee"] == {"accountId": "acc-9"}
+
+
+def test_set_summary_plain_passthrough(monkeypatch: pytest.MonkeyPatch) -> None:
+    http = _FakeHttp([_Response(None)])
+    adapter = _make_adapter(monkeypatch, http)
+    adapter.set_summary("FT-1", {"body": "new title", "fmt": "plain"})
+    sent = http.calls[0]
+    assert sent.method == "PUT"
+    assert sent.full_url.endswith("/rest/api/3/issue/FT-1")
+    assert _body_dict(sent)["fields"]["summary"] == "new title"
+
+
+def test_set_summary_adf_extracts_plain(monkeypatch: pytest.MonkeyPatch) -> None:
+    http = _FakeHttp([_Response(None)])
+    adapter = _make_adapter(monkeypatch, http)
+    adapter.set_summary("FT-1", {"body": _adf_summary_body(), "fmt": "adf"})
+    assert _body_dict(http.calls[0])["fields"]["summary"] == "hello world"
+
+
+def test_set_description_sends_adf(monkeypatch: pytest.MonkeyPatch) -> None:
+    http = _FakeHttp([_Response(None)])
+    adapter = _make_adapter(monkeypatch, http)
+    adapter.set_description("FT-1", {"body": "body text", "fmt": "plain"})
+    sent = http.calls[0]
+    assert sent.method == "PUT"
+    assert _body_dict(sent)["fields"]["description"]["type"] == "doc"
+
+
+def test_set_priority_sends_named_object(monkeypatch: pytest.MonkeyPatch) -> None:
+    http = _FakeHttp([_Response(None)])
+    adapter = _make_adapter(monkeypatch, http)
+    adapter.set_priority("FT-1", "High")
+    assert _body_dict(http.calls[0])["fields"]["priority"] == {"name": "High"}
+
+
+def test_set_labels_sends_list(monkeypatch: pytest.MonkeyPatch) -> None:
+    http = _FakeHttp([_Response(None)])
+    adapter = _make_adapter(monkeypatch, http)
+    adapter.set_labels("FT-1", ["x", "y"])
+    assert _body_dict(http.calls[0])["fields"]["labels"] == ["x", "y"]
+
+
+def test_set_assignee_with_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    http = _FakeHttp([_Response(None)])
+    adapter = _make_adapter(monkeypatch, http)
+    adapter.set_assignee("FT-1", "acc-1")
+    sent = http.calls[0]
+    assert sent.method == "PUT"
+    assert sent.full_url.endswith("/rest/api/3/issue/FT-1/assignee")
+    assert _body_dict(sent) == {"accountId": "acc-1"}
+
+
+def test_set_assignee_none_unassigns(monkeypatch: pytest.MonkeyPatch) -> None:
+    http = _FakeHttp([_Response(None)])
+    adapter = _make_adapter(monkeypatch, http)
+    adapter.set_assignee("FT-1", None)
+    assert _body_dict(http.calls[0]) == {"accountId": None}
+
+
+def test_link_sends_issue_link_payload(monkeypatch: pytest.MonkeyPatch) -> None:
+    http = _FakeHttp([_Response(None)])
+    adapter = _make_adapter(monkeypatch, http)
+    adapter.link("FT-1", "FT-2", "Blocks")
+    sent = http.calls[0]
+    assert sent.method == "POST"
+    assert sent.full_url.endswith("/rest/api/3/issueLink")
+    assert _body_dict(sent) == {
+        "type": {"name": "Blocks"},
+        "inwardIssue": {"key": "FT-1"},
+        "outwardIssue": {"key": "FT-2"},
+    }
+
+
+def test_set_components_sends_named_objects(monkeypatch: pytest.MonkeyPatch) -> None:
+    http = _FakeHttp([_Response(None)])
+    adapter = _make_adapter(monkeypatch, http)
+    adapter.set_components("FT-1", ["web", "api"])
+    assert _body_dict(http.calls[0])["fields"]["components"] == [
+        {"name": "web"},
+        {"name": "api"},
+    ]
+
+
+def test_set_custom_field_puts_literal_field(monkeypatch: pytest.MonkeyPatch) -> None:
+    http = _FakeHttp([_Response(None)])
+    adapter = _make_adapter(monkeypatch, http)
+    schema: t.FieldSpec = {"key": "customfield_10050", "type": "string"}
+    adapter.set_custom_field("FT-1", "customfield_10050", "the-value", schema)
+    sent = http.calls[0]
+    assert sent.method == "PUT"
+    assert _body_dict(sent)["fields"]["customfield_10050"] == "the-value"
+
+
+def test_board_rank_after_key_included(monkeypatch: pytest.MonkeyPatch) -> None:
+    http = _FakeHttp([_Response(None)])
+    adapter = _make_adapter(monkeypatch, http)
+    adapter.board_rank("FT-2", "FT-1")
+    sent = http.calls[0]
+    assert sent.method == "PUT"
+    assert sent.full_url.endswith("/rest/agile/1.0/issue/rank")
+    assert _body_dict(sent) == {"issues": ["FT-2"], "rankAfterIssue": "FT-1"}
+
+
+def test_board_rank_without_after_key_omits_rank_after(monkeypatch: pytest.MonkeyPatch) -> None:
+    http = _FakeHttp([_Response(None)])
+    adapter = _make_adapter(monkeypatch, http)
+    adapter.board_rank("FT-2", None)
+    body = _body_dict(http.calls[0])
+    assert body == {"issues": ["FT-2"]}
+    assert "rankAfterIssue" not in body
+
+
+def test_get_attachments_maps_fields(monkeypatch: pytest.MonkeyPatch) -> None:
+    payload = {
+        "key": "FT-1",
+        "fields": {
+            "attachment": [
+                {
+                    "id": "5",
+                    "filename": "a.png",
+                    "size": 12,
+                    "mimeType": "image/png",
+                    "created": "2026-01-01T00:00:00Z",
+                    "content": "https://x/a.png",
+                }
+            ]
+        },
+    }
+    http = _FakeHttp([_Response(payload)])
+    adapter = _make_adapter(monkeypatch, http)
+    atts = adapter.get_attachments("FT-1")
+    assert atts[0] == {
+        "id": "5",
+        "filename": "a.png",
+        "size": 12,
+        "mime_type": "image/png",
+        "created_at": "2026-01-01T00:00:00Z",
+        "url": "https://x/a.png",
+    }
+    assert "attachment" in http.calls[0].full_url
+
+
+def test_upload_attachment_multipart_shape(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
+    f = tmp_path / "report.txt"
+    file_bytes = b"hello-attachment-bytes"
+    f.write_bytes(file_bytes)
+    http = _FakeHttp([_Response([{"id": "10001"}])])
+    adapter = _make_adapter(monkeypatch, http)
+    attachment_id = adapter.upload_attachment("FT-1", str(f))
+    assert attachment_id == "10001"
+    sent = http.calls[0]
+    assert sent.method == "POST"
+    assert sent.full_url.endswith("/rest/api/3/issue/FT-1/attachments")
+    raw = cast("bytes", sent.data)
+    assert b"report.txt" in raw
+    assert file_bytes in raw
+    assert "multipart/form-data; boundary=" in (sent.get_header("Content-type") or "")
+    assert sent.get_header("X-atlassian-token") == "no-check"
+
+
 # ─── Public surface ─────────────────────────────────────────────────────────
 
 
