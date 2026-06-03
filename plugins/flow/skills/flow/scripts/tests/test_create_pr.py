@@ -25,6 +25,8 @@ def _runner(
             return subprocess.CompletedProcess(args, 0, branch + "\n", "")
         if args[:2] == ["git", "push"]:
             return subprocess.CompletedProcess(args, 0, "", "")
+        if args[:2] == ["git", "log"]:
+            return subprocess.CompletedProcess(args, 0, "test: add coverage\n", "")
         if args[:3] == ["gh", "pr", "list"]:
             return subprocess.CompletedProcess(args, 0, json.dumps(existing or []), "")
         if args[:3] == ["gh", "pr", "create"]:
@@ -77,6 +79,8 @@ def test_create_url_is_last_stdout_line(tmp_path):
             return subprocess.CompletedProcess(args, 0, "feature/flow-x\n", "")
         if args[:2] == ["git", "push"]:
             return subprocess.CompletedProcess(args, 0, "", "")
+        if args[:2] == ["git", "log"]:
+            return subprocess.CompletedProcess(args, 0, "test: x\n", "")
         if args[:3] == ["gh", "pr", "list"]:
             return subprocess.CompletedProcess(args, 0, "[]", "")
         if args[:3] == ["gh", "pr", "create"]:

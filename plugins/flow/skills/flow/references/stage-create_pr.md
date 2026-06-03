@@ -1,8 +1,8 @@
 # create_pr stage (inline, GitHub)
 
-Opens a **draft** PR for the run's feature branch. Inline handler for GitHub workspaces (flow's own dogfood wires `create_pr = "inline"`); the bare plugin default stays `none`, so non-GitHub workspaces never reach here.
+Opens a PR (ready for review, not draft) for the run's feature branch. Inline handler for GitHub workspaces (flow's own dogfood wires `create_pr = "inline"`); the bare plugin default stays `none`, so non-GitHub workspaces never reach here.
 
-**No `pr_title` gate.** Unlike the commit stage, do NOT call `lint_ticket` for a field. Nothing populates `pr_title`; the PR title/body come from the branch's commit (which the commit stage built from `commit_summary`) via `gh pr create --fill`.
+**No `pr_title` gate.** Unlike the commit stage, do NOT call `lint_ticket` for a field. Nothing populates `pr_title`; the PR title comes from the HEAD (work) commit subject, which the commit stage built from `commit_summary`.
 
 1. Open or resolve the draft PR:
    ```bash
