@@ -8,6 +8,12 @@ backend = "beads"
 prefix = "flow"
 shared_server = true
 
+# This repo IS the flow self-improvement target. Travels with the repo (so the
+# cloud routine's clone and local dogfooding both see it) and gates the
+# self-evolution loop: machinery friction -> flow's beads, /flow evolve enabled.
+[maintainer]
+self_target = true
+
 [pipeline]
 stages = ["ticket", "plan", "implement", "code_review", "e2e", "commit", "create_pr", "review_loop", "reflect"]
 

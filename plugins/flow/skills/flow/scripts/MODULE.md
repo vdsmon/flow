@@ -53,6 +53,7 @@ The live "which script does what" map. One line per script: purpose + CLI surfac
 | `reflect_inputs.py` | Bundle the reflect-stage inputs (state + frontmatter + diff + subagent reports + friction + reflect_config). | `--ticket --ticket-dir --ticket-frontmatter --cwd` |
 | `observe_ship_event.py` | Sole writer of `ship-events/<ticket>.json` (atomic, dupe-safe). | `--ticket --evidence-json --run-id --workspace-root` |
 | `machinery_edit.py` | Flock-serialized applier for reflect lens-B self-edits to flow's OWN source. Refuses out-of-tree + snapshot-pinned paths. See `../references/self-evolution.md`. | `apply --skill-root --payload` |
+| `flow_beads_create.py` | File a self-work (machinery) bead into flow's OWN beads, gated on maintainer mode; always targets flow's beads, never the run's tracker. | `--workspace-root --summary --description [--type --labels --parent]`; exit 4 = not maintainer |
 
 ## Work-mode quality gate
 
@@ -74,7 +75,7 @@ The live "which script does what" map. One line per script: purpose + CLI surfac
 
 ## Shared helpers (lib)
 
-`_atomicio.py` (atomic temp-write + fsync), `_workspace.py` (workspace.toml load), `_registry.py` (stage-registry parse), `_locking.py` (flock retry), `_jsonl.py` (JSONL sidecar parse).
+`_atomicio.py` (atomic temp-write + fsync), `_workspace.py` (workspace.toml load), `_registry.py` (stage-registry parse), `_locking.py` (flock retry), `_jsonl.py` (JSONL sidecar parse), `maintainer.py` (maintainer-mode detection via the `[maintainer]` marker; gates the self-evolution loop).
 
 ## Dev tooling
 
