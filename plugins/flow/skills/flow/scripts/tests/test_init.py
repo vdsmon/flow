@@ -755,6 +755,26 @@ def test_fresh_beads_init_runs_bd_init_once(tmp_path: Path) -> None:
     assert runner.init_calls == 1
 
 
+def test_bd_init_passes_skip_agents_and_non_interactive(tmp_path: Path) -> None:
+    runner = _StatefulBdRunner()
+    captured: list[list[str]] = []
+    base_call = runner.__call__
+
+    def recording(
+        args: list[str],
+        *,
+        cwd: Path | None = None,
+        check: bool = False,
+    ) -> subprocess.CompletedProcess[str]:
+        captured.append(args)
+        return base_call(args, cwd=cwd, check=check)
+
+    initmod.run_init(_beads_config(tmp_path), runner=recording)
+    init_argv = next(a for a in captured if a[:2] == ["bd", "init"])
+    assert "--skip-agents" in init_argv
+    assert "--non-interactive" in init_argv
+
+
 def test_resume_skips_bd_init_when_store_ready(tmp_path: Path) -> None:
     # Store already initialized externally; bd_init phase not yet recorded.
     runner = _StatefulBdRunner(already_initialized=True)
