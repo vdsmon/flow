@@ -1,6 +1,9 @@
 # evolve verb
 
-`/flow evolve`. Maintainer-only. Routed from SKILL.md's argument table. The cold-audit producer of the self-evolution loop: scan flow's OWN codebase for evidence-backed improvements and file them as beads in flow's backlog, so the harness proposes improvements to itself. Read-then-file; it does not implement or open PRs (that is the deferred shipper).
+`/flow evolve`. Maintainer-only. Routed from SKILL.md's argument table. Two halves of the self-evolution loop:
+
+- **`/flow evolve`** (no flag) — the cold-audit **producer**: scan flow's OWN codebase for evidence-backed improvements and file them as beads in flow's backlog (sections 1-5). Read-then-file; it does not implement.
+- **`/flow evolve --ship`** — the **drainer** (consumer, section 6): auto-merge green leaf PRs from prior launches, then fan out the next batch of beads as background `/flow <key> --auto` runs. `--reap` does the merge half only; `--dry-run` prints both plans and acts on neither.
 
 This is **Producer B**. Producer A is the reflect sling (`references/stage-reflect.md`): lived friction during real runs. Both land in the same `evolve`-labelled backlog, both dedup through the same `--dedup-key` seam.
 
@@ -51,4 +54,50 @@ The `--dedup-key` is reduced to a deterministic `evid:` fingerprint, so re-runs 
 
 Summarise: candidates found, filed (with keys), skipped-as-duplicate, dropped-as-noise. Be honest if the audit found little — a quiet run as the easy wins drain is success (the loop is self-limiting), not failure. Do not manufacture findings to fill the report.
 
-The user reviews the backlog (`bd ready --label evolve`) and ships from it. Autonomous implementation of the filed beads is the deferred nightly shipper, out of scope here.
+The user reviews the backlog (`bd ready --label evolve`) and ships from it — or runs `/flow evolve --ship` (section 6) to drain it autonomously.
+
+## 6. `--ship` / `--reap`: drain the backlog (the consumer)
+
+Maintainer-gated like the rest (section 1 already ran). The drainer reaps first (merge prior-launch green leaves), then launches the next batch — so repeated `--ship` calls self-pace: each pass clears finished work and starts more. `--reap` runs only the reap half; `--dry-run` prints both plans and changes nothing.
+
+### A. Reap — auto-merge green leaf PRs
+
+Green LEAF evolve PRs merge to the default branch unattended (immediate on green, non-hot only). Hot / non-green / conflicted PRs stay as draft PRs for the human — the gate survives where the risk is.
+
+```bash
+python3 ${CLAUDE_SKILL_DIR}/scripts/evolve_reap.py --workspace-root .
+```
+
+Returns JSON `{merge:[{pr,key,is_draft}], not_green, skipped_hot, blocked}`. For each `merge` entry (skip all of this under `--dry-run`):
+
+```bash
+# mark ready only if it was a draft, then squash-merge and delete the branch
+gh pr ready <pr>        # only when is_draft is true
+gh pr merge <pr> --squash --delete-branch
+```
+
+`gh pr merge` refuses a not-actually-mergeable PR, so it is a safe backstop if state changed since the classify. Veto for the human: convert a PR to draft or close it before the next pass and the reaper skips it.
+
+### B. Select + launch — fan out the next batch
+
+```bash
+python3 ${CLAUDE_SKILL_DIR}/scripts/evolve_select.py --workspace-root .
+```
+
+Returns JSON `{launch:[keys], skipped_in_flight, held_backpressure, held_hot, held_anchor, cap, concurrency, open_pr_count}`. Selection is already DAG-aware (`bd ready` excludes blocked beads), drops in-flight beads (open branch/PR), enforces backpressure (≥ `cap` open PRs → empty launch), and partitions coarsely (≤1 hot per batch; no two beads sharing a primary-file anchor). For each `launch` key (under `--dry-run`, print the command instead of running it):
+
+```bash
+claude --bg "/flow <key> --auto"
+```
+
+Each spawns a detached run that auto-plans and either opens a draft PR or **parks** asking a clarifying question (degrades to interactive when it cannot self-approve at ≥90% confidence). Park is intended, not a failure.
+
+### C. Report
+
+Summarise: merged (keys), launched (keys), and everything held — `skipped_in_flight`, `held_backpressure`, `held_hot`, `held_anchor`, `not_green`, `blocked`, `skipped_hot`. Tell the user how to follow along:
+
+- Monitor with `claude agents --json` (the plain `claude agents` needs a TTY).
+- Answer any **parked** sessions (they degraded to interactive on a real question).
+- Remaining draft PRs (hot / non-green / conflicted) are theirs to review and merge.
+
+Expect parks, not all PRs: terse audit beads will sometimes score under 90% or raise questions. A high park rate is a signal the audit evidence needs to be richer (a finding for the miners in section 2), not a drainer bug.
