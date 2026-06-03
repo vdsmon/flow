@@ -30,9 +30,14 @@ ignore = [
 quote-style = "double"
 indent-style = "space"
 
+[tool.ty.analysis]
+# pytest is a dev dep ty's env can't resolve; allow it so the gate surfaces
+# real test-type errors instead of import noise.
+allowed-unresolved-imports = ["pytest"]
+
 [tool.ty.src]
-# Type-check the runtime engine (scripts dir root). Default discovery walks the
-# project root (this dir); `include = ["."]` matched nothing, so ty silently
-# checked zero files. Tests are excluded: they're type-loose and most ty
-# diagnostics there are just pytest being unresolvable in ty's env.
-exclude = ["tests"]
+# Type-check the runtime engine and tests (scripts dir root). Default discovery
+# walks the project root (this dir); `include = ["."]` matched nothing, so ty
+# silently checked zero files. Only tests/_fixtures stays excluded: those are
+# deliberately type-loose sample inputs.
+exclude = ["tests/_fixtures"]

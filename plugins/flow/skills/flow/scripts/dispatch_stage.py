@@ -33,7 +33,7 @@ import sys
 from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import lease
 import recall_pending
@@ -314,6 +314,7 @@ def cmd_finish(
 ) -> tuple[int, dict[str, Any]]:
     if status_value not in ("completed", "failed"):
         return 1, {"error": f"--status must be completed|failed, got {status_value!r}"}
+    status = cast(state.StageStatus, status_value)
     td = _ticket_dir(workspace_root, ticket)
     ts, exit_code = state.read(td)
     if ts is None:
@@ -338,7 +339,7 @@ def cmd_finish(
         new_state = state.finish_stage(
             td,
             stage_name,
-            status_value,  # type: ignore[arg-type]
+            status,
             head_sha,
             output_path=output_path,
             skill_output=skill_output,

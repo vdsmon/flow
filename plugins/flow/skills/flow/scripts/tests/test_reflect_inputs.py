@@ -231,7 +231,9 @@ def test_bundle_includes_friction_for_this_run_only(tmp_repo: Path, tmp_path: Pa
     head = _git(["rev-parse", "HEAD"], tmp_repo).strip()
     ticket_dir = tmp_path / "runs" / "FT-1"
     _seed_state(ticket_dir, head)
-    run_id = state.read(ticket_dir)[0].run_id
+    ticket_state = state.read(ticket_dir)[0]
+    assert ticket_state is not None
+    run_id = ticket_state.run_id
     flow_friction.append(
         tmp_repo, "FT-1", run_id, "implement", "RECONCILE", "expanded planned_files"
     )

@@ -38,7 +38,7 @@ def test_percentile_pct_100_no_index_error() -> None:
 
 
 def test_percentile_does_not_mutate_caller_list() -> None:
-    values = [30, 10, 20]
+    values: list[float] = [30, 10, 20]
     baseline_collect.percentile(values, 50)
     assert values == [30, 10, 20]
 

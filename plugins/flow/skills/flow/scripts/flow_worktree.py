@@ -197,7 +197,7 @@ def _seed_state(worktree: Path, ticket: str, plan_text: str, head_sha: str) -> s
 
     ticket_dir = worktree / ".flow" / "runs" / ticket
     run_id = secrets.token_hex(8)
-    state.init(ticket_dir, ticket, backend, list(stages), run_id=run_id)
+    state.init(ticket_dir, ticket, backend, [str(s) for s in stages], run_id=run_id)
 
     if "plan" in stages:
         state.begin_stage(ticket_dir, "plan", head_sha)
