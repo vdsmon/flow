@@ -10,6 +10,7 @@ from typing import Any
 
 import pytest
 
+import pending_mutations
 import tracker_cli
 from tracker import TrackerError
 
@@ -365,7 +366,13 @@ def test_tracker_error_returns_1(tmp_path: Path, capsys: pytest.CaptureFixture[s
     assert "tracker error" in capsys.readouterr().err
 
 
-def _run_transition(tmp_path: Path, result: dict[str, Any]) -> tuple[int, str]:
+def _run_transition(
+    tmp_path: Path,
+    result: dict[str, Any],
+    *,
+    enqueue: bool = False,
+    fields: list[str] | None = None,
+) -> tuple[int, str]:
     """Drive `transition in_progress` with a tracker scripted to return `result`."""
     _seed_workspace(tmp_path)
 
@@ -375,20 +382,22 @@ def _run_transition(tmp_path: Path, result: dict[str, Any]) -> tuple[int, str]:
             return result
 
     tk = _ScriptedTransition()
+    argv = [
+        "--workspace-root",
+        str(tmp_path),
+        "transition",
+        "--key",
+        "FT-1",
+        "--to-state",
+        "in_progress",
+    ]
+    if enqueue:
+        argv.append("--enqueue-on-transient")
+    for f in fields or []:
+        argv += ["--field", f]
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
-        rc = tracker_cli.cli_main(
-            [
-                "--workspace-root",
-                str(tmp_path),
-                "transition",
-                "--key",
-                "FT-1",
-                "--to-state",
-                "in_progress",
-            ],
-            tracker_factory=_factory(tk),
-        )
+        rc = tracker_cli.cli_main(argv, tracker_factory=_factory(tk))
     return rc, buf.getvalue()
 
 
@@ -440,3 +449,105 @@ def test_transition_unknown_failure_kind_returns_1(tmp_path: Path) -> None:
 def test_transition_failure_without_kind_returns_1(tmp_path: Path) -> None:
     rc, _ = _run_transition(tmp_path, {"success": False})
     assert rc == 1
+
+
+# ─── Pending-mutations enqueue on transient transition failure ────────────────
+
+
+def test_transition_transient_with_flag_enqueues(tmp_path: Path) -> None:
+    rc, _ = _run_transition(tmp_path, {"success": False, "failure_kind": None}, enqueue=True)
+    assert rc == 1
+    entries = pending_mutations.list_mutations(tmp_path)
+    assert len(entries) == 1
+    entry = entries[0]
+    assert entry["op"] == "transition"
+    assert entry["ticket"] == "FT-1"
+    assert entry["args"]["transition_id"] == "31"
+    assert entry["args"]["fields"] is None
+    assert entry["expected_postcondition"]["normalized"] == "in_progress"
+
+
+def test_transition_transient_without_flag_no_enqueue(tmp_path: Path) -> None:
+    rc, _ = _run_transition(tmp_path, {"success": False, "failure_kind": None})
+    assert rc == 1
+    assert pending_mutations.list_mutations(tmp_path) == []
+
+
+def test_transition_raised_trackererror_with_flag_enqueues(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path)
+
+    class _RaisingTransition(_FakeTracker):
+        def transition(self, key, transition_id, fields=None):
+            raise TrackerError("network down")
+
+    tk = _RaisingTransition()
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        rc = tracker_cli.cli_main(
+            [
+                "--workspace-root",
+                str(tmp_path),
+                "transition",
+                "--key",
+                "FT-1",
+                "--to-state",
+                "in_progress",
+                "--enqueue-on-transient",
+            ],
+            tracker_factory=_factory(tk),
+        )
+    assert rc == 1
+    assert len(pending_mutations.list_mutations(tmp_path)) == 1
+
+
+@pytest.mark.parametrize(
+    ("failure_kind", "expected_rc"),
+    [("permission_denied", 4), ("wrong_source_state", 5)],
+)
+def test_transition_hard_failure_with_flag_no_enqueue(
+    tmp_path: Path, failure_kind: str, expected_rc: int
+) -> None:
+    rc, _ = _run_transition(
+        tmp_path, {"success": False, "failure_kind": failure_kind}, enqueue=True
+    )
+    assert rc == expected_rc
+    assert pending_mutations.list_mutations(tmp_path) == []
+
+
+def test_transition_success_with_flag_no_enqueue(tmp_path: Path) -> None:
+    rc, _ = _run_transition(tmp_path, {"success": True}, enqueue=True)
+    assert rc == 0
+    assert pending_mutations.list_mutations(tmp_path) == []
+
+
+def test_transition_enqueue_exception_swallowed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def boom(*args: Any, **kwargs: Any) -> None:
+        raise RuntimeError("disk full")
+
+    monkeypatch.setattr(pending_mutations, "append_mutation", boom)
+    rc, _ = _run_transition(tmp_path, {"success": False, "failure_kind": None}, enqueue=True)
+    assert rc == 1
+
+
+def test_transition_enqueue_idempotent(tmp_path: Path) -> None:
+    result = {"success": False, "failure_kind": None}
+    rc1, _ = _run_transition(tmp_path, result, enqueue=True)
+    rc2, _ = _run_transition(tmp_path, result, enqueue=True)
+    assert rc1 == 1
+    assert rc2 == 1
+    assert len(pending_mutations.list_mutations(tmp_path)) == 1
+
+
+def test_transition_with_fields_enqueues_fields(tmp_path: Path) -> None:
+    rc, _ = _run_transition(
+        tmp_path,
+        {"success": False, "failure_kind": None},
+        enqueue=True,
+        fields=["comment=ok"],
+    )
+    assert rc == 1
+    entries = pending_mutations.list_mutations(tmp_path)
+    assert len(entries) == 1
+    assert entries[0]["args"]["fields"] == {"comment": "ok"}

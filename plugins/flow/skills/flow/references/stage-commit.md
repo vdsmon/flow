@@ -84,7 +84,7 @@ The applied patch comes from the recorded `implement.diff` — NOT from `git add
    ```bash
    ${CLAUDE_SKILL_DIR}/scripts/tracker_cli.py \
      --workspace-root . \
-     transition --key <KEY> --to-state in_review
+     transition --key <KEY> --to-state in_review --enqueue-on-transient
    ```
    The commit already landed in git before this step, so a *transient* tracker failure must not fail the stage.
    A *hard* failure (permission / validator / wrong-state) must, because it means the transition will never succeed without intervention.
@@ -94,6 +94,7 @@ The applied patch comes from the recorded `implement.diff` — NOT from `git add
    - Exit 1 → transient/unknown tracker error (network / auth / retryable, or
      an unmapped `failure_kind`).
      Commit is already made; log a warning surfacing `failure_kind` + `failure_detail` from the printed JSON if present, else the stderr message (a raised `TrackerError` prints to stderr with no stdout JSON).
+     `--enqueue-on-transient` has durably QUEUED the transition to `.flow/pending-mutations.jsonl`; `/flow sync` reconciles it against live tracker state on the next run (no longer logged and dropped).
      Continue; stage completes (not status=failed — the diff is in git, the ticket transition is best-effort under transient faults).
    - Exit 2 → workspace config invalid.
      Surface stderr; do not retry.
@@ -121,7 +122,8 @@ The applied patch comes from the recorded `implement.diff` — NOT from `git add
   `commit_summary` frontmatter.
 - `git apply --cached` fail → working tree drift. `/flow recover` in 8c.
 - `tracker_cli.py transition` exit 1 → transient; log warning, do not block.
-  The commit is the source of truth.
+  The commit is the source of truth. `--enqueue-on-transient` queues the
+  transition to `.flow/pending-mutations.jsonl` for `/flow sync` to reconcile.
 - `tracker_cli.py transition` exit 3 → no `in_review` transition; do NOT
   auto-close via `done` (premature in a PR flow) — leave the ticket
   `in_progress`, warn, and continue.
