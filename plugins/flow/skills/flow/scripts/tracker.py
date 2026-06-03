@@ -358,12 +358,12 @@ def make_tracker(config: dict[str, Any]) -> Tracker:
         # Lazy import; isolates Jira HTTP stack from beads-only workspaces.
         from tracker_jira import JiraAdapter
 
-        return JiraAdapter(config)  # type: ignore[return-value]
+        return JiraAdapter(config)
     if backend == "beads":
         # Lazy import; isolates subprocess/`bd` requirements from jira-only workspaces.
         from tracker_beads import BeadsAdapter
 
-        return BeadsAdapter(config)  # type: ignore[return-value]
+        return BeadsAdapter(config)
 
     # Unreachable per the membership check above; kept as a typing safety net.
     raise TrackerConfigError(f"tracker.backend={backend!r} not handled by factory")

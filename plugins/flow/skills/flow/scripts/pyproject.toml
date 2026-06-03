@@ -31,6 +31,8 @@ quote-style = "double"
 indent-style = "space"
 
 [tool.ty.src]
-# Type-check the scripts dir only. Adapters import each other directly.
-include = ["."]
-exclude = ["tests/_fixtures"]
+# Type-check the runtime engine (scripts dir root). Default discovery walks the
+# project root (this dir); `include = ["."]` matched nothing, so ty silently
+# checked zero files. Tests are excluded: they're type-loose and most ty
+# diagnostics there are just pytest being unresolvable in ty's env.
+exclude = ["tests"]
