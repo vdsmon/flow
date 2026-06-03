@@ -29,3 +29,9 @@ plugins/flow/**/.venv/
 .flow/*.lock
 .flow/recall-pending.jsonl
 .flow/recall-pending.jsonl.lock
+# per-namespace memory + friction + ship-events (local, per-machine)
+.flow/*/knowledge.jsonl
+.flow/*/knowledge.jsonl.lock
+.flow/*/friction.jsonl
+.flow/*/friction.jsonl.lock
+.flow/*/ship-events/

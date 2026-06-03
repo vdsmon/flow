@@ -149,7 +149,12 @@ def _copy_config(main_root: Path, worktree: Path, extra: list[str]) -> list[str]
             continue
         dst = worktree / rel
         if src.is_dir():
-            shutil.copytree(src, dst, dirs_exist_ok=True)
+            # skip nested worktree checkouts (.claude/worktrees can be 10G+ of
+            # other tickets' trees); the tail needs hooks/skills/settings, never
+            # sibling worktrees.
+            shutil.copytree(
+                src, dst, dirs_exist_ok=True, ignore=shutil.ignore_patterns("worktrees")
+            )
         else:
             dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src, dst)
