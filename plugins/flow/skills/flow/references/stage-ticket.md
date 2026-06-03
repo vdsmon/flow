@@ -65,12 +65,35 @@ Subsequent stages depend on `<ticket-dir>/ticket.json` being present.
    - Exit 3: I/O error.
      Abort + recover hint.
 
+3b. **Claim the ticket in the tracker backend** (`open` → `in_progress`) so a parallel fleet does not double-pick it.
+   Step 3 stamped the frontmatter `status`, but that is local to `.flow`; the tracker backend (the bd issue) still reads `open`, so `bd ready` keeps listing this in-flight ticket as available until this transition lands. This is distinct from the run lease (which only guards against two *flow* runs colliding): this keeps the backend's own status truthful for external fleet consumers.
+
+   **MCP-first:** when the Atlassian MCP is available, transition via it (`transitionJiraIssue`) — auth-fresh, the primary path in an attached run. **REST fallback** (a backgrounded / headless run, or beads):
+   ```bash
+   ${CLAUDE_SKILL_DIR}/scripts/tracker_cli.py \
+     --workspace-root . \
+     transition --key <KEY> --to-state in_progress
+   ```
+   This claim is **best-effort: it never fails the stage.** No git work has happened yet, so the only thing at stake is the double-pick window; aborting the whole run because the backend would not move is worse than proceeding on the local stamp plus a logged warning. Read the printed JSON for `failure_kind` + `failure_detail`. Exit-code handling:
+   - Exit 0 → claimed; continue.
+   - Exit 3 → no transition to `in_progress` available — the ticket is already `in_progress` (a resumed run), or the tracker has no such state (a review-less / stateless backend). This is the desired end state (or a no-op tracker); continue silently.
+   - Exit 1 / 2 / 4 / 5 → log a one-line warning naming `failure_kind` + `failure_detail` (from the printed JSON, else the stderr message), append one friction entry, and continue. Do **NOT** mark the stage failed.
+     ```bash
+     ${CLAUDE_SKILL_DIR}/scripts/flow_friction.py \
+       --ticket <KEY> --run-id <run_id> --stage ticket \
+       --type RECONCILE --severity minor \
+       --body "ticket-stage backend claim to in_progress did not apply" \
+       --detail "<failure_kind>: <failure_detail>" \
+       --workspace-root . || true
+     ```
+
 ## Outputs
 
 - `<ticket-dir>/ticket.json` — full cached ticket payload.
 - `<ticket-dir>/attachments/` — downloaded ticket attachments (best-effort; absent for beads or when REST creds are unavailable).
 - `.flow/tickets/<KEY>.md` — ticket frontmatter with `status=in_progress`
   and `started_at` set.
+- Tracker backend transitioned to `in_progress` (best-effort; left unchanged if the backend has no such state or the claim failed — the stage never fails on this).
 
 ## Errors
 
@@ -78,6 +101,8 @@ Subsequent stages depend on `<ticket-dir>/ticket.json` being present.
   (recover is phase 8c; for now, manual retry).
 - Exit 2/3 from `ticket_frontmatter.py` → `/flow recover --reset-frontmatter
   <KEY>` (manual fix).
+- `tracker_cli.py transition` exit 3 in step 3b → already `in_progress` or no such state; continue silently (not an error).
+- `tracker_cli.py transition` exit 1 / 2 / 4 / 5 in step 3b → best-effort claim; warn + append a `RECONCILE` friction entry + continue. Never fails the stage.
 
 ## Skip conditions
 
