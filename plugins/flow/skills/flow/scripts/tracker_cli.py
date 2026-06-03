@@ -13,6 +13,7 @@ Subcommands:
   transition --key FT-1 --to-state in_progress [--field k=v ...]
   comment --key FT-1 --text "..."        tracker.comment(key, body)
   is-shipped --key FT-1                  tracker.is_shipped(key) -> JSON
+  download-attachments --key FT-1 --out <dir> [--max-bytes N]   download to <dir>
 
 Workspace resolution: reads `.flow/workspace.toml` `[tracker]` block, flattens
 the per-backend sub-block (`[tracker.jira]` or `[tracker.beads]`) into the
@@ -31,12 +32,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
 
 import _workspace
-from tracker import TrackerError, make_tracker
+from tracker import NotSupported, TrackerError, make_tracker
 
 
 class _WorkspaceConfigError(Exception):
@@ -156,6 +158,38 @@ def _cmd_is_shipped(tracker_obj: Any, args: argparse.Namespace) -> int:
     return 0
 
 
+def _safe_filename(name: str) -> str:
+    """Strip directory components and unsafe chars from an attachment filename."""
+    base = re.sub(r"[^\w.\-]+", "_", Path(name).name).strip("._")
+    return base or "attachment"
+
+
+def _cmd_download_attachments(tracker_obj: Any, args: argparse.Namespace) -> int:
+    out_dir = Path(args.out)
+    try:
+        attachments = tracker_obj.get_attachments(args.key)
+    except NotSupported:
+        # Backends without attachments (beads): not an error, nothing to do.
+        sys.stdout.write(json.dumps({"supported": False, "key": args.key, "downloaded": []}) + "\n")
+        return 0
+    out_dir.mkdir(parents=True, exist_ok=True)
+    downloaded: list[dict[str, Any]] = []
+    for att in attachments:
+        size = int(att.get("size") or 0)
+        fname = _safe_filename(att.get("filename") or att.get("id") or "attachment")
+        if args.max_bytes and size > args.max_bytes:
+            downloaded.append({"filename": fname, "size": size, "skipped": "exceeds-max-bytes"})
+            continue
+        data = tracker_obj.download_attachment(att)
+        dest = out_dir / fname
+        dest.write_bytes(data)
+        downloaded.append({"filename": fname, "size": len(data), "path": str(dest)})
+    sys.stdout.write(
+        json.dumps({"supported": True, "key": args.key, "downloaded": downloaded}, indent=2) + "\n"
+    )
+    return 0
+
+
 # ─── CLI ─────────────────────────────────────────────────────────────────────
 
 
@@ -194,6 +228,16 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     p_ship = sub.add_parser("is-shipped", help="tracker.is_shipped(key)")
     p_ship.add_argument("--key", required=True)
 
+    p_dl = sub.add_parser("download-attachments", help="download ticket attachments to a dir")
+    p_dl.add_argument("--key", required=True)
+    p_dl.add_argument("--out", required=True, help="destination directory")
+    p_dl.add_argument(
+        "--max-bytes",
+        type=int,
+        default=26_214_400,
+        help="skip attachments larger than this (default 25 MiB).",
+    )
+
     return parser.parse_args(argv)
 
 
@@ -204,6 +248,7 @@ _DISPATCH: dict[str, Any] = {
     "transition": _cmd_transition,
     "comment": _cmd_comment,
     "is-shipped": _cmd_is_shipped,
+    "download-attachments": _cmd_download_attachments,
 }
 
 

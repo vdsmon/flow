@@ -669,6 +669,10 @@ class BeadsAdapter:
         del key, path
         raise NotSupported("BeadsAdapter does not support attachments")
 
+    def download_attachment(self, attachment: Attachment) -> bytes:
+        del attachment
+        raise NotSupported("BeadsAdapter does not support attachments")
+
     # ─── Postcondition + git helpers ─────────────────────────────────────
 
     def _verify_field(self, key: str, field_name: str, expected: Any) -> None:

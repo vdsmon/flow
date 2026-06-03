@@ -876,6 +876,31 @@ class JiraAdapter:
             return str(resp[0].get("id", ""))
         return ""
 
+    def download_attachment(self, attachment: Attachment) -> bytes:
+        """Fetch an attachment's raw bytes from its content URL.
+
+        `attachment["url"]` is Jira's absolute `content` link, so it bypasses
+        `_url`/`_request` (which prepend the API base). Jira 302-redirects content
+        to a signed media URL; urllib follows the redirect and drops the
+        Authorization header on the cross-host hop, which is correct (the target
+        carries its own signature).
+        """
+        url = attachment.get("url")
+        if not url:
+            raise TrackerError(f"attachment {attachment.get('id')!r} has no content url")
+        req = urllib.request.Request(
+            url=url,
+            method="GET",
+            headers={"Authorization": self._auth_header, "Accept": "*/*"},
+        )
+        try:
+            resp = self._http(req)
+            return resp.read()
+        except urllib.error.HTTPError as exc:
+            raise TrackerError(f"attachment download failed ({url}): HTTP {exc.code}") from exc
+        except urllib.error.URLError as exc:
+            raise TrackerError(f"attachment download failed ({url}): {exc.reason}") from exc
+
 
 # ─── Internal exception (escapes _request to caller, never user-visible) ─────
 

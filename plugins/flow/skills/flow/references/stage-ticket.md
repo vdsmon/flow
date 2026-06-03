@@ -25,20 +25,28 @@ Subsequent stages depend on `<ticket-dir>/ticket.json` being present.
    Exit 3 (no match) → abort stage with status=failed;
    the user must rerun with an explicit `--ticket` arg.
 
-2. Fetch ticket details from the tracker:
+2. Fetch ticket details into `<ticket-dir>/ticket.json` — the canonical Ticket payload downstream stages read (key, summary, status, description, type, assignee, comments, parent, attachments, links).
+
+   **MCP-first.** When the Atlassian MCP is available (an attached session usually has it — `getJiraIssue` etc.), fetch via the MCP and write the result into `<ticket-dir>/ticket.json` in that Ticket shape. The MCP is auth-fresh and needs no env credentials, so it is the primary path in an attached run (this is what production already reaches for).
+
+   **REST fallback** — when the MCP is absent (a backgrounded / headless run), or for any workspace where it is unavailable:
    ```bash
    ${CLAUDE_SKILL_DIR}/scripts/tracker_cli.py \
      --workspace-root . \
      get --key <KEY> > <ticket-dir>/ticket.json
    ```
-   - Exit 0: ticket.json contains the full Ticket payload (key, summary,
-     status, description, type, assignee, comments, parent, attachments,
-     links).
-   - Exit 1: tracker error (network / auth / unknown key).
-     Surface stderr + `/flow recover --ticket <KEY>` hint.
-     Abort stage with status=failed.
-   - Exit 2: workspace config invalid.
-     Should not happen at this point — surface stderr + abort.
+   - Exit 0: ticket.json written.
+   - Exit 1: tracker error (network / auth / unknown key). If env creds are simply absent and the Atlassian MCP is reachable, use the MCP path above instead of failing. Otherwise surface stderr + `/flow recover --ticket <KEY>` hint; abort stage with status=failed.
+   - Exit 2: workspace config invalid. Surface stderr + abort.
+
+2b. **Download ticket attachments** so the plan / implement stages can see screenshots, specs, and sample files. When `ticket.json` lists any under `attachments` (Jira; beads has none):
+   ```bash
+   ${CLAUDE_SKILL_DIR}/scripts/tracker_cli.py \
+     --workspace-root . \
+     download-attachments --key <KEY> --out <ticket-dir>/attachments
+   ```
+   - Exit 0 → JSON `{supported, key, downloaded[]}`. `supported=false` (beads) or an empty `downloaded[]` is normal — continue. Each entry is `{filename, size, path}`, or `{filename, size, skipped}` when over the 25 MiB cap. Note the saved paths so later stages can read them.
+   - The Atlassian MCP has **no** attachment-download tool, so this always uses the REST adapter, which needs `ATLASSIAN_EMAIL` / `ATLASSIAN_API_TOKEN`. If those are absent, log a `MISSING_TOOL` friction entry and continue — attachment download is **best-effort**, never a stage blocker.
 
 3. Stamp ticket frontmatter `status` + `started_at`:
    ```bash
@@ -60,6 +68,7 @@ Subsequent stages depend on `<ticket-dir>/ticket.json` being present.
 ## Outputs
 
 - `<ticket-dir>/ticket.json` — full cached ticket payload.
+- `<ticket-dir>/attachments/` — downloaded ticket attachments (best-effort; absent for beads or when REST creds are unavailable).
 - `.flow/tickets/<KEY>.md` — ticket frontmatter with `status=in_progress`
   and `started_at` set.
 

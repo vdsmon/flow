@@ -79,7 +79,8 @@ The applied patch comes from the recorded `implement.diff` — NOT from `git add
    git commit -F /tmp/flow-commit-<KEY>.txt
    ```
 
-7. Transition the tracker ticket:
+7. Transition the tracker ticket to `in_review`.
+   **MCP-first:** when the Atlassian MCP is available, transition via it (`transitionJiraIssue`) — auth-fresh, no env creds needed, the primary path in an attached run (what production already does). **REST fallback** when the MCP is absent (a backgrounded / headless run) or for beads:
    ```bash
    ${CLAUDE_SKILL_DIR}/scripts/tracker_cli.py \
      --workspace-root . \

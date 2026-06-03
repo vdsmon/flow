@@ -274,6 +274,9 @@ class _FakeAdapter:
     def upload_attachment(self, key: str, path: str) -> str:  # pragma: no cover
         raise t.NotSupported
 
+    def download_attachment(self, attachment: t.Attachment) -> bytes:  # pragma: no cover
+        raise t.NotSupported
+
 
 def test_fake_adapter_is_structurally_a_tracker() -> None:
     # @runtime_checkable Protocols verify method NAMES, not signatures. The
