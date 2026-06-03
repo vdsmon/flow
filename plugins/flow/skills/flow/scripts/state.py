@@ -25,13 +25,13 @@ import json
 import os
 import secrets
 import sys
-import tempfile
 import time
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any, Literal
 
+from _atomicio import atomic_write_text
 from _locking import flock_blocking
 
 SCHEMA_VERSION = 1
@@ -134,30 +134,6 @@ def _deserialize(raw: str) -> TicketState:
     )
 
 
-def _atomic_write(path: Path, content: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(
-        mode="w",
-        encoding="utf-8",
-        dir=str(path.parent),
-        prefix=f".{path.name}.",
-        suffix=".tmp",
-        delete=False,
-    ) as tmp:
-        tmp.write(content)
-        tmp.flush()
-        os.fsync(tmp.fileno())
-        tmp_path = Path(tmp.name)
-    os.replace(tmp_path, path)
-    # fsync the parent dir so the rename itself is durable across a crash.
-    with contextlib.suppress(OSError):
-        dir_fd = os.open(str(path.parent), os.O_RDONLY)
-        try:
-            os.fsync(dir_fd)
-        finally:
-            os.close(dir_fd)
-
-
 # ─── Quarantine ──────────────────────────────────────────────────────────────
 
 
@@ -200,7 +176,7 @@ def _read_locked(ticket_dir: Path) -> tuple[TicketState | None, int]:
         recovered = _try_load_from_bak(ticket_dir)
         if recovered is None:
             return None, 2
-        _atomic_write(_state_path(ticket_dir), _serialize(recovered))
+        atomic_write_text(_state_path(ticket_dir), _serialize(recovered))
         return recovered, 1
 
 
@@ -353,7 +329,7 @@ def _write_locked(ticket_dir: Path, state: TicketState) -> None:
         bak = ticket_dir / f"state.json.{_ts_token()}.bak"
         with contextlib.suppress(OSError):
             bak.write_bytes(path.read_bytes())
-    _atomic_write(path, _serialize(state))
+    atomic_write_text(path, _serialize(state))
     _trim_backups(ticket_dir)
 
 

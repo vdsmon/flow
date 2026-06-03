@@ -36,7 +36,6 @@ import os
 import re
 import subprocess
 import sys
-import tempfile
 import time
 import tomllib
 import unicodedata
@@ -46,6 +45,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
+from _atomicio import atomic_write_text
 from _registry import StageEntry, load_registry
 from bundle_discover import DiscoveryResult
 from bundle_discover import discover as bundle_discover_run
@@ -279,26 +279,6 @@ def _utcnow_iso() -> str:
     # Stdlib-only ISO8601 UTC with Z suffix (no datetime.UTC dependency complaints
     # — we use time.gmtime which is timezone-naive but explicitly UTC).
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-
-
-# ─── Atomic write ───────────────────────────────────────────────────────────
-
-
-def _atomic_write_text(path: Path, content: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(
-        mode="w",
-        encoding="utf-8",
-        dir=str(path.parent),
-        prefix=f".{path.name}.",
-        suffix=".tmp",
-        delete=False,
-    ) as tmp:
-        tmp.write(content)
-        tmp.flush()
-        os.fsync(tmp.fileno())
-        tmp_path = Path(tmp.name)
-    os.replace(tmp_path, path)
 
 
 # ─── TOML emitter (hand-rolled) ─────────────────────────────────────────────
@@ -657,7 +637,7 @@ def _restore_reconfigure_backup(root: Path, backup: _ReconfigureBackup) -> None:
         initializing.unlink()
     toml_path = _workspace_toml_path(root)
     if backup.workspace_toml is not None:
-        _atomic_write_text(toml_path, backup.workspace_toml)
+        atomic_write_text(toml_path, backup.workspace_toml)
     progress = _progress_path(root)
     if progress.exists():
         progress.unlink()
@@ -877,7 +857,7 @@ def _run_init_phases(
             if not _legal_handler_string(value):
                 raise InitError(f"refusing to write illegal handler for stage {stage!r}: {value!r}")
         content = _render_workspace_toml(config, namespace, pipeline_stages, handlers)
-        _atomic_write_text(_workspace_toml_path(root), content)
+        atomic_write_text(_workspace_toml_path(root), content)
         return None
 
     _run_phase("write_workspace_toml", _phase_write_workspace_toml)

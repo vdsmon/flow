@@ -33,15 +33,14 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import subprocess
 import sys
-import tempfile
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, TypedDict
 
 import state
+from _atomicio import atomic_write_text
 
 Runner = Callable[..., subprocess.CompletedProcess[str]]
 
@@ -83,23 +82,6 @@ class _IgnoredPlannedFile(_BaselineMissing):
 
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
-
-
-def _atomic_write_text(path: Path, content: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(
-        mode="w",
-        encoding="utf-8",
-        dir=str(path.parent),
-        prefix=f".{path.name}.",
-        suffix=".tmp",
-        delete=False,
-    ) as tmp:
-        tmp.write(content)
-        tmp.flush()
-        os.fsync(tmp.fileno())
-        tmp_path = Path(tmp.name)
-    os.replace(tmp_path, path)
 
 
 def _git(args: list[str], cwd: Path, runner: Runner) -> str:
@@ -237,7 +219,7 @@ def record_baseline(
         "planned_files": files,
         "blobs": blobs,
     }
-    _atomic_write_text(
+    atomic_write_text(
         _baseline_path(ticket_dir), json.dumps(payload, indent=2, sort_keys=True) + "\n"
     )
     return payload
@@ -296,7 +278,7 @@ def capture_implement_diff(
         if untracked:
             _git(["reset", "--quiet", "--", *untracked], cwd, r)
     out_path = _implement_diff_path(ticket_dir)
-    _atomic_write_text(out_path, raw)
+    atomic_write_text(out_path, raw)
     return out_path
 
 
