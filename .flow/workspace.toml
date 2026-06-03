@@ -22,6 +22,11 @@ create_pr = "none"
 review_loop = "none"
 reflect = "inline"
 
+[reflect]
+# flow runs its own pipeline on itself (dogfood); turn the harness self-repair
+# lens on so reflect fixes machinery friction from inside the run.
+machinery = true
+
 [memory]
 namespace = "flow"
 auto_recall = true
