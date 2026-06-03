@@ -4,7 +4,7 @@ The two work-mode verbs. Routed from SKILL.md's argument table.
 
 ## sync verb
 
-`/flow sync` drains `.flow/pending-mutations.jsonl` — tracker writes (transition / comment / link / edit) that an adapter queued after a transient failure — and reconciles them against live tracker state.
+`/flow sync` drains `.flow/pending-mutations.jsonl` — tracker writes (transition / comment / link / edit) that the commit-stage `tracker_cli.py transition --enqueue-on-transient` chokepoint queued after a transient failure — and reconciles them against live tracker state.
 Work-mode verb.
 
 ```bash
