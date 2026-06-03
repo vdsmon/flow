@@ -18,3 +18,8 @@ plugins/flow/**/.pytest_cache/
 plugins/flow/**/.ruff_cache/
 plugins/flow/**/__pycache__/
 plugins/flow/**/.venv/
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key
