@@ -6,6 +6,17 @@ from _registry import load_registry, registry_by_name
 
 REAL_REGISTRY = Path(__file__).resolve().parent.parent.parent / "stage-registry.toml"
 
+_REFERENCE_DOC_ENTRIES = [e for e in load_registry(REAL_REGISTRY) if e.reference_doc is not None]
+
+
+@pytest.mark.parametrize(
+    "entry",
+    _REFERENCE_DOC_ENTRIES,
+    ids=[e.name for e in _REFERENCE_DOC_ENTRIES],
+)
+def test_reference_doc_resolves(entry):
+    assert (REAL_REGISTRY.parent / entry.reference_doc).is_file()
+
 
 def test_load_real_registry():
     entries = load_registry(REAL_REGISTRY)
