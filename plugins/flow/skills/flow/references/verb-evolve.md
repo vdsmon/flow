@@ -30,7 +30,7 @@ Spawn parallel read-only audit agents (the `Agent` tool with `Explore` / `genera
 
 ## 3. Synthesize, rank, assign stable ids
 
-Dedup the raw findings (merge ones about the same root issue), drop the vague / unevidenced. Rank by evidence strength × value × blast-radius-safety × reviewability — prefer small, isolated, high-evidence items. Give each survivor a **stable identity anchored on its primary file path** plus a short symptom — `<primary-relfile>::<short-symptom>`, e.g. `scripts/diff_extract.py::quotepath-parsing`. Anchor on the file, NOT free wording: the file path is the invariant a re-run will rediscover, so it is what makes the same defect dedup across runs (the seam fingerprints it, so exact formatting does not matter). Keep the `::` separator: the file component (its basename) now also anchors a fuzzy same-file dedup pass, so a re-discovery phrased differently still converges. Flag `hot` if it touches `SKILL.md` / `stage-registry.toml` / `CLAUDE.md` / a wired handler.
+Dedup the raw findings (merge ones about the same root issue), drop the vague / unevidenced. Rank by evidence strength × value × blast-radius-safety × reviewability, then score each survivor against the repo-root `VISION.md` (serves the thesis / on the right side of the auto-vs-propose line / does not erode the floor — a candidate that cannot be anchored there is slop: drop it or escalate it as a question). Prefer small, isolated, high-evidence items. Give each survivor a **stable identity anchored on its primary file path** plus a short symptom — `<primary-relfile>::<short-symptom>`, e.g. `scripts/diff_extract.py::quotepath-parsing`. Anchor on the file, NOT free wording: the file path is the invariant a re-run will rediscover, so it is what makes the same defect dedup across runs (the seam fingerprints it, so exact formatting does not matter). Keep the `::` separator: the file component (its basename) now also anchors a fuzzy same-file dedup pass, so a re-discovery phrased differently still converges. Flag `hot` if it touches `SKILL.md` / `stage-registry.toml` / `CLAUDE.md` / a wired handler, OR a safety-machinery guard file (`lease.py`, `snapshot.py`, `_atomicio.py`, `_locking.py`, `state.py`, `dispatch_stage.py`, `diff_extract.py`, `machinery_edit.py`, `flow_friction.py`): a guard change must ride the hot path so the property-check review (§6A) gates it.
 
 ## 4. File each candidate (dedup through the seam)
 
@@ -68,7 +68,9 @@ Green LEAF evolve PRs merge to the default branch unattended (immediate on green
 python3 ${CLAUDE_SKILL_DIR}/scripts/evolve_reap.py --workspace-root .
 ```
 
-Returns JSON `{merge:[{pr,key,is_draft}], not_green, skipped_hot, blocked}`. For each `merge` entry (skip all of this under `--dry-run`):
+Returns JSON `{merge:[{pr,key,is_draft,is_hot}], not_green, skipped_hot, blocked}`. For each `merge` entry (skip all of this under `--dry-run`):
+
+**Guard property-check — run FIRST for any entry with `is_hot: true`.** A hot entry touches the harness, possibly the safety machinery itself. Before merging it, review the PR diff (`gh pr diff <pr>`) against the guard-property checklist: does this DELETE or weaken a safety property — lease exclusivity (one run per ticket), snapshot drift-detection, atomic-write + corrupt-file quarantine, content-ownership refusal, or self-edit flock serialization? Guard *code* may be refactored, sped up, or improved freely; a guard *property* may only be replaced by one that provably still holds, never simply dropped. Green does NOT prove the property holds — most of these have no direct test — so this review is the enforcer, not CI. If the diff removes a protection without a provably-equivalent replacement → do NOT merge: leave the PR as a draft for the human (skip its `gh pr ready` + `gh pr merge`), and report it under `held_guard`. Only a property-preserving hot entry proceeds to the steps below; a non-hot entry (`is_hot: false`) skips straight to them.
 
 ```bash
 # mark ready only if it was a draft, then squash-merge and delete the branch
@@ -99,7 +101,7 @@ Each spawns a detached run that auto-plans and either opens a draft PR or, when 
 
 ### C. Report
 
-Summarise: merged (keys), launched (keys), and everything held — `skipped_in_flight`, `held_backpressure`, `held_hot`, `held_anchor`, `not_green`, `blocked`, `skipped_hot`. Tell the user how to follow along:
+Summarise: merged (keys), launched (keys), and everything held — `skipped_in_flight`, `held_backpressure`, `held_hot`, `held_anchor`, `not_green`, `blocked`, `skipped_hot`, plus any `held_guard` (a hot PR you withheld because its diff removed a safety property — name the property, it is the maintainer's to review). Tell the user how to follow along:
 
 - Monitor with `claude agents --json` (the plain `claude agents` needs a TTY).
 - Review any **deferred** beads: the run commented its open questions before exiting. `deferred` != done, so to unstick, answer the comment, reopen the bead (status → `open`), and re-run it interactively (WITHOUT `--auto`).

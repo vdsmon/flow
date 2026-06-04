@@ -63,7 +63,13 @@ def test_green_clean_leaf_merges():
     prs = [_pr(1, "flow-a")]
     out = er.classify(prs, _idx(**{"flow-a": ["evolve", "audit"]}))
     assert out["merge"] == [
-        {"pr": 1, "key": "flow-a", "branch": "feature/flow-a-some-desc", "is_draft": False}
+        {
+            "pr": 1,
+            "key": "flow-a",
+            "branch": "feature/flow-a-some-desc",
+            "is_draft": False,
+            "is_hot": False,
+        }
     ]
 
 
@@ -101,7 +107,13 @@ def test_draft_but_green_is_mergeable():
     prs = [_pr(1, "flow-a", state="DRAFT", draft=True)]
     out = er.classify(prs, _idx(**{"flow-a": ["evolve"]}))
     assert out["merge"] == [
-        {"pr": 1, "key": "flow-a", "branch": "feature/flow-a-some-desc", "is_draft": True}
+        {
+            "pr": 1,
+            "key": "flow-a",
+            "branch": "feature/flow-a-some-desc",
+            "is_draft": True,
+            "is_hot": False,
+        }
     ]
 
 
@@ -138,7 +150,13 @@ def test_hot_auto_merge_single_clean():
     prs = [_pr(1, "flow-h")]
     out = er.classify(prs, _idx(**{"flow-h": ["evolve", "hot"]}), auto_merge_hot=True)
     assert out["merge"] == [
-        {"pr": 1, "key": "flow-h", "branch": "feature/flow-h-some-desc", "is_draft": False}
+        {
+            "pr": 1,
+            "key": "flow-h",
+            "branch": "feature/flow-h-some-desc",
+            "is_draft": False,
+            "is_hot": True,
+        }
     ]
     assert out["skipped_hot"] == []
 
@@ -147,7 +165,13 @@ def test_hot_auto_merge_single_draft_carries_is_draft():
     prs = [_pr(1, "flow-h", state="DRAFT", draft=True)]
     out = er.classify(prs, _idx(**{"flow-h": ["evolve", "hot"]}), auto_merge_hot=True)
     assert out["merge"] == [
-        {"pr": 1, "key": "flow-h", "branch": "feature/flow-h-some-desc", "is_draft": True}
+        {
+            "pr": 1,
+            "key": "flow-h",
+            "branch": "feature/flow-h-some-desc",
+            "is_draft": True,
+            "is_hot": True,
+        }
     ]
     assert out["skipped_hot"] == []
 
@@ -170,7 +194,13 @@ def test_hot_auto_merge_clean_promotes_dirty_skips():
         prs, _idx(**{"flow-h": ["evolve", "hot"], "flow-g": ["evolve", "hot"]}), auto_merge_hot=True
     )
     assert out["merge"] == [
-        {"pr": 1, "key": "flow-h", "branch": "feature/flow-h-some-desc", "is_draft": False}
+        {
+            "pr": 1,
+            "key": "flow-h",
+            "branch": "feature/flow-h-some-desc",
+            "is_draft": False,
+            "is_hot": True,
+        }
     ]
     assert out["skipped_hot"] == [{"pr": 2, "key": "flow-g", "branch": "feature/flow-g-some-desc"}]
 
@@ -181,8 +211,20 @@ def test_hot_auto_merge_does_not_gate_non_hot_leaf():
         prs, _idx(**{"flow-h": ["evolve", "hot"], "flow-a": ["evolve"]}), auto_merge_hot=True
     )
     assert out["merge"] == [
-        {"pr": 1, "key": "flow-h", "branch": "feature/flow-h-some-desc", "is_draft": False},
-        {"pr": 2, "key": "flow-a", "branch": "feature/flow-a-some-desc", "is_draft": False},
+        {
+            "pr": 1,
+            "key": "flow-h",
+            "branch": "feature/flow-h-some-desc",
+            "is_draft": False,
+            "is_hot": True,
+        },
+        {
+            "pr": 2,
+            "key": "flow-a",
+            "branch": "feature/flow-a-some-desc",
+            "is_draft": False,
+            "is_hot": False,
+        },
     ]
     assert out["skipped_hot"] == []
 
@@ -192,6 +234,16 @@ def test_hot_auto_merge_off_by_default_still_skips():
     out = er.classify(prs, _idx(**{"flow-h": ["evolve", "hot"]}))
     assert out["merge"] == []
     assert out["skipped_hot"] == [{"pr": 1, "key": "flow-h", "branch": "feature/flow-h-some-desc"}]
+
+
+def test_merge_entries_flag_is_hot():
+    # the reap loop runs the guard property-check only on is_hot entries, so each
+    # merge entry must say whether it was a hot promotion or a plain leaf.
+    prs = [_pr(1, "flow-h"), _pr(2, "flow-a")]
+    out = er.classify(
+        prs, _idx(**{"flow-h": ["evolve", "hot"], "flow-a": ["evolve"]}), auto_merge_hot=True
+    )
+    assert {e["key"]: e["is_hot"] for e in out["merge"]} == {"flow-h": True, "flow-a": False}
 
 
 # ---- reap integration ----
@@ -234,7 +286,13 @@ def test_reap_integration(tmp_path):
     )
     out = er.reap(ws, runner=run)
     assert out["merge"] == [
-        {"pr": 1, "key": "flow-a", "branch": "feature/flow-a-some-desc", "is_draft": False}
+        {
+            "pr": 1,
+            "key": "flow-a",
+            "branch": "feature/flow-a-some-desc",
+            "is_draft": False,
+            "is_hot": False,
+        }
     ]
     assert out["skipped_hot"] == [{"pr": 2, "key": "flow-h", "branch": "feature/flow-h-some-desc"}]
     assert out["not_green"] == [{"pr": 3, "key": "flow-b", "branch": "feature/flow-b-some-desc"}]
@@ -257,7 +315,13 @@ def test_reap_auto_merge_hot_from_config(tmp_path):
     )
     out = er.reap(ws, runner=run)
     assert out["merge"] == [
-        {"pr": 1, "key": "flow-h", "branch": "feature/flow-h-some-desc", "is_draft": False}
+        {
+            "pr": 1,
+            "key": "flow-h",
+            "branch": "feature/flow-h-some-desc",
+            "is_draft": False,
+            "is_hot": True,
+        }
     ]
     assert out["skipped_hot"] == []
 

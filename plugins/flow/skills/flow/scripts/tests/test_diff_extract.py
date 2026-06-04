@@ -132,6 +132,20 @@ def test_check_ownership_non_ascii_planned_file(tmp_repo: Path, tmp_path: Path) 
     assert "pkg/café.py" in payload["changed"]
 
 
+def test_check_ownership_reconcile_widened_plan_passes(tmp_repo: Path, tmp_path: Path) -> None:
+    # the post-implement reconcile widens planned_files to include a file implement
+    # legitimately touched outside the original plan; with it recorded in the
+    # baseline, the gate owns both files and passes (the fail-safe the commit stage
+    # relies on so a legitimate widened commit is not refused).
+    ticket_dir = tmp_repo / ".flow" / "runs" / "FT-1"
+    diff_extract.record_baseline("implement", ticket_dir, tmp_repo, files=["a.py", "b.py"])
+    (tmp_repo / "a.py").write_text("print('planned')\n", encoding="utf-8")
+    (tmp_repo / "b.py").write_text("print('reconcile-widened')\n", encoding="utf-8")
+    payload = diff_extract.check_ownership(ticket_dir, tmp_repo)
+    assert payload["ok"] is True
+    assert payload["unowned_changes"] == []
+
+
 def test_check_ownership_cli_exit_3(tmp_repo: Path, tmp_path: Path) -> None:
     ticket_dir = tmp_repo / ".flow" / "runs" / "FT-1"
     diff_extract.record_baseline("implement", ticket_dir, tmp_repo, files=["a.py"])
