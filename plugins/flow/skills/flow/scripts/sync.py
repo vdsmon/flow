@@ -35,6 +35,15 @@ class _Tracker(Protocol):
     def comment(self, key: str, body: Any) -> None: ...
     def link(self, from_key: str, to_key: str, kind: str) -> None: ...
     def edit(self, key: str, fields: dict) -> None: ...
+    def create(
+        self,
+        summary: Any,
+        description: Any,
+        type: str,
+        parent: str | None = None,
+        labels: list[str] | None = None,
+        assignee: str | None = None,
+    ) -> str: ...
 
 
 def _state_matches(tracker: _Tracker, ticket: str, target: str) -> bool:
@@ -77,6 +86,16 @@ def _invoke(tracker: _Tracker, entry: dict[str, Any]) -> bool:
         return True
     if op == "edit":
         tracker.edit(key, args.get("fields") or {})
+        return True
+    if op == "create":
+        tracker.create(
+            args.get("summary"),
+            args.get("description"),
+            str(args.get("type")),
+            parent=args.get("parent"),
+            labels=args.get("labels"),
+            assignee=args.get("assignee"),
+        )
         return True
     return False
 
