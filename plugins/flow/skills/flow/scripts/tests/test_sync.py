@@ -15,6 +15,7 @@ class _FakeTracker:
         self.comments: list[tuple[str, Any]] = []
         self.links: list[tuple[str, str, str]] = []
         self.edits: list[tuple[str, dict]] = []
+        self.creates: list[tuple] = []
 
     def state(self, key: str) -> dict[str, Any]:
         return self._states.get(key, {"normalized": "open", "native_status": "Open"})
@@ -34,6 +35,18 @@ class _FakeTracker:
 
     def edit(self, key: str, fields: dict) -> None:
         self.edits.append((key, fields))
+
+    def create(
+        self,
+        summary: Any,
+        description: Any,
+        type: str,
+        parent: str | None = None,
+        labels: list[str] | None = None,
+        assignee: str | None = None,
+    ) -> str:
+        self.creates.append((summary, description, type, parent, labels, assignee))
+        return "FT-NEW"
 
 
 def _seed(workspace_root: Path, **kw: Any) -> None:
@@ -117,6 +130,21 @@ def test_reconcile_applies_pending_edit(tmp_path: Path) -> None:
     assert pending_mutations.list_mutations(tmp_path) == []
 
 
+def test_reconcile_applies_pending_create(tmp_path: Path) -> None:
+    _seed(
+        tmp_path,
+        ticket="FT-8",
+        op="create",
+        args={"summary": "new ticket", "description": "body", "type": "task"},
+    )
+    tracker = _FakeTracker({})
+    report = sync.reconcile(tmp_path, tracker)
+    assert len(report["applied"]) == 1
+    assert report["removed"] == 1
+    assert tracker.creates == [("new ticket", "body", "task", None, None, None)]
+    assert pending_mutations.list_mutations(tmp_path) == []
+
+
 def test_reconcile_unknown_op_falls_through(tmp_path: Path) -> None:
     path = pending_mutations.pending_mutations_path(tmp_path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -131,3 +159,4 @@ def test_reconcile_unknown_op_falls_through(tmp_path: Path) -> None:
     assert tracker.links == []
     assert tracker.edits == []
     assert tracker.transitions == []
+    assert tracker.creates == []
