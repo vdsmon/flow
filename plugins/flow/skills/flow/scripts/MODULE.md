@@ -20,7 +20,7 @@ The live "which script does what" map. One line per script: purpose + CLI surfac
 | Script | Role | Surface / touches |
 |--------|------|-------------------|
 | `init.py` | Transactional workspace bootstrap. Collects backend/bundle answers, writes `workspace.toml`, postcondition checks, atomic `.flow/.initialized`. | `--config <json>` (`--reconfigure` / `--resume`) |
-| `flow_worktree.py` | Post-approval worktree seeding: create worktree, seed `state.json` (plan completed), stamp frontmatter, point memory at main `.flow`, `mise trust`. | `create --ticket --plan-from --base --branch --main-root --planned-files --commit-type --commit-summary --e2e-recipe --worktree-path --copy --no-mise-trust` |
+| `flow_worktree.py` | Post-approval worktree seeding: create worktree, seed `state.json` (plan completed), stamp frontmatter, redirect memory to main `.flow` via the gitignored `.flow/memory-root` sibling (tracked workspace.toml left byte-identical), `mise trust`. | `create --ticket --plan-from --base --branch --main-root --planned-files --commit-type --commit-summary --e2e-recipe --worktree-path --copy --no-mise-trust` |
 | `branch_ticket.py` | Resolve ticket key from current git branch (backend-aware regex). | `--workspace-root`; exit 0 match / 1 env / 3 no-match |
 | `bundle_discover.py` (lib) | Walk `~/.claude/plugins/*/` + `<repo>/.claude/plugins/*/` for `.flow-bundle.toml` manifests. | imported by init |
 
@@ -47,7 +47,7 @@ The live "which script does what" map. One line per script: purpose + CLI surfac
 
 | Script | Role | Surface / touches |
 |--------|------|-------------------|
-| `_memory_paths.py` (lib) | Namespace resolution + `.flow/<ns>/` path conventions. | imported widely |
+| `_memory_paths.py` (lib) | Namespace resolution + `.flow/<ns>/` path conventions. `resolve_memory_base` reads the gitignored `.flow/memory-root` sibling first, then `workspace.toml [memory].root`, then local `.flow`. | imported widely |
 | `memory_append.py` | Single-writer `knowledge.jsonl` append with sha-keyed idempotency. | `--type --text --branch --ticket [--id]` |
 | `recall.py` | BM25 ranker over `knowledge.jsonl`; `--metric` forwards to `metric.py`. | `<query> [--branch --tickets --top-n]` ; `--metric ...` |
 | `recall_pending.py` (lib) | Promote SessionStart recall-pending entries into the per-ticket recall log. | imported by dispatch_stage |

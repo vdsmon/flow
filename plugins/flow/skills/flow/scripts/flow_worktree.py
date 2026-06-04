@@ -10,8 +10,9 @@ concern.
   2. copy gitignored dev config main->worktree; ensure .flow/.initialized +
      workspace.toml exist (a git worktree only materializes committed files)
   3. mise trust the worktree (toolchain) unless --no-mise-trust
-  4. point the worktree's [memory].root at the main checkout's .flow (shared store,
-     so per-ticket worktrees don't fragment the compounding-knowledge layer)
+  4. redirect the worktree's memory store to the main checkout's .flow via the
+     gitignored .flow/memory-root sibling (shared store, so per-ticket worktrees
+     don't fragment the compounding-knowledge layer; tracked workspace.toml untouched)
   5. seed state.json: plan marked completed with its output_path; plan.out written
      from --plan-from; ticket left pending so the pipeline self-fetches ticket.json
      and stamps frontmatter (keeps the bootstrap offline; tracker auth stays live)
@@ -89,50 +90,6 @@ def _gitignored(files: list[str], cwd: Path, runner: Runner) -> list[str]:
     return [line.strip() for line in result.stdout.splitlines() if line.strip()]
 
 
-def _table_name(line: str) -> str | None:
-    """Return the table name for a `[table]` header line, else None. Tolerates a
-    trailing inline comment (`[memory] # note`) and ignores `[[array]]` headers —
-    so a user's hand-edited workspace.toml doesn't slip past the [memory] match
-    and get a duplicate table appended (which would not parse)."""
-    s = line.split("#", 1)[0].strip()
-    if s.startswith("[[") or not (s.startswith("[") and s.endswith("]")):
-        return None
-    return s[1:-1].strip()
-
-
-def _set_memory_root(toml_text: str, root: str) -> str:
-    """Insert/replace `root = "<root>"` under the [memory] table, preserving the
-    rest of the file (comments, ordering). Assumes a [memory] section exists (a
-    valid flow workspace always has one)."""
-    lines = toml_text.splitlines()
-    out: list[str] = []
-    in_memory = False
-    replaced = False
-    for line in lines:
-        name = _table_name(line)
-        if name is not None:
-            # leaving the [memory] table without having seen a root key -> inject now
-            if in_memory and not replaced:
-                out.append(f'root = "{root}"')
-                replaced = True
-            in_memory = name == "memory"
-            out.append(line)
-            continue
-        key = line.split("=", 1)[0].strip() if "=" in line else ""
-        if in_memory and key == "root":
-            out.append(f'root = "{root}"')
-            replaced = True
-            continue
-        out.append(line)
-    if in_memory and not replaced:  # [memory] was the last table in the file
-        out.append(f'root = "{root}"')
-        replaced = True
-    if not replaced:  # no [memory] table at all
-        out.append("[memory]")
-        out.append(f'root = "{root}"')
-    return "\n".join(out) + "\n"
-
-
 def _copy_config(main_root: Path, worktree: Path, extra: list[str]) -> list[str]:
     """Copy gitignored dev config main->worktree. Returns the list copied."""
     copied: list[str] = []
@@ -157,8 +114,13 @@ def _copy_config(main_root: Path, worktree: Path, extra: list[str]) -> list[str]
 
 def _ensure_flow_config(main_root: Path, worktree: Path, shared_flow: Path) -> None:
     """Ensure the worktree has .flow/.initialized + workspace.toml (copying from
-    main when absent — the gitignored case), then point [memory].root at the
-    shared store."""
+    main when absent — the gitignored case), then redirect the memory store to the
+    shared (main) .flow via the gitignored `.flow/memory-root` sibling.
+
+    The redirect lives in the sibling, NOT in workspace.toml: the tracked
+    workspace.toml stays byte-identical to main's copy so a per-machine absolute
+    path can never ride into a commit. `resolve_memory_base` reads the sibling
+    first (see _memory_paths)."""
     wt_flow = worktree / ".flow"
     wt_ws = wt_flow / "workspace.toml"
     if not wt_ws.exists():
@@ -176,10 +138,7 @@ def _ensure_flow_config(main_root: Path, worktree: Path, shared_flow: Path) -> N
             shutil.copy2(main_marker, marker)
         else:
             marker.touch()
-    # redirect the memory store to the shared (main) .flow
-    wt_ws.write_text(
-        _set_memory_root(wt_ws.read_text(encoding="utf-8"), str(shared_flow)), encoding="utf-8"
-    )
+    (wt_flow / "memory-root").write_text(str(shared_flow) + "\n", encoding="utf-8")
 
 
 def _seed_state(worktree: Path, ticket: str, plan_text: str, head_sha: str) -> str:

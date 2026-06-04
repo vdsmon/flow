@@ -72,6 +72,42 @@ def test_base_expands_user_in_root(tmp_path: Path) -> None:
     assert _memory_paths.resolve_memory_base(tmp_path) == Path("~/some/.flow").expanduser()
 
 
+def _write_sibling(root: Path, text: str) -> None:
+    flow = root / ".flow"
+    flow.mkdir(parents=True, exist_ok=True)
+    (flow / "memory-root").write_text(text, encoding="utf-8")
+
+
+def test_base_uses_sibling_when_present(tmp_path: Path) -> None:
+    # sibling and a DIFFERENT [memory].root in the toml; the sibling wins.
+    toml_root = tmp_path / "toml-store" / ".flow"
+    sibling_root = tmp_path / "sibling-store" / ".flow"
+    _write_workspace(tmp_path, memory_root=str(toml_root))
+    _write_sibling(tmp_path, str(sibling_root) + "\n")
+    assert _memory_paths.resolve_memory_base(tmp_path) == sibling_root
+
+
+def test_base_falls_back_to_workspace_root_when_no_sibling(tmp_path: Path) -> None:
+    # no sibling, [memory].root set -> resolves from workspace.toml (back-compat).
+    toml_root = tmp_path / "toml-store" / ".flow"
+    _write_workspace(tmp_path, memory_root=str(toml_root))
+    assert _memory_paths.resolve_memory_base(tmp_path) == toml_root
+
+
+def test_base_expands_user_in_sibling(tmp_path: Path) -> None:
+    _write_workspace(tmp_path)
+    _write_sibling(tmp_path, "~/some/.flow\n")
+    assert _memory_paths.resolve_memory_base(tmp_path) == Path("~/some/.flow").expanduser()
+
+
+def test_base_tolerates_empty_or_whitespace_sibling(tmp_path: Path) -> None:
+    # an empty/whitespace sibling falls through to the next source ([memory].root).
+    toml_root = tmp_path / "toml-store" / ".flow"
+    _write_workspace(tmp_path, memory_root=str(toml_root))
+    _write_sibling(tmp_path, "   \n")
+    assert _memory_paths.resolve_memory_base(tmp_path) == toml_root
+
+
 def test_base_tolerates_unparseable_workspace(tmp_path: Path) -> None:
     flow = tmp_path / ".flow"
     flow.mkdir()

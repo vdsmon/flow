@@ -38,11 +38,21 @@ def resolve_namespace(workspace_root: Path) -> str:
 def resolve_memory_base(workspace_root: Path) -> Path:
     """Resolve the base dir that holds the memory store (the `.flow` to write under).
 
-    Reads `.flow/workspace.toml` [memory].root when set — an absolute path to a
-    shared `.flow` dir — so a git-worktree run (cwd = the worktree) writes into the
-    main checkout's store instead of fragmenting per worktree. Falls back to the
-    workspace-local `.flow` when unset, keeping non-worktree runs byte-identical.
+    Resolution order, most specific first:
+      1. `.flow/memory-root` (gitignored sibling, plain text single abs path): the
+         worktree bootstrap writes it to redirect the store to the shared (main)
+         `.flow` without touching the tracked workspace.toml.
+      2. `.flow/workspace.toml` [memory].root when set (the init-time render path).
+      3. the workspace-local `.flow` (non-worktree runs stay byte-identical).
     """
+    sibling = workspace_root / ".flow" / "memory-root"
+    try:
+        text = sibling.read_text(encoding="utf-8").strip()
+    except OSError:
+        text = ""
+    if text:
+        return Path(text).expanduser()
+
     path = workspace_root / ".flow" / "workspace.toml"
     if path.exists():
         try:
