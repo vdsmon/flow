@@ -1,11 +1,12 @@
 # evolve verb
 
-`/flow evolve`. Maintainer-only. Routed from SKILL.md's argument table. Two halves of the self-evolution loop:
+`/flow evolve`. Maintainer-only. Routed from SKILL.md's argument table. The self-evolution loop's producers + drainer:
 
 - **`/flow evolve`** (no flag) — the cold-audit **producer**: scan flow's OWN codebase for evidence-backed improvements and file them as beads in flow's backlog (sections 1-5). Read-then-file; it does not implement.
+- **`/flow evolve --generative`** — the multi-angle **proposal producer** (section 7): fan out one agent per generative angle (feature gaps, simplification, reorg, dead-weight, architecture, symmetry), adversarially verify, and file a ranked set. Provably-safe findings become auto-drainable `audit` beads; judgment findings become `proposal` beads held for the maintainer's triage. Read-then-file; it does not implement.
 - **`/flow evolve --ship`** — the **drainer** (consumer, section 6): auto-merge green leaf PRs from prior launches, then fan out the next batch of beads as background `/flow <key> --auto` runs. `--reap` does the merge half only; `--dry-run` prints both plans and acts on neither.
 
-This is **Producer B**. Producer A is the reflect sling (`references/stage-reflect.md`): lived friction during real runs. Both land in the same `evolve`-labelled backlog, both dedup through the same `--dedup-key` seam.
+This is **Producer B** (cold-audit + generative). Producer A is the reflect sling (`references/stage-reflect.md`): lived friction during real runs. Both land in the same `evolve`-labelled backlog, both dedup through the same `--dedup-key` seam. The cold-audit and generative producers differ in disposition: cold-audit and provably-safe generative findings are `audit` beads the drainer auto-ships; judgment generative findings are `proposal` beads the drainer holds for the maintainer (the vision's auto-vs-propose line).
 
 ## 1. Gate — maintainer only
 
@@ -91,7 +92,7 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/flow_worktree.py reap --ticket <key> --branc
 python3 ${CLAUDE_SKILL_DIR}/scripts/evolve_select.py --workspace-root .
 ```
 
-Returns JSON `{launch:[keys], skipped_in_flight, held_backpressure, held_hot, held_anchor, cap, concurrency, open_pr_count}`. Selection is already DAG-aware (`bd ready` excludes blocked beads), drops in-flight beads (open branch/PR), enforces backpressure (≥ `cap` open PRs → empty launch), and partitions coarsely (≤1 hot per batch; no two beads sharing a primary-file anchor). For each `launch` key (under `--dry-run`, print the command instead of running it):
+Returns JSON `{launch:[keys], skipped_in_flight, held_backpressure, held_hot, held_anchor, held_proposal, cap, concurrency, open_pr_count}`. Selection is already DAG-aware (`bd ready` excludes blocked beads), drops in-flight beads (open branch/PR), enforces backpressure (≥ `cap` open PRs → empty launch), holds `proposal`-labelled beads for the maintainer (`held_proposal` — never auto-launched), and partitions coarsely (≤1 hot per batch; no two beads sharing a primary-file anchor). For each `launch` key (under `--dry-run`, print the command instead of running it):
 
 ```bash
 claude --bg "/flow <key> --auto"
@@ -101,10 +102,46 @@ Each spawns a detached run that auto-plans and either opens a draft PR or, when 
 
 ### C. Report
 
-Summarise: merged (keys), launched (keys), and everything held — `skipped_in_flight`, `held_backpressure`, `held_hot`, `held_anchor`, `not_green`, `blocked`, `skipped_hot`, plus any `held_guard` (a hot PR you withheld because its diff removed a safety property — name the property, it is the maintainer's to review). Tell the user how to follow along:
+Summarise: merged (keys), launched (keys), and everything held — `skipped_in_flight`, `held_backpressure`, `held_hot`, `held_anchor`, `held_proposal` (generative proposals awaiting your triage — never auto-launched), `not_green`, `blocked`, `skipped_hot`, plus any `held_guard` (a hot PR you withheld because its diff removed a safety property — name the property, it is the maintainer's to review). Tell the user how to follow along:
 
 - Monitor with `claude agents --json` (the plain `claude agents` needs a TTY).
 - Review any **deferred** beads: the run commented its open questions before exiting. `deferred` != done, so to unstick, answer the comment, reopen the bead (status → `open`), and re-run it interactively (WITHOUT `--auto`).
 - Remaining draft PRs (non-green / conflicted, plus any `skipped_hot` not auto-merged this pass) are theirs to review and merge.
 
 Expect defers, not all PRs: terse audit beads will sometimes score under 90% or raise questions. A high defer rate is a signal the audit evidence needs to be richer (a finding for the miners in section 2), not a drainer bug.
+
+## 7. `--generative`: the multi-angle proposal producer
+
+`/flow evolve --generative`. Maintainer-gated like the rest (section 1's `maintainer.py` gate runs first; on exit 1, stop). This is the generative half of Producer B. Where section 2's cold audit mines small, provably-safe fixes, `--generative` goes after the judgment-side work a single run can never surface — net-new capability, real simplification, structural change — and files it as **ranked proposals for the maintainer**, not auto-drainable work. Read-then-file; it does not implement.
+
+Everything here is scored against the repo-root `VISION.md`, the scoring anchor: serves the thesis / on the right side of the auto-vs-propose line / does not erode the floor. A candidate that cannot be anchored there is slop — drop it.
+
+### A. Lenses — fan out one agent per angle (read-only, parallel)
+
+Spawn parallel read-only agents (the `Agent` tool, or a `Workflow` fan-out when available), one per angle. Each reads flow's code + `VISION.md` and proposes candidates FROM ITS ANGLE ONLY, each with: concrete evidence (`file:line` or a named gap), a one-line rationale tied to the vision, a `BLAST RADIUS:` line, and an honest confidence (0-1). The angles:
+
+- **feature / capability gaps** — what should flow DO that it doesn't, judged against the vision and the unfinished tracks (e.g. MCP-first Jira, attachment download into the ticket stage)? A gap is a candidate only if you can name the concrete workflow flow cannot serve today.
+- **simplification / over-engineering** — an abstraction not earning its keep, speculative generality with one caller, N things that could be one. Cite the call sites.
+- **reorg / navigability** — structure and altitude: a doc or module layout that makes the system harder to hold than it needs to be.
+- **dead weight / deletion** — code or docs that are unused and removable. PROVE zero refs (a proven deletion is provably-safe — see C).
+- **architecture coherence** — a property the prose asserts but the code does not enforce ("by convention, should be by construction"); a seam that works but is brittle.
+- **symmetry / consistency** — X has a test, handler, or doc that its sibling Y lacks; the asymmetry is usually a latent gap or bug.
+
+A quiet angle is success, not failure — do not manufacture candidates to fill a lens.
+
+### B. Adversarially verify each candidate (parallel)
+
+For each surviving candidate, spawn an independent skeptic prompted to REFUTE it: is the problem real, or an artifact of a narrow read? Does it serve the vision, or just add surface? Is it manufactured motion (the ouroboros failure mode the vision names)? Default to refuted when uncertain. Kill any candidate the skeptic refutes. This is the brake on a generative pass inventing work to justify itself.
+
+### C. Synthesize, split by disposition, rank
+
+Dedup across lenses (merge candidates about the same root issue). Then split each survivor by the auto-vs-propose line:
+
+- **Provably-safe → `audit`** (auto-drainable). A mechanical, behavior-preserving change with hard evidence — a proven-dead-code deletion, a zero-behavior-change simplification. File it exactly as section 4 (labels `evolve,audit`); it joins the normal drain.
+- **Judgment → `proposal`** (held for the maintainer). A feature, a real refactor, a reorg, an architecture challenge — anything whose merit is taste and fit, not a broke/works signal. File it with labels `evolve,proposal`. The drainer (section 6B) HOLDS these (`held_proposal`) and never auto-launches them; they are the maintainer's to triage.
+
+Rank by vision-alignment × value × evidence-strength × reviewability. Each `proposal` description MUST carry, beyond the section-4 evidence and blast-radius: your **confidence** and a **recommended default** (build / shelve / needs-discussion), so triaging it costs the maintainer seconds, not hours. Assign the same stable `<primary-relfile>::<short-symptom>` id and file through the section-4 seam (the `--dedup-key` converges re-runs). Flag `hot` per section 3 when it touches a hot or guard file.
+
+### D. Report
+
+Present the ranked proposal set: each proposal's title, disposition (`audit` auto-drains / `proposal` awaits you), confidence, recommended default, and one-line rationale. Be honest when a pass found little — surfacing two real proposals and refuting the rest is success, not failure. The maintainer triages the `proposal` beads (`bd ready --label proposal`); the `audit` ones drain with section 6.
