@@ -62,7 +62,7 @@ Maintainer-gated like the rest (section 1 already ran). The drainer reaps first 
 
 ### A. Reap — auto-merge green leaf PRs
 
-Green LEAF evolve PRs merge to the default branch unattended (immediate on green, non-hot only). Hot / non-green / conflicted PRs stay as draft PRs for the human — the gate survives where the risk is.
+Green LEAF evolve PRs merge to the default branch unattended (immediate on green). Non-green and conflicted PRs always wait as draft PRs for the human — the gate survives where the risk is. Hot PRs auto-merge ONLY under `[evolve] auto_merge_hot` (default off; on solely in this maintainer self-target repo) AND isolation: at most one hot PR merges per pass, and the fleet must be quiesced around the pass. Off / non-maintainer keeps today's behavior (hot → `skipped_hot`). Note: the code (`classify`) enforces only the one-hot-per-pass serialization; ensuring no other evolve run is active (quiescing the fleet) before an auto-merge pass is the operator's responsibility.
 
 ```bash
 python3 ${CLAUDE_SKILL_DIR}/scripts/evolve_reap.py --workspace-root .
@@ -103,6 +103,6 @@ Summarise: merged (keys), launched (keys), and everything held — `skipped_in_f
 
 - Monitor with `claude agents --json` (the plain `claude agents` needs a TTY).
 - Answer any **parked** sessions (they degraded to interactive on a real question).
-- Remaining draft PRs (hot / non-green / conflicted) are theirs to review and merge.
+- Remaining draft PRs (non-green / conflicted, plus any `skipped_hot` not auto-merged this pass) are theirs to review and merge.
 
 Expect parks, not all PRs: terse audit beads will sometimes score under 90% or raise questions. A high park rate is a signal the audit evidence needs to be richer (a finding for the miners in section 2), not a drainer bug.

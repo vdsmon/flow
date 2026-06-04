@@ -1,8 +1,12 @@
 """Classify open evolve PRs for auto-merge (the drainer's reaper, pure core).
 
 User opted in: green LEAF evolve PRs auto-merge to the default branch unattended,
-immediate on green, non-hot only. The human gate survives where risk lives — hot,
-non-green, and conflicted PRs stay as draft PRs for review.
+immediate on green. Hot PRs auto-merge too, but only under the `auto_merge_hot`
+config AND isolation (exactly one hot-eligible PR this pass — serialize hot
+merges, at most one per pass); otherwise they land in skipped_hot for the human.
+Non-green and conflicted PRs always wait. With the flag off (the default, every
+user project), hot PRs stay in skipped_hot — the human gate survives where risk
+lives.
 
 Repo reality (this build): GitHub-native auto-merge is off and there is no branch
 protection, so the reaper owns the merge in code and enforces "green" by reading
@@ -14,9 +18,10 @@ This module is pure classification (no side effects). The `/flow evolve --reap`
 verb step performs the merge: `gh pr ready` (if draft) then
 `gh pr merge --squash --delete-branch` over the `merge` set.
 
-Eligibility (all required): branch is `feature/<key>-*`; the bead carries `evolve`
-AND NOT `hot` (leaf scope); the check rollup is non-empty and all SUCCESS (green);
-mergeable (CLEAN, or DRAFT which just needs `gh pr ready`). Anything else lands in
+Eligibility (all required): branch is `feature/<key>-*`; the bead carries `evolve`;
+the check rollup is non-empty and all SUCCESS (green); mergeable (CLEAN, or DRAFT
+which just needs `gh pr ready`). A `hot` bead additionally needs `auto_merge_hot`
+plus isolation (it is the only hot-eligible PR this pass). Anything else lands in
 not_green / skipped_hot / blocked / ignored.
 
 CLI:
@@ -38,6 +43,7 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 
+from _workspace import WorkspaceConfigError, load_workspace_toml
 from maintainer import resolve_maintainer_repo
 
 Runner = Callable[[list[str]], subprocess.CompletedProcess[str]]
@@ -107,16 +113,40 @@ def rollup_is_green(rollup: list) -> bool:
     return True
 
 
-def classify(prs: list[dict], labels_index: dict[str, list[str]]) -> dict:
+def _hot_eligible(pr: dict, labels: list[str]) -> bool:
+    """A hot PR is auto-merge-eligible when it is green AND mergeable (CLEAN/DRAFT)."""
+    if "hot" not in labels:
+        return False
+    if not rollup_is_green(pr.get("statusCheckRollup") or []):
+        return False
+    return str(pr.get("mergeStateStatus", "")).upper() in _MERGEABLE_STATES
+
+
+def classify(
+    prs: list[dict], labels_index: dict[str, list[str]], *, auto_merge_hot: bool = False
+) -> dict:
     """Pure core: bucket open PRs into merge / not_green / skipped_hot / blocked.
 
     prs: parsed `gh pr list` items (number, headRefName, isDraft, mergeStateStatus,
     statusCheckRollup). labels_index: key -> labels, for every evolve bead.
+
+    auto_merge_hot: when True AND exactly one hot PR is auto-merge-eligible this
+    pass, that one hot PR is promoted into `merge`; all other hot PRs stay in
+    skipped_hot (serialize). When False (the default), every hot PR is skipped.
     """
     merge: list[dict] = []
     not_green: list[dict] = []
     skipped_hot: list[dict] = []
     blocked: list[dict] = []
+
+    hot_eligible = [
+        pr
+        for pr in prs
+        if (key := _key_from_ref(str(pr.get("headRefName", "")))) is not None
+        and key in labels_index
+        and _hot_eligible(pr, labels_index[key])
+    ]
+    promote = hot_eligible[0]["number"] if (auto_merge_hot and len(hot_eligible) == 1) else None
 
     for pr in prs:
         ref = str(pr.get("headRefName", ""))
@@ -131,7 +161,10 @@ def classify(prs: list[dict], labels_index: dict[str, list[str]]) -> dict:
             not_green.append(entry)
             continue
         if "hot" in labels:
-            skipped_hot.append(entry)
+            if promote is not None and number == promote:
+                merge.append({**entry, "is_draft": bool(pr.get("isDraft"))})
+            else:
+                skipped_hot.append(entry)
             continue
         state = str(pr.get("mergeStateStatus", "")).upper()
         if state not in _MERGEABLE_STATES:
@@ -159,11 +192,24 @@ def _labels_index(runner: Runner) -> dict[str, list[str]]:
     return index
 
 
+def _auto_merge_hot(workspace_root: Path) -> bool:
+    try:
+        config = load_workspace_toml(workspace_root)
+    except WorkspaceConfigError:
+        return False
+    section = config.get("evolve")
+    if not isinstance(section, dict):
+        return False
+    value = section.get("auto_merge_hot")
+    return value if isinstance(value, bool) else False
+
+
 def reap(workspace_root: Path, *, runner: Runner | None = None) -> dict:
     repo = resolve_maintainer_repo(workspace_root)
     if repo is None:
         raise NotMaintainer("not a flow maintainer setup; nothing to reap")
     run = runner or _default_runner(repo)
+    auto_merge_hot = _auto_merge_hot(workspace_root)
     pr_raw = _ok(
         run(
             [
@@ -181,7 +227,7 @@ def reap(workspace_root: Path, *, runner: Runner | None = None) -> dict:
         "gh pr list",
     )
     prs = _loads(pr_raw)
-    return classify(prs, _labels_index(run))
+    return classify(prs, _labels_index(run), auto_merge_hot=auto_merge_hot)
 
 
 def cli_main(argv: list[str]) -> int:
