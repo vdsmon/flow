@@ -14,6 +14,11 @@ shared_server = true
 [maintainer]
 self_target = true
 
+# Maintainer self-target only: let the reaper auto-merge a hot leaf PR in
+# isolation (one hot per pass). Stays off for user projects (human-merge keystone).
+[evolve]
+auto_merge_hot = true
+
 [pipeline]
 stages = ["ticket", "plan", "implement", "code_review", "e2e", "commit", "create_pr", "review_loop", "reflect"]
 
