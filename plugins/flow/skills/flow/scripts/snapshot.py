@@ -196,8 +196,12 @@ def write_snapshot(
     return json_path
 
 
-def _name_drift(stored: dict[str, Any], current: dict[str, Any]) -> str:
-    """Compare stored snapshot.json components to current; name what changed."""
+def drifted_components(stored: dict[str, Any], current: dict[str, Any]) -> list[str]:
+    """Ordered component labels that differ between stored and current snapshots.
+
+    Labels: "workspace_toml", "stage_registry", and "handler <stage>" entries.
+    Returns [] for the no-diff (inconclusive) case.
+    """
     changed: list[str] = []
     if stored.get("workspace_toml") != current.get("workspace_toml"):
         changed.append("workspace_toml")
@@ -211,10 +215,50 @@ def _name_drift(stored: dict[str, Any], current: dict[str, Any]) -> str:
     for stage in sorted(set(stored_handlers) | set(current_handlers)):
         if stored_handlers.get(stage) != current_handlers.get(stage):
             changed.append(f"handler {stage}")
+    return changed
 
-    if not changed:
+
+def _name_drift(stored: dict[str, Any], current: dict[str, Any]) -> str:
+    """Compare stored snapshot.json components to current; name what changed."""
+    comps = drifted_components(stored, current)
+    if not comps:
         return "drift: master_hash mismatch (component diff inconclusive)"
-    return "drift: " + ", ".join(changed)
+    return "drift: " + ", ".join(comps)
+
+
+def classify_drift(
+    workspace_root: Path,
+    ticket: str,
+    *,
+    skill_root: Path,
+    search_roots: list[Path] | None = None,
+) -> tuple[bool, str, list[str]]:
+    """Recompute and compare against the stored snapshot, naming drifted components.
+
+    (True, "no snapshot to verify", []) when no snapshot.sha exists; (True,
+    "match", []) on equality; otherwise (False, "drift: <what changed>", comps)
+    where comps is the ordered list from drifted_components (empty when the diff
+    is inconclusive or snapshot.json is missing/unreadable).
+    """
+    sha_path = snapshot_sha_path(workspace_root, ticket)
+    if not sha_path.exists():
+        return True, "no snapshot to verify", []
+
+    stored_hash = _read_text(sha_path).strip()
+    current = compute_snapshot(workspace_root, skill_root=skill_root, search_roots=search_roots)
+    if current["master_hash"] == stored_hash:
+        return True, "match", []
+
+    json_path = snapshot_json_path(workspace_root, ticket)
+    if json_path.exists():
+        try:
+            stored = json.loads(_read_text(json_path))
+        except json.JSONDecodeError:
+            stored = {}
+        if isinstance(stored, dict):
+            comps = drifted_components(stored, current)
+            return False, _name_drift(stored, current), comps
+    return False, "drift: master_hash mismatch", []
 
 
 def verify_snapshot(
@@ -231,24 +275,10 @@ def verify_snapshot(
     else (False, "drift: <what changed>") naming the changed component(s) by
     diffing against snapshot.json when present.
     """
-    sha_path = snapshot_sha_path(workspace_root, ticket)
-    if not sha_path.exists():
-        return True, "no snapshot to verify"
-
-    stored_hash = _read_text(sha_path).strip()
-    current = compute_snapshot(workspace_root, skill_root=skill_root, search_roots=search_roots)
-    if current["master_hash"] == stored_hash:
-        return True, "match"
-
-    json_path = snapshot_json_path(workspace_root, ticket)
-    if json_path.exists():
-        try:
-            stored = json.loads(_read_text(json_path))
-        except json.JSONDecodeError:
-            stored = {}
-        if isinstance(stored, dict):
-            return False, _name_drift(stored, current)
-    return False, "drift: master_hash mismatch"
+    ok, detail, _ = classify_drift(
+        workspace_root, ticket, skill_root=skill_root, search_roots=search_roots
+    )
+    return ok, detail
 
 
 # ─── CLI ─────────────────────────────────────────────────────────────────────
@@ -291,8 +321,10 @@ if __name__ == "__main__":
 
 
 __all__ = [
+    "classify_drift",
     "cli_main",
     "compute_snapshot",
+    "drifted_components",
     "snapshot_json_path",
     "snapshot_sha_path",
     "stage_registry_path",

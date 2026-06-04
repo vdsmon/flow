@@ -40,7 +40,7 @@ import recall_pending
 import state
 import validate_workspace as vw
 from _registry import registry_by_name
-from snapshot import verify_snapshot, write_snapshot
+from snapshot import classify_drift, write_snapshot
 
 _STAGE_REGISTRY_RELATIVE = Path("stage-registry.toml")
 
@@ -204,6 +204,44 @@ def cmd_init(workspace_root: Path, ticket: str, force: bool = False) -> tuple[in
     }
 
 
+_DRIFT_ABORT = {
+    "error": "config/version drift mid-run",
+    "hint": "/flow recover --reload-snapshot or --abort",
+}
+
+
+def _planned_files(td: Path) -> set[str]:
+    planned: set[str] = set()
+    with contextlib.suppress(Exception):
+        raw = json.loads((td / "baseline.json").read_text(encoding="utf-8")).get(
+            "planned_files", []
+        )
+        if isinstance(raw, list):
+            planned = {str(p).removeprefix("./").replace("\\", "/") for p in raw}
+    return planned
+
+
+def _gate_drift(workspace_root: Path, ticket: str, td: Path) -> tuple[dict[str, Any] | None, bool]:
+    """Classify the canonical-snapshot drift gate.
+
+    Returns (abort_payload, owned_reconcile). abort_payload is the exit-1 dict
+    when genuine drift must halt the run, else None. owned_reconcile is True when
+    the sole drifted component is workspace_toml AND .flow/workspace.toml is in
+    this run's planned_files (intended edit → reload the baseline, don't abort).
+    """
+    drift_ok, detail, components = classify_drift(
+        workspace_root, ticket, skill_root=_skill_root_from_script()
+    )
+    owned_reconcile = (
+        (not drift_ok)
+        and components == ["workspace_toml"]
+        and ".flow/workspace.toml" in _planned_files(td)
+    )
+    if (not drift_ok) and not owned_reconcile:
+        return {**_DRIFT_ABORT, "detail": detail}, False
+    return None, owned_reconcile
+
+
 def cmd_next(workspace_root: Path, ticket: str) -> tuple[int, dict[str, Any]]:
     result, snapshot = vw.validate(workspace_root)
     if snapshot is None:
@@ -219,14 +257,11 @@ def cmd_next(workspace_root: Path, ticket: str) -> tuple[int, dict[str, Any]]:
         return 2, {"error": f"no state.json at {td}; run `dispatch init` first"}
 
     # TOCTOU: refuse if workspace.toml / registry / a handler plugin drifted
-    # since the run started.
-    ok, detail = verify_snapshot(workspace_root, ticket, skill_root=_skill_root_from_script())
-    if not ok:
-        return 1, {
-            "error": "config/version drift mid-run",
-            "detail": detail,
-            "hint": "/flow recover --reload-snapshot or --abort",
-        }
+    # since the run started. EXCEPTION: an owned single-component workspace.toml
+    # drift auto-reconciles (snapshot reload) AFTER the lease guard confirms us.
+    abort_payload, owned_reconcile = _gate_drift(workspace_root, ticket, td)
+    if abort_payload is not None:
+        return 1, abort_payload
     # Lease: if one exists it must still be ours (detects a takeover). A run with
     # no lease (legacy / direct test call) proceeds without one.
     boot, host = lease.boot_id(), socket.gethostname()
@@ -239,6 +274,15 @@ def cmd_next(workspace_root: Path, ticket: str) -> tuple[int, dict[str, Any]]:
                 "detail": str(exc),
                 "hint": "/flow recover",
             }
+
+    # Owned drift confirmed AND the lease is ours: reload the snapshot baseline so
+    # later dispatch calls verify against the intended workspace.toml.
+    if owned_reconcile:
+        try:
+            write_snapshot(workspace_root, ticket, skill_root=_skill_root_from_script())
+        except Exception:
+            return 1, {**_DRIFT_ABORT, "detail": "drift: workspace_toml"}
+        sys.stderr.write(f"dispatch: auto-reconciled owned workspace.toml drift for {ticket}\n")
 
     failed = state.find_failed(ts)
     if failed is not None:
@@ -276,6 +320,8 @@ def cmd_next(workspace_root: Path, ticket: str) -> tuple[int, dict[str, Any]]:
     # to a spawned subagent (and to inline / skill / none handlers alike).
     if stage_meta is not None and stage_meta.reference_doc:
         payload["reference_doc"] = stage_meta.reference_doc
+    if owned_reconcile:
+        payload["reconciled_drift"] = "workspace_toml"
 
     # Refresh the lease to cover this stage's timeout window before marking it
     # in_progress, so a multi-minute stage does not self-expire the lease.

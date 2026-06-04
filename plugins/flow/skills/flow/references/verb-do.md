@@ -28,6 +28,7 @@ A blocker needs no special ping: an `AskUserQuestion` surfaces natively as "need
 - Exit 1 → distinguish by the stdout JSON payload, then break the loop:
   - `detail` present → config/version drift (the workspace.toml, the stage-registry, or a handler plugin changed mid-run).
     Surface the drift detail + the hint `/flow recover <ticket>`.
+    Before any such exit 1, dispatch auto-reconciles an *owned* single-component workspace.toml drift — the sole drifted component is `workspace_toml` AND `.flow/workspace.toml` is in this run's `planned_files` — by reloading the snapshot baseline and continuing; the descriptor then carries `reconciled_drift: "workspace_toml"` and the do-loop MAY log a `RECONCILE` friction entry on that marker.
   - `violations` present → a validate-workspace failure.
     Surface the violations and abort.
   - bare `error` (e.g. `unrecoverable state.json`) → the run state is corrupt.
@@ -39,7 +40,7 @@ A `--status failed` advance returns `{blocked_by}`, which the skeleton's descrip
 
 ## Friction logging (in-flight)
 
-Whenever a step hits a snag the run has to work around, append one friction entry before you act on it. This is the high-fidelity evidence the `reflect` stage synthesizes into machinery findings (a backgrounded reflect agent cannot reconstruct it from `state.json` alone). See `references/self-evolution.md` for how this feeds the self-modification loop. Trigger → `--type`: `next`/`advance` drift exit 1 → `DRIFT`; lost-lease exit 7 → `LEASE_LOSS`; the records_diff_baseline post-implement reconcile → `RECONCILE`; a skill handler not installed → `MISSING_TOOL`; an `AskUserQuestion` blocker → `BLOCKER`; a stage finished `failed` → `STAGE_FAILED`; a retried stage → `RETRY`. The call (best-effort — never let a logging failure abort the run):
+Whenever a step hits a snag the run has to work around, append one friction entry before you act on it. This is the high-fidelity evidence the `reflect` stage synthesizes into machinery findings (a backgrounded reflect agent cannot reconstruct it from `state.json` alone). See `references/self-evolution.md` for how this feeds the self-modification loop. Trigger → `--type`: `next`/`advance` drift exit 1 → `DRIFT`; lost-lease exit 7 → `LEASE_LOSS`; the records_diff_baseline post-implement reconcile OR a dispatch owned-drift reconcile (`next`/`advance` returns a `reconciled_drift` marker) → `RECONCILE`; a skill handler not installed → `MISSING_TOOL`; an `AskUserQuestion` blocker → `BLOCKER`; a stage finished `failed` → `STAGE_FAILED`; a retried stage → `RETRY`. The call (best-effort — never let a logging failure abort the run):
 ```bash
 python3 ${CLAUDE_SKILL_DIR}/scripts/flow_friction.py \
   --ticket "$KEY" --run-id "$RUN_ID" --stage "$STAGE" \
