@@ -21,10 +21,14 @@ select = [
     "UP",  # pyupgrade
     "SIM", # flake8-simplify
     "RUF", # ruff-specific
+    "C901", # mccabe complexity
 ]
 ignore = [
     "E501",  # line length handled by formatter
 ]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 15
 
 [tool.ruff.format]
 quote-style = "double"

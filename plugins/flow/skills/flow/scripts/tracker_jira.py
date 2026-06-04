@@ -143,6 +143,20 @@ def _retry_after_seconds(value: str | None, default: float) -> float:
     return max(0.0, delta)
 
 
+def _parse_jira_error_body(e: urllib.error.HTTPError) -> tuple[dict[str, Any], bytes]:
+    try:
+        raw_body = e.read()
+    except Exception:
+        raw_body = b""
+    parsed_body: dict[str, Any] = {}
+    if raw_body:
+        try:
+            parsed_body = json.loads(raw_body.decode("utf-8"))
+        except json.JSONDecodeError:
+            parsed_body = {"errorMessages": [raw_body.decode("utf-8", "replace")]}
+    return parsed_body, raw_body
+
+
 def _adf_paragraph(text: str) -> dict[str, Any]:
     """Wrap plain text as a single-paragraph ADF document."""
     return {
@@ -287,23 +301,17 @@ class JiraAdapter:
         base = "agile/1.0" if agile else "api/3"
         return f"{ATLASSIAN_OAUTH_HOST}/ex/jira/{self.cloud_id}/rest/{base}{path}"
 
-    def _request(
+    def _build_request(
         self,
         method: str,
         path: str,
-        body: dict[str, Any] | None = None,
+        body: dict[str, Any] | None,
         *,
-        agile: bool = False,
-        query: dict[str, Any] | None = None,
-        raw_response: bool = False,
-        extra_headers: dict[str, str] | None = None,
-        body_bytes: bytes | None = None,
-    ) -> Any:
-        """Make a Jira REST call. Returns parsed JSON dict, or raw response if raw_response.
-
-        Body precedence: `body_bytes` (used for multipart) > `body` (JSON dict). 5xx + 429
-        retry policy applied. Auth always present. Errors classified per inventory.md.
-        """
+        agile: bool,
+        query: dict[str, Any] | None,
+        extra_headers: dict[str, str] | None,
+        body_bytes: bytes | None,
+    ) -> urllib.request.Request:
         url = self._url(path, agile=agile)
         if query:
             url = url + "?" + urllib.parse.urlencode(query, doseq=True)
@@ -322,7 +330,56 @@ class JiraAdapter:
         if extra_headers:
             headers.update(extra_headers)
 
-        req = urllib.request.Request(url=url, data=data, method=method, headers=headers)
+        return urllib.request.Request(url=url, data=data, method=method, headers=headers)
+
+    def _http_error_retry_delay(self, e: urllib.error.HTTPError, attempt: int, path: str) -> float:
+        status = e.code
+        parsed_body, raw_body = _parse_jira_error_body(e)
+
+        if status == 401:
+            raise TrackerConfigError(
+                "invalid credentials: check ATLASSIAN_EMAIL/ATLASSIAN_API_TOKEN"
+            ) from e
+        if status == 404:
+            msg = parsed_body.get("errorMessages") or [f"endpoint not found: {path}"]
+            raise TrackerError(f"{msg[0]}") from e
+        if status == 409:
+            raise TrackerError(f"conflict: {parsed_body or raw_body!r}") from e
+        if status == 429 and attempt < 3:
+            header_val = e.headers.get("Retry-After") if e.headers else None
+            return min(_retry_after_seconds(header_val, 1.0), 30.0)
+        if 500 <= status < 600 and attempt < 2:
+            return 1.0 if attempt == 0 else 3.0
+        # Caller-visible 4xx (other than the special-cased ones) -- re-raise as HTTPError
+        # so callers expecting transition-style classification can catch + handle.
+        raise _JiraHTTPError(status, parsed_body, raw_body, path) from e
+
+    def _request(
+        self,
+        method: str,
+        path: str,
+        body: dict[str, Any] | None = None,
+        *,
+        agile: bool = False,
+        query: dict[str, Any] | None = None,
+        raw_response: bool = False,
+        extra_headers: dict[str, str] | None = None,
+        body_bytes: bytes | None = None,
+    ) -> Any:
+        """Make a Jira REST call. Returns parsed JSON dict, or raw response if raw_response.
+
+        Body precedence: `body_bytes` (used for multipart) > `body` (JSON dict). 5xx + 429
+        retry policy applied. Auth always present. Errors classified per inventory.md.
+        """
+        req = self._build_request(
+            method,
+            path,
+            body,
+            agile=agile,
+            query=query,
+            extra_headers=extra_headers,
+            body_bytes=body_bytes,
+        )
 
         last_err: TrackerError | None = None
         for attempt in range(4):
@@ -335,40 +392,10 @@ class JiraAdapter:
                     return {}
                 return json.loads(raw.decode("utf-8"))
             except urllib.error.HTTPError as e:
-                status = e.code
-                try:
-                    raw_body = e.read()
-                except Exception:
-                    raw_body = b""
-                parsed_body: dict[str, Any] = {}
-                if raw_body:
-                    try:
-                        parsed_body = json.loads(raw_body.decode("utf-8"))
-                    except json.JSONDecodeError:
-                        parsed_body = {"errorMessages": [raw_body.decode("utf-8", "replace")]}
-
-                if status == 401:
-                    raise TrackerConfigError(
-                        "invalid credentials: check ATLASSIAN_EMAIL/ATLASSIAN_API_TOKEN"
-                    ) from e
-                if status == 404:
-                    msg = parsed_body.get("errorMessages") or [f"endpoint not found: {path}"]
-                    raise TrackerError(f"{msg[0]}") from e
-                if status == 409:
-                    raise TrackerError(f"conflict: {parsed_body or raw_body!r}") from e
-                if status == 429 and attempt < 3:
-                    header_val = e.headers.get("Retry-After") if e.headers else None
-                    retry_after = _retry_after_seconds(header_val, 1.0)
-                    time.sleep(min(retry_after, 30.0))
-                    last_err = TrackerError(f"rate-limited (attempt {attempt + 1})")
-                    continue
-                if 500 <= status < 600 and attempt < 2:
-                    time.sleep(1.0 if attempt == 0 else 3.0)
-                    last_err = TrackerError(f"upstream {status}")
-                    continue
-                # Caller-visible 4xx (other than the special-cased ones) -- re-raise as HTTPError
-                # so callers expecting transition-style classification can catch + handle.
-                raise _JiraHTTPError(status, parsed_body, raw_body, path) from e
+                delay = self._http_error_retry_delay(e, attempt, path)
+                time.sleep(delay)
+                last_err = TrackerError(f"http {e.code} retry (attempt {attempt + 1})")
+                continue
             except urllib.error.URLError as e:
                 if attempt < 2:
                     time.sleep(1.0 if attempt == 0 else 3.0)
