@@ -162,7 +162,7 @@ def classify(
             continue
         if "hot" in labels:
             if promote is not None and number == promote:
-                merge.append({**entry, "is_draft": bool(pr.get("isDraft"))})
+                merge.append({**entry, "is_draft": bool(pr.get("isDraft")), "is_hot": True})
             else:
                 skipped_hot.append(entry)
             continue
@@ -170,7 +170,7 @@ def classify(
         if state not in _MERGEABLE_STATES:
             blocked.append({**entry, "reason": state or "UNKNOWN"})
             continue
-        merge.append({**entry, "is_draft": bool(pr.get("isDraft"))})
+        merge.append({**entry, "is_draft": bool(pr.get("isDraft")), "is_hot": False})
 
     return {
         "merge": merge,

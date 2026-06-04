@@ -45,6 +45,18 @@ The applied patch comes from the recorded `implement.diff` — NOT from `git add
      Abort; surface `/flow recover --reset-baseline` hint.
    - Exit 2 → git error. Abort.
 
+2b. Content-ownership gate. Verify the working tree carries only planned changes before the commit is composed — a PR must hold only what was planned. `planned_files` has already been widened by the post-implement reconcile, so a legitimately-touched file is owned by now; anything still outside it is unplanned and must not ride along.
+   ```bash
+   ${CLAUDE_SKILL_DIR}/scripts/diff_extract.py check-ownership \
+     --ticket <KEY> \
+     --ticket-dir <ticket-dir> \
+     --cwd .
+   ```
+   - Exit 0 → ownership clean; continue.
+   - Exit 3 → ownership violation. The printed JSON's `unowned_changes` lists files changed outside `planned_files`. Do NOT commit. Surface the unowned files and resolve by either (a) adding genuinely-needed files to the plan and re-recording the baseline (`record-baseline --files ...` — the reconcile path), or (b) reverting the stray edit; then rerun. If it cannot be resolved, abort with status=failed. Never commit past an unowned change, and never crash on it — exit 3 is a clean refusal to act on, not a fault.
+   - Exit 1 → no baseline. Abort; `/flow recover --reset-baseline`.
+   - Exit 2 → git error. Abort.
+
 3. Compose the commit skeleton.
    Read `commit_type` + `commit_summary` from the ticket frontmatter (or ask the user if missing):
    ```bash
@@ -121,6 +133,9 @@ The applied patch comes from the recorded `implement.diff` — NOT from `git add
 
 - `lint_ticket.py` exit 1 → user must populate `commit_type` +
   `commit_summary` frontmatter.
+- `diff_extract.py check-ownership` exit 3 → changes outside `planned_files`;
+  do NOT commit. Reconcile the plan (`record-baseline --files ...`) or revert
+  the stray edit, then rerun. Fail-safe: a clean refusal, never a silent commit.
 - `git apply --cached` fail → working tree drift. `/flow recover` in 8c.
 - `tracker_cli.py transition` exit 1 → transient; log warning, do not block.
   The commit is the source of truth. `--enqueue-on-transient` queues the
