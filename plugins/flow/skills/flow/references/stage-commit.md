@@ -62,9 +62,10 @@ The applied patch comes from the recorded `implement.diff` — NOT from `git add
      required flag (argparse usage error). Abort and fix the invocation.
 
 4. Fill in the body.
-   Read the skeleton, append a body section describing *why* (not what — the diff shows what).
-   Reference any failing-tests-now-green progress from implement stage.
-   Write the completed message back to the same path.
+   Step 3 created `/tmp/flow-commit-<KEY>.txt` via a shell redirect, so the file lives OUTSIDE the harness Read/Write tool tracking. The Write tool refuses to overwrite a path it has not Read in-session ("File has not been read yet"), which otherwise leaves the literal `# body - fill in below this line` skeleton in the commit.
+   Use the **Read tool** on `/tmp/flow-commit-<KEY>.txt` FIRST to register the path with the harness.
+   Then append a body section describing *why* (not what — the diff shows what), referencing any failing-tests-now-green progress from implement stage.
+   Then use the **Write tool** to write the completed message back to that same path.
 
 5. Apply the recorded patch:
    ```bash
