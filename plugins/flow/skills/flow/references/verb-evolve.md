@@ -73,10 +73,13 @@ Returns JSON `{merge:[{pr,key,is_draft}], not_green, skipped_hot, blocked}`. For
 ```bash
 # mark ready only if it was a draft, then squash-merge and delete the branch
 gh pr ready <pr>        # only when is_draft is true
-gh pr merge <pr> --squash --delete-branch
+# close the bead ONLY if the merge succeeds (chained with && so a refused merge leaves the bead open)
+gh pr merge <pr> --squash --delete-branch && bd close <key> --reason "merged via PR #<pr>"
 ```
 
-`gh pr merge` refuses a not-actually-mergeable PR, so it is a safe backstop if state changed since the classify. Veto for the human: convert a PR to draft or close it before the next pass and the reaper skips it.
+`<key>` and `<pr>` both come from the `merge` entry. The `bd close` runs ONLY when `gh pr merge` exits clean — gate it with `&&` (or an `if`), never as an unconditional third line. `gh pr merge` refuses a not-actually-mergeable PR, so it is a safe backstop if state changed since the classify; if it refuses, the `&&` short-circuits and the bead stays open. Closing a bead whose PR never merged would mint the exact PR↔bead state-inconsistency this step exists to prevent.
+
+`bd close` here autodiscovers `.beads/*.db` from cwd, and section 6 is maintainer-gated with no `cd` in the loop, so the close inherits the maintainer-repo cwd and hits flow's own DB. With the close wired in, reaping a PR also closes its bead, so `--ship` / `--reap` leaves no merged-but-open beads behind. Veto for the human: convert a PR to draft or close it before the next pass and the reaper skips it.
 
 ### B. Select + launch — fan out the next batch
 
