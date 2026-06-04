@@ -19,6 +19,9 @@ You cannot wait for or solicit that approval yourself — just return a plan goo
 - `.flow/runs/<KEY>/ticket.json` — the full cached ticket payload (summary,
   description, type, comments, parent, links).
   This is your primary source of intent.
+  When your prompt instead carries an embedded ticket-context block (the `--auto`
+  pre-bootstrap path, where the subagent runs before the `ticket` stage writes
+  this file), that block is your source of intent and this file will not exist yet.
 - `.flow/tickets/<KEY>.md` — ticket frontmatter (status, any `planned_files`
   the user pre-seeded, commit hints).
   The body below the frontmatter may carry human notes.
@@ -27,7 +30,9 @@ You cannot wait for or solicit that approval yourself — just return a plan goo
 
 ## Steps
 
-1. Read `.flow/runs/<KEY>/ticket.json` and `.flow/tickets/<KEY>.md`.
+1. Read `.flow/runs/<KEY>/ticket.json` and `.flow/tickets/<KEY>.md` if present;
+   otherwise (the `--auto` pre-bootstrap case) use the ticket-context block
+   embedded in your prompt.
    Extract the actual goal — what behavior must exist when this ticket is done.
 
 2. Explore the codebase enough to ground the plan.
@@ -66,9 +71,12 @@ You cannot wait for or solicit that approval yourself — just return a plan goo
 
 ## Errors
 
-- `ticket.json` missing or empty → you cannot plan without intent.
+- `ticket.json` missing or empty AND no embedded ticket-context block in your
+  prompt → you cannot plan without intent.
   Return a short report stating the ticket context is unavailable and the `ticket` stage must run first.
   Do not invent a plan from the ticket key alone.
+  (If an embedded ticket-context block IS present — the `--auto` pre-bootstrap
+  path — proceed normally from that block; do NOT bail.)
 - Ticket goal genuinely ambiguous → do not guess silently.
   State the competing interpretations in your returned plan and let the approver pick.
 

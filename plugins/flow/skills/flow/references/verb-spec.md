@@ -85,7 +85,8 @@ It replaces interactive steps 1-5; steps 6-7 (bootstrap + enter worktree) are sh
 3. Fetch ticket context into the conversation via `tracker_cli.py --workspace-root . get --key "$KEY"` (read the stdout); explore the codebase read-only; weave in the SessionStart `recall` — same as step 3.
 
 4. **Headless plan.**
-   Read `${CLAUDE_SKILL_DIR}/references/stage-plan.md`, then spawn the `Plan` subagent embedding that protocol PLUS the output contract below:
+   Read `${CLAUDE_SKILL_DIR}/references/stage-plan.md`, then spawn the `Plan` subagent embedding that protocol PLUS the output contract below.
+   The subagent runs PRE-bootstrap, so `.flow/runs/<KEY>/ticket.json` and `.flow/tickets/<KEY>.md` do NOT exist yet (the `ticket` stage writes ticket.json; `flow_worktree.py create` writes tickets/<KEY>.md — both run later). Do NOT point the subagent at those files. Instead, INLINE the ticket JSON you already fetched in step 3 (`tracker_cli.py get`) into the embedded ticket-context block below, pasting it verbatim where the placeholder sits:
    ```
    Agent(
      subagent_type="Plan",
@@ -93,7 +94,10 @@ It replaces interactive steps 1-5; steps 6-7 (bootstrap + enter worktree) are sh
      prompt="""
      Ticket: <KEY>
      You are the Plan subagent for the plan stage of /flow, running in --auto mode.
-     Read .flow/runs/<KEY>/ticket.json and .flow/tickets/<KEY>.md for ticket context.
+
+     Ticket context (fetched by the orchestrator in step 3 — this is your primary
+     source of intent; the pre-bootstrap files do NOT exist yet):
+     <the ticket JSON from step 3's tracker_cli.py get, pasted here verbatim>
 
      Per-stage protocol (from references/stage-plan.md):
      <contents of stage-plan.md>
@@ -107,8 +111,8 @@ It replaces interactive steps 1-5; steps 6-7 (bootstrap + enter worktree) are sh
          bullet per genuinely open decision a human must settle before code is
          written (competing interpretations, an unconfirmed assumption, a missing
          input). Only raise a question if its answer would change the plan.
-     If you cannot produce a plan at all (ticket.json missing/empty, or zero
-     usable intent), return a single line `BAIL: <reason>` instead of a plan.
+     If you cannot produce a plan at all (the embedded ticket context is empty, or
+     zero usable intent), return a single line `BAIL: <reason>` instead of a plan.
      """
    )
    ```
