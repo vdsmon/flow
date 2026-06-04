@@ -22,6 +22,13 @@ to touch `stage-registry.toml` (it IS in the run's canonical snapshot; editing i
 mid-run trips the drift guard on the closing advance) and refuses any path
 outside the skill tree.
 
+It refuses one more case: a skill-root sitting on a protected branch
+(main/master/dev/develop). In the marketplace-tracks-main setup the skill
+checkout is a separate working tree on `main`; a machinery self-edit there would
+land as a direct commit on `main`, bypassing the human-merge keystone. The fix
+must flow to PROPOSE+RECORD (the evolve-bead sling) instead. A skill-root that is
+not a git repo (the unit-test fixture) resolves to no branch and is allowed.
+
 Idempotency mirrors the doc's "anchor not found usually means already fixed":
 if `old` is absent but `new` is already present, the fix is reported
 already_applied (exit 0), not a failure.
@@ -32,7 +39,8 @@ Payload (JSON, via --payload <file> or stdin):
 Exit codes:
     0 = applied, or already_applied (idempotent no-op).
     1 = usage / I/O error (bad payload, missing file, empty `old`, old==new).
-    2 = refused (path outside skill tree, or snapshot-pinned stage-registry.toml).
+    2 = refused (path outside skill tree, snapshot-pinned stage-registry.toml,
+        or skill-root on a protected branch).
     3 = anchor_not_found (old absent AND new absent — agent must re-derive).
     4 = ambiguous (old occurs more than once — not a unique anchor).
 """
@@ -41,6 +49,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -50,13 +59,45 @@ from _locking import flock_blocking
 # In the run's canonical snapshot — editing mid-run trips the drift guard.
 _SNAPSHOT_PINNED = {"stage-registry.toml"}
 
+# A machinery commit must never land on one of these (human-merge keystone).
+_PROTECTED = {"main", "master", "dev", "develop"}
+
+
+def _current_branch(skill_root: Path) -> str | None:
+    """skill-root's current git branch, or None if it is not a git repo.
+
+    Resolves skill-root's OWN working tree (not cwd): in the marketplace setup
+    the skill checkout sits on `main` while the run's worktree is on a feature
+    branch, and the commit that follows a self-edit lands on skill-root. Any git
+    failure (skill-root is not a repo) returns None and allows the edit.
+    """
+    try:
+        res = subprocess.run(
+            ["git", "-C", str(skill_root), "rev-parse", "--abbrev-ref", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return None
+    if res.returncode != 0:
+        return None
+    return res.stdout.strip() or None
+
 
 def _emit(obj: dict, code: int) -> int:
     print(json.dumps(obj, indent=2))
     return code
 
 
-def apply_edit(skill_root: Path, target: Path, old: str, new: str) -> tuple[dict, int]:
+def apply_edit(
+    skill_root: Path,
+    target: Path,
+    old: str,
+    new: str,
+    *,
+    branch_resolver=_current_branch,
+) -> tuple[dict, int]:
     """Apply a single unique-anchor replacement under the machinery write lock.
 
     Pure of argparse so the test suite can drive it directly.
@@ -80,6 +121,14 @@ def apply_edit(skill_root: Path, target: Path, old: str, new: str) -> tuple[dict
             "file": str(target),
             "reason": f"{target.name} is in the canonical snapshot; "
             "propose+record or reload-snapshot instead",
+        }, 2
+    branch = branch_resolver(skill_root)
+    if branch in _PROTECTED:
+        return {
+            "status": "refused",
+            "file": str(target),
+            "reason": f"skill-root is on protected branch {branch}; machinery "
+            "self-edits never commit to main; propose+record (sling an evolve bead) instead",
         }, 2
     if not old:
         return {"status": "error", "file": str(target), "reason": "`old` is empty"}, 1

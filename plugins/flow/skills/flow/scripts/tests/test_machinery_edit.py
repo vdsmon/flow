@@ -70,6 +70,34 @@ def test_refuse_snapshot_pinned_registry(skill_root):
     assert f.read_text() == "OLD\n"
 
 
+def test_refuse_protected_branch(skill_root):
+    f = skill_root / "scripts" / "x.py"
+    _write(f, "OLD\n")
+    result, code = apply_edit(skill_root, f, "OLD", "NEW", branch_resolver=lambda _: "main")
+    assert code == 2
+    assert result["status"] == "refused"
+    assert "protected branch" in result["reason"]
+    assert f.read_text() == "OLD\n"  # untouched
+
+
+def test_feature_branch_still_applies(skill_root):
+    f = skill_root / "scripts" / "x.py"
+    _write(f, "OLD\n")
+    result, code = apply_edit(skill_root, f, "OLD", "NEW", branch_resolver=lambda _: "feature/x")
+    assert code == 0
+    assert result["status"] == "applied"
+    assert f.read_text() == "NEW\n"
+
+
+def test_non_repo_branch_none_still_applies(skill_root):
+    f = skill_root / "scripts" / "x.py"
+    _write(f, "OLD\n")
+    result, code = apply_edit(skill_root, f, "OLD", "NEW", branch_resolver=lambda _: None)
+    assert code == 0
+    assert result["status"] == "applied"
+    assert f.read_text() == "NEW\n"
+
+
 def test_empty_old_is_error(skill_root):
     f = skill_root / "scripts" / "x.py"
     _write(f, "x\n")
