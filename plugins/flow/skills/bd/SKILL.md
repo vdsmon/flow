@@ -51,3 +51,33 @@ bd export -o .beads/issues.jsonl
 ```
 
 The jsonl is the export; the Dolt DB is the truth. Keep the two paths separate: `bd dolt push/pull` moves the live data, `bd export` produces the committable file.
+
+## flow's bd gotchas
+
+beads-specific behaviors flow has hit and worked around.
+
+### bd init is invasive
+
+Bare `bd init --prefix <prefix>` generates an AGENTS.md plus a `.claude/settings.json` (a bd-prime SessionStart/PreCompact hook) and **auto-commits** them — unwanted in a shared, Claude-Code-only repo.
+
+flow invokes it headless instead:
+
+```
+bd init --prefix <prefix> --skip-agents --non-interactive
+```
+
+`--skip-agents` suppresses the AGENTS.md + Claude settings generation; `--non-interactive` is headless/background safety (flow often runs detached).
+
+### Ticket stage must transition the backend, not just frontmatter
+
+Stamping `.flow/tickets/<KEY>.md` frontmatter `status: in_progress` does **not** move the bd issue. On beads it stays `open`, so `bd ready` still lists the in-flight ticket and a parallel fleet agent can double-pick it.
+
+Fix: the ticket stage runs a best-effort backend transition `open → in_progress` (e.g. `bd update <id> --claim`).
+
+### No in_review state; commit must NOT auto-close via done
+
+beads exposes only `in_progress | blocked | closed` — there is **no** `in_review` state. The commit stage transitions the ticket to `in_review`; on beads that transition is unavailable (tracker exit 3).
+
+Do **NOT** fall back to `--to-state done`: closing the ticket at commit is premature in a PR-based flow (the PR is not merged yet, and `create_pr` / `review_loop` still run after this stage). Instead leave the ticket `in_progress`, log a warning naming the missing `in_review` transition, and continue — a human or a later merge step closes the ticket.
+
+See `references/stage-commit.md` exit-3 for the authoritative rule.
