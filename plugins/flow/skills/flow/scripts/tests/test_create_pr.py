@@ -101,3 +101,29 @@ def test_cli_prints_pr_url_token(tmp_path, monkeypatch, capsys):
     )
     assert rc == 0
     assert "PR_URL=https://github.com/o/r/pull/5" in capsys.readouterr().out
+
+
+def test_open_ready_omits_draft_flag(tmp_path):
+    run, calls = _runner(existing=[])
+    cp.open_or_get_pr(tmp_path, base="main", runner=run)
+    create = next(c for c in calls if c[:3] == ["gh", "pr", "create"])
+    assert "--draft" not in create
+
+
+def test_open_draft_passes_draft_flag(tmp_path):
+    run, calls = _runner(existing=[])
+    cp.open_or_get_pr(tmp_path, base="main", draft=True, runner=run)
+    create = next(c for c in calls if c[:3] == ["gh", "pr", "create"])
+    assert "--draft" in create
+
+
+def test_draft_config_default_false_when_no_workspace(tmp_path):
+    assert cp._draft_config(tmp_path) is False
+
+
+def test_draft_config_reads_true(tmp_path):
+    (tmp_path / ".flow").mkdir()
+    (tmp_path / ".flow" / "workspace.toml").write_text(
+        "[create_pr]\ndraft = true\n", encoding="utf-8"
+    )
+    assert cp._draft_config(tmp_path) is True

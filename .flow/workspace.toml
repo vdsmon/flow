@@ -19,6 +19,11 @@ self_target = true
 [evolve]
 auto_merge_hot = true
 
+# This repo opens PRs ready for review, not draft (maintainer preference). The
+# default is open; a workspace that wants draft PRs sets draft = true here.
+[create_pr]
+draft = false
+
 [pipeline]
 stages = ["ticket", "plan", "implement", "code_review", "e2e", "commit", "create_pr", "review_loop", "reflect"]
 
