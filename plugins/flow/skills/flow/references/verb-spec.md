@@ -54,6 +54,7 @@ Everything from the bootstrap onward is shared.
      --e2e-recipe "<the e2e recipe from step 4 — omit ONLY when e2e is none>"
    ```
    Derive `<slug>` from the ticket summary, and `--planned-files` from the plan's "Files to change" list — which (per stage-plan.md) already includes any anticipated NEW test file paths the TDD implement will create, so the stamped `planned_files` covers them.
+   Any version-bump number that appears in the plan is advisory: it was derived pre-bootstrap from the launcher checkout, which can lag `origin/main`, so the implement stage recomputes the bump against the worktree base.
    `--e2e-recipe` carries the recipe settled in step 4 (runner + command + env-prep + fixture + expected, or `skip: <reason>` / `test-ci-only`); pass it whenever e2e is enabled and omit it only when the handler is `none`.
    The bootstrap seeds state (plan pre-completed, ticket left pending), injects the plan, stamps `planned_files` + `commit_type` + `commit_summary` (+ `e2e_recipe` when given) into frontmatter (so the implement pre-hook, the commit stage, and the e2e stage never pause to ask the user — which is what lets the tail run unattended if you background it), points the worktree's memory store at this checkout's `.flow` (shared, so memory compounds across worktrees), copies gitignored config, and `mise trust`s the worktree.
    If e2e is enabled and you omit `--e2e-recipe`, create exits 2 (`_ConfigError`) — go back to step 4 and settle the recipe.
