@@ -12,6 +12,7 @@ The live "which script does what" map. One line per script: purpose + CLI surfac
 | `state.py` (lib) | Atomic `state.json` read/write under flock, backup rotation, quarantine recovery. | imported by dispatch_stage, flow_worktree, diff_extract |
 | `snapshot.py` (lib) | Canonical workspace snapshot at init; verify on each `next` (TOCTOU drift guard). | imported by dispatch_stage, validate_workspace, recover |
 | `lease.py` (lib) | Per-ticket run lease: acquire / refresh / release / expiry + takeover detection. | imported by dispatch_stage, recover, status |
+| `heartbeat.py` | Stage progress heartbeat + post-hoc hung detection: per-op progress writes during a stage; `recover detect` reads + classifies hung. | `write` / `read`; writes heartbeat progress under `<ticket_dir>`, imported by `recover` / `state` / `_registry` |
 | `validate_workspace.py` | HARD GATE: schema-validate `workspace.toml` + `stage-registry.toml` on every run. | exit 1 = violations to stderr |
 
 ## Bootstrap
@@ -19,7 +20,7 @@ The live "which script does what" map. One line per script: purpose + CLI surfac
 | Script | Role | Surface / touches |
 |--------|------|-------------------|
 | `init.py` | Transactional workspace bootstrap. Collects backend/bundle answers, writes `workspace.toml`, postcondition checks, atomic `.flow/.initialized`. | `--config <json>` (`--reconfigure` / `--resume`) |
-| `flow_worktree.py` | Post-approval worktree seeding: create worktree, seed `state.json` (plan completed), stamp frontmatter, point memory at main `.flow`, `mise trust`. | `create --ticket --plan-from --base --branch --main-root --planned-files --commit-type --commit-summary --e2e-recipe` |
+| `flow_worktree.py` | Post-approval worktree seeding: create worktree, seed `state.json` (plan completed), stamp frontmatter, point memory at main `.flow`, `mise trust`. | `create --ticket --plan-from --base --branch --main-root --planned-files --commit-type --commit-summary --e2e-recipe --worktree-path --copy --no-mise-trust` |
 | `branch_ticket.py` | Resolve ticket key from current git branch (backend-aware regex). | `--workspace-root`; exit 0 match / 1 env / 3 no-match |
 | `bundle_discover.py` (lib) | Walk `~/.claude/plugins/*/` + `<repo>/.claude/plugins/*/` for `.flow-bundle.toml` manifests. | imported by init |
 
@@ -28,10 +29,10 @@ The live "which script does what" map. One line per script: purpose + CLI surfac
 | Script | Role | Surface / touches |
 |--------|------|-------------------|
 | `tracker.py` (lib) | Tracker Protocol base + `make_tracker()` factory + `CAPABILITY_ENUM`. | imported by the adapters + tracker_cli |
-| `tracker_cli.py` | CLI wrapper around the Protocol (the only tracker surface the prose calls). | `get` / `state` / `transition` / `comment` / `is-shipped` / `list-assigned` |
+| `tracker_cli.py` | CLI wrapper around the Protocol (the only tracker surface the prose calls). | `get` / `state` / `transition` / `comment` / `is-shipped` / `list-assigned` / `download-attachments` |
 | `tracker_jira.py` (lib) | Jira Cloud REST v3 + Agile/1.0 adapter (Basic auth via `ATLASSIAN_EMAIL`/`ATLASSIAN_API_TOKEN`). | imported by tracker_cli |
 | `tracker_beads.py` (lib) | Beads `bd` CLI adapter (local-only tracker). | imported by tracker_cli |
-| `resolve_handler.py` | Resolve a `skill:<name>` handler: confirm bundle installed + manifest valid, return concrete `skill_name`/`skill_args`. | `--handler <string>`; exit 1 not-installed / 2 invalid |
+| `resolve_handler.py` | Resolve a `skill:<name>` handler: confirm bundle installed + manifest valid, return concrete `skill_name`/`skill_args`. | `--handler <string> --search-roots`; exit 1 not-installed / 2 invalid |
 
 ## Frontmatter / diff / commit
 
@@ -39,7 +40,7 @@ The live "which script does what" map. One line per script: purpose + CLI surfac
 |--------|------|-------------------|
 | `ticket_frontmatter.py` | TOML frontmatter r/w under flock + atomic rename (delimiter `+++`). | `read <path>` / `update <path> --set k=v` |
 | `lint_ticket.py` | HARD GATE: required frontmatter fields per stage. | `--stage --ticket-path --workspace-root` |
-| `diff_extract.py` | Git diff capture for implement/commit/reflect; baseline + ownership. | `since` / `since-stage` / `record-baseline` / `capture-implement-diff` |
+| `diff_extract.py` | Git diff capture for implement/commit/reflect; baseline + ownership. | `since` / `since-stage` / `record-baseline` / `capture-implement-diff` / `check-ownership` |
 | `compose_commit.py` | Deterministic conventional-commit header skeleton (LLM fills body). | `--ticket --type --summary [--scope --files]` |
 
 ## Memory / reflect / self-evolution
@@ -74,7 +75,7 @@ The live "which script does what" map. One line per script: purpose + CLI surfac
 |--------|------|-------------------|
 | `status.py` | Read-only run/stage/lease table (no network). | `[--ticket] --workspace-root [--json]` |
 | `recover.py` | Inspect + remediate a broken run. | `detect` / `takeover` / `retry` / `skip` / `abort` / `reload-snapshot` |
-| `flow_friction.py` | Append-only `friction.jsonl` log (the reflect/self-evolution feedstock). | `--ticket --run-id --stage --type --body [--detail]` |
+| `flow_friction.py` | Append-only `friction.jsonl` log (the reflect/self-evolution feedstock). | `--ticket --run-id --stage --type --body [--detail --severity]` |
 
 ## Shared helpers (lib)
 
