@@ -35,10 +35,12 @@ import argparse
 import secrets
 import shutil
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 
 import _atomicio
 import _workspace
+import lease
 import state
 import ticket_frontmatter
 from _runner import Runner
@@ -226,6 +228,103 @@ def _worktree_path(main_root: Path, branch: str, override: str | None) -> Path:
     return main.parent / f"{main.name}.worktrees" / branch.replace("/", "-")
 
 
+def _parse_worktree_list(porcelain: str) -> list[tuple[str, str | None]]:
+    """Parse `git worktree list --porcelain` into (path, short_branch) pairs.
+
+    Porcelain emits `worktree <path>`, then `HEAD <sha>`, then `branch
+    refs/heads/<name>` (absent, or `detached`, for a detached worktree); entries
+    are separated by blank lines. The short branch strips the `refs/heads/`
+    prefix; a detached entry yields None.
+    """
+    pairs: list[tuple[str, str | None]] = []
+    path: str | None = None
+    branch: str | None = None
+    for line in porcelain.splitlines():
+        if line.startswith("worktree "):
+            path = line[len("worktree ") :].strip()
+            branch = None
+        elif line.startswith("branch "):
+            ref = line[len("branch ") :].strip()
+            branch = ref.removeprefix("refs/heads/")
+        elif not line.strip():
+            if path is not None:
+                pairs.append((path, branch))
+            path = None
+            branch = None
+    if path is not None:
+        pairs.append((path, branch))
+    return pairs
+
+
+def _utcnow_iso() -> str:
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def reap_worktree(
+    *,
+    ticket: str,
+    main_root: Path,
+    branch: str | None = None,
+    runner: Runner | None = None,
+) -> dict:
+    """Tear down the local worktree + branch left behind after a squash-merge.
+
+    `gh pr merge --delete-branch` removes only the remote branch; the local
+    `feature/<key>-*` branch and its registered worktree leak (the branch is
+    "checked out" by the still-registered worktree). This reaps them, gated on
+    the per-ticket lease: when the worktree's run is still live (the bg session
+    is, typically, in reflect) NOTHING is touched and a later pass reaps it.
+
+    Idempotent: a second call (worktree + branch already gone) is a clean no-op.
+    """
+    run = runner or _default_runner()
+    main_root = main_root.expanduser().resolve()
+
+    listing = _git(["worktree", "list", "--porcelain"], main_root, run)
+    pairs = _parse_worktree_list(listing)
+
+    target_path: Path | None = None
+    resolved_branch = branch
+    for path, sb in pairs:
+        if sb is None:
+            continue
+        if branch is not None:
+            if sb == branch:
+                target_path = Path(path)
+                break
+        elif sb == f"feature/{ticket}" or sb.startswith(f"feature/{ticket}-"):
+            target_path = Path(path)
+            resolved_branch = sb
+            break
+
+    receipt = {
+        "ticket": ticket,
+        "branch": resolved_branch,
+        "worktree": str(target_path) if target_path is not None else None,
+        "worktree_removed": False,
+        "branch_deleted": False,
+        "skipped": None,
+    }
+
+    if target_path is not None:
+        ticket_dir = target_path / ".flow" / "runs" / ticket
+        info = lease.classify(ticket_dir, _utcnow_iso())
+        if info.get("state") == "live":
+            receipt["skipped"] = "lease live (run still in progress)"
+            return receipt
+        result = run(["git", "worktree", "remove", "--force", str(target_path)], main_root)
+        if result.returncode != 0:
+            receipt["skipped"] = f"worktree remove failed: {result.stderr.strip()}"
+            return receipt
+        receipt["worktree_removed"] = True
+
+    if resolved_branch:
+        result = run(["git", "branch", "-D", resolved_branch], main_root)
+        receipt["branch_deleted"] = result.returncode == 0
+
+    return receipt
+
+
 _DEFAULT_BASE = "@default"
 
 
@@ -397,13 +496,37 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         "Seeds frontmatter e2e_recipe so the opted-in e2e stage runs unattended",
     )
     p.add_argument("--no-mise-trust", action="store_true")
+
+    r = sub.add_parser("reap", help="Remove the local worktree + branch after a merge.")
+    r.add_argument("--ticket", required=True)
+    r.add_argument("--branch", default=None, help="branch to reap (else derived from --ticket)")
+    r.add_argument("--main-root", default=".", help="path to the main checkout (default cwd)")
+
     return parser.parse_args(argv)
+
+
+def _run_reap(args: argparse.Namespace) -> int:
+    import json
+
+    try:
+        receipt = reap_worktree(
+            ticket=args.ticket,
+            main_root=Path(args.main_root),
+            branch=args.branch,
+        )
+    except _GitError as exc:
+        sys.stderr.write(f"flow-worktree: {exc}\n")
+        return 1
+    sys.stdout.write(json.dumps(receipt, indent=2, sort_keys=True) + "\n")
+    return 0
 
 
 def cli_main(argv: list[str]) -> int:
     import json
 
     args = _parse_args(argv)
+    if args.cmd == "reap":
+        return _run_reap(args)
     extra = [s.strip() for s in args.copy.split(",")] if args.copy else []
     planned = (
         [s.strip() for s in args.planned_files.split(",") if s.strip()]

@@ -407,3 +407,207 @@ def test_resolve_base_default_retries_via_set_head(tmp_path):
 def test_resolve_base_default_fallback(tmp_path):
     run, _ = _base_runner([(1, ""), (1, "")])
     assert fw._resolve_base("@default", tmp_path, run) == "origin/main"
+
+
+# ─── reap subcommand ──────────────────────────────────────────────────────────
+
+
+def _porcelain(entries: list[tuple[str, str | None]]) -> str:
+    """Render `git worktree list --porcelain` text. None branch -> detached."""
+    blocks = []
+    for path, branch in entries:
+        lines = [f"worktree {path}", "HEAD abc123"]
+        if branch is None:
+            lines.append("detached")
+        else:
+            lines.append(f"branch refs/heads/{branch}")
+        blocks.append("\n".join(lines))
+    return "\n\n".join(blocks) + "\n"
+
+
+def test_parse_worktree_list_porcelain() -> None:
+    blob = _porcelain(
+        [
+            ("/main", "main"),
+            ("/main.worktrees/feature-FT-1-thing", "feature/FT-1-thing"),
+            ("/main.worktrees/detached", None),
+        ]
+    )
+    pairs = fw._parse_worktree_list(blob)
+    assert pairs == [
+        ("/main", "main"),
+        ("/main.worktrees/feature-FT-1-thing", "feature/FT-1-thing"),
+        ("/main.worktrees/detached", None),
+    ]
+
+
+def _reap_runner(*, worktrees: str, calls: list, remove_rc: int = 0, branch_rc: int = 0):
+    """Runner answering `git worktree list --porcelain` from `worktrees`; records
+    every call, and lets the worktree-remove / branch-delete return codes be set."""
+
+    def run(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        if args[:4] == ["git", "worktree", "list", "--porcelain"]:
+            return subprocess.CompletedProcess(args, 0, worktrees, "")
+        if args[:4] == ["git", "worktree", "remove", "--force"]:
+            return subprocess.CompletedProcess(
+                args, remove_rc, "", "" if remove_rc == 0 else "busy"
+            )
+        if args[:3] == ["git", "branch", "-D"]:
+            return subprocess.CompletedProcess(
+                args, branch_rc, "", "" if branch_rc == 0 else "gone"
+            )
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    return run
+
+
+def _seed_live_lease(ticket_dir: Path) -> None:
+    import lease
+
+    ticket_dir.mkdir(parents=True, exist_ok=True)
+    lease.acquire(
+        ticket_dir,
+        run_id="run-x",
+        ttl_seconds=3600,
+        now_iso="2999-01-01T00:00:00Z",
+        current_boot="boot-x",
+        hostname="host-x",
+        cwd="/cwd-x",
+    )
+
+
+def test_reap_removes_worktree_and_branch_when_free(tmp_path: Path) -> None:
+    wt = tmp_path / "main.worktrees" / "feature-FT-1-thing"
+    wt.mkdir(parents=True)
+    calls: list = []
+    runner = _reap_runner(
+        worktrees=_porcelain([(str(tmp_path / "main"), "main"), (str(wt), "feature/FT-1-thing")]),
+        calls=calls,
+    )
+    receipt = fw.reap_worktree(ticket="FT-1", main_root=tmp_path / "main", runner=runner)
+    assert receipt["worktree_removed"] is True
+    assert receipt["branch_deleted"] is True
+    assert receipt["branch"] == "feature/FT-1-thing"
+    assert receipt["skipped"] is None
+    assert any(c[:4] == ["git", "worktree", "remove", "--force"] for c in calls)
+    assert any(c[:3] == ["git", "branch", "-D"] for c in calls)
+
+
+def test_reap_skips_when_lease_live(tmp_path: Path) -> None:
+    wt = tmp_path / "main.worktrees" / "feature-FT-1-thing"
+    wt.mkdir(parents=True)
+    _seed_live_lease(wt / ".flow" / "runs" / "FT-1")
+    calls: list = []
+    runner = _reap_runner(
+        worktrees=_porcelain([(str(wt), "feature/FT-1-thing")]),
+        calls=calls,
+    )
+    receipt = fw.reap_worktree(ticket="FT-1", main_root=tmp_path / "main", runner=runner)
+    assert receipt["worktree_removed"] is False
+    assert receipt["branch_deleted"] is False
+    assert receipt["skipped"] and "live" in receipt["skipped"]
+    # a live session: touch NOTHING
+    assert not any(c[:4] == ["git", "worktree", "remove", "--force"] for c in calls)
+    assert not any(c[:3] == ["git", "branch", "-D"] for c in calls)
+
+
+def test_reap_idempotent_when_nothing_to_remove(tmp_path: Path) -> None:
+    calls: list = []
+    runner = _reap_runner(
+        worktrees=_porcelain([(str(tmp_path / "main"), "main")]),
+        calls=calls,
+    )
+    receipt = fw.reap_worktree(
+        ticket="FT-1", main_root=tmp_path / "main", branch="feature/FT-1-thing", runner=runner
+    )
+    assert receipt["worktree_removed"] is False
+    assert not any(c[:4] == ["git", "worktree", "remove", "--force"] for c in calls)
+    # branch was supplied, so a (tolerant) delete is still attempted; here it returns 0
+    assert receipt["branch"] == "feature/FT-1-thing"
+
+
+def test_reap_noop_when_no_branch_and_no_worktree(tmp_path: Path) -> None:
+    # neither a matching worktree nor an explicit --branch: a clean no-op,
+    # zero git mutations (the true idempotent path).
+    calls: list = []
+    runner = _reap_runner(
+        worktrees=_porcelain([(str(tmp_path / "main"), "main")]),
+        calls=calls,
+    )
+    receipt = fw.reap_worktree(ticket="FT-1", main_root=tmp_path / "main", runner=runner)
+    assert receipt["branch"] is None
+    assert receipt["worktree_removed"] is False and receipt["branch_deleted"] is False
+    assert not any(c[:3] == ["git", "branch", "-D"] for c in calls)
+    assert not any(c[:4] == ["git", "worktree", "remove", "--force"] for c in calls)
+
+
+def test_reap_tolerates_already_gone_branch(tmp_path: Path) -> None:
+    # a squash-merge can leave the branch already absent; `git branch -D` returns
+    # non-zero -> branch_deleted=False, no exception.
+    calls: list = []
+    runner = _reap_runner(
+        worktrees=_porcelain([(str(tmp_path / "main"), "main")]),
+        calls=calls,
+        branch_rc=1,
+    )
+    receipt = fw.reap_worktree(
+        ticket="FT-1", main_root=tmp_path / "main", branch="feature/FT-1-thing", runner=runner
+    )
+    assert receipt["branch_deleted"] is False
+    assert receipt["skipped"] is None
+
+
+def test_reap_deletes_leaked_branch_when_worktree_gone(tmp_path: Path) -> None:
+    # the worktree is already gone but the local branch leaked: delete it.
+    calls: list = []
+    runner = _reap_runner(
+        worktrees=_porcelain([(str(tmp_path / "main"), "main")]),
+        calls=calls,
+    )
+    receipt = fw.reap_worktree(
+        ticket="FT-1", main_root=tmp_path / "main", branch="feature/FT-1-thing", runner=runner
+    )
+    assert receipt["worktree_removed"] is False
+    assert receipt["branch_deleted"] is True
+    assert any(c == ["git", "branch", "-D", "feature/FT-1-thing"] for c in calls)
+
+
+def test_reap_remove_failure_skips_branch_delete(tmp_path: Path) -> None:
+    wt = tmp_path / "main.worktrees" / "feature-FT-1-thing"
+    wt.mkdir(parents=True)
+    calls: list = []
+    runner = _reap_runner(
+        worktrees=_porcelain([(str(wt), "feature/FT-1-thing")]),
+        calls=calls,
+        remove_rc=1,
+    )
+    receipt = fw.reap_worktree(ticket="FT-1", main_root=tmp_path / "main", runner=runner)
+    assert receipt["worktree_removed"] is False
+    assert receipt["branch_deleted"] is False
+    assert receipt["skipped"]
+    assert not any(c[:3] == ["git", "branch", "-D"] for c in calls)
+
+
+def test_reap_cli_prints_receipt(tmp_path: Path, monkeypatch, capsys) -> None:
+    calls: list = []
+    runner = _reap_runner(
+        worktrees=_porcelain([(str(tmp_path / "main"), "main")]),
+        calls=calls,
+    )
+    monkeypatch.setattr(fw, "_default_runner", lambda: runner)
+    (tmp_path / "main").mkdir()
+    rc = fw.cli_main(
+        [
+            "reap",
+            "--ticket",
+            "FT-1",
+            "--branch",
+            "feature/FT-1-thing",
+            "--main-root",
+            str(tmp_path / "main"),
+        ]
+    )
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert '"ticket": "FT-1"' in out and '"branch": "feature/FT-1-thing"' in out
