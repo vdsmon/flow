@@ -66,7 +66,9 @@ The read-only front half: fetch the ticket, design the plan WITH you in plan mod
 
 On approval (normal mode): the bootstrap (`flow_worktree.py create`) persists the plan, seeds the worktree, and stamps `planned_files` + `commit_type` + `commit_summary` (+ `e2e_recipe`) into frontmatter so the tail never pauses to ask — then `EnterWorktree(path="<worktree>")` switches this session in and you **continue straight into the `do` loop below** (its `init` resumes the spec-seeded run at `implement`).
 
-**Full procedure — interactive steps 1-7, the `--auto` headless path, and the exact `flow_worktree.py create` command: `references/verb-spec.md`.**
+In `--auto` mode the gate never parks: if the headless planner cannot self-approve (a clarifying question, sub-90% confidence, or a `BAIL`), the run defers the ticket in place (status → `deferred`, open questions commented) and exits, rather than asking via `AskUserQuestion` or `ExitPlanMode`.
+
+**Full procedure — interactive steps 1-7, the `--auto` headless path (incl. the defer-and-exit recipe), and the exact `flow_worktree.py create` command: `references/verb-spec.md`.**
 
 ## do verb — the loop
 
