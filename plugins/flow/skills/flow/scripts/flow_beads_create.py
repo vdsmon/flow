@@ -11,14 +11,23 @@ Used by the reflect sling-bead path and `/flow evolve`. Two guarantees:
 Stdlib-only. `bd` is invoked with cwd = the flow repo so it resolves that repo's
 .beads DB.
 
-Identity / convergence. `--dedup-key <s>` is reduced to a deterministic
-`evid:<fingerprint>` label (casefold + collapse non-alphanumerics, then sha256[:12]),
-so wording/format variance can't change it. Before creating, flow's beads are
-checked for that label in ANY status (open or closed); if one exists the create is
-skipped (exit 5). Anchor the key on the finding's primary file path (prose
-convention) so the same defect maps to the same fingerprint across runs — that is
-what stops the audit refiling open work AND re-proposing findings already closed or
-rejected, so the loop converges instead of churning.
+Identity / convergence (two-layer seam). `--dedup-key <s>` feeds two dedup nets:
+
+1. Exact: reduced to a deterministic `evid:<fingerprint>` label (casefold + collapse
+   non-alphanumerics, then sha256[:12]), so wording/format variance can't change it.
+   Before creating, flow's beads are checked for that label in ANY status (open or
+   closed); if one exists the create is skipped (exit 5).
+2. File-anchored fuzzy: for a `<file>::<symptom>` key, the file component (canonicalized
+   to its basename) is fingerprinted into an `evidfile:` anchor. On an exact miss, beads
+   carrying that anchor are listed and the new summary is token-compared (Jaccard over a
+   stemmed, stopword-filtered token set) against each candidate's title; a score over
+   THRESHOLD also dedups (exit 5). This catches re-discoveries of the same same-file
+   defect phrased differently — where the whole-key exact hash would mint a fresh slug.
+
+Anchor the key on the finding's primary file path (prose convention) so the same defect
+maps to the same fingerprint across runs — that is what stops the audit refiling open
+work AND re-proposing findings already closed or rejected, so the loop converges instead
+of churning.
 
 CLI:
   flow_beads_create.py --workspace-root <dir> --summary <s> --description <d>
@@ -67,6 +76,13 @@ class DuplicateBead(Exception):
 # every stored status, so dedup also catches closed/rejected findings (not just open)
 _ALL_STATUSES = "open,in_progress,blocked,deferred,closed"
 
+# function words only — NOT tuned to any one finding pair (symptom words stay)
+_STOPWORDS = frozenset({"a", "an", "the", "to", "of", "that", "and", "or", "for", "in", "on"})
+
+# 0.45 is calibrated on the single real pair available (flow-mst vs flow-9jk, ~0.61);
+# a distinct same-file finding scores well below it. Tunable as more real pairs appear.
+THRESHOLD = 0.45
+
 
 def fingerprint(raw: str) -> str:
     """Deterministic 12-hex fingerprint of a dedup key.
@@ -80,6 +96,32 @@ def fingerprint(raw: str) -> str:
     """
     norm = re.sub(r"[^a-z0-9]+", " ", raw.casefold()).strip()
     return hashlib.sha256(norm.encode("utf-8")).hexdigest()[:12]
+
+
+def _basename(p: str) -> str:
+    """Strip directory prefix so path-shape variance can't split the file anchor."""
+    return p.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
+
+
+def _symptom_tokens(text: str) -> frozenset[str]:
+    """Token set for fuzzy comparison: casefold, alnum-split, drop function words,
+    strip a single trailing 's' from tokens longer than 3 chars (light stemming)."""
+    raw = re.sub(r"[^a-z0-9]+", " ", text.casefold()).split()
+    out = set()
+    for tok in raw:
+        if tok in _STOPWORDS:
+            continue
+        if len(tok) > 3 and tok.endswith("s"):
+            tok = tok[:-1]
+        out.add(tok)
+    return frozenset(out)
+
+
+def _jaccard(a: frozenset[str], b: frozenset[str]) -> float:
+    union = a | b
+    if not union:
+        return 0.0
+    return len(a & b) / len(union)
 
 
 def _default_runner() -> Runner:
@@ -107,6 +149,35 @@ def _find_by_label(repo: Path, evid_label: str, run: Runner) -> str | None:
     )
     for item in items:
         if isinstance(item, dict) and item.get("id"):
+            return str(item["id"])
+    return None
+
+
+def _find_fuzzy_duplicate(
+    repo: Path, evidfile_label: str, new_summary: str, run: Runner
+) -> str | None:
+    """Return the key of a same-file candidate whose title is fuzzily equal to
+    new_summary (Jaccard >= THRESHOLD), or None."""
+    result = run(["bd", "list", "-l", evidfile_label, "--status", _ALL_STATUSES, "--json"], repo)
+    if result.returncode != 0:
+        raise BeadCreateError(f"bd list (fuzzy dedup check) failed: {result.stderr.strip()}")
+    try:
+        payload = json.loads(result.stdout or "[]")
+    except json.JSONDecodeError:
+        return None
+    items = (
+        payload
+        if isinstance(payload, list)
+        else payload.get("issues", [])
+        if isinstance(payload, dict)
+        else []
+    )
+    new_tokens = _symptom_tokens(new_summary)
+    for item in items:
+        if not isinstance(item, dict) or not item.get("id"):
+            continue
+        # bd list --json carries `title` (the one-liner), not `summary`
+        if _jaccard(new_tokens, _symptom_tokens(item.get("title", ""))) >= THRESHOLD:
             return str(item["id"])
     return None
 
@@ -141,6 +212,13 @@ def create_bead(
         if existing is not None:
             raise DuplicateBead(existing, dedup_key)
         labels.append(evid_label)
+        file_part, sep, _symptom = dedup_key.partition("::")
+        if sep:
+            evidfile_label = f"evidfile:{fingerprint(_basename(file_part))}"
+            fuzzy = _find_fuzzy_duplicate(repo, evidfile_label, summary, run)
+            if fuzzy is not None:
+                raise DuplicateBead(fuzzy, dedup_key)
+            labels.append(evidfile_label)
     args = ["bd", "create", summary, "--type", type, "--description", description]
     if labels:
         args += ["--labels", ",".join(labels)]
