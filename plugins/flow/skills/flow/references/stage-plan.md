@@ -44,11 +44,13 @@ You cannot wait for or solicit that approval yourself — just return a plan goo
    - **Files to change** — explicit paths, each with a one-line note on what
      changes there.
      This list is load-bearing: the implement stage confines edits to the planned files, so be complete and precise.
-     A NEW test file usually drags in enabling test-infra files that must ALSO be in this list, or the implement stage stalls on a reconcile: the package `__init__.py` a new test directory needs, and the target lib's test-runner config (e.g. a `[tool.pytest.ini_options] pythonpath` block) when the test or its conftest imports a shared test helper. Check whether the target test package is already importable and collectable under the chosen e2e runner; if not, the files that make it so are part of this plan, not an afterthought.
+     The implement stage is TDD, so it nearly always writes a NEW test file. List the concrete anticipated NEW test file path(s) it will create here — not only the cases (those live in Test strategy), the path itself — or state "no new test file" when the change adds none. This is what the bootstrap-derived `planned_files` stamps, so an unlisted test path makes the post-implement reconcile fire on essentially every run.
+     A NEW test file usually also drags in enabling test-infra files that must ALSO be in this list, or the implement stage stalls on a reconcile: the package `__init__.py` a new test directory needs, and the target lib's test-runner config (e.g. a `[tool.pytest.ini_options] pythonpath` block) when the test or its conftest imports a shared test helper. Check whether the target test package is already importable and collectable under the chosen e2e runner; if not, the files that make it so are part of this plan, not an afterthought.
    - **Approach** — the design.
      How the pieces fit, what existing patterns you reuse, any new module or interface and why.
    - **Test strategy** — what unit tests prove the change.
      The implement stage is TDD-mandatory, so name the cases the implementer should write.
+     When those cases need a new test file, list that file's path under **Files to change** (not here) so `planned_files` covers it.
    - **Risks** — what could go wrong, edge cases, migration concerns, anything
      the approver should weigh.
    - **Confidence** — a first-pass self-rating: a **Score (0-100%)**, then

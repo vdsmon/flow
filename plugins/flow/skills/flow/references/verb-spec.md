@@ -53,7 +53,7 @@ Everything from the bootstrap onward is shared.
      --commit-summary "<one-line summary from the plan>" \
      --e2e-recipe "<the e2e recipe from step 4 — omit ONLY when e2e is none>"
    ```
-   Derive `<slug>` from the ticket summary, and `--planned-files` from the plan's "files to change" list.
+   Derive `<slug>` from the ticket summary, and `--planned-files` from the plan's "Files to change" list — which (per stage-plan.md) already includes any anticipated NEW test file paths the TDD implement will create, so the stamped `planned_files` covers them.
    `--e2e-recipe` carries the recipe settled in step 4 (runner + command + env-prep + fixture + expected, or `skip: <reason>` / `test-ci-only`); pass it whenever e2e is enabled and omit it only when the handler is `none`.
    The bootstrap seeds state (plan pre-completed, ticket left pending), injects the plan, stamps `planned_files` + `commit_type` + `commit_summary` (+ `e2e_recipe` when given) into frontmatter (so the implement pre-hook, the commit stage, and the e2e stage never pause to ask the user — which is what lets the tail run unattended if you background it), points the worktree's memory store at this checkout's `.flow` (shared, so memory compounds across worktrees), copies gitignored config, and `mise trust`s the worktree.
    If e2e is enabled and you omit `--e2e-recipe`, create exits 2 (`_ConfigError`) — go back to step 4 and settle the recipe.
@@ -121,7 +121,7 @@ It replaces interactive steps 1-5; steps 6-7 (bootstrap + enter worktree) are sh
 
 5. **Branch on the returned block:**
    - **`NONE` (clean plan) AND the assessor rated >=90%** → auto-approve, no human gate.
-     Derive `--planned-files` from the plan's "Files to change" list, and `--commit-type` + `--commit-summary` from the Goal.
+     Derive `--planned-files` from the plan's "Files to change" list — which (per stage-plan.md) already includes any anticipated NEW test file paths the TDD implement will create, so the stamped `planned_files` covers them — and `--commit-type` + `--commit-summary` from the Goal.
      For `--e2e-recipe`, honor step 6's contract: when e2e is enabled (`workspace.toml [pipeline.handlers] e2e` is not `none`), pass the `--e2e-recipe "..."` value the user gave, else default it to `test-ci-only`; when the e2e handler is `none`, omit it.
      **Base off `--base @default`, NOT the current branch.** An autonomous run (the drainer launches `claude --bg "/flow <key> --auto"` from whatever branch the cockpit is on) must branch off the freshly-fetched default branch, never the launcher's HEAD — else the PR inherits the launcher's unmerged/stale commits and lands DIRTY. `@default` makes `flow_worktree.py` fetch origin and resolve `origin/<HEAD>`.
      Go straight to shared step 6 — there is no `ExitPlanMode` to call, because you never entered plan mode.
