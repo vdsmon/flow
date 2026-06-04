@@ -77,6 +77,18 @@ class _FakeTracker:
         self._record("transition", key, transition_id, fields)
         return {"success": True, "new_state": {"normalized": "in_progress"}}
 
+    def create(
+        self,
+        summary: dict,
+        description: dict,
+        type: str,
+        parent: str | None = None,
+        labels: list[str] | None = None,
+        assignee: str | None = None,
+    ) -> str:
+        self._record("create", summary, description, type, parent, labels, assignee)
+        return "FT-99"
+
     def comment(self, key: str, body: dict) -> None:
         self._record("comment", key, body)
 
@@ -315,6 +327,91 @@ def test_comment_invokes_tracker(tmp_path: Path) -> None:
     body = call_args[1]
     assert body == {"body": "looks good", "fmt": "md"}
     assert body["fmt"] == "md"
+
+
+def test_create_minimal_emits_key(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    _seed_workspace(tmp_path)
+    tk = _FakeTracker()
+    rc = tracker_cli.cli_main(
+        [
+            "--workspace-root",
+            str(tmp_path),
+            "create",
+            "--summary",
+            "New thing",
+            "--type",
+            "task",
+        ],
+        tracker_factory=_factory(tk),
+    )
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {"key": "FT-99"}
+    name, call_args, _ = tk.calls[0]
+    assert name == "create"
+    summary, description, ttype, parent, labels, assignee = call_args
+    assert summary == {"body": "New thing", "fmt": "md"}
+    assert description == {"body": "", "fmt": "md"}
+    assert summary["fmt"] == "md"
+    assert description["fmt"] == "md"
+    assert ttype == "task"
+    assert parent is None
+    assert labels is None
+    assert assignee is None
+
+
+def test_create_repeatable_labels(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path)
+    tk = _FakeTracker()
+    rc = tracker_cli.cli_main(
+        [
+            "--workspace-root",
+            str(tmp_path),
+            "create",
+            "--summary",
+            "X",
+            "--type",
+            "task",
+            "--label",
+            "a",
+            "--label",
+            "b",
+        ],
+        tracker_factory=_factory(tk),
+    )
+    assert rc == 0
+    _, call_args, _ = tk.calls[0]
+    labels = call_args[4]
+    assert labels == ["a", "b"]
+
+
+def test_create_parent_and_assignee_passthrough(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path)
+    tk = _FakeTracker()
+    rc = tracker_cli.cli_main(
+        [
+            "--workspace-root",
+            str(tmp_path),
+            "create",
+            "--summary",
+            "X",
+            "--description",
+            "details",
+            "--type",
+            "subtask",
+            "--parent",
+            "FT-1",
+            "--assignee",
+            "acct-123",
+        ],
+        tracker_factory=_factory(tk),
+    )
+    assert rc == 0
+    _, call_args, _ = tk.calls[0]
+    _summary, description, _ttype, parent, _labels, assignee = call_args
+    assert description == {"body": "details", "fmt": "md"}
+    assert parent == "FT-1"
+    assert assignee == "acct-123"
 
 
 def test_is_shipped_emits_state(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
