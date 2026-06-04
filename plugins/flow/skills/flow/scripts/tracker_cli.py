@@ -12,6 +12,8 @@ Subcommands:
   state --key FT-1                       tracker.state(key) -> JSON
   transition --key FT-1 --to-state in_progress [--field k=v ...]
   comment --key FT-1 --text "..."        tracker.comment(key, body)
+  create --summary "..." --type task [--description "..." --parent K --label L --assignee A]
+                                         tracker.create(...) -> {"key": new_key}
   is-shipped --key FT-1                  tracker.is_shipped(key) -> JSON
   download-attachments --key FT-1 --out <dir> [--max-bytes N]   download to <dir>
 
@@ -182,6 +184,21 @@ def _cmd_comment(tracker_obj: Any, args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_create(tracker_obj: Any, args: argparse.Namespace) -> int:
+    summary = {"body": args.summary, "fmt": "md"}
+    description = {"body": args.description, "fmt": "md"}
+    new_key = tracker_obj.create(
+        summary,
+        description,
+        args.type,
+        parent=args.parent,
+        labels=args.label,
+        assignee=args.assignee,
+    )
+    sys.stdout.write(json.dumps({"key": new_key}) + "\n")
+    return 0
+
+
 def _cmd_is_shipped(tracker_obj: Any, args: argparse.Namespace) -> int:
     ship = tracker_obj.is_shipped(args.key)
     sys.stdout.write(json.dumps(ship, indent=2, sort_keys=True, default=str) + "\n")
@@ -261,6 +278,14 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     p_comment.add_argument("--key", required=True)
     p_comment.add_argument("--text", required=True)
 
+    p_create = sub.add_parser("create", help="tracker.create(summary, description, type, ...)")
+    p_create.add_argument("--summary", required=True)
+    p_create.add_argument("--description", default="")
+    p_create.add_argument("--type", required=True)
+    p_create.add_argument("--parent", default=None)
+    p_create.add_argument("--label", action="append", default=None, help="label (repeatable).")
+    p_create.add_argument("--assignee", default=None)
+
     p_ship = sub.add_parser("is-shipped", help="tracker.is_shipped(key)")
     p_ship.add_argument("--key", required=True)
 
@@ -283,6 +308,7 @@ _DISPATCH: dict[str, Any] = {
     "state": _cmd_state,
     "transition": _cmd_transition,
     "comment": _cmd_comment,
+    "create": _cmd_create,
     "is-shipped": _cmd_is_shipped,
     "download-attachments": _cmd_download_attachments,
 }

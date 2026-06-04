@@ -727,6 +727,7 @@ Reads `.flow/workspace.toml` `[tracker]` block, flattens the per-backend sub-blo
 | `state` | `--key FT-1` | `tracker.state(key)` → JSON |
 | `transition` | `--key FT-1 --to-state in_progress [--field k=v ...]` | Looks up transition id by `to_normalized_state` / `to_state` / `name` (any match). Fields k=v pairs string-only in mvp. |
 | `comment` | `--key FT-1 --text "..."` | Wraps body as `{format: markdown, value: text}`. |
+| `create` | `--summary "..." --description "..." --type task [--parent K] [--label L ...] [--assignee A]` | `tracker.create(...)` → `{"key": new_key}` JSON. |
 | `is-shipped` | `--key FT-1` | `tracker.is_shipped(key)` → JSON. |
 
 Exit codes: 0=ok, 1=tracker error (network/auth/unknown key/TrackerError subclass), 2=workspace config invalid, 3=invalid args.
