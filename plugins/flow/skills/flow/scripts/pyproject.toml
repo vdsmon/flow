@@ -45,3 +45,10 @@ allowed-unresolved-imports = ["pytest"]
 # silently checked zero files. Only tests/_fixtures stays excluded: those are
 # deliberately type-loose sample inputs.
 exclude = ["tests/_fixtures"]
+
+[tool.coverage.run]
+# measure the engine modules, not the test files (conftest lives under tests/).
+omit = ["tests/*"]
+
+[tool.coverage.report]
+show_missing = true
