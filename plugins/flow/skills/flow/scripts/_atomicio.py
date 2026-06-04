@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import stat
 import tempfile
 from pathlib import Path
 
@@ -22,6 +23,15 @@ def atomic_write_bytes(path: Path, data: bytes) -> None:
             fh.write(data)
             fh.flush()
             os.fsync(fh.fileno())
+        # mkstemp makes the temp 0o600; preserve the destination's prior mode
+        # so a rewrite does not silently narrow it. new file falls back to 0o644
+        # (literal, not umask-masked, so a restrictive umask can't reintroduce 0o600).
+        try:
+            mode = stat.S_IMODE(os.stat(path).st_mode)
+        except FileNotFoundError:
+            mode = 0o644
+        with contextlib.suppress(OSError):
+            os.chmod(tmp, mode)
         os.replace(tmp, path)
     except BaseException:
         with contextlib.suppress(OSError):
