@@ -50,6 +50,9 @@ _PLACEHOLDER_RE = re.compile(r"""^[<"'$.]|^-""")
 # metric.cli_main, so the trailing flags are metric.py's surface, not recall's.
 _FORWARDERS = {("recall.py", "--metric"): "metric.py"}
 
+# A bare script name as it appears in MODULE.md backticks/prose (no path prefix).
+_MODULE_NAME_RE = re.compile(r"[a-z_]+\.py")
+
 
 @dataclass(frozen=True)
 class Surface:
@@ -274,6 +277,21 @@ def validate(inv: Invocation) -> list[Problem]:
 
 
 # --- driver ------------------------------------------------------------------
+
+
+def scripts_missing_from_module_md(
+    scripts_dir: Path = SCRIPTS_DIR, module_text: str | None = None
+) -> set[str]:
+    """Non-test *.py files on disk not named anywhere in MODULE.md."""
+    if module_text is None:
+        module_text = (scripts_dir / "MODULE.md").read_text(encoding="utf-8")
+    on_disk = {
+        p.name
+        for p in scripts_dir.glob("*.py")
+        if not p.name.startswith("test") and p.name != "conftest.py"
+    }
+    named = set(_MODULE_NAME_RE.findall(module_text))
+    return on_disk - named
 
 
 def docs_to_check() -> list[Path]:

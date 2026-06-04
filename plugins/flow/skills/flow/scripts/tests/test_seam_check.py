@@ -102,3 +102,31 @@ def test_forwarder_folds_metric_surface() -> None:
 def test_live_docs_are_green() -> None:
     """The real SKILL.md + references/ must have zero prose<->CLI seam errors."""
     assert seam_check.main([]) == 0
+
+
+def test_module_md_covers_all_live_scripts() -> None:
+    """Every non-test script on disk must be named in the real MODULE.md."""
+    assert seam_check.scripts_missing_from_module_md() == set()
+
+
+def test_flags_script_missing_from_module_md(tmp_path) -> None:
+    (tmp_path / "foo.py").write_text("")
+    missing = seam_check.scripts_missing_from_module_md(
+        scripts_dir=tmp_path, module_text="nothing here"
+    )
+    assert missing == {"foo.py"}
+
+
+def test_underscore_libs_are_required(tmp_path) -> None:
+    (tmp_path / "_bar.py").write_text("")
+    missing = seam_check.scripts_missing_from_module_md(
+        scripts_dir=tmp_path, module_text="some other text"
+    )
+    assert "_bar.py" in missing
+
+
+def test_excludes_test_and_conftest(tmp_path) -> None:
+    (tmp_path / "test_x.py").write_text("")
+    (tmp_path / "conftest.py").write_text("")
+    missing = seam_check.scripts_missing_from_module_md(scripts_dir=tmp_path, module_text="")
+    assert missing == set()
