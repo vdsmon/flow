@@ -3,7 +3,8 @@
 The `create_pr` stage handler for GitHub workspaces. The bare flow plugin ships no
 inline create_pr (PR mechanics are platform-specific); this is flow's own GitHub
 handler, wired as `create_pr = "inline"` in the dogfood workspace. Other workspaces
-keep `create_pr = "none"` and never invoke it. PRs open ready for review (not draft).
+keep `create_pr = "none"` and never invoke it. PRs open ready for review by default;
+set `[create_pr] draft = true` in `workspace.toml` (or pass `--draft`) to open drafts.
 
 Idempotent on resume: if a PR already exists for the branch it returns that URL
 instead of erroring, so a re-run after a crash does not double-open. The title comes
@@ -16,7 +17,7 @@ Prints `PR_URL=<url>` on stdout; the do-loop captures that into
 notification read the `PR_URL=` token.
 
 CLI:
-  create_pr.py --workspace-root <dir> [--base main] [--ticket KEY]
+  create_pr.py --workspace-root <dir> [--base main] [--ticket KEY] [--draft]
 
 Exit codes:
   0 = ok (prints PR_URL=<url>)
@@ -33,9 +34,24 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 
+from _workspace import WorkspaceConfigError, load_workspace_toml
+
 Runner = Callable[[list[str]], subprocess.CompletedProcess[str]]
 
 _PROTECTED = {"main", "master", "dev", "develop"}
+
+
+def _draft_config(workspace_root: Path) -> bool:
+    """`[create_pr] draft` from workspace.toml (bool); default False (open, ready)."""
+    try:
+        config = load_workspace_toml(workspace_root)
+    except WorkspaceConfigError:
+        return False
+    section = config.get("create_pr")
+    if not isinstance(section, dict):
+        return False
+    value = section.get("draft")
+    return value if isinstance(value, bool) else False
 
 
 class ToolError(Exception):
@@ -90,9 +106,12 @@ def _existing_pr_url(branch: str, runner: Runner) -> str | None:
 
 
 def open_or_get_pr(
-    workspace_root: Path, *, base: str = "main", runner: Runner | None = None
+    workspace_root: Path, *, base: str = "main", draft: bool = False, runner: Runner | None = None
 ) -> str:
-    """Push the run's branch and return its PR URL, opening one (ready) if absent."""
+    """Push the run's branch and return its PR URL, opening one if absent.
+
+    Opens ready-for-review by default; `draft=True` opens a draft PR.
+    """
     run = runner or _default_runner(workspace_root)
     branch = _ok(run(["git", "rev-parse", "--abbrev-ref", "HEAD"]), "git rev-parse").strip()
     if not branch or branch in _PROTECTED:
@@ -109,24 +128,22 @@ def open_or_get_pr(
     # already-merged commits, and --fill then mistitles from the branch name.
     subject = _ok(run(["git", "log", "-1", "--format=%s"]), "git log").strip()
     body = _ok(run(["git", "log", "-1", "--format=%b"]), "git log").strip()
-    out = _ok(
-        run(
-            [
-                "gh",
-                "pr",
-                "create",
-                "--base",
-                base,
-                "--head",
-                branch,
-                "--title",
-                subject,
-                "--body",
-                body or subject,
-            ],
-        ),
-        "gh pr create",
-    )
+    create_args = [
+        "gh",
+        "pr",
+        "create",
+        "--base",
+        base,
+        "--head",
+        branch,
+        "--title",
+        subject,
+        "--body",
+        body or subject,
+    ]
+    if draft:
+        create_args.append("--draft")
+    out = _ok(run(create_args), "gh pr create")
     # gh prints the PR URL as the last non-empty stdout line
     url = next((ln.strip() for ln in reversed(out.splitlines()) if ln.strip()), "")
     if not url:
@@ -142,9 +159,17 @@ def cli_main(argv: list[str]) -> int:
     parser.add_argument("--workspace-root", required=True)
     parser.add_argument("--base", default="main")
     parser.add_argument("--ticket", default=None)  # context only
+    parser.add_argument(
+        "--draft",
+        action="store_true",
+        default=None,
+        help="open a draft PR (overrides the [create_pr] draft workspace setting).",
+    )
     args = parser.parse_args(argv)
+    ws = Path(args.workspace_root)
+    draft = args.draft if args.draft is not None else _draft_config(ws)
     try:
-        url = open_or_get_pr(Path(args.workspace_root), base=args.base)
+        url = open_or_get_pr(ws, base=args.base, draft=draft)
     except RefusedBranch as exc:
         print(str(exc), file=sys.stderr)
         return 3
