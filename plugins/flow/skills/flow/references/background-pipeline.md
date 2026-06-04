@@ -55,6 +55,8 @@ PushNotification is harness-local (terminal + phone via Remote Control): it rend
 
 ## Blockers
 
+The front-half `--auto` plan gate never parks: when the headless planner cannot self-approve (a clarifying question, sub-90% confidence, or a `BAIL`), the run defers the ticket in place (status → `deferred`, open questions commented) and exits, rather than pausing (see `verb-spec.md`). That is distinct from a genuine mid-tail stage ambiguity below, which still pauses for a human.
+
 A stage that needs a decision raises `AskUserQuestion`.
 Attached, you answer inline. Backgrounded, the harness surfaces it as needs-input in `claude agents` — attach, answer, detach, and the run resumes.
 To minimize pauses, the bootstrap pre-populates the frontmatter keys the tail would otherwise ask for: `planned_files` (read by the implement pre-handler hook that records the diff baseline, and reused by the commit stage), `commit_type` + `commit_summary` (read by the commit stage), and `e2e_recipe` when e2e is opted in.
