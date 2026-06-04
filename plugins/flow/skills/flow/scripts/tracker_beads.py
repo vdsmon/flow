@@ -28,10 +28,11 @@ import json
 import os
 import re
 import subprocess
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
 
+from _runner import KwRunner as Runner
+from _runner import kw_default_runner as _default_runner
 from tracker import (
     Attachment,
     Capability,
@@ -125,8 +126,6 @@ _RE_PERMISSION = re.compile(r"(?i)(permission denied|forbidden|not authorized)")
 
 _BD_VERSION_RE = re.compile(r"bd version (\d+)\.(\d+)\.(\d+)")
 
-Runner = Callable[..., subprocess.CompletedProcess[str]]
-
 
 # ─── Exceptions ──────────────────────────────────────────────────────────────
 
@@ -144,26 +143,6 @@ class _BeadsError(TrackerError):
 
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
-
-
-def _default_runner() -> Runner:
-    def runner(
-        args: list[str],
-        *,
-        cwd: Path | None = None,
-        check: bool = False,
-        input: str | None = None,
-    ) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(
-            args,
-            cwd=str(cwd) if cwd else None,
-            check=check,
-            capture_output=True,
-            text=True,
-            input=input,
-        )
-
-    return runner
 
 
 def _content_to_markdown(body: Content) -> str:

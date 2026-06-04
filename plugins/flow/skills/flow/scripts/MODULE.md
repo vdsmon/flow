@@ -79,7 +79,7 @@ The live "which script does what" map. One line per script: purpose + CLI surfac
 
 ## Shared helpers (lib)
 
-`_atomicio.py` (atomic temp-write + fsync), `_timeutil.py` (UTC ISO8601 parse; `require_z` for the strict contract), `_workspace.py` (workspace.toml load), `_registry.py` (stage-registry parse), `_locking.py` (flock retry), `_jsonl.py` (JSONL sidecar parse), `maintainer.py` (maintainer-mode detection via the `[maintainer]` marker; gates the self-evolution loop).
+`_atomicio.py` (atomic temp-write + fsync), `_timeutil.py` (UTC ISO8601 parse; `require_z` for the strict contract), `_workspace.py` (workspace.toml load), `_registry.py` (stage-registry parse), `_locking.py` (flock retry), `_jsonl.py` (JSONL sidecar parse), `_runner.py` (subprocess-runner factories: positional-cwd `Runner`/`default_runner` for diff_extract/branch_ticket/recall_pending/flow_worktree, keyword-only `KwRunner`/`kw_default_runner` for init/tracker_beads), `maintainer.py` (maintainer-mode detection via the `[maintainer]` marker; gates the self-evolution loop).
 
 ## Dev tooling
 

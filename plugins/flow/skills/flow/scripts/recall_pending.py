@@ -41,37 +41,19 @@ import contextlib
 import hashlib
 import json
 import os
-import subprocess
 import sys
 import tempfile
-from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 from _jsonl import iter_jsonl
 from _locking import LockContention, flock_retry
+from _runner import Runner
+from _runner import default_runner as _default_runner
 from _timeutil import parse_iso
 
-Runner = Callable[..., subprocess.CompletedProcess[str]]
-
 _WINDOW = timedelta(hours=24)
-
-
-# ─── Runner ──────────────────────────────────────────────────────────────────
-
-
-def _default_runner() -> Runner:
-    def run(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(
-            args,
-            cwd=str(cwd),
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-
-    return run
 
 
 # ─── Paths ───────────────────────────────────────────────────────────────────
