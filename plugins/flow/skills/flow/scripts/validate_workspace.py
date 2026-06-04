@@ -89,29 +89,27 @@ def _validate_tracker_block(data: dict[str, Any], result: ValidationResult) -> s
     return backend
 
 
-def _validate_pipeline_block(
-    data: dict[str, Any],
-    registry: list[StageEntry],
-    compounding: bool,
-    result: ValidationResult,
-) -> tuple[list[str], dict[str, str]]:
-    pipeline = data.get("pipeline")
-    if not isinstance(pipeline, dict):
-        result.add("pipeline", "missing or not a table")
-        return [], {}
-
+def _parse_stages(pipeline: dict[str, Any], result: ValidationResult) -> list[str] | None:
     stages_raw = pipeline.get("stages")
     if not isinstance(stages_raw, list) or not stages_raw:
         result.add("pipeline.stages", "must be a non-empty list[str]")
-        return [], {}
+        return None
     stages: list[str] = []
     for i, s in enumerate(stages_raw):
         if not isinstance(s, str):
             result.add(f"pipeline.stages[{i}]", "entry is not a string")
             continue
         stages.append(s)
+    return stages
 
-    by_name = {e.name: e for e in registry}
+
+def _check_stage_registration(
+    stages: list[str],
+    by_name: dict[str, StageEntry],
+    registry: list[StageEntry],
+    compounding: bool,
+    result: ValidationResult,
+) -> None:
     for s in stages:
         if s not in by_name:
             result.add(
@@ -119,7 +117,6 @@ def _validate_pipeline_block(
                 f"stage {s!r} is not registered in stage-registry.toml",
             )
 
-    # Required (always)
     for entry in registry:
         if entry.required and entry.name not in stages:
             result.add(
@@ -132,7 +129,12 @@ def _validate_pipeline_block(
                 f"stage {entry.name!r} required when [memory] compounding=true",
             )
 
-    # Predecessors
+
+def _check_predecessors(
+    stages: list[str],
+    by_name: dict[str, StageEntry],
+    result: ValidationResult,
+) -> None:
     stage_index = {name: i for i, name in enumerate(stages)}
     for name in stages:
         entry = by_name.get(name)
@@ -147,11 +149,14 @@ def _validate_pipeline_block(
                     f"stage {name!r} must follow predecessor {pred!r}",
                 )
 
-    # Handlers
+
+def _parse_handlers(
+    pipeline: dict[str, Any], stages: list[str], result: ValidationResult
+) -> dict[str, str]:
     handlers_raw = pipeline.get("handlers")
     if not isinstance(handlers_raw, dict):
         result.add("pipeline.handlers", "missing or not a table")
-        return stages, {}
+        return {}
     handlers: dict[str, str] = {}
     for stage in stages:
         value = handlers_raw.get(stage)
@@ -166,7 +171,28 @@ def _validate_pipeline_block(
             )
             continue
         handlers[stage] = value
-    return stages, handlers
+    return handlers
+
+
+def _validate_pipeline_block(
+    data: dict[str, Any],
+    registry: list[StageEntry],
+    compounding: bool,
+    result: ValidationResult,
+) -> tuple[list[str], dict[str, str]]:
+    pipeline = data.get("pipeline")
+    if not isinstance(pipeline, dict):
+        result.add("pipeline", "missing or not a table")
+        return [], {}
+
+    stages = _parse_stages(pipeline, result)
+    if stages is None:
+        return [], {}
+
+    by_name = {e.name: e for e in registry}
+    _check_stage_registration(stages, by_name, registry, compounding, result)
+    _check_predecessors(stages, by_name, result)
+    return stages, _parse_handlers(pipeline, stages, result)
 
 
 def _validate_memory_block(data: dict[str, Any], result: ValidationResult) -> bool:

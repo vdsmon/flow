@@ -127,6 +127,72 @@ def default_search_roots(repo_root: Path | None = None) -> list[Path]:
 # ─── Loader ──────────────────────────────────────────────────────────────────
 
 
+def _str_list_field(entry: dict[str, Any], key: str) -> list[str] | None:
+    v = entry.get(key, [])
+    if not isinstance(v, list):
+        return None
+    out: list[str] = []
+    for x in v:
+        if not isinstance(x, str):
+            return None
+        out.append(x)
+    return out
+
+
+def _validate_skill_entry(path: Path, stage_name: str, entry: Any) -> ManifestSkill | ManifestError:
+    if not isinstance(entry, dict):
+        return ManifestError(path=str(path), reason=f"skills.{stage_name} is not a table")
+    if stage_name not in _KNOWN_STAGES:
+        return ManifestError(
+            path=str(path),
+            reason=f"skills.{stage_name} is not a registered flow stage",
+        )
+
+    handler_string = entry.get("handler_string")
+    if not isinstance(handler_string, str) or not handler_string.startswith("skill:"):
+        return ManifestError(
+            path=str(path),
+            reason=f"skills.{stage_name}.handler_string must be 'skill:<name>[:<args>]'",
+        )
+
+    skill_name = handler_string[len("skill:") :].split(":", 1)[0]
+    if not skill_name:
+        return ManifestError(
+            path=str(path),
+            reason=(
+                f"skills.{stage_name}.handler_string must have a non-empty "
+                f"skill name (got {handler_string!r})"
+            ),
+        )
+
+    lists: dict[str, list[str]] = {}
+    for key in ("required_capabilities", "required_outputs", "side_effects", "stage_compatibility"):
+        parsed = _str_list_field(entry, key)
+        if parsed is None:
+            return ManifestError(
+                path=str(path),
+                reason=f"skills.{stage_name}.{key} must be list[str]",
+            )
+        lists[key] = parsed
+
+    args_schema = entry.get("args_schema", {})
+    if not isinstance(args_schema, dict):
+        return ManifestError(
+            path=str(path),
+            reason=f"skills.{stage_name}.args_schema must be a table",
+        )
+
+    return ManifestSkill(
+        stage=stage_name,
+        handler_string=handler_string,
+        required_capabilities=lists["required_capabilities"],
+        args_schema=args_schema,
+        required_outputs=lists["required_outputs"],
+        side_effects=lists["side_effects"],
+        stage_compatibility=lists["stage_compatibility"],
+    )
+
+
 def _validate_manifest(path: Path, data: dict[str, Any]) -> Manifest | ManifestError:
     schema_version = data.get("schema_version")
     if schema_version != SCHEMA_VERSION:
@@ -153,88 +219,10 @@ def _validate_manifest(path: Path, data: dict[str, Any]) -> Manifest | ManifestE
 
     skills: list[ManifestSkill] = []
     for stage_name, entry in skills_table.items():
-        if not isinstance(entry, dict):
-            return ManifestError(path=str(path), reason=f"skills.{stage_name} is not a table")
-        if stage_name not in _KNOWN_STAGES:
-            return ManifestError(
-                path=str(path),
-                reason=f"skills.{stage_name} is not a registered flow stage",
-            )
-
-        handler_string = entry.get("handler_string")
-        if not isinstance(handler_string, str) or not handler_string.startswith("skill:"):
-            return ManifestError(
-                path=str(path),
-                reason=f"skills.{stage_name}.handler_string must be 'skill:<name>[:<args>]'",
-            )
-
-        skill_name = handler_string[len("skill:") :].split(":", 1)[0]
-        if not skill_name:
-            return ManifestError(
-                path=str(path),
-                reason=(
-                    f"skills.{stage_name}.handler_string must have a non-empty "
-                    f"skill name (got {handler_string!r})"
-                ),
-            )
-
-        def _str_list(key: str, *, _entry: dict[str, Any] = entry) -> list[str] | None:
-            v = _entry.get(key, [])
-            if not isinstance(v, list):
-                return None
-            out: list[str] = []
-            for x in v:
-                if not isinstance(x, str):
-                    return None
-                out.append(x)
-            return out
-
-        required_capabilities = _str_list("required_capabilities")
-        if required_capabilities is None:
-            return ManifestError(
-                path=str(path),
-                reason=f"skills.{stage_name}.required_capabilities must be list[str]",
-            )
-
-        required_outputs = _str_list("required_outputs")
-        if required_outputs is None:
-            return ManifestError(
-                path=str(path),
-                reason=f"skills.{stage_name}.required_outputs must be list[str]",
-            )
-
-        side_effects = _str_list("side_effects")
-        if side_effects is None:
-            return ManifestError(
-                path=str(path),
-                reason=f"skills.{stage_name}.side_effects must be list[str]",
-            )
-
-        stage_compatibility = _str_list("stage_compatibility")
-        if stage_compatibility is None:
-            return ManifestError(
-                path=str(path),
-                reason=f"skills.{stage_name}.stage_compatibility must be list[str]",
-            )
-
-        args_schema = entry.get("args_schema", {})
-        if not isinstance(args_schema, dict):
-            return ManifestError(
-                path=str(path),
-                reason=f"skills.{stage_name}.args_schema must be a table",
-            )
-
-        skills.append(
-            ManifestSkill(
-                stage=stage_name,
-                handler_string=handler_string,
-                required_capabilities=required_capabilities,
-                args_schema=args_schema,
-                required_outputs=required_outputs,
-                side_effects=side_effects,
-                stage_compatibility=stage_compatibility,
-            )
-        )
+        result = _validate_skill_entry(path, stage_name, entry)
+        if isinstance(result, ManifestError):
+            return result
+        skills.append(result)
 
     return Manifest(
         path=str(path),
