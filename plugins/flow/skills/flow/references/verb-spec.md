@@ -6,8 +6,8 @@ The read-only front half: fetch the ticket, design the plan WITH the user, then 
 This is the human/machine boundary — you own the spec and the eventual PR review; the machine owns everything between. Backgrounding that tail to run unattended (`/bg`) is your call at any point, not something spec does for you.
 
 If `$ARGUMENTS` carries `--auto` (alias `--aa` / `--yolo`), follow the **Auto-approve path (`--auto`)** below instead of steps 1-7.
-That path swaps the interactive plan + `ExitPlanMode` gate for a headless `Plan` subagent that self-approves ONLY when it has no clarifying questions, and otherwise falls back to the interactive steps.
-Everything from the bootstrap onward is shared.
+That path swaps the interactive plan + `ExitPlanMode` gate for a headless `Plan` subagent that self-approves ONLY when it has no clarifying questions and rates >=90%. `--auto` NEVER enters plan mode and NEVER parks: when it cannot self-approve it defers the bead + comments the open decision (beads) or exits with a report (generic), then STOPS — it does not fall back to an interactive gate.
+The shared bootstrap (steps 6-7) runs only on the clean-approve branch.
 
 1. **Be in plan mode.** The front half must perform no writes.
    If you are not already in plan mode, call `EnterPlanMode` before doing anything else.
@@ -74,7 +74,7 @@ Everything from the bootstrap onward is shared.
 
 For tickets you already know are simple and whose body is descriptive: auto-approve the plan WITHOUT your intervention, but ONLY when the planner has no clarifying questions.
 This is a conditional gate, not a blanket skip — a three-way branch on the headless planner's output.
-It replaces interactive steps 1-5; steps 6-7 (bootstrap + enter worktree) are shared, run them exactly as above.
+It replaces interactive steps 1-5. Only the clean-approve branch flows into shared steps 6-7 (bootstrap + enter worktree); the can't-self-approve branch defers + comments + exits before any write.
 
 1. **Do NOT `EnterPlanMode`.**
    The headless path performs only reads until the intended bootstrap write — there is no interactive plan to gate, so the plan-mode lock is unnecessary.
@@ -125,9 +125,21 @@ It replaces interactive steps 1-5; steps 6-7 (bootstrap + enter worktree) are sh
      For `--e2e-recipe`, honor step 6's contract: when e2e is enabled (`workspace.toml [pipeline.handlers] e2e` is not `none`), pass the `--e2e-recipe "..."` value the user gave, else default it to `test-ci-only`; when the e2e handler is `none`, omit it.
      **Base off `--base @default`, NOT the current branch.** An autonomous run (the drainer launches `claude --bg "/flow <key> --auto"` from whatever branch the cockpit is on) must branch off the freshly-fetched default branch, never the launcher's HEAD — else the PR inherits the launcher's unmerged/stale commits and lands DIRTY. `@default` makes `flow_worktree.py` fetch origin and resolve `origin/<HEAD>`.
      Go straight to shared step 6 — there is no `ExitPlanMode` to call, because you never entered plan mode.
-   - **Clarifying questions present, a sub-90% rating with any user-reachable gap, OR a `BAIL` line** → the human is needed; `--auto` degrades to interactive exactly when intervention has value.
-     `EnterPlanMode`, present the captured plan text AND the clarifying questions (or the bail reason) to the user, then run the normal interactive flow — steps 4-5 above: iterate the plan with the user, settle the e2e recipe, `ExitPlanMode` = the gate.
-     Then continue into shared step 6.
+   - **Clarifying questions present, a sub-90% rating with any user-reachable gap, OR a `BAIL` line** → the human is needed, but `--auto` must NOT park. A headless/backgrounded run (the evolve `--ship` drainer's `claude --bg "/flow <key> --auto"`) cannot answer an `EnterPlanMode` + `AskUserQuestion` gate. So instead of degrading to interactive, defer the work in place and exit cleanly:
+     - **Beads tracker** (the maintainer/evolve context): defer the bead and comment the open decision on it, then STOP. The Plan subagent ran pre-bootstrap, so no worktree exists yet — there is nothing to tear down.
+       ```bash
+       bd update <KEY> --status deferred
+       bd comment <KEY> "flow --auto could not self-approve. Open decision(s):
+       <the clarifying questions / sub-90% residual / BAIL reason>
 
-   Either branch ends at the same bootstrap + enter-worktree (steps 6-7).
+       Drafted plan:
+       <the captured plan text>
+
+       To resume: answer above, re-open (bd update <KEY> --status open), then run /flow <KEY> interactively."
+       ```
+       `bd ready` excludes deferred beads, so the evolve drainer (`evolve_select.py`'s `bd ready -l evolve`) stops re-launching it and the autonomous loop converges. Do NOT mint a second `needs-human` bead — it would itself be ready+unblocked and re-enter the drainer (a meta-loop); deferring in place avoids that surface.
+     - **Generic (non-beads) tracker:** the Tracker Protocol has no defer primitive, and `--auto` at scale is a maintainer/evolve-only concern. Exit cleanly, printing the captured plan + the open questions (or bail reason) + a "re-run `/flow <KEY>` interactively" hint. No park, no bootstrap.
+
+   Only the clean-approve branch reaches the bootstrap + enter-worktree (steps 6-7); the can't-self-approve branch ends here.
    `--auto`'s only effect is skipping the interactive plan gate; it does not change how the tail runs. As always, whether the tail runs unattended is the user's separate `/bg` choice (see step 7), independent of `--auto`.
+   The interactive (no-`--auto`) path is unchanged — it still gates at `ExitPlanMode` and degrades to the interactive plan exactly as steps 4-5 describe.

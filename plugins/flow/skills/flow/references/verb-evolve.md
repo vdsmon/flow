@@ -93,14 +93,14 @@ Returns JSON `{launch:[keys], skipped_in_flight, held_backpressure, held_hot, he
 claude --bg "/flow <key> --auto"
 ```
 
-Each spawns a detached run that auto-plans and either opens a draft PR or **parks** asking a clarifying question (degrades to interactive when it cannot self-approve at ≥90% confidence). Park is intended, not a failure.
+Each spawns a detached run that auto-plans and either opens a draft PR or, when it cannot self-approve at ≥90% confidence, **defers its bead + comments the open decision on it + exits** (it never parks — a backgrounded run cannot answer an interactive gate). The deferred bead drops out of `bd ready`, so the next `--ship` pass does not re-launch it and the loop converges.
 
 ### C. Report
 
 Summarise: merged (keys), launched (keys), and everything held — `skipped_in_flight`, `held_backpressure`, `held_hot`, `held_anchor`, `not_green`, `blocked`, `skipped_hot`. Tell the user how to follow along:
 
 - Monitor with `claude agents --json` (the plain `claude agents` needs a TTY).
-- Answer any **parked** sessions (they degraded to interactive on a real question).
+- Drain **deferred** evolve beads — `bd list -l evolve --status deferred`. For each, read the open-decision comment, answer it, re-open (`bd update <KEY> --status open`), then run `/flow <KEY>` interactively to drive it.
 - Remaining draft PRs (hot / non-green / conflicted) are theirs to review and merge.
 
-Expect parks, not all PRs: terse audit beads will sometimes score under 90% or raise questions. A high park rate is a signal the audit evidence needs to be richer (a finding for the miners in section 2), not a drainer bug.
+Expect some deferred beads, not all PRs: terse audit beads will sometimes score under 90% or raise questions. A high defer rate is a signal the audit evidence needs to be richer (a finding for the miners in section 2), not a drainer bug.
