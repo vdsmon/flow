@@ -34,17 +34,15 @@ from __future__ import annotations
 import argparse
 import secrets
 import shutil
-import subprocess
 import sys
-from collections.abc import Callable
 from pathlib import Path
 
 import _atomicio
 import _workspace
 import state
 import ticket_frontmatter
-
-Runner = Callable[[list[str], Path], subprocess.CompletedProcess[str]]
+from _runner import Runner
+from _runner import default_runner as _default_runner
 
 # Gitignored dev config the autonomous tail needs but a fresh worktree won't have.
 _DEFAULT_COPY = [
@@ -56,13 +54,6 @@ _DEFAULT_COPY = [
     "mise.local.toml",
     ".mise.local.toml",
 ]
-
-
-def _default_runner() -> Runner:
-    def run(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(args, cwd=str(cwd), capture_output=True, text=True, check=False)
-
-    return run
 
 
 class _GitError(Exception):

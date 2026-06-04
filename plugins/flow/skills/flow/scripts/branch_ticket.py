@@ -17,28 +17,13 @@ from __future__ import annotations
 
 import argparse
 import re
-import subprocess
 import sys
-from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
 import _workspace
-
-Runner = Callable[..., subprocess.CompletedProcess[str]]
-
-
-def _default_runner() -> Runner:
-    def run(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(
-            args,
-            cwd=str(cwd),
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-
-    return run
+from _runner import Runner
+from _runner import default_runner as _default_runner
 
 
 @dataclass(frozen=True)

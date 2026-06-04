@@ -34,7 +34,6 @@ import argparse
 import json
 import os
 import re
-import subprocess
 import sys
 import time
 import tomllib
@@ -47,6 +46,8 @@ from typing import Any, Literal
 
 from _atomicio import atomic_write_text
 from _registry import StageEntry, load_registry
+from _runner import KwRunner as Runner
+from _runner import kw_default_runner as _default_runner
 from bundle_discover import DiscoveryResult
 from bundle_discover import discover as bundle_discover_run
 
@@ -68,12 +69,6 @@ PhaseLiteral = Literal[
 
 # Phases run in order. Phases skipped by backend (e.g. bd_init for jira) are
 # still recorded as "completed" so --resume bookkeeping stays simple.
-
-
-# A minimal injectable subprocess shim. `args`, `cwd`, `check=False` is the
-# only call shape init.py uses. Tests pass a fake returning a stub with
-# `.returncode`, `.stdout`, `.stderr`.
-Runner = Callable[..., subprocess.CompletedProcess[str]]
 
 
 @dataclass(frozen=True)
@@ -449,24 +444,6 @@ def _compose_handlers(
 
 
 # ─── Beads init + verify ────────────────────────────────────────────────────
-
-
-def _default_runner() -> Runner:
-    def runner(
-        args: list[str],
-        *,
-        cwd: Path | None = None,
-        check: bool = False,
-    ) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(
-            args,
-            cwd=str(cwd) if cwd else None,
-            check=check,
-            capture_output=True,
-            text=True,
-        )
-
-    return runner
 
 
 def _run_bd_init(
