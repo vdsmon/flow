@@ -45,6 +45,7 @@ Spec is the default because fire-and-forget is the primary path.
 | First token | Verb | Reference |
 |------|------|------|
 | `init` (optionally `--reconfigure`, `--resume`) | init | `references/verb-init.md` |
+| `new` | new | `references/verb-new.md` |
 | `spec` (optionally `<ticket>`, `--auto`, `--e2e-recipe "..."`) | spec (gate below) | `references/verb-spec.md` |
 | `do` (optionally `<ticket>`) | do (skeleton below) | `references/verb-do.md` |
 | `recall <query> [--branch X --top-n N]` | recall | `references/verb-recall.md` |
