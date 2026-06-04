@@ -124,13 +124,22 @@ def partition(
 
     candidates: parsed `bd ready -l evolve` items (id, priority, labels, issue_type,
     description). Epics are skipped (you launch a run on leaf work, not a container).
+    Proposal beads (label `proposal`, filed by `/flow evolve --generative`) are held
+    for the maintainer to triage and never auto-launched — the judgment side of the
+    vision's auto-vs-propose line.
     """
+    held_proposal = [
+        c["id"] for c in candidates if c.get("id") and "proposal" in (c.get("labels") or [])
+    ]
     skipped_in_flight = [c["id"] for c in candidates if c.get("id") in inflight_keys]
 
     active = [
         c
         for c in candidates
-        if c.get("id") and c.get("issue_type") != "epic" and c["id"] not in inflight_keys
+        if c.get("id")
+        and c.get("issue_type") != "epic"
+        and "proposal" not in (c.get("labels") or [])
+        and c["id"] not in inflight_keys
     ]
     active.sort(key=lambda c: (c.get("priority", 99), str(c.get("id"))))
 
@@ -141,6 +150,7 @@ def partition(
             "held_backpressure": True,
             "held_hot": [],
             "held_anchor": [],
+            "held_proposal": held_proposal,
         }
 
     budget = min(cap - open_pr_count, concurrency)
@@ -175,6 +185,7 @@ def partition(
         "held_backpressure": False,
         "held_hot": held_hot,
         "held_anchor": held_anchor,
+        "held_proposal": held_proposal,
     }
 
 
