@@ -62,39 +62,54 @@ def test_rollup_status_context_shape():
 def test_green_clean_leaf_merges():
     prs = [_pr(1, "flow-a")]
     out = er.classify(prs, _idx(**{"flow-a": ["evolve", "audit"]}))
-    assert out["merge"] == [{"pr": 1, "key": "flow-a", "is_draft": False}]
+    assert out["merge"] == [
+        {"pr": 1, "key": "flow-a", "branch": "feature/flow-a-some-desc", "is_draft": False}
+    ]
 
 
 def test_hot_bead_skipped_even_when_green():
     prs = [_pr(1, "flow-h")]
     out = er.classify(prs, _idx(**{"flow-h": ["evolve", "hot"]}))
     assert out["merge"] == []
-    assert out["skipped_hot"] == [{"pr": 1, "key": "flow-h"}]
+    assert out["skipped_hot"] == [{"pr": 1, "key": "flow-h", "branch": "feature/flow-h-some-desc"}]
 
 
 def test_pending_is_not_green():
     prs = [_pr(1, "flow-a", rollup=PENDING)]
     out = er.classify(prs, _idx(**{"flow-a": ["evolve"]}))
-    assert out["not_green"] == [{"pr": 1, "key": "flow-a"}]
+    assert out["not_green"] == [{"pr": 1, "key": "flow-a", "branch": "feature/flow-a-some-desc"}]
     assert out["merge"] == []
 
 
 def test_dirty_is_blocked():
     prs = [_pr(1, "flow-a", state="DIRTY")]
     out = er.classify(prs, _idx(**{"flow-a": ["evolve"]}))
-    assert out["blocked"] == [{"pr": 1, "key": "flow-a", "reason": "DIRTY"}]
+    assert out["blocked"] == [
+        {"pr": 1, "key": "flow-a", "branch": "feature/flow-a-some-desc", "reason": "DIRTY"}
+    ]
 
 
 def test_behind_is_blocked():
     prs = [_pr(1, "flow-a", state="BEHIND")]
     out = er.classify(prs, _idx(**{"flow-a": ["evolve"]}))
-    assert out["blocked"] == [{"pr": 1, "key": "flow-a", "reason": "BEHIND"}]
+    assert out["blocked"] == [
+        {"pr": 1, "key": "flow-a", "branch": "feature/flow-a-some-desc", "reason": "BEHIND"}
+    ]
 
 
 def test_draft_but_green_is_mergeable():
     prs = [_pr(1, "flow-a", state="DRAFT", draft=True)]
     out = er.classify(prs, _idx(**{"flow-a": ["evolve"]}))
-    assert out["merge"] == [{"pr": 1, "key": "flow-a", "is_draft": True}]
+    assert out["merge"] == [
+        {"pr": 1, "key": "flow-a", "branch": "feature/flow-a-some-desc", "is_draft": True}
+    ]
+
+
+def test_merge_entry_carries_branch():
+    # the reap loop tears down the local branch + worktree; it needs headRefName.
+    prs = [_pr(7, "flow-a")]
+    out = er.classify(prs, _idx(**{"flow-a": ["evolve"]}))
+    assert out["merge"][0]["branch"] == "feature/flow-a-some-desc"
 
 
 def test_non_flow_branch_ignored():
@@ -155,9 +170,11 @@ def test_reap_integration(tmp_path):
         ],
     )
     out = er.reap(ws, runner=run)
-    assert out["merge"] == [{"pr": 1, "key": "flow-a", "is_draft": False}]
-    assert out["skipped_hot"] == [{"pr": 2, "key": "flow-h"}]
-    assert out["not_green"] == [{"pr": 3, "key": "flow-b"}]
+    assert out["merge"] == [
+        {"pr": 1, "key": "flow-a", "branch": "feature/flow-a-some-desc", "is_draft": False}
+    ]
+    assert out["skipped_hot"] == [{"pr": 2, "key": "flow-h", "branch": "feature/flow-h-some-desc"}]
+    assert out["not_green"] == [{"pr": 3, "key": "flow-b", "branch": "feature/flow-b-some-desc"}]
 
 
 def test_reap_not_maintainer(tmp_path, monkeypatch):

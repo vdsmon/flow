@@ -125,7 +125,7 @@ def classify(prs: list[dict], labels_index: dict[str, list[str]]) -> dict:
             continue  # not one of our evolve PRs
         labels = labels_index[key]
         number = pr.get("number")
-        entry = {"pr": number, "key": key}
+        entry = {"pr": number, "key": key, "branch": ref}
 
         if not rollup_is_green(pr.get("statusCheckRollup") or []):
             not_green.append(entry)
