@@ -799,3 +799,104 @@ def test_finish_cli_flag_contract_matches_skill_prose() -> None:
                 "deadbeef",
             ]
         )
+
+
+# ─── owned workspace.toml drift auto-reconcile (flow-u3s) ──────────────────────
+
+
+def _write_baseline(tmp_path: Path, ticket: str, planned_files: list[str]) -> None:
+    bpath = tmp_path / ".flow" / "runs" / ticket / "baseline.json"
+    bpath.parent.mkdir(parents=True, exist_ok=True)
+    bpath.write_text(
+        json.dumps({"head_sha": "x", "planned_files": planned_files, "blobs": {}}),
+        encoding="utf-8",
+    )
+
+
+def test_next_auto_reconciles_owned_workspace_drift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_workspace(tmp_path, stages=["ticket", "plan"], compounding=False)
+    _stub_git_head(monkeypatch)
+    ds.cmd_init(tmp_path, "FT-1")
+    _write_baseline(tmp_path, "FT-1", [".flow/workspace.toml"])
+    wt = tmp_path / ".flow" / "workspace.toml"
+    wt.write_text(wt.read_text(encoding="utf-8") + "\n# owned edit\n", encoding="utf-8")
+
+    sha_path = tmp_path / ".flow" / "runs" / "FT-1" / "snapshot.sha"
+    sha_before = sha_path.read_text(encoding="utf-8")
+
+    rc, payload = ds.cmd_next(tmp_path, "FT-1")
+    assert rc == 0, payload
+    assert payload.get("stage") == "ticket"
+    assert payload.get("reconciled_drift") == "workspace_toml"
+    # snapshot refreshed to the new baseline
+    assert sha_path.read_text(encoding="utf-8") != sha_before
+
+    # a second next finds no residual drift and does not re-reconcile
+    ds.cmd_finish(tmp_path, "FT-1", "ticket", "completed")
+    rc2, payload2 = ds.cmd_next(tmp_path, "FT-1")
+    assert rc2 == 0, payload2
+    assert "reconciled_drift" not in payload2
+
+
+def test_next_refuses_unowned_workspace_drift_without_baseline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # no baseline.json → planned set empty → owned reconcile MUST NOT fire.
+    _write_workspace(tmp_path, stages=["ticket", "plan"], compounding=False)
+    _stub_git_head(monkeypatch)
+    ds.cmd_init(tmp_path, "FT-1")
+    wt = tmp_path / ".flow" / "workspace.toml"
+    wt.write_text(wt.read_text(encoding="utf-8") + "\n# edit\n", encoding="utf-8")
+    rc, payload = ds.cmd_next(tmp_path, "FT-1")
+    assert rc == 1
+    assert "drift" in payload["error"]
+
+
+def test_next_owned_drift_reload_failure_returns_1(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_workspace(tmp_path, stages=["ticket", "plan"], compounding=False)
+    _stub_git_head(monkeypatch)
+    ds.cmd_init(tmp_path, "FT-1")
+    _write_baseline(tmp_path, "FT-1", [".flow/workspace.toml"])
+    wt = tmp_path / ".flow" / "workspace.toml"
+    wt.write_text(wt.read_text(encoding="utf-8") + "\n# owned edit\n", encoding="utf-8")
+
+    def boom(*args: Any, **kwargs: Any) -> Any:
+        del args, kwargs
+        raise OSError("disk full")
+
+    monkeypatch.setattr(ds, "write_snapshot", boom)
+    rc, payload = ds.cmd_next(tmp_path, "FT-1")
+    assert rc == 1
+    # `detail` present keeps the do-loop's exit-1 classification on the drift
+    # branch (not run-state-corruption).
+    assert payload.get("detail") == "drift: workspace_toml"
+
+
+def test_next_owned_drift_lost_lease_returns_7_without_reconcile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # owned drift AND a lost lease: the lease guard must win (rc 7) and the
+    # snapshot must NOT be refreshed (reconcile deferred past the lease check).
+    _write_workspace(tmp_path, stages=["ticket", "plan"], compounding=False)
+    _stub_git_head(monkeypatch)
+    ds.cmd_init(tmp_path, "FT-1")
+    _write_baseline(tmp_path, "FT-1", [".flow/workspace.toml"])
+    wt = tmp_path / ".flow" / "workspace.toml"
+    wt.write_text(wt.read_text(encoding="utf-8") + "\n# owned edit\n", encoding="utf-8")
+
+    lock = tmp_path / ".flow" / "runs" / "FT-1" / "run.lock"
+    data = json.loads(lock.read_text(encoding="utf-8"))
+    data["run_id"] = "someone-else"
+    lock.write_text(json.dumps(data), encoding="utf-8")
+
+    sha_path = tmp_path / ".flow" / "runs" / "FT-1" / "snapshot.sha"
+    sha_before = sha_path.read_bytes()
+
+    rc, payload = ds.cmd_next(tmp_path, "FT-1")
+    assert rc == 7
+    assert payload["error"] == "lost lease"
+    assert sha_path.read_bytes() == sha_before

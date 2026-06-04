@@ -244,3 +244,93 @@ def test_cli_verify_drift_exit_1(tmp_path: Path) -> None:
         ]
     )
     assert rc == 1
+
+
+# ─── drifted_components / classify_drift ───────────────────────────────────────
+
+
+def test_drifted_components_workspace_toml_only() -> None:
+    stored = {"workspace_toml": "a", "stage_registry": "r", "handlers": {}}
+    current = {"workspace_toml": "b", "stage_registry": "r", "handlers": {}}
+    assert snapshot.drifted_components(stored, current) == ["workspace_toml"]
+
+
+def test_drifted_components_workspace_and_stage_registry() -> None:
+    stored = {"workspace_toml": "a", "stage_registry": "r", "handlers": {}}
+    current = {"workspace_toml": "b", "stage_registry": "s", "handlers": {}}
+    assert snapshot.drifted_components(stored, current) == ["workspace_toml", "stage_registry"]
+
+
+def test_drifted_components_handler_co_drift() -> None:
+    stored = {
+        "workspace_toml": "a",
+        "stage_registry": "r",
+        "handlers": {"plan": {"tree_hash": "1"}},
+    }
+    current = {
+        "workspace_toml": "b",
+        "stage_registry": "r",
+        "handlers": {"plan": {"tree_hash": "2"}},
+    }
+    assert snapshot.drifted_components(stored, current) == ["workspace_toml", "handler plan"]
+
+
+def test_drifted_components_identical_is_empty() -> None:
+    snap = {"workspace_toml": "a", "stage_registry": "r", "handlers": {"plan": {"tree_hash": "1"}}}
+    assert snapshot.drifted_components(snap, dict(snap)) == []
+
+
+def test_name_drift_output_unchanged() -> None:
+    # regression guard on the formatter refactor: byte-identical to the old body.
+    ws = {"workspace_toml": "a", "stage_registry": "r", "handlers": {}}
+    ws2 = {"workspace_toml": "b", "stage_registry": "r", "handlers": {}}
+    assert snapshot._name_drift(ws, ws2) == "drift: workspace_toml"
+
+    both = {"workspace_toml": "b", "stage_registry": "s", "handlers": {}}
+    assert snapshot._name_drift(ws, both) == "drift: workspace_toml, stage_registry"
+
+    h1 = {"workspace_toml": "a", "stage_registry": "r", "handlers": {"plan": {"t": "1"}}}
+    h2 = {"workspace_toml": "a", "stage_registry": "r", "handlers": {"plan": {"t": "2"}}}
+    assert snapshot._name_drift(h1, h2) == "drift: handler plan"
+
+    same = {"workspace_toml": "a", "stage_registry": "r", "handlers": {}}
+    assert snapshot._name_drift(same, dict(same)) == (
+        "drift: master_hash mismatch (component diff inconclusive)"
+    )
+
+
+def test_classify_drift_no_snapshot_is_true() -> None:
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        skill_root = _make_skill_root(tmp_path)
+        workspace_root = _make_workspace(tmp_path, _bare_workspace_text())
+        ok, detail, comps = snapshot.classify_drift(workspace_root, "FT-1", skill_root=skill_root)
+        assert ok is True
+        assert detail == "no snapshot to verify"
+        assert comps == []
+
+
+def test_classify_drift_match(tmp_path: Path) -> None:
+    skill_root = _make_skill_root(tmp_path)
+    workspace_root = _make_workspace(tmp_path, _bare_workspace_text())
+    snapshot.write_snapshot(workspace_root, "FT-1", skill_root=skill_root)
+    ok, detail, comps = snapshot.classify_drift(workspace_root, "FT-1", skill_root=skill_root)
+    assert ok is True
+    assert detail == "match"
+    assert comps == []
+
+
+def test_classify_drift_names_components(tmp_path: Path) -> None:
+    skill_root = _make_skill_root(tmp_path)
+    workspace_root = _make_workspace(tmp_path, _bare_workspace_text())
+    snapshot.write_snapshot(workspace_root, "FT-1", skill_root=skill_root)
+    _write(
+        workspace_root / ".flow" / "workspace.toml",
+        _bare_workspace_text() + "\n# edit\n",
+    )
+    ok, detail, comps = snapshot.classify_drift(workspace_root, "FT-1", skill_root=skill_root)
+    assert ok is False
+    assert comps == ["workspace_toml"]
+    assert detail == "drift: workspace_toml"
