@@ -571,10 +571,12 @@ Exit 0=applied or already_applied (idempotent), 1=usage/IO error, 2=refused (out
 
 1. **TOML frontmatter scope** — flat scalars + string lists only. Nested tables
    on hand-edit trigger read-side quarantine; write-side aborts with exit 2.
-2. **No content-ownership check on commit** — `diff_extract` records baseline +
-   captures implement-diff, but the commit-gate ("refuse if working tree
-   contains modifications outside expected file set") is dispatcher-side and
-   not wired in 8-mvp.
+2. **Content-ownership check on commit — RESOLVED (v0.25.18).** `diff_extract
+   check-ownership` is now wired into the `commit` stage
+   (`references/stage-commit.md`): it refuses a working tree with changes outside
+   the reconciled `planned_files`, fail-safe (a clean exit-3 refusal, never a
+   silent commit). Filename-level; a hunk-level ownership check stays a deeper
+   future refinement.
 3. **lint-ticket `required_fields`** — only 3 stages get non-empty lists. Other
    stages get universal-only.
 4. **No retry knob** for ticket-frontmatter lock contention — hard-coded 3×1s.
