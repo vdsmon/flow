@@ -43,6 +43,7 @@ import _atomicio
 import _workspace
 import state
 import ticket_frontmatter
+from _runner import default_runner as _default_runner
 
 Runner = Callable[[list[str], Path], subprocess.CompletedProcess[str]]
 
@@ -56,13 +57,6 @@ _DEFAULT_COPY = [
     "mise.local.toml",
     ".mise.local.toml",
 ]
-
-
-def _default_runner() -> Runner:
-    def run(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(args, cwd=str(cwd), capture_output=True, text=True, check=False)
-
-    return run
 
 
 class _GitError(Exception):

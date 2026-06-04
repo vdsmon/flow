@@ -16,6 +16,11 @@ from pathlib import Path
 from typing import Any
 
 
+def quarantine_path(base: Path) -> Path:
+    """Sidecar path for malformed lines of `base`: `<base>.quarantine`."""
+    return base.with_name(base.name + ".quarantine")
+
+
 def append_quarantine(sidecar: Path, raw_line: str, reason: str) -> None:
     """Append one `{reason, raw}` record to the quarantine sidecar (fsynced)."""
     sidecar.parent.mkdir(parents=True, exist_ok=True)
@@ -79,4 +84,4 @@ def iter_jsonl(path: Path, quarantine_sidecar: Path) -> Iterator[dict[str, Any]]
             yield entry
 
 
-__all__ = ["append_quarantine", "iter_jsonl"]
+__all__ = ["append_quarantine", "iter_jsonl", "quarantine_path"]

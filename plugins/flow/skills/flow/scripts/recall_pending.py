@@ -41,36 +41,18 @@ import contextlib
 import hashlib
 import json
 import os
-import subprocess
 import sys
 import tempfile
-from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from _jsonl import iter_jsonl
+from _jsonl import iter_jsonl, quarantine_path
 from _locking import LockContention, flock_retry
-
-Runner = Callable[..., subprocess.CompletedProcess[str]]
+from _runner import Runner
+from _runner import default_runner as _default_runner
 
 _WINDOW = timedelta(hours=24)
-
-
-# ─── Runner ──────────────────────────────────────────────────────────────────
-
-
-def _default_runner() -> Runner:
-    def run(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(
-            args,
-            cwd=str(cwd),
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-
-    return run
 
 
 # ─── Paths ───────────────────────────────────────────────────────────────────
@@ -85,8 +67,7 @@ def _lock_path(workspace_root: Path) -> Path:
 
 
 def _quarantine_path(workspace_root: Path) -> Path:
-    path = recall_pending_path(workspace_root)
-    return path.with_name(path.name + ".quarantine")
+    return quarantine_path(recall_pending_path(workspace_root))
 
 
 def _stale_path(workspace_root: Path) -> Path:

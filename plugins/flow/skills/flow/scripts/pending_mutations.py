@@ -41,7 +41,7 @@ from pathlib import Path
 from typing import Any
 
 from _atomicio import atomic_write_text
-from _jsonl import iter_jsonl
+from _jsonl import iter_jsonl, quarantine_path
 from _locking import LockContention, flock_retry
 
 VALID_OPS: tuple[str, ...] = ("create", "edit", "transition", "comment", "link")
@@ -69,8 +69,7 @@ def _lock_path(workspace_root: Path) -> Path:
 
 
 def _quarantine_path(workspace_root: Path) -> Path:
-    path = pending_mutations_path(workspace_root)
-    return path.with_name(path.name + ".quarantine")
+    return quarantine_path(pending_mutations_path(workspace_root))
 
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
