@@ -51,6 +51,7 @@ from typing import Any
 
 from _jsonl import iter_jsonl
 from _locking import LockContention, flock_retry
+from _timeutil import parse_iso
 
 Runner = Callable[..., subprocess.CompletedProcess[str]]
 
@@ -108,17 +109,6 @@ def _utcnow_iso() -> str:
 def compute_pending_id(hook_observed_at: str, branch: str, head_sha: str, cwd: str) -> str:
     src = hook_observed_at + branch + head_sha + cwd
     return hashlib.sha256(src.encode("utf-8")).hexdigest()[:16]
-
-
-def _parse_iso(value: str) -> datetime | None:
-    """Parse a UTC ISO8601 timestamp into a tz-aware datetime, or None on failure."""
-    try:
-        dt = datetime.fromisoformat(value)
-    except (ValueError, TypeError):
-        return None
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=UTC)
-    return dt
 
 
 def _append_line(path: Path, entry: dict[str, Any]) -> None:
@@ -241,7 +231,7 @@ def promote_matching(
     """
     runner = runner or _default_runner()
     cwd_path = Path(cwd)
-    now = _parse_iso(now_iso) or datetime.now(UTC)
+    now = parse_iso(now_iso) or datetime.now(UTC)
     cutoff = now - _WINDOW
 
     path = recall_pending_path(workspace_root)
@@ -254,7 +244,7 @@ def promote_matching(
     with flock_retry(_lock_path(workspace_root)):
         entries = list(iter_jsonl(path, quarantine))
         for entry in entries:
-            observed = _parse_iso(str(entry.get("hook_observed_at", "")))
+            observed = parse_iso(str(entry.get("hook_observed_at", "")))
             if observed is not None and observed < cutoff:
                 stale.append(entry)
                 continue

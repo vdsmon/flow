@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Any
 
 from _atomicio import atomic_write_text
+from _timeutil import parse_iso
 
 EXIT_INVALID_ARGS = 3
 
@@ -61,16 +62,6 @@ class Progress:
 
 def _utcnow_iso() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-def _parse_iso(value: str) -> datetime | None:
-    try:
-        dt = datetime.fromisoformat(value)
-    except (ValueError, TypeError):
-        return None
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=UTC)
-    return dt
 
 
 # ─── Paths ───────────────────────────────────────────────────────────────────
@@ -166,8 +157,8 @@ def identity_ok(
     """
     if progress.run_id != run_id or progress.stage != stage or progress.ticket != ticket:
         return False
-    wrote_at = _parse_iso(progress.wrote_at)
-    started = _parse_iso(stage_started_at_iso)
+    wrote_at = parse_iso(progress.wrote_at)
+    started = parse_iso(stage_started_at_iso)
     if wrote_at is None or started is None:
         return False
     return wrote_at >= started
@@ -237,8 +228,8 @@ def detect_hung(
     (progress.wrote_at - prev.wrote_at), not against now: it asks whether real
     time passed while the work stayed frozen, which is why prev is required.
     """
-    now = _parse_iso(now_iso)
-    wrote_at = _parse_iso(progress.wrote_at)
+    now = parse_iso(now_iso)
+    wrote_at = parse_iso(progress.wrote_at)
     if (
         now is not None
         and wrote_at is not None
@@ -249,7 +240,7 @@ def detect_hung(
     if prev is not None:
         if prev.seq == progress.seq:
             return WEDGED
-        prev_wrote = _parse_iso(prev.wrote_at)
+        prev_wrote = parse_iso(prev.wrote_at)
         if (
             prev.last_artifact == progress.last_artifact
             and prev.current_op == progress.current_op

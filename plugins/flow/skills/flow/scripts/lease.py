@@ -38,6 +38,7 @@ from pathlib import Path
 
 from _atomicio import atomic_write_text
 from _locking import flock_blocking
+from _timeutil import parse_iso
 
 EXIT_LEASE_LOST = 7
 
@@ -90,18 +91,8 @@ def _utcnow_iso() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _parse_iso(value: str) -> datetime | None:
-    try:
-        dt = datetime.fromisoformat(value)
-    except (ValueError, TypeError):
-        return None
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=UTC)
-    return dt
-
-
 def _expiry_iso(now_iso: str, ttl_seconds: int) -> str:
-    now = _parse_iso(now_iso)
+    now = parse_iso(now_iso)
     if now is None:
         raise LeaseError(f"unparseable now_iso: {now_iso!r}")
     expires = now + timedelta(seconds=ttl_seconds)
@@ -190,8 +181,8 @@ def read_lease(ticket_dir: Path) -> Lease | None:
 
 def is_expired(lease: Lease, now_iso: str) -> bool:
     """True when now >= lease_expires_at. Equality counts as expired."""
-    now = _parse_iso(now_iso)
-    expires = _parse_iso(lease.lease_expires_at)
+    now = parse_iso(now_iso)
+    expires = parse_iso(lease.lease_expires_at)
     if now is None or expires is None:
         return True
     return now >= expires

@@ -42,6 +42,7 @@ from typing import Any
 
 import _memory_paths
 from _jsonl import append_quarantine
+from _timeutil import parse_iso
 
 ATTR_VIA_FLOW = "shipped_via_flow"
 ATTR_NOT_ATTRIBUTED = "shipped_backend_not_attributed"
@@ -60,20 +61,9 @@ def _utcnow_iso() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _parse_iso(value: str) -> datetime | None:
-    """Parse a UTC ISO8601 timestamp into a tz-aware datetime, or None on failure."""
-    try:
-        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except (ValueError, TypeError, AttributeError):
-        return None
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=UTC)
-    return dt
-
-
 def default_window(now_iso: str) -> tuple[str, str]:
     """Return (since_iso, until_iso) defaults: until=now, since=14d-ago at 00:00 UTC."""
-    now = _parse_iso(now_iso)
+    now = parse_iso(now_iso)
     if now is None:
         raise ValueError(f"now is not a UTC ISO8601 timestamp: {now_iso!r}")
     since_day = (now - timedelta(days=WINDOW_DAYS)).replace(
@@ -193,8 +183,8 @@ def compute(
     accepted for symmetry with the CLI default-window derivation; the window here
     is taken from the explicit since/until.
     """
-    since = _parse_iso(since_iso)
-    until = _parse_iso(until_iso)
+    since = parse_iso(since_iso)
+    until = parse_iso(until_iso)
     if since is None:
         raise ValueError(f"since is not a UTC ISO8601 timestamp: {since_iso!r}")
     if until is None:
@@ -206,7 +196,7 @@ def compute(
     tickets: list[dict[str, Any]] = []
 
     for event in load_ship_events(workspace_root, namespace):
-        shipped_at = _parse_iso(str(event.get("shipped_at")))
+        shipped_at = parse_iso(str(event.get("shipped_at")))
         if shipped_at is None or not (since <= shipped_at < until):
             continue
         attribution = classify_attribution(workspace_root, event)
@@ -292,7 +282,7 @@ def compute_checkpoint(
     equals `mode` and its initialized_at parses and is <= until. The per-mode
     `shipped_via_flow` is summed across the included participants.
     """
-    until = _parse_iso(until_iso)
+    until = parse_iso(until_iso)
     if until is None:
         raise ValueError(f"until is not a UTC ISO8601 timestamp: {until_iso!r}")
 
@@ -305,7 +295,7 @@ def compute_checkpoint(
         if entry.get("checkpoint_mode") != mode:
             continue
         initialized_at = _participant_initialized_at(entry)
-        init_dt = _parse_iso(initialized_at) if initialized_at else None
+        init_dt = parse_iso(initialized_at) if initialized_at else None
         if init_dt is None or init_dt > until:
             continue
         ws_root = _participant_workspace_root(entry)
@@ -353,9 +343,9 @@ def _resolve_window(args: argparse.Namespace, now_iso: str) -> tuple[str, str]:
     default_since, default_until = default_window(now_iso)
     until_iso = f"{args.until}T00:00:00Z" if args.until else default_until
     since_iso = f"{args.since}T00:00:00Z" if args.since else default_since
-    if _parse_iso(until_iso) is None:
+    if parse_iso(until_iso) is None:
         raise ValueError(f"--until is not YYYY-MM-DD: {args.until!r}")
-    if _parse_iso(since_iso) is None:
+    if parse_iso(since_iso) is None:
         raise ValueError(f"--since is not YYYY-MM-DD: {args.since!r}")
     return since_iso, until_iso
 

@@ -41,6 +41,7 @@ from typing import Any
 
 import ticket_frontmatter
 from _memory_paths import ship_events_dir
+from _timeutil import parse_iso
 
 TREND_PREFIX = "trend: "
 WINDOW_DAYS = 7
@@ -70,19 +71,6 @@ NEXT_ACTIONS: frozenset[str] = frozenset(
 )
 
 
-# ─── Time helpers ────────────────────────────────────────────────────────────
-
-
-def _parse_iso(value: str) -> datetime.datetime | None:
-    """Parse a UTC ISO8601 Z timestamp. Returns None if it does not parse."""
-    if not isinstance(value, str) or not value.endswith("Z"):
-        return None
-    try:
-        return datetime.datetime.fromisoformat(value[:-1]).replace(tzinfo=datetime.UTC)
-    except ValueError:
-        return None
-
-
 # ─── Trend from ship-events ──────────────────────────────────────────────────
 
 
@@ -106,7 +94,7 @@ def _shipped_timestamps(workspace_root: Path, namespace: str) -> list[datetime.d
             continue
         if not isinstance(data, dict):
             continue
-        ts = _parse_iso(data.get("shipped_at", ""))
+        ts = parse_iso(data.get("shipped_at", ""), require_z=True)
         if ts is not None:
             out.append(ts)
     return out
@@ -194,7 +182,7 @@ def validate(
         if not isinstance(fm.get("trend_evidence"), dict):
             violations.append("trend_evidence: missing or not a block")
         else:
-            now = _parse_iso(now_iso)
+            now = parse_iso(now_iso, require_z=True)
             if now is None:
                 violations.append(f"now_iso: {now_iso!r} not UTC ISO8601 Z")
             else:
