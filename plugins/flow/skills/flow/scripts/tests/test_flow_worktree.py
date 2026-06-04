@@ -107,66 +107,6 @@ def _run(tmp: Path, main: Path, **kw):
     )
 
 
-# ─── _set_memory_root (pure) ──────────────────────────────────────────────────
-
-
-def test_set_memory_root_inserts_under_memory() -> None:
-    toml = '[tracker]\nbackend = "jira"\n[memory]\nnamespace = "FT"\ncompounding = true\n'
-    out = fw._set_memory_root(toml, "/abs/main/.flow")
-    assert 'root = "/abs/main/.flow"' in out
-    assert out.index("[memory]") < out.index("root =")
-    # tracker section untouched
-    assert "[tracker]" in out and 'backend = "jira"' in out
-
-
-def test_set_memory_root_replaces_existing() -> None:
-    toml = '[memory]\nnamespace = "FT"\nroot = "/old/.flow"\n'
-    out = fw._set_memory_root(toml, "/new/.flow")
-    assert 'root = "/new/.flow"' in out
-    assert "/old/.flow" not in out
-
-
-def test_set_memory_root_memory_is_last_table() -> None:
-    toml = '[tracker]\nbackend = "jira"\n[memory]\nnamespace = "FT"\n'
-    out = fw._set_memory_root(toml, "/x/.flow")
-    assert 'root = "/x/.flow"' in out
-
-
-def test_set_memory_root_header_with_inline_comment() -> None:
-    # a [memory] header carrying an inline comment must still be recognized,
-    # else a duplicate [memory] table gets appended and the file won't parse.
-    import tomllib
-
-    toml = '[tracker]\nbackend = "jira"\n[memory]  # the compounding store\nnamespace = "FT"\n'
-    out = fw._set_memory_root(toml, "/x/.flow")
-    parsed = tomllib.loads(out)
-    assert parsed["memory"]["root"] == "/x/.flow"
-    assert out.count("[memory]") == 1  # no duplicate table
-
-
-def test_set_memory_root_does_not_match_rootlike_key() -> None:
-    # `root_dir` under [memory] must not be mistaken for the `root` key.
-    import tomllib
-
-    toml = '[memory]\nnamespace = "FT"\nroot_dir = "/keep/me"\n'
-    out = fw._set_memory_root(toml, "/x/.flow")
-    parsed = tomllib.loads(out)
-    assert parsed["memory"]["root"] == "/x/.flow"
-    assert parsed["memory"]["root_dir"] == "/keep/me"
-
-
-def test_set_memory_root_output_always_parses() -> None:
-    import tomllib
-
-    for toml in (
-        '[memory]\nnamespace = "FT"\n',
-        '[tracker]\nx = 1\n[memory]\nnamespace = "FT"\n[pipeline]\nstages = ["ticket"]\n',
-        '[memory]\nnamespace = "FT"\nroot = "/old"\n',
-    ):
-        parsed = tomllib.loads(fw._set_memory_root(toml, "/new/.flow"))
-        assert parsed["memory"]["root"] == "/new/.flow"
-
-
 # ─── bootstrap ────────────────────────────────────────────────────────────────
 
 
@@ -193,11 +133,25 @@ def test_copies_gitignored_config(tmp_path: Path) -> None:
     assert ".env" in res["copied"] and ".claude" in res["copied"]
 
 
-def test_sets_memory_root_to_main_flow(tmp_path: Path) -> None:
+def test_redirects_memory_via_sibling_not_workspace_toml(tmp_path: Path) -> None:
     main = _main_checkout(tmp_path)
     res = _run(tmp_path, main)
-    wt_ws = (Path(res["worktree"]) / ".flow" / "workspace.toml").read_text(encoding="utf-8")
-    assert f'root = "{main.resolve() / ".flow"}"' in wt_ws
+    wt_flow = Path(res["worktree"]) / ".flow"
+    sibling = (wt_flow / "memory-root").read_text(encoding="utf-8")
+    assert sibling.strip() == str(main.resolve() / ".flow")
+    # the tracked workspace.toml is NOT rewritten with an abs root
+    assert "root =" not in (wt_flow / "workspace.toml").read_text(encoding="utf-8")
+
+
+def test_bootstrap_leaves_workspace_toml_byte_identical_to_main(tmp_path: Path) -> None:
+    # the direct ticket-level regression: the worktree's tracked workspace.toml
+    # stays byte-for-byte equal to main's copy, so a per-machine abs path can never
+    # ride into implement.diff / a commit to origin/main.
+    main = _main_checkout(tmp_path)
+    res = _run(tmp_path, main)
+    wt_ws = Path(res["worktree"]) / ".flow" / "workspace.toml"
+    main_ws = main / ".flow" / "workspace.toml"
+    assert wt_ws.read_bytes() == main_ws.read_bytes()
 
 
 def test_prepopulates_commit_frontmatter(tmp_path: Path) -> None:
@@ -239,11 +193,14 @@ def test_mise_trust_failure_is_warning_not_fatal(tmp_path: Path) -> None:
 
 def test_works_when_worktree_already_has_committed_flow(tmp_path: Path) -> None:
     # committed-.flow case: the worktree already carries workspace.toml; bootstrap
-    # still sets memory_root and seeds state without clobbering it.
+    # writes the sibling redirect without clobbering the committed toml.
     main = _main_checkout(tmp_path)
     res = _run(tmp_path, main, runner=_fake_runner(worktree_has_flow=True))
-    wt_ws = (Path(res["worktree"]) / ".flow" / "workspace.toml").read_text(encoding="utf-8")
-    assert "root =" in wt_ws
+    wt_flow = Path(res["worktree"]) / ".flow"
+    assert (wt_flow / "memory-root").read_text(encoding="utf-8").strip() == str(
+        main.resolve() / ".flow"
+    )
+    assert "root =" not in (wt_flow / "workspace.toml").read_text(encoding="utf-8")
 
 
 def test_no_launch_cmd_emitted(tmp_path: Path) -> None:
