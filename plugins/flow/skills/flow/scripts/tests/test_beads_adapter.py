@@ -409,6 +409,31 @@ def test_set_labels_replaces_full_list_via_update() -> None:
     assert "x,y" in args
 
 
+def test_set_description_re_reads_for_postcondition() -> None:
+    issue_after = _issue_json(description="new body")
+    adapter, runner = _build_adapter([_cp(stdout=""), _cp(stdout=json.dumps(issue_after))])
+    adapter.set_description("bd-a1b2", {"body": "new body", "fmt": "plain"})
+    # Two calls: update + show.
+    assert runner.calls[0][0][:2] == ["bd", "update"]
+    assert runner.calls[1][0][:2] == ["bd", "show"]
+    args = runner.calls[0][0]
+    assert "--description" in args
+    assert "new body" in args
+
+
+def test_set_description_postcondition_failure_raises() -> None:
+    issue_after = _issue_json(description="DIFFERENT")
+    adapter, _ = _build_adapter([_cp(stdout=""), _cp(stdout=json.dumps(issue_after))])
+    with pytest.raises(t.TrackerError, match="postcondition"):
+        adapter.set_description("bd-a1b2", {"body": "new body", "fmt": "plain"})
+
+
+def test_set_description_rejects_adf() -> None:
+    adapter, _ = _build_adapter([])
+    with pytest.raises(t.NotSupported, match="ADF"):
+        adapter.set_description("bd-a1b2", {"body": "{}", "fmt": "adf"})
+
+
 def test_set_assignee_passes_account_id_verbatim() -> None:
     issue_after = _issue_json(assignee="charlie")
     adapter, runner = _build_adapter([_cp(stdout=""), _cp(stdout=json.dumps(issue_after))])
