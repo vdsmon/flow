@@ -5,7 +5,7 @@
 python = "3.12"
 ruff = "0.15.15"
 ty = "0.0.42"
-"pipx:pytest" = "8.3.3"
+"pipx:pytest" = { version = "8.3.3", uvx_args = "--with pytest-cov", pipx_args = "--preinstall pytest-cov" }
 
 [tasks.lint]
 description = "ruff check + ruff format --check + ty check (scripts + plugin hooks)"
@@ -21,3 +21,7 @@ run = [
     "pytest tests/ -q",
     "pytest ../../../hooks/tests/ -q",
 ]
+
+[tasks.cov]
+description = "pytest with line coverage over the engine (term-missing)"
+run = "pytest tests/ --cov=. --cov-report=term-missing"
