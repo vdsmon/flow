@@ -102,7 +102,35 @@ Each spawns a detached run that auto-plans and either opens a draft PR or **park
 Summarise: merged (keys), launched (keys), and everything held — `skipped_in_flight`, `held_backpressure`, `held_hot`, `held_anchor`, `not_green`, `blocked`, `skipped_hot`. Tell the user how to follow along:
 
 - Monitor with `claude agents --json` (the plain `claude agents` needs a TTY).
-- Answer any **parked** sessions (they degraded to interactive on a real question).
+- Answer any **parked** sessions (they degraded to interactive on a real question) — see the recipe below.
 - Remaining draft PRs (non-green / conflicted, plus any `skipped_hot` not auto-merged this pass) are theirs to review and merge.
 
 Expect parks, not all PRs: terse audit beads will sometimes score under 90% or raise questions. A high park rate is a signal the audit evidence needs to be richer (a finding for the miners in section 2), not a drainer bug.
+
+#### Answering a parked `--auto` run (interim manual PTY recipe)
+
+This is the single source for the recipe; `background-pipeline.md` only points here. It is an interim manual procedure that worked **once**, with the gotchas below — not a polished, re-verified API. Treat it accordingly.
+
+**Why the easy paths fail (try them, watch them refuse):** a parked `--auto` run is a live background agent, so `claude --resume <id> --print` refuses it — `Session ... is currently running as a background agent; use claude agents to attach, or --fork-session`. `--fork-session` would duplicate the run rather than answer the live one. So the only way to answer a parked `--auto` run is to attach to its live PTY.
+
+**Discover the parked session** and grab its **short** session id (the attach needs the short id, not the UUID):
+
+```bash
+claude agents --json
+```
+
+**Attach via a raw PTY.** Open a pseudo-terminal and attach to the short id. After attaching, set a **nonzero** terminal winsize via the `TIOCSWINSZ` ioctl on the PTY — otherwise the agent rejects input with `malformed request: Too small: expected number to be >=1`. The attested ingredients are: the short session id, a nonzero winsize set through `TIOCSWINSZ`, sending `Enter` to pick the option, and `Ctrl+Z` to detach. An illustrative skeleton (the ioctl winsize call is the load-bearing, fiddly part — set it to nonzero rows/cols before writing any input):
+
+```bash
+python3 - <<'PY'
+# illustrative only — proven once, not a re-verified API.
+# 1. spawn a raw PTY and attach `claude` to the parked SHORT session id.
+# 2. set a NONZERO winsize on the PTY via the TIOCSWINSZ ioctl
+#    (zero rows/cols -> "malformed request: Too small: expected number to be >=1").
+# 3. write Enter to select the option, then Ctrl+Z (\x1a) to detach.
+PY
+```
+
+**Answer + detach.** Send `Enter` to pick the default option, then `Ctrl+Z` to detach; the run keeps going. Safety caveat: "send `Enter` for the default" is only safe for the ExitPlanMode **approve** gate. For an `AskUserQuestion` (e.g. a scope question), read the parked question **first** and select the correct option — blindly defaulting can pick the wrong answer.
+
+This PTY recipe is the interim manual path. A cleaner headless answer command (or a file-a-bead-and-exit `--auto` mode) is future work.

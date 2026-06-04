@@ -57,6 +57,7 @@ PushNotification is harness-local (terminal + phone via Remote Control): it rend
 
 A stage that needs a decision raises `AskUserQuestion`.
 Attached, you answer inline. Backgrounded, the harness surfaces it as needs-input in `claude agents` — attach, answer, detach, and the run resumes.
+When you need to answer non-interactively and `claude --resume --print` refuses (the session is running as a background agent), see verb-evolve §6C for the proven PTY-attach recipe.
 To minimize pauses, the bootstrap pre-populates the frontmatter keys the tail would otherwise ask for: `planned_files` (read by the implement pre-handler hook that records the diff baseline, and reused by the commit stage), `commit_type` + `commit_summary` (read by the commit stage), and `e2e_recipe` when e2e is opted in.
 Other tail stages avoid prompts; any genuine ambiguity pauses rather than guessing.
 
