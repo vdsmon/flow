@@ -34,6 +34,17 @@ The live "which script does what" map. One line per script: purpose + CLI surfac
 | `tracker_beads.py` (lib) | Beads `bd` CLI adapter (local-only tracker). | imported by tracker_cli |
 | `resolve_handler.py` | Resolve a `skill:<name>` handler: confirm bundle installed + manifest valid, return concrete `skill_name`/`skill_args`. | `--handler <string> --search-roots`; exit 1 not-installed / 2 invalid |
 
+## Forge (PR host)
+
+Pluggable PR-host seam, structural twin of the tracker seam. The `create_pr` and `review_loop` stages reach the host ONLY through `forge_cli.py`, so a GitHub and a Bitbucket workspace run the same prose. Selected by `[forge] backend = "github" | "bitbucket"` in `workspace.toml` (the block is OPTIONAL; absent = no forge).
+
+| Script | Role | Surface / touches |
+|--------|------|-------------------|
+| `forge.py` (lib) | Forge Protocol base + `make_forge()` factory + `read_forge_config()` + `FORGE_CAPABILITY_ENUM` + normalized `PullRequest`/`CIStatus`/`ReviewThread`. | imported by the adapters + forge_cli + create_pr |
+| `forge_cli.py` | CLI wrapper around the Protocol (the only forge surface the prose calls); cap-gated subcommands degrade to `{"supported": false}` exit 0. | `detect-pr` / `open-pr` / `ci-rollup` / `review-threads` / `post-reply` / `resolve-thread` / `mark-ready` / `merge` / `delete-branch` |
+| `forge_github.py` (lib) | GitHub `gh` adapter: detect/open PR, CI rollup (`statusCheckRollup`), mark-ready/merge/delete-branch. Review-threads capability OFF for now (no live review-bot-on-GitHub yet). | imported by forge_cli |
+| `forge_bitbucket.py` (lib) | Bitbucket `bkt` adapter (absorbs ship-it): detect/open PR, CI rollup from `bkt pr checks`, CodeRabbit review-thread fetch + verified resolve (`.resolution != null`). | imported by forge_cli |
+
 ## Frontmatter / diff / commit
 
 | Script | Role | Surface / touches |

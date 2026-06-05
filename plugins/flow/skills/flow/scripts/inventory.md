@@ -176,6 +176,47 @@ Adapter probes project style at first `set_epic_link` invocation:
 
 This handles both project styles without forcing users to know which they're on.
 
+## Forge (PR host) surface
+
+Pluggable PR-host seam (`forge.py` Protocol + `forge_cli.py` + `forge_github.py` + `forge_bitbucket.py`), structural twin of the tracker seam. Selected by `[forge] backend` in `workspace.toml`; the block is OPTIONAL (absent = no forge, `create_pr`/`review_loop` stay `none`).
+
+### Operation surface (forge_cli subcommand → gh / bkt)
+
+| Op (Protocol / `forge_cli`) | GitHub (`gh`) | Bitbucket (`bkt`) |
+|------|------|------|
+| `detect_pr` / `detect-pr` | `gh pr list --head B --state open --json number,url,isDraft,baseRefName,headRefName,state` | `bkt api 2.0/repositories/WS/RS/pullrequests?state=OPEN` + filter `source.branch.name` |
+| `open_pr` / `open-pr` | `gh pr create --base --head --title --body [--draft]` | `bkt api .../pullrequests -X POST -d {title,source,destination,draft,description}` |
+| `ci_rollup` / `ci-rollup` | `gh pr view PR --json statusCheckRollup` (green = non-empty + every check COMPLETED-SUCCESS) | `bkt pr checks PR` → Pipeline line state (SUCCESSFUL→green, INPROGRESS→pending, FAILED/STOPPED/ERROR→failed) |
+| `review_threads` / `review-threads` | **NotSupported** (no live review-bot-on-GitHub yet) | CodeRabbit actionable inline findings via paginated `.../comments`, unresolved only |
+| `post_reply` / `post-reply` | NotSupported | `bkt api .../comments -X POST -d {content.raw, parent.id}` |
+| `resolve_thread` / `resolve-thread` | NotSupported | `POST .../comments/CID/resolve` then re-fetch + verify `.resolution != null` |
+| `mark_ready` / `mark-ready` | `gh pr ready PR` | `bkt api .../pullrequests/PR -X PUT -d {draft:false}` |
+| `merge` / `merge` | `gh pr merge PR --squash` | `bkt api .../pullrequests/PR/merge -X POST -d {merge_strategy:squash}` |
+| `delete_branch` / `delete-branch` | `git push origin --delete B` | `git push origin --delete B` |
+
+Cap-gated ops (`review-threads`/`post-reply`/`resolve-thread`/`mark-ready`/`delete-branch`) degrade on `NotSupported` to `{"supported": false}` exit 0. Exit codes: 0 ok / 1 transient forge error / 2 config invalid (incl. no `[forge]`) / 3 bad args.
+
+### Bitbucket comment-resolve gotchas (ported from ship-it; do NOT re-derive)
+
+- `POST .../comments/<CID>/resolve` is the resolve endpoint; the `links.resolve` rel is often absent — never gate on it.
+- Success returns a `comment_resolution` object with NO top-level `resolved:true`. Judge success by re-fetching the comment and testing `.resolution != null`.
+- Only top-level inline comments (`parent == null`) can be resolved; replies cannot.
+
+### `[forge]` workspace schema
+
+```toml
+[forge]
+backend = "github"   # or "bitbucket"
+
+[forge.github]        # github needs no sub-keys
+
+[forge.bitbucket]     # bitbucket REQUIRES both
+workspace = "ws"
+repo_slug = "rs"
+```
+
+`validate_workspace.py` validates the block only when present (`KNOWN_FORGE_BACKENDS = ("github", "bitbucket")`); github needs no sub-keys, bitbucket requires `workspace` + `repo_slug`.
+
 ## `.flow-bundle.toml` schema (phase 4)
 
 External plugins declare which flow stages they provide handlers for via a top-level `.flow-bundle.toml`.
