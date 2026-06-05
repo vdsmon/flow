@@ -35,13 +35,12 @@ import json
 import re
 import subprocess
 import sys
-from collections.abc import Callable
 from pathlib import Path
 
+from _runner import CwdRunner as Runner
+from _runner import cwd_default_runner as _default_runner
 from _workspace import WorkspaceConfigError, load_workspace_toml
 from maintainer import resolve_maintainer_repo
-
-Runner = Callable[[list[str]], subprocess.CompletedProcess[str]]
 
 DEFAULT_CAP = 5
 DEFAULT_CONCURRENCY = 3
@@ -59,13 +58,6 @@ class NotMaintainer(Exception):
 
 class ToolError(Exception):
     """Raised when an injected tool (bd/git/gh) fails. Exit 2."""
-
-
-def _default_runner(repo: Path) -> Runner:
-    def run(args: list[str]) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(args, cwd=str(repo), capture_output=True, text=True, check=False)
-
-    return run
 
 
 def _ok(result: subprocess.CompletedProcess[str], what: str) -> str:

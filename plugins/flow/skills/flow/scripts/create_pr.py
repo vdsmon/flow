@@ -32,13 +32,12 @@ from __future__ import annotations
 import argparse
 import subprocess
 import sys
-from collections.abc import Callable
 from pathlib import Path
 
+from _runner import CwdRunner as Runner
+from _runner import cwd_default_runner as _default_runner
 from _workspace import WorkspaceConfigError, load_workspace_toml
 from forge import Forge, ForgeError, make_forge, read_forge_config
-
-Runner = Callable[[list[str]], subprocess.CompletedProcess[str]]
 
 _PROTECTED = {"main", "master", "dev", "develop"}
 
@@ -62,13 +61,6 @@ class ToolError(Exception):
 
 class RefusedBranch(Exception):
     """Current branch is protected; never open a PR from it. Exit 3."""
-
-
-def _default_runner(repo: Path) -> Runner:
-    def run(args: list[str]) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(args, cwd=str(repo), capture_output=True, text=True, check=False)
-
-    return run
 
 
 def _ok(result: subprocess.CompletedProcess[str], what: str) -> str:
