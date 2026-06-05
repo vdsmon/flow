@@ -59,6 +59,8 @@ The user reviews the backlog (`bd ready --label evolve`) and ships from it — o
 
 ## 6. `--ship` / `--reap`: drain the backlog (the consumer)
 
+**Post-Layer-2:** a launched evolve run now **self-merges its own PR** in-session (the `merge` stage, `references/stage-merge.md`), so this deferred pass is no longer the primary merge path — it is the **launch + janitor**: it launches the next batch (section 6B) and reaps as a **safety net** the green PRs of runs that died before self-merging plus the worktrees of merged-and-exited runs (section 6A). On a healthy loop most runs self-merge, so `--reap` finds little. The §6A property-check below still gates any orphan `hot` PR this pass merges.
+
 Maintainer-gated like the rest (section 1 already ran). The drainer reaps first (merge prior-launch green leaves), then launches the next batch — so repeated `--ship` calls self-pace: each pass clears finished work and starts more. `--reap` runs only the reap half; `--dry-run` prints both plans and changes nothing.
 
 ### A. Reap — auto-merge green leaf PRs

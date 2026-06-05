@@ -36,7 +36,7 @@ backend = "github"
 [forge.github]
 
 [pipeline]
-stages = ["ticket", "plan", "implement", "code_review", "e2e", "commit", "create_pr", "review_loop", "reflect"]
+stages = ["ticket", "plan", "implement", "code_review", "e2e", "commit", "create_pr", "review_loop", "reflect", "merge"]
 
 [pipeline.handlers]
 ticket = "inline"
@@ -48,6 +48,9 @@ commit = "inline"
 create_pr = "inline"
 review_loop = "inline"
 reflect = "inline"
+# Layer 2: evolve self-target self-merges its own green+clean PR (hot via an
+# independent reviewer). Bare plugin default is none = human keystone.
+merge = "inline"
 
 [reflect]
 # flow runs its own pipeline on itself (dogfood); turn the harness self-repair
