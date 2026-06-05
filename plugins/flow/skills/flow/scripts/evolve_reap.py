@@ -15,8 +15,11 @@ the actual check rollup rather than trusting GitHub. CI runs on `push` + every
 can confirm green here, and the verb marks the PR ready just before merging.
 
 This module is pure classification (no side effects). The `/flow evolve --reap`
-verb step performs the merge: `gh pr ready` (if draft) then
-`gh pr merge --squash --delete-branch` over the `merge` set.
+verb step performs the merge: `gh pr ready` (if draft) then `gh pr merge --squash`
+over the `merge` set. The remote branch is deleted separately via
+`git push origin --delete` — `--delete-branch` is dropped because the still-
+registered worktree holds the local branch checked out, which makes gh's
+branch-delete step fail and an otherwise-clean merge exit 1.
 
 Eligibility (all required): branch is `feature/<key>-*`; the bead carries `evolve`;
 the check rollup is non-empty and all SUCCESS (green); mergeable (CLEAN, or DRAFT
