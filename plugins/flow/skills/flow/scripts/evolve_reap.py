@@ -1,4 +1,4 @@
-"""Classify open evolve PRs for auto-merge (the drainer's reaper, pure core).
+"""Classify open evolve PRs for auto-merge (the janitor's reap core, pure).
 
 User opted in: green LEAF evolve PRs auto-merge to the default branch unattended,
 immediate on green. Hot PRs auto-merge too, but only under the `auto_merge_hot`
@@ -9,14 +9,14 @@ user project), hot PRs stay in skipped_hot — the human gate survives where ris
 lives.
 
 Repo reality (this build): GitHub-native auto-merge is off and there is no branch
-protection, so the reaper owns the merge in code and enforces "green" by reading
+protection, so the janitor owns the merge in code and enforces "green" by reading
 the actual check rollup rather than trusting GitHub. CI runs on `push` + every
-`pull_request`, so a PR's checks go green while it is still a draft — the reaper
+`pull_request`, so a PR's checks go green while it is still a draft — this classify
 can confirm green here, and the verb marks the PR ready just before merging.
 
-This module is pure classification (no side effects). The `/flow evolve --reap`
+This module is pure classification (no side effects). The `/flow evolve janitor`
 verb step performs the merge: `gh pr ready` (if draft) then
-`gh pr merge --squash --delete-branch` over the `merge` set.
+`gh pr merge --squash` over the `merge` set.
 
 Eligibility (all required): branch is `feature/<key>-*`; the bead carries `evolve`;
 the check rollup is non-empty and all SUCCESS (green); mergeable (CLEAN, or DRAFT
