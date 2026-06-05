@@ -49,6 +49,11 @@ class _FakeTracker:
         return "FT-NEW"
 
 
+class _RaisingTracker(_FakeTracker):
+    def comment(self, key: str, body: Any) -> None:
+        raise RuntimeError("network error mid-drain")
+
+
 def _seed(workspace_root: Path, **kw: Any) -> None:
     pending_mutations.append_mutation(workspace_root, intent_at="2026-05-01T00:00:00Z", **kw)
 
@@ -160,3 +165,26 @@ def test_reconcile_unknown_op_falls_through(tmp_path: Path) -> None:
     assert tracker.edits == []
     assert tracker.transitions == []
     assert tracker.creates == []
+
+
+def test_reconcile_keeps_entry_when_tracker_raises(tmp_path: Path) -> None:
+    _seed(tmp_path, ticket="FT-R", op="comment", args={"body": "hi"})
+    key = pending_mutations.list_mutations(tmp_path)[0]["idempotency_key"]
+    report = sync.reconcile(tmp_path, _RaisingTracker({}))
+    assert report["failed"] == [key]
+    assert report["applied"] == []
+    assert report["removed"] == 0
+    assert len(pending_mutations.list_mutations(tmp_path)) == 1
+
+
+def test_reconcile_continues_drain_when_one_op_raises(tmp_path: Path) -> None:
+    _seed(tmp_path, ticket="FT-R", op="comment", args={"body": "hi"})
+    _seed(tmp_path, ticket="FT-OK", op="edit", args={"fields": {"summary": "x"}})
+    keys = {m["ticket"]: m["idempotency_key"] for m in pending_mutations.list_mutations(tmp_path)}
+    report = sync.reconcile(tmp_path, _RaisingTracker({}))
+    assert keys["FT-OK"] in report["applied"]
+    assert report["removed"] == 1
+    assert keys["FT-R"] in report["failed"]
+    survivors = {m["idempotency_key"] for m in pending_mutations.list_mutations(tmp_path)}
+    assert keys["FT-R"] in survivors
+    assert keys["FT-OK"] not in survivors
