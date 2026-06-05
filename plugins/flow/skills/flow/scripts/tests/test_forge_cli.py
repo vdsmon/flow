@@ -6,7 +6,7 @@ from typing import ClassVar
 import pytest
 
 import forge_cli
-from forge import NotSupported
+from forge import ForgeError, NotSupported
 
 
 class _FakeForge:
@@ -68,6 +68,11 @@ class _FakeForge:
 
     def delete_branch(self, branch):
         self.calls.append(("delete_branch", branch))
+
+
+class _FailingForge(_FakeForge):
+    def detect_pr(self, branch):
+        raise ForgeError(f"network failed for {branch}")
 
 
 @pytest.fixture
@@ -132,3 +137,12 @@ def test_missing_forge_block_is_config_error(tmp_path):
         forge_factory=lambda _cfg: _FakeForge(),
     )
     assert rc == 2
+
+
+def test_forge_error_returns_1(ws, capsys):
+    rc = forge_cli.cli_main(
+        ["--workspace-root", str(ws), "detect-pr", "--branch", "x"],
+        forge_factory=lambda _cfg: _FailingForge(),
+    )
+    assert rc == 1
+    assert "forge error" in capsys.readouterr().err
