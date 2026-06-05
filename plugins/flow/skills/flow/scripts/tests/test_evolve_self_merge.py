@@ -26,6 +26,14 @@ def test_skip_when_ci_not_green():
     assert "green" in d["reason"]
 
 
+def test_skip_proposal_bead():
+    d = esm.decide(
+        ["evolve", "proposal"], is_maintainer=True, auto_merge_hot=True, ci_status="green"
+    )
+    assert d["action"] == "skip"
+    assert "proposal" in d["reason"]
+
+
 def test_merge_leaf_when_green_maintainer():
     d = esm.decide(["evolve"], is_maintainer=True, auto_merge_hot=False, ci_status="green")
     assert d["action"] == "merge"
@@ -61,7 +69,8 @@ def _ws(tmp_path, *, self_target=True, auto_merge_hot=True):
 def _runner(labels):
     def run(args):
         if args[:2] == ["bd", "show"]:
-            return subprocess.CompletedProcess(args, 0, json.dumps({"labels": labels}), "")
+            # bd show --json returns a LIST with one element (the bead), not a dict.
+            return subprocess.CompletedProcess(args, 0, json.dumps([{"labels": labels}]), "")
         return subprocess.CompletedProcess(args, 1, "", "unexpected")
 
     return run

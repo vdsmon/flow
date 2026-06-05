@@ -45,15 +45,22 @@ If the reviewer reports `property_removed: true` → **do NOT merge.** Post a PR
 
 ## 3. Merge
 
+**Merge ONLY the exact commit CI validated.** `review_loop`'s green verdict was for the branch HEAD it pushed; `reflect` does not commit to the run branch (it names repo-artifact gaps instead of adding files, and machinery self-edits land on a separate skill-checkout tree — `references/stage-reflect.md`). Guard against it anyway: if the branch has any uncommitted change or an unpushed commit, CI never saw it, so do NOT self-merge — leave it for the janitor / human.
+
 ```bash
-git push                                                            # ensure the remote branch is current
-python3 ${CLAUDE_SKILL_DIR}/scripts/forge_cli.py --workspace-root . mark-ready --pr "$PR_ID"   # if it was a draft
-python3 ${CLAUDE_SKILL_DIR}/scripts/forge_cli.py --workspace-root . merge --pr "$PR_ID" --squash
-bd close "$KEY" --reason "self-merged via PR #$PR_ID"
-python3 ${CLAUDE_SKILL_DIR}/scripts/forge_cli.py --workspace-root . delete-branch --branch "$BRANCH"
+BRANCH=$(git rev-parse --abbrev-ref HEAD)   # the run's feature/<key>-* branch
+if [ -n "$(git status --porcelain)" ] || [ "$(git rev-parse HEAD)" != "$(git rev-parse @{u} 2>/dev/null)" ]; then
+  echo "branch has uncommitted/unpushed changes CI never validated — skipping self-merge"
+  # STATUS=completed; the deferred janitor (or the human) merges once state settles.
+else
+  python3 ${CLAUDE_SKILL_DIR}/scripts/forge_cli.py --workspace-root . mark-ready --pr "$PR_ID"   # if it was a draft
+  python3 ${CLAUDE_SKILL_DIR}/scripts/forge_cli.py --workspace-root . merge --pr "$PR_ID" --squash
+  bd close "$KEY" --reason "self-merged via PR #$PR_ID"
+  python3 ${CLAUDE_SKILL_DIR}/scripts/forge_cli.py --workspace-root . delete-branch --branch "$BRANCH"
+fi
 ```
 
-`$BRANCH` is the run's `feature/<key>-*` branch (`git rev-parse --abbrev-ref HEAD`). Close the bead and delete the **remote** branch only AFTER `merge` succeeds — a `bd close` on a PR that never merged would mint the exact PR↔bead inconsistency this guards against. The **local** worktree + branch are NOT torn down here: a run cannot remove the worktree it is standing in. Teardown is deferred to the janitor (`flow_worktree.py reap`, lease-gated), which reaps the worktree once this session exits.
+The push-state check binds the merge to the CI'd SHA: `git rev-parse @{u}` is the last-pushed commit, so `HEAD == @{u}` proves every local commit was pushed and therefore CI'd. Close the bead and delete the **remote** branch only AFTER `merge` succeeds — a `bd close` on a PR that never merged would mint the exact PR↔bead inconsistency this guards against. The **local** worktree + branch are NOT torn down here: a run cannot remove the worktree it is standing in. Teardown is deferred to the janitor (`flow_worktree.py reap`, lease-gated), which reaps the worktree once this session exits.
 
 `STATUS=completed` once the merge lands (or on a clean `skip`/`held_guard`). Only a tool failure on `merge` itself → `STATUS=failed`.
 

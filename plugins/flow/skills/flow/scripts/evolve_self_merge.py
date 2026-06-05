@@ -52,6 +52,10 @@ def decide(
         return {"action": "skip", "is_hot": is_hot, "reason": "not maintainer self-target"}
     if "evolve" not in labels:
         return {"action": "skip", "is_hot": is_hot, "reason": "not an evolve bead"}
+    if "proposal" in labels:
+        # Proposal beads are the maintainer's judgment call (the auto-vs-propose
+        # line), even if one was manually run. Leave the PR for the human.
+        return {"action": "skip", "is_hot": is_hot, "reason": "proposal bead — maintainer merges"}
     if ci_status != "green":
         return {"action": "skip", "is_hot": is_hot, "reason": f"CI not green ({ci_status})"}
     if is_hot and not auto_merge_hot:
@@ -81,14 +85,19 @@ def _default_runner() -> Runner:
 
 def _bead_labels(key: str, runner: Runner) -> list[str]:
     """The bead's labels via `bd show <key> --json` (authoritative; labels live in
-    the tracker, not in ticket.json). Empty list on any error."""
+    the tracker, not in ticket.json). Empty list on any error.
+
+    `bd show --json` returns a LIST with one element (the bead), not a bare dict.
+    """
     result = runner(["bd", "show", key, "--json"])
     if result.returncode != 0:
         return []
     try:
-        data = json.loads(result.stdout or "{}")
+        data = json.loads(result.stdout or "[]")
     except json.JSONDecodeError:
         return []
+    if isinstance(data, list):
+        data = data[0] if data else {}
     labels = data.get("labels") if isinstance(data, dict) else None
     return [str(x) for x in labels] if isinstance(labels, list) else []
 
