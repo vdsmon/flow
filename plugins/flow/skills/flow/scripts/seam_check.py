@@ -318,6 +318,17 @@ def main(argv: list[str]) -> int:
     for inv in all_invs:
         problems.extend(validate(inv))
 
+    for name in sorted(scripts_missing_from_module_md()):
+        problems.append(
+            Problem(
+                doc="MODULE.md",
+                line=0,
+                level="ERROR",
+                msg=f"script not named in MODULE.md: {name}",
+                raw="",
+            )
+        )
+
     if args.verbose:
         for inv in all_invs:
             sub = f" {inv.subcommand}" if inv.subcommand else ""
