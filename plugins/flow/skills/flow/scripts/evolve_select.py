@@ -1,9 +1,9 @@
-"""Select + partition the next batch of evolve beads to launch (the launch consumer's core).
+"""Select + partition the next batch of evolve beads to launch (drain's select core).
 
 Pure selection over flow's OWN backlog, no side effects. Given the ready evolve
 beads plus the in-flight branches/PRs, decide which keys to fan out as
-`/flow <key> --auto` runs. The `/flow evolve launch` verb consumes this and does
-the actual launching.
+`/flow <key> --auto` runs. The `/flow evolve drain` loop consumes this (via
+`evolve_drain.py`, which adds in-flight lease liveness) and does the launching.
 
 Partition is best-effort coarse, NOT a disjointness guarantee — planning is
 post-launch (the headless Plan subagent runs after `claude --bg` fires), so the

@@ -2,22 +2,22 @@
 
 This is the thesis, not a footnote. `/flow` is a self-evolving harness: it audits itself, files improvement tickets into its own backlog, works them autonomously to PRs, and auto-merges the safe ones — so the maintainer wakes to merged improvements. The same machinery also heals friction in-flight, while the context that produced it is still live.
 
-Two halves: **producers** put evidence-backed work into one backlog; the **consumer** (`launch` + `janitor`) takes it from backlog to merged PR. Post-Layer-2 each launched run **self-merges its own green PR** in-session (the `merge` stage); `janitor` is the orphan safety-net for runs that died before self-merging. A human (or a green-CI gate + the in-run guard reviewer) keeps the keystone: what lands on `main`.
+Two halves: **producers** put evidence-backed work into one backlog; the **consumer** (`drain`) takes it from backlog to merged PR. Post-Layer-2 each launched run **self-merges its own green PR** in-session (the `merge` stage); `drain`'s reap step is the orphan safety-net for runs that died before self-merging. A human (or a green-CI gate + the in-run guard reviewer) keeps the keystone: what lands on `main`.
 
 ## The loop at a glance
 
 ```
    ┌─ Producer A: reflect sling ─┐
    │  (lived friction, in a run) │
-   │                             ├─→  flow's OWN beads backlog  ─→  launch  ─→  (run self-merges)
-   └─ Producer B: evolve audit ──┘     (evolve-labelled)        (evolve launch)        │
+   │                             ├─→  flow's OWN beads backlog  ─→  drain loop  ─→  (run self-merges)
+   └─ Producer B: evolve audit ──┘     (evolve-labelled)        (evolve drain)         │
       (cold scan, on demand)                                          │          green + leaf
                                                               claude --bg     →  → self-merge in-run
                                                               /flow --auto        else → human merge
                                                               → create_pr → review_loop → merge
                                                                                   │
-                                                                            janitor: orphan
-                                                                            safety-net (dead runs)
+                                                                            drain reaps orphans
+                                                                            (dead runs) + loops
 ```
 
 Everything below is **maintainer-gated** (`maintainer.py`: the `[maintainer] self_target = true` marker in `.flow/workspace.toml`). A stranger running flow neither wants flow editing its own source nor cares about flow-internal findings — for them the whole loop is dormant.
@@ -25,22 +25,20 @@ Everything below is **maintainer-gated** (`maintainer.py`: the `[maintainer] sel
 ## Producers — fill the backlog
 
 **Producer A — the reflect sling (lived friction).** A run that hits a snag is the highest-fidelity judge of the harness that will ever exist for that snag. The do-loop logs friction in-flight (`flow_friction.py`); reflect lens-B reads the bundle (`reflect_inputs.py`), points the lens UP at the harness, and diagnoses at `file:line`. Two outlets:
-- **In-place self-heal (fast path).** Surgical, high-confidence, strictly-correct fixes to flow's OWN `scripts/*.py` / `references/*.md` apply on the spot via `machinery_edit.py apply` (NOT the raw Edit tool — it flock-serializes read→replace→atomic-write so a fleet of concurrent reflect agents is safe, and refuses out-of-tree / snapshot-pinned paths). The apply edits the skill checkout's own working tree, so the fast path is live ONLY when that checkout is on a feature branch: bump the plugin version, commit the touched skill files on that branch, record the commit sha in a `MACHINERY:` knowledge entry. NEVER commit a machinery fix to `main` — now enforced by code, not just prose: `machinery_edit.py` refuses (exit 2) any apply when skill-root is on a protected branch (main/master/dev/develop). In the normal marketplace-tracks-main setup the apply refuses and the finding routes to the bead → consumer (`launch`) → reviewed PR.
+- **In-place self-heal (fast path).** Surgical, high-confidence, strictly-correct fixes to flow's OWN `scripts/*.py` / `references/*.md` apply on the spot via `machinery_edit.py apply` (NOT the raw Edit tool — it flock-serializes read→replace→atomic-write so a fleet of concurrent reflect agents is safe, and refuses out-of-tree / snapshot-pinned paths). The apply edits the skill checkout's own working tree, so the fast path is live ONLY when that checkout is on a feature branch: bump the plugin version, commit the touched skill files on that branch, record the commit sha in a `MACHINERY:` knowledge entry. NEVER commit a machinery fix to `main` — now enforced by code, not just prose: `machinery_edit.py` refuses (exit 2) any apply when skill-root is on a protected branch (main/master/dev/develop). In the normal marketplace-tracks-main setup the apply refuses and the finding routes to the bead → consumer (`drain`) → reviewed PR.
 - **Sling to the backlog.** Anything too big / structural / not certain → `flow_beads_create.py` files a deduped `evolve` bead instead of editing. See `references/stage-reflect.md` (step 2b).
 
 **Producer B — the evolve cold audit (on demand).** `/flow evolve audit` fans out read-only evidence miners over flow's own code (quality gates, test gaps, dead code, doc drift, friction history, robustness, seam), synthesizes findings with stable file-anchored ids, and files each as a deduped `evolve` bead. Read-then-file; it does not implement. See `references/verb-evolve.md` (§audit). The generative half, `/flow evolve propose`, mines the judgment-side work (features, real refactors) and files it as `proposal` beads the consumer holds for the maintainer.
 
 Both producers land in the **same backlog** (flow's OWN beads, `evolve`-labelled) and dedup through the same `--dedup-key` → `evid:<fingerprint>` seam, so a re-run never refiles open work nor re-proposes a closed/rejected finding.
 
-## Consumer A — launch: backlog to self-merged PR (`/flow evolve launch`)
+## Consumer — drain: backlog to merged, in one looping run (`/flow evolve drain`)
 
-`evolve_select.py` picks the next batch from `bd ready -l evolve`: drops in-flight beads (open branch/PR), enforces backpressure (≥ CAP open PRs → launch nothing), and partitions **best-effort coarse** (≤1 `hot` bead per batch; no two beads sharing a primary-file anchor). It then fans out `claude --bg "/flow <key> --auto"` per launched key. Each detached run branches off `--base @default` (the freshly-fetched default branch, NEVER the launcher's HEAD — else the PR inherits stale commits and lands DIRTY), implements, commits, opens a PR via `create_pr`, drives it green-and-review-clean via `review_loop`, and **self-merges it** via the `merge` stage. A bead that can't auto-plan at ≥90% confidence **defers** in place rather than guessing — that's intended. So `launch` no longer reaps: the run owns its own merge.
+`evolve drain` is a single LOOP that drains the whole backlog. Each turn: (1) **reap** orphan green leaf PRs via `evolve_reap.py` (a healthy run self-merges, so this only catches runs that **died before self-merging** — green + leaf + mergeable → merge to `main` with `gh pr merge --squash`; hot / not-green / conflicted → left for the human) + tear down merged-and-exited worktrees (lease-gated); (2) **decide** via `evolve_drain.py`, which runs `evolve_select.py` (drops in-flight beads, enforces backpressure ≥ CAP open PRs, holds `proposal` beads, partitions best-effort coarse — ≤1 `hot` per batch, no two sharing a primary-file anchor) and annotates each in-flight bead with its run's **lease liveness**; (3) **act** — launch the batch (`claude --bg "/flow <key> --auto"`, each detached run branches off `--base @default`, implements, opens a PR, drives it green via `review_loop`, and **self-merges** via the `merge` stage), or **wait** while a live run settles, or — when nothing is startable and no run is live — finish.
+
+The termination is **liveness-gated**: a withheld hot bead (its in-run reviewer raised `held_guard`) leaves a ready PR but a non-live lease, so it reads as `parked`, never `wait` — the loop cannot spin on it; it terminates and hands it to the human. Hot beads drain **sequentially** (a live hot → wait → it self-merges → the next reap clears `hot_inflight` → the next hot launches). A bead that can't auto-plan at ≥90% confidence **defers** in place rather than guessing — intended.
 
 Partition is best-effort, not a disjointness guarantee: planning is post-launch, so the selector never knows a run's real file set. Residual cross-run overlap surfaces as a merge conflict at review — each run is worktree/lease-isolated, so it's friction, never corruption. Keep CONCURRENCY low.
-
-## Consumer B — janitor: the orphan safety-net (`/flow evolve janitor`)
-
-A healthy run self-merges, so `janitor` only ever sees a green evolve PR whose run **died before self-merging** (an orphan). `evolve_reap.py` classifies open evolve PRs by reading the actual `gh` check rollup (the repo has no branch protection, so the gate lives in code): **green + leaf (non-`hot`) + mergeable → merge** to `main` (`gh pr merge --squash`); **hot / not-green / conflicted → left as a PR for the human**. It then tears down merged-and-exited worktrees (lease-gated). `/flow evolve drain` runs `janitor` then `launch` in one pass, so repeated `drain` calls self-pace.
 
 The keystone gate survives exactly where the risk is: leaf fixes flow through unattended (the run self-merges, or the janitor mops up an orphan); hot machinery, failing CI, and conflicts always wait for a human. Veto any auto-merge by converting its PR to draft (or closing it) before the next janitor pass.
 
@@ -58,10 +56,10 @@ The keystone gate survives exactly where the risk is: leaf fixes flow through un
 - **Reference-doc edits validate next run, not this one.** A stage editing its OWN `reference_doc` (the explicit self-modifying-stage case) is NOT drift-guarded — the edit applies cleanly to the worktree copy, commits, and merges. But the do-loop reads each inline/subagent stage's `reference_doc` from `${CLAUDE_SKILL_DIR}` (the installed checkout), so the run that authors the fix still executes the OLD prose; the fix only takes effect on the NEXT run after merge. Don't expect a mid-run prose fix to validate on the run that wrote it — it's deferred, not lost.
 - **Never commit machinery to `main`.** In-flight self-edits commit on the run's own branch; everything else flows through a bead → consumer (`launch`) → PR → merge. A background process landing straight on `main` bypasses the keystone gate.
 - **Human-merge keystone.** Only green + leaf PRs auto-merge. Hot / non-green / conflicted always wait for a human. The auto-merge envelope is deliberately narrow — widen it only with eyes open.
-- **Fresh base for autonomous runs.** `--base @default`, never the launcher's branch (see §launch).
+- **Fresh base for autonomous runs.** `--base @default`, never the launcher's branch (see §drain).
 
 ## Where the mechanics live
 
-- `references/verb-evolve.md` — the `evolve` namespace: producers (§audit, §propose) + consumers (§launch, §janitor, §drain).
+- `references/verb-evolve.md` — the `evolve` namespace: producers (§audit, §propose) + consumer (§drain).
 - `references/stage-reflect.md` — reflect lens-B protocol + the sling.
 - `MODULE.md` — `evolve_select.py`, `evolve_reap.py`, `create_pr.py`, `flow_beads_create.py`, `machinery_edit.py`, `maintainer.py`.

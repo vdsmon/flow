@@ -4,9 +4,7 @@
 
 - **`/flow evolve audit`** — the cold-audit **producer** (§audit): scan flow's OWN codebase for evidence-backed improvements and file them as `audit` beads in flow's backlog. Read-then-file; it does not implement.
 - **`/flow evolve propose`** — the multi-angle **proposal producer** (§propose): fan out one agent per generative angle (feature gaps, simplification, reorg, dead-weight, architecture, symmetry), adversarially verify, and file a ranked set. Provably-safe findings become auto-drainable `audit` beads; judgment findings become `proposal` beads held for the maintainer's triage. Read-then-file; it does not implement.
-- **`/flow evolve launch`** — the **consumer** (§launch): fan out the next batch of beads as background `/flow <key> --auto` runs. Each launched run self-merges its own green PR (the `merge` stage, post-Layer-2).
-- **`/flow evolve janitor`** — the orphan **safety-net** (§janitor): merge the green leaf PRs of runs that died before self-merging, then teardown merged-and-exited worktrees (lease-gated). On a healthy loop most runs self-merge, so the janitor finds little.
-- **`/flow evolve drain`** — **janitor then launch** in one pass (§drain): the self-pacing consumer (each pass clears finished orphans and starts the next batch). This is the nightly loop's consumer.
+- **`/flow evolve drain`** — the **consumer** (§drain): a single looping pass that drains the whole backlog. Each turn it reaps finished orphans (merge the green leaf PRs of runs that died before self-merging + teardown merged-and-exited worktrees, lease-gated), then fans out the next launchable batch as background `/flow <key> --auto` runs (each run self-merges its own green PR via the `merge` stage, post-Layer-2). It loops — launching, waiting while runs are live, reaping — until nothing is startable, draining hot beads sequentially. This is the nightly loop's consumer.
 
 The producers are **Producer B** (cold-audit + generative). Producer A is the reflect sling (`references/stage-reflect.md`): lived friction during real runs. Both land in the same `evolve`-labelled backlog, both dedup through the same `--dedup-key` seam. The cold-audit and generative producers differ in disposition: cold-audit and provably-safe generative findings are `audit` beads the consumer auto-ships; judgment generative findings are `proposal` beads the consumer holds for the maintainer (the vision's auto-vs-propose line).
 
@@ -14,11 +12,11 @@ The producers are **Producer B** (cold-audit + generative). Producer A is the re
 
 Match the **second whitespace token** of the args against the sub-verb set by exact string equality:
 
-- `audit` → §audit. `propose` → §propose. `launch` → §launch. `janitor` → §janitor. `drain` → run §janitor then §launch (in that order).
+- `audit` → §audit. `propose` → §propose. `drain` → §drain.
 - **empty** (bare `/flow evolve`, no sub-verb) → print the sub-verb listing above and stop. Do NOT default to a sub-verb; the namespace is explicit.
 - **anything else** (unknown sub-verb) → print the listing + "unknown evolve sub-verb: `<token>`" and stop.
 
-**`--dry-run`** is a modifier, valid on `launch` / `janitor` / `drain`: print the plan(s) and act on nothing. It is ignored on the read-only producers (`audit` / `propose` already change no live state).
+**`--dry-run`** is a modifier on `drain`: run ONE turn's reap + select classification and print the plan (what it would reap + launch), act on nothing. It is ignored on the read-only producers (`audit` / `propose` already change no live state).
 
 Every sub-verb runs the **Gate** below first.
 
@@ -51,7 +49,7 @@ Spawn parallel read-only audit agents (the `Agent` tool with `Explore` / `genera
 
 ### 2. Synthesize, rank, assign stable ids
 
-Dedup the raw findings (merge ones about the same root issue), drop the vague / unevidenced. Rank by evidence strength × value × blast-radius-safety × reviewability, then score each survivor against the repo-root `VISION.md` (serves the thesis / on the right side of the auto-vs-propose line / does not erode the floor — a candidate that cannot be anchored there is slop: drop it or escalate it as a question). Prefer small, isolated, high-evidence items. Give each survivor a **stable identity anchored on its primary file path** plus a short symptom — `<primary-relfile>::<short-symptom>`, e.g. `scripts/diff_extract.py::quotepath-parsing`. Anchor on the file, NOT free wording: the file path is the invariant a re-run will rediscover, so it is what makes the same defect dedup across runs (the seam fingerprints it, so exact formatting does not matter). Keep the `::` separator: the file component (its basename) now also anchors a fuzzy same-file dedup pass, so a re-discovery phrased differently still converges. Flag `hot` if it touches `SKILL.md` / `stage-registry.toml` / `CLAUDE.md` / a wired handler, OR a safety-machinery guard file (`lease.py`, `snapshot.py`, `_atomicio.py`, `_locking.py`, `state.py`, `dispatch_stage.py`, `diff_extract.py`, `machinery_edit.py`, `flow_friction.py`): a guard change must ride the hot path so the property-check review (§janitor.A) gates it.
+Dedup the raw findings (merge ones about the same root issue), drop the vague / unevidenced. Rank by evidence strength × value × blast-radius-safety × reviewability, then score each survivor against the repo-root `VISION.md` (serves the thesis / on the right side of the auto-vs-propose line / does not erode the floor — a candidate that cannot be anchored there is slop: drop it or escalate it as a question). Prefer small, isolated, high-evidence items. Give each survivor a **stable identity anchored on its primary file path** plus a short symptom — `<primary-relfile>::<short-symptom>`, e.g. `scripts/diff_extract.py::quotepath-parsing`. Anchor on the file, NOT free wording: the file path is the invariant a re-run will rediscover, so it is what makes the same defect dedup across runs (the seam fingerprints it, so exact formatting does not matter). Keep the `::` separator: the file component (its basename) now also anchors a fuzzy same-file dedup pass, so a re-discovery phrased differently still converges. Flag `hot` if it touches `SKILL.md` / `stage-registry.toml` / `CLAUDE.md` / a wired handler, OR a safety-machinery guard file (`lease.py`, `snapshot.py`, `_atomicio.py`, `_locking.py`, `state.py`, `dispatch_stage.py`, `diff_extract.py`, `machinery_edit.py`, `flow_friction.py`): a guard change must ride the hot path so the guard-property review gates it (the in-run merge reviewer when the run self-merges, or the §drain reap guard-property-check for an orphan).
 
 ### 3. File each candidate (dedup through the seam)
 
@@ -79,42 +77,17 @@ The user reviews the backlog (`bd ready --label evolve`) and ships from it — o
 
 ---
 
-## launch
+## drain
 
-The consumer. Select + fan out the next batch of beads as background `/flow <key> --auto` runs. **Post-Layer-2 each launched run self-merges its own green PR in-session** (the `merge` stage, `references/stage-merge.md`), so launch does NOT merge — it only selects and fans out. The merge side belongs to the runs themselves (primary) and to `janitor` (the orphan safety-net). The Gate above already ran.
+The consumer. A single LOOP that drains the whole backlog: each turn reaps finished orphans, launches the next startable batch, then waits while runs are live — repeating until nothing is startable. Post-Layer-2 each launched run self-merges its own green PR in-session (the `merge` stage, `references/stage-merge.md`), so `drain` does not merge live work itself; its reap step is the orphan safety-net (runs that died before self-merging), and its launch step starts new runs. Hot beads drain **sequentially** (serialized by `hot_inflight`), one landing before the next starts. The Gate above already ran.
 
-```bash
-python3 ${CLAUDE_SKILL_DIR}/scripts/evolve_select.py --workspace-root .
-```
+### The loop
 
-Returns JSON `{launch:[keys], skipped_in_flight, held_backpressure, held_hot, held_anchor, held_proposal, cap, concurrency, open_pr_count}`. Selection is already DAG-aware (`bd ready` excludes blocked beads), drops in-flight beads (open branch/PR), enforces backpressure (≥ `cap` open PRs → empty launch), holds `proposal`-labelled beads for the maintainer (`held_proposal` — never auto-launched), and partitions coarsely (≤1 hot per batch; no two beads sharing a primary-file anchor). For each `launch` key (under `--dry-run`, print the command instead of running it):
+Repeat the turn below until step **D** returns `done`:
 
-```bash
-claude --bg "/flow <key> --auto"
-```
+**A. Reap — merge orphan green leaf PRs (safety-net), first each turn.** Reaping first frees backpressure (open-PR cap) and clears `hot_inflight` for a hot that just landed, so the launch step sees an honest picture.
 
-Each spawns a detached run that auto-plans and either drives its PR to green-and-self-merged, or — when it cannot self-approve at ≥90% confidence — **defers** its bead in place (status → `deferred`, open questions commented) and exits. A deferred bead drops out of `bd ready`, so the consumer stops relaunching it. Defer-and-exit is the intended unattended outcome, not a failure.
-
-**Backpressure note:** the backpressure check counts open PRs, which includes the **orphan** PRs of runs that died before self-merging. A launch-only cadence (never running `janitor`) can therefore slowly wedge as dead-run orphans accumulate against `cap`. Run `janitor` (or `drain`, which folds it in) periodically so orphans are reaped and backpressure stays honest.
-
-### Report
-
-Summarise: launched (keys), and everything held — `skipped_in_flight`, `held_backpressure`, `held_hot`, `held_anchor`, `held_proposal` (generative proposals awaiting your triage — never auto-launched). Tell the user how to follow along:
-
-- Monitor with `claude agents --json` (the plain `claude agents` needs a TTY).
-- Review any **deferred** beads: the run commented its open questions before exiting. `deferred` != done, so to unstick, answer the comment, reopen the bead (status → `open`), and re-run it interactively (WITHOUT `--auto`).
-
-Expect defers, not all PRs: terse audit beads will sometimes score under 90% or raise questions. A high defer rate is a signal the audit evidence needs to be richer (a finding for the miners in §audit), not a consumer bug.
-
----
-
-## janitor
-
-The orphan safety-net. A launched run self-merges its own green PR in-session, so the janitor only ever sees a green evolve PR if its run **died before self-merging** (an orphan). It merges those (safety net) + tears down merged-and-exited worktrees (lease-gated). On a healthy loop the janitor finds little. The Gate above already ran. `--dry-run` prints the plan and changes nothing.
-
-### A. Reap — merge orphan green leaf PRs
-
-Green LEAF evolve PRs merge to the default branch unattended (immediate on green). Non-green and conflicted PRs always wait as draft PRs for the human — the gate survives where the risk is. Hot PRs auto-merge ONLY under `[evolve] auto_merge_hot` (default off; on solely in this maintainer self-target repo) AND isolation: at most one hot PR merges per pass, and the fleet must be quiesced around the pass. Off / non-maintainer keeps today's behavior (hot → `skipped_hot`). Note: the code (`classify`) enforces only the one-hot-per-pass serialization; ensuring no other evolve run is active (quiescing the fleet) before an auto-merge pass is the operator's responsibility.
+A launched run self-merges its own green PR, so this only ever finds a green evolve PR whose run **died before self-merging**. Green LEAF evolve PRs merge to the default branch unattended (immediate on green). Non-green and conflicted PRs always wait as draft PRs for the human — the gate survives where the risk is. Hot PRs auto-merge ONLY under `[evolve] auto_merge_hot` (default off; on solely in this maintainer self-target repo) AND isolation: at most one hot PR merges per pass, and the fleet must be quiesced around the pass. Off / non-maintainer keeps today's behavior (hot → `skipped_hot`). Note: the code (`classify`) enforces only the one-hot-per-pass serialization; ensuring no other evolve run is active (quiescing the fleet) before an auto-merge pass is the operator's responsibility.
 
 ```bash
 python3 ${CLAUDE_SKILL_DIR}/scripts/evolve_reap.py --workspace-root .
@@ -137,21 +110,46 @@ fi
 python3 ${CLAUDE_SKILL_DIR}/scripts/flow_worktree.py reap --ticket <key> --branch <branch> --main-root .
 ```
 
-`<key>`, `<pr>`, and `<branch>` (== `headRefName`) all come from the `merge` entry. `--delete-branch` is dropped: gh's branch-delete step fails because the still-registered worktree under `flow.worktrees/` holds the local `feature/<key>-*` branch checked out, and that failure makes an otherwise-successful `gh pr merge` exit 1 — which short-circuited the old `&& bd close`, so the bead never closed and the remote branch was left undeleted. Now `gh pr merge --squash` alone exits 0 on a clean merge, so `bd close` runs; the remote branch is deleted explicitly with `git push origin --delete <branch>` (which also drops the local `refs/remotes/origin/<branch>` tracking ref that feeds `evolve_select._gather_refs`). Deleting the REMOTE ref is unaffected by the worktree holding the LOCAL branch. `bd close` and the remote delete are each gated on the merge succeeding and are independent of each other (separate statements inside the `if`, never chained behind one another), so a `bd close` hiccup never skips the remote delete. `gh pr merge` refuses a not-actually-mergeable PR, so it is a safe backstop if state changed since the classify; if it refuses, the `if` body is skipped and the bead stays open. Closing a bead whose PR never merged would mint the exact PR↔bead state-inconsistency this step exists to prevent. The `reap` step still owns the LOCAL worktree + local branch teardown. It is lease-gated: a worktree whose bg session is still running (typically the reflect stage, which runs after the PR is green) is SKIPPED and reaped on a later `janitor` / `drain` pass once the session ends.
+`<key>`, `<pr>`, and `<branch>` (== `headRefName`) all come from the `merge` entry. `--delete-branch` is dropped: gh's branch-delete step fails because the still-registered worktree under `flow.worktrees/` holds the local `feature/<key>-*` branch checked out, and that failure makes an otherwise-successful `gh pr merge` exit 1 — which short-circuited the old `&& bd close`, so the bead never closed and the remote branch was left undeleted. Now `gh pr merge --squash` alone exits 0 on a clean merge, so `bd close` runs; the remote branch is deleted explicitly with `git push origin --delete <branch>` (which also drops the local `refs/remotes/origin/<branch>` tracking ref that feeds `evolve_select._gather_refs`). Deleting the REMOTE ref is unaffected by the worktree holding the LOCAL branch. `bd close` and the remote delete are each gated on the merge succeeding and are independent of each other (separate statements inside the `if`, never chained behind one another), so a `bd close` hiccup never skips the remote delete. `gh pr merge` refuses a not-actually-mergeable PR, so it is a safe backstop if state changed since the classify; if it refuses, the `if` body is skipped and the bead stays open. Closing a bead whose PR never merged would mint the exact PR↔bead state-inconsistency this step exists to prevent. The `reap` step still owns the LOCAL worktree + local branch teardown. It is lease-gated: a worktree whose bg session is still running (typically the reflect stage, which runs after the PR is green) is SKIPPED and reaped on a later turn once the session ends.
 
-`bd close` here autodiscovers `.beads/*.db` from cwd, and this sub-verb is maintainer-gated with no `cd` in the loop, so the close inherits the maintainer-repo cwd and hits flow's own DB. With the close wired in, reaping a PR also closes its bead, so `janitor` leaves no merged-but-open beads behind. Veto for the human: convert a PR to draft or close it before the next pass and the janitor skips it.
+`bd close` here autodiscovers `.beads/*.db` from cwd, and this sub-verb is maintainer-gated with no `cd` in the loop, so the close inherits the maintainer-repo cwd and hits flow's own DB. With the close wired in, reaping a PR also closes its bead, so the loop leaves no merged-but-open beads behind. Veto for the human: convert a PR to draft or close it before the next turn and the reap skips it.
 
-### B. Report
+**B. Decide the next action.**
 
-Summarise: merged (keys), worktrees torn down, and everything held — `not_green`, `blocked`, `skipped_hot` (a hot PR not auto-merged this pass), plus any `held_guard` (a hot PR you withheld because its diff removed a safety property — name the property, it is the maintainer's to review). Remaining draft PRs (non-green / conflicted, plus any `skipped_hot`) are theirs to review and merge.
+```bash
+python3 ${CLAUDE_SKILL_DIR}/scripts/evolve_drain.py --workspace-root .
+```
 
----
+This runs `evolve_select` (which is DAG-aware via `bd ready`, drops in-flight beads, enforces backpressure ≥ `cap` open PRs, holds `proposal` beads, partitions ≤1 hot per batch / no shared primary-file anchor) and annotates each in-flight bead with its run's lease liveness. It returns JSON `{action: "launch"|"wait"|"done", launch:[keys], parked:[keys], liveness:{}, select:{...}}`:
 
-## drain
+- **`launch`** (launch non-empty) → go to **C**.
+- **`wait`** (launch empty, but a still-LIVE in-flight run will free serialization/backpressure) → go to **D-wait**.
+- **`done`** (launch empty AND no in-flight run is live — backlog drained, or only parked-for-human work remains) → exit the loop, go to **Report**.
 
-`janitor` then `launch`, in that order, in one pass — the self-pacing consumer. Reaping orphans first clears finished work + frees backpressure, then `launch` starts the next batch, so repeated `drain` calls self-pace: each pass clears finished orphans and starts more. This is the nightly loop's consumer. `--dry-run` prints both plans (the janitor reap plan and the launch plan) and changes nothing.
+The termination is liveness-gated on purpose: a **withheld** hot bead (its in-run reviewer raised `held_guard`) leaves a ready PR + branch but its session has ended, so its lease is non-live — it reads as `parked`, never `wait`, so the loop cannot spin on it. It terminates and hands it (plus any hot beads stuck behind it in `held_hot`) to the human.
 
-Run §janitor in full, then §launch in full. Report both halves: merged + torn-down (janitor), launched + held (launch).
+**C. Launch.** For each key in `launch` (under `--dry-run`, print the command instead of running it):
+
+```bash
+claude --bg "/flow <key> --auto"
+```
+
+Each spawns a detached run that auto-plans and either drives its PR to green-and-self-merged, or — when it cannot self-approve at ≥90% confidence — **defers** its bead in place (status → `deferred`, open questions commented) and exits. A deferred bead drops out of `bd ready`, so the loop stops relaunching it. Defer-and-exit is the intended unattended outcome, not a failure. After launching, briefly wait (Monitor, short cap) until the new keys register a branch/PR so the next turn's select sees them as in-flight, then loop back to **A**.
+
+**D-wait.** Nothing to launch yet, but a live run is in flight. Wait with the `Monitor` tool (foreground `sleep` is blocked) until a run settles — `open_pr_count` drops (a PR merged) OR a lease goes non-live — capped at roughly a stage timeout; on the cap, loop back to **A** anyway (the next reap mops up a now-dead run). Then loop back to **A**.
+
+### --dry-run
+
+`/flow evolve drain --dry-run`: run ONE turn's **A** reap classification (`evolve_reap.py`, print the `merge`/`not_green`/`skipped_hot`/`blocked` sets, do NOT merge) + **B** (`evolve_drain.py`, print the action + would-launch keys + parked), then STOP. No merges, no launches, no loop.
+
+### Report
+
+When the loop exits (`done`), summarise the whole run: merged (keys) + worktrees torn down across all turns, launched (keys), deferred (keys), and everything **parked for the human** — `parked` in-flight beads (non-live lease, including any `held_guard` hot PR you withheld because its diff removed a safety property — name the property), plus `not_green` / conflicted draft PRs and `held_proposal` (generative proposals awaiting your triage). Tell the user how to follow along:
+
+- Monitor live runs with `claude agents --json` (the plain `claude agents` needs a TTY).
+- Review any **deferred** beads: the run commented its open questions before exiting. `deferred` != done, so to unstick, answer the comment, reopen the bead (status → `open`), and re-run it interactively (WITHOUT `--auto`).
+
+Expect defers, not all PRs: terse audit beads will sometimes score under 90% or raise questions. A high defer rate signals the audit evidence needs to be richer (a finding for the miners in §audit), not a consumer bug.
 
 ---
 
@@ -183,7 +181,7 @@ For each surviving candidate, spawn an independent skeptic prompted to REFUTE it
 Dedup across lenses (merge candidates about the same root issue). Then split each survivor by the auto-vs-propose line:
 
 - **Provably-safe → `audit`** (auto-drainable). A mechanical, behavior-preserving change with hard evidence — a proven-dead-code deletion, a zero-behavior-change simplification. File it exactly as §audit step 3 (labels `evolve,audit`); it joins the normal drain.
-- **Judgment → `proposal`** (held for the maintainer). A feature, a real refactor, a reorg, an architecture challenge — anything whose merit is taste and fit, not a broke/works signal. File it with labels `evolve,proposal`. The consumer (§launch) HOLDS these (`held_proposal`) and never auto-launches them; they are the maintainer's to triage.
+- **Judgment → `proposal`** (held for the maintainer). A feature, a real refactor, a reorg, an architecture challenge — anything whose merit is taste and fit, not a broke/works signal. File it with labels `evolve,proposal`. The consumer (§drain) HOLDS these (`held_proposal`) and never auto-launches them; they are the maintainer's to triage.
 
 Rank by vision-alignment × value × evidence-strength × reviewability. Each `proposal` description MUST carry, beyond the evidence and blast-radius: your **confidence** and a **recommended default** (build / shelve / needs-discussion), so triaging it costs the maintainer seconds, not hours. Assign the same stable `<primary-relfile>::<short-symptom>` id and file through the §audit step 3 seam (the `--dedup-key` converges re-runs). Flag `hot` per §audit step 2 when it touches a hot or guard file.
 
