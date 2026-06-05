@@ -10,7 +10,7 @@ a clean review does it merge.
 directly. The CLI wires the I/O: read the bead's labels (`bd show`), the
 `[evolve] auto_merge_hot` flag, and maintainer mode, then call `decide()`.
 
-Gates (mirrors the janitor's classify, but evaluated in-run):
+Gates (mirrors the drain reap's classify, but evaluated in-run):
 - not maintainer self-target / not an `evolve` bead / CI not green -> skip (leave the
   PR for the human; never an error).
 - a `hot` bead self-merges only when `[evolve] auto_merge_hot` is on (else skip ->
