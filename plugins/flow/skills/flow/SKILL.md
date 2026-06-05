@@ -1,7 +1,7 @@
 ---
 name: flow
 description: Ticket pipeline. /flow <ticket> plans in plan mode (ExitPlanMode = the one gate), then enters a worktree and runs the autonomous implement→PR tail in the same session; background it (/bg) anytime to run unattended. You spec and review the draft PR. Multi-tracker engine (Jira | beads), pluggable handlers, compounding memory.
-when_to_use: User runs /flow <ticket> or /flow spec <ticket> to spec a ticket and run it to a draft PR, /flow do <ticket> to run/resume the pipeline standalone, or /flow init, recall, status, recover, sync, baseline. A bare ticket key with no verb defaults to spec. Also use proactively when opening a worktree under a project with .flow/.initialized.
+when_to_use: User runs /flow <ticket> or /flow spec <ticket> to spec a ticket and run it to a draft PR, /flow do <ticket> to run/resume the pipeline standalone, or /flow init, recall, status, triage, recover, sync, baseline. A bare ticket key with no verb defaults to spec. Also use proactively when opening a worktree under a project with .flow/.initialized.
 allowed-tools: Bash(python3:*), Bash(git:*), Bash(bd:*), Bash(jq:*), Bash(cat:*), Bash(mkdir:*), Bash(mktemp:*), Bash(rm:*), Read, Write, Edit, Agent, AskUserQuestion, PushNotification, EnterWorktree
 ---
 
@@ -24,7 +24,7 @@ See `references/background-pipeline.md`.
 
 `/flow do` is the **executor primitive** — the full pipeline, resuming at the next pending stage.
 `spec` enters the seeded worktree and flows into it in the same session; `do` also runs standalone to resume a run.
-Everything else (`recall`, `status`, `recover`, `sync`, `baseline`) is a work-state verb around the same pipeline.
+Everything else (`recall`, `status`, `triage`, `recover`, `sync`, `baseline`) is a work-state verb around the same pipeline.
 
 Built on a multi-tracker engine: the tracker is pluggable (Jira | beads); stages, handlers, and the memory namespace come from `.flow/workspace.toml` + `stage-registry.toml`.
 The memory layer compounds across tickets (reflect-stage extraction, SessionStart recall), and the harness fixes its own bugs from inside a run — see `references/self-evolution.md`.
@@ -51,6 +51,7 @@ Spec is the default because fire-and-forget is the primary path.
 | `recall <query> [--branch X --top-n N]` | recall | `references/verb-recall.md` |
 | `recall --metric tickets-per-week [...]` | metric (recall passthrough) | `references/verb-recall.md` |
 | `status` (optionally `<ticket>`) | status | `references/verb-status.md` |
+| `triage` (optionally `<key> "<answer>"`) | triage | `references/verb-triage.md` |
 | `recover` (optionally `<ticket>`) | recover | `references/verb-recover.md` |
 | `sync` | sync | `references/verb-sync-baseline.md` |
 | `baseline` | baseline | `references/verb-sync-baseline.md` |
