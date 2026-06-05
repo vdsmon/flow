@@ -128,6 +128,21 @@ def test_ci_rollup_status_context_shape():
     assert fg.ci_rollup("7")["status"] == "green"
 
 
+def test_ci_rollup_status_context_pending_is_not_failed():
+    # A legacy StatusContext (no `status` field) carrying a non-terminal `state`
+    # must read as pending, never failed (else it trips a premature fix cycle).
+    for pending_state in ("PENDING", "EXPECTED", ""):
+        view = json.dumps({"statusCheckRollup": [{"context": "legacy", "state": pending_state}]})
+        fg, _ = _adapter({"view": view})
+        assert fg.ci_rollup("7")["status"] == "pending", pending_state
+
+
+def test_ci_rollup_status_context_failure():
+    view = json.dumps({"statusCheckRollup": [{"context": "legacy", "state": "FAILURE"}]})
+    fg, _ = _adapter({"view": view})
+    assert fg.ci_rollup("7")["status"] == "failed"
+
+
 def test_mark_ready_merge_delete_argv():
     fg, calls = _adapter()
     fg.mark_ready("7")

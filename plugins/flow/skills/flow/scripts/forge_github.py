@@ -183,10 +183,18 @@ class GitHubAdapter:
         raise NotSupported("github adapter does not yet drive review-bot threads")
 
 
+# Non-terminal verdicts a legacy StatusContext (no `status` field) can carry; these
+# read as still-running, NOT failed (else a pending check trips a premature fix cycle).
+_NONTERMINAL_VERDICTS = frozenset(
+    {"", "PENDING", "EXPECTED", "QUEUED", "IN_PROGRESS", "WAITING", "REQUESTED"}
+)
+
+
 def _classify_rollup(rollup: list) -> CIStatus:
     """green iff non-empty and every check is completed-SUCCESS (matches
-    evolve_reap.rollup_is_green); failed if any completed check is non-SUCCESS;
-    pending if checks are still running or none are registered yet."""
+    evolve_reap.rollup_is_green); pending if any check is still running (CheckRun
+    status != COMPLETED, or a StatusContext with a non-terminal state); failed only
+    when a check reaches a terminal non-SUCCESS verdict."""
     checks: list[CICheck] = []
     any_pending = False
     any_failed = False
@@ -206,7 +214,11 @@ def _classify_rollup(rollup: list) -> CIStatus:
         )
         if status and status != "COMPLETED":
             any_pending = True
-        elif verdict != "SUCCESS":
+        elif verdict == "SUCCESS":
+            continue
+        elif verdict in _NONTERMINAL_VERDICTS:
+            any_pending = True
+        else:
             any_failed = True
 
     if not rollup:
