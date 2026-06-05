@@ -198,6 +198,44 @@ def test_resolve_thread_false_when_still_unresolved():
     assert fg.resolve_thread("9", "1") is False
 
 
+def _payload_for_path(calls: list[list[str]], path: str) -> dict:
+    # select by API path, not the first -d: mark_ready's -d precedes merge's.
+    c = next(c for c in calls if _api_path(c) == path)
+    return json.loads(c[c.index("-d") + 1])
+
+
+def _ran_prefix(calls: list[list[str]], prefix: list[str]) -> bool:
+    return any(c[: len(prefix)] == prefix for c in calls)
+
+
+def test_mark_ready_merge_delete_argv():
+    fg, calls = _adapter(lambda a: "null")
+    fg.mark_ready("9")
+    fg.merge("9", squash=True)
+    fg.delete_branch("feature/flow-x")
+
+    base = "2.0/repositories/ws/rs"
+
+    ready = next(c for c in calls if _api_path(c) == f"{base}/pullrequests/9")
+    assert ready[ready.index("-X") + 1] == "PUT"
+    assert _payload_for_path(calls, f"{base}/pullrequests/9") == {"draft": False}
+
+    merge = next(c for c in calls if _api_path(c) == f"{base}/pullrequests/9/merge")
+    assert merge[merge.index("-X") + 1] == "POST"
+    assert _payload_for_path(calls, f"{base}/pullrequests/9/merge") == {
+        "merge_strategy": "squash"
+    }
+
+    assert _ran_prefix(calls, ["git", "push", "origin", "--delete", "feature/flow-x"])
+
+
+def test_merge_no_squash_emits_empty_payload():
+    # squash=False sends {} (still carried as -d "{}" since {} is not None).
+    fg, calls = _adapter(lambda a: "null")
+    fg.merge("9", squash=False)
+    assert _payload_for_path(calls, "2.0/repositories/ws/rs/pullrequests/9/merge") == {}
+
+
 def test_capabilities_all_supported():
     fg, _ = _adapter(lambda a: "null")
     assert all(c["supported"] for c in fg.capabilities)
