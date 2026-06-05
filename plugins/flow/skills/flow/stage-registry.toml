@@ -125,7 +125,6 @@ default_heartbeat_required = true
 default_max_no_progress_min = 15
 required_capabilities = []
 required_predecessors = ["commit"]
-required_fields = ["pr_title"]
 required = false
 required_when_compounding = false
 reference_doc = "references/stage-create_pr.md"

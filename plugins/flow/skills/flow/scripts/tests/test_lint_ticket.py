@@ -140,14 +140,6 @@ def test_commit_with_type_and_summary_passes(tmp_path: Path) -> None:
     assert lint_ticket.validate("commit", tp, reg) == []
 
 
-def test_create_pr_requires_pr_title(tmp_path: Path) -> None:
-    reg = _write_registry(tmp_path, [_stage("create_pr", required_fields=["pr_title"])])
-    tp = tmp_path / "FT-1.md"
-    _write_ticket(tp, {"ticket": "FT-1", "status": "in_progress"})
-    violations = lint_ticket.validate("create_pr", tp, reg)
-    assert any("pr_title:" in v for v in violations)
-
-
 def test_stage_with_no_required_fields_only_checks_universal(tmp_path: Path) -> None:
     reg = _write_registry(tmp_path, [_stage("plan")])
     tp = tmp_path / "FT-1.md"
@@ -250,3 +242,11 @@ def test_real_registry_commit_fields_match_composer() -> None:
     (commit_type + commit_summary), not the unused commit_message field."""
     fields = lint_ticket._load_required_fields(lint_ticket._default_registry_path(), "commit")
     assert fields == ["commit_type", "commit_summary"]
+
+
+def test_real_registry_create_pr_has_no_required_fields() -> None:
+    """create_pr declares no required_fields: nothing populates pr_title and the
+    dispatcher never lints create_pr (stage-create_pr.md + create_pr.py assert
+    no gate). A declared gate would block forever in a PR-wired workspace."""
+    fields = lint_ticket._load_required_fields(lint_ticket._default_registry_path(), "create_pr")
+    assert fields == []

@@ -17,7 +17,6 @@ Required-field defaults baked into stage-registry.toml:
     by this helper; not declared per-stage in the registry).
   - implement.required_fields  = ["planned_files"]
   - commit.required_fields     = ["commit_type", "commit_summary"]
-  - create_pr.required_fields  = ["pr_title"]
 
 Exit codes:
   0 = continue
