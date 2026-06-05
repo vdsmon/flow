@@ -157,3 +157,17 @@ required = false
 required_when_compounding = true
 reference_doc = "references/stage-reflect.md"
 roles = ["reflect_anchor", "ship_observer"]
+
+[[stage]]
+name = "merge"
+description = "Terminal self-merge (evolve self-target only; bare default none = human keystone). Wired merge = \"inline\" (references/stage-merge.md → scripts/evolve_self_merge.py + forge_cli.py): after reflect, a green+clean evolve run self-merges its own PR; a hot bead only after an independent reviewer subagent clears the §6A guard-property check. Worktree teardown stays deferred to the janitor."
+default_handler = "none"
+default_timeout_min = 15
+default_heartbeat_required = false
+default_max_no_progress_min = 10
+required_capabilities = []
+required_predecessors = ["reflect"]
+required = false
+required_when_compounding = false
+reference_doc = "references/stage-merge.md"
+roles = []
