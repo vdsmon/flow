@@ -54,13 +54,6 @@ from tracker import (
 
 ATLASSIAN_OAUTH_HOST = "https://api.atlassian.com"
 
-# Status category → normalized fallback. Refined by native_status heuristics below.
-_CATEGORY_TO_NORMALIZED = {
-    "new": "open",
-    "indeterminate": "in_progress",
-    "done": "done",
-}
-
 _BLOCKED_HINTS = ("block", "hold", "wait")
 _REVIEW_HINTS = ("review", "qa", "merge", "approval")
 _CANCELLED_RESOLUTIONS = ("won't do", "wont do", "cancelled", "canceled", "duplicate", "won't fix")
