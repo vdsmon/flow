@@ -612,6 +612,68 @@ def test_cli_finish_skill_output_invalid_json(
     assert "not JSON" in capsys.readouterr().err
 
 
+def test_cli_advance_skill_output_invalid_json(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _write_workspace(tmp_path, stages=["ticket"], compounding=False)
+    _stub_git_head(monkeypatch)
+    ds.cmd_init(tmp_path, "FT-1")
+    ds.cmd_next(tmp_path, "FT-1")
+    rc = ds.cli_main(
+        [
+            "advance",
+            "--ticket",
+            "FT-1",
+            "--workspace-root",
+            str(tmp_path),
+            "--stage",
+            "ticket",
+            "--status",
+            "completed",
+            "--skill-output",
+            "{not json",
+        ]
+    )
+    assert rc == 1
+    assert "not JSON" in capsys.readouterr().err
+
+
+def test_cli_advance_persists_skill_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_workspace(
+        tmp_path,
+        handlers={"ticket": "skill:ship-it:create"},
+        stages=["ticket"],
+        compounding=False,
+    )
+    _stub_git_head(monkeypatch)
+    ds.cmd_init(tmp_path, "FT-1")
+    ds.cmd_next(tmp_path, "FT-1")
+    rc = ds.cli_main(
+        [
+            "advance",
+            "--ticket",
+            "FT-1",
+            "--workspace-root",
+            str(tmp_path),
+            "--stage",
+            "ticket",
+            "--status",
+            "completed",
+            "--skill-output",
+            json.dumps({"pr_url": "https://x/1"}),
+        ]
+    )
+    assert rc == 0
+    state_path = tmp_path / ".flow" / "runs" / "FT-1" / "state.json"
+    state_data = json.loads(state_path.read_text())
+    assert state_data["stages"]["ticket"]["skill_output"] == {"pr_url": "https://x/1"}
+
+
 # ─── Phase 7-full: lease (mutex) + canonical snapshot ────────────────────────
 
 
