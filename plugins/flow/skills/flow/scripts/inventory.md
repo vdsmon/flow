@@ -525,7 +525,6 @@ Required fields per stage (8-mvp set, baked into stage-registry.toml):
 - **universal** (every stage): `ticket`, `status`.
 - `implement.required_fields = ["planned_files"]`
 - `commit.required_fields = ["commit_message"]`
-- `create_pr.required_fields = ["pr_title"]`
 
 Empty-string / empty-list / missing-key all count as violations.
 
