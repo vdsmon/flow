@@ -118,7 +118,7 @@ roles = []
 
 [[stage]]
 name = "create_pr"
-description = "Bare default skips PR creation. GitHub workspaces can wire create_pr = \"inline\" (references/stage-create_pr.md → scripts/create_pr.py: push + gh pr create --draft --fill, idempotent). Other platforms install a PR-capable skill (ship-it for Bitbucket, etc) and wire skill:<name> via the init wizard."
+description = "Bare default skips PR creation. Workspaces wire create_pr = \"inline\" (references/stage-create_pr.md → scripts/create_pr.py): git push + open-or-resolve the PR through the forge seam (gh or bkt, per [forge] backend), idempotent. Requires a [forge] block."
 default_handler = "none"
 default_timeout_min = 20
 default_heartbeat_required = true
@@ -132,7 +132,7 @@ roles = []
 
 [[stage]]
 name = "review_loop"
-description = "Bare default skips CI / review-bot wait loop. Opt-in via init wizard if a wait-loop skill is installed."
+description = "Bare default skips the CI / review-bot wait loop. Workspaces wire review_loop = \"inline\" (references/stage-review_loop.md → scripts/forge_cli.py): wait for CI green, drive fixes (<=3 cycles), resolve Major+ review threads. Integral on the forge seam; terminal on CI green AND zero unresolved Major+."
 default_handler = "none"
 default_timeout_min = 60
 default_heartbeat_required = true

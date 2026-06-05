@@ -46,7 +46,7 @@ code_review = "inline"
 e2e = "none"
 commit = "inline"
 create_pr = "inline"
-review_loop = "none"
+review_loop = "inline"
 reflect = "inline"
 
 [reflect]
