@@ -14,11 +14,11 @@ valid and can be wired when a real review-bot-on-GitHub PR exists. `merge` /
 from __future__ import annotations
 
 import json
-import subprocess
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from _runner import CwdRunner as Runner
+from _runner import cwd_default_runner as _default_runner
 from forge import (
     Capability,
     CICheck,
@@ -28,15 +28,6 @@ from forge import (
     PullRequest,
     ReviewThread,
 )
-
-Runner = Callable[[list[str]], subprocess.CompletedProcess[str]]
-
-
-def _default_runner(repo: Path) -> Runner:
-    def run(args: list[str]) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(args, cwd=str(repo), capture_output=True, text=True, check=False)
-
-    return run
 
 
 class GitHubAdapter:

@@ -97,10 +97,10 @@ Subsequent stages depend on `<ticket-dir>/ticket.json` being present.
 
 ## Errors
 
-- Exit 1 from `tracker_cli.py get` → `/flow recover --reset-ticket <KEY>`
-  (recover is phase 8c; for now, manual retry).
-- Exit 2/3 from `ticket_frontmatter.py` → `/flow recover --reset-frontmatter
-  <KEY>` (manual fix).
+- Exit 1 from `tracker_cli.py get` → abort status=failed; once the tracker/creds
+  cause is fixed, `/flow recover <KEY>` → `retry --stage ticket`.
+- Exit 2/3 from `ticket_frontmatter.py` → abort status=failed; once the
+  frontmatter input is fixed, `/flow recover <KEY>` → `retry --stage ticket`.
 - `tracker_cli.py transition` exit 3 in step 3b → already `in_progress` or no such state; continue silently (not an error).
 - `tracker_cli.py transition` exit 1 / 2 / 4 / 5 in step 3b → best-effort claim; warn + append a `RECONCILE` friction entry + continue. Never fails the stage.
 
