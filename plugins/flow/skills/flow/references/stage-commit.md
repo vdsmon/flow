@@ -42,7 +42,7 @@ The applied patch comes from the recorded `implement.diff` — NOT from `git add
    ```
    - Exit 0 → `<ticket-dir>/implement.diff` exists.
    - Exit 1 → no baseline.
-     Abort; surface `/flow recover --reset-baseline` hint.
+     Abort; recover via `/flow recover <KEY>` → `retry --stage implement` (its records_diff_baseline pre-hook re-records the baseline).
    - Exit 2 → git error. Abort.
 
 2b. Content-ownership gate. Verify the working tree carries only planned changes before the commit is composed — a PR must hold only what was planned. `planned_files` has already been widened by the post-implement reconcile, so a legitimately-touched file is owned by now; anything still outside it is unplanned and must not ride along.
@@ -54,7 +54,7 @@ The applied patch comes from the recorded `implement.diff` — NOT from `git add
    ```
    - Exit 0 → ownership clean; continue.
    - Exit 3 → ownership violation. The printed JSON's `unowned_changes` lists files changed outside `planned_files`. Do NOT commit. Surface the unowned files and resolve by either (a) adding genuinely-needed files to the plan and re-recording the baseline (`record-baseline --files ...` — the reconcile path), or (b) reverting the stray edit; then rerun. If it cannot be resolved, abort with status=failed. Never commit past an unowned change, and never crash on it — exit 3 is a clean refusal to act on, not a fault.
-   - Exit 1 → no baseline. Abort; `/flow recover --reset-baseline`.
+   - Exit 1 → no baseline. Abort; `/flow recover <KEY>` → `retry --stage implement` (re-records the baseline).
    - Exit 2 → git error. Abort.
 
 3. Compose the commit skeleton.
@@ -85,7 +85,7 @@ The applied patch comes from the recorded `implement.diff` — NOT from `git add
    ```
    If apply fails:
    - The working tree drifted from the baseline. Surface the error.
-   - Abort with status=failed; `/flow recover --reapply-implement` (phase 8c).
+   - Abort with status=failed; `/flow recover <KEY>` → `retry --stage implement` (re-records the baseline against the current tree, then commit re-applies cleanly).
 
 6. Commit:
    ```bash
@@ -136,7 +136,7 @@ The applied patch comes from the recorded `implement.diff` — NOT from `git add
 - `diff_extract.py check-ownership` exit 3 → changes outside `planned_files`;
   do NOT commit. Reconcile the plan (`record-baseline --files ...`) or revert
   the stray edit, then rerun. Fail-safe: a clean refusal, never a silent commit.
-- `git apply --cached` fail → working tree drift. `/flow recover` in 8c.
+- `git apply --cached` fail → working tree drift. `/flow recover <KEY>` → `retry --stage implement` re-records the baseline.
 - `tracker_cli.py transition` exit 1 → transient; log warning, do not block.
   The commit is the source of truth. `--enqueue-on-transient` queues the
   transition to `.flow/pending-mutations.jsonl` for `/flow sync` to reconcile.
