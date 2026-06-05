@@ -113,6 +113,12 @@ def cli_main(argv: list[str]) -> int:
     parser.add_argument("--workspace-root", required=True)
     parser.add_argument("--cap", type=int, default=None)
     parser.add_argument("--concurrency", type=int, default=None)
+    parser.add_argument(
+        "--include-proposals",
+        action="store_true",
+        help="DANGEROUS: also auto-launch `proposal` (judgment) beads, bypassing the "
+        "human spec-plan accept gate. Default off; evolve/audit work only.",
+    )
     args = parser.parse_args(argv)
 
     ws = Path(args.workspace_root)
@@ -125,8 +131,15 @@ def cli_main(argv: list[str]) -> int:
     cap = args.cap if args.cap is not None else cfg_cap
     concurrency = args.concurrency if args.concurrency is not None else cfg_conc
 
+    if args.include_proposals:
+        print(
+            "WARNING: --include-proposals auto-launches judgment `proposal` beads "
+            "without the human spec-plan accept gate.",
+            file=sys.stderr,
+        )
+
     try:
-        sel = select(ws, cap=cap, concurrency=concurrency)
+        sel = select(ws, cap=cap, concurrency=concurrency, include_proposals=args.include_proposals)
         inflight = sorted(set(sel.get("skipped_in_flight") or []) | set(_open_pr_keys(repo)))
         live = liveness_map(repo, inflight)
     except NotMaintainer as exc:
@@ -139,6 +152,7 @@ def cli_main(argv: list[str]) -> int:
     result = decide(sel, live)
     result["liveness"] = live
     result["select"] = sel
+    result["include_proposals"] = args.include_proposals
     print(json.dumps(result, indent=2))
     return 0
 
