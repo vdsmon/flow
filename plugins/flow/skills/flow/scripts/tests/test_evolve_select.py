@@ -95,13 +95,13 @@ def test_epic_is_skipped():
     assert out["launch"] == ["flow-a"]
 
 
-def test_proposal_is_held_not_launched():
-    # generative proposals (label `proposal`) are judgment work — held for the
-    # maintainer to triage, never auto-launched.
+def test_proposal_label_never_launched():
+    # the `proposal`-exclusion guard keeps a mislabeled `evolve,proposal` bead
+    # out of `launch` — defense-in-depth, since plain proposals now live in a
+    # separate non-`evolve` backlog and never reach drain.
     cands = [_cand("flow-prop", labels=["evolve", "proposal"]), _cand("flow-a")]
     out = es.partition(cands, set(), False, 0, cap=10, concurrency=5)
     assert out["launch"] == ["flow-a"]
-    assert out["held_proposal"] == ["flow-prop"]
 
 
 def test_priority_ranking():

@@ -3,10 +3,10 @@
 `/flow evolve <sub-verb>`. Maintainer-only. Routed from SKILL.md's argument table. `evolve` is a **namespace**: the self-evolution loop's producers + consumers, one sub-verb each.
 
 - **`/flow evolve audit`** — the cold-audit **producer** (§audit): scan flow's OWN codebase for evidence-backed improvements and file them as `audit` beads in flow's backlog. Read-then-file; it does not implement.
-- **`/flow evolve propose`** — the multi-angle **proposal producer** (§propose): fan out one agent per generative angle (feature gaps, simplification, reorg, dead-weight, architecture, symmetry), adversarially verify, and file a ranked set. Provably-safe findings become auto-drainable `audit` beads; judgment findings become `proposal` beads held for the maintainer's triage. Read-then-file; it does not implement.
+- **`/flow evolve propose`** — the multi-angle **proposal producer** (§propose): fan out one agent per generative angle (feature gaps, simplification, reorg, dead-weight, architecture, symmetry), adversarially verify, and file a ranked set. Provably-safe findings become auto-drainable `audit` beads; judgment findings become plain `proposal` beads (non-`evolve`) in the maintainer's own backlog, run via `/flow <key>`. Read-then-file; it does not implement.
 - **`/flow evolve drain`** — the **consumer** (§drain): a single looping pass that drains the whole backlog. Each turn it reaps finished orphans (merge the green leaf PRs of runs that died before self-merging + teardown merged-and-exited worktrees, lease-gated), then fans out the next launchable batch as background `/flow <key> --auto` runs (each run self-merges its own green PR via the `merge` stage, post-Layer-2). It loops — launching, waiting while runs are live, reaping — until nothing is startable, draining hot beads sequentially. This is the nightly loop's consumer.
 
-The producers are **Producer B** (cold-audit + generative). Producer A is the reflect sling (`references/stage-reflect.md`): lived friction during real runs. Both land in the same `evolve`-labelled backlog, both dedup through the same `--dedup-key` seam. The cold-audit and generative producers differ in disposition: cold-audit and provably-safe generative findings are `audit` beads the consumer auto-ships; judgment generative findings are `proposal` beads the consumer holds for the maintainer (the vision's auto-vs-propose line).
+The producers are **Producer B** (cold-audit + generative). Producer A is the reflect sling (`references/stage-reflect.md`): lived friction during real runs. The cold-audit and provably-safe generative findings land in the same `evolve`-labelled backlog and dedup through the same `--dedup-key` seam; the consumer auto-ships them. The producers differ in disposition: judgment generative findings are instead filed as plain `proposal` beads (non-`evolve`) in the maintainer's own backlog — drain never sees them; the maintainer runs them via `/flow <key>` (the vision's auto-vs-propose line is now a backlog split, not a label filter).
 
 ## 0. Dispatch
 
@@ -60,7 +60,7 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/flow_beads_create.py \
   --workspace-root . \
   --summary "<finding title>" \
   --description "<evidence (file:line / repro) + value + blast radius>" \
-  --type <bug|chore|task> --labels evolve,audit \
+  --type <bug|chore|task> --labels evolve \
   --dedup-key "<primary-relfile>::<short-symptom>"
 ```
 
@@ -120,7 +120,7 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/flow_worktree.py reap --ticket <key> --branc
 python3 ${CLAUDE_SKILL_DIR}/scripts/evolve_drain.py --workspace-root .
 ```
 
-This runs `evolve_select` (which is DAG-aware via `bd ready`, drops in-flight beads, enforces backpressure ≥ `cap` open PRs, holds `proposal` beads, partitions ≤1 hot per batch / no shared primary-file anchor) and annotates each in-flight bead with its run's lease liveness. It returns JSON `{action: "launch"|"wait"|"done", launch:[keys], parked:[keys], liveness:{}, select:{...}}`:
+This runs `evolve_select` (which is DAG-aware via `bd ready`, drops in-flight beads, enforces backpressure ≥ `cap` open PRs, partitions ≤1 hot per batch / no shared primary-file anchor) and annotates each in-flight bead with its run's lease liveness. It returns JSON `{action: "launch"|"wait"|"done", launch:[keys], parked:[keys], liveness:{}, select:{...}}`:
 
 - **`launch`** (launch non-empty) → go to **C**.
 - **`wait`** (launch empty, but a still-LIVE in-flight run will free serialization/backpressure) → go to **D-wait**.
@@ -144,7 +144,7 @@ Each spawns a detached run that auto-plans and either drives its PR to green-and
 
 ### Report
 
-When the loop exits (`done`), summarise the whole run: merged (keys) + worktrees torn down across all turns, launched (keys), deferred (keys), and everything **parked for the human** — `parked` in-flight beads (non-live lease, including any `held_guard` hot PR you withheld because its diff removed a safety property — name the property), plus `not_green` / conflicted draft PRs and `held_proposal` (generative proposals awaiting your triage). Tell the user how to follow along:
+When the loop exits (`done`), summarise the whole run: merged (keys) + worktrees torn down across all turns, launched (keys), deferred (keys), and everything **parked for the human** — `parked` in-flight beads (non-live lease, including any `held_guard` hot PR you withheld because its diff removed a safety property — name the property), plus `not_green` / conflicted draft PRs. Tell the user how to follow along:
 
 - Monitor live runs with `claude agents --json` (the plain `claude agents` needs a TTY).
 - Review any **deferred** beads: the run commented its open questions before exiting. `deferred` != done, so to unstick, answer the comment, reopen the bead (status → `open`), and re-run it interactively (WITHOUT `--auto`).
@@ -180,11 +180,11 @@ For each surviving candidate, spawn an independent skeptic prompted to REFUTE it
 
 Dedup across lenses (merge candidates about the same root issue). Then split each survivor by the auto-vs-propose line:
 
-- **Provably-safe → `audit`** (auto-drainable). A mechanical, behavior-preserving change with hard evidence — a proven-dead-code deletion, a zero-behavior-change simplification. File it exactly as §audit step 3 (labels `evolve,audit`); it joins the normal drain.
-- **Judgment → `proposal`** (held for the maintainer). A feature, a real refactor, a reorg, an architecture challenge — anything whose merit is taste and fit, not a broke/works signal. File it with labels `evolve,proposal`. The consumer (§drain) HOLDS these (`held_proposal`) and never auto-launches them; they are the maintainer's to triage.
+- **Provably-safe → `audit`** (auto-drainable). A mechanical, behavior-preserving change with hard evidence — a proven-dead-code deletion, a zero-behavior-change simplification. File it exactly as §audit step 3 (labels `evolve`); it joins the normal drain.
+- **Judgment → `proposal`** (the maintainer's backlog). A feature, a real refactor, a reorg, an architecture challenge — anything whose merit is taste and fit, not a broke/works signal. File it as a plain `proposal` bead (label `proposal` only, NOT `evolve,proposal`). A plain `proposal` bead carries no `evolve` label, so drain never sees it — it lands in the maintainer's backlog and is run via `/flow <key>`, where the spec plan gate is the accept.
 
 Rank by vision-alignment × value × evidence-strength × reviewability. Each `proposal` description MUST carry, beyond the evidence and blast-radius: your **confidence** and a **recommended default** (build / shelve / needs-discussion), so triaging it costs the maintainer seconds, not hours. Assign the same stable `<primary-relfile>::<short-symptom>` id and file through the §audit step 3 seam (the `--dedup-key` converges re-runs). Flag `hot` per §audit step 2 when it touches a hot or guard file.
 
 ### D. Report
 
-Present the ranked proposal set: each proposal's title, disposition (`audit` auto-drains / `proposal` awaits you), confidence, recommended default, and one-line rationale. Be honest when a pass found little — surfacing two real proposals and refuting the rest is success, not failure. The maintainer triages the `proposal` beads (`bd ready --label proposal`); the `audit` ones drain with §drain.
+Present the ranked proposal set: each proposal's title, disposition (`audit` auto-drains / `proposal` you run via `/flow <key>`), confidence, recommended default, and one-line rationale. Be honest when a pass found little — surfacing two real proposals and refuting the rest is success, not failure. The maintainer finds the `proposal` beads (`bd ready --label proposal`) and runs each via `/flow <key>`; the `audit` ones drain with §drain.
