@@ -109,6 +109,11 @@ def test_module_md_covers_all_live_scripts() -> None:
     assert seam_check.scripts_missing_from_module_md() == set()
 
 
+def test_main_fails_on_module_md_gap(monkeypatch) -> None:
+    monkeypatch.setattr(seam_check, "scripts_missing_from_module_md", lambda *a, **k: {"foo.py"})
+    assert seam_check.main([]) == 1
+
+
 def test_flags_script_missing_from_module_md(tmp_path) -> None:
     (tmp_path / "foo.py").write_text("")
     missing = seam_check.scripts_missing_from_module_md(
