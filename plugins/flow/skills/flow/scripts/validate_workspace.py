@@ -38,6 +38,7 @@ import snapshot
 from _registry import StageEntry, load_registry
 
 KNOWN_BACKENDS: tuple[str, ...] = ("jira", "beads")
+KNOWN_FORGE_BACKENDS: tuple[str, ...] = ("github", "bitbucket")
 _HANDLER_RE = re.compile(r"^(inline|none|subagent:[A-Za-z0-9_-]+|skill:[A-Za-z0-9_.-]+(?::.+)?)$")
 
 
@@ -87,6 +88,33 @@ def _validate_tracker_block(data: dict[str, Any], result: ValidationResult) -> s
         elif not isinstance(beads.get("prefix"), str) or not beads["prefix"]:
             result.add("tracker.beads.prefix", "missing or not a non-empty string")
     return backend
+
+
+def _validate_forge_block(data: dict[str, Any], result: ValidationResult) -> None:
+    """Validate the OPTIONAL `[forge]` block, only when present.
+
+    Unlike `[tracker]`, an absent `[forge]` is NOT a violation (a workspace that
+    keeps create_pr/review_loop at `none` needs no forge). github requires no
+    sub-keys; bitbucket requires `workspace` + `repo_slug`.
+    """
+    forge = data.get("forge")
+    if forge is None:
+        return
+    if not isinstance(forge, dict):
+        result.add("forge", "not a table")
+        return
+    backend = forge.get("backend")
+    if backend not in KNOWN_FORGE_BACKENDS:
+        result.add("forge.backend", f"expected one of {KNOWN_FORGE_BACKENDS!r}, got {backend!r}")
+        return
+    if backend == "bitbucket":
+        bb = forge.get("bitbucket")
+        if not isinstance(bb, dict):
+            result.add("forge.bitbucket", "missing or not a table")
+        else:
+            for key in ("workspace", "repo_slug"):
+                if not isinstance(bb.get(key), str) or not bb[key]:
+                    result.add(f"forge.bitbucket.{key}", "missing or not a non-empty string")
 
 
 def _parse_stages(pipeline: dict[str, Any], result: ValidationResult) -> list[str] | None:
@@ -263,6 +291,7 @@ def validate(
         return result, None
 
     backend = _validate_tracker_block(data, result)
+    _validate_forge_block(data, result)
     compounding = _validate_memory_block(data, result)
 
     registry = stage_registry or load_registry(_stage_registry_path())

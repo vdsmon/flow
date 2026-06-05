@@ -490,3 +490,51 @@ def test_emit_snapshot_matches_snapshot_emit_cli(tmp_path: Path) -> None:
     assert rc == 0
     _, sha_path = _snapshot_paths(root, "T")
     assert sha_path.read_text(encoding="utf-8").strip() == expected
+
+
+# ─── [forge] block (optional; validate-if-present) ───────────────────────────
+
+
+def _append_forge(root: Path, body: str) -> None:
+    p = root / ".flow" / "workspace.toml"
+    p.write_text(p.read_text(encoding="utf-8") + "\n" + body, encoding="utf-8")
+
+
+def test_forge_absent_is_valid(tmp_path: Path) -> None:
+    root = _make_workspace(tmp_path, backend="beads")
+    result, snapshot = vw.validate(root)
+    assert result.ok
+    assert snapshot is not None
+
+
+def test_forge_github_valid(tmp_path: Path) -> None:
+    root = _make_workspace(tmp_path, backend="beads")
+    _append_forge(root, '[forge]\nbackend = "github"\n[forge.github]\n')
+    result, _ = vw.validate(root)
+    assert result.ok
+
+
+def test_forge_bitbucket_valid(tmp_path: Path) -> None:
+    root = _make_workspace(tmp_path, backend="beads")
+    _append_forge(
+        root,
+        '[forge]\nbackend = "bitbucket"\n[forge.bitbucket]\nworkspace = "ws"\nrepo_slug = "rs"\n',
+    )
+    result, _ = vw.validate(root)
+    assert result.ok
+
+
+def test_forge_bitbucket_missing_keys_fails(tmp_path: Path) -> None:
+    root = _make_workspace(tmp_path, backend="beads")
+    _append_forge(root, '[forge]\nbackend = "bitbucket"\n[forge.bitbucket]\n')
+    result, _ = vw.validate(root)
+    assert not result.ok
+    assert any("forge.bitbucket" in v for v in result.violations)
+
+
+def test_forge_unknown_backend_fails(tmp_path: Path) -> None:
+    root = _make_workspace(tmp_path, backend="beads")
+    _append_forge(root, '[forge]\nbackend = "gitlab"\n')
+    result, _ = vw.validate(root)
+    assert not result.ok
+    assert any("forge.backend" in v for v in result.violations)
