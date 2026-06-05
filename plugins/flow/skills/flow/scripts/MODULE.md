@@ -93,7 +93,7 @@ Pluggable PR-host seam, structural twin of the tracker seam. The `create_pr` and
 
 ## Shared helpers (lib)
 
-`_atomicio.py` (atomic temp-write + fsync), `_timeutil.py` (UTC ISO8601 parse; `require_z` for the strict contract), `_workspace.py` (workspace.toml load), `_registry.py` (stage-registry parse), `_locking.py` (flock retry), `_jsonl.py` (JSONL sidecar parse), `_runner.py` (subprocess-runner factories: positional-cwd `Runner`/`default_runner` for diff_extract/branch_ticket/recall_pending/flow_worktree, keyword-only `KwRunner`/`kw_default_runner` for init/tracker_beads), `maintainer.py` (maintainer-mode detection via the `[maintainer]` marker; gates the self-evolution loop).
+`_atomicio.py` (atomic temp-write + fsync), `_timeutil.py` (UTC ISO8601 parse; `require_z` for the strict contract), `_workspace.py` (workspace.toml load), `_registry.py` (stage-registry parse), `_locking.py` (flock retry), `_jsonl.py` (JSONL sidecar parse), `_runner.py` (subprocess-runner factories: positional-cwd `Runner`/`default_runner` for diff_extract/branch_ticket/recall_pending/flow_worktree/flow_beads_create, keyword-only `KwRunner`/`kw_default_runner` for init/tracker_beads, cwd-bound `CwdRunner`/`cwd_default_runner` for forge_github/forge_bitbucket/evolve_reap/evolve_select/create_pr), `maintainer.py` (maintainer-mode detection via the `[maintainer]` marker; gates the self-evolution loop).
 
 ## Dev tooling
 

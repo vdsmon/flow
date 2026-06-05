@@ -19,11 +19,11 @@ from __future__ import annotations
 
 import json
 import re
-import subprocess
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from _runner import CwdRunner as Runner
+from _runner import cwd_default_runner as _default_runner
 from forge import (
     THREAD_SEVERITY,
     Capability,
@@ -35,16 +35,7 @@ from forge import (
     ReviewThread,
 )
 
-Runner = Callable[[list[str]], subprocess.CompletedProcess[str]]
-
 _CI_STATE_RE = re.compile(r"INPROGRESS|SUCCESSFUL|FAILED|STOPPED|ERROR", re.IGNORECASE)
-
-
-def _default_runner(repo: Path) -> Runner:
-    def run(args: list[str]) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(args, cwd=str(repo), capture_output=True, text=True, check=False)
-
-    return run
 
 
 class BitbucketAdapter:
