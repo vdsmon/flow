@@ -419,7 +419,8 @@ Phase 7-full adds per-field structural validation.
 | dispatch_stage      | 0    | ok                                              |
 | dispatch_stage      | 1    | validate failed / state malformed / generic     |
 | dispatch_stage      | 2    | no ticket dir / not yet initialized             |
-| dispatch_stage      | 7    | RESERVED (lost lease, phase 7-full)             |
+| dispatch_stage      | 5    | stale foreign lease (needs /flow recover --takeover) |
+| dispatch_stage      | 7    | lost lease (another run took over)               |
 
 ### Handler-descriptor JSON shape (`dispatch next` stdout)
 
@@ -728,11 +729,12 @@ Reads `.flow/workspace.toml` `[tracker]` block, flattens the per-backend sub-blo
 | `list-assigned` | `[--filter open]` | `tracker.list_assigned()` → array |
 | `state` | `--key FT-1` | `tracker.state(key)` → JSON |
 | `transition` | `--key FT-1 --to-state in_progress [--field k=v ...]` | Looks up transition id by `to_normalized_state` / `to_state` / `name` (any match). Fields k=v pairs string-only in mvp. |
-| `comment` | `--key FT-1 --text "..."` | Wraps body as `{format: markdown, value: text}`. |
+| `comment` | `--key FT-1 --text "..."` | Wraps body as `{"body": text, "fmt": "md"}` (Content TypedDict: fmt in {md, adf, plain}). |
 | `create` | `--summary "..." --description "..." --type task [--parent K] [--label L ...] [--assignee A]` | `tracker.create(...)` → `{"key": new_key}` JSON. |
 | `is-shipped` | `--key FT-1` | `tracker.is_shipped(key)` → JSON. |
+| `download-attachments` | `--key FT-1 --out <dir> [--max-bytes N]` | Downloads ticket attachments to `<dir>`; skips files over `--max-bytes` (default 25 MiB). |
 
-Exit codes: 0=ok, 1=tracker error (network/auth/unknown key/TrackerError subclass), 2=workspace config invalid, 3=invalid args.
+Exit codes: 0=ok, 1=transient/unknown tracker error (network/auth/retryable/unknown failure_kind), 2=workspace config invalid, 3=invalid args, 4=hard transition failure (permission_denied / validator_failed / missing_required_field), 5=transition not applicable (wrong_source_state / ambiguous_transition).
 
 Reuses: `tracker.make_tracker()` factory, `tracker.TrackerError` class.
 Tests via injectable `tracker_factory` shim — no real tracker construction.
