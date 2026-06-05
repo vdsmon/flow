@@ -4,6 +4,7 @@ import socket
 from datetime import UTC, datetime
 from pathlib import Path
 
+import heartbeat
 import lease
 import recover
 import state
@@ -117,3 +118,72 @@ def test_reload_snapshot_writes_sha(tmp_path: Path) -> None:
     assert rc == 0
     assert payload["snapshot_reloaded"] is True
     assert (td / "snapshot.sha").exists()
+
+
+def test_detect_progress_hung(tmp_path: Path) -> None:
+    td = _ws(tmp_path)
+    state.begin_stage(td, "plan", "sha")
+    heartbeat.write_progress(
+        td,
+        run_id="r",
+        stage="plan",
+        ticket="T-1",
+        seq=1,
+        current_op="x",
+        now_iso="2026-05-28T12:00:00Z",
+    )
+    rep = recover.detect(tmp_path, "T-1", now_iso="2026-05-28T12:05:00Z")
+    assert rep["progress"]["plan"] == heartbeat.HUNG
+    assert "ticket" not in rep["progress"]
+
+
+def test_detect_progress_ok(tmp_path: Path) -> None:
+    td = _ws(tmp_path)
+    state.begin_stage(td, "plan", "sha")
+    heartbeat.write_progress(
+        td,
+        run_id="r",
+        stage="plan",
+        ticket="T-1",
+        seq=1,
+        current_op="x",
+        now_iso="2026-05-28T12:05:00Z",
+    )
+    rep = recover.detect(tmp_path, "T-1", now_iso="2026-05-28T12:05:30Z")
+    assert rep["progress"]["plan"] == heartbeat.OK
+
+
+def test_detect_ship_event_attention(tmp_path: Path) -> None:
+    _ws(tmp_path)
+    ship = tmp_path / ".flow" / "FT" / "ship-events"
+    ship.mkdir(parents=True)
+    (ship / "evt.dupe.1.json").write_text("{}", encoding="utf-8")
+    (ship / "evt.corrupt.json").write_text("{}", encoding="utf-8")
+    (ship / ".quarantine-intent-evt").write_text("{}", encoding="utf-8")
+    (ship / "clean.json").write_text("{}", encoding="utf-8")
+    rep = recover.detect(tmp_path, "T-1", now_iso=_now())
+    assert rep["ship_event_attention"] == 3
+
+
+def test_retry_exit2_no_state(tmp_path: Path) -> None:
+    (tmp_path / ".flow").mkdir()
+    rc = recover.cli_main(
+        ["retry", "--ticket", "ZZ-9", "--workspace-root", str(tmp_path), "--stage", "plan"]
+    )
+    assert rc == 2
+
+
+def test_retry_exit1_unknown_stage(tmp_path: Path) -> None:
+    _ws(tmp_path)
+    rc = recover.cli_main(
+        ["retry", "--ticket", "T-1", "--workspace-root", str(tmp_path), "--stage", "nope"]
+    )
+    assert rc == 1
+
+
+def test_skip_exit1_unknown_stage(tmp_path: Path) -> None:
+    _ws(tmp_path)
+    rc = recover.cli_main(
+        ["skip", "--ticket", "T-1", "--workspace-root", str(tmp_path), "--stage", "nope"]
+    )
+    assert rc == 1
