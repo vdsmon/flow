@@ -147,6 +147,13 @@ def test_cli_missing_forge_block_is_tool_error(tmp_path, monkeypatch):
     assert rc == 2
 
 
+def test_cli_refused_protected_branch(tmp_path, monkeypatch):
+    run, _ = _git_runner(branch="main")
+    monkeypatch.setattr(cp, "_default_runner", lambda _repo: run)
+    rc = cp.cli_main(["--workspace-root", str(tmp_path), "--base", "main"])
+    assert rc == 3
+
+
 def test_draft_config_default_false_when_no_workspace(tmp_path):
     assert cp._draft_config(tmp_path) is False
 
