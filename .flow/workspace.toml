@@ -16,7 +16,11 @@ self_target = true
 
 # Maintainer self-target only: let the reaper auto-merge a hot leaf PR in
 # isolation (one hot per pass). Stays off for user projects (human-merge keystone).
+# cap/concurrency tune this repo's drainer fan-out (default 5/3); committed so the
+# nightly schedule's ff-only advance doesn't conflict with a local uncommitted edit.
 [evolve]
+cap = 10
+concurrency = 8
 auto_merge_hot = true
 
 # This repo opens PRs ready for review, not draft (maintainer preference). The
