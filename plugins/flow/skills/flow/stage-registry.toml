@@ -10,9 +10,12 @@
 #   name                          - matches references/stage-<name>.md and pipeline.stages entries
 #   default_handler               - one of: "inline" | "subagent:<type>" | "skill:<name>[:<args>]" | "none"
 #   default_timeout_min           - workspace.toml [pipeline.timeouts] overrides per-stage
-#   default_heartbeat_required    - if true, handler manifests with supports_progress=false are rejected
-#   default_max_no_progress_min   - stricter than overall timeout; catches wedged-but-touching-file
-#   required_capabilities         - CAPABILITY_ENUM names; cross-checked at validate-workspace.py
+#   default_heartbeat_required    - INFORMATIONAL ONLY: parsed but no engine reads it; no live
+#                                   poller exists, so supports_progress=false is NOT actually rejected
+#   default_max_no_progress_min   - INFORMATIONAL ONLY: not read by any engine; the hung-detector
+#                                   uses its own hardcoded default (heartbeat.py), never this field
+#   required_capabilities         - DEFERRED (phase 7-full): validate-workspace cross-check is
+#                                   out-of-scope today; required_capabilities=[] everywhere, so inert
 #   required_predecessors         - upstream stages that MUST appear earlier in pipeline.stages
 #   required                      - if true, MUST appear in pipeline.stages
 #   required_when_compounding     - if true AND [memory] compounding=true, MUST appear
