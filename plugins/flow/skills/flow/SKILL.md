@@ -54,7 +54,7 @@ Spec is the default because fire-and-forget is the primary path.
 | `recover` (optionally `<ticket>`) | recover | `references/verb-recover.md` |
 | `sync` | sync | `references/verb-sync-baseline.md` |
 | `baseline` | baseline | `references/verb-sync-baseline.md` |
-| `evolve` (maintainer-only) | evolve | `references/verb-evolve.md` |
+| `evolve <audit\|propose\|launch\|janitor\|drain>` (maintainer-only) | evolve namespace (dispatch in the ref) | `references/verb-evolve.md` |
 | (empty) | print verb listing | — |
 | anything else (e.g. `FT-123`) | spec; that positional token is the ticket key | `references/verb-spec.md` |
 

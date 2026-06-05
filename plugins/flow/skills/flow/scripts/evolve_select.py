@@ -1,8 +1,8 @@
-"""Select + partition the next batch of evolve beads to launch (the drainer's core).
+"""Select + partition the next batch of evolve beads to launch (the launch consumer's core).
 
 Pure selection over flow's OWN backlog, no side effects. Given the ready evolve
 beads plus the in-flight branches/PRs, decide which keys to fan out as
-`/flow <key> --auto` runs. The `/flow evolve --ship` verb consumes this and does
+`/flow <key> --auto` runs. The `/flow evolve launch` verb consumes this and does
 the actual launching.
 
 Partition is best-effort coarse, NOT a disjointness guarantee — planning is
@@ -126,7 +126,7 @@ def partition(
 
     candidates: parsed `bd ready -l evolve` items (id, priority, labels, issue_type,
     description). Epics are skipped (you launch a run on leaf work, not a container).
-    Proposal beads (label `proposal`, filed by `/flow evolve --generative`) are held
+    Proposal beads (label `proposal`, filed by `/flow evolve propose`) are held
     for the maintainer to triage and never auto-launched — the judgment side of the
     vision's auto-vs-propose line.
     """
