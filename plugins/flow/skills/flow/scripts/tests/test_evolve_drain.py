@@ -140,3 +140,48 @@ def test_cli_include_proposals_threads_to_select(monkeypatch, tmp_path, capsys):
     cap = capsys.readouterr()
     assert json.loads(cap.out)["include_proposals"] is True
     assert "WARNING" in cap.err  # the dangerous-mode banner fires
+
+
+# ─── cli_main — exit codes ───────────────────────────────────────────────────
+
+
+def _plain_ws(tmp_path):
+    d = tmp_path / "proj"
+    (d / ".flow").mkdir(parents=True)
+    (d / ".flow" / "workspace.toml").write_text('[tracker]\nbackend = "beads"\n', encoding="utf-8")
+    return d
+
+
+def test_cli_not_maintainer_dormant_exit_4(tmp_path, monkeypatch, capsys):
+    # patch maintainer._global_config_path, not ed.resolve_maintainer_repo:
+    # resolve_maintainer_repo reads _global_config_path from maintainer's globals
+    # at call time, so the directly-imported func still sees the patch (real boundary)
+    monkeypatch.setattr("maintainer._global_config_path", lambda: tmp_path / "absent.toml")
+    plain = _plain_ws(tmp_path)
+    rc = ed.cli_main(["--workspace-root", str(plain)])
+    assert rc == 4
+    assert "drain is dormant" in capsys.readouterr().err
+
+
+def test_cli_select_not_maintainer_exit_4(monkeypatch, tmp_path, capsys):
+    _stub_cli(monkeypatch, tmp_path, {})
+
+    def fake_select(ws, *, cap, concurrency, include_proposals=False):
+        raise ed.NotMaintainer("select says not maintainer")
+
+    monkeypatch.setattr(ed, "select", fake_select)
+    rc = ed.cli_main(["--workspace-root", str(tmp_path)])
+    assert rc == 4
+    assert "select says not maintainer" in capsys.readouterr().err
+
+
+def test_cli_tool_error_exit_2(monkeypatch, tmp_path, capsys):
+    _stub_cli(monkeypatch, tmp_path, {})
+
+    def fake_select(ws, *, cap, concurrency, include_proposals=False):
+        raise ed.ToolError("bd blew up")
+
+    monkeypatch.setattr(ed, "select", fake_select)
+    rc = ed.cli_main(["--workspace-root", str(tmp_path)])
+    assert rc == 2
+    assert "bd blew up" in capsys.readouterr().err
