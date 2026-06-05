@@ -56,10 +56,10 @@ The keystone gate survives exactly where the risk is: leaf fixes flow through un
 - **Reference-doc edits validate next run, not this one.** A stage editing its OWN `reference_doc` (the explicit self-modifying-stage case) is NOT drift-guarded — the edit applies cleanly to the worktree copy, commits, and merges. But the do-loop reads each inline/subagent stage's `reference_doc` from `${CLAUDE_SKILL_DIR}` (the installed checkout), so the run that authors the fix still executes the OLD prose; the fix only takes effect on the NEXT run after merge. Don't expect a mid-run prose fix to validate on the run that wrote it — it's deferred, not lost.
 - **Never commit machinery to `main`.** In-flight self-edits commit on the run's own branch; everything else flows through a bead → consumer (`launch`) → PR → merge. A background process landing straight on `main` bypasses the keystone gate.
 - **Human-merge keystone.** Only green + leaf PRs auto-merge. Hot / non-green / conflicted always wait for a human. The auto-merge envelope is deliberately narrow — widen it only with eyes open.
-- **Fresh base for autonomous runs.** `--base @default`, never the launcher's branch (see §launch).
+- **Fresh base for autonomous runs.** `--base @default`, never the launcher's branch (see §drain).
 
 ## Where the mechanics live
 
-- `references/verb-evolve.md` — the `evolve` namespace: producers (§audit, §propose) + consumers (§launch, §janitor, §drain).
+- `references/verb-evolve.md` — the `evolve` namespace: producers (§audit, §propose) + consumer (§drain).
 - `references/stage-reflect.md` — reflect lens-B protocol + the sling.
 - `MODULE.md` — `evolve_select.py`, `evolve_reap.py`, `create_pr.py`, `flow_beads_create.py`, `machinery_edit.py`, `maintainer.py`.
