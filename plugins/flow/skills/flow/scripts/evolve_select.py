@@ -46,6 +46,8 @@ Runner = Callable[[list[str]], subprocess.CompletedProcess[str]]
 DEFAULT_CAP = 5
 DEFAULT_CONCURRENCY = 3
 _EVOLVE_STATUSES = "open,in_progress,blocked,deferred,closed"
+# a CLOSED or DEFERRED bead is never in flight regardless of a leaked feature/<key>-* branch
+_ACTIVE_STATUSES = "open,in_progress,blocked"
 _BRANCH_PREFIX = "feature/"
 _FLOW_KEY_RE = re.compile(r"^feature/(flow-[a-z0-9]+(?:\.\d+)?)(?:-.*)?$", re.IGNORECASE)
 _BLAST_RE = re.compile(r"^\s*BLAST[ _]RADIUS:\s*(.+?)\s*$", re.IGNORECASE | re.MULTILINE)
@@ -218,7 +220,7 @@ def _hot_inflight(runner: Runner, refs: set[str]) -> bool:
     if not inflight_flow_keys:
         return False
     raw = _ok(
-        runner(["bd", "list", "-l", "evolve", "--status", _EVOLVE_STATUSES, "--json"]),
+        runner(["bd", "list", "-l", "evolve", "--status", _ACTIVE_STATUSES, "--json"]),
         "bd list",
     )
     hot_keys = {

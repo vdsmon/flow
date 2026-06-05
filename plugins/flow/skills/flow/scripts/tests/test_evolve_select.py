@@ -203,6 +203,37 @@ def test_select_hot_inflight_from_open_pr(tmp_path):
     assert out["open_pr_count"] == 1
 
 
+def _status_aware_runner(
+    beads: list[dict],
+) -> tuple[Callable[..., subprocess.CompletedProcess[str]], Recorder]:
+    """bd list runner that honors --status, filtering fixture beads by their status field."""
+    calls: Recorder = []
+
+    def run(args: list[str]) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        wanted = set(args[args.index("--status") + 1].split(","))
+        filtered = [b for b in beads if b.get("status") in wanted]
+        return subprocess.CompletedProcess(args, 0, json.dumps(filtered), "")
+
+    return run, calls
+
+
+def test_hot_inflight_ignores_closed_bead_with_leaked_ref():
+    for dead_status in ("closed", "deferred"):
+        beads = [{"id": "flow-old", "labels": ["evolve", "hot"], "status": dead_status}]
+        run, _ = _status_aware_runner(beads)
+        assert es._hot_inflight(run, {"feature/flow-old-wip"}) is False, dead_status
+
+
+def test_hot_inflight_queries_active_statuses():
+    run, calls = _status_aware_runner([])
+    es._hot_inflight(run, {"feature/flow-x-wip"})
+    list_calls = [a for a in calls if a[:2] == ["bd", "list"]]
+    assert len(list_calls) == 1
+    args = list_calls[0]
+    assert args[args.index("--status") + 1] == "open,in_progress,blocked"
+
+
 def test_select_not_maintainer_raises(tmp_path, monkeypatch):
     monkeypatch.setattr("maintainer._global_config_path", lambda: tmp_path / "absent.toml")
     plain = tmp_path / "proj"
