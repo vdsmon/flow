@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import fcntl
 import json
+import multiprocessing
+import os
 from pathlib import Path
+from typing import Any
 
 import _memory_paths
 import flow_friction
@@ -122,6 +126,59 @@ def test_cli_invalid_type_returns_3(tmp_path: Path) -> None:
         ]
     )
     assert rc == 3
+
+
+# ─── Concurrency: friction flock contention → exit 2 ───────────────────────────
+
+
+def _hold_friction_lock(lock_path_str: str, acquired_evt: Any, release_evt: Any) -> None:
+    """Top-level so multiprocessing can pickle it on macOS spawn-start.
+
+    Holds an exclusive flock on the friction lock file, signals once held, and
+    waits for release. While held, cli_main's flock_retry exhausts and returns 2.
+    """
+    fd = os.open(lock_path_str, os.O_RDWR | os.O_CREAT, 0o644)
+    fcntl.flock(fd, fcntl.LOCK_EX)
+    acquired_evt.set()
+    release_evt.wait(timeout=30)
+    fcntl.flock(fd, fcntl.LOCK_UN)
+    os.close(fd)
+
+
+def test_cli_lock_contention_returns_2(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path)
+    ns = _memory_paths.resolve_namespace(tmp_path)
+    lock_path = _memory_paths.friction_lock_path(tmp_path, ns)
+    # O_CREAT does not create parent dirs; the holder runs before append()'s mkdir.
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+
+    ctx = multiprocessing.get_context("spawn")
+    acquired_evt = ctx.Event()
+    release_evt = ctx.Event()
+    proc = ctx.Process(target=_hold_friction_lock, args=(str(lock_path), acquired_evt, release_evt))
+    proc.start()
+    try:
+        assert acquired_evt.wait(timeout=10)
+        rc = flow_friction.cli_main(
+            [
+                "--ticket",
+                "FT-1",
+                "--run-id",
+                "r",
+                "--stage",
+                "implement",
+                "--type",
+                "RETRY",
+                "--body",
+                "b",
+                "--workspace-root",
+                str(tmp_path),
+            ]
+        )
+        assert rc == 2
+    finally:
+        release_evt.set()
+        proc.join(timeout=10)
 
 
 def test_cli_missing_config_returns_4(tmp_path: Path) -> None:
