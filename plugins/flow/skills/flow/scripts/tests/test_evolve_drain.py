@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import evolve_drain as ed
 
 # decide() reads only `launch` from the select result; the in-flight picture comes
@@ -98,3 +100,43 @@ def test_liveness_map_absent_key(tmp_path):
     repo = tmp_path / "flow"
     repo.mkdir()
     assert ed.liveness_map(repo, ["flow-gone"]) == {"flow-gone": "absent"}
+
+
+# ─── cli_main — --include-proposals threading ────────────────────────────────
+
+
+def _stub_cli(monkeypatch, tmp_path, captured):
+    repo = tmp_path / "flow"
+    repo.mkdir()
+    monkeypatch.setattr(ed, "resolve_maintainer_repo", lambda ws: repo)
+    monkeypatch.setattr(ed, "_config_defaults", lambda ws: (5, 3))
+    monkeypatch.setattr(ed, "_open_pr_keys", lambda repo: [])
+    monkeypatch.setattr(ed, "liveness_map", lambda repo, keys: {})
+
+    def fake_select(ws, *, cap, concurrency, include_proposals=False):
+        captured["include_proposals"] = include_proposals
+        return _sel()
+
+    monkeypatch.setattr(ed, "select", fake_select)
+    return repo
+
+
+def test_cli_default_does_not_include_proposals(monkeypatch, tmp_path, capsys):
+    captured = {}
+    _stub_cli(monkeypatch, tmp_path, captured)
+    rc = ed.cli_main(["--workspace-root", str(tmp_path)])
+    assert rc == 0
+    assert captured["include_proposals"] is False
+    out = json.loads(capsys.readouterr().out)
+    assert out["include_proposals"] is False
+
+
+def test_cli_include_proposals_threads_to_select(monkeypatch, tmp_path, capsys):
+    captured = {}
+    _stub_cli(monkeypatch, tmp_path, captured)
+    rc = ed.cli_main(["--workspace-root", str(tmp_path), "--include-proposals"])
+    assert rc == 0
+    assert captured["include_proposals"] is True
+    cap = capsys.readouterr()
+    assert json.loads(cap.out)["include_proposals"] is True
+    assert "WARNING" in cap.err  # the dangerous-mode banner fires

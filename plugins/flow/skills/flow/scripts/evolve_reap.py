@@ -180,15 +180,23 @@ def classify(
     }
 
 
-def _labels_index(runner: Runner) -> dict[str, list[str]]:
-    raw = _ok(
-        runner(["bd", "list", "-l", "evolve", "--status", _EVOLVE_STATUSES, "--json"]),
-        "bd list",
-    )
+def _labels_index(runner: Runner, *, include_proposals: bool = False) -> dict[str, list[str]]:
+    """key -> labels for every evolve bead (plus `proposal` beads when opted in).
+
+    `classify` skips any PR whose key is absent here, so the proposal backlog MUST
+    join the index under `include_proposals` or proposal orphans (runs that died
+    before self-merging) would never reap and pile up unmerged.
+    """
+    labels = ["evolve", "proposal"] if include_proposals else ["evolve"]
     index: dict[str, list[str]] = {}
-    for b in _loads(raw):
-        if isinstance(b, dict) and b.get("id"):
-            index[str(b["id"])] = list(b.get("labels") or [])
+    for label in labels:
+        raw = _ok(
+            runner(["bd", "list", "-l", label, "--status", _EVOLVE_STATUSES, "--json"]),
+            "bd list",
+        )
+        for b in _loads(raw):
+            if isinstance(b, dict) and b.get("id"):
+                index[str(b["id"])] = list(b.get("labels") or [])
     return index
 
 
@@ -204,7 +212,9 @@ def _auto_merge_hot(workspace_root: Path) -> bool:
     return value if isinstance(value, bool) else False
 
 
-def reap(workspace_root: Path, *, runner: Runner | None = None) -> dict:
+def reap(
+    workspace_root: Path, *, runner: Runner | None = None, include_proposals: bool = False
+) -> dict:
     repo = resolve_maintainer_repo(workspace_root)
     if repo is None:
         raise NotMaintainer("not a flow maintainer setup; nothing to reap")
@@ -227,15 +237,22 @@ def reap(workspace_root: Path, *, runner: Runner | None = None) -> dict:
         "gh pr list",
     )
     prs = _loads(pr_raw)
-    return classify(prs, _labels_index(run), auto_merge_hot=auto_merge_hot)
+    index = _labels_index(run, include_proposals=include_proposals)
+    return classify(prs, index, auto_merge_hot=auto_merge_hot)
 
 
 def cli_main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description="Classify open evolve PRs for auto-merge.")
     parser.add_argument("--workspace-root", required=True)
+    parser.add_argument(
+        "--include-proposals",
+        action="store_true",
+        help="DANGEROUS: also reap orphan `proposal` PRs (pairs with the same flag "
+        "on evolve_drain.py). Default off; evolve/audit PRs only.",
+    )
     args = parser.parse_args(argv)
     try:
-        result = reap(Path(args.workspace_root))
+        result = reap(Path(args.workspace_root), include_proposals=args.include_proposals)
     except NotMaintainer as exc:
         print(str(exc), file=sys.stderr)
         return 4

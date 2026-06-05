@@ -18,6 +18,8 @@ Match the **second whitespace token** of the args against the sub-verb set by ex
 
 **`--dry-run`** is a modifier on `drain`: run ONE turn's reap + select classification and print the plan (what it would reap + launch), act on nothing. It is ignored on the read-only producers (`audit` / `propose` already change no live state).
 
+**`--include-proposals`** is a DANGEROUS modifier on `drain`: it widens the loop to auto-drain plain `proposal` beads too, bypassing the human spec-plan accept gate (§`--include-proposals` below). Off by default; also ignored on the producers.
+
 Every sub-verb runs the **Gate** below first.
 
 ## Gate — maintainer only
@@ -83,7 +85,7 @@ The consumer. A single LOOP that drains the whole backlog: each turn reaps finis
 
 ### The loop
 
-Repeat the turn below until step **D** returns `done`:
+Repeat the turn below until step **D** returns `done`. If the user invoked `/flow evolve drain --include-proposals` (the dangerous mode, §`--include-proposals` below), append `--include-proposals` to BOTH the `evolve_reap.py` (step **A**) and `evolve_drain.py` (step **B**) invocations every turn — the reap flag is not optional, it is what lets a proposal orphan reap (without it those PRs pile up unmerged).
 
 **A. Reap — merge orphan green leaf PRs (safety-net), first each turn.** Reaping first frees backpressure (open-PR cap) and clears `hot_inflight` for a hot that just landed, so the launch step sees an honest picture.
 
@@ -141,6 +143,12 @@ Each spawns a detached run that auto-plans and either drives its PR to green-and
 ### --dry-run
 
 `/flow evolve drain --dry-run`: run ONE turn's **A** reap classification (`evolve_reap.py`, print the `merge`/`not_green`/`skipped_hot`/`blocked` sets, do NOT merge) + **B** (`evolve_drain.py`, print the action + would-launch keys + parked), then STOP. No merges, no launches, no loop.
+
+### --include-proposals (dangerous)
+
+`/flow evolve drain --include-proposals` widens the loop from the `evolve` backlog to **also auto-launch + reap plain `proposal` beads** — the judgment-side work (features, real refactors, reorgs) that §propose deliberately routes to the maintainer's own backlog so a human accepts it at the spec-plan gate. With this flag, each ready `proposal` bead is fanned out as a `/flow <key> --auto` run that self-plans and self-merges at ≥90% confidence, **bypassing that human accept**. This is the one place drain ships taste-and-fit work with no human in the loop; use it only when you genuinely want the proposal backlog drained autonomously.
+
+Mechanically it threads through the whole turn: `evolve_select` pulls a second `bd ready -l proposal` candidate set (merged by id) and drops its proposal-exclusion guard; `evolve_drain.py --include-proposals` carries the flag into select and echoes `include_proposals: true` in its JSON; `evolve_reap.py --include-proposals` widens its label index so proposal **orphans** (runs that died before self-merging) reap too — pass it on the step **A** invocation or those PRs never merge. Hot proposals serialize on the same single hot slot as hot evolve beads. Composable with `--dry-run` to preview what the dangerous mode would launch. The Report (below) names `include_proposals: true` so a run that auto-drained judgment work says so.
 
 ### Report
 

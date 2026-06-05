@@ -110,6 +110,13 @@ def test_priority_ranking():
     assert out["launch"] == ["flow-hi"]
 
 
+def test_include_proposals_drops_exclusion_guard():
+    # the DANGEROUS opt-in: a plain `proposal` bead now launches alongside audit work.
+    cands = [_cand("flow-prop", labels=["proposal"]), _cand("flow-a")]
+    out = es.partition(cands, set(), False, 0, cap=10, concurrency=5, include_proposals=True)
+    assert set(out["launch"]) == {"flow-prop", "flow-a"}
+
+
 # ---- helpers ----
 
 
@@ -177,6 +184,74 @@ def test_select_launches_leaves(tmp_path):
     assert set(out["launch"]) == {"flow-a", "flow-b"}
     assert out["open_pr_count"] == 0
     assert ["bd", "ready", "-l", "evolve", "--json"] in calls
+    assert out["include_proposals"] is False
+
+
+def _label_aware_dispatch(
+    *, by_label: dict[str, list[dict]]
+) -> tuple[Callable[..., subprocess.CompletedProcess[str]], Recorder]:
+    """`bd ready -l <label>` returns the per-label fixture; everything else is empty."""
+    calls: Recorder = []
+
+    def run(args: list[str]) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        if args[:2] == ["bd", "ready"]:
+            label = args[args.index("-l") + 1]
+            return subprocess.CompletedProcess(args, 0, json.dumps(by_label.get(label, [])), "")
+        if args[:2] == ["bd", "list"]:
+            return subprocess.CompletedProcess(args, 0, "[]", "")
+        if args[:3] == ["gh", "pr", "list"]:
+            return subprocess.CompletedProcess(args, 0, "[]", "")
+        if args[:2] == ["git", "for-each-ref"]:
+            return subprocess.CompletedProcess(args, 0, "", "")
+        return subprocess.CompletedProcess(args, 1, "", f"unexpected: {args}")
+
+    return run, calls
+
+
+def test_select_excludes_proposals_by_default(tmp_path):
+    ws = _marked_ws(tmp_path)
+    run, calls = _label_aware_dispatch(
+        by_label={
+            "evolve": [_cand("flow-a")],
+            "proposal": [_cand("flow-prop", labels=["proposal"])],
+        }
+    )
+    out = es.select(ws, cap=5, concurrency=3, runner=run)
+    assert out["launch"] == ["flow-a"]  # proposal backlog never queried
+    assert not any(a[:2] == ["bd", "ready"] and "proposal" in a for a in calls)
+
+
+def test_select_include_proposals_dual_query(tmp_path):
+    ws = _marked_ws(tmp_path)
+    run, calls = _label_aware_dispatch(
+        by_label={
+            "evolve": [_cand("flow-a")],
+            "proposal": [_cand("flow-prop", labels=["proposal"])],
+        }
+    )
+    out = es.select(ws, cap=5, concurrency=3, runner=run, include_proposals=True)
+    assert set(out["launch"]) == {"flow-a", "flow-prop"}
+    assert out["include_proposals"] is True
+    assert ["bd", "ready", "-l", "proposal", "--json"] in calls
+
+
+def test_hot_inflight_include_proposals_queries_both_labels():
+    seen_labels = []
+
+    def run(args):
+        if args[:2] == ["bd", "list"]:
+            seen_labels.append(args[args.index("-l") + 1])
+            label = seen_labels[-1]
+            beads = (
+                [{"id": "flow-old", "labels": ["proposal", "hot"]}] if label == "proposal" else []
+            )
+            return subprocess.CompletedProcess(args, 0, json.dumps(beads), "")
+        return subprocess.CompletedProcess(args, 1, "", "unexpected")
+
+    # a hot PROPOSAL already in flight consumes the single hot slot under the flag
+    assert es._hot_inflight(run, {"feature/flow-old-wip"}, include_proposals=True) is True
+    assert seen_labels == ["evolve", "proposal"]
 
 
 def test_select_drops_inflight_branch(tmp_path):
