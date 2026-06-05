@@ -222,9 +222,7 @@ def test_mark_ready_merge_delete_argv():
 
     merge = next(c for c in calls if _api_path(c) == f"{base}/pullrequests/9/merge")
     assert merge[merge.index("-X") + 1] == "POST"
-    assert _payload_for_path(calls, f"{base}/pullrequests/9/merge") == {
-        "merge_strategy": "squash"
-    }
+    assert _payload_for_path(calls, f"{base}/pullrequests/9/merge") == {"merge_strategy": "squash"}
 
     assert _ran_prefix(calls, ["git", "push", "origin", "--delete", "feature/flow-x"])
 
