@@ -3,6 +3,27 @@ from __future__ import annotations
 import json
 
 import evolve_drain as ed
+import lease
+
+
+def _write_lease(run_dir, *, expired: bool = False) -> None:
+    now = "2020-01-01T00:00:00Z" if expired else lease._utcnow_iso()
+    ttl = 1 if expired else 3600
+    lease.acquire(
+        run_dir,
+        "run-test",
+        ttl,
+        now,
+        stage="implement",
+        current_boot="boot-A",
+        hostname="host-1",
+        cwd=str(run_dir),
+    )
+
+
+def _sibling_run_dir(repo, key, slug="wip"):
+    return repo.parent / f"{repo.name}.worktrees" / f"feature-{key}-{slug}" / ".flow" / "runs" / key
+
 
 # decide() reads only `launch` from the select result; the in-flight picture comes
 # entirely from the `liveness` map the CLI builds over open PRs + in-flight beads.
@@ -185,3 +206,39 @@ def test_cli_tool_error_exit_2(monkeypatch, tmp_path, capsys):
     rc = ed.cli_main(["--workspace-root", str(tmp_path)])
     assert rc == 2
     assert "bd blew up" in capsys.readouterr().err
+
+
+# ─── cli_main — pre-PR live-run liveness (real lease + real liveness_map) ─────
+
+
+def _stub_cli_live(monkeypatch, tmp_path, sel):
+    """Like _stub_cli but leaves liveness_map REAL so it reads the on-disk lease."""
+    repo = tmp_path / "flow"
+    repo.mkdir()
+    monkeypatch.setattr(ed, "resolve_maintainer_repo", lambda ws: repo)
+    monkeypatch.setattr(ed, "_config_defaults", lambda ws: (5, 3))
+    monkeypatch.setattr(ed, "_open_pr_keys", lambda repo: [])
+    monkeypatch.setattr(ed, "select", lambda ws, **kw: sel)
+    return repo
+
+
+def test_cli_pre_pr_live_run_waits(monkeypatch, tmp_path, capsys):
+    sel = {"launch": [], "skipped_in_flight": [], "live_runs": ["flow-x"]}
+    repo = _stub_cli_live(monkeypatch, tmp_path, sel)
+    _write_lease(_sibling_run_dir(repo, "flow-x"))
+    rc = ed.cli_main(["--workspace-root", str(tmp_path)])
+    assert rc == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["action"] == "wait"
+    assert out["liveness"]["flow-x"] == "live"
+
+
+def test_cli_pre_pr_expired_run_done(monkeypatch, tmp_path, capsys):
+    sel = {"launch": [], "skipped_in_flight": [], "live_runs": ["flow-x"]}
+    repo = _stub_cli_live(monkeypatch, tmp_path, sel)
+    _write_lease(_sibling_run_dir(repo, "flow-x"), expired=True)
+    rc = ed.cli_main(["--workspace-root", str(tmp_path)])
+    assert rc == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["action"] == "done"
+    assert out["liveness"]["flow-x"] == "expired_foreign"
