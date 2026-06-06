@@ -105,7 +105,7 @@ The verbose detail — full exit-code matrices, the PR-ready notification protoc
       DESCRIPTOR=$(python3 ${CLAUDE_SKILL_DIR}/scripts/dispatch_stage.py next \
         --workspace-root . --ticket "$KEY")
       ```
-      `next` refreshes the lease + verifies the snapshot. Exit 0 → continue to (b). Exit 1 (drift/violations/corrupt) or Exit 7 (lost lease) → surface + `/flow recover <ticket>`, break the loop. Full matrix: `references/verb-do.md`.
+      `next` refreshes the lease + verifies the snapshot. Exit 0 → continue to (b) (a self-inflicted *owned* drift — a planned `workspace.toml`/`stage-registry.toml` edit — auto-reconciles upstream in dispatch and returns exit 0 with a `reconciled_drift` marker, so it never trips this exit-1 path). Exit 1 (drift/violations/corrupt) or Exit 7 (lost lease) → surface + `/flow recover <ticket>`, break the loop. Full matrix: `references/verb-do.md`.
 
    b. Parse `DESCRIPTOR` (JSON):
       - `{"done": true}` → all stages completed. Break to step 5.

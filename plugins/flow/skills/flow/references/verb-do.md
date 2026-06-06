@@ -28,7 +28,7 @@ A blocker needs no special ping: an `AskUserQuestion` surfaces natively as "need
 - Exit 1 → distinguish by the stdout JSON payload, then break the loop:
   - `detail` present → config/version drift (the workspace.toml, the stage-registry, or a handler plugin changed mid-run).
     Surface the drift detail + the hint `/flow recover <ticket>`.
-    Before any such exit 1, dispatch auto-reconciles an *owned* single-component workspace.toml drift — the sole drifted component is `workspace_toml` AND `.flow/workspace.toml` is in this run's `planned_files` — by reloading the snapshot baseline and continuing; the descriptor then carries `reconciled_drift: "workspace_toml"` and the do-loop MAY log a `RECONCILE` friction entry on that marker.
+    Before any such exit 1, dispatch auto-reconciles an *owned* drift whose changed snapshot component(s) (`workspace_toml` and/or `stage_registry`) ALL map to files in this run's `planned_files` (a deliberate self-inflicted edit, e.g. a ticket whose deliverable edits `stage-registry.toml`) by reloading the snapshot baseline and continuing; the descriptor then carries `reconciled_drift: "<components>"` (the do-loop MAY log a `RECONCILE` friction entry on that marker). A handler-tree drift is never owned (it names no single file). Foreign/concurrent drift still halts at exit 1.
   - `violations` present → a validate-workspace failure.
     Surface the violations and abort.
   - bare `error` (e.g. `unrecoverable state.json`) → the run state is corrupt.
