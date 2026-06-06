@@ -125,10 +125,10 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/evolve_drain.py --workspace-root .
 This runs `evolve_select` (which is DAG-aware via `bd ready`, drops in-flight beads, enforces backpressure ≥ `cap` open PRs, partitions ≤1 hot per batch / no shared primary-file anchor) and annotates each in-flight bead with its run's lease liveness. It returns JSON `{action: "launch"|"wait"|"done", launch:[keys], parked:[keys], liveness:{}, select:{...}}`:
 
 - **`launch`** (launch non-empty) → go to **C**.
-- **`wait`** (launch empty, but a still-LIVE in-flight run will free serialization/backpressure) → go to **D-wait**.
-- **`done`** (launch empty AND no in-flight run is live — backlog drained, or only parked-for-human work remains) → exit the loop, go to **Report**.
+- **`wait`** (launch empty, but a **blocking** in-flight run remains) → go to **D-wait**. A run blocks when its lease reads `live` OR `corrupt`: a live run will self-merge and free serialization/backpressure; a corrupt lease (run.lock unparseable, ownership unconfirmable) does NOT self-free — it blocks until a human runs `recover takeover`. Both route to **D-wait**.
+- **`done`** (launch empty AND no in-flight run is blocking — none reads `live` or `corrupt` — backlog drained, or only parked-for-human work remains) → exit the loop, go to **Report**.
 
-The termination is liveness-gated on purpose: a **withheld** hot bead (its in-run reviewer raised `held_guard`) leaves a ready PR + branch but its session has ended, so its lease is non-live — it reads as `parked`, never `wait`, so the loop cannot spin on it. It terminates and hands it (plus any hot beads stuck behind it in `held_hot`) to the human.
+The termination is blocking-gated on purpose: a **withheld** hot bead (its in-run reviewer raised `held_guard`) leaves a ready PR + branch but its session has ended, so its lease is expired/absent (non-blocking) — it reads as `parked`, never `wait`, so the loop cannot spin on it. The other blocking state is `corrupt` (treated live-equivalent because an in-flight run that cannot be confirmed dead must never let the loop drain to `done`); a corrupt lease blocks until a human runs `recover takeover`. It terminates and hands the withheld bead (plus any hot beads stuck behind it in `held_hot`) to the human.
 
 **C. Launch.** For each key in `launch` (under `--dry-run`, print the command instead of running it):
 
@@ -138,7 +138,7 @@ claude --bg "/flow <key> --auto"
 
 Each spawns a detached run that auto-plans and either drives its PR to green-and-self-merged, or — when it cannot self-approve at ≥90% confidence — **defers** its bead in place (status → `deferred`, open questions commented) and exits. A deferred bead drops out of `bd ready`, so the loop stops relaunching it. Defer-and-exit is the intended unattended outcome, not a failure. Drain auto-picks decided beads (already triaged + reopened) via the recorded-decision marker — no command change; the `--auto` run self-detects the decision (verb-spec.md step 4) and ingests the answer instead of re-deferring on it. After launching, briefly wait (Monitor, short cap) until the new keys register a branch/PR so the next turn's select sees them as in-flight, then loop back to **A**.
 
-**D-wait.** Nothing to launch yet, but a live run is in flight. Wait with the `Monitor` tool (foreground `sleep` is blocked) until a run settles — `open_pr_count` drops (a PR merged) OR a lease goes non-live — capped at roughly a stage timeout; on the cap, loop back to **A** anyway (the next reap mops up a now-dead run). Then loop back to **A**.
+**D-wait.** Nothing to launch yet, but a **blocking** run is in flight. Wait with the `Monitor` tool (foreground `sleep` is blocked) until a run settles — `open_pr_count` drops (a PR merged) OR a lease ceases to block (goes non-live, or a corrupt lease cleared by `recover takeover`) — capped at roughly a stage timeout; on the cap, loop back to **A** anyway (the next reap mops up a now-dead run). Then loop back to **A**.
 
 ### --dry-run
 
@@ -152,7 +152,7 @@ Mechanically it threads through the whole turn: `evolve_select` pulls a second `
 
 ### Report
 
-When the loop exits (`done`), summarise the whole run: merged (keys) + worktrees torn down across all turns, launched (keys), deferred (keys), and everything **parked for the human** — `parked` in-flight beads (non-live lease, including any `held_guard` hot PR you withheld because its diff removed a safety property — name the property), plus `not_green` / conflicted draft PRs. Tell the user how to follow along:
+When the loop exits (`done`), summarise the whole run: merged (keys) + worktrees torn down across all turns, launched (keys), deferred (keys), and everything **parked for the human** — `parked` in-flight beads (expired/absent (non-blocking) lease, including any `held_guard` hot PR you withheld because its diff removed a safety property — name the property), plus `not_green` / conflicted draft PRs. Tell the user how to follow along:
 
 - Monitor live runs with `claude agents --json` (the plain `claude agents` needs a TTY).
 - Review any **deferred** beads with `/flow triage` — it lists the whole deferred queue with each bead's open-question comment inline. `deferred` != done; to unstick one, `/flow triage <key> "<answer>"` posts the answer + reopens the bead (status → `open`), then re-run it interactively (WITHOUT `--auto`).
