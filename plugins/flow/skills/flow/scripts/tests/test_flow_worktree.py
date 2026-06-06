@@ -16,7 +16,13 @@ import flow_worktree as fw
 import state
 
 
-def _main_checkout(tmp: Path, *, with_mise: bool = False, stages: list[str] | None = None) -> Path:
+def _main_checkout(
+    tmp: Path,
+    *,
+    with_mise: bool = False,
+    stages: list[str] | None = None,
+    maintainer: bool = False,
+) -> Path:
     stages = stages or ["ticket", "plan", "implement", "commit", "reflect"]
     main = tmp / "main"
     flow = main / ".flow"
@@ -34,6 +40,8 @@ def _main_checkout(tmp: Path, *, with_mise: bool = False, stages: list[str] | No
         'namespace = "FT"',
         "compounding = true",
     ]
+    if maintainer:
+        lines += ["[maintainer]", "self_target = true"]
     (flow / "workspace.toml").write_text("\n".join(lines) + "\n", encoding="utf-8")
     (main / ".env").write_text("SECRET=1\n", encoding="utf-8")
     (main / ".claude").mkdir()
@@ -172,6 +180,63 @@ def test_seeds_planned_files_as_list(tmp_path: Path) -> None:
     fm_path = Path(res["worktree"]) / ".flow" / "tickets" / "FT-1.md"
     parsed = ticket_frontmatter.read(fm_path)
     assert parsed["planned_files"] == ["src/a.py", "src/b.py"]
+
+
+_PLUGIN_JSON = "plugins/flow/.claude-plugin/plugin.json"
+_MARKETPLACE_JSON = ".claude-plugin/marketplace.json"
+
+
+def _seed_planned(tmp_path: Path, main: Path, planned: list[str]) -> list[str]:
+    import ticket_frontmatter
+
+    res = _run(tmp_path, main, planned_files=planned)
+    fm_path = Path(res["worktree"]) / ".flow" / "tickets" / "FT-1.md"
+    return ticket_frontmatter.read(fm_path)["planned_files"]
+
+
+def test_maintainer_plugin_change_auto_includes_version_files(tmp_path: Path) -> None:
+    # maintainer self-target + a plugins/flow/ path -> both version files appended,
+    # so the implement-stage version bump is already in planned_files (no reconcile).
+    main = _main_checkout(tmp_path, maintainer=True)
+    planned = _seed_planned(tmp_path, main, ["plugins/flow/skills/flow/scripts/x.py"])
+    assert planned == [
+        "plugins/flow/skills/flow/scripts/x.py",
+        _PLUGIN_JSON,
+        _MARKETPLACE_JSON,
+    ]
+
+
+def test_maintainer_non_plugin_change_leaves_planned_files(tmp_path: Path) -> None:
+    # maintainer, but no plugins/flow/ path -> no version bump expected, unchanged.
+    main = _main_checkout(tmp_path, maintainer=True)
+    planned = _seed_planned(tmp_path, main, ["src/a.py"])
+    assert planned == ["src/a.py"]
+
+
+def test_maintainer_dedups_already_present_version_file(tmp_path: Path) -> None:
+    # one version file already planned -> no duplicate, the other appended once.
+    main = _main_checkout(tmp_path, maintainer=True)
+    planned = _seed_planned(
+        tmp_path, main, [_MARKETPLACE_JSON, "plugins/flow/skills/flow/SKILL.md"]
+    )
+    assert planned == [
+        _MARKETPLACE_JSON,
+        "plugins/flow/skills/flow/SKILL.md",
+        _PLUGIN_JSON,
+    ]
+    assert planned.count(_MARKETPLACE_JSON) == 1
+
+
+def test_user_project_plugin_path_not_augmented(tmp_path: Path, monkeypatch) -> None:
+    # no maintainer marker (default main) -> user project, version files untouched
+    # even when a plugins/flow/ path is planned. Pin the global-config path off so
+    # a stray ~/.flow/config.toml pointer can't flip this on.
+    import maintainer
+
+    monkeypatch.setattr(maintainer, "_global_config_path", lambda: tmp_path / "no-global.toml")
+    main = _main_checkout(tmp_path)
+    planned = _seed_planned(tmp_path, main, ["plugins/flow/skills/flow/scripts/x.py"])
+    assert planned == ["plugins/flow/skills/flow/scripts/x.py"]
 
 
 def test_mise_trust_invoked_when_mise_present(tmp_path: Path) -> None:

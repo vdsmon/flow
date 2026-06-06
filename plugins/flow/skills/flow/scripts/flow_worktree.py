@@ -42,10 +42,33 @@ from pathlib import Path
 import _atomicio
 import _workspace
 import lease
+import maintainer
 import state
 import ticket_frontmatter
 from _runner import Runner
 from _runner import default_runner as _default_runner
+
+# The two files the version-bump invariant requires on any plugin-code change.
+_VERSION_BUMP_FILES = (
+    "plugins/flow/.claude-plugin/plugin.json",
+    ".claude-plugin/marketplace.json",
+)
+
+
+def _with_version_bump_files(planned: list[str], main_root: Path) -> list[str]:
+    """Append the version-bump files to planned_files for maintainer plugin-code changes.
+
+    The implement stage always bumps these two files on a plugin-code change (the
+    version-bump invariant), so a maintainer ticket that touches `plugins/flow/`
+    otherwise pays a post-implement reconcile to add them. No-op for user projects
+    and non-plugin changes.
+    """
+    if not maintainer.is_maintainer(main_root):
+        return planned
+    if not any(f.startswith("plugins/flow/") for f in planned):
+        return planned
+    return planned + [f for f in _VERSION_BUMP_FILES if f not in planned]
+
 
 # Gitignored dev config the autonomous tail needs but a fresh worktree won't have.
 _DEFAULT_COPY = [
@@ -334,6 +357,9 @@ def bootstrap(
 ) -> dict:
     run = runner or _default_runner()
     main_root = main_root.expanduser().resolve()
+
+    if planned_files:
+        planned_files = _with_version_bump_files(planned_files, main_root)
 
     # e2e is opt-in; when a workspace enables it the approved plan must declare
     # what the e2e stage runs. Refuse here, while the user is still present at the
