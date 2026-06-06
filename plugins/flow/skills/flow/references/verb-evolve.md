@@ -44,7 +44,7 @@ Spawn parallel read-only audit agents (the `Agent` tool with `Explore` / `genera
 - **quality gates** — run `mise run lint`, `mise run test`, `python3 seam_check.py` from `scripts/`; every real failure / warning / lint-suppression is a finding.
 - **test gaps** — public functions / branches with no test (use `MODULE.md` to map script → test).
 - **dead code & complexity** — unused defs (prove zero refs), very long / tangled functions.
-- **doc drift** — `MODULE.md` / `inventory.md` / `SKILL.md` / `references/*.md` claims vs the actual code.
+- **doc drift** — `MODULE.md` / `inventory.md` / `SKILL.md` / `references/*.md` claims vs the actual code. For a PR-introduced *vocabulary/phrasing* drift (a renamed term, a reworded invariant, a changed concept name), the stale phrasing typically lives in EVERY reference describing that subsystem, not just the file the diff surfaced: grep the whole `references/*.md` + `SKILL.md` doc set for the old phrasing and enumerate ALL loci (every `file:line`) in the finding's description/evidence, so the one bead that fixes it names every locus — and when that bead is later spec'd its "Files to change" (and thus the stamped `planned_files`) covers them together. The finding's dedup identity still anchors on its single primary file (per §2); the multi-locus list belongs in the evidence, not the key.
 - **friction & history** — unaddressed `MACHINERY:` entries in `knowledge.jsonl`, `TODO`/`FIXME`, recent git-log pain.
 - **robustness** — real gaps in the load-bearing machinery (run lease, snapshot TOCTOU, atomic writes, ownership gate, flock). Tighten, never erode.
 - **architecture / seam** — SKILL.md thinness, registry↔reference-doc consistency, prose↔CLI seam risks.
