@@ -192,6 +192,11 @@ def read(ticket_dir: Path) -> tuple[TicketState | None, int]:
     `state=None` with exit_code 2 is the "broken and no backup" signal —
     callers MUST distinguish these by checking exit_code.
     """
+    # short-circuit a non-existent ticket_dir: same (None, 0) as an absent
+    # state.json, but skips flock_blocking's mkdir+O_CREAT so a drifted cwd
+    # never materializes a phantom <cwd>/.flow tree + state.json.lock.
+    if not ticket_dir.exists():
+        return None, 0
     with flock_blocking(_lock_path(ticket_dir)):
         return _read_locked(ticket_dir)
 
