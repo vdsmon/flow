@@ -25,14 +25,15 @@ plugins/flow/**/.venv/
 .beads-credential-key
 
 # flow transient run state (workspace.toml + .initialized stay tracked)
-.flow/runs/
-.flow/*.lock
-.flow/memory-root
-.flow/recall-pending.jsonl
-.flow/recall-pending.jsonl.lock
+# unanchored **/ so a phantom nested <subdir>/.flow/... (drifted-cwd leak) is ignored too
+**/.flow/runs/
+**/.flow/*.lock
+**/.flow/memory-root
+**/.flow/recall-pending.jsonl
+**/.flow/recall-pending.jsonl.lock
 # per-namespace memory + friction + ship-events (local, per-machine)
-.flow/*/knowledge.jsonl
-.flow/*/knowledge.jsonl.lock
-.flow/*/friction.jsonl
-.flow/*/friction.jsonl.lock
-.flow/*/ship-events/
+**/.flow/*/knowledge.jsonl
+**/.flow/*/knowledge.jsonl.lock
+**/.flow/*/friction.jsonl
+**/.flow/*/friction.jsonl.lock
+**/.flow/*/ship-events/

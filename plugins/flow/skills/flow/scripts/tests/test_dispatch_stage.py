@@ -548,6 +548,14 @@ def test_status_before_init_returns_exit_2(tmp_path: Path) -> None:
     assert rc == 2
 
 
+def test_release_on_missing_flow_creates_no_tree(tmp_path: Path) -> None:
+    # drifted-cwd reproduction: release/status against a workspace whose .flow
+    # does not exist must not materialize a phantom .flow tree + state.json.lock.
+    rc, _ = ds.cmd_release(tmp_path, "FT-1")
+    assert rc == 0
+    assert not (tmp_path / ".flow").exists()
+
+
 # ─── End-to-end walk ─────────────────────────────────────────────────────────
 
 
