@@ -80,6 +80,66 @@ def _git(args: list[str], cwd: Path, runner: Runner) -> str:
     return result.stdout
 
 
+_PORCELAIN_ESCAPES = {
+    "n": 0x0A,
+    "t": 0x09,
+    "r": 0x0D,
+    '"': 0x22,
+    "\\": 0x5C,
+    "a": 0x07,
+    "b": 0x08,
+    "f": 0x0C,
+    "v": 0x0B,
+}
+
+
+def _unquote_porcelain_path(token: str) -> str:
+    """C-decode a `git status --porcelain` path token.
+
+    Porcelain v1 wraps a path in double-quotes and C-escapes it whenever it holds
+    a space, double-quote, backslash, tab, newline or control char (column
+    disambiguation, independent of core.quotePath). An unquoted token is returned
+    unchanged. Octal escapes (`\\303\\251`) are collected as raw bytes so multibyte
+    UTF-8 round-trips through the single final decode. Malformed input fails safe to
+    the raw token.
+    """
+    if not token.startswith('"'):
+        return token
+    if len(token) < 2 or not token.endswith('"'):
+        return token
+    interior = token[1:-1]
+    buf = bytearray()
+    i = 0
+    n = len(interior)
+    while i < n:
+        ch = interior[i]
+        if ch != "\\":
+            buf.extend(ch.encode("utf-8"))
+            i += 1
+            continue
+        if i + 1 >= n:  # trailing backslash, malformed
+            return token
+        nxt = interior[i + 1]
+        if nxt in "01234567":
+            j = i + 1
+            octal = ""
+            while j < n and len(octal) < 3 and interior[j] in "01234567":
+                octal += interior[j]
+                j += 1
+            buf.append(int(octal, 8) & 0xFF)
+            i = j
+            continue
+        mapped = _PORCELAIN_ESCAPES.get(nxt)
+        if mapped is None:  # unknown escape, malformed
+            return token
+        buf.append(mapped)
+        i += 2
+    try:
+        return bytes(buf).decode("utf-8")
+    except UnicodeDecodeError:
+        return token
+
+
 def _head_sha(cwd: Path, runner: Runner) -> str:
     return _git(["rev-parse", "HEAD"], cwd, runner).strip()
 
@@ -296,9 +356,10 @@ def check_ownership(
     for line in raw.splitlines():
         if not line.strip():
             continue
-        path = line[3:].strip()
-        if " -> " in path:  # rename: take the destination path
-            path = path.split(" -> ", 1)[1].strip()
+        token = line[3:].strip()
+        if " -> " in token:  # rename: take the destination (each side quoted apart)
+            token = token.split(" -> ", 1)[1].strip()
+        path = _unquote_porcelain_path(token)
         # flow's own run state lives under .flow/; its writes are never an
         # unrelated user edit, so they never count against ownership.
         if path == ".flow" or path.startswith(".flow/"):

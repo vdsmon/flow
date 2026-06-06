@@ -50,7 +50,13 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/flow_friction.py \
 
 ## Post-implement reconcile (records_diff_baseline stages only)
 
-After the implement stage returns, if its report flags files it created/modified OUTSIDE the recorded `planned_files` (a package `__init__.py`, a `.gitignore` negation, etc.) that genuinely must ship, expand the set BEFORE `finish`. The commit stage reads `planned_files` from `baseline.json`, so a needed file missing there is silently dropped from the commit. To widen it: edit `planned_files` in `.flow/tickets/<KEY>.md` frontmatter to include them, then re-run the `record-baseline` command (do-loop step c) with the full comma-separated `--files` list. HEAD is unchanged (no commit has landed), so this only widens ownership and re-captures any modified tracked file's original blob. Confirm with `diff_extract.py capture-implement-diff --ticket <KEY> --ticket-dir <ticket-dir> --cwd .` + `git apply --cached --check --binary <ticket-dir>/implement.diff` that the patch carries every file and applies cleanly. (`capture-implement-diff` takes ONLY `--ticket`/`--ticket-dir`/`--cwd` — NOT `--stage`; passing `--stage` errors with `unrecognized arguments`.)
+After the implement stage returns, if its report flags files it created/modified OUTSIDE the recorded `planned_files` (a package `__init__.py`, a `.gitignore` negation, etc.) that genuinely must ship, expand the set BEFORE `finish`. The commit stage reads `planned_files` from `baseline.json`, so a needed file missing there is silently dropped from the commit. To widen it, rewrite the `planned_files` array in `.flow/tickets/<KEY>.md` frontmatter with the full set — pass a bracketed TOML array literal, NOT a bare comma list (a bare `a,b,c` is stored as the string `"a,b,c"`, not an array):
+```bash
+python3 ${CLAUDE_SKILL_DIR}/scripts/ticket_frontmatter.py update \
+  .flow/tickets/<KEY>.md \
+  --set 'planned_files=["a/b.py", "c/d.py"]'
+```
+then re-run the `record-baseline` command (do-loop step c) with the full comma-separated `--files` list. HEAD is unchanged (no commit has landed), so this only widens ownership and re-captures any modified tracked file's original blob. Confirm with `diff_extract.py capture-implement-diff --ticket <KEY> --ticket-dir <ticket-dir> --cwd .` + `git apply --cached --check --binary <ticket-dir>/implement.diff` that the patch carries every file and applies cleanly. (`capture-implement-diff` takes ONLY `--ticket`/`--ticket-dir`/`--cwd` — NOT `--stage`; passing `--stage` errors with `unrecognized arguments`.)
 
 ## Timeout note (mvp hole)
 

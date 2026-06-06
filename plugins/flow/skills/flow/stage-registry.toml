@@ -17,11 +17,18 @@
 #   required_capabilities         - DEFERRED (phase 7-full): validate-workspace cross-check is
 #                                   out-of-scope today; required_capabilities=[] everywhere, so inert
 #   required_predecessors         - upstream stages that MUST appear earlier in pipeline.stages
+#   required_fields               - ticket-frontmatter keys that MUST be present for this stage;
+#                                   parsed by _registry.py, consumed by lint_ticket.py to gate the
+#                                   stage on frontmatter (the HARD GATE the gated stages run)
 #   required                      - if true, MUST appear in pipeline.stages
 #   required_when_compounding     - if true AND [memory] compounding=true, MUST appear
 #   reference_doc                 - path relative to this skill dir; loaded by inline handler
-#   roles                         - open-ended strings the dispatcher recognises
-#                                   (records_diff_baseline | reflect_anchor | ship_observer | ...)
+#   roles                         - open-ended list round-tripped into the dispatch descriptor
+#                                   (dispatch_stage.py); the dispatcher does NOT enforce them, a
+#                                   handler or pre-handler hook keys off a role string. Live reader:
+#                                   records_diff_baseline (implement pre-handler hook, SKILL.md).
+#                                   reflect_anchor / ship_observer are declared on the reflect stage
+#                                   but have no reader yet: reserved, round-tripped unread.
 #
 # Timeouts/heartbeats for plan / code_review / e2e / commit / create_pr / review_loop
 # are inferred defaults (the plan only specified ticket, implement, reflect explicitly).
@@ -118,7 +125,7 @@ roles = []
 
 [[stage]]
 name = "create_pr"
-description = "Bare default skips PR creation. GitHub workspaces can wire create_pr = \"inline\" (references/stage-create_pr.md → scripts/create_pr.py: push + gh pr create --draft --fill, idempotent). Other platforms install a PR-capable skill (ship-it for Bitbucket, etc) and wire skill:<name> via the init wizard."
+description = "Bare default skips PR creation. Workspaces wire create_pr = \"inline\" (references/stage-create_pr.md → scripts/create_pr.py): git push + open-or-resolve the PR through the forge seam (gh or bkt, per [forge] backend), idempotent. Requires a [forge] block."
 default_handler = "none"
 default_timeout_min = 20
 default_heartbeat_required = true
@@ -132,7 +139,7 @@ roles = []
 
 [[stage]]
 name = "review_loop"
-description = "Bare default skips CI / review-bot wait loop. Opt-in via init wizard if a wait-loop skill is installed."
+description = "Bare default skips the CI / review-bot wait loop. Workspaces wire review_loop = \"inline\" (references/stage-review_loop.md → scripts/forge_cli.py): wait for CI green, drive fixes (<=3 cycles), resolve Major+ review threads. Integral on the forge seam; terminal on CI green AND zero unresolved Major+."
 default_handler = "none"
 default_timeout_min = 60
 default_heartbeat_required = true
@@ -157,3 +164,17 @@ required = false
 required_when_compounding = true
 reference_doc = "references/stage-reflect.md"
 roles = ["reflect_anchor", "ship_observer"]
+
+[[stage]]
+name = "merge"
+description = "Terminal self-merge (evolve self-target only; bare default none = human keystone). Wired merge = \"inline\" (references/stage-merge.md → scripts/evolve_self_merge.py + forge_cli.py): after reflect, a green+clean evolve run self-merges its own PR; a hot bead only after an independent reviewer subagent clears the §6A guard-property check. Worktree teardown stays deferred to the janitor."
+default_handler = "none"
+default_timeout_min = 15
+default_heartbeat_required = false
+default_max_no_progress_min = 10
+required_capabilities = []
+required_predecessors = ["reflect"]
+required = false
+required_when_compounding = false
+reference_doc = "references/stage-merge.md"
+roles = []

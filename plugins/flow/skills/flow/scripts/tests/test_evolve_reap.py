@@ -335,3 +335,64 @@ def test_reap_not_maintainer(tmp_path, monkeypatch):
     )
     with pytest.raises(er.NotMaintainer):
         er.reap(plain)
+
+
+# ---- _labels_index / reap: include_proposals ----
+
+
+def _label_aware_list_runner(
+    *, prs: list[dict], by_label: dict[str, list[dict]]
+) -> tuple[Callable[..., subprocess.CompletedProcess[str]], Recorder]:
+    """`bd list -l <label>` returns the per-label fixture; pr list returns `prs`."""
+    calls: Recorder = []
+
+    def run(args: list[str]) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        if args[:3] == ["gh", "pr", "list"]:
+            return subprocess.CompletedProcess(args, 0, json.dumps(prs), "")
+        if args[:2] == ["bd", "list"]:
+            label = args[args.index("-l") + 1]
+            return subprocess.CompletedProcess(args, 0, json.dumps(by_label.get(label, [])), "")
+        return subprocess.CompletedProcess(args, 1, "", f"unexpected: {args}")
+
+    return run, calls
+
+
+def test_labels_index_default_evolve_only():
+    run, calls = _label_aware_list_runner(
+        prs=[], by_label={"evolve": [{"id": "flow-a", "labels": ["evolve"]}]}
+    )
+    index = er._labels_index(run)
+    assert index == {"flow-a": ["evolve"]}
+    assert not any(a[:2] == ["bd", "list"] and "proposal" in a for a in calls)
+
+
+def test_labels_index_include_proposals_merges_both():
+    run, _ = _label_aware_list_runner(
+        prs=[],
+        by_label={
+            "evolve": [{"id": "flow-a", "labels": ["evolve"]}],
+            "proposal": [{"id": "flow-prop", "labels": ["proposal"]}],
+        },
+    )
+    index = er._labels_index(run, include_proposals=True)
+    assert index == {"flow-a": ["evolve"], "flow-prop": ["proposal"]}
+
+
+def test_reap_include_proposals_reaps_proposal_orphan(tmp_path):
+    # a proposal orphan (run died before self-merging) only reaps under the flag;
+    # without it the PR's key is absent from the label index and classify skips it.
+    ws = _marked_ws(tmp_path)
+    by_label = {
+        "evolve": [{"id": "flow-a", "labels": ["evolve"]}],
+        "proposal": [{"id": "flow-prop", "labels": ["proposal"]}],
+    }
+    prs = [_pr(1, "flow-a"), _pr(2, "flow-prop")]
+
+    run, _ = _label_aware_list_runner(prs=prs, by_label=by_label)
+    off = er.reap(ws, runner=run)
+    assert {e["key"] for e in off["merge"]} == {"flow-a"}  # proposal orphan invisible
+
+    run, _ = _label_aware_list_runner(prs=prs, by_label=by_label)
+    on = er.reap(ws, runner=run, include_proposals=True)
+    assert {e["key"] for e in on["merge"]} == {"flow-a", "flow-prop"}

@@ -1,10 +1,12 @@
-"""Open (or resolve) a GitHub PR for the run's feature branch.
+"""Open (or resolve) a PR for the run's feature branch, via the forge seam.
 
-The `create_pr` stage handler for GitHub workspaces. The bare flow plugin ships no
-inline create_pr (PR mechanics are platform-specific); this is flow's own GitHub
-handler, wired as `create_pr = "inline"` in the dogfood workspace. Other workspaces
-keep `create_pr = "none"` and never invoke it. PRs open ready for review by default;
-set `[create_pr] draft = true` in `workspace.toml` (or pass `--draft`) to open drafts.
+The `create_pr` stage handler. Git mechanics (push, protected-branch refusal, title
+from the HEAD commit) live here; the host calls (detect/open PR) go through the
+pluggable forge seam (`forge.py`), so this same handler serves GitHub (`gh`) and
+Bitbucket (`bkt`) workspaces. Wired as `create_pr = "inline"` in the dogfood
+workspace and requires a `[forge]` block; other workspaces keep `create_pr = "none"`.
+PRs open ready for review by default; set `[create_pr] draft = true` in
+`workspace.toml` (or pass `--draft`) to open drafts.
 
 Idempotent on resume: if a PR already exists for the branch it returns that URL
 instead of erroring, so a re-run after a crash does not double-open. The title comes
@@ -28,15 +30,14 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
-import json
 import subprocess
 import sys
-from collections.abc import Callable
 from pathlib import Path
 
+from _runner import CwdRunner as Runner
+from _runner import cwd_default_runner as _default_runner
 from _workspace import WorkspaceConfigError, load_workspace_toml
-
-Runner = Callable[[list[str]], subprocess.CompletedProcess[str]]
+from forge import Forge, ForgeError, make_forge, read_forge_config
 
 _PROTECTED = {"main", "master", "dev", "develop"}
 
@@ -62,55 +63,26 @@ class RefusedBranch(Exception):
     """Current branch is protected; never open a PR from it. Exit 3."""
 
 
-def _default_runner(repo: Path) -> Runner:
-    def run(args: list[str]) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(args, cwd=str(repo), capture_output=True, text=True, check=False)
-
-    return run
-
-
 def _ok(result: subprocess.CompletedProcess[str], what: str) -> str:
     if result.returncode != 0:
         raise ToolError(f"{what} failed: {result.stderr.strip()}")
     return result.stdout or ""
 
 
-def _existing_pr_url(branch: str, runner: Runner) -> str | None:
-    """URL of an open PR already targeting this branch, or None."""
-    raw = _ok(
-        runner(
-            [
-                "gh",
-                "pr",
-                "list",
-                "--head",
-                branch,
-                "--state",
-                "open",
-                "--json",
-                "url",
-                "--limit",
-                "1",
-            ]
-        ),
-        "gh pr list",
-    )
-    try:
-        items = json.loads(raw or "[]")
-    except json.JSONDecodeError:
-        return None
-    if isinstance(items, list) and items and isinstance(items[0], dict):
-        url = items[0].get("url")
-        return str(url) if url else None
-    return None
-
-
 def open_or_get_pr(
-    workspace_root: Path, *, base: str = "main", draft: bool = False, runner: Runner | None = None
+    workspace_root: Path,
+    *,
+    base: str = "main",
+    draft: bool = False,
+    runner: Runner | None = None,
+    forge: Forge | None = None,
 ) -> str:
     """Push the run's branch and return its PR URL, opening one if absent.
 
-    Opens ready-for-review by default; `draft=True` opens a draft PR.
+    Git mechanics (rev-parse, protected-branch refusal, push, title from the HEAD
+    commit) stay here; the host calls (detect/open PR) go through the forge seam, so
+    this same handler serves GitHub and Bitbucket. Opens ready-for-review by default;
+    `draft=True` opens a draft PR. `forge` is injectable for tests.
     """
     run = runner or _default_runner(workspace_root)
     branch = _ok(run(["git", "rev-parse", "--abbrev-ref", "HEAD"]), "git rev-parse").strip()
@@ -119,39 +91,33 @@ def open_or_get_pr(
 
     _ok(run(["git", "push", "-u", "origin", branch]), "git push")
 
-    existing = _existing_pr_url(branch, run)
-    if existing:
-        return existing
+    fg = forge if forge is not None else _resolve_forge(workspace_root)
 
-    # title from the HEAD (work) commit, which the commit stage built from
-    # commit_summary. Not `gh --fill`: a branch cut off a non-main base carries
-    # already-merged commits, and --fill then mistitles from the branch name.
-    subject = _ok(run(["git", "log", "-1", "--format=%s"]), "git log").strip()
-    body = _ok(run(["git", "log", "-1", "--format=%b"]), "git log").strip()
-    create_args = [
-        "gh",
-        "pr",
-        "create",
-        "--base",
-        base,
-        "--head",
-        branch,
-        "--title",
-        subject,
-        "--body",
-        body or subject,
-    ]
-    if draft:
-        create_args.append("--draft")
-    out = _ok(run(create_args), "gh pr create")
-    # gh prints the PR URL as the last non-empty stdout line
-    url = next((ln.strip() for ln in reversed(out.splitlines()) if ln.strip()), "")
-    if not url:
-        # re-resolve rather than fail: the PR may have been created despite no URL echo
-        url = _existing_pr_url(branch, run) or ""
-    if not url:
-        raise ToolError("gh pr create returned no URL and none is resolvable")
-    return url
+    try:
+        existing = fg.detect_pr(branch)
+        if existing:
+            return str(existing["url"])
+
+        # title from the HEAD (work) commit, which the commit stage built from
+        # commit_summary. Not `gh --fill`: a branch cut off a non-main base carries
+        # already-merged commits, and --fill then mistitles from the branch name.
+        subject = _ok(run(["git", "log", "-1", "--format=%s"]), "git log").strip()
+        body = _ok(run(["git", "log", "-1", "--format=%b"]), "git log").strip()
+        pr = fg.open_pr(base, branch, subject, body or subject, draft)
+    except ForgeError as exc:
+        raise ToolError(str(exc)) from exc
+    return str(pr["url"])
+
+
+def _resolve_forge(workspace_root: Path) -> Forge:
+    """Build the workspace's forge adapter; an inline create_pr requires `[forge]`."""
+    try:
+        config = read_forge_config(workspace_root)
+        if config is None:
+            raise ToolError("inline create_pr requires a [forge] block in workspace.toml")
+        return make_forge(config)
+    except ForgeError as exc:
+        raise ToolError(str(exc)) from exc
 
 
 def cli_main(argv: list[str]) -> int:

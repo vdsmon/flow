@@ -1,7 +1,7 @@
 ---
 name: flow
 description: Ticket pipeline. /flow <ticket> plans in plan mode (ExitPlanMode = the one gate), then enters a worktree and runs the autonomous implement→PR tail in the same session; background it (/bg) anytime to run unattended. You spec and review the draft PR. Multi-tracker engine (Jira | beads), pluggable handlers, compounding memory.
-when_to_use: User runs /flow <ticket> or /flow spec <ticket> to spec a ticket and run it to a draft PR, /flow do <ticket> to run/resume the pipeline standalone, or /flow init, recall, status, recover, sync, baseline. A bare ticket key with no verb defaults to spec. Also use proactively when opening a worktree under a project with .flow/.initialized.
+when_to_use: User runs /flow <ticket> or /flow spec <ticket> to spec a ticket and run it to a draft PR, /flow do <ticket> to run/resume the pipeline standalone, or /flow init, recall, status, triage, recover, sync, baseline. A bare ticket key with no verb defaults to spec. Also use proactively when opening a worktree under a project with .flow/.initialized.
 allowed-tools: Bash(python3:*), Bash(git:*), Bash(bd:*), Bash(jq:*), Bash(cat:*), Bash(mkdir:*), Bash(mktemp:*), Bash(rm:*), Read, Write, Edit, Agent, AskUserQuestion, PushNotification, EnterWorktree
 ---
 
@@ -24,7 +24,7 @@ See `references/background-pipeline.md`.
 
 `/flow do` is the **executor primitive** — the full pipeline, resuming at the next pending stage.
 `spec` enters the seeded worktree and flows into it in the same session; `do` also runs standalone to resume a run.
-Everything else (`recall`, `status`, `recover`, `sync`, `baseline`) is a work-state verb around the same pipeline.
+Everything else (`recall`, `status`, `triage`, `recover`, `sync`, `baseline`) is a work-state verb around the same pipeline.
 
 Built on a multi-tracker engine: the tracker is pluggable (Jira | beads); stages, handlers, and the memory namespace come from `.flow/workspace.toml` + `stage-registry.toml`.
 The memory layer compounds across tickets (reflect-stage extraction, SessionStart recall), and the harness fixes its own bugs from inside a run — see `references/self-evolution.md`.
@@ -51,10 +51,11 @@ Spec is the default because fire-and-forget is the primary path.
 | `recall <query> [--branch X --top-n N]` | recall | `references/verb-recall.md` |
 | `recall --metric tickets-per-week [...]` | metric (recall passthrough) | `references/verb-recall.md` |
 | `status` (optionally `<ticket>`) | status | `references/verb-status.md` |
+| `triage` (optionally `<key> "<answer>"`) | triage | `references/verb-triage.md` |
 | `recover` (optionally `<ticket>`) | recover | `references/verb-recover.md` |
 | `sync` | sync | `references/verb-sync-baseline.md` |
 | `baseline` | baseline | `references/verb-sync-baseline.md` |
-| `evolve` (maintainer-only) | evolve | `references/verb-evolve.md` |
+| `evolve <audit\|propose\|drain>` (maintainer-only) | evolve namespace (dispatch in the ref) | `references/verb-evolve.md` |
 | (empty) | print verb listing | — |
 | anything else (e.g. `FT-123`) | spec; that positional token is the ticket key | `references/verb-spec.md` |
 
@@ -189,21 +190,3 @@ The verbose detail — full exit-code matrices, the PR-ready notification protoc
    **PR ready for review →** <PR_URL>
    ```
    Put any one-line caveats (residual risks) ABOVE the rule; nothing goes below the PR link. Draft state is the normal end state, not a caveat: never flag it. If `create_pr` was skipped (handler `none`, or the run blocked before it), omit the block rather than printing an empty rule.
-
-## Stage handler routing
-
-Inline stages (handler `inline`) read their `reference_doc` from `${CLAUDE_SKILL_DIR}/${descriptor.reference_doc}`. The inline reference docs:
-
-- `references/stage-ticket.md` — fetch + cache ticket, stamp frontmatter.
-- `references/stage-code_review.md` — inline self-review of implement diff.
-- `references/stage-commit.md` — compose + apply + transition.
-- `references/stage-reflect.md` — knowledge extraction + ship-event (+ lens-B harness self-repair; see `references/self-evolution.md`).
-
-Subagent stages carry a `reference_doc` too; the dispatcher includes it in the descriptor, and the spawned agent receives the per-stage protocol embedded in its prompt:
-
-- `references/stage-plan.md` — `subagent:Plan` for the plan stage.
-- `references/stage-implement.md` — `subagent:general-purpose` for implement.
-
-(`e2e` ships `references/stage-e2e.md` for the same reason, though it defaults to handler `none` and only becomes a subagent stage when a workspace reconfigures it.)
-
-Skill stages (handler `skill:<name>[:<args>]`) resolve through `resolve_handler.py` before invocation: it confirms the bundle is installed and its `.flow-bundle.toml` manifest is valid, then returns the concrete `skill_name` + `skill_args` to feed the Skill tool.
