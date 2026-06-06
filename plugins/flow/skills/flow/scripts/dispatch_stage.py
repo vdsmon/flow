@@ -2,7 +2,7 @@
 
 Library + thin CLI. Stdlib-only. Imports `state` + `validate_workspace`.
 
-Subcommands: `init`, `next`, `finish`, `status`. The dispatcher does NOT
+Subcommands: `init`, `next`, `advance`, `finish`, `release`, `status`. The dispatcher does NOT
 invoke handlers itself; it reads/writes state.json and emits a handler-
 descriptor JSON for the SKILL.md prose layer to act on.
 
