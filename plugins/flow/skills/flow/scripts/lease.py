@@ -91,6 +91,11 @@ def _utcnow_iso() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _ts_token() -> str:
+    # colon-free so it is usable in a filename (mirrors state._ts_token).
+    return datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+
+
 def _expiry_iso(now_iso: str, ttl_seconds: int) -> str:
     now = parse_iso(now_iso)
     if now is None:
@@ -341,10 +346,17 @@ def classify(
 ) -> dict[str, object]:
     """Describe the lease for /flow recover.
 
-    state is one of: free | live | expired_reboot_clearable | expired_foreign.
-    holder is the lease as a dict, or None when free.
+    state is one of: free | live | expired_reboot_clearable | expired_foreign |
+    corrupt. holder is the lease as a dict, or None when free or corrupt.
+
+    Non-mutating: a corrupt run.lock yields {"state": "corrupt"} but is never
+    touched here. The RENAME-to-quarantine remediation lives in
+    quarantine_corrupt_lock, called by the human-driven recover takeover.
     """
-    lease = read_lease(ticket_dir)
+    try:
+        lease = read_lease(ticket_dir)
+    except LeaseError:
+        return {"state": "corrupt", "holder": None}
     if lease is None:
         return {"state": "free", "holder": None}
     holder = asdict(lease)
@@ -353,6 +365,23 @@ def classify(
     if lease.boot_id and current_boot and lease.boot_id != current_boot:
         return {"state": "expired_reboot_clearable", "holder": holder}
     return {"state": "expired_foreign", "holder": holder}
+
+
+def quarantine_corrupt_lock(ticket_dir: Path) -> Path | None:
+    """Rename a corrupt run.lock to run.lock.quarantine.<ts> for forensics.
+
+    Mutex-safe: the rename runs under the same flock as acquire/refresh/release,
+    so it never races a concurrent write. Returns the quarantine dst Path, or
+    None when run.lock is absent. The takeover caller has already classified the
+    lock as non-live (corrupt), so renaming it cannot strand a live holder.
+    """
+    with flock_blocking(_flock_path(ticket_dir)):
+        src = run_lock_path(ticket_dir)
+        if not src.exists():
+            return None
+        dst = ticket_dir / f"run.lock.quarantine.{_ts_token()}"
+        os.replace(src, dst)
+        return dst
 
 
 # ─── Internal write (flock already held) ──────────────────────────────────────
@@ -517,6 +546,7 @@ __all__ = [
     "classify",
     "cli_main",
     "is_expired",
+    "quarantine_corrupt_lock",
     "read_lease",
     "refresh",
     "release",

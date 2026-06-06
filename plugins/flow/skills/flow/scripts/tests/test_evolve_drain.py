@@ -98,6 +98,21 @@ def test_mixed_live_and_parked_waits_and_reports_parked():
     assert d["parked"] == ["flow-parked"]
 
 
+def test_corrupt_inflight_blocks_like_live():
+    # corrupt is BLOCKING: a corrupt in-flight lease cannot be confirmed dead,
+    # so it must never drain to "done" (it gates a self-merge).
+    d = ed.decide(_sel(), {"flow-corrupt": "corrupt"})
+    assert d["action"] == "wait"
+    # blocking, not parked: corrupt is in neither the parked nor the done bucket.
+    assert d["parked"] == []
+
+
+def test_corrupt_with_parked_still_waits():
+    d = ed.decide(_sel(), {"flow-corrupt": "corrupt", "flow-parked": "absent"})
+    assert d["action"] == "wait"
+    assert d["parked"] == ["flow-parked"]
+
+
 # ─── _run_dir_for / liveness_map — the worktree resolution ───────────────────
 
 
@@ -121,6 +136,17 @@ def test_liveness_map_absent_key(tmp_path):
     repo = tmp_path / "flow"
     repo.mkdir()
     assert ed.liveness_map(repo, ["flow-gone"]) == {"flow-gone": "absent"}
+
+
+def test_liveness_map_surfaces_corrupt(tmp_path):
+    # a corrupt run.lock surfaces as "corrupt" (not absent, not a crash), so the
+    # raw liveness picture still shows it for diagnosis.
+    repo = tmp_path / "flow"
+    repo.mkdir()
+    run_dir = _sibling_run_dir(repo, "flow-bad")
+    run_dir.mkdir(parents=True)
+    lease.run_lock_path(run_dir).write_text("{not json", encoding="utf-8")
+    assert ed.liveness_map(repo, ["flow-bad"]) == {"flow-bad": "corrupt"}
 
 
 # ─── cli_main — --include-proposals threading ────────────────────────────────
