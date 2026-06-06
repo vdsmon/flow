@@ -190,21 +190,3 @@ The verbose detail — full exit-code matrices, the PR-ready notification protoc
    **PR ready for review →** <PR_URL>
    ```
    Put any one-line caveats (residual risks) ABOVE the rule; nothing goes below the PR link. Draft state is the normal end state, not a caveat: never flag it. If `create_pr` was skipped (handler `none`, or the run blocked before it), omit the block rather than printing an empty rule.
-
-## Stage handler routing
-
-Inline stages (handler `inline`) read their `reference_doc` from `${CLAUDE_SKILL_DIR}/${descriptor.reference_doc}`. The inline reference docs:
-
-- `references/stage-ticket.md` — fetch + cache ticket, stamp frontmatter.
-- `references/stage-code_review.md` — inline self-review of implement diff.
-- `references/stage-commit.md` — compose + apply + transition.
-- `references/stage-reflect.md` — knowledge extraction + ship-event (+ lens-B harness self-repair; see `references/self-evolution.md`).
-
-Subagent stages carry a `reference_doc` too; the dispatcher includes it in the descriptor, and the spawned agent receives the per-stage protocol embedded in its prompt:
-
-- `references/stage-plan.md` — `subagent:Plan` for the plan stage.
-- `references/stage-implement.md` — `subagent:general-purpose` for implement.
-
-(`e2e` ships `references/stage-e2e.md` for the same reason, though it defaults to handler `none` and only becomes a subagent stage when a workspace reconfigures it.)
-
-Skill stages (handler `skill:<name>[:<args>]`) resolve through `resolve_handler.py` before invocation: it confirms the bundle is installed and its `.flow-bundle.toml` manifest is valid, then returns the concrete `skill_name` + `skill_args` to feed the Skill tool.
