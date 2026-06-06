@@ -180,12 +180,19 @@ _NONTERMINAL_VERDICTS = frozenset(
     {"", "PENDING", "EXPECTED", "QUEUED", "IN_PROGRESS", "WAITING", "REQUESTED"}
 )
 
+# Terminal verdicts that are not failures the change caused: a superseded duplicate
+# concurrent run (CANCELLED/STALE) or a deliberate non-run (NEUTRAL/SKIPPED). These
+# read as pending (re-poll), not failed (else a transient CANCELLED trips a phantom
+# fix cycle on a PR whose real checks all end SUCCESS).
+_SUPERSEDED_VERDICTS = frozenset({"CANCELLED", "STALE", "NEUTRAL", "SKIPPED"})
+
 
 def _classify_rollup(rollup: list) -> CIStatus:
     """green iff non-empty and every check is completed-SUCCESS (matches
     evolve_reap.rollup_is_green); pending if any check is still running (CheckRun
-    status != COMPLETED, or a StatusContext with a non-terminal state); failed only
-    when a check reaches a terminal non-SUCCESS verdict."""
+    status != COMPLETED, or a StatusContext with a non-terminal state); a superseded
+    terminal verdict (_SUPERSEDED_VERDICTS) also reads as pending, not failed; failed
+    only when a check reaches a terminal non-SUCCESS verdict outside those sets."""
     checks: list[CICheck] = []
     any_pending = False
     any_failed = False
@@ -207,7 +214,7 @@ def _classify_rollup(rollup: list) -> CIStatus:
             any_pending = True
         elif verdict == "SUCCESS":
             continue
-        elif verdict in _NONTERMINAL_VERDICTS:
+        elif verdict in _NONTERMINAL_VERDICTS or verdict in _SUPERSEDED_VERDICTS:
             any_pending = True
         else:
             any_failed = True
