@@ -98,6 +98,25 @@ def test_non_repo_branch_none_still_applies(skill_root):
     assert f.read_text() == "NEW\n"
 
 
+def test_refuse_detached_head(skill_root):
+    f = skill_root / "scripts" / "x.py"
+    _write(f, "OLD\n")
+    result, code = apply_edit(skill_root, f, "OLD", "NEW", branch_resolver=lambda _: "HEAD")
+    assert code == 2
+    assert result["status"] == "refused"
+    assert "detached" in result["reason"]
+    assert f.read_text() == "OLD\n"  # untouched
+
+
+def test_refuse_empty_branch(skill_root):
+    f = skill_root / "scripts" / "x.py"
+    _write(f, "OLD\n")
+    result, code = apply_edit(skill_root, f, "OLD", "NEW", branch_resolver=lambda _: "")
+    assert code == 2
+    assert result["status"] == "refused"
+    assert f.read_text() == "OLD\n"  # untouched
+
+
 def test_empty_old_is_error(skill_root):
     f = skill_root / "scripts" / "x.py"
     _write(f, "x\n")

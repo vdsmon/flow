@@ -1,4 +1,4 @@
-"""Tests for _runner.py — shared subprocess-runner factories (two contracts)."""
+"""Tests for _runner.py — shared subprocess-runner factories (three contracts)."""
 
 from __future__ import annotations
 
@@ -34,6 +34,34 @@ def test_default_runner_captures_text(tmp_path):
 def test_default_runner_honors_cwd(tmp_path):
     r = _runner.default_runner()
     cp = r(["python3", "-c", "import os; print(os.getcwd())"], tmp_path)
+    assert cp.stdout.strip() == str(tmp_path)
+
+
+def test_cwd_default_runner_returns_completed_process(tmp_path):
+    r = _runner.cwd_default_runner(tmp_path)
+    cp = r(["python3", "-c", "import sys; sys.exit(0)"])
+    assert isinstance(cp, subprocess.CompletedProcess)
+    assert cp.returncode == 0
+
+
+def test_cwd_default_runner_does_not_raise_on_failure(tmp_path):
+    r = _runner.cwd_default_runner(tmp_path)
+    cp = r(["python3", "-c", "import sys; sys.exit(3)"])
+    assert cp.returncode == 3
+
+
+def test_cwd_default_runner_captures_text(tmp_path):
+    r = _runner.cwd_default_runner(tmp_path)
+    cp = r(["python3", "-c", "import sys; print('out'); sys.stderr.write('err')"])
+    assert isinstance(cp.stdout, str)
+    assert isinstance(cp.stderr, str)
+    assert "out" in cp.stdout
+    assert "err" in cp.stderr
+
+
+def test_cwd_default_runner_honors_bound_cwd(tmp_path):
+    r = _runner.cwd_default_runner(tmp_path)
+    cp = r(["python3", "-c", "import os; print(os.getcwd())"])
     assert cp.stdout.strip() == str(tmp_path)
 
 

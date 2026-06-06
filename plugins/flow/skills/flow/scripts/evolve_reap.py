@@ -1,4 +1,4 @@
-"""Classify open evolve PRs for auto-merge (the drainer's reaper, pure core).
+"""Classify open evolve PRs for auto-merge (the drain loop's reap-step core, pure).
 
 User opted in: green LEAF evolve PRs auto-merge to the default branch unattended,
 immediate on green. Hot PRs auto-merge too, but only under the `auto_merge_hot`
@@ -9,14 +9,14 @@ user project), hot PRs stay in skipped_hot — the human gate survives where ris
 lives.
 
 Repo reality (this build): GitHub-native auto-merge is off and there is no branch
-protection, so the reaper owns the merge in code and enforces "green" by reading
+protection, so the drain reap step owns the merge in code and enforces "green" by reading
 the actual check rollup rather than trusting GitHub. CI runs on `push` + every
-`pull_request`, so a PR's checks go green while it is still a draft — the reaper
+`pull_request`, so a PR's checks go green while it is still a draft — this classify
 can confirm green here, and the verb marks the PR ready just before merging.
 
-This module is pure classification (no side effects). The `/flow evolve --reap`
-verb step performs the merge: `gh pr ready` (if draft) then
-`gh pr merge --squash --delete-branch` over the `merge` set.
+This module is pure classification (no side effects). The `/flow evolve drain`
+reap step performs the merge: `gh pr ready` (if draft) then
+`gh pr merge --squash` over the `merge` set.
 
 Eligibility (all required): branch is `feature/<key>-*`; the bead carries `evolve`;
 the check rollup is non-empty and all SUCCESS (green); mergeable (CLEAN, or DRAFT
@@ -40,13 +40,12 @@ import json
 import re
 import subprocess
 import sys
-from collections.abc import Callable
 from pathlib import Path
 
+from _runner import CwdRunner as Runner
+from _runner import cwd_default_runner as _default_runner
 from _workspace import WorkspaceConfigError, load_workspace_toml
 from maintainer import resolve_maintainer_repo
-
-Runner = Callable[[list[str]], subprocess.CompletedProcess[str]]
 
 _EVOLVE_STATUSES = "open,in_progress,blocked,deferred,closed"
 _FLOW_KEY_RE = re.compile(r"^feature/(flow-[a-z0-9]+(?:\.\d+)?)(?:-.*)?$", re.IGNORECASE)
@@ -59,13 +58,6 @@ class NotMaintainer(Exception):
 
 class ToolError(Exception):
     """Raised when an injected tool (gh/bd) fails. Exit 2."""
-
-
-def _default_runner(repo: Path) -> Runner:
-    def run(args: list[str]) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(args, cwd=str(repo), capture_output=True, text=True, check=False)
-
-    return run
 
 
 def _ok(result: subprocess.CompletedProcess[str], what: str) -> str:
@@ -180,15 +172,23 @@ def classify(
     }
 
 
-def _labels_index(runner: Runner) -> dict[str, list[str]]:
-    raw = _ok(
-        runner(["bd", "list", "-l", "evolve", "--status", _EVOLVE_STATUSES, "--json"]),
-        "bd list",
-    )
+def _labels_index(runner: Runner, *, include_proposals: bool = False) -> dict[str, list[str]]:
+    """key -> labels for every evolve bead (plus `proposal` beads when opted in).
+
+    `classify` skips any PR whose key is absent here, so the proposal backlog MUST
+    join the index under `include_proposals` or proposal orphans (runs that died
+    before self-merging) would never reap and pile up unmerged.
+    """
+    labels = ["evolve", "proposal"] if include_proposals else ["evolve"]
     index: dict[str, list[str]] = {}
-    for b in _loads(raw):
-        if isinstance(b, dict) and b.get("id"):
-            index[str(b["id"])] = list(b.get("labels") or [])
+    for label in labels:
+        raw = _ok(
+            runner(["bd", "list", "-l", label, "--status", _EVOLVE_STATUSES, "--json"]),
+            "bd list",
+        )
+        for b in _loads(raw):
+            if isinstance(b, dict) and b.get("id"):
+                index[str(b["id"])] = list(b.get("labels") or [])
     return index
 
 
@@ -204,7 +204,9 @@ def _auto_merge_hot(workspace_root: Path) -> bool:
     return value if isinstance(value, bool) else False
 
 
-def reap(workspace_root: Path, *, runner: Runner | None = None) -> dict:
+def reap(
+    workspace_root: Path, *, runner: Runner | None = None, include_proposals: bool = False
+) -> dict:
     repo = resolve_maintainer_repo(workspace_root)
     if repo is None:
         raise NotMaintainer("not a flow maintainer setup; nothing to reap")
@@ -227,15 +229,22 @@ def reap(workspace_root: Path, *, runner: Runner | None = None) -> dict:
         "gh pr list",
     )
     prs = _loads(pr_raw)
-    return classify(prs, _labels_index(run), auto_merge_hot=auto_merge_hot)
+    index = _labels_index(run, include_proposals=include_proposals)
+    return classify(prs, index, auto_merge_hot=auto_merge_hot)
 
 
 def cli_main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description="Classify open evolve PRs for auto-merge.")
     parser.add_argument("--workspace-root", required=True)
+    parser.add_argument(
+        "--include-proposals",
+        action="store_true",
+        help="DANGEROUS: also reap orphan `proposal` PRs (pairs with the same flag "
+        "on evolve_drain.py). Default off; evolve/audit PRs only.",
+    )
     args = parser.parse_args(argv)
     try:
-        result = reap(Path(args.workspace_root))
+        result = reap(Path(args.workspace_root), include_proposals=args.include_proposals)
     except NotMaintainer as exc:
         print(str(exc), file=sys.stderr)
         return 4

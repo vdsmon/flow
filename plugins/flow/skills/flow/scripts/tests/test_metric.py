@@ -52,12 +52,18 @@ def _write_state(
     *,
     run_id: str,
     reflect_status: str | None = "completed",
+    plan_started_at_iso: str | None = None,
+    create_pr_finished_at_iso: str | None = None,
 ) -> Path:
     stages: dict = {
         "implement": {"status": "completed"},
     }
     if reflect_status is not None:
         stages["reflect"] = {"status": reflect_status}
+    if plan_started_at_iso is not None:
+        stages["plan"] = {"started_at_iso": plan_started_at_iso}
+    if create_pr_finished_at_iso is not None:
+        stages["create_pr"] = {"finished_at_iso": create_pr_finished_at_iso}
     state = {
         "schema_version": 1,
         "ticket": ticket,
@@ -436,3 +442,211 @@ def test_cli_checkpoint_aggregates(tmp_path: Path, capsys) -> None:
 def test_cli_bad_date_returns_1(tmp_path: Path, capsys) -> None:
     rc = metric.cli_main(["tickets-per-week", "--namespace", "demo", "--since", "not-a-date"])
     assert rc == 1
+
+
+# ─── time-to-pr ──────────────────────────────────────────────────────────────
+
+
+def _compute_ttp(root: Path, namespace: str = "demo") -> dict:
+    return metric.compute_time_to_pr(
+        root, namespace, since_iso=_SINCE, until_iso=_UNTIL, now_iso=_NOW
+    )
+
+
+def test_ttp_happy_single(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path)
+    _write_ship_event(
+        tmp_path, "FT-1", shipped_at="2026-05-20T10:00:00Z", observed_by_run_id="run-1"
+    )
+    _write_state(
+        tmp_path,
+        "FT-1",
+        run_id="run-1",
+        reflect_status="completed",
+        plan_started_at_iso="2026-05-20T00:00:00Z",
+        create_pr_finished_at_iso="2026-05-20T12:00:00Z",
+    )
+    result = _compute_ttp(tmp_path)
+    assert result["n_measured"] == 1
+    assert result["n_skipped"] == 0
+    assert result["median_hours"] == 12.0
+    assert result["p90_hours"] == 12.0
+    assert result["tickets"][0]["ticket"] == "FT-1"
+    assert result["tickets"][0]["time_to_pr_hours"] == 12.0
+    assert result["tickets"][0]["plan_started_at"] == "2026-05-20T00:00:00Z"
+    assert result["tickets"][0]["create_pr_finished_at"] == "2026-05-20T12:00:00Z"
+
+
+def test_ttp_excludes_not_attributed(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path)
+    # no state.json -> not attributed; must not be measured even with timestamps absent
+    _write_ship_event(tmp_path, "FT-1", shipped_at="2026-05-20T10:00:00Z")
+    result = _compute_ttp(tmp_path)
+    assert result["n_measured"] == 0
+    assert result["n_skipped"] == 0
+    assert result["tickets"] == []
+
+
+def test_ttp_excludes_out_of_window(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path)
+    _write_ship_event(
+        tmp_path, "FT-OLD", shipped_at="2026-05-13T23:59:59Z", observed_by_run_id="run-old"
+    )
+    _write_state(
+        tmp_path,
+        "FT-OLD",
+        run_id="run-old",
+        reflect_status="completed",
+        plan_started_at_iso="2026-05-13T00:00:00Z",
+        create_pr_finished_at_iso="2026-05-13T12:00:00Z",
+    )
+    result = _compute_ttp(tmp_path)
+    assert result["n_measured"] == 0
+    assert result["tickets"] == []
+
+
+def test_ttp_skips_missing_timestamp(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path)
+    _write_ship_event(
+        tmp_path, "FT-1", shipped_at="2026-05-20T10:00:00Z", observed_by_run_id="run-1"
+    )
+    # attributed but plan.started_at_iso absent -> skip-and-record
+    _write_state(
+        tmp_path,
+        "FT-1",
+        run_id="run-1",
+        reflect_status="completed",
+        create_pr_finished_at_iso="2026-05-20T12:00:00Z",
+    )
+    result = _compute_ttp(tmp_path)
+    assert result["n_measured"] == 0
+    assert result["n_skipped"] == 1
+    assert result["median_hours"] == 0.0
+    assert result["skipped"][0]["ticket"] == "FT-1"
+    assert "plan" in result["skipped"][0]["reason"]
+
+
+def test_ttp_skips_negative_duration(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path)
+    _write_ship_event(
+        tmp_path, "FT-1", shipped_at="2026-05-20T10:00:00Z", observed_by_run_id="run-1"
+    )
+    # create_pr finishes before plan started -> negative duration -> skip
+    _write_state(
+        tmp_path,
+        "FT-1",
+        run_id="run-1",
+        reflect_status="completed",
+        plan_started_at_iso="2026-05-20T12:00:00Z",
+        create_pr_finished_at_iso="2026-05-20T00:00:00Z",
+    )
+    result = _compute_ttp(tmp_path)
+    assert result["n_measured"] == 0
+    assert result["n_skipped"] == 1
+    assert result["skipped"][0]["ticket"] == "FT-1"
+
+
+def test_ttp_multi_percentile(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path)
+    # FT-A: 10h, FT-B: 20h -> median (p50) == 15.0 via linear interpolation
+    _write_ship_event(
+        tmp_path, "FT-A", shipped_at="2026-05-20T10:00:00Z", observed_by_run_id="run-a"
+    )
+    _write_state(
+        tmp_path,
+        "FT-A",
+        run_id="run-a",
+        reflect_status="completed",
+        plan_started_at_iso="2026-05-20T00:00:00Z",
+        create_pr_finished_at_iso="2026-05-20T10:00:00Z",
+    )
+    _write_ship_event(
+        tmp_path, "FT-B", shipped_at="2026-05-21T10:00:00Z", observed_by_run_id="run-b"
+    )
+    _write_state(
+        tmp_path,
+        "FT-B",
+        run_id="run-b",
+        reflect_status="completed",
+        plan_started_at_iso="2026-05-21T00:00:00Z",
+        create_pr_finished_at_iso="2026-05-21T20:00:00Z",
+    )
+    result = _compute_ttp(tmp_path)
+    assert result["n_measured"] == 2
+    assert result["median_hours"] == 15.0
+    # sorted by (time_to_pr_hours, ticket)
+    assert [t["ticket"] for t in result["tickets"]] == ["FT-A", "FT-B"]
+    assert result["tickets"][0]["time_to_pr_hours"] == 10.0
+    assert result["tickets"][1]["time_to_pr_hours"] == 20.0
+
+
+def test_ttp_empty(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path)
+    result = _compute_ttp(tmp_path)
+    assert result["n_measured"] == 0
+    assert result["median_hours"] == 0.0
+    assert result["p90_hours"] == 0.0
+    assert result["tickets"] == []
+
+
+def test_ttp_non_dict_plan_stage_skips_not_crashes(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path)
+    _write_ship_event(
+        tmp_path, "FT-1", shipped_at="2026-05-20T10:00:00Z", observed_by_run_id="run-1"
+    )
+    # attributed via flow, but state carries a null `plan` stage (not a dict)
+    state = {
+        "schema_version": 1,
+        "ticket": "FT-1",
+        "run_id": "run-1",
+        "backend": "jira",
+        "stages": {
+            "reflect": {"status": "completed"},
+            "plan": None,
+            "create_pr": {"finished_at_iso": "2026-05-20T12:00:00Z"},
+        },
+    }
+    state_dir = tmp_path / ".flow" / "runs" / "FT-1"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    result = _compute_ttp(tmp_path)
+    assert result["n_measured"] == 0
+    assert result["n_skipped"] == 1
+
+
+def test_ttp_cli_happy(tmp_path: Path, capsys) -> None:
+    _seed_workspace(tmp_path)
+    _write_ship_event(
+        tmp_path, "FT-1", shipped_at="2026-05-20T10:00:00Z", observed_by_run_id="run-1"
+    )
+    _write_state(
+        tmp_path,
+        "FT-1",
+        run_id="run-1",
+        reflect_status="completed",
+        plan_started_at_iso="2026-05-20T00:00:00Z",
+        create_pr_finished_at_iso="2026-05-20T12:00:00Z",
+    )
+    rc = metric.cli_main(
+        [
+            "time-to-pr",
+            "--namespace",
+            "demo",
+            "--workspace-root",
+            str(tmp_path),
+            "--since",
+            "2026-05-14",
+            "--until",
+            "2026-05-28",
+        ]
+    )
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["n_measured"] == 1
+    assert payload["median_hours"] == 12.0
+
+
+def test_ttp_cli_namespace_required(tmp_path: Path, capsys) -> None:
+    rc = metric.cli_main(["time-to-pr"])
+    assert rc == 1
+    assert "namespace" in capsys.readouterr().err

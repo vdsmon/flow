@@ -228,11 +228,14 @@ def reap_worktree(
 ) -> dict:
     """Tear down the local worktree + branch left behind after a squash-merge.
 
-    `gh pr merge --delete-branch` removes only the remote branch; the local
-    `feature/<key>-*` branch and its registered worktree leak (the branch is
-    "checked out" by the still-registered worktree). This reaps them, gated on
-    the per-ticket lease: when the worktree's run is still live (the bg session
-    is, typically, in reflect) NOTHING is touched and a later pass reaps it.
+    The squash-merge (`gh pr merge --squash`) deletes no branch (gh's
+    branch-delete is skipped), and the separate `git push origin --delete
+    <branch>` touches only the remote ref; so the local `feature/<key>-*`
+    branch and its still-registered worktree survive regardless (the worktree
+    holds that branch checked out, which also blocks any local-branch delete).
+    This reaps them, gated on the per-ticket lease: when the worktree's run is
+    still live (the bg session is, typically, in reflect) NOTHING is touched
+    and a later pass reaps it.
 
     Idempotent: a second call (worktree + branch already gone) is a clean no-op.
     """

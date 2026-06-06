@@ -1,22 +1,30 @@
 from __future__ import annotations
 
-import json
 import subprocess
-from collections.abc import Callable
+from typing import ClassVar
 
 import pytest
 
 import create_pr as cp
+from forge import ForgeError, PullRequest
 
 Recorder = list[list[str]]
 
 
-def _runner(
-    *,
-    branch: str = "feature/flow-aut.7-x",
-    existing: list[dict] | None = None,
-    created_url: str = "https://github.com/o/r/pull/42",
-) -> tuple[Callable[..., subprocess.CompletedProcess[str]], Recorder]:
+def _pr(url: str, head: str, *, base: str = "main", draft: bool = False) -> PullRequest:
+    return {
+        "id": "1",
+        "url": url,
+        "number": 1,
+        "draft": draft,
+        "base": base,
+        "head": head,
+        "state": "OPEN",
+    }
+
+
+def _git_runner(*, branch: str = "feature/flow-aut.7-x", push_rc: int = 0):
+    """Fake runner for the git-only calls create_pr still makes directly."""
     calls: Recorder = []
 
     def run(args: list[str]) -> subprocess.CompletedProcess[str]:
@@ -24,16 +32,46 @@ def _runner(
         if args[:2] == ["git", "rev-parse"]:
             return subprocess.CompletedProcess(args, 0, branch + "\n", "")
         if args[:2] == ["git", "push"]:
-            return subprocess.CompletedProcess(args, 0, "", "")
+            return subprocess.CompletedProcess(args, push_rc, "", "remote rejected")
         if args[:2] == ["git", "log"]:
             return subprocess.CompletedProcess(args, 0, "test: add coverage\n", "")
-        if args[:3] == ["gh", "pr", "list"]:
-            return subprocess.CompletedProcess(args, 0, json.dumps(existing or []), "")
-        if args[:3] == ["gh", "pr", "create"]:
-            return subprocess.CompletedProcess(args, 0, created_url + "\n", "")
         return subprocess.CompletedProcess(args, 1, "", f"unexpected {args}")
 
     return run, calls
+
+
+class _FakeForge:
+    backend = "github"
+    capabilities: ClassVar[list] = []
+
+    def __init__(self, *, existing: str | None = None, created="https://github.com/o/r/pull/42"):
+        self._existing = existing
+        self._created = created
+        self.opened: list[dict] = []
+        self.raise_on_open: Exception | None = None
+
+    def detect_pr(self, branch: str) -> PullRequest | None:
+        return _pr(self._existing, branch) if self._existing else None
+
+    def open_pr(self, base: str, head: str, title: str, body: str, draft: bool) -> PullRequest:
+        if self.raise_on_open:
+            raise self.raise_on_open
+        self.opened.append({"base": base, "head": head, "draft": draft, "title": title})
+        return _pr(self._created, head, base=base, draft=draft)
+
+    def ci_rollup(self, pr_id: str):
+        raise NotImplementedError
+
+    def review_threads(self, pr_id: str):
+        raise NotImplementedError
+
+    def post_reply(self, pr_id: str, thread_id: str, body: str) -> None: ...
+    def resolve_thread(self, pr_id: str, thread_id: str) -> bool:
+        return True
+
+    def mark_ready(self, pr_id: str) -> None: ...
+    def merge(self, pr_id: str, squash: bool = True) -> None: ...
+    def delete_branch(self, branch: str) -> None: ...
 
 
 def _ran(calls: Recorder, prefix: list[str]) -> bool:
@@ -41,80 +79,79 @@ def _ran(calls: Recorder, prefix: list[str]) -> bool:
 
 
 def test_creates_when_no_existing_pr(tmp_path):
-    run, calls = _runner(existing=[])
-    url = cp.open_or_get_pr(tmp_path, base="main", runner=run)
+    run, calls = _git_runner()
+    fg = _FakeForge(existing=None)
+    url = cp.open_or_get_pr(tmp_path, base="main", runner=run, forge=fg)
     assert url == "https://github.com/o/r/pull/42"
-    assert _ran(calls, ["gh", "pr", "create"])
+    assert len(fg.opened) == 1
     assert _ran(calls, ["git", "push"])
 
 
 def test_idempotent_reuses_existing_pr(tmp_path):
-    run, calls = _runner(existing=[{"url": "https://github.com/o/r/pull/7"}])
-    url = cp.open_or_get_pr(tmp_path, base="main", runner=run)
+    run, _ = _git_runner()
+    fg = _FakeForge(existing="https://github.com/o/r/pull/7")
+    url = cp.open_or_get_pr(tmp_path, base="main", runner=run, forge=fg)
     assert url == "https://github.com/o/r/pull/7"
-    assert not _ran(calls, ["gh", "pr", "create"])  # never double-open
+    assert fg.opened == []  # never double-open
 
 
 def test_refuses_protected_branch(tmp_path):
-    run, _ = _runner(branch="main")
+    run, _ = _git_runner(branch="main")
     with pytest.raises(cp.RefusedBranch):
-        cp.open_or_get_pr(tmp_path, runner=run)
+        cp.open_or_get_pr(tmp_path, runner=run, forge=_FakeForge())
 
 
 def test_push_failure_is_tool_error(tmp_path):
-    def run(args):
-        if args[:2] == ["git", "rev-parse"]:
-            return subprocess.CompletedProcess(args, 0, "feature/flow-x\n", "")
-        if args[:2] == ["git", "push"]:
-            return subprocess.CompletedProcess(args, 1, "", "remote rejected")
-        return subprocess.CompletedProcess(args, 0, "[]", "")
-
+    run, _ = _git_runner(push_rc=1)
     with pytest.raises(cp.ToolError):
-        cp.open_or_get_pr(tmp_path, runner=run)
+        cp.open_or_get_pr(tmp_path, runner=run, forge=_FakeForge())
 
 
-def test_create_url_is_last_stdout_line(tmp_path):
-    def run(args):
-        if args[:2] == ["git", "rev-parse"]:
-            return subprocess.CompletedProcess(args, 0, "feature/flow-x\n", "")
-        if args[:2] == ["git", "push"]:
-            return subprocess.CompletedProcess(args, 0, "", "")
-        if args[:2] == ["git", "log"]:
-            return subprocess.CompletedProcess(args, 0, "test: x\n", "")
-        if args[:3] == ["gh", "pr", "list"]:
-            return subprocess.CompletedProcess(args, 0, "[]", "")
-        if args[:3] == ["gh", "pr", "create"]:
-            # gh sometimes prints a preamble line before the URL
-            return subprocess.CompletedProcess(
-                args, 0, "Warning: ...\nhttps://github.com/o/r/pull/9\n", ""
-            )
-        return subprocess.CompletedProcess(args, 1, "", "x")
+def test_forge_error_is_tool_error(tmp_path):
+    run, _ = _git_runner()
+    fg = _FakeForge()
+    fg.raise_on_open = ForgeError("gh pr create failed")
+    with pytest.raises(cp.ToolError):
+        cp.open_or_get_pr(tmp_path, runner=run, forge=fg)
 
-    assert cp.open_or_get_pr(tmp_path, runner=run) == "https://github.com/o/r/pull/9"
+
+def test_open_ready_omits_draft(tmp_path):
+    run, _ = _git_runner()
+    fg = _FakeForge()
+    cp.open_or_get_pr(tmp_path, base="main", runner=run, forge=fg)
+    assert fg.opened[0]["draft"] is False
+
+
+def test_open_draft_passes_draft(tmp_path):
+    run, _ = _git_runner()
+    fg = _FakeForge()
+    cp.open_or_get_pr(tmp_path, base="main", draft=True, runner=run, forge=fg)
+    assert fg.opened[0]["draft"] is True
 
 
 def test_cli_prints_pr_url_token(tmp_path, monkeypatch, capsys):
-    run, _ = _runner(existing=[{"url": "https://github.com/o/r/pull/5"}])
+    run, _ = _git_runner(branch="feature/flow-x")
+    fg = _FakeForge(existing="https://github.com/o/r/pull/5")
     monkeypatch.setattr(cp, "_default_runner", lambda _repo: run)
-    rc = cp.cli_main(
-        ["--workspace-root", str(tmp_path), "--base", "main", "--ticket", "flow-aut.7"]
-    )
+    monkeypatch.setattr(cp, "_resolve_forge", lambda _ws: fg)
+    rc = cp.cli_main(["--workspace-root", str(tmp_path), "--base", "main", "--ticket", "flow-x"])
     assert rc == 0
     assert "PR_URL=https://github.com/o/r/pull/5" in capsys.readouterr().out
 
 
-def test_open_ready_omits_draft_flag(tmp_path):
-    run, calls = _runner(existing=[])
-    cp.open_or_get_pr(tmp_path, base="main", runner=run)
-    create = next(c for c in calls if c[:3] == ["gh", "pr", "create"])
-    assert "--draft" not in create
+def test_cli_missing_forge_block_is_tool_error(tmp_path, monkeypatch):
+    run, _ = _git_runner(branch="feature/flow-x")
+    monkeypatch.setattr(cp, "_default_runner", lambda _repo: run)
+    # no [forge] block in tmp_path -> _resolve_forge raises ToolError -> exit 2
+    rc = cp.cli_main(["--workspace-root", str(tmp_path), "--base", "main"])
+    assert rc == 2
 
 
-def test_open_draft_passes_draft_flag(tmp_path):
-    run, calls = _runner(existing=[])
-    cp.open_or_get_pr(tmp_path, base="main", draft=True, runner=run)
-    create = next(c for c in calls if c[:3] == ["gh", "pr", "create"])
-    assert "--draft" in create
+def test_cli_refused_protected_branch(tmp_path, monkeypatch):
+    run, _ = _git_runner(branch="main")
+    monkeypatch.setattr(cp, "_default_runner", lambda _repo: run)
+    rc = cp.cli_main(["--workspace-root", str(tmp_path), "--base", "main"])
+    assert rc == 3
 
 
 def test_draft_config_default_false_when_no_workspace(tmp_path):

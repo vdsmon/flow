@@ -1,9 +1,9 @@
-"""Select + partition the next batch of evolve beads to launch (the drainer's core).
+"""Select + partition the next batch of evolve beads to launch (drain's select core).
 
 Pure selection over flow's OWN backlog, no side effects. Given the ready evolve
 beads plus the in-flight branches/PRs, decide which keys to fan out as
-`/flow <key> --auto` runs. The `/flow evolve --ship` verb consumes this and does
-the actual launching.
+`/flow <key> --auto` runs. The `/flow evolve drain` loop consumes this (via
+`evolve_drain.py`, which adds in-flight lease liveness) and does the launching.
 
 Partition is best-effort coarse, NOT a disjointness guarantee — planning is
 post-launch (the headless Plan subagent runs after `claude --bg` fires), so the
@@ -35,13 +35,12 @@ import json
 import re
 import subprocess
 import sys
-from collections.abc import Callable
 from pathlib import Path
 
+from _runner import CwdRunner as Runner
+from _runner import cwd_default_runner as _default_runner
 from _workspace import WorkspaceConfigError, load_workspace_toml
 from maintainer import resolve_maintainer_repo
-
-Runner = Callable[[list[str]], subprocess.CompletedProcess[str]]
 
 DEFAULT_CAP = 5
 DEFAULT_CONCURRENCY = 3
@@ -59,13 +58,6 @@ class NotMaintainer(Exception):
 
 class ToolError(Exception):
     """Raised when an injected tool (bd/git/gh) fails. Exit 2."""
-
-
-def _default_runner(repo: Path) -> Runner:
-    def run(args: list[str]) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(args, cwd=str(repo), capture_output=True, text=True, check=False)
-
-    return run
 
 
 def _ok(result: subprocess.CompletedProcess[str], what: str) -> str:
@@ -121,18 +113,22 @@ def partition(
     open_pr_count: int,
     cap: int = DEFAULT_CAP,
     concurrency: int = DEFAULT_CONCURRENCY,
+    include_proposals: bool = False,
 ) -> dict:
     """Pure core: decide the launch batch from already-extracted inputs.
 
     candidates: parsed `bd ready -l evolve` items (id, priority, labels, issue_type,
     description). Epics are skipped (you launch a run on leaf work, not a container).
-    Proposal beads (label `proposal`, filed by `/flow evolve --generative`) are held
-    for the maintainer to triage and never auto-launched — the judgment side of the
-    vision's auto-vs-propose line.
+    Generative proposals now live in a separate (non-`evolve`) backlog and only
+    reach drain at all if mislabeled; the `proposal`-exclusion filter in `active`
+    is retained as a defensive guard (judgment work never auto-launches), no
+    longer surfaced as `held_proposal`.
+
+    `include_proposals` is the DANGEROUS opt-in: it drops the proposal-exclusion
+    guard so judgment beads auto-launch alongside audit work, bypassing the human
+    spec-plan accept gate. The caller also has to feed the proposal candidates in
+    (see `select`); flipping this alone over an evolve-only candidate set is a no-op.
     """
-    held_proposal = [
-        c["id"] for c in candidates if c.get("id") and "proposal" in (c.get("labels") or [])
-    ]
     skipped_in_flight = [c["id"] for c in candidates if c.get("id") in inflight_keys]
 
     active = [
@@ -140,7 +136,7 @@ def partition(
         for c in candidates
         if c.get("id")
         and c.get("issue_type") != "epic"
-        and "proposal" not in (c.get("labels") or [])
+        and (include_proposals or "proposal" not in (c.get("labels") or []))
         and c["id"] not in inflight_keys
     ]
     active.sort(key=lambda c: (c.get("priority", 99), str(c.get("id"))))
@@ -152,7 +148,6 @@ def partition(
             "held_backpressure": True,
             "held_hot": [],
             "held_anchor": [],
-            "held_proposal": held_proposal,
         }
 
     budget = min(cap - open_pr_count, concurrency)
@@ -187,7 +182,6 @@ def partition(
         "held_backpressure": False,
         "held_hot": held_hot,
         "held_anchor": held_anchor,
-        "held_proposal": held_proposal,
     }
 
 
@@ -214,42 +208,76 @@ def _gather_refs(runner: Runner) -> tuple[set[str], int]:
     return refs, open_pr_count
 
 
-def _hot_inflight(runner: Runner, refs: set[str]) -> bool:
-    """True if any in-flight `feature/flow-*` ref maps to a hot evolve bead."""
+def _hot_inflight(runner: Runner, refs: set[str], *, include_proposals: bool = False) -> bool:
+    """True if any in-flight `feature/flow-*` ref maps to a hot evolve bead.
+
+    Under `include_proposals` the hot slot also serializes hot *proposal* beads, so
+    a hot proposal already in flight blocks the next hot launch (the `proposal`
+    label can carry `hot` too — see references/verb-evolve.md §propose).
+    """
     inflight_flow_keys = {k for r in refs if (k := _key_from_ref(r))}
     if not inflight_flow_keys:
         return False
-    raw = _ok(
-        runner(["bd", "list", "-l", "evolve", "--status", _ACTIVE_STATUSES, "--json"]),
-        "bd list",
-    )
-    hot_keys = {
-        str(b["id"])
-        for b in _loads(raw)
-        if isinstance(b, dict) and b.get("id") and "hot" in (b.get("labels") or [])
-    }
+    labels = ["evolve", "proposal"] if include_proposals else ["evolve"]
+    hot_keys: set[str] = set()
+    for label in labels:
+        raw = _ok(
+            runner(["bd", "list", "-l", label, "--status", _ACTIVE_STATUSES, "--json"]),
+            "bd list",
+        )
+        hot_keys |= {
+            str(b["id"])
+            for b in _loads(raw)
+            if isinstance(b, dict) and b.get("id") and "hot" in (b.get("labels") or [])
+        }
     return bool(inflight_flow_keys & hot_keys)
 
 
+def _ready_candidates(run: Runner, include_proposals: bool) -> list[dict]:
+    """Ready evolve beads, plus the `proposal` backlog when explicitly opted in.
+
+    Two label-scoped `bd ready` calls merged by id (not `-l evolve,proposal`, whose
+    AND/OR semantics are ambiguous); a bead carrying both labels is kept once.
+    """
+    cands = _loads(_ok(run(["bd", "ready", "-l", "evolve", "--json"]), "bd ready"))
+    if include_proposals:
+        seen = {c.get("id") for c in cands}
+        props = _loads(_ok(run(["bd", "ready", "-l", "proposal", "--json"]), "bd ready"))
+        cands += [p for p in props if p.get("id") and p.get("id") not in seen]
+    return cands
+
+
 def select(
-    workspace_root: Path, *, cap: int, concurrency: int, runner: Runner | None = None
+    workspace_root: Path,
+    *,
+    cap: int,
+    concurrency: int,
+    runner: Runner | None = None,
+    include_proposals: bool = False,
 ) -> dict:
     repo = resolve_maintainer_repo(workspace_root)
     if repo is None:
         raise NotMaintainer("not a flow maintainer setup; nothing to select")
     run = runner or _default_runner(repo)
 
-    candidates = _loads(_ok(run(["bd", "ready", "-l", "evolve", "--json"]), "bd ready"))
+    candidates = _ready_candidates(run, include_proposals)
     refs, open_pr_count = _gather_refs(run)
     inflight_keys = {c["id"] for c in candidates if c.get("id") and _is_inflight(c["id"], refs)}
-    hot_inflight = _hot_inflight(run, refs)
+    hot_inflight = _hot_inflight(run, refs, include_proposals=include_proposals)
 
     result = partition(
-        candidates, inflight_keys, hot_inflight, open_pr_count, cap=cap, concurrency=concurrency
+        candidates,
+        inflight_keys,
+        hot_inflight,
+        open_pr_count,
+        cap=cap,
+        concurrency=concurrency,
+        include_proposals=include_proposals,
     )
     result["cap"] = cap
     result["concurrency"] = concurrency
     result["open_pr_count"] = open_pr_count
+    result["include_proposals"] = include_proposals
     return result
 
 

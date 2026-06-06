@@ -26,7 +26,9 @@ It refuses one more case: a skill-root sitting on a protected branch
 (main/master/dev/develop). In the marketplace-tracks-main setup the skill
 checkout is a separate working tree on `main`; a machinery self-edit there would
 land as a direct commit on `main`, bypassing the human-merge keystone. The fix
-must flow to PROPOSE+RECORD (the evolve-bead sling) instead. A skill-root that is
+must flow to PROPOSE+RECORD (the evolve-bead sling) instead. A skill-root in
+detached-HEAD state is refused for the same reason: a self-edit commit there is
+not on any branch, so it never reaches the keystone merge. A skill-root that is
 not a git repo (the unit-test fixture) resolves to no branch and is allowed.
 
 Idempotency mirrors the doc's "anchor not found usually means already fixed":
@@ -40,7 +42,7 @@ Exit codes:
     0 = applied, or already_applied (idempotent no-op).
     1 = usage / I/O error (bad payload, missing file, empty `old`, old==new).
     2 = refused (path outside skill tree, snapshot-pinned stage-registry.toml,
-        or skill-root on a protected branch).
+        skill-root on a protected branch, or skill-root in detached-HEAD state).
     3 = anchor_not_found (old absent AND new absent — agent must re-derive).
     4 = ambiguous (old occurs more than once — not a unique anchor).
 """
@@ -129,6 +131,13 @@ def apply_edit(
             "file": str(target),
             "reason": f"skill-root is on protected branch {branch}; machinery "
             "self-edits never commit to main; propose+record (sling an evolve bead) instead",
+        }, 2
+    if branch in {"HEAD", ""}:
+        return {
+            "status": "refused",
+            "file": str(target),
+            "reason": "skill-root is in detached-HEAD state; machinery self-edits "
+            "never commit detached; propose+record (sling an evolve bead) instead",
         }, 2
     if not old:
         return {"status": "error", "file": str(target), "reason": "`old` is empty"}, 1

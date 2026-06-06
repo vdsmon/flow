@@ -34,6 +34,17 @@ The live "which script does what" map. One line per script: purpose + CLI surfac
 | `tracker_beads.py` (lib) | Beads `bd` CLI adapter (local-only tracker). | imported by tracker_cli |
 | `resolve_handler.py` | Resolve a `skill:<name>` handler: confirm bundle installed + manifest valid, return concrete `skill_name`/`skill_args`. | `--handler <string> --search-roots`; exit 1 not-installed / 2 invalid |
 
+## Forge (PR host)
+
+Pluggable PR-host seam, structural twin of the tracker seam. The `create_pr` and `review_loop` stages reach the host ONLY through `forge_cli.py`, so a GitHub and a Bitbucket workspace run the same prose. Selected by `[forge] backend = "github" | "bitbucket"` in `workspace.toml` (the block is OPTIONAL; absent = no forge).
+
+| Script | Role | Surface / touches |
+|--------|------|-------------------|
+| `forge.py` (lib) | Forge Protocol base + `make_forge()` factory + `read_forge_config()` + `FORGE_CAPABILITY_ENUM` + normalized `PullRequest`/`CIStatus`/`ReviewThread`. | imported by the adapters + forge_cli + create_pr |
+| `forge_cli.py` | CLI wrapper around the Protocol (the only forge surface the prose calls); cap-gated subcommands degrade to `{"supported": false}` exit 0. | `detect-pr` / `open-pr` / `ci-rollup` / `review-threads` / `post-reply` / `resolve-thread` / `mark-ready` / `merge` / `delete-branch` |
+| `forge_github.py` (lib) | GitHub `gh` adapter: detect/open PR, CI rollup (`statusCheckRollup`), mark-ready/merge/delete-branch. Review-threads capability OFF for now (no live review-bot-on-GitHub yet). | imported by forge_cli |
+| `forge_bitbucket.py` (lib) | Bitbucket `bkt` adapter (absorbs ship-it): detect/open PR, CI rollup from `bkt pr checks`, CodeRabbit review-thread fetch + verified resolve (`.resolution != null`). | imported by forge_cli |
+
 ## Frontmatter / diff / commit
 
 | Script | Role | Surface / touches |
@@ -53,11 +64,13 @@ The live "which script does what" map. One line per script: purpose + CLI surfac
 | `recall_pending.py` (lib) | Promote SessionStart recall-pending entries into the per-ticket recall log. | imported by dispatch_stage |
 | `reflect_inputs.py` | Bundle the reflect-stage inputs (state + frontmatter + diff + subagent reports + friction + reflect_config). | `--ticket --ticket-dir --ticket-frontmatter --cwd` |
 | `observe_ship_event.py` | Sole writer of `ship-events/<ticket>.json` (atomic, dupe-safe). | `--ticket --evidence-json --run-id --workspace-root` |
-| `machinery_edit.py` | Flock-serialized applier for reflect lens-B self-edits to flow's OWN source. Refuses out-of-tree + snapshot-pinned paths. See `../references/self-evolution.md`. | `apply --skill-root --payload` |
+| `machinery_edit.py` | Flock-serialized applier for reflect lens-B self-edits to flow's OWN source. Refuses out-of-tree + snapshot-pinned paths + skill-root on a protected branch (main/master/dev/develop → propose+record instead). See `../references/self-evolution.md`. | `apply --skill-root --payload` |
 | `flow_beads_create.py` | File a self-work (machinery) bead into flow's OWN beads, gated on maintainer mode; always targets flow's beads, never the run's tracker. | `--workspace-root --summary --description [--type --labels --parent]`; exit 4 = not maintainer |
-| `evolve_select.py` | Drainer core: select + partition the next batch of evolve beads to launch (`bd ready -l evolve`, drop in-flight, backpressure, coarse hot/anchor serialization). Pure, no side effects. | `--workspace-root [--cap --concurrency]`; exit 4 = not maintainer. Consumed by `/flow evolve --ship` |
-| `evolve_reap.py` | Drainer reaper: classify open evolve PRs for auto-merge (green + leaf + mergeable → `merge`; a hot leaf also merges under `[evolve] auto_merge_hot` + isolation, one hot per pass; else not_green/skipped_hot/blocked). Pure; the verb does the `gh pr merge`. | `--workspace-root`; exit 4 = not maintainer. Consumed by `/flow evolve --ship/--reap` |
-| `create_pr.py` | `create_pr` stage handler (GitHub): push branch + `gh pr create` (title from HEAD commit subject, not `--fill`); ready-for-review by default, `--draft` only when `[create_pr] draft = true` or `--draft` passed; idempotent (reuse existing PR on resume). Prints `PR_URL=<url>`. | `--workspace-root [--base main --ticket KEY --draft]`; exit 3 = protected branch. Wired `create_pr = "inline"` via `references/stage-create_pr.md` |
+| `evolve_select.py` | Drain select core: select + partition the next batch of evolve beads to launch (`bd ready -l evolve`, drop in-flight, backpressure, coarse hot/anchor serialization). Pure, no side effects. | `--workspace-root [--cap --concurrency]`; exit 4 = not maintainer. Consumed by `evolve_drain.py` (the `/flow evolve drain` loop) |
+| `evolve_reap.py` | Drain reap-step core: classify open evolve PRs for auto-merge (green + leaf + mergeable → `merge`; a hot leaf also merges under `[evolve] auto_merge_hot` + isolation, one hot per pass; else not_green/skipped_hot/blocked). Pure; the loop does the `gh pr merge`. Role: orphan safety-net (a run that died before self-merging) + worktree teardown. | `--workspace-root`; exit 4 = not maintainer. Consumed by `/flow evolve drain` (reap step) |
+| `evolve_drain.py` | Drain loop's next-action decider: `decide(select_result, liveness) → {action: launch\|wait\|done, launch, parked}`. CLI runs `evolve_select.select()` + annotates each in-flight bead with its run's lease liveness (`lease.classify`), so the loop terminates on "nothing startable + nothing live" and never spins on a withheld (parked) hot bead. Pure `decide()`; CLI read-only. | `--workspace-root [--cap --concurrency]`; exit 4 = not maintainer, 2 = bd/git/gh error. Consumed by the `/flow evolve drain` loop |
+| `evolve_self_merge.py` | Self-merge gate (the `merge` stage core): pure `decide(labels, is_maintainer, auto_merge_hot, ci_status) → {action, is_hot, reason}`. The stage acts on it: a hot bead gets an independent reviewer subagent (§6A) before `forge_cli merge`. | `--workspace-root --key --ci-status`; consumed by `references/stage-merge.md` |
+| `create_pr.py` | `create_pr` stage handler: git push of the branch, then open/resolve the PR through the forge seam (`fg.detect_pr` / `fg.open_pr` via the injected `Forge` adapter), so the same handler serves GitHub and Bitbucket. Title from HEAD commit subject (not `--fill`); ready-for-review by default, `--draft` only when `[create_pr] draft = true` or `--draft` passed; idempotent (reuse existing PR on resume). Prints `PR_URL=<url>`. | `--workspace-root [--base main --ticket KEY --draft]`; exit 3 = protected branch. Wired `create_pr = "inline"` via `references/stage-create_pr.md` |
 
 ## Work-mode quality gate
 
@@ -74,12 +87,13 @@ The live "which script does what" map. One line per script: purpose + CLI surfac
 | Script | Role | Surface / touches |
 |--------|------|-------------------|
 | `status.py` | Read-only run/stage/lease table (no network). | `[--ticket] --workspace-root [--json]` |
+| `triage.py` | Read-only deferred-bead queue + each one's defer comment (beads only). | `--workspace-root [--json]` |
 | `recover.py` | Inspect + remediate a broken run. | `detect` / `takeover` / `retry` / `skip` / `abort` / `reload-snapshot` |
 | `flow_friction.py` | Append-only `friction.jsonl` log (the reflect/self-evolution feedstock). | `--ticket --run-id --stage --type --body [--detail --severity]` |
 
 ## Shared helpers (lib)
 
-`_atomicio.py` (atomic temp-write + fsync), `_timeutil.py` (UTC ISO8601 parse; `require_z` for the strict contract), `_workspace.py` (workspace.toml load), `_registry.py` (stage-registry parse), `_locking.py` (flock retry), `_jsonl.py` (JSONL sidecar parse), `_runner.py` (subprocess-runner factories: positional-cwd `Runner`/`default_runner` for diff_extract/branch_ticket/recall_pending/flow_worktree, keyword-only `KwRunner`/`kw_default_runner` for init/tracker_beads), `maintainer.py` (maintainer-mode detection via the `[maintainer]` marker; gates the self-evolution loop).
+`_atomicio.py` (atomic temp-write + fsync), `_timeutil.py` (UTC ISO8601 parse; `require_z` for the strict contract), `_workspace.py` (workspace.toml load), `_registry.py` (stage-registry parse), `_locking.py` (flock retry), `_jsonl.py` (JSONL sidecar parse), `_runner.py` (subprocess-runner factories: positional-cwd `Runner`/`default_runner` for diff_extract/branch_ticket/recall_pending/flow_worktree/flow_beads_create, keyword-only `KwRunner`/`kw_default_runner` for init/tracker_beads, cwd-bound `CwdRunner`/`cwd_default_runner` for forge_github/forge_bitbucket/evolve_reap/evolve_select/create_pr), `maintainer.py` (maintainer-mode detection via the `[maintainer]` marker; gates the self-evolution loop).
 
 ## Dev tooling
 

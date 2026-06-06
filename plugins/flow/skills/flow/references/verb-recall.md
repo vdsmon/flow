@@ -30,3 +30,11 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/recall.py --metric tickets-per-week \
 It counts shipped tickets in the window from the immutable ship-event evidence and splits `shipped_via_flow` (ticket+run+reflect three-way binding verified) from `shipped_backend_not_attributed`.
 `--checkpoint --mode` aggregates across the checkpoint manifest's participants of that mode.
 Surface the JSON report.
+
+```bash
+python3 ${CLAUDE_SKILL_DIR}/scripts/recall.py --metric time-to-pr \
+  --namespace <ns> --workspace-root . \
+  [--since YYYY-MM-DD] [--until YYYY-MM-DD]
+```
+
+It counts flow-attributed shipped tickets in-window and reports observed time-to-PR (plan-start → create_pr-finish) as median_hours / p90_hours, the trio's third leg.

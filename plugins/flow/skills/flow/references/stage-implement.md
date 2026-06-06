@@ -23,8 +23,8 @@ Leave your work as uncommitted changes in the working tree.
 - `.flow/runs/<KEY>/ticket.json` — full ticket context.
 - `.flow/tickets/<KEY>.md` — frontmatter, including `planned_files`.
   Your edits must stay within this set (see Steps).
-- The project's test command — discover it from the repo (pyproject /
-  package.json / Makefile / mise / existing CI config).
+- The project's test command AND its lint/format/type-check gate — discover both
+  from the repo (pyproject / package.json / Makefile / mise / existing CI config).
 
 ## Steps
 
@@ -52,8 +52,14 @@ Leave your work as uncommitted changes in the working tree.
    Smallest change that makes the tests pass.
    Match the surrounding file's style and conventions.
 
-5. Run the project's full relevant test suite (not only your new tests).
-   Iterate until green.
+5. Run the project's FULL CI-equivalent gate before declaring green — not just the tests.
+   Discover the gate the same way you discover the test command (CI config / mise / package.json / Makefile), and run every part CI runs:
+   - the linter;
+   - the formatter in CHECK mode (e.g. `--check`) — call this out as a DISTINCT step: a file can pass the linter yet still be reformatted by CI, so lint-clean does not mean format-clean;
+   - the type-checker, if the project runs one;
+   - the project's full relevant test suite (not only your new tests).
+   (For this repo the gate is `mise run lint` = ruff check + ruff format --check + ty, plus `mise run test`, run from the scripts dir — that is an example, not a default; use whatever THIS project's CI enforces.)
+   Iterate until the whole gate is green.
    Do not return on red.
 
 6. Report what changed: the files touched, the tests added or updated, and the final test run result (command + pass summary).

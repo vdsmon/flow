@@ -1,0 +1,187 @@
+from __future__ import annotations
+
+import json
+
+import evolve_drain as ed
+
+# decide() reads only `launch` from the select result; the in-flight picture comes
+# entirely from the `liveness` map the CLI builds over open PRs + in-flight beads.
+# So the scenarios below are expressed through the liveness map, not select fields.
+
+
+def _sel(launch=None):
+    return {"launch": launch or []}
+
+
+# ─── decide() — the termination core ─────────────────────────────────────────
+
+
+def test_launch_nonempty_launches():
+    d = ed.decide(_sel(launch=["flow-a", "flow-b"]), {})
+    assert d["action"] == "launch"
+    assert d["launch"] == ["flow-a", "flow-b"]
+    assert d["parked"] == []
+
+
+def test_drained_is_done():
+    # nothing to launch, nothing in flight → terminal
+    d = ed.decide(_sel(), {})
+    assert d["action"] == "done"
+    assert d["parked"] == []
+
+
+def test_live_inflight_waits():
+    d = ed.decide(_sel(), {"flow-run": "live"})
+    assert d["action"] == "wait"
+
+
+def test_held_hot_blocked_by_live_run_waits():
+    # a hot bead is held because another hot is still running → wait, don't bail
+    d = ed.decide(_sel(), {"flow-hot1": "live"})
+    assert d["action"] == "wait"
+
+
+def test_held_hot_blocked_by_parked_hot_is_done():
+    # the blocking hot was WITHHELD (held_guard): ready PR + branch, but session
+    # ended → lease non-live → loop terminates, leaves it for the human (no spin)
+    d = ed.decide(_sel(), {"flow-hot1": "expired_foreign"})
+    assert d["action"] == "done"
+    assert d["parked"] == ["flow-hot1"]
+
+
+def test_backpressure_with_a_live_run_waits():
+    # the PR cap is full but a run is still working → wait for it to merge + free cap.
+    # (real shape: select returns held_backpressure + empty skipped_in_flight; the
+    # cap-occupying run shows up only via the open-PR liveness the CLI computes.)
+    d = ed.decide(_sel(), {"flow-busy": "live"})
+    assert d["action"] == "wait"
+
+
+def test_backpressure_all_parked_is_done():
+    # cap occupied entirely by parked PRs the human must clear → nothing to do
+    d = ed.decide(_sel(), {"flow-x": "expired_foreign", "flow-y": "absent"})
+    assert d["action"] == "done"
+    assert d["parked"] == ["flow-x", "flow-y"]
+
+
+def test_absent_rundir_counts_as_non_live():
+    # a leaked branch / PR with no worktree run dir → "absent" → never waited on
+    d = ed.decide(_sel(), {"flow-orphan": "absent"})
+    assert d["action"] == "done"
+    assert d["parked"] == ["flow-orphan"]
+
+
+def test_mixed_live_and_parked_waits_and_reports_parked():
+    d = ed.decide(_sel(), {"flow-live": "live", "flow-parked": "absent"})
+    assert d["action"] == "wait"
+    assert d["parked"] == ["flow-parked"]
+
+
+# ─── _run_dir_for / liveness_map — the worktree resolution ───────────────────
+
+
+def test_run_dir_for_absent_returns_none(tmp_path):
+    repo = tmp_path / "flow"
+    repo.mkdir()
+    assert ed._run_dir_for(repo, "flow-nope") is None
+
+
+def test_run_dir_for_finds_sibling_worktree(tmp_path):
+    repo = tmp_path / "flow"
+    repo.mkdir()
+    run_dir = (
+        tmp_path / "flow.worktrees" / "feature-flow-abc-some-slug" / ".flow" / "runs" / "flow-abc"
+    )
+    run_dir.mkdir(parents=True)
+    assert ed._run_dir_for(repo, "flow-abc") == run_dir
+
+
+def test_liveness_map_absent_key(tmp_path):
+    repo = tmp_path / "flow"
+    repo.mkdir()
+    assert ed.liveness_map(repo, ["flow-gone"]) == {"flow-gone": "absent"}
+
+
+# ─── cli_main — --include-proposals threading ────────────────────────────────
+
+
+def _stub_cli(monkeypatch, tmp_path, captured):
+    repo = tmp_path / "flow"
+    repo.mkdir()
+    monkeypatch.setattr(ed, "resolve_maintainer_repo", lambda ws: repo)
+    monkeypatch.setattr(ed, "_config_defaults", lambda ws: (5, 3))
+    monkeypatch.setattr(ed, "_open_pr_keys", lambda repo: [])
+    monkeypatch.setattr(ed, "liveness_map", lambda repo, keys: {})
+
+    def fake_select(ws, *, cap, concurrency, include_proposals=False):
+        captured["include_proposals"] = include_proposals
+        return _sel()
+
+    monkeypatch.setattr(ed, "select", fake_select)
+    return repo
+
+
+def test_cli_default_does_not_include_proposals(monkeypatch, tmp_path, capsys):
+    captured = {}
+    _stub_cli(monkeypatch, tmp_path, captured)
+    rc = ed.cli_main(["--workspace-root", str(tmp_path)])
+    assert rc == 0
+    assert captured["include_proposals"] is False
+    out = json.loads(capsys.readouterr().out)
+    assert out["include_proposals"] is False
+
+
+def test_cli_include_proposals_threads_to_select(monkeypatch, tmp_path, capsys):
+    captured = {}
+    _stub_cli(monkeypatch, tmp_path, captured)
+    rc = ed.cli_main(["--workspace-root", str(tmp_path), "--include-proposals"])
+    assert rc == 0
+    assert captured["include_proposals"] is True
+    cap = capsys.readouterr()
+    assert json.loads(cap.out)["include_proposals"] is True
+    assert "WARNING" in cap.err  # the dangerous-mode banner fires
+
+
+# ─── cli_main — exit codes ───────────────────────────────────────────────────
+
+
+def _plain_ws(tmp_path):
+    d = tmp_path / "proj"
+    (d / ".flow").mkdir(parents=True)
+    (d / ".flow" / "workspace.toml").write_text('[tracker]\nbackend = "beads"\n', encoding="utf-8")
+    return d
+
+
+def test_cli_not_maintainer_dormant_exit_4(tmp_path, monkeypatch, capsys):
+    # patch maintainer._global_config_path, not ed.resolve_maintainer_repo:
+    # resolve_maintainer_repo reads _global_config_path from maintainer's globals
+    # at call time, so the directly-imported func still sees the patch (real boundary)
+    monkeypatch.setattr("maintainer._global_config_path", lambda: tmp_path / "absent.toml")
+    plain = _plain_ws(tmp_path)
+    rc = ed.cli_main(["--workspace-root", str(plain)])
+    assert rc == 4
+    assert "drain is dormant" in capsys.readouterr().err
+
+
+def test_cli_select_not_maintainer_exit_4(monkeypatch, tmp_path, capsys):
+    _stub_cli(monkeypatch, tmp_path, {})
+
+    def fake_select(ws, *, cap, concurrency, include_proposals=False):
+        raise ed.NotMaintainer("select says not maintainer")
+
+    monkeypatch.setattr(ed, "select", fake_select)
+    rc = ed.cli_main(["--workspace-root", str(tmp_path)])
+    assert rc == 4
+    assert "select says not maintainer" in capsys.readouterr().err
+
+
+def test_cli_tool_error_exit_2(monkeypatch, tmp_path, capsys):
+    _stub_cli(monkeypatch, tmp_path, {})
+
+    def fake_select(ws, *, cap, concurrency, include_proposals=False):
+        raise ed.ToolError("bd blew up")
+
+    monkeypatch.setattr(ed, "select", fake_select)
+    rc = ed.cli_main(["--workspace-root", str(tmp_path)])
+    assert rc == 2
+    assert "bd blew up" in capsys.readouterr().err

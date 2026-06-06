@@ -36,13 +36,15 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import _memory_paths
-from _jsonl import append_quarantine
+from _jsonl import append_quarantine, iter_jsonl
 from _timeutil import parse_iso
+from baseline_collect import percentile
 
 ATTR_VIA_FLOW = "shipped_via_flow"
 ATTR_NOT_ATTRIBUTED = "shipped_backend_not_attributed"
@@ -224,6 +226,89 @@ def compute(
     }
 
 
+# ─── Time-to-PR ──────────────────────────────────────────────────────────────
+
+
+def compute_time_to_pr(
+    workspace_root: Path,
+    namespace: str,
+    *,
+    since_iso: str,
+    until_iso: str,
+    now_iso: str,
+) -> dict[str, Any]:
+    """Compute observed time-to-PR over the half-open window [since, until).
+
+    Enumerates flow-attributed ship events whose `shipped_at` is in window, then
+    for each reads `plan.started_at_iso` -> `create_pr.finished_at_iso` from its
+    state.json and computes the duration in hours. Tickets with a missing/None/
+    unparseable timestamp or a negative duration are skip-and-recorded (counted
+    in `n_skipped`, never fed to the percentiles). `now_iso` is accepted for
+    symmetry with compute(); the window is the explicit since/until.
+    """
+    since = parse_iso(since_iso)
+    until = parse_iso(until_iso)
+    if since is None:
+        raise ValueError(f"since is not a UTC ISO8601 timestamp: {since_iso!r}")
+    if until is None:
+        raise ValueError(f"until is not a UTC ISO8601 timestamp: {until_iso!r}")
+
+    hours: list[float] = []
+    tickets: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+
+    for event in load_ship_events(workspace_root, namespace):
+        shipped_at = parse_iso(str(event.get("shipped_at")))
+        if shipped_at is None or not (since <= shipped_at < until):
+            continue
+        if classify_attribution(workspace_root, event) != ATTR_VIA_FLOW:
+            continue
+        ticket = event.get("ticket")
+        state = json.loads(_state_path(workspace_root, str(ticket)).read_text(encoding="utf-8"))
+        stages = state.get("stages", {})
+        plan_stage = stages.get("plan") if isinstance(stages.get("plan"), dict) else {}
+        create_pr_stage = (
+            stages.get("create_pr") if isinstance(stages.get("create_pr"), dict) else {}
+        )
+        plan_started_raw = plan_stage.get("started_at_iso")
+        create_pr_finished_raw = create_pr_stage.get("finished_at_iso")
+        plan_started = parse_iso(plan_started_raw) if isinstance(plan_started_raw, str) else None
+        create_pr_finished = (
+            parse_iso(create_pr_finished_raw) if isinstance(create_pr_finished_raw, str) else None
+        )
+        if plan_started is None:
+            skipped.append({"ticket": ticket, "reason": "missing plan.started_at_iso"})
+            continue
+        if create_pr_finished is None:
+            skipped.append({"ticket": ticket, "reason": "missing create_pr.finished_at_iso"})
+            continue
+        duration = (create_pr_finished - plan_started).total_seconds() / 3600.0
+        if duration < 0:
+            skipped.append({"ticket": ticket, "reason": "negative duration"})
+            continue
+        hours.append(duration)
+        tickets.append(
+            {
+                "ticket": ticket,
+                "time_to_pr_hours": duration,
+                "plan_started_at": plan_started_raw,
+                "create_pr_finished_at": create_pr_finished_raw,
+            }
+        )
+
+    tickets.sort(key=lambda t: (t["time_to_pr_hours"], str(t["ticket"])))
+    return {
+        "since": since_iso,
+        "until": until_iso,
+        "n_measured": len(hours),
+        "n_skipped": len(skipped),
+        "median_hours": percentile(hours, 50.0),
+        "p90_hours": percentile(hours, 90.0),
+        "tickets": tickets,
+        "skipped": skipped,
+    }
+
+
 # ─── Checkpoint manifest aggregation ─────────────────────────────────────────
 
 
@@ -335,6 +420,72 @@ def compute_checkpoint(
     }
 
 
+# ─── Friction per run ────────────────────────────────────────────────────────
+
+
+def _ts_token() -> str:
+    return time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+
+
+def compute_friction_per_run(
+    workspace_root: Path,
+    namespace: str,
+    *,
+    since_iso: str,
+    until_iso: str,
+) -> dict[str, Any]:
+    """Compute friction-events-per-run over the half-open window [since, until).
+
+    Reads `.flow/<namespace>/friction.jsonl` (one JSON object per line) via the
+    quarantine-on-malformed reader. An entry counts iff its `ts` parses and is in
+    [since, until); entries with missing/unparseable `ts` are skipped. Among the
+    windowed entries, distinct string `run_id` values give the run count; a
+    missing or non-string `run_id` is not added to the set. events_per_run is
+    total_events / runs, or 0 when runs == 0.
+    """
+    since = parse_iso(since_iso)
+    until = parse_iso(until_iso)
+    if since is None:
+        raise ValueError(f"since is not a UTC ISO8601 timestamp: {since_iso!r}")
+    if until is None:
+        raise ValueError(f"until is not a UTC ISO8601 timestamp: {until_iso!r}")
+
+    path = _memory_paths.friction_path(workspace_root, namespace)
+    sidecar = path.with_name(f"{path.name}.quarantine.{_ts_token()}")
+
+    total_events = 0
+    runs: set[str] = set()
+    by_type: dict[str, int] = {}
+    by_severity: dict[str, int] = {}
+
+    for entry in iter_jsonl(path, sidecar):
+        ts = parse_iso(entry.get("ts"))
+        if ts is None or not (since <= ts < until):
+            continue
+        total_events += 1
+        run_id = entry.get("run_id")
+        if isinstance(run_id, str):
+            runs.add(run_id)
+        entry_type = entry.get("type")
+        if isinstance(entry_type, str):
+            by_type[entry_type] = by_type.get(entry_type, 0) + 1
+        severity = entry.get("severity")
+        if isinstance(severity, str):
+            by_severity[severity] = by_severity.get(severity, 0) + 1
+
+    run_count = len(runs)
+    events_per_run = round(total_events / run_count, 6) if run_count > 0 else 0
+    return {
+        "since": since_iso,
+        "until": until_iso,
+        "total_events": total_events,
+        "runs": run_count,
+        "events_per_run": events_per_run,
+        "by_type": by_type,
+        "by_severity": by_severity,
+    }
+
+
 # ─── CLI ─────────────────────────────────────────────────────────────────────
 
 
@@ -362,6 +513,20 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     p_tpw.add_argument("--checkpoint", action="store_true")
     p_tpw.add_argument("--mode", choices=("personal", "work"), default=None)
     p_tpw.add_argument("--manifest-path", default=None)
+
+    p_ttp = sub.add_parser("time-to-pr", help="Compute observed time-to-PR in a window.")
+    p_ttp.add_argument("--namespace", default=None)
+    p_ttp.add_argument("--workspace-root", default=".")
+    p_ttp.add_argument("--since", default=None, help="YYYY-MM-DD (inclusive day start, UTC)")
+    p_ttp.add_argument("--until", default=None, help="YYYY-MM-DD (exclusive day start, UTC)")
+
+    p_fpr = sub.add_parser(
+        "friction-per-run", help="Compute friction events per distinct run in a window."
+    )
+    p_fpr.add_argument("--namespace", default=None)
+    p_fpr.add_argument("--workspace-root", default=".")
+    p_fpr.add_argument("--since", default=None, help="YYYY-MM-DD (inclusive day start, UTC)")
+    p_fpr.add_argument("--until", default=None, help="YYYY-MM-DD (exclusive day start, UTC)")
     return parser.parse_args(argv)
 
 
@@ -374,7 +539,40 @@ def cli_main(argv: list[str]) -> int:
         sys.stderr.write(f"metric: {exc}\n")
         return 1
 
-    if args.checkpoint:
+    if args.command == "time-to-pr":
+        if not args.namespace:
+            sys.stderr.write("metric: --namespace is required when not --checkpoint\n")
+            return 1
+        workspace_root = Path(args.workspace_root).resolve()
+        try:
+            result = compute_time_to_pr(
+                workspace_root,
+                args.namespace,
+                since_iso=since_iso,
+                until_iso=until_iso,
+                now_iso=now_iso,
+            )
+        except ValueError as exc:
+            sys.stderr.write(f"metric: {exc}\n")
+            return 1
+        sys.stdout.write(json.dumps(result, indent=2, sort_keys=True) + "\n")
+        return 0
+
+    if args.command == "friction-per-run":
+        if not args.namespace:
+            sys.stderr.write("metric: --namespace is required\n")
+            return 1
+        workspace_root = Path(args.workspace_root).resolve()
+        result = compute_friction_per_run(
+            workspace_root,
+            args.namespace,
+            since_iso=since_iso,
+            until_iso=until_iso,
+        )
+        sys.stdout.write(json.dumps(result, indent=2, sort_keys=True) + "\n")
+        return 0
+
+    if getattr(args, "checkpoint", False):
         if args.mode is None:
             sys.stderr.write("metric: --checkpoint requires --mode personal|work\n")
             return 1
@@ -428,6 +626,8 @@ __all__ = [
     "cli_main",
     "compute",
     "compute_checkpoint",
+    "compute_friction_per_run",
+    "compute_time_to_pr",
     "default_window",
     "load_ship_events",
 ]

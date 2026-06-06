@@ -1,4 +1,4 @@
-"""Shared subprocess-runner factories: positional-cwd and keyword-only contracts."""
+"""Shared subprocess-runner factories: positional-cwd, keyword-only, and cwd-bound contracts."""
 
 from __future__ import annotations
 
@@ -38,5 +38,18 @@ def kw_default_runner() -> KwRunner:
             text=True,
             input=input,
         )
+
+    return run
+
+
+# Contract C: cwd bound into the closure, args-only call. Used by forge adapters
+# (forge_github, forge_bitbucket), the evolve cluster (evolve_reap, evolve_select),
+# and create_pr.
+CwdRunner = Callable[[list[str]], subprocess.CompletedProcess[str]]
+
+
+def cwd_default_runner(repo: Path) -> CwdRunner:
+    def run(args: list[str]) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(args, cwd=str(repo), capture_output=True, text=True, check=False)
 
     return run
