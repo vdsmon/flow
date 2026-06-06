@@ -164,6 +164,71 @@ def test_check_ownership_cli_exit_3(tmp_repo: Path, tmp_path: Path) -> None:
     assert rc == 3
 
 
+def test_check_ownership_planned_file_with_space(tmp_repo: Path, tmp_path: Path) -> None:
+    # Regression: git status --porcelain C-quotes any path containing a space
+    # (e.g. ?? "a b.py") for column-disambiguation, independent of core.quotePath.
+    # The quoted token never matches the unquoted planned entry, so the gate
+    # false-flags a legit planned file as unowned and blocks the commit.
+    ticket_dir = tmp_repo / ".flow" / "runs" / "FT-1"
+    diff_extract.record_baseline("implement", ticket_dir, tmp_repo, files=["a b.py"])
+    (tmp_repo / "a b.py").write_text("print('planned')\n", encoding="utf-8")
+    payload = diff_extract.check_ownership(ticket_dir, tmp_repo)
+    assert payload["ok"] is True
+    assert payload["unowned_changes"] == []
+    assert "a b.py" in payload["changed"]
+
+
+def test_check_ownership_unplanned_file_with_space_is_unowned(
+    tmp_repo: Path, tmp_path: Path
+) -> None:
+    ticket_dir = tmp_repo / ".flow" / "runs" / "FT-1"
+    diff_extract.record_baseline("implement", ticket_dir, tmp_repo, files=["a.py"])
+    (tmp_repo / "a.py").write_text("print('planned')\n", encoding="utf-8")
+    (tmp_repo / "b c.py").write_text("print('unplanned')\n", encoding="utf-8")
+    payload = diff_extract.check_ownership(ticket_dir, tmp_repo)
+    assert payload["ok"] is False
+    assert "b c.py" in payload["unowned_changes"]
+
+
+def test_check_ownership_planned_file_with_special_chars(tmp_repo: Path, tmp_path: Path) -> None:
+    # backslash is C-quoted by porcelain and is valid on POSIX filesystems.
+    name = "a\\b.py"
+    ticket_dir = tmp_repo / ".flow" / "runs" / "FT-1"
+    diff_extract.record_baseline("implement", ticket_dir, tmp_repo, files=[name])
+    (tmp_repo / name).write_text("print('planned')\n", encoding="utf-8")
+    payload = diff_extract.check_ownership(ticket_dir, tmp_repo)
+    assert payload["ok"] is True
+    assert payload["unowned_changes"] == []
+    assert name in payload["changed"]
+
+
+def test_check_ownership_renamed_planned_file_with_space(tmp_repo: Path, tmp_path: Path) -> None:
+    (tmp_repo / "old.py").write_text("print('x')\n", encoding="utf-8")
+    _git(["add", "old.py"], tmp_repo)
+    _git(["commit", "-m", "add old"], tmp_repo)
+    ticket_dir = tmp_repo / ".flow" / "runs" / "FT-1"
+    diff_extract.record_baseline("implement", ticket_dir, tmp_repo, files=["new name.py"])
+    _git(["mv", "old.py", "new name.py"], tmp_repo)
+    payload = diff_extract.check_ownership(ticket_dir, tmp_repo)
+    assert payload["ok"] is True
+    assert payload["unowned_changes"] == []
+    assert "new name.py" in payload["changed"]
+
+
+def test_unquote_porcelain_path_octal_utf8() -> None:
+    # quotePath=false keeps non-ASCII literal so this is unreachable through
+    # check_ownership; exercise the octal multibyte round-trip at the helper level.
+    assert diff_extract._unquote_porcelain_path('"caf\\303\\251.py"') == "café.py"
+
+
+def test_unquote_porcelain_path_passthrough() -> None:
+    assert diff_extract._unquote_porcelain_path("a.py") == "a.py"
+    assert diff_extract._unquote_porcelain_path('"a b.py"') == "a b.py"
+    assert diff_extract._unquote_porcelain_path('"a\\"b.py"') == 'a"b.py'
+    assert diff_extract._unquote_porcelain_path('"a\\\\b.py"') == "a\\b.py"
+    assert diff_extract._unquote_porcelain_path('"a\\tb.py"') == "a\tb.py"
+
+
 def test_since_detects_binary(tmp_repo: Path) -> None:
     initial = _git(["rev-parse", "HEAD"], tmp_repo).strip()
     (tmp_repo / "blob.bin").write_bytes(bytes(range(256)))
