@@ -189,10 +189,13 @@ def write_snapshot(
     """Write snapshot.json (full dict) and snapshot.sha (master_hash); returns the json path."""
     snapshot = compute_snapshot(workspace_root, skill_root=skill_root, search_roots=search_roots)
     json_path = snapshot_json_path(workspace_root, ticket)
-    atomic_write_text(json_path, json.dumps(snapshot, indent=2, sort_keys=True) + "\n")
+    # sha before json: a partial-write survivor is then sha-present/json-absent, which
+    # classify_drift fails CLOSED on, instead of the json-present/sha-absent state it
+    # reads as "no snapshot to verify" (drift guard silently off).
     atomic_write_text(
         snapshot_sha_path(workspace_root, ticket), str(snapshot["master_hash"]) + "\n"
     )
+    atomic_write_text(json_path, json.dumps(snapshot, indent=2, sort_keys=True) + "\n")
     return json_path
 
 
