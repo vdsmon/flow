@@ -177,6 +177,14 @@ def cmd_init(workspace_root: Path, ticket: str, force: bool = False) -> tuple[in
             "holder": asdict(exc.holder),
             "hint": f"/flow recover --takeover {ticket}",
         }
+    except lease.LeaseError as exc:
+        # corrupt run.lock: cannot confirm ownership. Do NOT auto-clear; hand off
+        # to the human-driven takeover (which quarantines the corrupt lock).
+        return 1, {
+            "error": "corrupt run.lock",
+            "detail": str(exc),
+            "hint": f"/flow recover --takeover {ticket}",
+        }
 
     # Canonical snapshot for later `next` TOCTOU checks. Best-effort: a snapshot
     # write failure must not block the run (verify treats absence as no-op).
@@ -249,6 +257,34 @@ def _gate_drift(
     return None, reconciled_label
 
 
+def _guard_lease_ownership(td: Path, run_id: str) -> tuple[int, dict[str, Any]] | None:
+    """Confirm an existing lease is still ours. Returns an error tuple, or None if ok.
+
+    A run with no lease (legacy / direct test call) proceeds without one. A
+    LeaseLost means another run took over; a bare LeaseError means a corrupt
+    run.lock we cannot read, so ownership is unconfirmable and the caller must
+    stop before mutating state.
+    """
+    try:
+        if lease.read_lease(td) is not None:
+            lease.assert_lease_still_mine(
+                td, run_id, current_boot=lease.boot_id(), hostname=socket.gethostname()
+            )
+    except lease.LeaseLost as exc:
+        return lease.EXIT_LEASE_LOST, {
+            "error": "lost lease",
+            "detail": str(exc),
+            "hint": "/flow recover",
+        }
+    except lease.LeaseError as exc:
+        return lease.EXIT_LEASE_LOST, {
+            "error": "corrupt run.lock",
+            "detail": str(exc),
+            "hint": "/flow recover --takeover",
+        }
+    return None
+
+
 def cmd_next(workspace_root: Path, ticket: str) -> tuple[int, dict[str, Any]]:
     result, snapshot = vw.validate(workspace_root)
     if snapshot is None:
@@ -273,15 +309,9 @@ def cmd_next(workspace_root: Path, ticket: str) -> tuple[int, dict[str, Any]]:
     # Lease: if one exists it must still be ours (detects a takeover). A run with
     # no lease (legacy / direct test call) proceeds without one.
     boot, host = lease.boot_id(), socket.gethostname()
-    if lease.read_lease(td) is not None:
-        try:
-            lease.assert_lease_still_mine(td, ts.run_id, current_boot=boot, hostname=host)
-        except lease.LeaseLost as exc:
-            return lease.EXIT_LEASE_LOST, {
-                "error": "lost lease",
-                "detail": str(exc),
-                "hint": "/flow recover",
-            }
+    guard = _guard_lease_ownership(td, ts.run_id)
+    if guard is not None:
+        return guard
 
     # Owned drift confirmed AND the lease is ours: reload the snapshot baseline so
     # later dispatch calls verify against the intended workspace.toml.
@@ -378,17 +408,9 @@ def cmd_finish(
             return 1, {"error": f"unrecoverable state.json at {td}"}
         return 2, {"error": f"no state.json at {td}; run `dispatch init` first"}
 
-    if lease.read_lease(td) is not None:
-        try:
-            lease.assert_lease_still_mine(
-                td, ts.run_id, current_boot=lease.boot_id(), hostname=socket.gethostname()
-            )
-        except lease.LeaseLost as exc:
-            return lease.EXIT_LEASE_LOST, {
-                "error": "lost lease",
-                "detail": str(exc),
-                "hint": "/flow recover",
-            }
+    guard = _guard_lease_ownership(td, ts.run_id)
+    if guard is not None:
+        return guard
 
     head_sha = _git_head_sha(workspace_root)
     try:

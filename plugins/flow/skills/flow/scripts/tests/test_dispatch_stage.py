@@ -1042,3 +1042,63 @@ def test_next_refuses_unowned_stage_registry_drift(
     rc, payload = ds.cmd_next(tmp_path, "FT-1")
     assert rc == 1
     assert "drift" in payload["error"]
+
+
+# ─── corrupt run.lock ────────────────────────────────────────────────────────
+
+
+def _corrupt_lock(tmp_path: Path, ticket: str = "FT-1") -> Path:
+    lock = tmp_path / ".flow" / "runs" / ticket / "run.lock"
+    lock.write_text("{not json", encoding="utf-8")
+    return lock
+
+
+def test_init_corrupt_lock_returns_clean_error_no_clear(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_workspace(tmp_path)
+    _stub_git_head(monkeypatch)
+    ds.cmd_init(tmp_path, "FT-1")
+    lock = _corrupt_lock(tmp_path)
+    rc, payload = ds.cmd_init(tmp_path, "FT-1")
+    assert rc == 1
+    assert payload["error"] == "corrupt run.lock"
+    assert "recover --takeover" in payload["hint"]
+    # NOT auto-cleared: the corrupt lock survives for human-driven takeover.
+    assert lock.exists()
+    assert lock.read_text(encoding="utf-8") == "{not json"
+
+
+def test_next_corrupt_lock_returns_lease_lost_no_advance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_workspace(tmp_path, stages=["ticket"], handlers={"ticket": "inline"}, compounding=False)
+    _stub_git_head(monkeypatch)
+    ds.cmd_init(tmp_path, "FT-1")
+    _corrupt_lock(tmp_path)
+    rc, payload = ds.cmd_next(tmp_path, "FT-1")
+    assert rc == lease.EXIT_LEASE_LOST
+    assert payload["error"] == "corrupt run.lock"
+    assert "recover" in payload["hint"]
+    # state did not advance: ticket stage stays pending (never begun).
+    state_path = tmp_path / ".flow" / "runs" / "FT-1" / "state.json"
+    data = json.loads(state_path.read_text(encoding="utf-8"))
+    assert data["stages"]["ticket"]["status"] == "pending"
+
+
+def test_finish_corrupt_lock_returns_lease_lost_no_advance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_workspace(tmp_path, stages=["ticket"], handlers={"ticket": "inline"}, compounding=False)
+    _stub_git_head(monkeypatch)
+    ds.cmd_init(tmp_path, "FT-1")
+    ds.cmd_next(tmp_path, "FT-1")
+    _corrupt_lock(tmp_path)
+    rc, payload = ds.cmd_finish(tmp_path, "FT-1", "ticket", "completed")
+    assert rc == lease.EXIT_LEASE_LOST
+    assert payload["error"] == "corrupt run.lock"
+    assert "recover" in payload["hint"]
+    # finish did not run: ticket stays in_progress (begun by cmd_next, not closed).
+    state_path = tmp_path / ".flow" / "runs" / "FT-1" / "state.json"
+    data = json.loads(state_path.read_text(encoding="utf-8"))
+    assert data["stages"]["ticket"]["status"] == "in_progress"

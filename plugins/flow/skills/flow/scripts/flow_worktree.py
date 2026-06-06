@@ -274,6 +274,9 @@ def reap_worktree(
         if info.get("state") == "live":
             receipt["skipped"] = "lease live (run still in progress)"
             return receipt
+        if info.get("state") == "corrupt":
+            receipt["skipped"] = "lease corrupt (run.lock unparseable; possibly live)"
+            return receipt
         result = run(["git", "worktree", "remove", "--force", str(target_path)], main_root)
         if result.returncode != 0:
             receipt["skipped"] = f"worktree remove failed: {result.stderr.strip()}"

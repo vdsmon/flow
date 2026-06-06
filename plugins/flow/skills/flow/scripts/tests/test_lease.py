@@ -332,6 +332,46 @@ def test_read_lease_corrupt_raises(tmp_path: Path) -> None:
         lease.read_lease(tmp_path)
 
 
+def test_classify_corrupt_unparseable(tmp_path: Path) -> None:
+    lease.run_lock_path(tmp_path).write_text("{not json", encoding="utf-8")
+    result = lease.classify(tmp_path, NOW, current_boot="boot-A")
+    assert result == {"state": "corrupt", "holder": None}
+
+
+def test_classify_corrupt_missing_required_key(tmp_path: Path) -> None:
+    # valid JSON dict but missing run_id -> _deserialize KeyError trigger.
+    lease.run_lock_path(tmp_path).write_text(
+        json.dumps({"boot_id": "b", "acquired_at": NOW, "lease_expires_at": NOW}),
+        encoding="utf-8",
+    )
+    result = lease.classify(tmp_path, NOW, current_boot="boot-A")
+    assert result == {"state": "corrupt", "holder": None}
+
+
+def test_classify_corrupt_does_not_mutate(tmp_path: Path) -> None:
+    lock = lease.run_lock_path(tmp_path)
+    lock.write_text("{not json", encoding="utf-8")
+    lease.classify(tmp_path, NOW, current_boot="boot-A")
+    assert lock.exists()
+    assert lock.read_text(encoding="utf-8") == "{not json"
+    assert list(tmp_path.glob("run.lock.quarantine.*")) == []
+
+
+def test_quarantine_corrupt_lock_renames(tmp_path: Path) -> None:
+    lock = lease.run_lock_path(tmp_path)
+    lock.write_text("{not json", encoding="utf-8")
+    dst = lease.quarantine_corrupt_lock(tmp_path)
+    assert dst is not None
+    assert dst.exists()
+    assert dst.name.startswith("run.lock.quarantine.")
+    assert dst.read_text(encoding="utf-8") == "{not json"
+    assert not lock.exists()
+
+
+def test_quarantine_corrupt_lock_absent_returns_none(tmp_path: Path) -> None:
+    assert lease.quarantine_corrupt_lock(tmp_path) is None
+
+
 # ─── CLI ───────────────────────────────────────────────────────────────────────
 
 
