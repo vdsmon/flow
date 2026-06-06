@@ -31,12 +31,14 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import glob
 import json
 import re
 import subprocess
 import sys
 from pathlib import Path
 
+import lease
 from _runner import CwdRunner as Runner
 from _runner import cwd_default_runner as _default_runner
 from _workspace import WorkspaceConfigError, load_workspace_toml
@@ -208,14 +210,42 @@ def _gather_refs(runner: Runner) -> tuple[set[str], int]:
     return refs, open_pr_count
 
 
-def _hot_inflight(runner: Runner, refs: set[str], *, include_proposals: bool = False) -> bool:
+def _live_run_keys(repo: Path) -> set[str]:
+    """Ticket keys with a LIVE (unexpired) pre-PR lease in a sibling worktree.
+
+    Globs `<repo>.worktrees/feature-*/.flow/runs/*` (mirrors evolve_drain._run_dir_for's
+    layout) and keeps only run dirs whose lease classifies `live`. Live-only by
+    design: an expired/absent lease contributes nothing, so an orphan still reads
+    `done`/parked exactly as before.
+    """
+    base = repo.parent / f"{repo.name}.worktrees"
+    now = lease._utcnow_iso()
+    live: set[str] = set()
+    for run_dir in glob.glob(str(base / "feature-*" / ".flow" / "runs" / "*")):
+        key = Path(run_dir).name
+        if lease.classify(Path(run_dir), now).get("state") == "live":
+            live.add(key)
+    return live
+
+
+def _hot_inflight(
+    runner: Runner,
+    refs: set[str],
+    *,
+    include_proposals: bool = False,
+    extra_keys: frozenset[str] | set[str] = frozenset(),
+) -> bool:
     """True if any in-flight `feature/flow-*` ref maps to a hot evolve bead.
 
     Under `include_proposals` the hot slot also serializes hot *proposal* beads, so
     a hot proposal already in flight blocks the next hot launch (the `proposal`
     label can carry `hot` too — see references/verb-evolve.md §propose).
+
+    `extra_keys` seeds the in-flight set with keys known live by another channel
+    (e.g. a pre-PR lease that has no ref/PR yet), so a hot pre-PR run blocks the
+    next hot launch.
     """
-    inflight_flow_keys = {k for r in refs if (k := _key_from_ref(r))}
+    inflight_flow_keys = {k for r in refs if (k := _key_from_ref(r))} | set(extra_keys)
     if not inflight_flow_keys:
         return False
     labels = ["evolve", "proposal"] if include_proposals else ["evolve"]
@@ -262,8 +292,13 @@ def select(
 
     candidates = _ready_candidates(run, include_proposals)
     refs, open_pr_count = _gather_refs(run)
-    inflight_keys = {c["id"] for c in candidates if c.get("id") and _is_inflight(c["id"], refs)}
-    hot_inflight = _hot_inflight(run, refs, include_proposals=include_proposals)
+    live_keys = _live_run_keys(repo)
+    inflight_keys = {
+        c["id"] for c in candidates if c.get("id") and _is_inflight(c["id"], refs)
+    } | live_keys
+    hot_inflight = _hot_inflight(
+        run, refs, include_proposals=include_proposals, extra_keys=live_keys
+    )
 
     result = partition(
         candidates,
@@ -278,6 +313,7 @@ def select(
     result["concurrency"] = concurrency
     result["open_pr_count"] = open_pr_count
     result["include_proposals"] = include_proposals
+    result["live_runs"] = sorted(live_keys)
     return result
 
 

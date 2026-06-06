@@ -140,7 +140,11 @@ def cli_main(argv: list[str]) -> int:
 
     try:
         sel = select(ws, cap=cap, concurrency=concurrency, include_proposals=args.include_proposals)
-        inflight = sorted(set(sel.get("skipped_in_flight") or []) | set(_open_pr_keys(repo)))
+        inflight = sorted(
+            set(sel.get("skipped_in_flight") or [])
+            | set(_open_pr_keys(repo))
+            | set(sel.get("live_runs") or [])
+        )
         live = liveness_map(repo, inflight)
     except NotMaintainer as exc:
         print(str(exc), file=sys.stderr)
