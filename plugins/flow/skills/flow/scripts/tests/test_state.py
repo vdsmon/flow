@@ -64,6 +64,13 @@ def test_read_nonexistent_dir_creates_nothing(tmp_path: Path) -> None:
     assert not (tmp_path / "nope").exists()
 
 
+def test_read_existing_empty_dir_creates_no_lock(tmp_path: Path) -> None:
+    loaded, exit_code = state.read(tmp_path)
+    assert loaded is None
+    assert exit_code == 0
+    assert not (tmp_path / "state.json.lock").exists()
+
+
 def test_init_auto_generates_run_id(tmp_path: Path) -> None:
     ts = state.init(tmp_path, "FT-9", "beads", ["ticket"])
     assert len(ts.run_id) == 16
