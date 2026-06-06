@@ -88,7 +88,11 @@ def takeover(
     info = lease.classify(td, now_iso, current_boot=lease.boot_id())
     if info["state"] == "live":
         return 1, {"error": "lease is live; cannot take over", "holder": info["holder"]}
-    lease.run_lock_path(td).unlink(missing_ok=True)
+    quarantined: Path | None = None
+    if info["state"] == "corrupt":
+        quarantined = lease.quarantine_corrupt_lock(td)
+    else:
+        lease.run_lock_path(td).unlink(missing_ok=True)
     reset: list[str] = []
     ts, _ = state.read(td)
     if ts is not None:
@@ -98,7 +102,10 @@ def takeover(
                 reset.append(name)
     with contextlib.suppress(Exception):
         write_snapshot(workspace_root, ticket, skill_root=_skill_root())
-    return 0, {"ticket": ticket, "took_over": True, "reset_stages": reset}
+    payload: dict[str, Any] = {"ticket": ticket, "took_over": True, "reset_stages": reset}
+    if quarantined is not None:
+        payload["quarantined"] = str(quarantined)
+    return 0, payload
 
 
 def _force(

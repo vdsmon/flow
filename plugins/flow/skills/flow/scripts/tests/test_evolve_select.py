@@ -8,8 +8,25 @@ from pathlib import Path
 import pytest
 
 import evolve_select as es
+import lease
 
 Recorder = list[list[str]]
+
+
+def _write_lease(run_dir: Path, *, expired: bool = False) -> None:
+    """Acquire a real lease in run_dir (live by default, expired on request)."""
+    now = "2020-01-01T00:00:00Z" if expired else lease._utcnow_iso()
+    ttl = 1 if expired else 3600
+    lease.acquire(
+        run_dir,
+        "run-test",
+        ttl,
+        now,
+        stage="implement",
+        current_boot="boot-A",
+        hostname="host-1",
+        cwd=str(run_dir),
+    )
 
 
 def _cand(
@@ -328,3 +345,76 @@ def test_select_tool_error(tmp_path):
 
     with pytest.raises(es.ToolError):
         es.select(ws, cap=5, concurrency=3, runner=run)
+
+
+# ---- _live_run_keys — pre-PR lease scan ----
+
+
+def _sibling_run_dir(repo: Path, key: str, slug: str = "wip") -> Path:
+    return repo.parent / f"{repo.name}.worktrees" / f"feature-{key}-{slug}" / ".flow" / "runs" / key
+
+
+def test_live_run_keys_finds_live_lease(tmp_path):
+    repo = tmp_path / "flow"
+    repo.mkdir()
+    _write_lease(_sibling_run_dir(repo, "flow-x"))
+    assert es._live_run_keys(repo) == {"flow-x"}
+
+
+def test_live_run_keys_skips_expired(tmp_path):
+    repo = tmp_path / "flow"
+    repo.mkdir()
+    _write_lease(_sibling_run_dir(repo, "flow-x"), expired=True)
+    assert es._live_run_keys(repo) == set()
+
+
+def test_live_run_keys_empty_when_no_worktrees(tmp_path):
+    repo = tmp_path / "flow"
+    repo.mkdir()
+    assert es._live_run_keys(repo) == set()
+
+
+def test_hot_inflight_extra_keys_no_refs():
+    # no refs at all, but a live pre-PR run for flow-old that is hot -> serialized
+    beads = [{"id": "flow-old", "labels": ["evolve", "hot"], "status": "in_progress"}]
+    run, _ = _status_aware_runner(beads)
+    assert es._hot_inflight(run, set(), extra_keys={"flow-old"}) is True
+
+
+def test_hot_inflight_no_refs_no_extra_keys_short_circuits():
+    # both empty -> early return, no bd list call
+    calls: Recorder = []
+
+    def run(args):
+        calls.append(args)
+        return subprocess.CompletedProcess(args, 0, "[]", "")
+
+    assert es._hot_inflight(run, set()) is False
+    assert calls == []
+
+
+def test_select_pre_pr_live_run_is_inflight(tmp_path):
+    ws = _marked_ws(tmp_path)
+    repo = es.resolve_maintainer_repo(ws)
+    assert repo is not None
+    _write_lease(_sibling_run_dir(repo, "flow-x"))
+    run, _ = _dispatch(ready=[_cand("flow-x"), _cand("flow-y")])
+    out = es.select(ws, cap=5, concurrency=3, runner=run)
+    assert out["launch"] == ["flow-y"]
+    assert out["skipped_in_flight"] == ["flow-x"]
+    assert out["live_runs"] == ["flow-x"]
+
+
+def test_select_pre_pr_live_hot_blocks_second_hot(tmp_path):
+    ws = _marked_ws(tmp_path)
+    repo = es.resolve_maintainer_repo(ws)
+    assert repo is not None
+    _write_lease(_sibling_run_dir(repo, "flow-old"))
+    run, _ = _dispatch(
+        ready=[_cand("flow-new", labels=["evolve", "hot"], blast="z.py")],
+        evolve_list=[{"id": "flow-old", "labels": ["evolve", "hot"]}],
+    )
+    out = es.select(ws, cap=5, concurrency=3, runner=run)
+    assert out["launch"] == []
+    assert out["held_hot"] == ["flow-new"]
+    assert out["live_runs"] == ["flow-old"]

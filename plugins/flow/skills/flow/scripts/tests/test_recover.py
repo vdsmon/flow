@@ -78,6 +78,21 @@ def test_takeover_refused_on_live_lease(tmp_path: Path) -> None:
     assert "live" in payload["error"]
 
 
+def test_takeover_quarantines_corrupt_lock(tmp_path: Path) -> None:
+    td = _ws(tmp_path)
+    lock = lease.run_lock_path(td)
+    lock.write_text("{not json", encoding="utf-8")
+    rc, payload = recover.takeover(tmp_path, "T-1", now_iso=_now())
+    assert rc == 0
+    assert payload["took_over"] is True
+    # RENAME for forensics, not blind-unlink: original gone, quarantine sibling present.
+    assert not lock.exists()
+    quarantined = list(td.glob("run.lock.quarantine.*"))
+    assert len(quarantined) == 1
+    assert quarantined[0].read_text(encoding="utf-8") == "{not json"
+    assert payload["quarantined"] == str(quarantined[0])
+
+
 def test_retry_resets_failed_to_pending(tmp_path: Path) -> None:
     td = _ws(tmp_path)
     state.force_stage_status(td, "plan", "failed")

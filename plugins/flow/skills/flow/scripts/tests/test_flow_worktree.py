@@ -534,6 +534,29 @@ def test_reap_skips_when_lease_live(tmp_path: Path) -> None:
     assert not any(c[:3] == ["git", "branch", "-D"] for c in calls)
 
 
+def test_reap_skips_when_lease_corrupt(tmp_path: Path) -> None:
+    import lease
+
+    wt = tmp_path / "main.worktrees" / "feature-FT-1-thing"
+    ticket_dir = wt / ".flow" / "runs" / "FT-1"
+    ticket_dir.mkdir(parents=True)
+    lease.run_lock_path(ticket_dir).write_text("{not json", encoding="utf-8")
+    calls: list = []
+    runner = _reap_runner(
+        worktrees=_porcelain([(str(wt), "feature/FT-1-thing")]),
+        calls=calls,
+    )
+    receipt = fw.reap_worktree(ticket="FT-1", main_root=tmp_path / "main", runner=runner)
+    assert receipt["worktree_removed"] is False
+    assert receipt["branch_deleted"] is False
+    # distinct reason from the "live" skip, so the human can tell why it was held.
+    assert receipt["skipped"] and "corrupt" in receipt["skipped"]
+    assert receipt["skipped"] != "lease live (run still in progress)"
+    # a possibly-live corrupt run: touch NOTHING
+    assert not any(c[:4] == ["git", "worktree", "remove", "--force"] for c in calls)
+    assert not any(c[:3] == ["git", "branch", "-D"] for c in calls)
+
+
 def test_reap_idempotent_when_nothing_to_remove(tmp_path: Path) -> None:
     calls: list = []
     runner = _reap_runner(

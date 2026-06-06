@@ -14,11 +14,16 @@ would make the loop quit the moment backpressure hits. Liveness over the open PR
 is the authoritative picture.
 
 Termination: `action == "done"` iff `launch` is empty AND no in-flight run is
-live. A withheld hot bead (the in-run reviewer raised `held_guard`) leaves a ready
-PR + a branch but its session has ended, so its lease is non-live: it never reads
-as "wait," so the loop cannot spin on it — it terminates and reports it `parked`
-for the human. A still-running run reads "live" → the loop waits → it self-merges →
-the next turn's reap clears the cap / `hot_inflight` → the next batch launches.
+BLOCKING. A run is blocking when its lease reads "live" (still working) OR
+"corrupt" (run.lock unparseable, ownership cannot be confirmed). Corrupt is
+treated live-equivalent because this decision gates a self-merge: an in-flight
+run we cannot confirm dead must never let the loop drain to done. A withheld hot
+bead (the in-run reviewer raised `held_guard`) leaves a ready PR + a branch but
+its session has ended, so its lease is non-blocking (expired/absent): it never
+reads as "wait," so the loop cannot spin on it — it terminates and reports it
+`parked` for the human. A still-running run reads "live" → the loop waits → it
+self-merges → the next turn's reap clears the cap / `hot_inflight` → the next
+batch launches. A corrupt lease blocks until a human runs `recover takeover`.
 
 Exit codes: 0 ok; 2 = a `bd`/`git`/`gh` call failed; 4 = not a maintainer setup.
 """
@@ -49,8 +54,9 @@ def decide(select_result: dict, liveness: dict[str, str]) -> dict:
     """Pure: map a select result + in-flight liveness to the loop's next action.
 
     launch non-empty            -> launch that batch.
-    launch empty, a live run    -> wait (it will free serialization / the PR cap).
-    launch empty, none live     -> done (drained, or only parked-for-human remains).
+    launch empty, a blocking run -> wait (live OR corrupt: corrupt cannot be
+                                   confirmed dead, so it blocks a self-merge).
+    launch empty, none blocking -> done (drained, or only parked-for-human remains).
 
     `liveness` is the complete in-flight picture (open PRs + in-flight ready beads);
     `parked` is the keys whose run is not live — what the loop hands the human
@@ -59,9 +65,9 @@ def decide(select_result: dict, liveness: dict[str, str]) -> dict:
     launch = list(select_result.get("launch") or [])
     if launch:
         return {"action": "launch", "launch": launch, "parked": []}
-    live = sorted(k for k, state in liveness.items() if state == "live")
-    parked = sorted(k for k, state in liveness.items() if state != "live")
-    if live:
+    blocking = sorted(k for k, state in liveness.items() if state in ("live", "corrupt"))
+    parked = sorted(k for k, state in liveness.items() if state not in ("live", "corrupt"))
+    if blocking:
         return {"action": "wait", "launch": [], "parked": parked}
     return {"action": "done", "launch": [], "parked": parked}
 
@@ -140,7 +146,11 @@ def cli_main(argv: list[str]) -> int:
 
     try:
         sel = select(ws, cap=cap, concurrency=concurrency, include_proposals=args.include_proposals)
-        inflight = sorted(set(sel.get("skipped_in_flight") or []) | set(_open_pr_keys(repo)))
+        inflight = sorted(
+            set(sel.get("skipped_in_flight") or [])
+            | set(_open_pr_keys(repo))
+            | set(sel.get("live_runs") or [])
+        )
         live = liveness_map(repo, inflight)
     except NotMaintainer as exc:
         print(str(exc), file=sys.stderr)
