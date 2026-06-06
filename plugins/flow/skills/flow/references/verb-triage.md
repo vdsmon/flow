@@ -8,11 +8,14 @@ concept; on a non-beads backend the list step prints "nothing to triage".
 
 1. Run:
    ```bash
-   python3 ${CLAUDE_SKILL_DIR}/scripts/triage.py --workspace-root .
+   python3 ${CLAUDE_SKILL_DIR}/scripts/triage.py list --workspace-root .
    ```
-   Lists every `deferred` bead (whole queue, unscoped) with each one's last
-   "could not self-approve" open-question comment inline. Add `--json` for a
-   machine consumer; default is the human table.
+   Lists every `deferred` bead PLUS every `blocked` bead carrying the defer stem
+   (decided-mode hot blocks — a `--auto` run that hit a post-decision
+   implementation wall on a hot change), each with a `status` column and its last
+   "could not self-approve" open-question comment inline. A bare
+   `triage.py --workspace-root .` still works (defaults to `list`). Add `--json`
+   for a machine consumer; default is the human table.
 
 2. Handle the exit:
    - Exit 0 → surface the table verbatim.
@@ -23,17 +26,29 @@ concept; on a non-beads backend the list step prints "nothing to triage".
 
 The decision stays human; this step automates the reopen mechanics only, over
 the existing `tracker_cli` seams. Comment FIRST (mirroring the defer recipe
-order), so a failed transition still leaves the recorded answer:
+order), so a failed transition still leaves the recorded answer. The answer
+comment carries the stable stem `TRIAGE-DECISION:` so a later `--auto` relaunch
+detects it as a recorded decision (decided mode) and does not re-defer on the
+answered question:
 
 ```bash
 python3 ${CLAUDE_SKILL_DIR}/scripts/tracker_cli.py --workspace-root . \
-  comment --key <KEY> --text "<answer>"
+  comment --key <KEY> --text "TRIAGE-DECISION: <answer>"
 python3 ${CLAUDE_SKILL_DIR}/scripts/tracker_cli.py --workspace-root . \
   transition --key <KEY> --to-state open
 ```
 
-Then print the hint: re-run the ticket WITHOUT `--auto` to plan interactively
-(an `--auto` retry would re-defer on the same question).
+This works identically for a `blocked` bead (a decided-mode hot block): comment
+the answer + transition to open, same as a deferred one.
+
+Then print the hint: re-run the ticket WITHOUT `--auto` to plan interactively.
+(An `--auto` retry now ingests the `TRIAGE-DECISION:` answer as authoritative
+rather than re-deferring; a hot change still blocks on a residual
+implementation wall, a clean one proceeds — see verb-spec.md's decided-mode
+branch.)
+
+Note: the already-reopened beads carry legacy `DECISION:` comments; detection
+accepts that stem too, so no backfill is needed.
 
 Note: the defer-comment pick is coupled to verb-spec.md's wording
 (`flow --auto could not self-approve`). If that stem changes, triage degrades to
