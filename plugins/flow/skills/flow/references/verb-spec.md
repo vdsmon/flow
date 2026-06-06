@@ -85,7 +85,13 @@ It replaces interactive steps 1-5. The self-approve branch then runs shared step
 
 3. Fetch ticket context into the conversation via `tracker_cli.py --workspace-root . get --key "$KEY"` (read the stdout); explore the codebase read-only; weave in the SessionStart `recall` — same as step 3.
 
-4. **Headless plan.**
+4. **Decided-mode probe — then the headless plan.**
+   First probe whether the maintainer already triaged + reopened this bead with a recorded decision. Without this, an `--auto` relaunch re-defers on the exact question already answered (the triage→reopen→re-defer loop never converges):
+   ```bash
+   python3 ${CLAUDE_SKILL_DIR}/scripts/triage.py decided --workspace-root . --key "$KEY"
+   ```
+   It always emits one JSON object `{"decided": bool, "answer": str|null, "is_hot": bool}` (never raises; a bd-read failure reads as `decided:false, is_hot:true`). When `decided` is true, INJECT the `answer` into the Plan subagent prompt as AUTHORITATIVE — a line like: "the maintainer has already decided this: <answer>; treat it as settled, do NOT raise it as a clarifying question." Carry the `decided` flag into step 5's branch.
+
    Read `${CLAUDE_SKILL_DIR}/references/stage-plan.md`, then spawn the `Plan` subagent embedding that protocol PLUS the output contract below.
    The subagent runs PRE-bootstrap, so `.flow/runs/<KEY>/ticket.json` and `.flow/tickets/<KEY>.md` do NOT exist yet (the `ticket` stage writes ticket.json; `flow_worktree.py create` writes tickets/<KEY>.md — both run later). Do NOT point the subagent at those files. Instead, INLINE the ticket JSON you already fetched in step 3 (`tracker_cli.py get`) into the embedded ticket-context block below, pasting it verbatim where the placeholder sits:
    ```
@@ -127,17 +133,31 @@ It replaces interactive steps 1-5. The self-approve branch then runs shared step
      For `--e2e-recipe`, honor step 6's contract: when e2e is enabled (`workspace.toml [pipeline.handlers] e2e` is not `none`), pass the `--e2e-recipe "..."` value the user gave, else default it to `test-ci-only`; when the e2e handler is `none`, omit it.
      **Base off `--base @default`, NOT the current branch.** An autonomous run (the evolve `drain` loop fires `claude --bg "/flow <key> --auto"` from whatever branch the cockpit is on) must branch off the freshly-fetched default branch, never the launcher's HEAD — else the PR inherits the launcher's unmerged/stale commits and lands DIRTY. `@default` makes `flow_worktree.py` fetch origin and resolve `origin/<HEAD>`.
      Go straight to shared step 6 — there is no `ExitPlanMode` to call, because you never entered plan mode.
-   - **Clarifying questions present, a sub-90% rating with any user-reachable gap, OR a `BAIL` line** → **defer-and-exit.** An `--auto` run never parks for a human (the launcher walked away, so there is nobody to ask). Instead the run comments the open questions on the original ticket, sets its status to `deferred`, and exits cleanly. It does NOT `EnterPlanMode`, does NOT degrade to interactive, does NOT bootstrap a worktree, and does NOT mint a follow-up bead. A `deferred` ticket drops out of `bd ready`, so an autonomous relaunch loop (the evolve `drain` loop) stops re-launching it. Run exactly, in order:
-     ```bash
-     # 1. comment the open questions / bail reason on the original ticket (tracker-agnostic seam)
-     python3 ${CLAUDE_SKILL_DIR}/scripts/tracker_cli.py --workspace-root . comment \
-       --key "$KEY" \
-       --text "flow --auto could not self-approve: <clarifying questions, or the BAIL reason>. To unstick: answer here, reopen (status->open), and re-run WITHOUT --auto to plan interactively."
-     # 2. defer the ticket in place so it leaves bd ready (beads-native; tracker_cli transition has no deferred target)
-     bd update "$KEY" --status deferred
-     ```
-     Then emit a terse `deferred <KEY>: <reason>` line (so an attended `--auto` run shows why it stopped) and STOP. No `EnterPlanMode`, no bootstrap (`flow_worktree.py create`), no `EnterWorktree`, no do-loop, no follow-up bead.
-     The behavior ("`--auto` never parks") is universal; the `bd update --status deferred` command is the beads instance (the autonomous relaunch loop this serves, the evolve `drain` loop, is beads/maintainer-only).
+   - **Clarifying questions present, a sub-90% rating with any user-reachable gap, OR a `BAIL` line** (a residual wall) → the disposition depends on whether step 4's probe reported `decided`:
+     - **NOT decided** → **defer-and-exit** (unchanged). An `--auto` run never parks for a human (the launcher walked away, so there is nobody to ask). Instead the run comments the open questions on the original ticket, sets its status to `deferred`, and exits cleanly. It does NOT `EnterPlanMode`, does NOT degrade to interactive, does NOT bootstrap a worktree, and does NOT mint a follow-up bead. A `deferred` ticket drops out of `bd ready`, so an autonomous relaunch loop (the evolve `drain` loop) stops re-launching it. Run exactly, in order:
+       ```bash
+       # 1. comment the open questions / bail reason on the original ticket (tracker-agnostic seam)
+       python3 ${CLAUDE_SKILL_DIR}/scripts/tracker_cli.py --workspace-root . comment \
+         --key "$KEY" \
+         --text "flow --auto could not self-approve: <clarifying questions, or the BAIL reason>. To unstick: answer here, reopen (status->open), and re-run WITHOUT --auto to plan interactively."
+       # 2. defer the ticket in place so it leaves bd ready (beads-native; tracker_cli transition has no deferred target)
+       bd update "$KEY" --status deferred
+       ```
+       Then emit a terse `deferred <KEY>: <reason>` line (so an attended `--auto` run shows why it stopped) and STOP. No `EnterPlanMode`, no bootstrap (`flow_worktree.py create`), no `EnterWorktree`, no do-loop, no follow-up bead.
+       The behavior ("`--auto` never parks") is universal; the `bd update --status deferred` command is the beads instance (the autonomous relaunch loop this serves, the evolve `drain` loop, is beads/maintainer-only).
+     - **Decided** → NO plain re-defer (the judgment question is already answered; re-deferring on it would just re-loop). The wall now is an *implementation* block, not a judgment one. Re-probe with the plan's planned-files to classify hotness:
+       ```bash
+       python3 ${CLAUDE_SKILL_DIR}/scripts/triage.py decided --workspace-root . --key "$KEY" --files "<plan's planned-files, comma-separated>"
+       ```
+       - **`is_hot` true** → **block** (never blind-ship a guard change). Comment the NEW residual wall — word it distinctly so it reads as a *post-decision implementation block*, not a re-ask of the answered question, but still CONTAIN the stem `flow --auto could not self-approve` so the `/flow triage` scan surfaces it — then set status to `blocked` (NOT `deferred`, NOT a `tracker_cli` transition):
+         ```bash
+         python3 ${CLAUDE_SKILL_DIR}/scripts/tracker_cli.py --workspace-root . comment \
+           --key "$KEY" \
+           --text "flow --auto could not self-approve: post-decision implementation block on a hot change — <the residual wall>. The judgment is settled, this is an implementation/safety concern. To unstick: answer here, reopen (status->open), and re-run WITHOUT --auto."
+         bd update "$KEY" --status blocked
+         ```
+         Then emit a terse `blocked <KEY>: <reason>` line and STOP. No bootstrap, no worktree, no PR. A `blocked` bead drops out of `bd ready` (no relaunch loop) and surfaces in `/flow triage`.
+       - **`is_hot` false** (clean change) → **proceed best-effort**: self-approve the strongest plan and go to shared step 6 (bootstrap), exactly as the clean-and-≥90% branch above. A clean decided bead self-ships, CI-gated only — wrong-but-compiling can land for clean decided beads.
 
    The two outcomes: (a) **self-approve** → shared bootstrap + enter-worktree (steps 6-7), then the tail; or (b) **cannot self-approve** → defer-and-exit (no bootstrap, no worktree, no tail).
    `--auto`'s only effect on the self-approve branch is skipping the interactive plan gate; it does not change how the tail runs. As always, whether the tail runs unattended is the user's separate `/bg` choice (see step 7), independent of `--auto`.

@@ -82,6 +82,28 @@ def _comment(body: str, created_at: str, *, cid: str = "c", author: str = "x") -
     return {"id": cid, "author": author, "body": body, "created_at": created_at}
 
 
+def _decided_show(
+    *,
+    comments: list[dict[str, Any]] | None = None,
+    labels: list[str] | None = None,
+    key: str = "flow-x",
+) -> subprocess.CompletedProcess[str]:
+    """`bd show --include-comments --json` payload: comments keyed under `text`."""
+    issue = {
+        "id": key,
+        "title": "T",
+        "status": "open",
+        "labels": labels or [],
+        "comments": comments or [],
+    }
+    return _cp(stdout=json.dumps([issue]))
+
+
+def _tc(text: str, created_at: str, *, cid: str = "c") -> dict[str, Any]:
+    """A decided-probe comment (body under `text`)."""
+    return {"id": cid, "author": "x", "text": text, "created_at": created_at}
+
+
 _DEFER_REAL = (
     "flow --auto could not self-approve (HOT lease/mutex machinery): the plan "
     "needs a decision on whether to serialize the drain. To unstick: answer here."
@@ -103,7 +125,8 @@ def test_non_beads_backend_short_circuits(tmp_path: Path) -> None:
 
 def test_no_deferred_prints_sentinel(tmp_path: Path) -> None:
     _seed_workspace(tmp_path, backend="beads")
-    runner = _FakeRunner([_version_ok(), _cp(stdout="[]")])
+    # deferred list empty, blocked list empty
+    runner = _FakeRunner([_version_ok(), _cp(stdout="[]"), _cp(stdout="[]")])
     code, out, _ = _run(["--workspace-root", str(tmp_path)], runner)
     assert code == 0
     assert "(no deferred tickets)" in out
@@ -118,7 +141,7 @@ def test_one_deferred_surfaces_title_and_defer_comment(tmp_path: Path) -> None:
         "status": "deferred",
         "comments": [_comment(_DEFER_REAL, "2026-06-01T10:00:00Z")],
     }
-    runner = _FakeRunner([_version_ok(), _cp(stdout=list_json), _show(issue)])
+    runner = _FakeRunner([_version_ok(), _cp(stdout=list_json), _cp(stdout="[]"), _show(issue)])
     code, out, _ = _run(["--workspace-root", str(tmp_path)], runner)
     assert code == 0
     assert "flow-wo5" in out
@@ -139,7 +162,7 @@ def test_stem_match_beats_later_plain_human_comment(tmp_path: Path) -> None:
             _comment("just a human note, unrelated", "2026-06-02T10:00:00Z", cid="2"),
         ],
     }
-    runner = _FakeRunner([_version_ok(), _cp(stdout=list_json), _show(issue)])
+    runner = _FakeRunner([_version_ok(), _cp(stdout=list_json), _cp(stdout="[]"), _show(issue)])
     code, out, _ = _run(["--workspace-root", str(tmp_path)], runner)
     assert code == 0
     assert "HOT lease/mutex machinery" in out
@@ -166,7 +189,7 @@ def test_redefer_picks_last_stem_comment(tmp_path: Path) -> None:
             ),
         ],
     }
-    runner = _FakeRunner([_version_ok(), _cp(stdout=list_json), _show(issue)])
+    runner = _FakeRunner([_version_ok(), _cp(stdout=list_json), _cp(stdout="[]"), _show(issue)])
     code, out, _ = _run(["--workspace-root", str(tmp_path)], runner)
     assert code == 0
     assert "NEW question" in out
@@ -182,7 +205,7 @@ def test_colon_format_matches(tmp_path: Path) -> None:
         "status": "deferred",
         "comments": [_comment(_DEFER_COLON, "2026-06-01T10:00:00Z")],
     }
-    runner = _FakeRunner([_version_ok(), _cp(stdout=list_json), _show(issue)])
+    runner = _FakeRunner([_version_ok(), _cp(stdout=list_json), _cp(stdout="[]"), _show(issue)])
     code, out, _ = _run(["--workspace-root", str(tmp_path)], runner)
     assert code == 0
     assert "which backend should win the tie" in out
@@ -192,7 +215,7 @@ def test_zero_comment_deferred_shows_placeholder(tmp_path: Path) -> None:
     _seed_workspace(tmp_path, backend="beads")
     list_json = json.dumps([{"id": "flow-z", "title": "Quiet bead"}])
     issue = {"id": "flow-z", "title": "Quiet bead", "status": "deferred", "comments": []}
-    runner = _FakeRunner([_version_ok(), _cp(stdout=list_json), _show(issue)])
+    runner = _FakeRunner([_version_ok(), _cp(stdout=list_json), _cp(stdout="[]"), _show(issue)])
     code, out, _ = _run(["--workspace-root", str(tmp_path)], runner)
     assert code == 0
     assert "flow-z" in out
@@ -210,7 +233,9 @@ def test_two_deferred_both_json_shapes(tmp_path: Path) -> None:
         "comments": [_comment(_DEFER_COLON, "2026-06-01T10:00:00Z")],
     }
     issue_b = {"id": "flow-b", "title": "Beta", "status": "deferred", "comments": []}
-    runner = _FakeRunner([_version_ok(), _cp(stdout=list_bare), _show(issue_a), _show(issue_b)])
+    runner = _FakeRunner(
+        [_version_ok(), _cp(stdout=list_bare), _cp(stdout="[]"), _show(issue_a), _show(issue_b)]
+    )
     code, out, _ = _run(["--workspace-root", str(tmp_path)], runner)
     assert code == 0
     assert "flow-a" in out
@@ -218,7 +243,7 @@ def test_two_deferred_both_json_shapes(tmp_path: Path) -> None:
 
     # wrapper {"issues": [...]} shape
     list_wrap = json.dumps({"issues": [{"id": "flow-a", "title": "Alpha"}]})
-    runner2 = _FakeRunner([_version_ok(), _cp(stdout=list_wrap), _show(issue_a)])
+    runner2 = _FakeRunner([_version_ok(), _cp(stdout=list_wrap), _cp(stdout="[]"), _show(issue_a)])
     code2, out2, _ = _run(["--workspace-root", str(tmp_path)], runner2)
     assert code2 == 0
     assert "flow-a" in out2
@@ -233,12 +258,13 @@ def test_json_flag_emits_raw_structure(tmp_path: Path) -> None:
         "status": "deferred",
         "comments": [_comment(_DEFER_COLON, "2026-06-01T10:00:00Z")],
     }
-    runner = _FakeRunner([_version_ok(), _cp(stdout=list_json), _show(issue)])
+    runner = _FakeRunner([_version_ok(), _cp(stdout=list_json), _cp(stdout="[]"), _show(issue)])
     code, out, _ = _run(["--workspace-root", str(tmp_path), "--json"], runner)
     assert code == 0
     payload = json.loads(out)
     assert payload[0]["key"] == "flow-j"
     assert payload[0]["title"] == "JSON bead"
+    assert payload[0]["status"] == "deferred"
     assert "which backend" in payload[0]["open_question"]
 
 
@@ -252,3 +278,200 @@ def test_workspace_not_initialized_exits_1(tmp_path: Path) -> None:
 
 def test_render_table_empty_is_pure_sentinel() -> None:
     assert triage.render_table([]) == "(no deferred tickets)"
+
+
+# ─── list: subcommand back-compat + blocked-bead surfacing ───────────────────
+
+
+def test_list_explicit_subcommand_matches_bare(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path, backend="beads")
+    list_json = json.dumps([{"id": "flow-wo5", "title": "Serialize the drain"}])
+    issue = {
+        "id": "flow-wo5",
+        "title": "Serialize the drain",
+        "status": "deferred",
+        "comments": [_comment(_DEFER_REAL, "2026-06-01T10:00:00Z")],
+    }
+    runner = _FakeRunner([_version_ok(), _cp(stdout=list_json), _cp(stdout="[]"), _show(issue)])
+    code, out, _ = _run(["list", "--workspace-root", str(tmp_path)], runner)
+    assert code == 0
+    assert "flow-wo5" in out
+    assert "deferred" in out
+
+
+def test_list_surfaces_blocked_with_stem_not_bare_blocked(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path, backend="beads")
+    deferred_json = json.dumps([{"id": "flow-d", "title": "A deferred bead"}])
+    blocked_json = json.dumps(
+        [
+            {"id": "flow-hb", "title": "Hot block"},
+            {"id": "flow-dag", "title": "Dependency hold"},
+        ]
+    )
+    issue_d = {
+        "id": "flow-d",
+        "title": "A deferred bead",
+        "status": "deferred",
+        "comments": [_comment(_DEFER_COLON, "2026-06-01T10:00:00Z")],
+    }
+    issue_hb = {
+        "id": "flow-hb",
+        "title": "Hot block",
+        "status": "blocked",
+        "comments": [_tc(_DEFER_REAL, "2026-06-02T10:00:00Z")],
+    }
+    issue_dag = {
+        "id": "flow-dag",
+        "title": "Dependency hold",
+        "status": "blocked",
+        "comments": [_tc("blocked on flow-d (dependency)", "2026-06-02T10:00:00Z")],
+    }
+    runner = _FakeRunner(
+        [
+            _version_ok(),
+            _cp(stdout=deferred_json),
+            _cp(stdout=blocked_json),
+            _show(issue_d),
+            _show(issue_hb),
+            _show(issue_dag),
+        ]
+    )
+    code, out, _ = _run(["--workspace-root", str(tmp_path), "--json"], runner)
+    assert code == 0
+    payload = json.loads(out)
+    keys = {row["key"]: row["status"] for row in payload}
+    assert keys == {"flow-d": "deferred", "flow-hb": "blocked"}
+    assert "flow-dag" not in keys  # bare dependency hold not surfaced
+
+
+# ─── decided probe ───────────────────────────────────────────────────────────
+
+
+def _run_decided(
+    tmp_path: Path, argv_tail: list[str], runner: _FakeRunner
+) -> tuple[int, dict[str, Any]]:
+    code, out, _ = _run(["decided", "--workspace-root", str(tmp_path), *argv_tail], runner)
+    return code, json.loads(out)
+
+
+def test_decided_legacy_decision_stem(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path, backend="beads")
+    comments = [
+        _tc(_DEFER_REAL, "2026-06-01T10:00:00Z", cid="1"),
+        _tc(
+            "DECISION: FIX, branch-gated behind the drift guard; serialize via the existing lease.",
+            "2026-06-03T10:00:00Z",
+            cid="2",
+        ),
+    ]
+    runner = _FakeRunner([_version_ok(), _decided_show(comments=comments, key="flow-2pp")])
+    code, result = _run_decided(tmp_path, ["--key", "flow-2pp"], runner)
+    assert code == 0
+    assert result["decided"] is True
+    assert result["answer"].startswith("FIX, branch-gated")
+    assert "could not self-approve" not in result["answer"]
+
+
+def test_decided_new_triage_decision_stem(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path, backend="beads")
+    comments = [_tc("TRIAGE-DECISION: build it the simple way.", "2026-06-03T10:00:00Z")]
+    runner = _FakeRunner([_version_ok(), _decided_show(comments=comments)])
+    code, result = _run_decided(tmp_path, ["--key", "flow-x"], runner)
+    assert code == 0
+    assert result["decided"] is True
+    assert result["answer"] == "build it the simple way."
+
+
+def test_decided_start_anchored_no_false_positive(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path, backend="beads")
+    comments = [
+        _tc(
+            "flow --auto could not self-approve: please record the decision on scope.",
+            "2026-06-01T10:00:00Z",
+        )
+    ]
+    runner = _FakeRunner([_version_ok(), _decided_show(comments=comments)])
+    code, result = _run_decided(tmp_path, ["--key", "flow-x"], runner)
+    assert code == 0
+    assert result["decided"] is False
+    assert result["answer"] is None
+
+
+def test_decided_newest_decision_wins(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path, backend="beads")
+    comments = [
+        _tc("DECISION: old answer.", "2026-06-01T10:00:00Z", cid="1"),
+        _tc("TRIAGE-DECISION: new answer.", "2026-06-05T10:00:00Z", cid="2"),
+    ]
+    runner = _FakeRunner([_version_ok(), _decided_show(comments=comments)])
+    code, result = _run_decided(tmp_path, ["--key", "flow-x"], runner)
+    assert code == 0
+    assert result["answer"] == "new answer."
+
+
+def test_decided_clean_files_no_hot_label(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path, backend="beads")
+    comments = [_tc("DECISION: ship it.", "2026-06-03T10:00:00Z")]
+    runner = _FakeRunner([_version_ok(), _decided_show(comments=comments, labels=["proposal"])])
+    code, result = _run_decided(tmp_path, ["--key", "flow-x", "--files", "recall.py"], runner)
+    assert code == 0
+    assert result["decided"] is True
+    assert result["is_hot"] is False
+
+
+def test_decided_hot_via_label(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path, backend="beads")
+    comments = [_tc("DECISION: ship it.", "2026-06-03T10:00:00Z")]
+    runner = _FakeRunner(
+        [_version_ok(), _decided_show(comments=comments, labels=["hot", "proposal"])]
+    )
+    code, result = _run_decided(tmp_path, ["--key", "flow-x", "--files", "recall.py"], runner)
+    assert code == 0
+    assert result["is_hot"] is True
+
+
+def test_decided_hot_via_guard_set(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path, backend="beads")
+    comments = [_tc("DECISION: ship it.", "2026-06-03T10:00:00Z")]
+    runner = _FakeRunner([_version_ok(), _decided_show(comments=comments, labels=["proposal"])])
+    code, result = _run_decided(tmp_path, ["--key", "flow-x", "--files", "snapshot.py"], runner)
+    assert code == 0
+    assert result["is_hot"] is True
+
+
+def test_decided_untriaged_no_decision(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path, backend="beads")
+    comments = [_tc(_DEFER_REAL, "2026-06-01T10:00:00Z")]
+    runner = _FakeRunner([_version_ok(), _decided_show(comments=comments)])
+    code, result = _run_decided(tmp_path, ["--key", "flow-x"], runner)
+    assert code == 0
+    assert result["decided"] is False
+    assert result["answer"] is None
+
+
+def test_decided_bd_read_fail_blocks(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path, backend="beads")
+    runner = _FakeRunner([_version_ok(), _cp(returncode=1, stderr="boom")])
+    code, result = _run_decided(tmp_path, ["--key", "flow-x"], runner)
+    assert code == 0
+    assert result == {"decided": False, "answer": None, "is_hot": True}
+
+
+def test_decided_hotness_indeterminate_blocks(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path, backend="beads")
+    comments = [_tc("DECISION: ship it.", "2026-06-03T10:00:00Z")]
+    runner = _FakeRunner([_version_ok(), _decided_show(comments=comments, labels=["proposal"])])
+    # no --files, no hot label -> default to hot
+    code, result = _run_decided(tmp_path, ["--key", "flow-x"], runner)
+    assert code == 0
+    assert result["decided"] is True
+    assert result["is_hot"] is True
+
+
+def test_is_hot_change_unit() -> None:
+    assert triage.is_hot_change(["scripts/lease.py"]) is True
+    assert triage.is_hot_change(["lease.py"]) is True
+    assert triage.is_hot_change(["recall.py"]) is False
+    assert triage.is_hot_change([]) is False
+    for guard in triage._GUARD_FILES:
+        assert triage.is_hot_change([f"some/path/{guard}"]) is True
