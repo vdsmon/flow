@@ -143,6 +143,32 @@ def test_ci_rollup_status_context_failure():
     assert fg.ci_rollup("7")["status"] == "failed"
 
 
+@pytest.mark.parametrize("verdict", ["CANCELLED", "STALE", "NEUTRAL", "SKIPPED"])
+def test_ci_rollup_superseded_verdict_is_pending(verdict):
+    # A COMPLETED check with a superseded/terminal-non-failure verdict (e.g. a
+    # CANCELLED duplicate concurrent run) must read as pending, never failed.
+    view = json.dumps(
+        {"statusCheckRollup": [{"name": "ci", "status": "COMPLETED", "conclusion": verdict}]}
+    )
+    fg, _ = _adapter({"view": view})
+    assert fg.ci_rollup("7")["status"] == "pending", verdict
+
+
+def test_ci_rollup_mixed_success_and_cancelled_is_pending():
+    # The flow-483 PR #120 shape: a winning SUCCESS run plus a superseded
+    # CANCELLED duplicate -> pending, not failed.
+    view = json.dumps(
+        {
+            "statusCheckRollup": [
+                {"name": "ci", "status": "COMPLETED", "conclusion": "SUCCESS"},
+                {"name": "ci", "status": "COMPLETED", "conclusion": "CANCELLED"},
+            ]
+        }
+    )
+    fg, _ = _adapter({"view": view})
+    assert fg.ci_rollup("7")["status"] == "pending"
+
+
 def test_mark_ready_merge_delete_argv():
     fg, calls = _adapter()
     fg.mark_ready("7")
