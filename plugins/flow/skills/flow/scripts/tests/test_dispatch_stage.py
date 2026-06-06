@@ -962,3 +962,83 @@ def test_next_owned_drift_lost_lease_returns_7_without_reconcile(
     assert rc == 7
     assert payload["error"] == "lost lease"
     assert sha_path.read_bytes() == sha_before
+
+
+# ─── owned stage_registry drift auto-reconcile (flow-56s) ──────────────────────
+
+
+def _redirect_skill_root(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    """Point dispatch's skill_root under tmp_path with a parseable stage-registry.
+
+    Returns the skill_root. The registry file must exist BEFORE cmd_init so the
+    init snapshot baseline includes the stage_registry component; otherwise the
+    suppressed write_snapshot would skip and the drift gate would see no
+    baseline.
+    """
+    skill_root = tmp_path / "skill"
+    skill_root.mkdir(parents=True, exist_ok=True)
+    (skill_root / "stage-registry.toml").write_text(
+        '[[stage]]\nname = "create_pr"\ndefault_handler = "none"\n', encoding="utf-8"
+    )
+    monkeypatch.setattr(ds, "_skill_root_from_script", lambda: skill_root)
+    return skill_root
+
+
+def test_next_auto_reconciles_owned_stage_registry_drift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    skill_root = _redirect_skill_root(monkeypatch, tmp_path)
+    _write_workspace(tmp_path, stages=["ticket", "plan"], compounding=False)
+    _stub_git_head(monkeypatch)
+    ds.cmd_init(tmp_path, "FT-1")
+    _write_baseline(tmp_path, "FT-1", ["skill/stage-registry.toml"])
+    reg = skill_root / "stage-registry.toml"
+    reg.write_text(reg.read_text(encoding="utf-8") + "\n# owned edit\n", encoding="utf-8")
+
+    sha_path = tmp_path / ".flow" / "runs" / "FT-1" / "snapshot.sha"
+    sha_before = sha_path.read_text(encoding="utf-8")
+
+    rc, payload = ds.cmd_next(tmp_path, "FT-1")
+    assert rc == 0, payload
+    assert payload.get("reconciled_drift") == "stage_registry"
+    assert sha_path.read_text(encoding="utf-8") != sha_before
+
+    ds.cmd_finish(tmp_path, "FT-1", "ticket", "completed")
+    rc2, payload2 = ds.cmd_next(tmp_path, "FT-1")
+    assert rc2 == 0, payload2
+    assert "reconciled_drift" not in payload2
+
+
+def test_next_auto_reconciles_owned_co_drift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    skill_root = _redirect_skill_root(monkeypatch, tmp_path)
+    _write_workspace(tmp_path, stages=["ticket", "plan"], compounding=False)
+    _stub_git_head(monkeypatch)
+    ds.cmd_init(tmp_path, "FT-1")
+    _write_baseline(tmp_path, "FT-1", [".flow/workspace.toml", "skill/stage-registry.toml"])
+    wt = tmp_path / ".flow" / "workspace.toml"
+    wt.write_text(wt.read_text(encoding="utf-8") + "\n# owned edit\n", encoding="utf-8")
+    reg = skill_root / "stage-registry.toml"
+    reg.write_text(reg.read_text(encoding="utf-8") + "\n# owned edit\n", encoding="utf-8")
+
+    rc, payload = ds.cmd_next(tmp_path, "FT-1")
+    assert rc == 0, payload
+    assert payload.get("reconciled_drift") == "workspace_toml, stage_registry"
+
+
+def test_next_refuses_unowned_stage_registry_drift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # stage-registry.toml drifts but is NOT in planned_files → halt at exit 1.
+    skill_root = _redirect_skill_root(monkeypatch, tmp_path)
+    _write_workspace(tmp_path, stages=["ticket", "plan"], compounding=False)
+    _stub_git_head(monkeypatch)
+    ds.cmd_init(tmp_path, "FT-1")
+    _write_baseline(tmp_path, "FT-1", [".flow/workspace.toml"])
+    reg = skill_root / "stage-registry.toml"
+    reg.write_text(reg.read_text(encoding="utf-8") + "\n# foreign edit\n", encoding="utf-8")
+
+    rc, payload = ds.cmd_next(tmp_path, "FT-1")
+    assert rc == 1
+    assert "drift" in payload["error"]

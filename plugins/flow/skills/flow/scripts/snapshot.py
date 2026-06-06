@@ -218,6 +218,37 @@ def drifted_components(stored: dict[str, Any], current: dict[str, Any]) -> list[
     return changed
 
 
+def _rel_or_none(path: Path, workspace_root: Path) -> str | None:
+    if path.is_relative_to(workspace_root):
+        return path.relative_to(workspace_root).as_posix()
+    return None
+
+
+def component_files(
+    components: list[str],
+    *,
+    workspace_root: Path,
+    skill_root: Path,
+) -> dict[str, str | None]:
+    """Map drifted component labels to a workspace-root-relative posix path.
+
+    workspace_toml and stage_registry map to their path relative to
+    workspace_root (or None when the file lives outside it — a separate skill
+    checkout, so the edit cannot be a planned file of this run). A handler
+    tree component maps to None: a tree_hash names no single file, so a
+    handler drift is never owned (deliberate scope limit).
+    """
+    out: dict[str, str | None] = {}
+    for component in components:
+        if component == "workspace_toml":
+            out[component] = _rel_or_none(workspace_toml_path(workspace_root), workspace_root)
+        elif component == "stage_registry":
+            out[component] = _rel_or_none(stage_registry_path(skill_root), workspace_root)
+        else:
+            out[component] = None
+    return out
+
+
 def _name_drift(stored: dict[str, Any], current: dict[str, Any]) -> str:
     """Compare stored snapshot.json components to current; name what changed."""
     comps = drifted_components(stored, current)
@@ -323,6 +354,7 @@ if __name__ == "__main__":
 __all__ = [
     "classify_drift",
     "cli_main",
+    "component_files",
     "compute_snapshot",
     "drifted_components",
     "snapshot_json_path",

@@ -299,6 +299,41 @@ def test_name_drift_output_unchanged() -> None:
     )
 
 
+def test_component_files_maps_workspace_and_stage_registry(tmp_path: Path) -> None:
+    # skill_root under workspace_root → both components map to rel posix paths.
+    workspace_root = tmp_path
+    skill_root = tmp_path / "skill"
+    files = snapshot.component_files(
+        ["workspace_toml", "stage_registry"],
+        workspace_root=workspace_root,
+        skill_root=skill_root,
+    )
+    assert files == {
+        "workspace_toml": ".flow/workspace.toml",
+        "stage_registry": "skill/stage-registry.toml",
+    }
+
+
+def test_component_files_stage_registry_outside_workspace_is_none(tmp_path: Path) -> None:
+    workspace_root = tmp_path / "workspace"
+    skill_root = tmp_path / "elsewhere" / "skill"
+    files = snapshot.component_files(
+        ["stage_registry"],
+        workspace_root=workspace_root,
+        skill_root=skill_root,
+    )
+    assert files == {"stage_registry": None}
+
+
+def test_component_files_handler_maps_to_none(tmp_path: Path) -> None:
+    files = snapshot.component_files(
+        ["handler plan"],
+        workspace_root=tmp_path,
+        skill_root=tmp_path / "skill",
+    )
+    assert files == {"handler plan": None}
+
+
 def test_classify_drift_no_snapshot_is_true() -> None:
     import tempfile
 
