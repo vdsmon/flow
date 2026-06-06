@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 import snapshot
 
 # ─── Fixtures ────────────────────────────────────────────────────────────────
@@ -355,6 +357,39 @@ def test_classify_drift_match(tmp_path: Path) -> None:
     assert ok is True
     assert detail == "match"
     assert comps == []
+
+
+def test_partial_write_sha_present_json_absent_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """sha is written before json: a survivor of an interrupted write is sha-present /
+    json-absent, so classify_drift on real drift fails CLOSED, not (True, "no snapshot")."""
+    skill_root = _make_skill_root(tmp_path)
+    workspace_root = _make_workspace(tmp_path, _bare_workspace_text())
+
+    real_write = snapshot.atomic_write_text
+    calls = {"n": 0}
+
+    def flaky(path: Path, text: str) -> None:
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise OSError("interrupted on json write")
+        real_write(path, text)
+
+    monkeypatch.setattr(snapshot, "atomic_write_text", flaky)
+    with pytest.raises(OSError):
+        snapshot.write_snapshot(workspace_root, "FT-1", skill_root=skill_root)
+
+    assert snapshot.snapshot_sha_path(workspace_root, "FT-1").exists()
+    assert not snapshot.snapshot_json_path(workspace_root, "FT-1").exists()
+
+    _write(
+        workspace_root / ".flow" / "workspace.toml",
+        _bare_workspace_text() + "\n# drift edit\n",
+    )
+    ok, detail, _ = snapshot.classify_drift(workspace_root, "FT-1", skill_root=skill_root)
+    assert ok is False
+    assert detail != "no snapshot to verify"
 
 
 def test_classify_drift_names_components(tmp_path: Path) -> None:
