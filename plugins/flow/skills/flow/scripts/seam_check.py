@@ -53,6 +53,14 @@ _FORWARDERS = {("recall.py", "--metric"): "metric.py"}
 # A bare script name as it appears in MODULE.md backticks/prose (no path prefix).
 _MODULE_NAME_RE = re.compile(r"[a-z_]+\.py")
 
+# An inline-code span: text between a pair of backticks on one line.
+_INLINE_SPAN_RE = re.compile(r"`([^`]*)`")
+# A fenced-code block delimiter (``` or ~~~), ignoring leading whitespace.
+_FENCE_RE = re.compile(r"^\s*(```|~~~)")
+# A user-facing slash command in prose, e.g. `/flow recover --ticket X`. The verb
+# is the first word after `/flow `; cross-checked against scripts/<verb>.py.
+_SLASH_RE = re.compile(r"^/flow\s+([a-z][a-z-]*)\b(.*)$")
+
 
 @dataclass(frozen=True)
 class Surface:
@@ -139,6 +147,54 @@ def find_invocations(doc_name: str, text: str) -> list[Invocation]:
                 subcommand=None,  # resolved later, once the surface is known
                 flags=flags,
                 raw=logical.strip(),
+            )
+        )
+    return invs
+
+
+def _slash_spans(text: str) -> list[tuple[int, str]]:
+    """Yield (1-based line, span-content) for each inline-code span and each
+    fenced-code line. Spans are extracted independently so two adjacent backtick
+    spans on one line never merge (e.g. `/flow recover <KEY>` then `retry --stage
+    ticket` stay separate)."""
+    spans: list[tuple[int, str]] = []
+    in_fence = False
+    for lineno, line in enumerate(text.splitlines(), start=1):
+        if _FENCE_RE.match(line):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            spans.append((lineno, line.strip()))
+        else:
+            for m in _INLINE_SPAN_RE.finditer(line):
+                spans.append((lineno, m.group(1).strip()))
+    return spans
+
+
+def find_slash_invocations(doc_name: str, text: str) -> list[Invocation]:
+    """Parse user-facing `/flow <verb> ...` slash-prose and normalize each to the
+    same Invocation form `find_invocations` produces, so validate() runs unchanged.
+    Only verbs with a matching scripts/<verb>.py on disk are linted; verbs without
+    a script (do, evolve, new, spec, baseline) are intentionally skipped."""
+    invs: list[Invocation] = []
+    for lineno, span in _slash_spans(text):
+        m = _SLASH_RE.match(span)
+        if not m:
+            continue
+        verb, rest = m.group(1), m.group(2)
+        script = f"{verb}.py"
+        if not (SCRIPTS_DIR / script).is_file():
+            continue
+        raw = f"{script}{rest}"
+        flags = _FLAG_RE.findall(_VALUE_SPAN_RE.sub(" ", rest))
+        invs.append(
+            Invocation(
+                doc=doc_name,
+                line=lineno,
+                script=script,
+                subcommand=None,
+                flags=flags,
+                raw=raw,
             )
         )
     return invs
@@ -312,7 +368,9 @@ def main(argv: list[str]) -> int:
     docs = docs_to_check()
     all_invs: list[Invocation] = []
     for doc in docs:
-        all_invs.extend(find_invocations(doc.name, doc.read_text(encoding="utf-8")))
+        text = doc.read_text(encoding="utf-8")
+        all_invs.extend(find_invocations(doc.name, text))
+        all_invs.extend(find_slash_invocations(doc.name, text))
 
     problems: list[Problem] = []
     for inv in all_invs:

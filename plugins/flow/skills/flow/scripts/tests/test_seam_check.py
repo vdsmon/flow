@@ -99,6 +99,69 @@ def test_forwarder_folds_metric_surface() -> None:
     assert [p for p in seam_check.validate(inv) if p.level == "ERROR"] == []
 
 
+def test_slash_phantom_flag_is_error() -> None:
+    # The headline regression: `/flow recover --reset-foo` names a flag recover.py
+    # has nowhere on its surface, so it must surface as an ERROR.
+    text = "Run `/flow recover --reset-foo` to wipe state."
+    invs = seam_check.find_slash_invocations("t.md", text)
+    assert len(invs) == 1
+    assert invs[0].script == "recover.py"
+    errors = [p for inv in invs for p in seam_check.validate(inv) if p.level == "ERROR"]
+    assert len(errors) == 1
+    assert "--reset-foo" in errors[0].msg
+
+
+def test_slash_real_flags_pass() -> None:
+    text = "Run `/flow init --reconfigure --resume` to redo setup."
+    invs = seam_check.find_slash_invocations("t.md", text)
+    assert len(invs) == 1
+    assert [p for inv in invs for p in seam_check.validate(inv) if p.level == "ERROR"] == []
+
+
+def test_slash_skips_verbs_without_script() -> None:
+    # evolve and do have no scripts/<verb>.py, so their slash-prose is not linted.
+    text = "Use `/flow evolve drain --include-proposals` or `/flow do --stage implement`."
+    assert seam_check.find_slash_invocations("t.md", text) == []
+
+
+def test_slash_subcommand_recover_passes() -> None:
+    text = "Then `/flow recover reload-snapshot <ticket>` accepts the config."
+    invs = seam_check.find_slash_invocations("t.md", text)
+    assert len(invs) == 1
+    problems = [p for inv in invs for p in seam_check.validate(inv)]
+    assert [p for p in problems if p.level == "ERROR"] == []
+    assert invs[0].subcommand == "reload-snapshot"
+
+
+def test_slash_recall_metric_forwarder_passes() -> None:
+    text = "`/flow recall --metric tickets-per-week` forwards to metric.py."
+    invs = seam_check.find_slash_invocations("t.md", text)
+    assert len(invs) == 1
+    assert [p for inv in invs for p in seam_check.validate(inv) if p.level == "ERROR"] == []
+
+
+def test_slash_adjacent_backtick_spans_do_not_merge() -> None:
+    # Two inline spans on one line must stay separate: the bare recover span must
+    # not absorb the `--stage` that belongs to the second `retry --stage ticket` span.
+    text = "Once fixed, `/flow recover <KEY>` -> `retry --stage ticket`."
+    invs = seam_check.find_slash_invocations("t.md", text)
+    assert len(invs) == 1
+    assert invs[0].script == "recover.py"
+    assert invs[0].flags == []
+
+
+def test_slash_phantom_flag_in_fenced_block_is_error() -> None:
+    # The phantom-flag catch must also fire when the slash command sits on a
+    # fenced-code line, not just an inline backtick span.
+    text = "Example:\n\n```\n/flow recover --reset-foo\n```\n"
+    invs = seam_check.find_slash_invocations("t.md", text)
+    assert len(invs) == 1
+    assert invs[0].script == "recover.py"
+    errors = [p for inv in invs for p in seam_check.validate(inv) if p.level == "ERROR"]
+    assert len(errors) == 1
+    assert "--reset-foo" in errors[0].msg
+
+
 def test_live_docs_are_green() -> None:
     """The real SKILL.md + references/ must have zero prose<->CLI seam errors."""
     assert seam_check.main([]) == 0
