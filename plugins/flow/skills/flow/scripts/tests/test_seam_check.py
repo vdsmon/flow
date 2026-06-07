@@ -198,3 +198,52 @@ def test_excludes_test_and_conftest(tmp_path) -> None:
     (tmp_path / "conftest.py").write_text("")
     missing = seam_check.scripts_missing_from_module_md(scripts_dir=tmp_path, module_text="")
     assert missing == set()
+
+
+def _write_registry(path, description: str) -> None:
+    path.write_text(
+        '[[stage]]\nname = "commit"\ndescription = "' + description + '"\n',
+        encoding="utf-8",
+    )
+
+
+def test_registry_description_drift_is_flagged(tmp_path) -> None:
+    # A hyphenated reference (compose-commit.py) for the real compose_commit.py
+    # must be flagged literally, not normalized away.
+    registry = tmp_path / "stage-registry.toml"
+    _write_registry(registry, "Compose commit (compose-commit.py skeleton).")
+    scripts_dir = tmp_path / "scripts"
+    scripts_dir.mkdir()
+    (scripts_dir / "compose_commit.py").write_text("")
+    missing = seam_check.scripts_missing_from_registry_descriptions(
+        registry_path=registry, scripts_dir=scripts_dir
+    )
+    assert missing == {"compose-commit.py"}
+
+
+def test_registry_description_real_underscore_names_pass(tmp_path) -> None:
+    registry = tmp_path / "stage-registry.toml"
+    _write_registry(registry, "Open the PR via create_pr.py.")
+    scripts_dir = tmp_path / "scripts"
+    scripts_dir.mkdir()
+    (scripts_dir / "create_pr.py").write_text("")
+    missing = seam_check.scripts_missing_from_registry_descriptions(
+        registry_path=registry, scripts_dir=scripts_dir
+    )
+    assert missing == set()
+
+
+def test_registry_description_hyphen_basename_matched() -> None:
+    # Guards against accidentally reusing `[a-z_]+\.py`, which cannot match a
+    # hyphenated basename.
+    assert seam_check._REGISTRY_SCRIPT_RE.findall("see compose-commit.py here") == [
+        "compose-commit.py"
+    ]
+
+
+def test_main_fails_on_registry_description_gap(monkeypatch) -> None:
+    monkeypatch.setattr(seam_check, "scripts_missing_from_module_md", lambda *a, **k: set())
+    monkeypatch.setattr(
+        seam_check, "scripts_missing_from_registry_descriptions", lambda *a, **k: {"foo.py"}
+    )
+    assert seam_check.main([]) == 1

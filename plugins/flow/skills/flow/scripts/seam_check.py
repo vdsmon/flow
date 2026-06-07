@@ -23,6 +23,7 @@ import argparse
 import re
 import subprocess
 import sys
+import tomllib
 from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
@@ -52,6 +53,12 @@ _FORWARDERS = {("recall.py", "--metric"): "metric.py"}
 
 # A bare script name as it appears in MODULE.md backticks/prose (no path prefix).
 _MODULE_NAME_RE = re.compile(r"[a-z_]+\.py")
+
+# A script basename inside a stage-registry.toml [[stage]].description. Allows
+# hyphens and uppercase so a stale hyphenated reference (compose-commit.py for
+# the real compose_commit.py) is matched literally and flagged, not normalized
+# away. Do NOT reuse `[a-z_]+\.py` here — it cannot match a hyphenated drift.
+_REGISTRY_SCRIPT_RE = re.compile(r"[A-Za-z0-9_-]+\.py")
 
 # An inline-code span: text between a pair of backticks on one line.
 _INLINE_SPAN_RE = re.compile(r"`([^`]*)`")
@@ -350,6 +357,23 @@ def scripts_missing_from_module_md(
     return on_disk - named
 
 
+def scripts_missing_from_registry_descriptions(
+    registry_path: Path = SKILL_ROOT / "stage-registry.toml",
+    scripts_dir: Path = SCRIPTS_DIR,
+) -> set[str]:
+    """Script basenames named in a [[stage]].description but not on disk.
+
+    Matches the LITERAL basename (hyphens preserved, no normalization) so a
+    stale compose-commit.py reference for the real compose_commit.py is caught,
+    not masked.
+    """
+    data = tomllib.loads(registry_path.read_text(encoding="utf-8"))
+    named: set[str] = set()
+    for stage in data.get("stage", []):
+        named |= set(_REGISTRY_SCRIPT_RE.findall(stage.get("description", "")))
+    return {name for name in named if not (scripts_dir / name).is_file()}
+
+
 def docs_to_check() -> list[Path]:
     docs = [SKILL_ROOT / "SKILL.md"]
     refs = SKILL_ROOT / "references"
@@ -383,6 +407,17 @@ def main(argv: list[str]) -> int:
                 line=0,
                 level="ERROR",
                 msg=f"script not named in MODULE.md: {name}",
+                raw="",
+            )
+        )
+
+    for name in sorted(scripts_missing_from_registry_descriptions()):
+        problems.append(
+            Problem(
+                doc="stage-registry.toml",
+                line=0,
+                level="ERROR",
+                msg=f"description names a script not on disk: {name}",
                 raw="",
             )
         )
