@@ -9,10 +9,10 @@ The live "which script does what" map. One line per script: purpose + CLI surfac
 | Script | Role | Surface / touches |
 |--------|------|-------------------|
 | `dispatch_stage.py` | State-machine driver for `/flow do`. Does NOT run handlers; emits a handler-descriptor JSON for the prose layer. | `init` / `next` / `advance` / `finish` / `release` / `status`; reads+writes `state.json` |
-| `state.py` (lib) | Atomic `state.json` read/write under flock, backup rotation, quarantine recovery. | imported by dispatch_stage, flow_worktree, diff_extract |
+| `state.py` (lib) | Atomic `state.json` read/write under flock, backup rotation, quarantine recovery. | imported by dispatch_stage, flow_worktree, diff_extract, recover, status, reflect_inputs |
 | `snapshot.py` (lib) | Canonical workspace snapshot at init; verify on each `next` (TOCTOU drift guard). | imported by dispatch_stage, validate_workspace, recover |
-| `lease.py` (lib) | Per-ticket run lease: acquire / refresh / release / expiry + takeover detection. | imported by dispatch_stage, recover, status |
-| `heartbeat.py` | Stage progress heartbeat + post-hoc hung detection: per-op progress writes during a stage; `recover detect` reads + classifies hung. | `write` / `read`; writes heartbeat progress under `<ticket_dir>`, imported by `recover` / `state` / `_registry` |
+| `lease.py` (lib) | Per-ticket run lease: acquire / refresh / release / expiry + takeover detection. | imported by dispatch_stage, recover, status, flow_worktree, evolve_drain, evolve_select |
+| `heartbeat.py` | Stage progress heartbeat + post-hoc hung detection: per-op progress writes during a stage; `recover detect` reads + classifies hung. | `write` / `read`; writes heartbeat progress under `<ticket_dir>`, imported by `recover` |
 | `validate_workspace.py` | HARD GATE: schema-validate `workspace.toml` + `stage-registry.toml` on every run. | exit 1 = violations to stderr |
 
 ## Bootstrap
@@ -22,7 +22,7 @@ The live "which script does what" map. One line per script: purpose + CLI surfac
 | `init.py` | Transactional workspace bootstrap. Collects backend/bundle answers, writes `workspace.toml`, postcondition checks, atomic `.flow/.initialized`. | `--config <json>` (`--reconfigure` / `--resume`) |
 | `flow_worktree.py` | Post-approval worktree seeding: create worktree, seed `state.json` (plan completed), stamp frontmatter, redirect memory to main `.flow` via the gitignored `.flow/memory-root` sibling (tracked workspace.toml left byte-identical), `mise trust`. | `create --ticket --plan-from --base --branch --main-root --planned-files --commit-type --commit-summary --e2e-recipe --worktree-path --copy --no-mise-trust` |
 | `branch_ticket.py` | Resolve ticket key from current git branch (backend-aware regex). | `--workspace-root`; exit 0 match / 1 env / 3 no-match |
-| `bundle_discover.py` (lib) | Walk `~/.claude/plugins/*/` + `<repo>/.claude/plugins/*/` for `.flow-bundle.toml` manifests. | imported by init |
+| `bundle_discover.py` (lib) | Walk `~/.claude/plugins/*/` + `<repo>/.claude/plugins/*/` for `.flow-bundle.toml` manifests. | imported by init, resolve_handler |
 
 ## Tracker
 
@@ -31,7 +31,7 @@ The live "which script does what" map. One line per script: purpose + CLI surfac
 | `tracker.py` (lib) | Tracker Protocol base + `make_tracker()` factory + `CAPABILITY_ENUM`. | imported by the adapters + tracker_cli |
 | `tracker_cli.py` | CLI wrapper around the Protocol (the only tracker surface the prose calls). | `get` / `state` / `transition` / `comment` / `create` / `is-shipped` / `list-assigned` / `download-attachments` |
 | `tracker_jira.py` (lib) | Jira Cloud REST v3 + Agile/1.0 adapter (Basic auth via `ATLASSIAN_EMAIL`/`ATLASSIAN_API_TOKEN`). | imported by tracker_cli |
-| `tracker_beads.py` (lib) | Beads `bd` CLI adapter (local-only tracker). | imported by tracker_cli |
+| `tracker_beads.py` (lib) | Beads `bd` CLI adapter (local-only tracker). | imported by triage, tracker (make_tracker factory) |
 | `resolve_handler.py` | Resolve a `skill:<name>` handler: confirm bundle installed + manifest valid, return concrete `skill_name`/`skill_args`. | `--handler <string> --search-roots`; exit 1 not-installed / 2 invalid |
 
 ## Forge (PR host)
@@ -79,7 +79,7 @@ Pluggable PR-host seam, structural twin of the tracker seam. The `create_pr` and
 | `metric.py` | Throughput calculator (shipped tickets/week from ship-event evidence). | (via `recall.py --metric`) |
 | `baseline_collect.py` | Pre-migration time-to-PR baseline file + stats. | `build --samples-json` / `show` |
 | `validate_postmortem.py` (lib) | Postmortem schema + week-over-week trend. | imports snapshot, state |
-| `pending_mutations.py` (lib) | Transient tracker-mutation queue (create/edit/transition/comment/link). | imported by sync |
+| `pending_mutations.py` (lib) | Transient tracker-mutation queue (create/edit/transition/comment/link). | imported by sync, tracker_cli |
 | `sync.py` | Drain `pending-mutations.jsonl` + reconcile against live tracker. | `--workspace-root` |
 
 ## Status / recovery / friction
