@@ -17,10 +17,12 @@ lock-free on purpose: it is called from inside the held flock (flock is not
 reentrant across fds under blocking LOCK_EX), and atomic_write_text uses
 os.replace so a concurrent reader sees old-or-new, never a torn file.
 
-Reboot handling: a stale-but-expired foreign lease whose boot_id differs from the
-current boot is reboot-clearable (the holder cannot exist after a reboot), so it
-is overwritten. An expired foreign lease from the same boot needs human takeover
-via /flow recover unless `force` is passed.
+Reboot handling: a stale-but-expired foreign lease is reboot-clearable (the holder
+cannot exist after a reboot) only when it is from the SAME hostname AND its boot_id
+differs from the current boot, so it is overwritten. The same-hostname requirement
+keeps a live foreign host on shared .flow storage (different hostname, different
+boot) from being mis-cleared. An expired foreign lease from the same boot, or from
+a different host, needs human takeover via /flow recover unless `force` is passed.
 """
 
 from __future__ import annotations
@@ -127,6 +129,11 @@ def boot_id(runner: Runner | None = None) -> str:
     except (OSError, subprocess.SubprocessError):
         return ""
     return ""
+
+
+def hostname() -> str:
+    """The current host name, mirroring socket.gethostname()."""
+    return socket.gethostname()
 
 
 # ─── Paths ───────────────────────────────────────────────────────────────────
@@ -253,7 +260,10 @@ def acquire(
             raise LeaseHeld(existing)
 
         reboot_clearable = (
-            bool(existing.boot_id) and bool(current_boot) and (existing.boot_id != current_boot)
+            bool(existing.boot_id)
+            and bool(current_boot)
+            and (existing.boot_id != current_boot)
+            and existing.hostname == hostname
         )
         if reboot_clearable or force:
             return _write_lease(
@@ -343,6 +353,7 @@ def classify(
     now_iso: str,
     *,
     current_boot: str | None = None,
+    hostname: str | None = None,
 ) -> dict[str, object]:
     """Describe the lease for /flow recover.
 
@@ -362,7 +373,12 @@ def classify(
     holder = asdict(lease)
     if not is_expired(lease, now_iso):
         return {"state": "live", "holder": holder}
-    if lease.boot_id and current_boot and lease.boot_id != current_boot:
+    if (
+        lease.boot_id
+        and current_boot
+        and lease.boot_id != current_boot
+        and lease.hostname == hostname
+    ):
         return {"state": "expired_reboot_clearable", "holder": holder}
     return {"state": "expired_foreign", "holder": holder}
 
@@ -518,7 +534,9 @@ def cli_main(argv: list[str]) -> int:
 
     if args.command in ("classify", "status"):
         try:
-            result = classify(ticket_dir, now_iso, current_boot=boot_id())
+            result = classify(
+                ticket_dir, now_iso, current_boot=boot_id(), hostname=socket.gethostname()
+            )
         except LeaseError as exc:
             sys.stderr.write(f"lease {args.command}: {exc}\n")
             return 3
@@ -545,6 +563,7 @@ __all__ = [
     "boot_id",
     "classify",
     "cli_main",
+    "hostname",
     "is_expired",
     "quarantine_corrupt_lock",
     "read_lease",
