@@ -39,6 +39,14 @@ You cannot wait for or solicit that approval yourself — just return a plan goo
    Locate the files, modules, and functions the change touches.
    Do not skim; an approver should be able to trust your file list.
 
+   **Verify any content/drift finding against the default base, not the working checkout.** General orientation reads stay on the working checkout via the Read tool (that is the normal way to explore, and you do NOT need to `git show` every file you look at). But the moment you would CITE a content/drift finding in the plan, or STAMP a file into `planned_files` BECAUSE OF its current content, re-read that specific file at the freshly-fetched default base before committing the finding. The `--auto` tail branches its worktree off `@default` (`origin/<default>`, fetched fresh), while the launcher checkout this exploration runs in can lag `origin/main`, so a drift a file shows here may already be fixed upstream, and the planned fix would land as a no-op (flow-749). Resolve the base the same way `flow_worktree.py create --base @default` does and read the base version:
+   ```bash
+   git fetch --quiet origin
+   DEFAULT=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD)   # e.g. origin/main
+   git show "$DEFAULT:<path>"   # the base version of the file you'd cite
+   ```
+   The `git fetch` is read-only by discipline (it only updates remote-tracking refs / FETCH_HEAD, never the working tree). This differs from the version-bump advisory (verb-spec.md, stage-implement.md), which documents the same launcher-lags-`@default` mismatch: a version number is advisory and recomputed at implement, but a content/drift finding is cited at plan time and may stamp `planned_files`, so it must be verified against the right base now, at plan time, and cannot be deferred to implement.
+
 3. Draft the plan with these sections:
    - **Goal** — one or two sentences on what success looks like.
    - **Files to change** — explicit paths, each with a one-line note on what
