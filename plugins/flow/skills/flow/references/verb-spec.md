@@ -24,6 +24,13 @@ Everything from the bootstrap onward is shared by the self-approve branch; the d
    Read the stdout.
    Explore the codebase read-only (Read/Grep/Glob, or a subagent).
    `recall` is auto-injected at SessionStart; weave relevant prior knowledge into the plan.
+   **Verify any content/drift finding against the default base, not the working checkout.** General orientation reads stay on the working checkout via the Read tool (you do NOT need to `git show` every file). But the moment you would CITE a content/drift finding in the plan, or derive a `--planned-files` entry (step 6) BECAUSE OF a file's current content, re-read that specific file at the freshly-fetched default base first. The tail branches off `@default` (`origin/<default>`, fetched fresh) while this checkout can lag `origin/main`, so a drift seen here may already be fixed upstream and the planned fix would land as a no-op (flow-749). Resolve the base the way `flow_worktree.py create --base @default` does and read the base version:
+   ```bash
+   git fetch --quiet origin
+   DEFAULT=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD)   # e.g. origin/main
+   git show "$DEFAULT:<path>"   # the base version of the file you'd cite
+   ```
+   The `git fetch` is read-only by discipline (only remote-tracking refs / FETCH_HEAD, safe under plan mode, same as the `aws s3 cp` artefact step 5 lists). This is the content-finding analogue of the version-bump advisory (step 6 / stage-implement.md): a version number is advisory and recomputed at implement, but a content/drift finding is cited at plan time and may stamp `planned_files`, so it must be verified against the right base now and cannot be deferred to implement.
 
 4. Iterate the implementation plan with the user: goal, files to change, approach, test strategy, risks.
    This is the same depth a `subagent:Plan` handler would produce — but interactive, so the user shapes it.
@@ -85,6 +92,7 @@ It replaces interactive steps 1-5. The self-approve branch then runs shared step
 2. Resolve the ticket key (positional `$ARGUMENTS` minus the flags, else `branch_ticket.py --workspace-root .`) — same as step 2.
 
 3. Fetch ticket context into the conversation via `tracker_cli.py --workspace-root . get --key "$KEY"` (read the stdout); explore the codebase read-only; weave in the SessionStart `recall` — same as step 3.
+   The drift-vs-`@default` rule (verify any cited content/drift finding against the freshly-fetched default base) lives in the `stage-plan.md` embedded into the Plan subagent in step 4; it is that subagent's plan, not this orchestrator's own explore, that derives `planned_files`, so the rule is enforced there.
 
 4. **Decided-mode probe — then the headless plan.**
    First probe whether the maintainer already triaged + reopened this bead with a recorded decision. Without this, an `--auto` relaunch re-defers on the exact question already answered (the triage→reopen→re-defer loop never converges):
