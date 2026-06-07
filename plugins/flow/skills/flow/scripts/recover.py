@@ -59,7 +59,9 @@ def detect(workspace_root: Path, ticket: str, *, now_iso: str | None = None) -> 
     td = _ticket_dir(workspace_root, ticket)
     ts, state_exit = state.read(td)
     stages = {name: rec.status for name, rec in ts.stages.items()} if ts is not None else None
-    lease_info = lease.classify(td, now_iso, current_boot=lease.boot_id())
+    lease_info = lease.classify(
+        td, now_iso, current_boot=lease.boot_id(), hostname=lease.hostname()
+    )
     ok, detail = verify_snapshot(workspace_root, ticket, skill_root=_skill_root())
     progress: dict[str, str] = {}
     if ts is not None:
@@ -85,7 +87,7 @@ def takeover(
 ) -> tuple[int, dict[str, Any]]:
     now_iso = now_iso or _now_iso()
     td = _ticket_dir(workspace_root, ticket)
-    info = lease.classify(td, now_iso, current_boot=lease.boot_id())
+    info = lease.classify(td, now_iso, current_boot=lease.boot_id(), hostname=lease.hostname())
     if info["state"] == "live":
         return 1, {"error": "lease is live; cannot take over", "holder": info["holder"]}
     quarantined: Path | None = None

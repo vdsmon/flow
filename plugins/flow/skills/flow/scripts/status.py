@@ -55,7 +55,9 @@ def _summarize(
         nxt = state.pick_next_pending(ts, order)
         next_or_blocked = "done" if nxt is None else f"{nxt}:{statuses[nxt]}"
 
-    classify = lease.classify(ticket_dir, now_iso, current_boot=lease.boot_id())
+    classify = lease.classify(
+        ticket_dir, now_iso, current_boot=lease.boot_id(), hostname=lease.hostname()
+    )
     return {
         "ticket": ts.ticket,
         "run_id": ts.run_id,

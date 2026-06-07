@@ -129,6 +129,26 @@ def test_foreign_expired_different_boot_overwrites(tmp_path: Path) -> None:
     assert ls.acquired_at == after  # fresh acquired_at on overwrite
 
 
+def test_foreign_expired_different_boot_different_host_raises_expired_foreign(
+    tmp_path: Path,
+) -> None:
+    # a live foreign host (different hostname AND boot) on shared .flow storage is
+    # NOT a same-host reboot; its expired lease must need human takeover.
+    _acquire(tmp_path, "run-1", boot="boot-A", host="host-1")  # expires 12:05
+    after = "2026-05-28T13:00:00Z"
+    with pytest.raises(lease.LeaseExpiredForeign) as exc:
+        _acquire(tmp_path, "run-2", now=after, boot="boot-B", host="host-2")
+    assert exc.value.holder.run_id == "run-1"
+
+
+def test_foreign_expired_same_host_different_boot_overwrites(tmp_path: Path) -> None:
+    # a genuine same-host reboot (same hostname, changed boot) still clears.
+    _acquire(tmp_path, "run-1", boot="boot-A", host="host-1")  # expires 12:05
+    after = "2026-05-28T13:00:00Z"
+    ls = _acquire(tmp_path, "run-2", now=after, boot="boot-B", host="host-1")
+    assert ls.run_id == "run-2"
+
+
 # ─── acquire: force overrides expired-foreign ──────────────────────────────────
 
 
@@ -269,9 +289,9 @@ def test_classify_live(tmp_path: Path) -> None:
 
 
 def test_classify_expired_reboot_clearable(tmp_path: Path) -> None:
-    _acquire(tmp_path, "run-1", boot="boot-A")  # expires 12:05
+    _acquire(tmp_path, "run-1", boot="boot-A", host="host-1")  # expires 12:05
     after = "2026-05-28T13:00:00Z"
-    result = lease.classify(tmp_path, after, current_boot="boot-B")
+    result = lease.classify(tmp_path, after, current_boot="boot-B", hostname="host-1")
     assert result["state"] == "expired_reboot_clearable"
 
 
@@ -279,6 +299,32 @@ def test_classify_expired_foreign(tmp_path: Path) -> None:
     _acquire(tmp_path, "run-1", boot="boot-A")
     after = "2026-05-28T13:00:00Z"
     result = lease.classify(tmp_path, after, current_boot="boot-A")
+    assert result["state"] == "expired_foreign"
+
+
+def test_classify_expired_different_host_is_foreign_not_reboot_clearable(
+    tmp_path: Path,
+) -> None:
+    _acquire(tmp_path, "run-1", boot="boot-A", host="host-1")
+    after = "2026-05-28T13:00:00Z"
+    result = lease.classify(tmp_path, after, current_boot="boot-B", hostname="host-2")
+    assert result["state"] == "expired_foreign"
+
+
+def test_classify_expired_same_host_different_boot_is_reboot_clearable(
+    tmp_path: Path,
+) -> None:
+    _acquire(tmp_path, "run-1", boot="boot-A", host="host-1")
+    after = "2026-05-28T13:00:00Z"
+    result = lease.classify(tmp_path, after, current_boot="boot-B", hostname="host-1")
+    assert result["state"] == "expired_reboot_clearable"
+
+
+def test_classify_reboot_clearable_requires_hostname_arg(tmp_path: Path) -> None:
+    # conservative default: no hostname passed -> expired_foreign, never auto-clear.
+    _acquire(tmp_path, "run-1", boot="boot-A", host="host-1")
+    after = "2026-05-28T13:00:00Z"
+    result = lease.classify(tmp_path, after, current_boot="boot-B")
     assert result["state"] == "expired_foreign"
 
 
