@@ -46,7 +46,6 @@ from maintainer import resolve_maintainer_repo
 
 DEFAULT_CAP = 5
 DEFAULT_CONCURRENCY = 3
-_EVOLVE_STATUSES = "open,in_progress,blocked,deferred,closed"
 # a CLOSED or DEFERRED bead is never in flight regardless of a leaked feature/<key>-* branch
 _ACTIVE_STATUSES = "open,in_progress,blocked"
 _BRANCH_PREFIX = "feature/"
