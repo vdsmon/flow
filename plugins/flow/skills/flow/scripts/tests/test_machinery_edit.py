@@ -1,8 +1,11 @@
+import io
+import json
+import sys
 import threading
 
 import pytest
 
-from machinery_edit import apply_edit
+from machinery_edit import _load_payload, apply_edit, main
 
 
 @pytest.fixture
@@ -166,3 +169,69 @@ def test_concurrent_writers_no_lost_update(skill_root):
     final = f.read_text()
     assert "OLD" not in final
     assert final.count("=NEW") == n
+
+
+def test_load_payload_from_file(tmp_path):
+    payload = {"file": "scripts/x.py", "old": "OLD", "new": "NEW"}
+    p = tmp_path / "payload.json"
+    _write(p, json.dumps(payload))
+    assert _load_payload(str(p)) == payload
+
+
+def test_load_payload_from_stdin(monkeypatch):
+    payload = {"file": "scripts/x.py", "old": "OLD", "new": "NEW"}
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(payload)))
+    assert _load_payload(None) == payload
+
+
+def test_load_payload_missing_file_raises(tmp_path):
+    ghost = tmp_path / "nope.json"
+    with pytest.raises(OSError):
+        _load_payload(str(ghost))
+
+
+def test_load_payload_malformed_json_raises(tmp_path):
+    p = tmp_path / "bad.json"
+    _write(p, "not json {")
+    with pytest.raises(json.JSONDecodeError):
+        _load_payload(str(p))
+
+
+def test_main_apply_happy(skill_root, tmp_path):
+    target = skill_root / "scripts" / "x.py"
+    _write(target, "a = 1  # ANCHOR\nb = 2\n")
+    payload = tmp_path / "payload.json"
+    _write(payload, json.dumps({"file": str(target), "old": "# ANCHOR", "new": "# FIXED"}))
+    code = main(["apply", "--skill-root", str(skill_root), "--payload", str(payload)])
+    assert code == 0
+    assert target.read_text() == "a = 1  # FIXED\nb = 2\n"
+
+
+def test_main_bad_payload_missing_file(skill_root, tmp_path):
+    ghost = tmp_path / "ghost.json"
+    code = main(["apply", "--skill-root", str(skill_root), "--payload", str(ghost)])
+    assert code == 1
+
+
+def test_main_malformed_json_payload(skill_root, tmp_path):
+    payload = tmp_path / "bad.json"
+    _write(payload, "not json {")
+    code = main(["apply", "--skill-root", str(skill_root), "--payload", str(payload)])
+    assert code == 1
+
+
+def test_main_missing_keys(skill_root, tmp_path):
+    payload = tmp_path / "payload.json"
+    _write(payload, json.dumps({}))
+    code = main(["apply", "--skill-root", str(skill_root), "--payload", str(payload)])
+    assert code == 1
+
+
+def test_main_refused_path_outside(skill_root, tmp_path):
+    outside = tmp_path.parent / "outside.py"
+    _write(outside, "OLD\n")
+    payload = tmp_path / "payload.json"
+    _write(payload, json.dumps({"file": str(outside), "old": "OLD", "new": "NEW"}))
+    code = main(["apply", "--skill-root", str(skill_root), "--payload", str(payload)])
+    assert code == 2
+    assert outside.read_text() == "OLD\n"
