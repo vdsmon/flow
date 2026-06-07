@@ -110,7 +110,7 @@ roles = []
 
 [[stage]]
 name = "commit"
-description = "Compose conventional commit (compose-commit.py skeleton, LLM fills body). Applies recorded implement-stage diff via git apply --cached; content-ownership gate refuses unrelated edits."
+description = "Compose conventional commit (compose_commit.py skeleton, LLM fills body). Applies recorded implement-stage diff via git apply --cached; content-ownership gate refuses unrelated edits."
 default_handler = "inline"
 default_timeout_min = 5
 default_heartbeat_required = false
