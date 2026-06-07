@@ -146,6 +146,55 @@ def test_finish_stage_persists_skill_output(tmp_path: Path) -> None:
     assert ts.stages["ticket"].skill_output == {"pr_url": "https://x/1"}
 
 
+# ─── force_stage_status (recovery) ───────────────────────────────────────────
+
+
+def test_force_stage_status_rejects_invalid_status(tmp_path: Path) -> None:
+    _seed(tmp_path)
+    with pytest.raises(ValueError, match="invalid status"):
+        state.force_stage_status(tmp_path, "plan", "bogus")  # ty: ignore[invalid-argument-type]
+
+
+def test_force_stage_status_unknown_stage_raises(tmp_path: Path) -> None:
+    _seed(tmp_path)
+    with pytest.raises(ValueError, match=r"not in state\.stages"):
+        state.force_stage_status(tmp_path, "nonexistent", "completed")
+
+
+def test_force_stage_status_pending_resets_stage(tmp_path: Path) -> None:
+    _seed(tmp_path)
+    state.begin_stage(tmp_path, "plan", "h1")
+    state.finish_stage(tmp_path, "plan", "failed", "h2", failure_detail="boom")
+    ts = state.force_stage_status(tmp_path, "plan", "pending")
+    record = ts.stages["plan"]
+    assert record.status == "pending"
+    assert record.started_at_iso is None
+    assert record.started_at_sha is None
+    assert record.finished_at_iso is None
+    assert record.finished_at_sha is None
+    assert record.failure_detail is None
+
+
+def test_force_stage_status_else_sets_status_preserving_fields(tmp_path: Path) -> None:
+    _seed(tmp_path)
+    state.begin_stage(tmp_path, "plan", "h1")
+    ts = state.force_stage_status(tmp_path, "plan", "completed")
+    record = ts.stages["plan"]
+    assert record.status == "completed"
+    assert record.started_at_sha == "h1"
+    assert record.started_at_iso is not None
+
+
+def test_force_stage_status_persists_to_disk(tmp_path: Path) -> None:
+    _seed(tmp_path)
+    state.begin_stage(tmp_path, "plan", "h1")
+    state.force_stage_status(tmp_path, "plan", "completed")
+    loaded, exit_code = state.read(tmp_path)
+    assert exit_code == 0
+    assert loaded is not None
+    assert loaded.stages["plan"].status == "completed"
+
+
 # ─── pick_next + find_failed ────────────────────────────────────────────────
 
 
