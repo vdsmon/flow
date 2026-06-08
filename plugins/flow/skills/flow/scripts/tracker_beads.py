@@ -283,7 +283,7 @@ class BeadsAdapter:
         return {
             "id": str(raw.get("id", "")),
             "author": str(raw.get("author", "")),
-            "body": {"body": str(raw.get("body", "")), "fmt": "md"},
+            "body": {"body": str(raw.get("text") or raw.get("body") or ""), "fmt": "md"},
             "created_at": str(raw.get("created_at", "")),
         }
 
@@ -349,7 +349,7 @@ class BeadsAdapter:
         return None
 
     def get(self, key: str) -> Ticket:
-        raw = self._unwrap_show(self._run_json(["show", key]))
+        raw = self._unwrap_show(self._run_json(["show", key, "--include-comments"]))
         if raw is None:
             raise TrackerError(f"bd show {key} --json returned non-object")
         return self._ticket_from_json(raw)
