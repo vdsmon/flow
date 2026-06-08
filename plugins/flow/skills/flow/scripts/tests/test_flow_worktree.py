@@ -739,6 +739,26 @@ def test_auto_hot_with_decision_proceeds(tmp_path, monkeypatch):
     assert res["ticket"] == "flow-x1"
 
 
+def test_auto_hot_no_decision_floor_fires_when_adjudicate_hot_off(tmp_path, monkeypatch):
+    # default off: _main_beads has no [evolve] section -> real adjudicate_hot
+    # returns False, so the floor still refuses a hot+undecided change.
+    main = _main_beads(tmp_path)
+    monkeypatch.setattr(triage, "decided", lambda *a, **k: {"is_hot": True, "decided": False})
+    assert triage.adjudicate_hot(main) is False
+    with pytest.raises(fw._ConfigError):
+        _boot(tmp_path, main, base="main", auto=True, planned=["lease.py"])
+
+
+def test_auto_hot_no_decision_proceeds_when_adjudicate_hot_on(tmp_path, monkeypatch):
+    # adjudicate_hot lifts the floor: a hot+undecided change bootstraps without
+    # refusing (advisor proceed + merge-time guard review/CI are the gate).
+    main = _main_beads(tmp_path)
+    monkeypatch.setattr(triage, "decided", lambda *a, **k: {"is_hot": True, "decided": False})
+    monkeypatch.setattr(triage, "adjudicate_hot", lambda *a, **k: True)
+    res = _boot(tmp_path, main, base="main", auto=True, planned=["lease.py"])
+    assert res["ticket"] == "flow-x1"
+
+
 def test_auto_non_hot_proceeds(tmp_path, monkeypatch):
     main = _main_beads(tmp_path)
     monkeypatch.setattr(triage, "decided", lambda *a, **k: {"is_hot": False, "decided": False})
