@@ -193,6 +193,36 @@ def test_get_returns_full_ticket_shape() -> None:
     assert ticket["links"][0]["to_key"] == "bd-9999"
 
 
+def test_get_passes_include_comments_flag() -> None:
+    adapter, runner = _build_adapter([_cp(stdout=json.dumps(_issue_json()))])
+    adapter.get("bd-a1b2")
+    show_args = runner.calls[0][0]
+    assert "show" in show_args
+    assert "--include-comments" in show_args
+
+
+def test_get_marshals_text_keyed_comment() -> None:
+    issue = _issue_json(
+        comments=[
+            {"id": "c1", "author": "bob", "text": "ack", "created_at": "2026-05-01T01:00:00Z"},
+        ],
+    )
+    adapter, _ = _build_adapter([_cp(stdout=json.dumps(issue))])
+    ticket = adapter.get("bd-a1b2")
+    assert ticket["comments"][0]["body"]["body"] == "ack"
+
+
+def test_get_falls_back_to_body_keyed_comment() -> None:
+    issue = _issue_json(
+        comments=[
+            {"id": "c1", "author": "bob", "body": "ack", "created_at": "2026-05-01T01:00:00Z"},
+        ],
+    )
+    adapter, _ = _build_adapter([_cp(stdout=json.dumps(issue))])
+    ticket = adapter.get("bd-a1b2")
+    assert ticket["comments"][0]["body"]["body"] == "ack"
+
+
 def test_get_raises_on_non_object_response() -> None:
     adapter, _ = _build_adapter([_cp(stdout='["not an object"]')])
     with pytest.raises(t.TrackerError, match="non-object"):
