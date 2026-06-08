@@ -362,7 +362,8 @@ def _enforce_hot_floor(
     hot change past it. Beads-only: `triage.decided` reads a `DECISION:`/
     `TRIAGE-DECISION:` comment, a beads-native seam (a non-beads tracker has no such
     record, so gating it would permanently block). Caller invokes this BEFORE
-    `git worktree add`, so a refusal leaves no orphan.
+    `git worktree add`, so a refusal leaves no orphan. The `[evolve] adjudicate_hot`
+    flag (default off) skips this floor for a maintainer self-target workspace.
     """
     if not (planned_files and (auto or base.strip() == "@default")):
         return
@@ -370,6 +371,11 @@ def _enforce_hot_floor(
 
     config, _code = triage._resolve_config(main_root)
     if config is None or config.get("backend") != "beads":
+        return
+    # adjudicate_hot lifts the floor for this (maintainer self-target) workspace:
+    # the advisor's proceed ruling stands for hot changes too, gated by the
+    # merge-time guard-property review + CI instead of this pre-bootstrap refusal.
+    if triage.adjudicate_hot(main_root):
         return
     # No runner threaded: BeadsAdapter (via decided) needs the keyword-only
     # KwRunner protocol, not flow_worktree's positional Runner — passing `run`

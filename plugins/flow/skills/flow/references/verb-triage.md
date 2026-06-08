@@ -75,3 +75,12 @@ two outcomes a maintainer sees here:
 Note: the defer-comment pick is coupled to verb-spec.md's wording
 (`flow --auto could not self-approve`). If that stem changes, triage degrades to
 showing the last comment overall.
+
+## Lifting the hot floor (`adjudicate_hot`, default off)
+
+`[evolve] adjudicate_hot` (default off, maintainer self-target) lifts the hot
+hard-floor so hot changes auto-adjudicate like non-hot ones: an advisor `proceed`
+on a hot change ships instead of being downgraded to a block (and the
+flow_worktree bootstrap stops refusing a hot change with no recorded decision).
+The merge-time guard-property review + CI are the retained gate. Read the flag via
+`python3 ${CLAUDE_SKILL_DIR}/scripts/triage.py adjudicate-hot-enabled --workspace-root .`.

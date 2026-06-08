@@ -22,6 +22,9 @@ self_target = true
 cap = 10
 concurrency = 8
 auto_merge_hot = true
+# lift the hot hard-floor for this maintainer self-target repo (the human reviews
+# every PR; the floor was pure friction). Merge-time guard-property review + CI gate.
+adjudicate_hot = true
 
 # This repo opens PRs ready for review, not draft (maintainer preference). The
 # default is open; a workspace that wants draft PRs sets draft = true here.

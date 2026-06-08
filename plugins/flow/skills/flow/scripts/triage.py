@@ -87,6 +87,32 @@ def advisor_adjudicates(workspace_root: Path) -> bool:
     return value if isinstance(value, bool) else True
 
 
+def adjudicate_hot(workspace_root: Path) -> bool:
+    """`[evolve] adjudicate_hot` from workspace.toml (bool); default False.
+
+    Default OFF: the hot hard-floor holds for user projects, so a hot change
+    never self-proceeds unattended. Opt IN with an explicit
+    `adjudicate_hot = true` (a maintainer self-target preference) to lift the
+    floor: a hot change then ships on an advisor `proceed` like a non-hot one.
+    Only an explicit `True` enables it; an absent key/section/file (and any read
+    error) reads as off, the conservative side. Sibling of `advisor_adjudicates`.
+
+    Lifting the floor removes BOTH the verb-spec step 5.3 `proceed`->`block`
+    downgrade and the flow_worktree bootstrap refusal. The remaining gates still
+    hold: advisor adjudication rules on the fork, and the merge-time
+    guard-property review plus CI back-stop every hot landing.
+    """
+    try:
+        config = load_workspace_toml(workspace_root)
+    except WorkspaceConfigError:
+        return False
+    section = config.get("evolve")
+    if not isinstance(section, dict):
+        return False
+    value = section.get("adjudicate_hot")
+    return value if isinstance(value, bool) else False
+
+
 def _recorded_decision(comments: list[Any]) -> str | None:
     """Newest-by-created_at comment whose text starts with a decision stem.
 
@@ -304,6 +330,12 @@ def _cmd_adjudicate_enabled(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_adjudicate_hot_enabled(args: argparse.Namespace) -> int:
+    workspace_root = Path(args.workspace_root).expanduser().resolve()
+    sys.stdout.write("true\n" if adjudicate_hot(workspace_root) else "false\n")
+    return 0
+
+
 def _default_to_list(argv: list[str]) -> list[str]:
     """Prepend `list` when the first non-flag token is not a known subcommand.
 
@@ -317,7 +349,7 @@ def _default_to_list(argv: list[str]) -> list[str]:
             return argv
         if tok.startswith("-"):
             continue
-        if tok in ("list", "decided", "adjudicate-enabled"):
+        if tok in ("list", "decided", "adjudicate-enabled", "adjudicate-hot-enabled"):
             return argv
         break
     return ["list", *argv]
@@ -342,12 +374,20 @@ def cli_main(argv: list[str], runner: Any = None) -> int:
     )
     p_adj.add_argument("--workspace-root", default=".")
 
+    p_adj_hot = sub.add_parser(
+        "adjudicate-hot-enabled",
+        help="print whether [evolve] adjudicate_hot is on (true/false)",
+    )
+    p_adj_hot.add_argument("--workspace-root", default=".")
+
     args = parser.parse_args(_default_to_list(argv))
 
     if args.command == "decided":
         return _cmd_decided(args, runner)
     if args.command == "adjudicate-enabled":
         return _cmd_adjudicate_enabled(args)
+    if args.command == "adjudicate-hot-enabled":
+        return _cmd_adjudicate_hot_enabled(args)
     return _cmd_list(args, runner)
 
 
@@ -356,6 +396,7 @@ if __name__ == "__main__":
 
 
 __all__ = [
+    "adjudicate_hot",
     "advisor_adjudicates",
     "cli_main",
     "collect",
