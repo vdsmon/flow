@@ -61,6 +61,18 @@ _MODULE_NAME_RE = re.compile(r"[a-z_]+\.py")
 # away. Do NOT reuse `[a-z_]+\.py` here — it cannot match a hyphenated drift.
 _REGISTRY_SCRIPT_RE = re.compile(r"[A-Za-z0-9_-]+\.py")
 
+# A stage-doc basename, e.g. references/stage-e2e.md. The char class is
+# [a-z0-9_]+ (NOT [a-z_]+): omitting the digit silently misses stage-e2e.md and
+# makes the registry parse return 9 docs not 10. ONE regex serves both the
+# registry-side parse and the doc-side citation scan so they cannot diverge.
+_STAGE_DOC_RE = re.compile(r"stage-[a-z0-9_]+\.md")
+
+# Live-corpus max distinct stage-doc citations per doc = 2 (SKILL.md,
+# verb-spec.md, verb-evolve.md); 3 = max+1 tripwire. A doc citing 3+ distinct
+# registry stage-docs is a static re-enumeration of the registry mapping (the
+# flow-0n8 regression class). Fire condition is count >= limit.
+STAGE_DOC_CITATION_LIMIT = 3
+
 # An inline-code span: text between a pair of backticks on one line.
 _INLINE_SPAN_RE = re.compile(r"`([^`]*)`")
 # A fenced-code block delimiter (``` or ~~~), ignoring leading whitespace.
@@ -484,6 +496,32 @@ def module_md_importer_drift(
     return drifts
 
 
+def docs_over_stage_doc_citation_limit(
+    registry_path: Path = SKILL_ROOT / "stage-registry.toml",
+    docs: list[Path] | None = None,
+    limit: int = STAGE_DOC_CITATION_LIMIT,
+) -> dict[str, int]:
+    """Docs that statically re-enumerate the stage->reference_doc map (flow-0n8).
+
+    Parse the registry's reference_doc fields into the set of stage-doc
+    basenames it owns, then for each doc count how many DISTINCT registry
+    stage-docs it cites (intersection, so a non-registry stage-*.md token can
+    not inflate). Returns {doc.name: count} for docs citing >= limit.
+    """
+    data = tomllib.loads(registry_path.read_text(encoding="utf-8"))
+    registry_basenames: set[str] = set()
+    for stage in data.get("stage", []):
+        registry_basenames |= set(_STAGE_DOC_RE.findall(stage.get("reference_doc", "")))
+    if docs is None:
+        docs = docs_to_check()
+    out: dict[str, int] = {}
+    for doc in docs:
+        cited = set(_STAGE_DOC_RE.findall(doc.read_text(encoding="utf-8"))) & registry_basenames
+        if len(cited) >= limit:
+            out[doc.name] = len(cited)
+    return out
+
+
 def docs_to_check() -> list[Path]:
     docs = [SKILL_ROOT / "SKILL.md"]
     refs = SKILL_ROOT / "references"
@@ -541,6 +579,20 @@ def main(argv: list[str]) -> int:
                 msg=(
                     f"MODULE.md 'imported by' row for {drift.module}: "
                     f"missing {sorted(drift.missing)}, phantom {sorted(drift.phantom)}"
+                ),
+                raw="",
+            )
+        )
+
+    for doc_name, count in sorted(docs_over_stage_doc_citation_limit().items()):
+        problems.append(
+            Problem(
+                doc=doc_name,
+                line=0,
+                level="ERROR",
+                msg=(
+                    f"cites {count} distinct stage-docs (limit {STAGE_DOC_CITATION_LIMIT}): "
+                    f"re-enumerates the stage->reference_doc map canonical in stage-registry.toml"
                 ),
                 raw="",
             )

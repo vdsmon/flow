@@ -342,3 +342,87 @@ def test_main_fails_on_importer_drift(monkeypatch) -> None:
 def test_module_md_importer_rows_match_imports() -> None:
     """Every enumerable MODULE.md 'imported by' row must match the AST truth."""
     assert seam_check.module_md_importer_drift() == []
+
+
+# --- stage->reference_doc map re-enumeration drift ---------------------------
+
+
+def _write_stage_registry(path, names: list[str]) -> None:
+    body = "".join(
+        f'[[stage]]\nname = "{n}"\nreference_doc = "references/stage-{n}.md"\n\n' for n in names
+    )
+    path.write_text(body, encoding="utf-8")
+
+
+def test_stage_doc_re_matches_e2e_digit() -> None:
+    # Guards the [a-z_]+ regression: without the digit, stage-e2e.md is missed.
+    assert seam_check._STAGE_DOC_RE.findall("see references/stage-e2e.md") == ["stage-e2e.md"]
+
+
+def test_live_registry_yields_ten_stage_docs() -> None:
+    import tomllib
+
+    registry = seam_check.SKILL_ROOT / "stage-registry.toml"
+    data = tomllib.loads(registry.read_text(encoding="utf-8"))
+    basenames: set[str] = set()
+    for stage in data.get("stage", []):
+        basenames |= set(seam_check._STAGE_DOC_RE.findall(stage.get("reference_doc", "")))
+    assert len(basenames) == 10
+    assert "stage-e2e.md" in basenames
+
+
+def test_exact_three_distinct_citations_flagged(tmp_path) -> None:
+    # Exactly 3 DISTINCT registry stage-docs -> flagged. Discriminates >=3 from >3.
+    registry = tmp_path / "stage-registry.toml"
+    _write_stage_registry(registry, ["plan", "implement", "commit", "merge"])
+    doc = tmp_path / "verb-x.md"
+    doc.write_text(
+        "see references/stage-plan.md and references/stage-implement.md and "
+        "references/stage-commit.md",
+        encoding="utf-8",
+    )
+    over = seam_check.docs_over_stage_doc_citation_limit(registry_path=registry, docs=[doc])
+    assert over == {"verb-x.md": 3}
+
+
+def test_exact_two_distinct_citations_clean(tmp_path) -> None:
+    registry = tmp_path / "stage-registry.toml"
+    _write_stage_registry(registry, ["plan", "implement", "commit"])
+    doc = tmp_path / "verb-x.md"
+    doc.write_text(
+        "see references/stage-plan.md and references/stage-implement.md",
+        encoding="utf-8",
+    )
+    over = seam_check.docs_over_stage_doc_citation_limit(registry_path=registry, docs=[doc])
+    assert over == {}
+
+
+def test_non_registry_token_does_not_inflate(tmp_path) -> None:
+    # 3 stage-*.md tokens cited, but only 2 live in the synthetic registry; the
+    # intersection drops the foreign token, so count is 2 -> clean.
+    registry = tmp_path / "stage-registry.toml"
+    _write_stage_registry(registry, ["plan", "implement"])
+    doc = tmp_path / "verb-x.md"
+    doc.write_text(
+        "references/stage-plan.md references/stage-implement.md references/stage-bogus.md",
+        encoding="utf-8",
+    )
+    over = seam_check.docs_over_stage_doc_citation_limit(registry_path=registry, docs=[doc])
+    assert over == {}
+
+
+def test_main_fails_on_stage_doc_citation_offender(monkeypatch) -> None:
+    monkeypatch.setattr(seam_check, "scripts_missing_from_module_md", lambda *a, **k: set())
+    monkeypatch.setattr(
+        seam_check, "scripts_missing_from_registry_descriptions", lambda *a, **k: set()
+    )
+    monkeypatch.setattr(seam_check, "module_md_importer_drift", lambda *a, **k: [])
+    monkeypatch.setattr(
+        seam_check, "docs_over_stage_doc_citation_limit", lambda *a, **k: {"SKILL.md": 4}
+    )
+    assert seam_check.main([]) == 1
+
+
+def test_live_corpus_no_stage_doc_reenumeration() -> None:
+    """No live /flow doc statically re-enumerates the stage->reference_doc map."""
+    assert seam_check.docs_over_stage_doc_citation_limit() == {}

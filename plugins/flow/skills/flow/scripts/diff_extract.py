@@ -38,6 +38,7 @@ from pathlib import Path
 from typing import Any, TypedDict
 
 import state
+import ticket_frontmatter
 from _atomicio import atomic_write_text
 from _runner import Runner
 from _runner import default_runner as _default_runner
@@ -244,6 +245,34 @@ def _ls_files_blobs(files: list[str], cwd: Path, runner: Runner) -> dict[str, di
     return blobs
 
 
+def _union_frontmatter_planned(files: list[str], ticket: str | None, cwd: Path) -> list[str]:
+    """Union passed `--files` with the ticket frontmatter `planned_files`.
+
+    The spec bootstrap auto-adds version-bump files (plugin.json + marketplace.json)
+    to FRONTMATTER planned_files only, so a `--files`-only baseline drops them from
+    the captured implement.diff. Reads them back here so they survive.
+
+    `--files` come first (input order preserved), then frontmatter-only entries in
+    frontmatter order; exact-string dedup. Returns `files` unchanged when `ticket`
+    is falsy (every existing positional caller). `ticket_frontmatter.read` returns
+    {} on missing/malformed, so degradation to `--files` is free.
+    """
+    if not ticket:
+        return files
+    fm = ticket_frontmatter.read(cwd / ".flow" / "tickets" / f"{ticket}.md")
+    planned = fm.get("planned_files", [])
+    if not isinstance(planned, list):
+        return files
+    merged = list(files)
+    seen = set(merged)
+    for entry in planned:
+        coerced = str(entry)
+        if coerced not in seen:
+            merged.append(coerced)
+            seen.add(coerced)
+    return merged
+
+
 def record_baseline(
     stage: str,
     ticket_dir: Path,
@@ -251,11 +280,13 @@ def record_baseline(
     files: list[str] | None = None,
     capture_blobs: bool = False,
     runner: Runner | None = None,
+    ticket: str | None = None,
 ) -> dict[str, Any]:
     r = runner or _default_runner()
     head = _head_sha(cwd, r)
     blobs: dict[str, dict[str, str]] = {}
     files = files or []
+    files = _union_frontmatter_planned(files, ticket, cwd)
     if capture_blobs and files:
         blobs = _ls_files_blobs(files, cwd, r)
     payload: dict[str, Any] = {
@@ -439,6 +470,7 @@ def cli_main(argv: list[str]) -> int:
                 cwd,
                 files=files,
                 capture_blobs=args.capture_blobs,
+                ticket=args.ticket,
             )
             sys.stdout.write(json.dumps(payload, indent=2, sort_keys=True) + "\n")
             return 0
