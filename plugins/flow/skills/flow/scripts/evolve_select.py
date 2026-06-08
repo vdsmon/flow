@@ -313,6 +313,12 @@ def select(
     result["open_pr_count"] = open_pr_count
     result["include_proposals"] = include_proposals
     result["live_runs"] = sorted(live_keys)
+    labels_by_id = {c["id"]: (c.get("labels") or []) for c in candidates if c.get("id")}
+    result["model_per_key"] = {
+        key: "sonnet"
+        for key in result["launch"]
+        if "tier:trivial" in labels_by_id.get(key, []) and "hot" not in labels_by_id.get(key, [])
+    }
     return result
 
 
