@@ -118,6 +118,24 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/flow_worktree.py reap --ticket <key> --branc
 
 `bd close` here autodiscovers `.beads/*.db` from cwd, and this sub-verb is maintainer-gated with no `cd` in the loop, so the close inherits the maintainer-repo cwd and hits flow's own DB. With the close wired in, reaping a PR also closes its bead, so the loop leaves no merged-but-open beads behind. Veto for the human: convert a PR to draft or close it before the next turn and the reap skips it.
 
+**A2. Cleanup finished sessions — stop + tombstone the idle done ones.** A launched `claude --bg /flow <key> --auto` run does not exit when its work finishes: after the PR merges + the reflect stage runs, the session goes idle but lingers as a job dir under `~/.claude/jobs/<id>/`, so a multi-bead drain leaves a pile of idle sessions in the agents panel for the maintainer to `claude stop` + Ctrl+X by hand. This step clears them. It is read-only classification + reviewable prose side effects (mirrors step A reap).
+
+```bash
+python3 ${CLAUDE_SKILL_DIR}/scripts/evolve_session_cleanup.py --workspace-root . --self-job "$(basename "$CLAUDE_JOB_DIR")"
+```
+
+Enumeration + liveness are filesystem-only — the script scans `~/.claude/jobs/*/state.json` directly and NEVER calls `claude agents --json` (it blocks on a TTY and the drain can run headless). Flags: `--workspace-root` (required; non-maintainer → exit 4, skip this step), `--self-job` (the orchestrator's own `$CLAUDE_JOB_DIR` basename, skipped outright), `--idle-threshold-secs` (default 300; a transcript with a fresher mtime is treated as still writing → not stopped). It returns JSON `{stoppable:[{session_id, key, cwd, job_dir, reason}], skipped:[{session_id, reason}]}`. The session→bead map is the job's `intent` (`/flow <key> --auto`), which also filters out foreign / non-flow jobs; the bg orchestrator records `cwd == repo root` (not the worktree), so a job is eligible only when its cwd is this repo's root. A session reaches `stoppable` only when its `<key>`'s bead is terminal (closed/blocked/deferred), `state ∈ {done,stopped}` + `tempo == idle`, its run lease is non-live (`live`/`corrupt` → skipped, the same mid-reflect guard reap uses; an already-reaped worktree reads `absent` → non-live → proceeds), and its transcript mtime is idle — any busy or unprovable signal skips it (fail-safe toward NOT stopping).
+
+For each `stoppable` entry (skip ALL of this under `--dry-run` — print the stoppable set and run nothing):
+
+```bash
+# validate BOTH tokens before interpolating (defensive on the destructive path)
+timeout 10 claude stop <session_id> </dev/null || true   # kill process if still live; stdin detached + bounded (claude stop TTY-blocking is unverified)
+rm -rf <job_dir>                                          # Ctrl+X-equivalent: drop the panel tombstone (the absolute path from the entry)
+```
+
+`<session_id>` and `<job_dir>` come from the `stoppable` entry. Before the `claude stop`, validate `<session_id>` against a hex-token pattern (`^[0-9a-f-]+$`). Before the `rm -rf`, validate `<job_dir>` is under `~/.claude/jobs/` with an 8-hex basename (`^.*/\.claude/jobs/[0-9a-f]{8}$`) — this is the single destructive line, so guard the path it deletes, not just the stop handle. Use the entry's literal `<job_dir>`; do NOT reconstruct `~/.claude/jobs/<id>/` from `<session_id>` (the dir is named by the 8-hex `daemonShort`, not the full sessionId UUID). This is NON-DESTRUCTIVE to history: the transcript at `~/.claude/projects/<slug>/<session_id>.jsonl` is untouched, so the session stays resumable (`claude attach <session_id>`) after either stop or dir-removal. `rm` bypasses the daemon (safe for done/stopped jobs); a daemon-sanctioned dismiss is the cleaner long-term path if a future CLI offers one (none in 2.1.168).
+
 **B. Decide the next action.**
 
 ```bash
@@ -148,7 +166,7 @@ Each spawns a detached run that auto-plans and either drives its PR to green-and
 
 ### --dry-run
 
-`/flow evolve drain --dry-run`: run ONE turn's **A** reap classification (`evolve_reap.py`, print the `merge`/`not_green`/`skipped_hot`/`blocked` sets, do NOT merge) + **B** (`evolve_drain.py`, print the action + would-launch keys + parked), then STOP. No merges, no launches, no loop.
+`/flow evolve drain --dry-run`: run ONE turn's **A** reap classification (`evolve_reap.py`, print the `merge`/`not_green`/`skipped_hot`/`blocked` sets, do NOT merge) + **A2** session-cleanup classification (`evolve_session_cleanup.py`, print the `stoppable` set, do NOT `claude stop` or `rm`) + **B** (`evolve_drain.py`, print the action + would-launch keys + parked), then STOP. No merges, no stops, no launches, no loop.
 
 ### --include-proposals (dangerous)
 
