@@ -715,6 +715,76 @@ def test_init_writes_snapshot(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
     assert (td / "snapshot.sha").exists()
 
 
+def _boom_write(*args: Any, **kwargs: Any) -> Any:
+    del args, kwargs
+    raise OSError("disk full")
+
+
+def test_init_snapshot_write_failure_fail_open(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # fresh init, no pre-existing sha: write_snapshot raises -> drift guard OFF.
+    _write_workspace(tmp_path)
+    _stub_git_head(monkeypatch)
+    monkeypatch.setattr(ds, "write_snapshot", _boom_write)
+    rc, payload = ds.cmd_init(tmp_path, "FT-1")
+    assert rc == 0
+    assert payload["snapshot_write_failed"] is True
+    assert payload["snapshot_guard_active"] is False
+    sha_path = tmp_path / ".flow" / "runs" / "FT-1" / "snapshot.sha"
+    assert not sha_path.exists()
+    err = capsys.readouterr().err
+    assert "fail-open" in err
+    assert "recover --reload-snapshot" in err
+
+
+def test_init_snapshot_write_failure_fail_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # first init writes a valid sha; a later init whose write fails keeps the
+    # surviving sha so the drift guard stays active (fail-closed).
+    _write_workspace(tmp_path)
+    _stub_git_head(monkeypatch)
+    rc, _ = ds.cmd_init(tmp_path, "FT-1")
+    assert rc == 0
+    sha_path = tmp_path / ".flow" / "runs" / "FT-1" / "snapshot.sha"
+    assert sha_path.exists()
+    sha_before = sha_path.read_bytes()
+    capsys.readouterr()
+
+    monkeypatch.setattr(ds, "write_snapshot", _boom_write)
+    rc, payload = ds.cmd_init(tmp_path, "FT-1")
+    assert rc == 0
+    assert payload["snapshot_write_failed"] is True
+    assert payload["snapshot_guard_active"] is True
+    assert sha_path.read_bytes() == sha_before
+    assert "fail-closed" in capsys.readouterr().err
+
+
+def test_init_exits_zero_on_snapshot_write_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # the broad catch was not hardened into a block: a write failure still exits 0.
+    _write_workspace(tmp_path)
+    _stub_git_head(monkeypatch)
+    monkeypatch.setattr(ds, "write_snapshot", _boom_write)
+    rc, _ = ds.cmd_init(tmp_path, "FT-1")
+    assert rc == 0
+
+
+def test_init_snapshot_success_emits_no_marker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # happy path stays byte-identical: no marker keys, no stderr.
+    _write_workspace(tmp_path)
+    _stub_git_head(monkeypatch)
+    rc, payload = ds.cmd_init(tmp_path, "FT-1")
+    assert rc == 0
+    assert "snapshot_write_failed" not in payload
+    assert "snapshot_guard_active" not in payload
+    assert capsys.readouterr().err == ""
+
+
 def test_init_refuses_foreign_live_lease(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _write_workspace(tmp_path)
     _stub_git_head(monkeypatch)
