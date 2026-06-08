@@ -263,3 +263,82 @@ def test_main_fails_on_registry_description_gap(monkeypatch) -> None:
         seam_check, "scripts_missing_from_registry_descriptions", lambda *a, **k: {"foo.py"}
     )
     assert seam_check.main([]) == 1
+
+
+# --- MODULE.md 'imported by' row drift ---------------------------------------
+
+
+def test_importer_drift_clean_row_matches(tmp_path) -> None:
+    (tmp_path / "a.py").write_text("")
+    (tmp_path / "b.py").write_text("import a\n")
+    text = "| `a.py` (lib) | x | imported by b |\n"
+    assert seam_check.module_md_importer_drift(scripts_dir=tmp_path, module_text=text) == []
+
+
+def test_importer_drift_phantom_importer(tmp_path) -> None:
+    (tmp_path / "a.py").write_text("")
+    (tmp_path / "b.py").write_text("import a\n")
+    (tmp_path / "c.py").write_text("")  # real stem, but does not import a
+    text = "| `a.py` (lib) | x | imported by b, c |\n"
+    drifts = seam_check.module_md_importer_drift(scripts_dir=tmp_path, module_text=text)
+    assert len(drifts) == 1
+    assert "c" in drifts[0].phantom
+    assert drifts[0].missing == frozenset()
+
+
+def test_importer_drift_missing_importer(tmp_path) -> None:
+    (tmp_path / "a.py").write_text("")
+    (tmp_path / "b.py").write_text("import a\n")
+    (tmp_path / "c.py").write_text("import a\n")
+    text = "| `a.py` (lib) | x | imported by b |\n"
+    drifts = seam_check.module_md_importer_drift(scripts_dir=tmp_path, module_text=text)
+    assert len(drifts) == 1
+    assert "c" in drifts[0].missing
+    assert drifts[0].phantom == frozenset()
+
+
+def test_importer_drift_prose_row_skipped_per_row(tmp_path) -> None:
+    (tmp_path / "a.py").write_text("")
+    (tmp_path / "x.py").write_text("import a\n")
+    (tmp_path / "foo.py").write_text("")
+    # `adapters` is not a real stem -> the whole row is skipped (not flagged).
+    # The second, enumerable row IS still checked: x imports a, so it is clean.
+    text = (
+        "| `a.py` (lib) | y | imported by the adapters + foo |\n"
+        "| `a.py` (lib) | z | imported by x |\n"
+    )
+    assert seam_check.module_md_importer_drift(scripts_dir=tmp_path, module_text=text) == []
+
+
+def test_importer_drift_reverse_direction_guard(tmp_path) -> None:
+    # `vp.py` declares `imports a, b, c` (real stems) but NOT `imported by`.
+    # The anchor must skip it so it is never inverted into a phantom row.
+    (tmp_path / "vp.py").write_text("")
+    (tmp_path / "a.py").write_text("")
+    (tmp_path / "b.py").write_text("")
+    (tmp_path / "c.py").write_text("")
+    text = "| `vp.py` (lib) | imports a, b, c |\n"
+    assert seam_check.module_md_importer_drift(scripts_dir=tmp_path, module_text=text) == []
+
+
+def test_true_importers_captures_lazy_in_function_import(tmp_path) -> None:
+    (tmp_path / "a.py").write_text("")
+    (tmp_path / "b.py").write_text("def f():\n    from a import X\n    return X\n")
+    importers = seam_check.true_importers(scripts_dir=tmp_path)
+    assert importers.get("a") == {"b"}
+
+
+def test_main_fails_on_importer_drift(monkeypatch) -> None:
+    monkeypatch.setattr(
+        seam_check,
+        "module_md_importer_drift",
+        lambda *a, **k: [
+            seam_check.ImporterDrift(module="a", missing=frozenset({"c"}), phantom=frozenset())
+        ],
+    )
+    assert seam_check.main([]) == 1
+
+
+def test_module_md_importer_rows_match_imports() -> None:
+    """Every enumerable MODULE.md 'imported by' row must match the AST truth."""
+    assert seam_check.module_md_importer_drift() == []

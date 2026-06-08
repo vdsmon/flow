@@ -14,6 +14,8 @@ valid and can be wired when a real review-bot-on-GitHub PR exists. `merge` /
 from __future__ import annotations
 
 import json
+import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -33,10 +35,16 @@ from forge import (
 class GitHubAdapter:
     backend = "github"
 
-    def __init__(self, config: dict[str, Any], runner: Runner | None = None) -> None:
+    def __init__(
+        self,
+        config: dict[str, Any],
+        runner: Runner | None = None,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> None:
         self._config = config
         root = config.get("workspace_root", ".")
         self._run: Runner = runner or _default_runner(Path(root))
+        self._sleep = sleep
 
     @property
     def capabilities(self) -> list[Capability]:
@@ -53,6 +61,22 @@ class GitHubAdapter:
 
     def _ok(self, args: list[str], what: str) -> str:
         result = self._run(args)
+        if result.returncode != 0:
+            raise ForgeError(f"{what} failed: {(result.stderr or '').strip()}")
+        return result.stdout or ""
+
+    # like _ok but for IDEMPOTENT reads: a transient gh/GraphQL 5xx survives a bounded
+    # retry. Retries on ANY non-zero return (a permanent error fails identically at
+    # bounded cost, and this needs no allowlist for novel 5xx phrasings).
+    _READ_BACKOFFS = (0.5, 1.0)
+
+    def _ok_read(self, args: list[str], what: str) -> str:
+        result = self._run(args)
+        for backoff in self._READ_BACKOFFS:
+            if result.returncode == 0:
+                return result.stdout or ""
+            self._sleep(backoff)
+            result = self._run(args)
         if result.returncode != 0:
             raise ForgeError(f"{what} failed: {(result.stderr or '').strip()}")
         return result.stdout or ""
@@ -81,7 +105,7 @@ class GitHubAdapter:
     # ─── PR mechanics ─────────────────────────────────────────────────────
 
     def detect_pr(self, branch: str) -> PullRequest | None:
-        raw = self._ok(
+        raw = self._ok_read(
             [
                 "gh",
                 "pr",
