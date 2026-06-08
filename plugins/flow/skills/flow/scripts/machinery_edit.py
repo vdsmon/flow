@@ -29,7 +29,10 @@ land as a direct commit on `main`, bypassing the human-merge keystone. The fix
 must flow to PROPOSE+RECORD (the evolve-bead sling) instead. A skill-root in
 detached-HEAD state is refused for the same reason: a self-edit commit there is
 not on any branch, so it never reaches the keystone merge. A skill-root that is
-not a git repo (the unit-test fixture) resolves to no branch and is allowed.
+not a git repo (the unit-test fixture) resolves to no branch and is allowed —
+but only on a POSITIVE not-a-repo signal: any ambiguous git failure while a repo
+is present fails closed (refused, exit 2) so a self-edit cannot slip onto a
+protected branch behind a transient git error.
 
 Idempotency mirrors the doc's "anchor not found usually means already fixed":
 if `old` is absent but `new` is already present, the fix is reported
@@ -42,7 +45,8 @@ Exit codes:
     0 = applied, or already_applied (idempotent no-op).
     1 = usage / I/O error (bad payload, missing file, empty `old`, old==new).
     2 = refused (path outside skill tree, snapshot-pinned stage-registry.toml,
-        skill-root on a protected branch, or skill-root in detached-HEAD state).
+        skill-root on a protected branch, skill-root in detached-HEAD state, or
+        a git error while skill-root has a repo present — fail closed).
     3 = anchor_not_found (old absent AND new absent — agent must re-derive).
     4 = ambiguous (old occurs more than once — not a unique anchor).
 """
@@ -64,15 +68,45 @@ _SNAPSHOT_PINNED = {"stage-registry.toml"}
 # A machinery commit must never land on one of these (human-merge keystone).
 _PROTECTED = {"main", "master", "dev", "develop"}
 
+# NUL-prefixed: cannot collide with a real branch, _PROTECTED, "HEAD", or "".
+# Signals "git failed while a repo is present" -> apply_edit fails closed.
+_GIT_ERROR = "\x00git-error"
+
 
 def _current_branch(skill_root: Path) -> str | None:
-    """skill-root's current git branch, or None if it is not a git repo.
+    """skill-root's current git branch, _GIT_ERROR on a git failure, or None.
 
     Resolves skill-root's OWN working tree (not cwd): in the marketplace setup
     the skill checkout sits on `main` while the run's worktree is on a feature
-    branch, and the commit that follows a self-edit lands on skill-root. Any git
-    failure (skill-root is not a repo) returns None and allows the edit.
+    branch, and the commit that follows a self-edit lands on skill-root.
+
+    The allow path (return None) rests on a POSITIVE not-a-repo signal, never on
+    "any failure": only a clean `false` from --is-inside-work-tree or a genuine
+    "not a git repository" error maps to None. A work tree confirmed but the
+    branch read failing, an OSError, or any unexpected git output returns
+    _GIT_ERROR so the caller fails closed (refuses) rather than letting a
+    self-edit land on a protected branch behind a transient git error.
     """
+    try:
+        probe = subprocess.run(
+            ["git", "-C", str(skill_root), "rev-parse", "--is-inside-work-tree"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return _GIT_ERROR
+    if probe.returncode == 0:
+        inside = probe.stdout.strip()
+        if inside == "false":
+            return None
+        if inside != "true":
+            return _GIT_ERROR
+    elif "not a git repository" in probe.stderr.lower():
+        return None
+    else:
+        return _GIT_ERROR
+
     try:
         res = subprocess.run(
             ["git", "-C", str(skill_root), "rev-parse", "--abbrev-ref", "HEAD"],
@@ -81,10 +115,10 @@ def _current_branch(skill_root: Path) -> str | None:
             check=False,
         )
     except OSError:
-        return None
+        return _GIT_ERROR
     if res.returncode != 0:
-        return None
-    return res.stdout.strip() or None
+        return _GIT_ERROR
+    return res.stdout.strip()
 
 
 def _emit(obj: dict, code: int) -> int:
@@ -125,6 +159,14 @@ def apply_edit(
             "propose+record or reload-snapshot instead",
         }, 2
     branch = branch_resolver(skill_root)
+    if branch == _GIT_ERROR:
+        return {
+            "status": "refused",
+            "file": str(target),
+            "reason": "git failed while skill-root has a repo present; "
+            "failing closed so a self-edit cannot land on a protected branch; "
+            "propose+record (sling an evolve bead) instead",
+        }, 2
     if branch in _PROTECTED:
         return {
             "status": "refused",
