@@ -210,7 +210,7 @@ def create_bead(
             if fuzzy is not None:
                 raise DuplicateBead(fuzzy, dedup_key)
             labels.append(evidfile_label)
-    args = ["bd", "create", summary, "--type", type, "--description", description]
+    args = ["bd", "create", f"--title={summary}", "--type", type, "--description", description]
     if labels:
         args += ["--labels", ",".join(labels)]
     if parent:
