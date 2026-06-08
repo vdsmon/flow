@@ -50,6 +50,28 @@ branch.)
 Note: the already-reopened beads carry legacy `DECISION:` comments; detection
 accepts that stem too, so no backfill is needed.
 
+## Advisor-minted decisions (`advisor_adjudicates`, default on)
+
+By default an `--auto` run RULES on a judgment fork itself instead of deferring
+(see verb-spec.md step 5, the advisor-adjudication branch); set
+`[evolve] advisor_adjudicates = false` to opt out and restore defer-on-fork. The
+two outcomes a maintainer sees here:
+
+- A `proceed` ruling writes a `DECISION: (advisor) <ruling>` comment and ships.
+  The `DECISION:` stem means a relaunch reads it as already-decided (no re-ask);
+  the `(advisor)` marker is informational. `triage.py list` tags any surfaced row
+  whose open-question carries `(advisor)` so an advisor ruling is distinguishable
+  from a human `TRIAGE-DECISION:` at a glance. These beads are usually already
+  in-flight or shipped, so they appear in the deferred/blocked queue only if a
+  later wall lands them there.
+- A `block` ruling (rulable, but unsafe to auto-ship — broad blast radius,
+  irreversibility, or hot) does NOT write a `DECISION:` comment. It uses the
+  ordinary defer-stem (`flow --auto could not self-approve: advisor ruled … but
+  blocked auto-ship …`) + status `blocked`, so it surfaces in this list exactly
+  like any other hot block, and the reopen flow above applies unchanged. Writing
+  a `DECISION:` for a block would let a relaunch re-proceed a non-hot block,
+  defeating it — so block deliberately reuses the defer-stem, not a decision.
+
 Note: the defer-comment pick is coupled to verb-spec.md's wording
 (`flow --auto could not self-approve`). If that stem changes, triage degrades to
 showing the last comment overall.
