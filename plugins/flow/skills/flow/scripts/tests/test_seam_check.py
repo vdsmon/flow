@@ -33,6 +33,22 @@ def test_find_invocations_strips_command_substitution() -> None:
     assert "--abbrev-ref" not in inv.flags
 
 
+def test_find_invocations_quoted_value_with_sequencing_char() -> None:
+    # A `;` inside a quoted --text value must not truncate the span: the inner
+    # `--auto` is part of the value, not a flag of this command.
+    text = (
+        "${CLAUDE_SKILL_DIR}/scripts/tracker_cli.py comment --key X "
+        '--text "Judgment --auto settled; this is a safety hold"'
+    )
+    invs = seam_check.find_invocations("t.md", text)
+    assert len(invs) == 1
+    inv = invs[0]
+    assert inv.script == "tracker_cli.py"
+    assert "--key" in inv.flags
+    assert "--text" in inv.flags
+    assert "--auto" not in inv.flags
+
+
 def test_find_invocations_handles_bare_form() -> None:
     text = "   ${CLAUDE_SKILL_DIR}/scripts/tracker_cli.py --workspace-root . get --key X"
     invs = seam_check.find_invocations("t.md", text)

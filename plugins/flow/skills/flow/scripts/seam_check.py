@@ -141,11 +141,15 @@ def find_invocations(doc_name: str, text: str) -> list[Invocation]:
         # truncated at a shell sequencing operator so a second command's flags
         # are not attributed to this script.
         args = logical[m.end() :]
+        # Strip quoted value-spans FIRST so a sequencing char inside a quoted
+        # value (e.g. `--text "a; b"`) does not truncate the span mid-way and
+        # leak inner --flags. Unquoted operators survive the sub.
+        args = _VALUE_SPAN_RE.sub(" ", args)
         for sep in ("&&", "||", "|", ";"):
             idx = args.find(sep)
             if idx != -1:
                 args = args[:idx]
-        flags = _FLAG_RE.findall(_VALUE_SPAN_RE.sub(" ", args))
+        flags = _FLAG_RE.findall(args)
         invs.append(
             Invocation(
                 doc=doc_name,
