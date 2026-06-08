@@ -195,3 +195,92 @@ def test_capabilities_review_threads_off():
     assert caps["review_threads"] is False
     assert caps["ci_rollup"] is True
     assert caps["squash_merge"] is True
+
+
+def _retry_adapter(
+    list_returns: list[subprocess.CompletedProcess[str]],
+    create_returns: list[subprocess.CompletedProcess[str]] | None = None,
+) -> tuple[GitHubAdapter, Recorder, list[float]]:
+    """Counter-driven fake runner: each `gh pr list` / `gh pr create` call pops the
+    next queued CompletedProcess (last one repeats if exhausted). Records every argv
+    and every sleep delay so fail-then-succeed retry behaviour is drivable.
+    """
+    calls: Recorder = []
+    sleeps: list[float] = []
+    list_i = [0]
+    create_i = [0]
+    create_q = create_returns or []
+
+    def _pop(queue: list, idx: list[int], args: list[str]) -> subprocess.CompletedProcess[str]:
+        cp = queue[min(idx[0], len(queue) - 1)]
+        idx[0] += 1
+        return subprocess.CompletedProcess(args, cp.returncode, cp.stdout, cp.stderr)
+
+    def run(args: list[str]) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        if args[:3] == ["gh", "pr", "list"]:
+            return _pop(list_returns, list_i, args)
+        if args[:3] == ["gh", "pr", "create"]:
+            return _pop(create_q, create_i, args)
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    def sleep(delay: float) -> None:
+        sleeps.append(delay)
+
+    adapter = GitHubAdapter({"workspace_root": "."}, runner=run, sleep=sleep)
+    return adapter, calls, sleeps
+
+
+def _cp(returncode: int, stdout: str = "", stderr: str = "") -> subprocess.CompletedProcess[str]:
+    return subprocess.CompletedProcess([], returncode, stdout, stderr)
+
+
+def test_detect_pr_retries_then_succeeds():
+    listing = json.dumps([{"number": 7, "url": "https://github.com/o/r/pull/7"}])
+    fg, calls, sleeps = _retry_adapter(
+        list_returns=[
+            _cp(1, "", "GraphQL: Something went wrong (HTTP 502)"),
+            _cp(0, listing, ""),
+        ]
+    )
+    pr = fg.detect_pr("feature/flow-x")
+    assert pr is not None and pr["number"] == 7
+    list_calls = [c for c in calls if c[:3] == ["gh", "pr", "list"]]
+    assert len(list_calls) == 2
+    assert len(sleeps) == 1
+
+
+def test_detect_pr_retries_exhausted_raises():
+    from forge import ForgeError
+
+    fg, calls, _ = _retry_adapter(list_returns=[_cp(1, "", "GraphQL: HTTP 502 bad gateway")])
+    with pytest.raises(ForgeError) as exc:
+        fg.detect_pr("feature/flow-x")
+    list_calls = [c for c in calls if c[:3] == ["gh", "pr", "list"]]
+    assert len(list_calls) == 3
+    assert str(exc.value).startswith("gh pr list failed:")
+
+
+def test_detect_pr_no_retry_on_happy_path():
+    listing = json.dumps([{"number": 7, "url": "https://github.com/o/r/pull/7"}])
+    fg, calls, sleeps = _retry_adapter(list_returns=[_cp(0, listing, "")])
+    pr = fg.detect_pr("feature/flow-x")
+    assert pr is not None and pr["number"] == 7
+    list_calls = [c for c in calls if c[:3] == ["gh", "pr", "list"]]
+    assert len(list_calls) == 1
+    assert sleeps == []
+
+
+def test_open_pr_create_failure_not_retried():
+    from forge import ForgeError
+
+    fg, calls, sleeps = _retry_adapter(
+        list_returns=[_cp(0, "[]", "")],
+        create_returns=[_cp(1, "", "create blew up")],
+    )
+    with pytest.raises(ForgeError):
+        fg.open_pr("main", "feature/flow-x", "feat: x", "body", draft=False)
+    create_calls = [c for c in calls if c[:3] == ["gh", "pr", "create"]]
+    assert len(create_calls) == 1
+    assert not _ran(calls, ["gh", "pr", "list"])
+    assert sleeps == []
