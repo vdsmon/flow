@@ -565,6 +565,7 @@ Required fields per stage (8-mvp set, baked into stage-registry.toml):
 
 - **universal** (every stage): `ticket`, `status`.
 - `implement.required_fields = ["planned_files"]`
+- `e2e.required_fields = ["e2e_recipe"]`
 - `commit.required_fields = ["commit_type", "commit_summary"]`
 
 Empty-string / empty-list / missing-key all count as violations.
