@@ -30,7 +30,7 @@ The live "which script does what" map. One line per script: purpose + CLI surfac
 |--------|------|-------------------|
 | `tracker.py` (lib) | Tracker Protocol base + `make_tracker()` factory + `CAPABILITY_ENUM`. | imported by the adapters + tracker_cli |
 | `tracker_cli.py` | CLI wrapper around the Protocol (the only tracker surface the prose calls). | `get` / `state` / `transition` / `comment` / `create` / `is-shipped` / `list-assigned` / `download-attachments` |
-| `tracker_jira.py` (lib) | Jira Cloud REST v3 + Agile/1.0 adapter (Basic auth via `ATLASSIAN_EMAIL`/`ATLASSIAN_API_TOKEN`). | imported by tracker_cli |
+| `tracker_jira.py` (lib) | Jira Cloud REST v3 + Agile/1.0 adapter (Basic auth via `ATLASSIAN_EMAIL`/`ATLASSIAN_API_TOKEN`). | imported by tracker.py (lazy in make_tracker) |
 | `tracker_beads.py` (lib) | Beads `bd` CLI adapter (local-only tracker). | imported by triage, tracker (make_tracker factory) |
 | `resolve_handler.py` | Resolve a `skill:<name>` handler: confirm bundle installed + manifest valid, return concrete `skill_name`/`skill_args`. | `--handler <string> --search-roots`; exit 1 not-installed / 2 invalid |
 
@@ -42,8 +42,8 @@ Pluggable PR-host seam, structural twin of the tracker seam. The `create_pr` and
 |--------|------|-------------------|
 | `forge.py` (lib) | Forge Protocol base + `make_forge()` factory + `read_forge_config()` + `FORGE_CAPABILITY_ENUM` + normalized `PullRequest`/`CIStatus`/`ReviewThread`. | imported by the adapters + forge_cli + create_pr |
 | `forge_cli.py` | CLI wrapper around the Protocol (the only forge surface the prose calls); cap-gated subcommands degrade to `{"supported": false}` exit 0. | `detect-pr` / `open-pr` / `ci-rollup` / `review-threads` / `post-reply` / `resolve-thread` / `mark-ready` / `merge` / `delete-branch` |
-| `forge_github.py` (lib) | GitHub `gh` adapter: detect/open PR, CI rollup (`statusCheckRollup`), mark-ready/merge/delete-branch. Review-threads capability OFF for now (no live review-bot-on-GitHub yet). | imported by forge_cli |
-| `forge_bitbucket.py` (lib) | Bitbucket `bkt` adapter (absorbs ship-it): detect/open PR, CI rollup from `bkt pr checks`, CodeRabbit review-thread fetch + verified resolve (`.resolution != null`). | imported by forge_cli |
+| `forge_github.py` (lib) | GitHub `gh` adapter: detect/open PR, CI rollup (`statusCheckRollup`), mark-ready/merge/delete-branch. Review-threads capability OFF for now (no live review-bot-on-GitHub yet). | imported by forge.py (lazy in make_forge) |
+| `forge_bitbucket.py` (lib) | Bitbucket `bkt` adapter (absorbs ship-it): detect/open PR, CI rollup from `bkt pr checks`, CodeRabbit review-thread fetch + verified resolve (`.resolution != null`). | imported by forge.py (lazy in make_forge) |
 
 ## Frontmatter / diff / commit
 
@@ -78,7 +78,7 @@ Pluggable PR-host seam, structural twin of the tracker seam. The `create_pr` and
 |--------|------|-------------------|
 | `metric.py` | Throughput calculator (shipped tickets/week from ship-event evidence). | (via `recall.py --metric`) |
 | `baseline_collect.py` | Pre-migration time-to-PR baseline file + stats. | `build --samples-json` / `show` |
-| `validate_postmortem.py` (lib) | Postmortem schema + week-over-week trend. | imports snapshot, state |
+| `validate_postmortem.py` (lib) | Postmortem schema + week-over-week trend. | imports ticket_frontmatter, _memory_paths, _timeutil |
 | `pending_mutations.py` (lib) | Transient tracker-mutation queue (create/edit/transition/comment/link). | imported by sync, tracker_cli |
 | `sync.py` | Drain `pending-mutations.jsonl` + reconcile against live tracker. | `--workspace-root` |
 
