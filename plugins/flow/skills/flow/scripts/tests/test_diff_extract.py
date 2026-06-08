@@ -14,6 +14,7 @@ import pytest
 
 import diff_extract
 import state
+import ticket_frontmatter
 
 # ─── Tmp git repo fixture ────────────────────────────────────────────────────
 
@@ -358,6 +359,137 @@ def test_record_baseline_outside_git_raises(tmp_path: Path) -> None:
     ticket_dir = tmp_path / "runs" / "FT-1"
     with pytest.raises(diff_extract._GitError, match="git rev-parse"):
         diff_extract.record_baseline("implement", ticket_dir, tmp_path)
+
+
+# ─── record-baseline frontmatter union ───────────────────────────────────────
+
+
+def _seed_frontmatter(repo: Path, ticket: str, planned: list[str]) -> Path:
+    """Write a +++-delimited frontmatter file at repo/.flow/tickets/<ticket>.md.
+
+    Production path: record_baseline reads cwd/.flow/tickets/<KEY>.md.
+    """
+    path = repo / ".flow" / "tickets" / f"{ticket}.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    ticket_frontmatter.update(path, {"planned_files": json.dumps(planned)})
+    return path
+
+
+def test_record_baseline_unions_frontmatter_planned_files(tmp_repo: Path, tmp_path: Path) -> None:
+    _seed_frontmatter(tmp_repo, "FT-1", ["plugin.json", "marketplace.json"])
+    ticket_dir = tmp_path / "runs" / "FT-1"
+    payload = diff_extract.record_baseline(
+        "implement", ticket_dir, tmp_repo, files=["a.py"], ticket="FT-1"
+    )
+    assert payload["planned_files"] == ["a.py", "plugin.json", "marketplace.json"]
+
+
+def test_record_baseline_union_dedup_and_order(tmp_repo: Path, tmp_path: Path) -> None:
+    # a.py is in both --files and frontmatter; appears once, --files order first.
+    _seed_frontmatter(tmp_repo, "FT-1", ["a.py", "plugin.json"])
+    ticket_dir = tmp_path / "runs" / "FT-1"
+    payload = diff_extract.record_baseline(
+        "implement", ticket_dir, tmp_repo, files=["a.py", "b.py"], ticket="FT-1"
+    )
+    assert payload["planned_files"] == ["a.py", "b.py", "plugin.json"]
+
+
+def test_record_baseline_frontmatter_only_file_gets_blob(tmp_repo: Path, tmp_path: Path) -> None:
+    # A tracked file present ONLY in frontmatter must get a baseline blob, proving
+    # the union runs before the blob-capture block.
+    (tmp_repo / "plugin.json").write_text("{}\n", encoding="utf-8")
+    _git(["add", "plugin.json"], tmp_repo)
+    _git(["commit", "-m", "seed plugin.json"], tmp_repo)
+    _seed_frontmatter(tmp_repo, "FT-1", ["plugin.json"])
+    ticket_dir = tmp_path / "runs" / "FT-1"
+    payload = diff_extract.record_baseline(
+        "implement", ticket_dir, tmp_repo, files=["a.py"], ticket="FT-1", capture_blobs=True
+    )
+    assert "plugin.json" in payload["blobs"]
+    assert payload["blobs"]["plugin.json"]["type"] == "blob"
+
+
+def test_record_baseline_frontmatter_absent_degrades_to_files(
+    tmp_repo: Path, tmp_path: Path
+) -> None:
+    ticket_dir = tmp_path / "runs" / "FT-1"
+    payload = diff_extract.record_baseline(
+        "implement", ticket_dir, tmp_repo, files=["a.py"], ticket="FT-1"
+    )
+    assert payload["planned_files"] == ["a.py"]
+
+
+def test_record_baseline_frontmatter_no_planned_key_degrades(
+    tmp_repo: Path, tmp_path: Path
+) -> None:
+    path = tmp_repo / ".flow" / "tickets" / "FT-1.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    ticket_frontmatter.update(path, {"status": "open"})
+    ticket_dir = tmp_path / "runs" / "FT-1"
+    payload = diff_extract.record_baseline(
+        "implement", ticket_dir, tmp_repo, files=["a.py"], ticket="FT-1"
+    )
+    assert payload["planned_files"] == ["a.py"]
+
+
+def test_record_baseline_frontmatter_non_list_planned_degrades(
+    tmp_repo: Path, tmp_path: Path
+) -> None:
+    path = tmp_repo / ".flow" / "tickets" / "FT-1.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    ticket_frontmatter.update(path, {"planned_files": "a-bare-string"})
+    ticket_dir = tmp_path / "runs" / "FT-1"
+    payload = diff_extract.record_baseline(
+        "implement", ticket_dir, tmp_repo, files=["a.py"], ticket="FT-1"
+    )
+    assert payload["planned_files"] == ["a.py"]
+
+
+def test_record_baseline_ticket_none_skips_frontmatter(tmp_repo: Path, tmp_path: Path) -> None:
+    # Even with a frontmatter file present, ticket=None (default) reads nothing.
+    _seed_frontmatter(tmp_repo, "FT-1", ["plugin.json"])
+    ticket_dir = tmp_path / "runs" / "FT-1"
+    payload = diff_extract.record_baseline("implement", ticket_dir, tmp_repo, files=["a.py"])
+    assert payload["planned_files"] == ["a.py"]
+
+
+def test_record_baseline_union_end_to_end_diff(tmp_repo: Path, tmp_path: Path) -> None:
+    # Regression (flow-7m8): frontmatter-only version file lands in implement.diff.
+    (tmp_repo / "plugin.json").write_text('{"version": "0.0.1"}\n', encoding="utf-8")
+    _git(["add", "plugin.json"], tmp_repo)
+    _git(["commit", "-m", "seed plugin.json"], tmp_repo)
+    _seed_frontmatter(tmp_repo, "FT-1", ["plugin.json"])
+    ticket_dir = tmp_path / "runs" / "FT-1"
+    diff_extract.record_baseline("implement", ticket_dir, tmp_repo, files=["a.py"], ticket="FT-1")
+    (tmp_repo / "plugin.json").write_text('{"version": "0.0.2"}\n', encoding="utf-8")
+    out = diff_extract.capture_implement_diff(ticket_dir, tmp_repo)
+    assert "plugin.json" in out.read_text(encoding="utf-8")
+
+
+def test_cli_record_baseline_unions_frontmatter(
+    tmp_repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Locks the cwd/.flow/tickets/<KEY>.md production path through the CLI.
+    _seed_frontmatter(tmp_repo, "FT-1", ["plugin.json", "marketplace.json"])
+    ticket_dir = tmp_path / "runs" / "FT-1"
+    rc = diff_extract.cli_main(
+        [
+            "record-baseline",
+            "--stage",
+            "implement",
+            "--ticket",
+            "FT-1",
+            "--ticket-dir",
+            str(ticket_dir),
+            "--files",
+            "a.py",
+            "--cwd",
+            str(tmp_repo),
+        ]
+    )
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["planned_files"] == ["a.py", "plugin.json", "marketplace.json"]
 
 
 # ─── capture-implement-diff ──────────────────────────────────────────────────
