@@ -342,6 +342,52 @@ def _resolve_base(base: str, main_root: Path, runner: Runner) -> str:
     return name or "origin/main"
 
 
+def _enforce_hot_floor(
+    *,
+    ticket: str,
+    base: str,
+    auto: bool,
+    planned_files: list[str] | None,
+    main_root: Path,
+) -> None:
+    """Code-enforced hot hard-floor (flow-aen).
+
+    An autonomous run — signaled by `--auto` OR a `@default` base (the load-bearing
+    autonomous base; the drain launches from the main checkout, so `--base` alone is
+    not a sufficient signal, hence both) — may NOT self-ship a hot change (a
+    guard/safety file, or a `hot`-labelled bead) with no maintainer decision on file.
+    This lives at the single shared bootstrap every self-approve path funnels through,
+    so it holds for the clean >=90% path too — verb-spec.md step 5 only carried the
+    floor in the adjudication/decided sub-branches, so a clean re-plan could slip a
+    hot change past it. Beads-only: `triage.decided` reads a `DECISION:`/
+    `TRIAGE-DECISION:` comment, a beads-native seam (a non-beads tracker has no such
+    record, so gating it would permanently block). Caller invokes this BEFORE
+    `git worktree add`, so a refusal leaves no orphan.
+    """
+    if not (planned_files and (auto or base.strip() == "@default")):
+        return
+    import triage
+
+    config, _code = triage._resolve_config(main_root)
+    if config is None or config.get("backend") != "beads":
+        return
+    # No runner threaded: BeadsAdapter (via decided) needs the keyword-only
+    # KwRunner protocol, not flow_worktree's positional Runner — passing `run`
+    # here throws inside decided's try/except and silently returns block-by-default,
+    # which would make the gate unable to read a recorded decision (the triage
+    # bypass would never clear). Let decided build its own kw_default_runner.
+    probe = triage.decided(config, ticket, planned_files)
+    if probe.get("is_hot") and not probe.get("decided"):
+        raise _ConfigError(
+            "autonomous run refuses to bootstrap a HOT change with no recorded "
+            "decision: " + ", ".join(planned_files) + " trips the is_hot_change "
+            "floor (a guard/safety file or a 'hot'-labelled bead) and carries no "
+            "DECISION:/TRIAGE-DECISION: comment. A hot change never self-approves "
+            f'unattended. Triage it (/flow triage {ticket} "<answer>") then re-run, '
+            "or run WITHOUT --auto so a human gates it at ExitPlanMode."
+        )
+
+
 def bootstrap(
     *,
     ticket: str,
@@ -356,6 +402,7 @@ def bootstrap(
     commit_summary: str | None = None,
     e2e_recipe: str | None = None,
     mise_trust: bool = True,
+    auto: bool = False,
     runner: Runner | None = None,
 ) -> dict:
     run = runner or _default_runner()
@@ -372,6 +419,14 @@ def bootstrap(
             "e2e handler is enabled in workspace.toml; pass --e2e-recipe "
             "(the approved plan must declare the e2e recipe/fixture, or 'skip: <reason>')"
         )
+
+    _enforce_hot_floor(
+        ticket=ticket,
+        base=base,
+        auto=auto,
+        planned_files=planned_files,
+        main_root=main_root,
+    )
 
     plan_text = plan_from.read_text(encoding="utf-8")
     worktree = _worktree_path(main_root, branch, worktree_override)
@@ -487,6 +542,13 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         "Seeds frontmatter e2e_recipe so the opted-in e2e stage runs unattended",
     )
     p.add_argument("--no-mise-trust", action="store_true")
+    p.add_argument(
+        "--auto",
+        action="store_true",
+        help="autonomous run: code-enforce the is_hot_change floor (refuse to bootstrap "
+        "a hot change with no recorded DECISION:/TRIAGE-DECISION:). A `@default` base "
+        "implies this too. Omit for interactive runs (ExitPlanMode is the human gate)",
+    )
 
     r = sub.add_parser("reap", help="Remove the local worktree + branch after a merge.")
     r.add_argument("--ticket", required=True)
@@ -538,6 +600,7 @@ def cli_main(argv: list[str]) -> int:
             commit_summary=args.commit_summary,
             e2e_recipe=args.e2e_recipe,
             mise_trust=not args.no_mise_trust,
+            auto=args.auto,
         )
     except _ConfigError as exc:
         sys.stderr.write(f"flow-worktree: {exc}\n")

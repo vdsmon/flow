@@ -14,6 +14,7 @@ import pytest
 
 import flow_worktree as fw
 import state
+import triage
 
 
 def _main_checkout(
@@ -656,3 +657,167 @@ def test_reap_cli_prints_receipt(tmp_path: Path, monkeypatch, capsys) -> None:
     assert rc == 0
     out = capsys.readouterr().out
     assert '"ticket": "FT-1"' in out and '"branch": "feature/FT-1-thing"' in out
+
+
+# ─── hot hard-floor (code-enforced, flow-aen) ───────────────────────────────
+# The is_hot_change floor lives here at the shared bootstrap so every autonomous
+# self-approve path (incl. clean >=90%, which step-5 prose never gated) is caught.
+# triage.decided's own logic is covered in test_triage.py; here we monkeypatch it
+# to isolate the signal detection (--auto / @default) + the beads backend gate.
+
+
+def _main_beads(tmp: Path, *, maintainer: bool = True) -> Path:
+    main = tmp / "main"
+    flow = main / ".flow"
+    flow.mkdir(parents=True)
+    (flow / ".initialized").touch()
+    lines = [
+        "[tracker]",
+        'backend = "beads"',
+        "[tracker.beads]",
+        'prefix = "flow"',
+        "shared_server = true",
+        "[pipeline]",
+        'stages = ["ticket", "plan", "implement", "commit", "reflect"]',
+        "[memory]",
+        'namespace = "flow"',
+        "compounding = true",
+    ]
+    if maintainer:
+        lines += ["[maintainer]", "self_target = true"]
+    (flow / "workspace.toml").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    (main / ".env").write_text("S=1\n", encoding="utf-8")
+    (main / ".claude").mkdir()
+    (main / ".claude" / "settings.json").write_text("{}", encoding="utf-8")
+    return main
+
+
+def _boot(tmp: Path, main: Path, *, base: str, auto: bool, planned, runner=None):
+    return fw.bootstrap(
+        ticket="flow-x1",
+        plan_from=_plan_file(tmp),
+        base=base,
+        branch="feature/flow-x1-thing",
+        main_root=main,
+        worktree_override=str(tmp / "wt"),
+        planned_files=planned,
+        auto=auto,
+        runner=runner or _fake_runner(main=main),
+    )
+
+
+def test_auto_hot_no_decision_refuses(tmp_path, monkeypatch):
+    main = _main_beads(tmp_path)
+    monkeypatch.setattr(triage, "decided", lambda *a, **k: {"is_hot": True, "decided": False})
+    calls: list = []
+    with pytest.raises(fw._ConfigError):
+        _boot(
+            tmp_path,
+            main,
+            base="main",
+            auto=True,
+            planned=["lease.py"],
+            runner=_fake_runner(main=main, calls=calls),
+        )
+    # refused BEFORE creating the worktree -> no orphan
+    assert not any(c[:3] == ["git", "worktree", "add"] for c in calls)
+    assert not (tmp_path / "wt").exists()
+
+
+def test_default_base_hot_no_decision_refuses(tmp_path, monkeypatch):
+    # the flow-6mx clean->90% path: --auto run passes @default, not args.auto
+    main = _main_beads(tmp_path)
+    monkeypatch.setattr(triage, "decided", lambda *a, **k: {"is_hot": True, "decided": False})
+    with pytest.raises(fw._ConfigError):
+        _boot(tmp_path, main, base="@default", auto=False, planned=["snapshot.py"])
+
+
+def test_auto_hot_with_decision_proceeds(tmp_path, monkeypatch):
+    main = _main_beads(tmp_path)
+    monkeypatch.setattr(triage, "decided", lambda *a, **k: {"is_hot": True, "decided": True})
+    res = _boot(tmp_path, main, base="main", auto=True, planned=["lease.py"])
+    assert res["ticket"] == "flow-x1"
+
+
+def test_auto_non_hot_proceeds(tmp_path, monkeypatch):
+    main = _main_beads(tmp_path)
+    monkeypatch.setattr(triage, "decided", lambda *a, **k: {"is_hot": False, "decided": False})
+    res = _boot(tmp_path, main, base="main", auto=True, planned=["some_helper.py"])
+    assert res["ticket"] == "flow-x1"
+
+
+def test_interactive_hot_not_gated(tmp_path, monkeypatch):
+    # no --auto, base is not @default -> the floor is the human at ExitPlanMode,
+    # so decided() must never even be consulted
+    main = _main_beads(tmp_path)
+
+    def _boom(*a, **k):
+        raise AssertionError("decided() must not run on the interactive path")
+
+    monkeypatch.setattr(triage, "decided", _boom)
+    res = _boot(tmp_path, main, base="main", auto=False, planned=["lease.py"])
+    assert res["ticket"] == "flow-x1"
+
+
+def test_non_beads_backend_skips_gate(tmp_path, monkeypatch):
+    # Jira has no DECISION-record seam; gating it would permanently block a hot
+    # --auto change. The gate must not consult decided() for a non-beads tracker.
+    main = _main_checkout(tmp_path, maintainer=True)  # backend = jira
+
+    def _boom(*a, **k):
+        raise AssertionError("decided() must not run for a non-beads tracker")
+
+    monkeypatch.setattr(triage, "decided", _boom)
+    res = _boot(tmp_path, main, base="@default", auto=True, planned=["lease.py"])
+    assert res["ticket"] == "flow-x1"
+
+
+def _fake_beads_adapter(payload):
+    """A BeadsAdapter stand-in whose `_run_json` returns canned `bd show` output,
+    so the REAL triage.decided runs (label/comment parsing, is_hot, decided) with
+    only the subprocess faked — the path the monkeypatch-decided tests skip."""
+
+    class _A:
+        def __init__(self, config, runner=None):
+            pass
+
+        def _run_json(self, args):
+            return payload
+
+    return _A
+
+
+def test_real_decided_hot_label_no_decision_refuses(tmp_path, monkeypatch):
+    # real decided(): hot LABEL (file is non-hot) + no decision comment -> refuse
+    main = _main_beads(tmp_path)
+    monkeypatch.setattr(
+        triage, "BeadsAdapter", _fake_beads_adapter([{"labels": ["evolve", "hot"], "comments": []}])
+    )
+    with pytest.raises(fw._ConfigError):
+        _boot(tmp_path, main, base="@default", auto=False, planned=["some_helper.py"])
+
+
+def test_real_decided_with_decision_clears_floor(tmp_path, monkeypatch):
+    # the triage bypass MUST work: a recorded DECISION clears the floor. Regression
+    # for the runner-protocol bug where a threaded positional runner threw inside
+    # decided() -> block-by-default -> the bypass could never clear.
+    main = _main_beads(tmp_path)
+    monkeypatch.setattr(
+        triage,
+        "BeadsAdapter",
+        _fake_beads_adapter(
+            [
+                {
+                    "labels": ["evolve", "hot"],
+                    "comments": [
+                        {
+                            "text": "DECISION: approved, ship it",
+                            "created_at": "2026-06-08T00:00:00Z",
+                        }
+                    ],
+                }
+            ]
+        ),
+    )
+    res = _boot(tmp_path, main, base="@default", auto=False, planned=["some_helper.py"])
+    assert res["ticket"] == "flow-x1"

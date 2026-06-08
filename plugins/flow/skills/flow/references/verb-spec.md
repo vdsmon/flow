@@ -46,7 +46,7 @@ Everything from the bootstrap onward is shared by the self-approve branch; the d
    On approval you return to normal mode.
 
 6. (Normal mode) Persist the approved plan and bootstrap the worktree.
-   The tail branches off whatever `--base` you pass. Interactive: branch off your integration branch (the example uses the current branch) — stacking on a feature branch is a feature. Autonomous (`--auto`): pass `--base @default` instead, so the run branches off the freshly-fetched default branch and never inherits the launcher's HEAD (see step 5's auto-approve branch).
+   The tail branches off whatever `--base` you pass. Interactive: branch off your integration branch (the example uses the current branch) — stacking on a feature branch is a feature. Autonomous (`--auto`): pass `--base @default` AND `--auto`, so the run branches off the freshly-fetched default branch (never inheriting the launcher's HEAD) and the bootstrap code-enforces the hot hard-floor (see step 5's auto-approve branch).
    ```bash
    PLAN=/tmp/flow-plan-$KEY.md   # write the approved plan text here (Write tool)
    python3 ${CLAUDE_SKILL_DIR}/scripts/flow_worktree.py create \
@@ -66,6 +66,7 @@ Everything from the bootstrap onward is shared by the self-approve branch; the d
    The bootstrap seeds state (plan pre-completed, ticket left pending), injects the plan, stamps `planned_files` + `commit_type` + `commit_summary` (+ `e2e_recipe` when given) into frontmatter (so the implement pre-hook, the commit stage, and the e2e stage never pause to ask the user — which is what lets the tail run unattended if you background it), points the worktree's memory store at this checkout's `.flow` (shared, so memory compounds across worktrees), copies gitignored config, and `mise trust`s the worktree.
    In a maintainer self-target repo, when `--planned-files` touches plugin code (any `plugins/flow/` path) the bootstrap auto-includes the two version-bump files (`plugin.json` + `marketplace.json`) in the stamped `planned_files`, so plugin-code tickets don't pay a post-implement reconcile for the version-bump invariant.
    If e2e is enabled and you omit `--e2e-recipe`, create exits 2 (`_ConfigError`) — go back to step 4 and settle the recipe.
+   **Hot hard-floor (code-enforced).** When the bootstrap is autonomous (`--auto`, or a `@default` base) on a beads tracker, create refuses (exit 2) if `--planned-files` trips `is_hot_change` (a guard/safety file, or a `hot`-labelled bead) and the bead carries no recorded `DECISION:`/`TRIAGE-DECISION:` comment. This is the floor's real enforcer: step 5's prose only carried it in the adjudication/decided sub-branches, so a clean re-plan could self-ship a hot change past it (flow-aen). On this refusal the auto path treats it as a hot block (defer-stem comment + `bd status blocked`, per step 5), exactly as if adjudication had blocked. Interactive runs are not gated here — `ExitPlanMode` is the human floor.
    Surface any `WARN` lines (e.g. mise trust failures — the tail would die on the first `mise run`).
 
 7. **Enter the worktree and continue the pipeline in this same session.**
