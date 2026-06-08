@@ -405,6 +405,34 @@ def test_select_pre_pr_live_run_is_inflight(tmp_path):
     assert out["live_runs"] == ["flow-x"]
 
 
+def test_select_trivial_non_hot_downshifts_to_sonnet(tmp_path):
+    ws = _marked_ws(tmp_path)
+    run, _ = _dispatch(ready=[_cand("flow-t", labels=["evolve", "tier:trivial"])])
+    out = es.select(ws, cap=5, concurrency=3, runner=run)
+    assert out["launch"] == ["flow-t"]
+    assert out["model_per_key"]["flow-t"] == "sonnet"
+
+
+def test_select_trivial_hot_never_downshifts(tmp_path):
+    # belt-and-suspenders: a mis-stamped tier:trivial+hot bead launches (single hot,
+    # no in-flight, so it takes the hot slot) but is ABSENT from model_per_key.
+    ws = _marked_ws(tmp_path)
+    run, _ = _dispatch(
+        ready=[_cand("flow-th", labels=["evolve", "tier:trivial", "hot"], blast="z.py")]
+    )
+    out = es.select(ws, cap=5, concurrency=3, runner=run)
+    assert "flow-th" in out["launch"]  # launched, so absence below is the guard, not a hold
+    assert "flow-th" not in out["model_per_key"]
+
+
+def test_select_plain_bead_no_downshift(tmp_path):
+    ws = _marked_ws(tmp_path)
+    run, _ = _dispatch(ready=[_cand("flow-p")])  # default labels carry no tier
+    out = es.select(ws, cap=5, concurrency=3, runner=run)
+    assert out["launch"] == ["flow-p"]
+    assert "flow-p" not in out["model_per_key"]
+
+
 def test_select_pre_pr_live_hot_blocks_second_hot(tmp_path):
     ws = _marked_ws(tmp_path)
     repo = es.resolve_maintainer_repo(ws)
