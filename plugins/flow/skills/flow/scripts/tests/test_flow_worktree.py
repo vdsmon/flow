@@ -770,3 +770,54 @@ def test_non_beads_backend_skips_gate(tmp_path, monkeypatch):
     monkeypatch.setattr(triage, "decided", _boom)
     res = _boot(tmp_path, main, base="@default", auto=True, planned=["lease.py"])
     assert res["ticket"] == "flow-x1"
+
+
+def _fake_beads_adapter(payload):
+    """A BeadsAdapter stand-in whose `_run_json` returns canned `bd show` output,
+    so the REAL triage.decided runs (label/comment parsing, is_hot, decided) with
+    only the subprocess faked — the path the monkeypatch-decided tests skip."""
+
+    class _A:
+        def __init__(self, config, runner=None):
+            pass
+
+        def _run_json(self, args):
+            return payload
+
+    return _A
+
+
+def test_real_decided_hot_label_no_decision_refuses(tmp_path, monkeypatch):
+    # real decided(): hot LABEL (file is non-hot) + no decision comment -> refuse
+    main = _main_beads(tmp_path)
+    monkeypatch.setattr(
+        triage, "BeadsAdapter", _fake_beads_adapter([{"labels": ["evolve", "hot"], "comments": []}])
+    )
+    with pytest.raises(fw._ConfigError):
+        _boot(tmp_path, main, base="@default", auto=False, planned=["some_helper.py"])
+
+
+def test_real_decided_with_decision_clears_floor(tmp_path, monkeypatch):
+    # the triage bypass MUST work: a recorded DECISION clears the floor. Regression
+    # for the runner-protocol bug where a threaded positional runner threw inside
+    # decided() -> block-by-default -> the bypass could never clear.
+    main = _main_beads(tmp_path)
+    monkeypatch.setattr(
+        triage,
+        "BeadsAdapter",
+        _fake_beads_adapter(
+            [
+                {
+                    "labels": ["evolve", "hot"],
+                    "comments": [
+                        {
+                            "text": "DECISION: approved, ship it",
+                            "created_at": "2026-06-08T00:00:00Z",
+                        }
+                    ],
+                }
+            ]
+        ),
+    )
+    res = _boot(tmp_path, main, base="@default", auto=False, planned=["some_helper.py"])
+    assert res["ticket"] == "flow-x1"

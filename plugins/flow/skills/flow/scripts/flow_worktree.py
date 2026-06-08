@@ -349,7 +349,6 @@ def _enforce_hot_floor(
     auto: bool,
     planned_files: list[str] | None,
     main_root: Path,
-    runner: Runner,
 ) -> None:
     """Code-enforced hot hard-floor (flow-aen).
 
@@ -372,7 +371,12 @@ def _enforce_hot_floor(
     config, _code = triage._resolve_config(main_root)
     if config is None or config.get("backend") != "beads":
         return
-    probe = triage.decided(config, ticket, planned_files, runner=runner)
+    # No runner threaded: BeadsAdapter (via decided) needs the keyword-only
+    # KwRunner protocol, not flow_worktree's positional Runner — passing `run`
+    # here throws inside decided's try/except and silently returns block-by-default,
+    # which would make the gate unable to read a recorded decision (the triage
+    # bypass would never clear). Let decided build its own kw_default_runner.
+    probe = triage.decided(config, ticket, planned_files)
     if probe.get("is_hot") and not probe.get("decided"):
         raise _ConfigError(
             "autonomous run refuses to bootstrap a HOT change with no recorded "
@@ -422,7 +426,6 @@ def bootstrap(
         auto=auto,
         planned_files=planned_files,
         main_root=main_root,
-        runner=run,
     )
 
     plan_text = plan_from.read_text(encoding="utf-8")
