@@ -5,7 +5,8 @@ import threading
 
 import pytest
 
-from machinery_edit import _load_payload, apply_edit, main
+import machinery_edit
+from machinery_edit import _current_branch, _load_payload, apply_edit, main
 
 
 @pytest.fixture
@@ -118,6 +119,70 @@ def test_refuse_empty_branch(skill_root):
     assert code == 2
     assert result["status"] == "refused"
     assert f.read_text() == "OLD\n"  # untouched
+
+
+def test_refuse_git_error_sentinel_caller(skill_root):
+    f = skill_root / "scripts" / "x.py"
+    _write(f, "OLD\n")
+    result, code = apply_edit(
+        skill_root, f, "OLD", "NEW", branch_resolver=lambda _: machinery_edit._GIT_ERROR
+    )
+    assert code == 2
+    assert result["status"] == "refused"
+    assert "failing closed" in result["reason"]
+    assert "git failed" in result["reason"]
+    assert f.read_text() == "OLD\n"  # untouched
+
+
+class _FakeProc:
+    def __init__(self, returncode, stdout="", stderr=""):
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = stderr
+
+
+def test_branch_read_fails_after_worktree_confirmed_refuses(skill_root, monkeypatch):
+    def fake_run(cmd, **kwargs):
+        if "--is-inside-work-tree" in cmd:
+            return _FakeProc(0, stdout="true\n")
+        if "--abbrev-ref" in cmd:
+            return _FakeProc(128, stderr="fatal: index file corrupt")
+        raise AssertionError(f"unexpected git call: {cmd}")
+
+    monkeypatch.setattr(machinery_edit.subprocess, "run", fake_run)
+    assert _current_branch(skill_root) == machinery_edit._GIT_ERROR
+
+
+def test_probe_oserror_refuses(skill_root, monkeypatch):
+    def fake_run(cmd, **kwargs):
+        raise OSError("git binary missing")
+
+    monkeypatch.setattr(machinery_edit.subprocess, "run", fake_run)
+    assert _current_branch(skill_root) == machinery_edit._GIT_ERROR
+
+
+def test_probe_unknown_nonzero_refuses(skill_root, monkeypatch):
+    def fake_run(cmd, **kwargs):
+        if "--is-inside-work-tree" in cmd:
+            return _FakeProc(128, stderr="fatal: detected dubious ownership")
+        raise AssertionError(f"unexpected git call: {cmd}")
+
+    monkeypatch.setattr(machinery_edit.subprocess, "run", fake_run)
+    assert _current_branch(skill_root) == machinery_edit._GIT_ERROR
+
+
+def test_non_repo_dir_allows(tmp_path):
+    assert _current_branch(tmp_path) is None
+
+
+def test_clean_false_allows(skill_root, monkeypatch):
+    def fake_run(cmd, **kwargs):
+        if "--is-inside-work-tree" in cmd:
+            return _FakeProc(0, stdout="false\n")
+        raise AssertionError(f"unexpected git call: {cmd}")
+
+    monkeypatch.setattr(machinery_edit.subprocess, "run", fake_run)
+    assert _current_branch(skill_root) is None
 
 
 def test_empty_old_is_error(skill_root):
