@@ -1,0 +1,323 @@
+from __future__ import annotations
+
+import json
+import os
+
+import evolve_session_cleanup as esc
+import lease
+
+NOW = "2026-06-08T22:00:00Z"
+NOW_EPOCH = 1780956000.0  # epoch of NOW (UTC)
+
+
+# ─── fixtures ────────────────────────────────────────────────────────────────
+
+
+def _worktree_cwd(repo, key, slug="wip"):
+    return repo.parent / f"{repo.name}.worktrees" / f"feature-{key}-{slug}"
+
+
+def _run_dir(cwd, key):
+    return cwd / ".flow" / "runs" / key
+
+
+def _write_lease(run_dir, *, expired: bool = False, corrupt: bool = False) -> None:
+    run_dir.mkdir(parents=True, exist_ok=True)
+    if corrupt:
+        lease.run_lock_path(run_dir).write_text("{not json", encoding="utf-8")
+        return
+    now = "2020-01-01T00:00:00Z" if expired else NOW
+    ttl = 1 if expired else 3600
+    lease.acquire(
+        run_dir,
+        "run-test",
+        ttl,
+        now,
+        stage="reflect",
+        current_boot="boot-A",
+        hostname="host-1",
+        cwd=str(run_dir),
+    )
+
+
+_transcript_counter = [0]
+
+
+def _transcript(tmp_path, *, fresh: bool) -> str:
+    """A transcript file whose mtime is fresh (just-now) or idle (well past threshold).
+
+    Each call gets a unique filename so an overridden default never clobbers the
+    mtime of a transcript an earlier call set.
+    """
+    _transcript_counter[0] += 1
+    path = tmp_path / f"transcript-{_transcript_counter[0]}.jsonl"
+    path.write_text("{}\n", encoding="utf-8")
+    mtime = NOW_EPOCH - 5 if fresh else NOW_EPOCH - 10_000
+    os.utime(path, (mtime, mtime))
+    return str(path)
+
+
+def _record(repo, tmp_path, *, key="flow-abc", **overrides):
+    # a drain-launched bg run records cwd == repo root and the key in `intent`
+    cwd = overrides.pop("cwd", None) or str(repo)
+    intent = overrides.pop("intent", None)
+    if intent is None:
+        intent = f"/flow {key} --auto"
+    defaults = dict(
+        job_id="abc12345",
+        job_dir=str(tmp_path / "jobs" / "abc12345"),
+        session_id="abc12345-0000-0000-0000-000000000000",
+        state="done",
+        tempo="idle",
+        cwd=cwd,
+        intent=intent,
+        link_scan_path=_transcript(tmp_path, fresh=False),
+    )
+    defaults.update(overrides)
+    return esc.JobRecord(**defaults)
+
+
+def _classify(repo, records, *, self_job=None, status="closed", threshold=300):
+    return esc.classify(
+        records,
+        repo,
+        NOW,
+        self_job=self_job,
+        idle_threshold_secs=threshold,
+        bead_status=lambda key: status,
+    )
+
+
+def _setup_happy(tmp_path):
+    """A repo + one fully-qualifying record (terminal bead supplied by the caller).
+
+    The lease is EXPIRED (session ended) and the transcript is idle, so the only
+    remaining gate is the bead status the caller chooses.
+    """
+    repo = tmp_path / "flow"
+    repo.mkdir()
+    rec = _record(repo, tmp_path)
+    _write_lease(_run_dir(_worktree_cwd(repo, "flow-abc"), "flow-abc"), expired=True)
+    return repo, rec
+
+
+# ─── classify core — happy path + one negative per guard ─────────────────────
+
+
+def test_happy_path_terminal_bead_is_stoppable(tmp_path):
+    repo, rec = _setup_happy(tmp_path)
+    for status in ("closed", "blocked", "deferred"):
+        out = _classify(repo, [rec], status=status)
+        assert len(out["stoppable"]) == 1, status
+        entry = out["stoppable"][0]
+        assert entry["session_id"] == rec.session_id
+        assert entry["key"] == "flow-abc"
+        assert entry["cwd"] == rec.cwd
+        assert entry["job_dir"] == rec.job_dir
+
+
+def test_bead_open_skips(tmp_path):
+    repo, rec = _setup_happy(tmp_path)
+    out = _classify(repo, [rec], status="open")
+    assert out["stoppable"] == []
+    assert out["skipped"][0]["reason"].startswith("bead flow-abc not terminal")
+
+
+def test_lease_live_skips(tmp_path):
+    repo, rec = _setup_happy(tmp_path)
+    _write_lease(_run_dir(_worktree_cwd(repo, "flow-abc"), "flow-abc"))  # live (not expired)
+    out = _classify(repo, [rec])
+    assert out["stoppable"] == []
+    assert out["skipped"][0]["reason"] == "lease is live"
+
+
+def test_lease_corrupt_skips(tmp_path):
+    repo = tmp_path / "flow"
+    repo.mkdir()
+    rec = _record(repo, tmp_path)
+    _write_lease(_run_dir(_worktree_cwd(repo, "flow-abc"), "flow-abc"), corrupt=True)
+    out = _classify(repo, [rec])
+    assert out["stoppable"] == []
+    assert out["skipped"][0]["reason"] == "lease is corrupt"
+
+
+def test_fresh_transcript_mtime_skips(tmp_path):
+    # state=done, tempo=idle, bead terminal, lease expired — but the transcript was
+    # just written → still mid-reflect (tempo lags) → skip. The load-bearing case.
+    repo = tmp_path / "flow"
+    repo.mkdir()
+    rec = _record(repo, tmp_path, link_scan_path=_transcript(tmp_path, fresh=True))
+    _write_lease(_run_dir(_worktree_cwd(repo, "flow-abc"), "flow-abc"), expired=True)
+    out = _classify(repo, [rec])
+    assert out["stoppable"] == []
+    assert out["skipped"][0]["reason"] == "transcript not provably idle"
+
+
+def test_missing_transcript_path_skips(tmp_path):
+    repo = tmp_path / "flow"
+    repo.mkdir()
+    rec = _record(repo, tmp_path, link_scan_path="")
+    _write_lease(_run_dir(_worktree_cwd(repo, "flow-abc"), "flow-abc"), expired=True)
+    out = _classify(repo, [rec])
+    assert out["stoppable"] == []
+    assert out["skipped"][0]["reason"] == "transcript not provably idle"
+
+
+def test_unreadable_transcript_path_skips(tmp_path):
+    repo = tmp_path / "flow"
+    repo.mkdir()
+    rec = _record(repo, tmp_path, link_scan_path=str(tmp_path / "does-not-exist.jsonl"))
+    _write_lease(_run_dir(_worktree_cwd(repo, "flow-abc"), "flow-abc"), expired=True)
+    out = _classify(repo, [rec])
+    assert out["stoppable"] == []
+    assert out["skipped"][0]["reason"] == "transcript not provably idle"
+
+
+def test_tempo_not_idle_skips(tmp_path):
+    repo, _ = _setup_happy(tmp_path)
+    rec = _record(tmp_path / "flow", tmp_path, tempo="active")
+    out = _classify(repo, [rec])
+    assert out["stoppable"] == []
+    assert "state floor not met" in out["skipped"][0]["reason"]
+
+
+def test_state_not_terminal_skips(tmp_path):
+    repo, _ = _setup_happy(tmp_path)
+    rec = _record(tmp_path / "flow", tmp_path, state="working")
+    out = _classify(repo, [rec])
+    assert out["stoppable"] == []
+    assert "state floor not met" in out["skipped"][0]["reason"]
+
+
+def test_intent_not_a_flow_launch_skips(tmp_path):
+    # a foreign / non-flow job (e.g. intent "ft-1121") has no /flow <key> --auto
+    repo = tmp_path / "flow"
+    repo.mkdir()
+    rec = _record(repo, tmp_path, intent="ft-1121 status check")
+    out = _classify(repo, [rec])
+    assert out["stoppable"] == []
+    assert out["skipped"][0]["reason"] == "intent is not a /flow <key> --auto launch"
+
+
+def test_cwd_not_repo_root_skips(tmp_path):
+    # a flow job whose cwd is another project (not THIS repo's root)
+    repo = tmp_path / "flow"
+    repo.mkdir()
+    rec = _record(repo, tmp_path, cwd=str(tmp_path / "other-project"))
+    out = _classify(repo, [rec])
+    assert out["stoppable"] == []
+    assert out["skipped"][0]["reason"] == "cwd is not this repo's root"
+
+
+def test_absent_worktree_proceeds(tmp_path):
+    # the worktree was already reaped (common post-reap case) → lease "absent"
+    # (non-live) → cleanup PROCEEDS, not skip. Treating absent as skip would mean
+    # cleanup never fires once reap tears down the worktree.
+    repo = tmp_path / "flow"
+    repo.mkdir()
+    rec = _record(repo, tmp_path)  # no lease / worktree written for flow-abc
+    out = _classify(repo, [rec], status="closed")
+    assert len(out["stoppable"]) == 1
+    assert "lease absent" in out["stoppable"][0]["reason"]
+
+
+def test_self_job_skips_even_when_qualified(tmp_path):
+    repo, rec = _setup_happy(tmp_path)
+    out = _classify(repo, [rec], self_job=rec.job_id)
+    assert out["stoppable"] == []
+    assert out["skipped"][0]["reason"] == "self-job"
+
+
+# ─── CLI ─────────────────────────────────────────────────────────────────────
+
+
+def _jobs_root_with(tmp_path, *records_json):
+    root = tmp_path / "jobs"
+    root.mkdir(parents=True, exist_ok=True)
+    for i, payload in enumerate(records_json):
+        d = root / f"{i:08x}"  # an 8-hex job dir basename, distinct per record
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "state.json").write_text(payload, encoding="utf-8")
+    return root
+
+
+def test_cli_non_maintainer_exit_4(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr("maintainer._global_config_path", lambda: tmp_path / "absent.toml")
+    plain = tmp_path / "proj"
+    (plain / ".flow").mkdir(parents=True)
+    (plain / ".flow" / "workspace.toml").write_text(
+        '[tracker]\nbackend = "beads"\n', encoding="utf-8"
+    )
+    rc = esc.cli_main(["--workspace-root", str(plain), "--jobs-root", str(tmp_path / "jobs")])
+    assert rc == 4
+    assert "nothing to clean" in capsys.readouterr().err
+
+
+def test_cli_happy_path_prints_expected_json(tmp_path, monkeypatch, capsys):
+    repo = tmp_path / "flow"
+    repo.mkdir()
+    monkeypatch.setattr(esc, "resolve_maintainer_repo", lambda ws: repo)
+    monkeypatch.setattr(esc, "_bd_status_lookup", lambda: lambda key: "closed")
+
+    # the lease lives in the worktree; the job records cwd == repo root + the key in intent
+    _write_lease(_run_dir(_worktree_cwd(repo, "flow-abc"), "flow-abc"), expired=True)
+    transcript = _transcript(tmp_path, fresh=False)
+    state = json.dumps(
+        {
+            "state": "done",
+            "tempo": "idle",
+            "cwd": str(repo),
+            "intent": "/flow flow-abc --auto",
+            "sessionId": "deadbeef-0000-0000-0000-000000000000",
+            "linkScanPath": transcript,
+        }
+    )
+    # an empty/malformed sibling state.json must be skipped, not crash enumeration
+    jobs_root = _jobs_root_with(tmp_path, state, "", "{not json")
+
+    rc = esc.cli_main(["--workspace-root", str(repo), "--jobs-root", str(jobs_root), "--now", NOW])
+    assert rc == 0
+    out = json.loads(capsys.readouterr().out)
+    assert len(out["stoppable"]) == 1
+    entry = out["stoppable"][0]
+    assert entry["session_id"] == "deadbeef-0000-0000-0000-000000000000"
+    assert entry["key"] == "flow-abc"
+
+
+def test_cli_self_job_threads_through(tmp_path, monkeypatch, capsys):
+    repo = tmp_path / "flow"
+    repo.mkdir()
+    monkeypatch.setattr(esc, "resolve_maintainer_repo", lambda ws: repo)
+    monkeypatch.setattr(esc, "_bd_status_lookup", lambda: lambda key: "closed")
+
+    _write_lease(_run_dir(_worktree_cwd(repo, "flow-abc"), "flow-abc"), expired=True)
+    transcript = _transcript(tmp_path, fresh=False)
+    state = json.dumps(
+        {
+            "state": "done",
+            "tempo": "idle",
+            "cwd": str(repo),
+            "intent": "/flow flow-abc --auto",
+            "sessionId": "deadbeef-0000-0000-0000-000000000000",
+            "linkScanPath": transcript,
+        }
+    )
+    jobs_root = _jobs_root_with(tmp_path, state)
+    self_basename = sorted(p.name for p in jobs_root.iterdir())[0]
+
+    rc = esc.cli_main(
+        [
+            "--workspace-root",
+            str(repo),
+            "--jobs-root",
+            str(jobs_root),
+            "--now",
+            NOW,
+            "--self-job",
+            self_basename,
+        ]
+    )
+    assert rc == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["stoppable"] == []
+    assert out["skipped"][0]["reason"] == "self-job"
