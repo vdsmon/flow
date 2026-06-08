@@ -54,11 +54,23 @@ def test_create_bead_targets_flow_beads(tmp_path):
     assert key == "flow-x1"
     args, cwd = calls[0]
     assert cwd == repo.resolve()  # bd runs in the flow repo, not the run's cwd
-    assert args[:3] == ["bd", "create", "title"]
+    assert args[:2] == ["bd", "create"]
+    assert "--title=title" in args
     assert "--json" in args
     assert args[args.index("--type") + 1] == "bug"
     assert args[args.index("--labels") + 1] == "evolve,machinery"
     assert args[args.index("--parent") + 1] == "flow-aut"
+
+
+def test_create_bead_summary_with_leading_dashes(tmp_path):
+    repo = _marked_ws(tmp_path)
+    run, calls = _runner()
+    key = fbc.create_bead(repo, "--auto leads", "body", type="task", runner=run)
+    assert key == "flow-x1"
+    create_args = calls[-1][0]
+    assert "--title=--auto leads" in create_args
+    # the summary must NOT appear as a bare leading positional
+    assert create_args[2] != "--auto leads"
 
 
 def test_create_bead_not_maintainer_raises(tmp_path, monkeypatch):
