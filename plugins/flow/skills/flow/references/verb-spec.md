@@ -136,7 +136,13 @@ It replaces interactive steps 1-5. The self-approve branch then runs shared step
    Capture the full response.
    Then get the same INDEPENDENT confidence rating as interactive step 4 — call `advisor()` (or a `general-purpose` `Agent` if advisor is absent) over the captured plan. Its score feeds the branch below.
 
-5. **Branch on the returned block:**
+5. **Branch on the returned block.** Whether a judgment fork defers or gets adjudicated depends on the `advisor_adjudicates` flag:
+   ```bash
+   ADJ=$(python3 ${CLAUDE_SKILL_DIR}/scripts/triage.py adjudicate-enabled --workspace-root .)
+   ```
+   `ADJ=false` (the default — every user project, where the human-decision keystone holds) → follow the **flag-off branch** directly below, unchanged. `ADJ=true` (maintainer opt-in, mirrors `[evolve] auto_merge_hot`) → skip to the **advisor-adjudication branch** after it.
+
+   **Flag-off branch (`advisor_adjudicates = false`, default):**
    - **`NONE` (clean plan) AND the assessor rated >=90%** → auto-approve, no human gate.
      Derive `--planned-files` from the plan's "Files to change" list — which (per stage-plan.md) already includes any anticipated NEW test file paths the TDD implement will create, so the stamped `planned_files` covers them — and `--commit-type` + `--commit-summary` from the Goal.
      And mind drift: any `planned_files` entry the plan stamped because of a file's CURRENT content (a content/drift finding — "this row/line is stale, so touch this file") is advisory the same way a version-bump number is (step 6), since it was read pre-bootstrap from the launcher checkout, which can lag `origin/main`. Before stamping it, re-verify the finding against the base `--base @default` will resolve to — `git fetch origin`, then `git show origin/<default-branch>:<path>` to re-read the cited content there — and DROP the entry if that base already has it fixed. This keeps the drift-vs-base discipline even though the self-derive shortcut skips the `Plan` subagent (where the plan would otherwise be re-grounded).
@@ -168,6 +174,31 @@ It replaces interactive steps 1-5. The self-approve branch then runs shared step
          ```
          Then emit a terse `blocked <KEY>: <reason>` line and STOP. No bootstrap, no worktree, no PR. A `blocked` bead drops out of `bd ready` (no relaunch loop) and surfaces in `/flow triage`.
        - **`is_hot` false** (clean change) → **proceed best-effort**: self-approve the strongest plan and go to shared step 6 (bootstrap), exactly as the clean-and-≥90% branch above. A clean decided bead self-ships, CI-gated only — wrong-but-compiling can land for clean decided beads.
+
+   **Advisor-adjudication branch (`advisor_adjudicates = true`, maintainer opt-in):**
+   Same clean self-approve, but a judgment fork is RULED ON by a strong independent mind instead of parked, and the flat 90% number stops being a hard cliff — it folds into the ruling.
+   - **`NONE` (clean plan) AND the assessor rated >=90%** → auto-approve exactly as the flag-off clean branch (derive `--planned-files` + `--commit-*`, re-verify any drift-stamped entry against `@default`, base off `--base @default`, go to shared step 6). No adjudication needed.
+   - **Otherwise** (clarifying questions, a sub-90% rating, or a `BAIL`) → a judgment fork. The decided short-circuit still wins first: if step 4's probe reported `decided`, follow the flag-off **Decided** sub-branch above (re-probe hotness; `is_hot` true → block, clean → proceed) — a recorded maintainer decision outranks a fresh advisor ruling. Otherwise adjudicate:
+     1. **Confidence floor.** If the assessor's score is below **70%**, defer immediately via the flag-off defer-and-exit recipe — the plan is too shaky to rule on; don't spend an adjudication call. STOP.
+     2. **Get a ship verdict from a strong, independent mind.** Prefer the `advisor` tool. Hand it the drafted plan + the confidence score with its Proven/Inferred bullets, and ask for a verdict on **two SEPARATE axes** — "which option is right?" and, independently, "is it safe to auto-ship?" — returning one of `proceed` / `block` / `defer` plus a one-paragraph ruling. Frame "safe to auto-ship" explicitly on **blast-radius** (how many call sites / how broadly the touched code is used), **reversibility** (can a wrong landing be reverted cleanly), and **CI-coverage** (would CI catch a mistake). This is what keeps file-path hotness from standing in for blast-radius risk: a change can be non-hot yet broad-blast (e.g. a widely-imported helper), and the verdict must catch that. If `advisor` is not in this harness (a `ToolSearch` for it returns nothing), spawn an independent strong-tier `Agent` instead — `model: opus`, fresh context, a refute-style rubric ("default to `block`/`defer` unless the call is clearly right AND clearly safe") — a fresh-context strong agent is genuinely independent, NOT the same-tier self-scoring the step-4 rubric warns against. If neither is reachable, defer (flag-off recipe). STOP.
+     3. **`is_hot_change` hard floor.** Re-probe hotness with the plan's planned-files (`triage.py decided --workspace-root . --key "$KEY" --files "<...>"` reads `is_hot`). A hot change can NEVER `proceed` — downgrade any `proceed` on a hot change to `block`. Never blind-ship a guard/lease/safety change, regardless of the verdict.
+     4. **Route the verdict:**
+       - **`proceed`** → record the ruling as an authoritative decision the way a maintainer triage would, then self-approve and go to shared step 6:
+         ```bash
+         python3 ${CLAUDE_SKILL_DIR}/scripts/tracker_cli.py --workspace-root . comment \
+           --key "$KEY" \
+           --text "DECISION: (advisor) <the ruling — which option, and why it is safe to auto-ship>"
+         ```
+         The `DECISION:` stem makes a relaunch idempotent (step 4's probe reads it as `decided`, so it never re-asks); the `(advisor)` marker lets `/flow triage` surface it for optional maintainer review. Then derive `--planned-files` + `--commit-*`, re-verify drift against `@default`, and base off `--base @default`, exactly as the clean branch.
+       - **`block`** → rulable, but unsafe to auto-ship (broad blast radius / hard to reverse / hot). Comment with the DEFER-stem (NOT a `DECISION:` comment) and set status `blocked`:
+         ```bash
+         python3 ${CLAUDE_SKILL_DIR}/scripts/tracker_cli.py --workspace-root . comment \
+           --key "$KEY" \
+           --text "flow --auto could not self-approve: advisor ruled <which option> but blocked auto-ship — <why unsafe: blast radius / irreversibility / hot>. Judgment settled, this is a safety hold. To unstick: answer here, reopen (status->open) and re-run WITHOUT --auto, or merge by hand."
+         bd update "$KEY" --status blocked
+         ```
+         Then emit a terse `blocked <KEY>: <reason>` line and STOP. **Critical: a `block` MUST NOT write a `DECISION:` comment.** If it did, a relaunch's probe would read `decided` and — for a non-hot change — route straight to the Decided sub-branch's `proceed`, silently defeating the block. The whole reason the verdict is three-way (not "proceed unless hot") is to catch the non-hot-but-unsafe case (the broad-blast helper); writing a decision for it throws that away.
+       - **`defer`** → needs maintainer-only information the advisor cannot supply, or the advisor itself is not confident. Defer via the flag-off defer-and-exit recipe. STOP.
 
    The two outcomes: (a) **self-approve** → shared bootstrap + enter-worktree (steps 6-7), then the tail; or (b) **cannot self-approve** → defer-and-exit (no bootstrap, no worktree, no tail).
    `--auto`'s only effect on the self-approve branch is skipping the interactive plan gate; it does not change how the tail runs. As always, whether the tail runs unattended is the user's separate `/bg` choice (see step 7), independent of `--auto`.

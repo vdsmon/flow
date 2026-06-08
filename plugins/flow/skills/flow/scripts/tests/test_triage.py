@@ -475,3 +475,89 @@ def test_is_hot_change_unit() -> None:
     assert triage.is_hot_change([]) is False
     for guard in triage._GUARD_FILES:
         assert triage.is_hot_change([f"some/path/{guard}"]) is True
+
+
+# --- advisor_adjudicates flag + adjudicate-enabled CLI ------------------------
+
+
+def _seed_evolve(root: Path, body: str) -> None:
+    """Append an `[evolve]` section to the seeded workspace.toml."""
+    path = root / ".flow" / "workspace.toml"
+    path.write_text(path.read_text(encoding="utf-8") + body, encoding="utf-8")
+
+
+def test_advisor_adjudicates_true(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path, backend="beads")
+    _seed_evolve(tmp_path, "\n[evolve]\nadvisor_adjudicates = true\n")
+    assert triage.advisor_adjudicates(tmp_path) is True
+
+
+def test_advisor_adjudicates_false_when_key_absent(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path, backend="beads")
+    _seed_evolve(tmp_path, "\n[evolve]\nauto_merge_hot = true\n")
+    assert triage.advisor_adjudicates(tmp_path) is False
+
+
+def test_advisor_adjudicates_false_when_section_absent(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path, backend="beads")
+    assert triage.advisor_adjudicates(tmp_path) is False
+
+
+def test_advisor_adjudicates_false_when_explicitly_false(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path, backend="beads")
+    _seed_evolve(tmp_path, "\n[evolve]\nadvisor_adjudicates = false\n")
+    assert triage.advisor_adjudicates(tmp_path) is False
+
+
+def test_advisor_adjudicates_false_when_no_workspace(tmp_path: Path) -> None:
+    # absent workspace.toml -> WorkspaceConfigError -> False
+    assert triage.advisor_adjudicates(tmp_path) is False
+
+
+def test_adjudicate_enabled_cli_prints_true(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path, backend="beads")
+    _seed_evolve(tmp_path, "\n[evolve]\nadvisor_adjudicates = true\n")
+    code, out, _ = _run(["adjudicate-enabled", "--workspace-root", str(tmp_path)], _FakeRunner([]))
+    assert code == 0
+    assert out.strip() == "true"
+
+
+def test_adjudicate_enabled_cli_prints_false(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path, backend="beads")
+    code, out, _ = _run(["adjudicate-enabled", "--workspace-root", str(tmp_path)], _FakeRunner([]))
+    assert code == 0
+    assert out.strip() == "false"
+
+
+def test_render_table_tags_advisor_rows() -> None:
+    rows = [
+        {
+            "key": "flow-a",
+            "status": "blocked",
+            "title": "T",
+            "open_question": "flow --auto could not self-approve: advisor ruled X (advisor) blocked auto-ship",
+        },
+        {
+            "key": "flow-b",
+            "status": "deferred",
+            "title": "T2",
+            "open_question": "needs a human answer",
+        },
+    ]
+    table = triage.render_table(rows)
+    a_line = next(line for line in table.splitlines() if line.startswith("flow-a"))
+    b_line = next(line for line in table.splitlines() if line.startswith("flow-b"))
+    assert "blocked (advisor)" in a_line
+    assert "(advisor)" not in b_line
+
+
+def test_recorded_decision_accepts_advisor_stem() -> None:
+    comments = [
+        {
+            "text": "DECISION: (advisor) ship option A; blast radius is contained",
+            "created_at": "2026-06-08T10:00:00Z",
+        }
+    ]
+    assert (
+        triage._recorded_decision(comments) == "(advisor) ship option A; blast radius is contained"
+    )

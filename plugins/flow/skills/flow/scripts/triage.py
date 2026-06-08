@@ -23,6 +23,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from _workspace import WorkspaceConfigError, load_workspace_toml
 from tracker_beads import BeadsAdapter
 from tracker_cli import _read_tracker_config, _WorkspaceConfigError
 
@@ -62,6 +63,25 @@ _NO_COMMENT = "(no open-question comment)"
 
 def is_hot_change(files: list[str]) -> bool:
     return any(Path(f).name in _GUARD_FILES for f in files)
+
+
+def advisor_adjudicates(workspace_root: Path) -> bool:
+    """`[evolve] advisor_adjudicates` from workspace.toml (bool); default False.
+
+    Maintainer opt-in (mirrors `evolve_self_merge._auto_merge_hot`): when on, the
+    `--auto` path escalates a judgment fork to the advisor for a ship/block/defer
+    ruling instead of deferring. Absent key or section -> False, so a user project
+    (its own init'd workspace.toml) keeps the human-decision keystone.
+    """
+    try:
+        config = load_workspace_toml(workspace_root)
+    except WorkspaceConfigError:
+        return False
+    section = config.get("evolve")
+    if not isinstance(section, dict):
+        return False
+    value = section.get("advisor_adjudicates")
+    return value if isinstance(value, bool) else False
 
 
 def _recorded_decision(comments: list[Any]) -> str | None:
@@ -211,10 +231,16 @@ def render_table(rows: list[dict[str, Any]]) -> str:
     headers = ["KEY", "STATUS", "TITLE", "OPEN QUESTION"]
     table = [headers]
     for r in rows:
+        status = str(r.get("status", ""))
+        # surface advisor-minted rulings so a maintainer can spot them for
+        # optional review (a `block` verdict lands the ruling in the defer-stem
+        # comment, tagged `(advisor)`).
+        if "(advisor)" in str(r.get("open_question", "")):
+            status = f"{status} (advisor)"
         table.append(
             [
                 str(r["key"]),
-                str(r.get("status", "")),
+                status,
                 _truncate(str(r["title"]), 40),
                 _truncate(str(r["open_question"])),
             ]
@@ -269,6 +295,12 @@ def _cmd_decided(args: argparse.Namespace, runner: Any) -> int:
     return 0
 
 
+def _cmd_adjudicate_enabled(args: argparse.Namespace) -> int:
+    workspace_root = Path(args.workspace_root).expanduser().resolve()
+    sys.stdout.write("true\n" if advisor_adjudicates(workspace_root) else "false\n")
+    return 0
+
+
 def _default_to_list(argv: list[str]) -> list[str]:
     """Prepend `list` when the first non-flag token is not a known subcommand.
 
@@ -282,7 +314,7 @@ def _default_to_list(argv: list[str]) -> list[str]:
             return argv
         if tok.startswith("-"):
             continue
-        if tok in ("list", "decided"):
+        if tok in ("list", "decided", "adjudicate-enabled"):
             return argv
         break
     return ["list", *argv]
@@ -301,10 +333,18 @@ def cli_main(argv: list[str], runner: Any = None) -> int:
     p_decided.add_argument("--key", required=True)
     p_decided.add_argument("--files", default=None)
 
+    p_adj = sub.add_parser(
+        "adjudicate-enabled",
+        help="print whether [evolve] advisor_adjudicates is on (true/false)",
+    )
+    p_adj.add_argument("--workspace-root", default=".")
+
     args = parser.parse_args(_default_to_list(argv))
 
     if args.command == "decided":
         return _cmd_decided(args, runner)
+    if args.command == "adjudicate-enabled":
+        return _cmd_adjudicate_enabled(args)
     return _cmd_list(args, runner)
 
 
@@ -313,6 +353,7 @@ if __name__ == "__main__":
 
 
 __all__ = [
+    "advisor_adjudicates",
     "cli_main",
     "collect",
     "decided",

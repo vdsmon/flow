@@ -22,6 +22,7 @@ self_target = true
 cap = 10
 concurrency = 8
 auto_merge_hot = true
+advisor_adjudicates = true
 
 # This repo opens PRs ready for review, not draft (maintainer preference). The
 # default is open; a workspace that wants draft PRs sets draft = true here.
