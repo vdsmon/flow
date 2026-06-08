@@ -13,6 +13,20 @@ PR_URL=$(grep -oE '^PR_URL=.*' "$TICKET_DIR/stages/create_pr.out" | head -1 | cu
 PR_ID=$(printf '%s' "$PR_URL" | grep -oE '[0-9]+$')
 ```
 
+**Already-merged short-circuit.** Before re-reading CI or asking the gate, check the PR's actual merge state — a `hot` leaf PR can auto-merge (via the evolve janitor) before this run's own merge stage runs, and the eligibility gate below does NOT read PR merge state (it decides from CI-green + self-target + evolve-bead + hot-policy), so an already-MERGED PR with still-green CI would return `action: "merge"`, burn a §2 guard review on a merged PR, then trip §3's `@{u}` fatal once origin has deleted the branch. The check sits here, right after PR_ID is in hand, so it short-circuits all of that. Read the state with raw `gh` (the established precedent for this inline, self-target-only GitHub stage — §2 already uses `gh pr diff`; `forge_cli detect-pr` filters `--state open` and cannot see an already-MERGED known PR_ID):
+
+```bash
+PR_STATE=$(gh pr view "$PR_ID" --json state -q .state)
+if [ "$PR_STATE" = "MERGED" ]; then
+  echo "PR #$PR_ID already merged — nothing to do"
+  bd close "$KEY" --reason "PR #$PR_ID already merged" || true   # may already be CLOSED by the auto-merge; must not fail the stage
+  # STATUS=completed; STOP — skip the CI re-read, the eligibility gate, §2, and §3.
+  # No delete-branch: origin already removed the branch; worktree teardown stays with the drain reap (§3's division of labor).
+fi
+```
+
+On `MERGED`, set `STATUS=completed` and STOP here — do not fall through to the CI re-read, the eligibility gate, §2, or §3. Scope this short-circuit to `MERGED` ONLY. A `CLOSED`-not-merged (abandoned) PR is NOT handled here — it falls through to the §3 push-state guard unchanged.
+
 Re-confirm CI is still green (it was `review_loop`'s terminal, but re-read defensively — nothing should have changed it):
 
 ```bash
