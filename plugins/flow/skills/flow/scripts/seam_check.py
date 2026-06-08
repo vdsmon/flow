@@ -20,6 +20,7 @@ unknown subcommand, or missing script). WARN lines never fail the build.
 from __future__ import annotations
 
 import argparse
+import ast
 import re
 import subprocess
 import sys
@@ -374,6 +375,111 @@ def scripts_missing_from_registry_descriptions(
     return {name for name in named if not (scripts_dir / name).is_file()}
 
 
+def _local_stems(scripts_dir: Path) -> set[str]:
+    """Stems of every non-test *.py basename in scripts_dir (the resolvable modules)."""
+    return {
+        p.stem
+        for p in scripts_dir.glob("*.py")
+        if not p.name.startswith("test") and p.name != "conftest.py"
+    }
+
+
+def true_importers(scripts_dir: Path = SCRIPTS_DIR) -> dict[str, set[str]]:
+    """AST-walk every non-test scripts/*.py and build {imported_stem: {importer_stem}}.
+
+    Walks the whole module body so lazy/in-function imports are credited (e.g.
+    tracker imports its adapters inside make_tracker). Only resolvable local
+    stems are kept; an import of a module's own stem is dropped.
+    """
+    stems = _local_stems(scripts_dir)
+    out: dict[str, set[str]] = {}
+    for path in scripts_dir.glob("*.py"):
+        if path.name.startswith("test") or path.name == "conftest.py":
+            continue
+        importer = path.stem
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except (OSError, SyntaxError):
+            continue
+        for node in ast.walk(tree):
+            names: list[str] = []
+            if isinstance(node, ast.Import):
+                names = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom) and node.module is not None:
+                names = [node.module]
+            for name in names:
+                stem = name.split(".")[0]
+                if stem in stems and stem != importer:
+                    out.setdefault(stem, set()).add(importer)
+    return out
+
+
+@dataclass(frozen=True)
+class ImporterDrift:
+    module: str
+    missing: frozenset[str]  # in true importers, absent from the row
+    phantom: frozenset[str]  # in the row, not a true importer
+
+
+def module_md_importer_drift(
+    scripts_dir: Path = SCRIPTS_DIR, module_text: str | None = None
+) -> list[ImporterDrift]:
+    """Drift between MODULE.md 'imported by' rows and the AST-computed truth.
+
+    For each line: take the module from the first backticked *.py token, require
+    the literal `imported by` anchor (skips reverse-direction `imports x, y`
+    rows), parse the importer list after it (split on , and +; strip
+    parentheticals/backticks/the/.py). A row is enumerable iff every token
+    resolves to a local stem; unresolvable rows (prose like `the adapters`) are
+    skipped. Enumerable rows whose parsed set != true set yield one descriptor.
+    """
+    if module_text is None:
+        module_text = (scripts_dir / "MODULE.md").read_text(encoding="utf-8")
+    stems = _local_stems(scripts_dir)
+    truth = true_importers(scripts_dir)
+    drifts: list[ImporterDrift] = []
+    for line in module_text.splitlines():
+        module_stem: str | None = None
+        for span in _INLINE_SPAN_RE.finditer(line):
+            mm = _MODULE_NAME_RE.search(span.group(1))
+            if mm:
+                module_stem = mm.group(0)[: -len(".py")]
+                break
+        if module_stem is None:
+            continue
+        anchor = "imported by"
+        idx = line.find(anchor)
+        if idx == -1:
+            continue
+        cell = line[idx + len(anchor) :]
+        cell = cell.split("|", 1)[0]
+        tokens: list[str] = []
+        for raw_tok in re.split(r"[,+]", cell):
+            tok = raw_tok.split("(", 1)[0]
+            tok = tok.strip().strip("`").strip()
+            if tok.startswith("the "):
+                tok = tok[len("the ") :]
+            tok = tok.strip().strip(".").strip()
+            if tok.endswith(".py"):
+                tok = tok[: -len(".py")]
+            tok = tok.strip()
+            if tok:
+                tokens.append(tok)
+        if not tokens or any(tok not in stems for tok in tokens):
+            continue
+        parsed = set(tokens)
+        true_set = truth.get(module_stem, set())
+        if parsed != true_set:
+            drifts.append(
+                ImporterDrift(
+                    module=module_stem,
+                    missing=frozenset(true_set - parsed),
+                    phantom=frozenset(parsed - true_set),
+                )
+            )
+    return drifts
+
+
 def docs_to_check() -> list[Path]:
     docs = [SKILL_ROOT / "SKILL.md"]
     refs = SKILL_ROOT / "references"
@@ -418,6 +524,20 @@ def main(argv: list[str]) -> int:
                 line=0,
                 level="ERROR",
                 msg=f"description names a script not on disk: {name}",
+                raw="",
+            )
+        )
+
+    for drift in module_md_importer_drift():
+        problems.append(
+            Problem(
+                doc="MODULE.md",
+                line=0,
+                level="ERROR",
+                msg=(
+                    f"MODULE.md 'imported by' row for {drift.module}: "
+                    f"missing {sorted(drift.missing)}, phantom {sorted(drift.phantom)}"
+                ),
                 raw="",
             )
         )
