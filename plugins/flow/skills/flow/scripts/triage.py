@@ -66,22 +66,25 @@ def is_hot_change(files: list[str]) -> bool:
 
 
 def advisor_adjudicates(workspace_root: Path) -> bool:
-    """`[evolve] advisor_adjudicates` from workspace.toml (bool); default False.
+    """`[evolve] advisor_adjudicates` from workspace.toml (bool); default True.
 
-    Maintainer opt-in (mirrors `evolve_self_merge._auto_merge_hot`): when on, the
-    `--auto` path escalates a judgment fork to the advisor for a ship/block/defer
-    ruling instead of deferring. Absent key or section -> False, so a user project
-    (its own init'd workspace.toml) keeps the human-decision keystone.
+    Default ON: when the `--auto` path hits a judgment fork it escalates to the
+    advisor for a ship/block/defer ruling instead of deferring. Opt OUT with an
+    explicit `advisor_adjudicates = false` (restores the old defer-on-fork
+    behavior). Only an explicit `false` disables it; an absent key/section/file
+    reads as on. The safety nets still hold either way: `is_hot_change` is a hard
+    floor (hot never auto-proceeds), a broad-blast verdict blocks for human merge,
+    and the PR review/merge keystone is unchanged.
     """
     try:
         config = load_workspace_toml(workspace_root)
     except WorkspaceConfigError:
-        return False
+        return True
     section = config.get("evolve")
     if not isinstance(section, dict):
-        return False
+        return True
     value = section.get("advisor_adjudicates")
-    return value if isinstance(value, bool) else False
+    return value if isinstance(value, bool) else True
 
 
 def _recorded_decision(comments: list[Any]) -> str | None:

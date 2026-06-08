@@ -136,13 +136,13 @@ It replaces interactive steps 1-5. The self-approve branch then runs shared step
    Capture the full response.
    Then get the same INDEPENDENT confidence rating as interactive step 4 — call `advisor()` (or a `general-purpose` `Agent` if advisor is absent) over the captured plan. Its score feeds the branch below.
 
-5. **Branch on the returned block.** Whether a judgment fork defers or gets adjudicated depends on the `advisor_adjudicates` flag:
+5. **Branch on the returned block.** Whether a judgment fork is adjudicated or deferred depends on the `advisor_adjudicates` flag:
    ```bash
    ADJ=$(python3 ${CLAUDE_SKILL_DIR}/scripts/triage.py adjudicate-enabled --workspace-root .)
    ```
-   `ADJ=false` (the default — every user project, where the human-decision keystone holds) → follow the **flag-off branch** directly below, unchanged. `ADJ=true` (maintainer opt-in, mirrors `[evolve] auto_merge_hot`) → skip to the **advisor-adjudication branch** after it.
+   `ADJ=true` (**the default** — on unless explicitly disabled) → skip to the **advisor-adjudication branch** below. `ADJ=false` (explicit opt-out via `[evolve] advisor_adjudicates = false`, restoring the old defer-on-fork behavior) → follow the **opt-out branch** directly here. The safety nets hold either way (the hot hard-floor, the broad-blast block, and the PR review/merge keystone are in both branches); the only difference is whether a judgment fork is ruled on or parked for the human.
 
-   **Flag-off branch (`advisor_adjudicates = false`, default):**
+   **Opt-out branch (`advisor_adjudicates = false`):**
    - **`NONE` (clean plan) AND the assessor rated >=90%** → auto-approve, no human gate.
      Derive `--planned-files` from the plan's "Files to change" list — which (per stage-plan.md) already includes any anticipated NEW test file paths the TDD implement will create, so the stamped `planned_files` covers them — and `--commit-type` + `--commit-summary` from the Goal.
      And mind drift: any `planned_files` entry the plan stamped because of a file's CURRENT content (a content/drift finding — "this row/line is stale, so touch this file") is advisory the same way a version-bump number is (step 6), since it was read pre-bootstrap from the launcher checkout, which can lag `origin/main`. Before stamping it, re-verify the finding against the base `--base @default` will resolve to — `git fetch origin`, then `git show origin/<default-branch>:<path>` to re-read the cited content there — and DROP the entry if that base already has it fixed. This keeps the drift-vs-base discipline even though the self-derive shortcut skips the `Plan` subagent (where the plan would otherwise be re-grounded).
@@ -175,7 +175,7 @@ It replaces interactive steps 1-5. The self-approve branch then runs shared step
          Then emit a terse `blocked <KEY>: <reason>` line and STOP. No bootstrap, no worktree, no PR. A `blocked` bead drops out of `bd ready` (no relaunch loop) and surfaces in `/flow triage`.
        - **`is_hot` false** (clean change) → **proceed best-effort**: self-approve the strongest plan and go to shared step 6 (bootstrap), exactly as the clean-and-≥90% branch above. A clean decided bead self-ships, CI-gated only — wrong-but-compiling can land for clean decided beads.
 
-   **Advisor-adjudication branch (`advisor_adjudicates = true`, maintainer opt-in):**
+   **Advisor-adjudication branch (`advisor_adjudicates = true`, the default):**
    Same clean self-approve, but a judgment fork is RULED ON by a strong independent mind instead of parked, and the flat 90% number stops being a hard cliff — it folds into the ruling.
    - **`NONE` (clean plan) AND the assessor rated >=90%** → auto-approve exactly as the flag-off clean branch (derive `--planned-files` + `--commit-*`, re-verify any drift-stamped entry against `@default`, base off `--base @default`, go to shared step 6). No adjudication needed.
    - **Otherwise** (clarifying questions, a sub-90% rating, or a `BAIL`) → a judgment fork. The decided short-circuit still wins first: if step 4's probe reported `decided`, follow the flag-off **Decided** sub-branch above (re-probe hotness; `is_hot` true → block, clean → proceed) — a recorded maintainer decision outranks a fresh advisor ruling. Otherwise adjudicate:

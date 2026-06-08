@@ -486,44 +486,44 @@ def _seed_evolve(root: Path, body: str) -> None:
     path.write_text(path.read_text(encoding="utf-8") + body, encoding="utf-8")
 
 
-def test_advisor_adjudicates_true(tmp_path: Path) -> None:
+def test_advisor_adjudicates_true_when_explicitly_true(tmp_path: Path) -> None:
     _seed_workspace(tmp_path, backend="beads")
     _seed_evolve(tmp_path, "\n[evolve]\nadvisor_adjudicates = true\n")
     assert triage.advisor_adjudicates(tmp_path) is True
 
 
-def test_advisor_adjudicates_false_when_key_absent(tmp_path: Path) -> None:
+def test_advisor_adjudicates_default_on_when_key_absent(tmp_path: Path) -> None:
     _seed_workspace(tmp_path, backend="beads")
     _seed_evolve(tmp_path, "\n[evolve]\nauto_merge_hot = true\n")
-    assert triage.advisor_adjudicates(tmp_path) is False
+    assert triage.advisor_adjudicates(tmp_path) is True
 
 
-def test_advisor_adjudicates_false_when_section_absent(tmp_path: Path) -> None:
+def test_advisor_adjudicates_default_on_when_section_absent(tmp_path: Path) -> None:
     _seed_workspace(tmp_path, backend="beads")
-    assert triage.advisor_adjudicates(tmp_path) is False
+    assert triage.advisor_adjudicates(tmp_path) is True
 
 
-def test_advisor_adjudicates_false_when_explicitly_false(tmp_path: Path) -> None:
+def test_advisor_adjudicates_false_only_when_explicitly_false(tmp_path: Path) -> None:
     _seed_workspace(tmp_path, backend="beads")
     _seed_evolve(tmp_path, "\n[evolve]\nadvisor_adjudicates = false\n")
     assert triage.advisor_adjudicates(tmp_path) is False
 
 
-def test_advisor_adjudicates_false_when_no_workspace(tmp_path: Path) -> None:
-    # absent workspace.toml -> WorkspaceConfigError -> False
-    assert triage.advisor_adjudicates(tmp_path) is False
+def test_advisor_adjudicates_default_on_when_no_workspace(tmp_path: Path) -> None:
+    # absent workspace.toml -> WorkspaceConfigError -> default on
+    assert triage.advisor_adjudicates(tmp_path) is True
 
 
-def test_adjudicate_enabled_cli_prints_true(tmp_path: Path) -> None:
-    _seed_workspace(tmp_path, backend="beads")
-    _seed_evolve(tmp_path, "\n[evolve]\nadvisor_adjudicates = true\n")
+def test_adjudicate_enabled_cli_prints_true_by_default(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path, backend="beads")  # no [evolve] -> default on
     code, out, _ = _run(["adjudicate-enabled", "--workspace-root", str(tmp_path)], _FakeRunner([]))
     assert code == 0
     assert out.strip() == "true"
 
 
-def test_adjudicate_enabled_cli_prints_false(tmp_path: Path) -> None:
+def test_adjudicate_enabled_cli_prints_false_when_opted_out(tmp_path: Path) -> None:
     _seed_workspace(tmp_path, backend="beads")
+    _seed_evolve(tmp_path, "\n[evolve]\nadvisor_adjudicates = false\n")
     code, out, _ = _run(["adjudicate-enabled", "--workspace-root", str(tmp_path)], _FakeRunner([]))
     assert code == 0
     assert out.strip() == "false"

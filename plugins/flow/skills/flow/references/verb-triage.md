@@ -50,11 +50,12 @@ branch.)
 Note: the already-reopened beads carry legacy `DECISION:` comments; detection
 accepts that stem too, so no backfill is needed.
 
-## Advisor-minted decisions (`advisor_adjudicates = true`)
+## Advisor-minted decisions (`advisor_adjudicates`, default on)
 
-When the maintainer opt-in `[evolve] advisor_adjudicates` is on, an `--auto` run
-can RULE on a judgment fork itself instead of deferring (see verb-spec.md step 5,
-the advisor-adjudication branch). The two outcomes a maintainer sees here:
+By default an `--auto` run RULES on a judgment fork itself instead of deferring
+(see verb-spec.md step 5, the advisor-adjudication branch); set
+`[evolve] advisor_adjudicates = false` to opt out and restore defer-on-fork. The
+two outcomes a maintainer sees here:
 
 - A `proceed` ruling writes a `DECISION: (advisor) <ruling>` comment and ships.
   The `DECISION:` stem means a relaunch reads it as already-decided (no re-ask);
