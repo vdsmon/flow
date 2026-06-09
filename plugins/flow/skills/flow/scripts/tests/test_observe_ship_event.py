@@ -183,6 +183,84 @@ def test_io_error_writes_intent_log(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     assert payload["error"]
 
 
+# ─── flow_attribution self-stamp ─────────────────────────────────────────────
+
+
+def _seed_state(
+    root: Path,
+    ticket: str,
+    *,
+    run_id: str,
+    plan_started_at_iso: str | None = "2026-05-28T00:00:00Z",
+    create_pr_finished_at_iso: str | None = "2026-05-28T12:00:00Z",
+) -> None:
+    stages: dict = {}
+    if plan_started_at_iso is not None:
+        stages["plan"] = {"started_at_iso": plan_started_at_iso}
+    if create_pr_finished_at_iso is not None:
+        stages["create_pr"] = {"finished_at_iso": create_pr_finished_at_iso}
+    state = {"ticket": ticket, "run_id": run_id, "stages": stages}
+    state_dir = root / ".flow" / "runs" / ticket
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "state.json").write_text(
+        json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+
+
+def test_stamp_present_when_state_coherent(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path)
+    _seed_state(
+        tmp_path,
+        "FT-1",
+        run_id="abcdef0123456789",
+        plan_started_at_iso="2026-05-28T00:00:00Z",
+        create_pr_finished_at_iso="2026-05-28T12:00:00Z",
+    )
+    path, _ = observe_ship_event.observe(tmp_path, "FT-1", _payload(), "abcdef0123456789")
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert data["flow_attribution"] == {
+        "plan_started_at_iso": "2026-05-28T00:00:00Z",
+        "create_pr_finished_at_iso": "2026-05-28T12:00:00Z",
+    }
+
+
+def test_no_stamp_when_no_state(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path)
+    path, _ = observe_ship_event.observe(tmp_path, "FT-1", _payload(), "abcdef0123456789")
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert "flow_attribution" not in data
+    assert data["observed_by_run_id"] == "abcdef0123456789"
+
+
+def test_no_stamp_when_run_id_mismatch(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path)
+    _seed_state(tmp_path, "FT-1", run_id="0000000000000000")
+    path, _ = observe_ship_event.observe(tmp_path, "FT-1", _payload(), "abcdef0123456789")
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert "flow_attribution" not in data
+
+
+def test_no_stamp_when_timestamp_missing(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path)
+    _seed_state(tmp_path, "FT-1", run_id="abcdef0123456789", create_pr_finished_at_iso=None)
+    path, _ = observe_ship_event.observe(tmp_path, "FT-1", _payload(), "abcdef0123456789")
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert "flow_attribution" not in data
+
+
+def test_stamp_present_in_dupe_write(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path)
+    _seed_state(tmp_path, "FT-1", run_id="abcdef0123456789")
+    observe_ship_event.observe(tmp_path, "FT-1", _payload(), "abcdef0123456789")
+    p_dupe, is_dupe = observe_ship_event.observe(tmp_path, "FT-1", _payload(), "abcdef0123456789")
+    assert is_dupe is True
+    data = json.loads(p_dupe.read_text(encoding="utf-8"))
+    assert data["flow_attribution"] == {
+        "plan_started_at_iso": "2026-05-28T00:00:00Z",
+        "create_pr_finished_at_iso": "2026-05-28T12:00:00Z",
+    }
+
+
 # ─── CLI ─────────────────────────────────────────────────────────────────────
 
 
