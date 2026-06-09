@@ -47,14 +47,14 @@ import json
 import subprocess
 import sys
 import time
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import _memory_paths
 import _workspace
 from _jsonl import append_quarantine, iter_jsonl
-from _timeutil import parse_iso
+from _timeutil import iso_z, parse_iso, utcnow_iso
 from baseline_collect import percentile
 
 ATTR_VIA_FLOW = "shipped_via_flow"
@@ -70,10 +70,6 @@ _SKIP_INFIXES: tuple[str, ...] = (".dupe.", ".corrupt.", ".quarantine-intent.")
 # ─── Time helpers ────────────────────────────────────────────────────────────
 
 
-def _utcnow_iso() -> str:
-    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
 def default_window(now_iso: str) -> tuple[str, str]:
     """Return (since_iso, until_iso) defaults: until=now, since=14d-ago at 00:00 UTC."""
     now = parse_iso(now_iso)
@@ -82,11 +78,7 @@ def default_window(now_iso: str) -> tuple[str, str]:
     since_day = (now - timedelta(days=WINDOW_DAYS)).replace(
         hour=0, minute=0, second=0, microsecond=0
     )
-    return _to_iso(since_day), _to_iso(now)
-
-
-def _to_iso(dt: datetime) -> str:
-    return dt.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return iso_z(since_day), iso_z(now)
 
 
 # ─── Ship-event loading ──────────────────────────────────────────────────────
@@ -745,46 +737,41 @@ def _resolve_window(args: argparse.Namespace, now_iso: str) -> tuple[str, str]:
     return since_iso, until_iso
 
 
+def _add_common_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--namespace", default=None)
+    parser.add_argument("--workspace-root", default=".")
+    parser.add_argument("--since", default=None, help="YYYY-MM-DD (inclusive day start, UTC)")
+    parser.add_argument("--until", default=None, help="YYYY-MM-DD (exclusive day start, UTC)")
+
+
 def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Tickets-per-week metric.")
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_tpw = sub.add_parser("tickets-per-week", help="Compute shipped tickets in a window.")
-    p_tpw.add_argument("--namespace", default=None)
-    p_tpw.add_argument("--workspace-root", default=".")
-    p_tpw.add_argument("--since", default=None, help="YYYY-MM-DD (inclusive day start, UTC)")
-    p_tpw.add_argument("--until", default=None, help="YYYY-MM-DD (exclusive day start, UTC)")
+    _add_common_args(p_tpw)
     p_tpw.add_argument("--checkpoint", action="store_true")
     p_tpw.add_argument("--mode", choices=("personal", "work"), default=None)
     p_tpw.add_argument("--manifest-path", default=None)
 
     p_ttp = sub.add_parser("time-to-pr", help="Compute observed time-to-PR in a window.")
-    p_ttp.add_argument("--namespace", default=None)
-    p_ttp.add_argument("--workspace-root", default=".")
-    p_ttp.add_argument("--since", default=None, help="YYYY-MM-DD (inclusive day start, UTC)")
-    p_ttp.add_argument("--until", default=None, help="YYYY-MM-DD (exclusive day start, UTC)")
+    _add_common_args(p_ttp)
 
     p_fpr = sub.add_parser(
         "friction-per-run", help="Compute friction events per distinct run in a window."
     )
-    p_fpr.add_argument("--namespace", default=None)
-    p_fpr.add_argument("--workspace-root", default=".")
-    p_fpr.add_argument("--since", default=None, help="YYYY-MM-DD (inclusive day start, UTC)")
-    p_fpr.add_argument("--until", default=None, help="YYYY-MM-DD (exclusive day start, UTC)")
+    _add_common_args(p_fpr)
 
     p_rev = sub.add_parser(
         "revert-rate", help="Compute the revert rate of shipped tickets in a window."
     )
-    p_rev.add_argument("--namespace", default=None)
-    p_rev.add_argument("--workspace-root", default=".")
-    p_rev.add_argument("--since", default=None, help="YYYY-MM-DD (inclusive day start, UTC)")
-    p_rev.add_argument("--until", default=None, help="YYYY-MM-DD (exclusive day start, UTC)")
+    _add_common_args(p_rev)
     return parser.parse_args(argv)
 
 
 def cli_main(argv: list[str]) -> int:
     args = _parse_args(argv)
-    now_iso = _utcnow_iso()
+    now_iso = utcnow_iso()
     try:
         since_iso, until_iso = _resolve_window(args, now_iso)
     except ValueError as exc:

@@ -190,7 +190,10 @@ def apply_edit(
     with flock_blocking(lock_path):
         if not target.is_file():
             return {"status": "error", "file": str(target), "reason": "file does not exist"}, 1
-        text = target.read_text(encoding="utf-8")
+        try:
+            text = target.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return {"status": "error", "file": str(target), "reason": "file does not exist"}, 1
         count = text.count(old)
         if count == 1:
             atomic_write_text(target, text.replace(old, new, 1))

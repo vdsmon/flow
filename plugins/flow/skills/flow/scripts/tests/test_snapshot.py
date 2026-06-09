@@ -7,6 +7,8 @@ skill-handler plugin file change -> drift via plugin tree hash.
 
 from __future__ import annotations
 
+import hashlib
+import json
 from pathlib import Path
 
 import pytest
@@ -343,20 +345,28 @@ def test_classify_drift_no_snapshot_is_true() -> None:
         tmp_path = Path(tmp)
         skill_root = _make_skill_root(tmp_path)
         workspace_root = _make_workspace(tmp_path, _bare_workspace_text())
-        ok, detail, comps = snapshot.classify_drift(workspace_root, "FT-1", skill_root=skill_root)
+        ok, detail, comps, current = snapshot.classify_drift(
+            workspace_root, "FT-1", skill_root=skill_root
+        )
         assert ok is True
         assert detail == "no snapshot to verify"
         assert comps == []
+        assert current is None
 
 
 def test_classify_drift_match(tmp_path: Path) -> None:
     skill_root = _make_skill_root(tmp_path)
     workspace_root = _make_workspace(tmp_path, _bare_workspace_text())
     snapshot.write_snapshot(workspace_root, "FT-1", skill_root=skill_root)
-    ok, detail, comps = snapshot.classify_drift(workspace_root, "FT-1", skill_root=skill_root)
+    ok, detail, comps, current = snapshot.classify_drift(
+        workspace_root, "FT-1", skill_root=skill_root
+    )
     assert ok is True
     assert detail == "match"
     assert comps == []
+    assert current is not None
+    sha = snapshot.snapshot_sha_path(workspace_root, "FT-1").read_text(encoding="utf-8").strip()
+    assert current["master_hash"] == sha
 
 
 def test_partial_write_sha_present_json_absent_fails_closed(
@@ -387,7 +397,7 @@ def test_partial_write_sha_present_json_absent_fails_closed(
         workspace_root / ".flow" / "workspace.toml",
         _bare_workspace_text() + "\n# drift edit\n",
     )
-    ok, detail, _ = snapshot.classify_drift(workspace_root, "FT-1", skill_root=skill_root)
+    ok, detail, _, _ = snapshot.classify_drift(workspace_root, "FT-1", skill_root=skill_root)
     assert ok is False
     assert detail != "no snapshot to verify"
 
@@ -400,10 +410,13 @@ def test_classify_drift_names_components(tmp_path: Path) -> None:
         workspace_root / ".flow" / "workspace.toml",
         _bare_workspace_text() + "\n# edit\n",
     )
-    ok, detail, comps = snapshot.classify_drift(workspace_root, "FT-1", skill_root=skill_root)
+    ok, detail, comps, current = snapshot.classify_drift(
+        workspace_root, "FT-1", skill_root=skill_root
+    )
     assert ok is False
     assert comps == ["workspace_toml"]
     assert detail == "drift: workspace_toml"
+    assert current is not None
 
 
 # ─── fail-closed on a vanished tracked file mid-verify ─────────────────────────
@@ -416,10 +429,13 @@ def test_classify_drift_vanished_workspace_toml_fails_closed(tmp_path: Path) -> 
 
     (workspace_root / ".flow" / "workspace.toml").unlink()
 
-    ok, detail, comps = snapshot.classify_drift(workspace_root, "FT-1", skill_root=skill_root)
+    ok, detail, comps, current = snapshot.classify_drift(
+        workspace_root, "FT-1", skill_root=skill_root
+    )
     assert ok is False
     assert comps == []
     assert detail != "no snapshot to verify"
+    assert current is None
 
 
 def test_classify_drift_vanished_stage_registry_fails_closed(tmp_path: Path) -> None:
@@ -429,10 +445,13 @@ def test_classify_drift_vanished_stage_registry_fails_closed(tmp_path: Path) -> 
 
     snapshot.stage_registry_path(skill_root).unlink()
 
-    ok, detail, comps = snapshot.classify_drift(workspace_root, "FT-1", skill_root=skill_root)
+    ok, detail, comps, current = snapshot.classify_drift(
+        workspace_root, "FT-1", skill_root=skill_root
+    )
     assert ok is False
     assert comps == []
     assert detail != "no snapshot to verify"
+    assert current is None
 
 
 def test_classify_drift_plugin_reinstall_race_fails_closed(
@@ -441,7 +460,7 @@ def test_classify_drift_plugin_reinstall_race_fails_closed(
     """The primary threat: a tracked file vanishes between rglob-enumerate and read_bytes
     during a plugin reinstall. Physical deletion can't reproduce the enumerate-then-vanish
     race (rglob just never enumerates a gone file), so patch read_bytes to raise on the
-    real _tree_hash read path (snapshot.py:98) and prove classify_drift catches it into a
+    real _tree_hash read path and prove classify_drift catches it into a
     fail-closed abort."""
     skill_root = _make_skill_root(tmp_path)
     workspace_root = _make_workspace(tmp_path, _skill_workspace_text())
@@ -455,13 +474,14 @@ def test_classify_drift_plugin_reinstall_race_fails_closed(
 
     monkeypatch.setattr(Path, "read_bytes", boom)
 
-    ok, detail, comps = snapshot.classify_drift(
+    ok, detail, comps, current = snapshot.classify_drift(
         workspace_root, "FT-1", skill_root=skill_root, search_roots=[plugin_parent]
     )
     assert ok is False
     assert comps == []
     assert detail
     assert detail != "no snapshot to verify"
+    assert current is None
 
 
 def test_verify_snapshot_surfaces_vanished_as_drift(
@@ -480,3 +500,72 @@ def test_verify_snapshot_surfaces_vanished_as_drift(
     assert ok is False
     assert detail
     assert detail != "no snapshot to verify"
+
+
+# ─── _tree_hash single-walk == old 4-glob algorithm ────────────────────────────
+
+
+def _old_tree_hash(plugin_root: Path) -> str:
+    """The pre-optimization implementation (one rglob per glob), kept as the oracle."""
+    entries: list[tuple[str, str]] = []
+    seen: set[Path] = set()
+    for glob in ("*.py", "*.sh", "*.md", "*.toml"):
+        for path in plugin_root.rglob(glob):
+            if not path.is_file():
+                continue
+            resolved = path.resolve()
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            relpath = path.relative_to(plugin_root).as_posix()
+            entries.append((relpath, hashlib.sha256(path.read_bytes()).hexdigest()))
+    entries.sort()
+    payload = json.dumps({"tree": entries}, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def test_tree_hash_matches_old_four_glob_algorithm(tmp_path: Path) -> None:
+    root = tmp_path / "plugin"
+    _write(root / "a.py", "print(1)\n")
+    _write(root / "run.sh", "#!/bin/sh\n")
+    _write(root / "docs" / "README.md", "# readme\n")
+    _write(root / "conf" / "deep" / "settings.toml", "[x]\ny = 1\n")
+    _write(root / ".hidden.md", "hidden but tracked\n")
+    _write(root / "notes.txt", "excluded suffix\n")
+    _write(root / "__pycache__" / "a.cpython-313.pyc", "excluded bytecode\n")
+    (root / "dir.py").mkdir()
+    _write(root / "dir.py" / "inner.md", "tracked file under a .py-named dir\n")
+
+    assert snapshot._tree_hash(root) == _old_tree_hash(root)
+
+
+def test_tree_hash_oracle_detects_content_change(tmp_path: Path) -> None:
+    # guard the guard: the oracle comparison is not vacuously equal.
+    root = tmp_path / "plugin"
+    _write(root / "a.py", "print(1)\n")
+    before = snapshot._tree_hash(root)
+    _write(root / "a.py", "print(2)\n")
+    assert snapshot._tree_hash(root) != before
+    assert snapshot._tree_hash(root) == _old_tree_hash(root)
+
+
+# ─── write_snapshot with a precomputed snapshot ────────────────────────────────
+
+
+def test_write_snapshot_accepts_precomputed_snapshot(tmp_path: Path) -> None:
+    skill_root = _make_skill_root(tmp_path)
+    workspace_root = _make_workspace(tmp_path, _bare_workspace_text())
+
+    precomputed = snapshot.compute_snapshot(workspace_root, skill_root=skill_root)
+    json_path = snapshot.write_snapshot(
+        workspace_root, "FT-1", skill_root=skill_root, snapshot=precomputed
+    )
+
+    stored = json.loads(json_path.read_text(encoding="utf-8"))
+    assert stored == precomputed
+    sha = snapshot.snapshot_sha_path(workspace_root, "FT-1").read_text(encoding="utf-8").strip()
+    assert sha == precomputed["master_hash"]
+
+    ok, detail = snapshot.verify_snapshot(workspace_root, "FT-1", skill_root=skill_root)
+    assert ok is True
+    assert detail == "match"

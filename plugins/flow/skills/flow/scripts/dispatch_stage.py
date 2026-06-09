@@ -31,7 +31,6 @@ import socket
 import subprocess
 import sys
 from dataclasses import asdict
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
@@ -40,6 +39,7 @@ import recall_pending
 import state
 import validate_workspace as vw
 from _registry import registry_by_name
+from _timeutil import utcnow_iso
 from snapshot import classify_drift, component_files, snapshot_sha_path, write_snapshot
 
 _STAGE_REGISTRY_RELATIVE = Path("stage-registry.toml")
@@ -48,10 +48,6 @@ _STAGE_REGISTRY_RELATIVE = Path("stage-registry.toml")
 _INIT_TTL_S = 600
 # Slack added to a stage's timeout so the lease outlives the stage it covers.
 _LEASE_BUFFER_S = 300
-
-
-def _now_iso() -> str:
-    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 # ─── Handler-string parsing ──────────────────────────────────────────────────
@@ -77,10 +73,10 @@ def _parse_handler(value: str) -> dict[str, Any]:
 # ─── Git HEAD probe ──────────────────────────────────────────────────────────
 
 
-def _git_head_sha(workspace_root: Path) -> str:
+def _git_stdout(workspace_root: Path, args: list[str]) -> str:
     try:
         cp = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
+            ["git", *args],
             cwd=str(workspace_root),
             capture_output=True,
             text=True,
@@ -91,22 +87,14 @@ def _git_head_sha(workspace_root: Path) -> str:
     if cp.returncode != 0:
         return ""
     return cp.stdout.strip()
+
+
+def _git_head_sha(workspace_root: Path) -> str:
+    return _git_stdout(workspace_root, ["rev-parse", "HEAD"])
 
 
 def _git_branch(workspace_root: Path) -> str:
-    try:
-        cp = subprocess.run(
-            ["git", "branch", "--show-current"],
-            cwd=str(workspace_root),
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-    except FileNotFoundError:
-        return ""
-    if cp.returncode != 0:
-        return ""
-    return cp.stdout.strip()
+    return _git_stdout(workspace_root, ["branch", "--show-current"])
 
 
 def _promote_recall_log(workspace_root: Path, ticket: str) -> None:
@@ -119,7 +107,7 @@ def _promote_recall_log(workspace_root: Path, ticket: str) -> None:
             branch=_git_branch(workspace_root),
             head_sha=_git_head_sha(workspace_root),
             cwd=str(workspace_root),
-            now_iso=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            now_iso=utcnow_iso(),
         )
 
 
@@ -152,7 +140,7 @@ def cmd_init(workspace_root: Path, ticket: str, force: bool = False) -> tuple[in
     resuming = have_valid and not force
     run_id = existing.run_id if (existing is not None and exit_code == 0) else secrets.token_hex(8)
 
-    boot, host, cwd, now = lease.boot_id(), socket.gethostname(), str(workspace_root), _now_iso()
+    boot, host, cwd, now = lease.boot_id(), socket.gethostname(), str(workspace_root), utcnow_iso()
     try:
         lease.acquire(
             td,
@@ -251,17 +239,19 @@ def _planned_files(td: Path) -> set[str]:
 
 def _gate_drift(
     workspace_root: Path, ticket: str, td: Path
-) -> tuple[dict[str, Any] | None, str | None]:
+) -> tuple[dict[str, Any] | None, str | None, dict[str, Any] | None]:
     """Classify the canonical-snapshot drift gate.
 
-    Returns (abort_payload, reconciled_label). abort_payload is the exit-1 dict
-    when genuine drift must halt the run, else None. reconciled_label is the
-    comma-joined drifted-component names when the drift is owned (every changed
-    component maps to a file in this run's planned_files, an intended edit →
-    reload the baseline, don't abort), else None. A handler-tree drift maps to
-    no single file and so is never owned.
+    Returns (abort_payload, reconciled_label, current_snapshot). abort_payload
+    is the exit-1 dict when genuine drift must halt the run, else None.
+    reconciled_label is the comma-joined drifted-component names when the drift
+    is owned (every changed component maps to a file in this run's
+    planned_files, an intended edit → reload the baseline, don't abort), else
+    None. A handler-tree drift maps to no single file and so is never owned.
+    current_snapshot is classify_drift's computed snapshot, reused on reconcile
+    so write_snapshot skips a second compute.
     """
-    drift_ok, detail, components = classify_drift(
+    drift_ok, detail, components, current_snapshot = classify_drift(
         workspace_root, ticket, skill_root=_skill_root_from_script()
     )
     reconciled_label: str | None = None
@@ -273,8 +263,8 @@ def _gate_drift(
         if all(files[c] is not None and files[c] in planned for c in components):
             reconciled_label = ", ".join(components)
     if (not drift_ok) and reconciled_label is None:
-        return {**_DRIFT_ABORT, "detail": detail}, None
-    return None, reconciled_label
+        return {**_DRIFT_ABORT, "detail": detail}, None, None
+    return None, reconciled_label, current_snapshot
 
 
 def _guard_lease_ownership(td: Path, run_id: str) -> tuple[int, dict[str, Any]] | None:
@@ -323,7 +313,7 @@ def cmd_next(workspace_root: Path, ticket: str) -> tuple[int, dict[str, Any]]:
     # since the run started. EXCEPTION: an owned drift whose changed component(s)
     # all map to planned files auto-reconciles (snapshot reload) AFTER the lease
     # guard confirms us.
-    abort_payload, owned_reconcile = _gate_drift(workspace_root, ticket, td)
+    abort_payload, owned_reconcile, drift_snapshot = _gate_drift(workspace_root, ticket, td)
     if abort_payload is not None:
         return 1, abort_payload
     # Lease: if one exists it must still be ours (detects a takeover). A run with
@@ -337,7 +327,12 @@ def cmd_next(workspace_root: Path, ticket: str) -> tuple[int, dict[str, Any]]:
     # later dispatch calls verify against the intended workspace.toml.
     if owned_reconcile:
         try:
-            write_snapshot(workspace_root, ticket, skill_root=_skill_root_from_script())
+            write_snapshot(
+                workspace_root,
+                ticket,
+                skill_root=_skill_root_from_script(),
+                snapshot=drift_snapshot,
+            )
         except Exception:
             return 1, {**_DRIFT_ABORT, "detail": f"drift: {owned_reconcile}"}
         sys.stderr.write(
@@ -392,7 +387,7 @@ def cmd_next(workspace_root: Path, ticket: str) -> tuple[int, dict[str, Any]]:
                 td,
                 ts.run_id,
                 ttl,
-                _now_iso(),
+                utcnow_iso(),
                 stage=next_stage,
                 current_boot=boot,
                 hostname=host,

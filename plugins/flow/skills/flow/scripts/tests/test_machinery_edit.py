@@ -205,6 +205,18 @@ def test_missing_file_is_error(skill_root):
     assert code == 1
 
 
+def test_file_deleted_between_check_and_read_is_error(skill_root, monkeypatch):
+    f = skill_root / "scripts" / "x.py"
+    _write(f, "a = 1\n")
+    monkeypatch.setattr(
+        type(f), "read_text", lambda self, **kw: (_ for _ in ()).throw(FileNotFoundError(self))
+    )
+    result, code = apply_edit(skill_root, f, "a = 1", "a = 2")
+    assert code == 1
+    assert result["status"] == "error"
+    assert result["reason"] == "file does not exist"
+
+
 def test_concurrent_writers_no_lost_update(skill_root):
     """N threads each replace a distinct anchor on the SAME file. Without the
     flock + atomic write, read-modify-write interleaving would drop some edits.

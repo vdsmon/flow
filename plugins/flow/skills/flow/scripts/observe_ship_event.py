@@ -52,6 +52,7 @@ from typing import Any
 
 import _memory_paths
 from _locking import LockContention, flock_retry
+from _timeutil import utcnow_iso
 
 _SHIPPED_AT_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 _RUN_ID_RE = re.compile(r"^[0-9a-f]{16}$")
@@ -67,10 +68,6 @@ class _EvidenceInvalid(Exception):
 
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
-
-
-def _utcnow_iso() -> str:
-    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
 def _ts_token() -> str:
@@ -147,7 +144,7 @@ def _write_intent_log(primary: Path, record: dict[str, Any], err: str) -> None:
     """Best-effort intent log write. Never raises."""
     payload = {
         "primary_path": str(primary),
-        "ts": _utcnow_iso(),
+        "ts": utcnow_iso(),
         "error": err,
         "record": record,
     }
@@ -225,7 +222,7 @@ def observe(
     namespace = _memory_paths.resolve_namespace(workspace_root)
     primary = _memory_paths.ship_event_path(workspace_root, namespace, ticket)
     record: dict[str, Any] = dict(validated)
-    record["observed_at"] = _utcnow_iso()
+    record["observed_at"] = utcnow_iso()
     record["observed_by_run_id"] = run_id
     stamp = _attribution_stamp(workspace_root, ticket, run_id)
     if stamp is not None:

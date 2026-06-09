@@ -24,8 +24,9 @@ Promotion rules (an entry promotes iff ALL hold):
   (e) entry.head_sha is an ancestor of current HEAD
       (git merge-base --is-ancestor returns 0)
 
-Per-entry three-way partition (stale checked FIRST): older than 24h -> stale;
-else all five rules pass -> promote; else -> keep.
+Per-entry three-way partition (stale checked FIRST): older than 24h or a
+missing/unparseable hook_observed_at -> stale; else all five rules pass ->
+promote; else -> keep.
 
 Exit codes:
   0 = ok
@@ -51,7 +52,7 @@ from _jsonl import iter_jsonl
 from _locking import LockContention, flock_retry
 from _runner import Runner
 from _runner import default_runner as _default_runner
-from _timeutil import parse_iso
+from _timeutil import parse_iso, utcnow_iso
 
 _WINDOW = timedelta(hours=24)
 
@@ -82,10 +83,6 @@ def _recall_log_path(workspace_root: Path, ticket: str) -> Path:
 
 
 # ─── Helpers ───────────────────────────────────────────────────────────────────
-
-
-def _utcnow_iso() -> str:
-    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def compute_pending_id(hook_observed_at: str, branch: str, head_sha: str, cwd: str) -> str:
@@ -202,7 +199,8 @@ def promote_matching(
     """Promote matching pending entries into the per-ticket recall log.
 
     Holds the recall-pending flock for the whole operation. Each entry is
-    partitioned: older than 24h -> stale; else all five rules pass -> promoted
+    partitioned: older than 24h or missing/unparseable hook_observed_at ->
+    stale; else all five rules pass -> promoted
     (stamped recalled_at=now_iso); else -> kept. Durability order under the lock:
     append promoted, append stale, then atomic-rewrite the pending file to the
     kept set. Returns the promoted entries (each with recalled_at).
@@ -227,13 +225,12 @@ def promote_matching(
         entries = list(iter_jsonl(path, quarantine))
         for entry in entries:
             observed = parse_iso(str(entry.get("hook_observed_at", "")))
-            if observed is not None and observed < cutoff:
+            if observed is None or observed < cutoff:
                 stale.append(entry)
                 continue
             matches = (
                 entry.get("branch") == branch
                 and entry.get("cwd") == cwd
-                and observed is not None
                 and entry.get("hook_time_resolved_ticket") in ("", ticket)
                 and _is_ancestor(entry, cwd_path, runner)
             )
@@ -310,7 +307,7 @@ def cli_main(argv: list[str]) -> int:
         if args.command == "append":
             entry = append_pending(
                 workspace_root,
-                hook_observed_at=args.hook_observed_at or _utcnow_iso(),
+                hook_observed_at=args.hook_observed_at or utcnow_iso(),
                 branch=args.branch,
                 head_sha=args.head_sha,
                 cwd=args.cwd,
@@ -329,7 +326,7 @@ def cli_main(argv: list[str]) -> int:
                 branch=args.branch,
                 head_sha=args.head_sha,
                 cwd=args.cwd,
-                now_iso=args.now or _utcnow_iso(),
+                now_iso=args.now or utcnow_iso(),
             )
             sys.stdout.write(json.dumps(promoted, sort_keys=True) + "\n")
     except ValueError as exc:

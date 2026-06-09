@@ -9,17 +9,13 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import lease
 import state
+from _timeutil import utcnow_iso
 from _workspace import WorkspaceConfigError, load_workspace_toml
-
-
-def _now_iso() -> str:
-    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _runs_dir(workspace_root: Path) -> Path:
@@ -77,7 +73,7 @@ def collect(
     ticket: str | None = None,
     now_iso: str | None = None,
 ) -> list[dict[str, Any]]:
-    now_iso = now_iso or _now_iso()
+    now_iso = now_iso or utcnow_iso()
     runs = _runs_dir(workspace_root)
     rows: list[dict[str, Any]] = []
     if not runs.is_dir():

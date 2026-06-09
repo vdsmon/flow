@@ -36,17 +36,13 @@ import argparse
 import json
 import re
 import sys
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import _workspace
 import pending_mutations
+from _timeutil import utcnow_iso
 from tracker import NotSupported, TrackerError, make_tracker
-
-
-def _now_iso() -> str:
-    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 class _WorkspaceConfigError(Exception):
@@ -157,7 +153,7 @@ def _cmd_transition(tracker_obj: Any, args: argparse.Namespace) -> int:
                 op="transition",
                 args={"transition_id": selected_id, "fields": fields or None},
                 expected_postcondition={"normalized": args.to_state.lower()},
-                intent_at=_now_iso(),
+                intent_at=utcnow_iso(),
             )
         except Exception as exc:
             sys.stderr.write(f"tracker-cli transition: enqueue failed: {exc}\n")

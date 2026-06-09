@@ -301,11 +301,38 @@ def test_real_git_ancestor_promotes_descendant_keeps(tmp_path: Path) -> None:
     assert len(recall_pending.list_pending(root_b)) == 1
 
 
-# ─── malformed hook_observed_at -> kept, no crash ──────────────────────────────
+# ─── missing/malformed hook_observed_at -> stale, not kept forever ──────────────
 
 
-def test_malformed_observed_at_kept(tmp_path: Path) -> None:
+def _stale_lines(root: Path) -> list[str]:
+    stale_path = recall_pending.recall_pending_path(root).with_name("recall-pending.jsonl.stale")
+    return stale_path.read_text(encoding="utf-8").splitlines()
+
+
+def test_malformed_observed_at_goes_stale(tmp_path: Path) -> None:
     _append(tmp_path, hook_observed_at="not-a-date")
     promoted = _promote(tmp_path, _fake_runner(0))
     assert promoted == []
-    assert len(recall_pending.list_pending(tmp_path)) == 1
+    assert recall_pending.list_pending(tmp_path) == []
+    assert len(_stale_lines(tmp_path)) == 1
+
+
+def test_missing_observed_at_goes_stale(tmp_path: Path) -> None:
+    entry = {
+        "pending_id": "deadbeefdeadbeef",
+        "branch": "feature/FT-1",
+        "head_sha": "abc123",
+        "cwd": "/work/repo",
+        "hook_time_resolved_ticket": "",
+        "query": "q",
+        "returned_ids": [],
+        "rank_scores": [],
+    }
+    path = recall_pending.recall_pending_path(tmp_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(entry) + "\n", encoding="utf-8")
+    promoted = _promote(tmp_path, _fake_runner(0))
+    assert promoted == []
+    assert recall_pending.list_pending(tmp_path) == []
+    assert len(_stale_lines(tmp_path)) == 1
+    assert json.loads(_stale_lines(tmp_path)[0])["pending_id"] == "deadbeefdeadbeef"

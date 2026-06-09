@@ -87,7 +87,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import lease
-from _timeutil import parse_iso
+from _evolve_common import run_dir_for as _run_dir_for
+from _timeutil import parse_iso, utcnow_iso
 from maintainer import resolve_maintainer_repo
 
 DEFAULT_IDLE_THRESHOLD_SECS = 300
@@ -145,22 +146,6 @@ def _key_from_intent(intent: str) -> str | None:
     return m.group(1) if m else None
 
 
-def _run_dir_for(repo: Path, key: str) -> Path | None:
-    """The in-flight run's ticket dir under the worktree pool for `key`.
-
-    Worktrees live at `<repo>/.flow/worktrees/feature-<key>-<slug>/`; the run state
-    is `.flow/runs/<key>/` (the lease lives in the worktree, not at cwd). Returns None
-    when no worktree run dir exists — the common post-reap case, which the caller
-    treats as non-live (proceed), not skip.
-    """
-    base = repo / ".flow" / "worktrees"
-    for wt in sorted(glob.glob(str(base / f"feature-{key}*"))):
-        run_dir = Path(wt) / ".flow" / "runs" / key
-        if run_dir.exists():
-            return run_dir
-    return None
-
-
 def _transcript_is_idle(link_scan_path: str, now_epoch: float, idle_threshold_secs: int) -> bool:
     """True iff the transcript exists and its mtime is older than the idle threshold.
 
@@ -195,6 +180,8 @@ def classify(
     now_epoch = parse_iso(now_iso)
     now_ts = now_epoch.timestamp() if now_epoch is not None else None
     repo_resolved = repo.resolve()
+    current_boot = lease.boot_id()
+    host = lease.hostname()
 
     stoppable: list[dict] = []
     skipped: list[dict] = []
@@ -223,7 +210,13 @@ def classify(
 
         run_dir = _run_dir_for(repo, key)
         lease_state = (
-            "absent" if run_dir is None else str(lease.classify(run_dir, now_iso).get("state"))
+            "absent"
+            if run_dir is None
+            else str(
+                lease.classify(run_dir, now_iso, current_boot=current_boot, hostname=host).get(
+                    "state"
+                )
+            )
         )
         if lease_state in ("live", "corrupt"):
             skip(rec, f"lease is {lease_state}")
@@ -377,7 +370,7 @@ def cli_main(argv: list[str]) -> int:
     args = parser.parse_args(argv)
 
     jobs_root = Path(args.jobs_root) if args.jobs_root else Path.home() / ".claude" / "jobs"
-    now_iso = args.now or lease._utcnow_iso()
+    now_iso = args.now or utcnow_iso()
 
     try:
         result = cleanup(

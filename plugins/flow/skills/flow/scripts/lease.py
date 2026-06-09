@@ -40,7 +40,7 @@ from pathlib import Path
 
 from _atomicio import atomic_write_text
 from _locking import flock_blocking
-from _timeutil import parse_iso
+from _timeutil import iso_z, parse_iso, utcnow_iso
 
 EXIT_LEASE_LOST = 7
 
@@ -89,10 +89,6 @@ class LeaseLost(LeaseError):
 # ─── Helpers ─────────────────────────────────────────────────────────────────
 
 
-def _utcnow_iso() -> str:
-    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
 def _ts_token() -> str:
     # colon-free so it is usable in a filename (mirrors state._ts_token).
     return datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
@@ -103,7 +99,7 @@ def _expiry_iso(now_iso: str, ttl_seconds: int) -> str:
     if now is None:
         raise LeaseError(f"unparseable now_iso: {now_iso!r}")
     expires = now + timedelta(seconds=ttl_seconds)
-    return expires.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return iso_z(expires)
 
 
 def _default_runner() -> Runner:
@@ -470,7 +466,7 @@ def _holder_payload(lease: Lease) -> dict[str, object]:
 def cli_main(argv: list[str]) -> int:
     args = _parse_args(argv)
     ticket_dir = Path(args.ticket_dir).resolve()
-    now_iso = getattr(args, "now", None) or _utcnow_iso()
+    now_iso = getattr(args, "now", None) or utcnow_iso()
 
     if args.command == "acquire":
         try:

@@ -18,6 +18,7 @@ import pytest
 
 import dispatch_stage as ds
 import lease
+import snapshot
 import state
 
 # ─── Fixtures ────────────────────────────────────────────────────────────────
@@ -978,6 +979,36 @@ def test_next_auto_reconciles_owned_workspace_drift(
     rc2, payload2 = ds.cmd_next(tmp_path, "FT-1")
     assert rc2 == 0, payload2
     assert "reconciled_drift" not in payload2
+
+
+def test_next_owned_reconcile_computes_snapshot_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # the reconcile write reuses classify_drift's snapshot instead of recomputing.
+    _write_workspace(tmp_path, stages=["ticket", "plan"], compounding=False)
+    _stub_git_head(monkeypatch)
+    ds.cmd_init(tmp_path, "FT-1")
+    _write_baseline(tmp_path, "FT-1", [".flow/workspace.toml"])
+    wt = tmp_path / ".flow" / "workspace.toml"
+    wt.write_text(wt.read_text(encoding="utf-8") + "\n# owned edit\n", encoding="utf-8")
+
+    calls = {"n": 0}
+    real_compute = snapshot.compute_snapshot
+
+    def counting(*args: Any, **kwargs: Any) -> Any:
+        calls["n"] += 1
+        return real_compute(*args, **kwargs)
+
+    monkeypatch.setattr(snapshot, "compute_snapshot", counting)
+    rc, payload = ds.cmd_next(tmp_path, "FT-1")
+    assert rc == 0, payload
+    assert payload.get("reconciled_drift") == "workspace_toml"
+    assert calls["n"] == 1
+
+    # the reused snapshot must verify clean afterwards
+    ok, detail = snapshot.verify_snapshot(tmp_path, "FT-1", skill_root=ds._skill_root_from_script())
+    assert ok is True
+    assert detail == "match"
 
 
 def test_next_refuses_unowned_workspace_drift_without_baseline(

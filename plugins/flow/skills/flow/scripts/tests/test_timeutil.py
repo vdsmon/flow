@@ -1,6 +1,8 @@
+import re
+from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
 
-from _timeutil import parse_iso
+from _timeutil import iso_z, parse_iso, utcnow_iso
 
 
 def test_naive_treated_as_utc():
@@ -52,3 +54,19 @@ def test_naive_utc_equals_z_utc():
     assert z is not None
     assert naive is not None
     assert z == naive
+
+
+def test_iso_z_known_value():
+    dt = datetime(2024, 1, 2, 3, 4, 5, 678901, tzinfo=UTC)
+    assert iso_z(dt) == "2024-01-02T03:04:05Z"
+
+
+def test_iso_z_converts_offset_to_utc():
+    dt = datetime(2024, 1, 2, 8, 4, 5, tzinfo=timezone(timedelta(hours=5)))
+    assert iso_z(dt) == "2024-01-02T03:04:05Z"
+
+
+def test_utcnow_iso_format_and_roundtrip():
+    value = utcnow_iso()
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", value)
+    assert parse_iso(value, require_z=True) is not None

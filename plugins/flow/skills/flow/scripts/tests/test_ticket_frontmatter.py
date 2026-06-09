@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import datetime
+import fcntl
 import json
 import multiprocessing
+import os
 import re
 from pathlib import Path
 
@@ -250,6 +252,20 @@ def test_concurrent_updates_serialize_via_flock(tmp_path: Path) -> None:
     assert data["alpha"] == 1
     assert data["beta"] == 2
     assert data["ticket"] == "FT-15"
+
+
+def test_flock_contention_exhausts_retries(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(ticket_frontmatter, "LOCK_RETRY_DELAY_S", 0.0)
+    lock_path = tmp_path / "FT-15b.md.lock"
+    holder_fd = os.open(str(lock_path), os.O_RDWR | os.O_CREAT, 0o644)
+    try:
+        fcntl.flock(holder_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        flock = ticket_frontmatter._Flock(lock_path)
+        with pytest.raises(ticket_frontmatter._LockContention, match="after 3 attempts"):
+            flock.__enter__()
+        assert flock._fd is None
+    finally:
+        os.close(holder_fd)
 
 
 # ─── CLI ─────────────────────────────────────────────────────────────────────

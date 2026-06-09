@@ -34,9 +34,10 @@ from _runner import cwd_default_runner as _default_runner
 PLUGIN_JSON = "plugins/flow/.claude-plugin/plugin.json"
 MARKETPLACE_JSON = ".claude-plugin/marketplace.json"
 
-_VERSION_RE = re.compile(r'"version"\s*:\s*"(\d+)\.(\d+)\.(\d+)"')
+VERSION_RE = re.compile(r'"version"\s*:\s*"(\d+)\.(\d+)\.(\d+)"')
 
 __all__ = [
+    "VERSION_RE",
     "ToolError",
     "bump_patch",
     "cli_main",
@@ -90,7 +91,7 @@ def compute(*, cwd: Path, ref: str | None = "origin/main", runner: Runner | None
 def _set_version_in_file(path: Path, version: str) -> None:
     """Replace the first `"version": "X.Y.Z"` in the file, preserving the rest byte-for-byte."""
     text = path.read_text(encoding="utf-8")
-    new_text = _VERSION_RE.sub(f'"version": "{version}"', text, count=1)
+    new_text = VERSION_RE.sub(f'"version": "{version}"', text, count=1)
     if new_text == text:
         raise ToolError(f"no version line to replace in {path}")
     path.write_text(new_text, encoding="utf-8")

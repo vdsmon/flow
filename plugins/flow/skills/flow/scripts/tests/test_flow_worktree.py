@@ -536,6 +536,31 @@ def test_reap_skips_when_lease_corrupt(tmp_path: Path) -> None:
     assert not any(c[:3] == ["git", "branch", "-D"] for c in calls)
 
 
+def test_reap_removes_expired_same_host_previous_boot_lease(tmp_path: Path) -> None:
+    import lease
+
+    wt = tmp_path / "main" / ".flow" / "worktrees" / "feature-FT-1-thing"
+    ticket_dir = wt / ".flow" / "runs" / "FT-1"
+    ticket_dir.mkdir(parents=True)
+    lease.acquire(
+        ticket_dir,
+        run_id="run-x",
+        ttl_seconds=60,
+        now_iso="2020-01-01T00:00:00Z",
+        current_boot="previous-boot",
+        hostname=lease.hostname(),
+        cwd="/cwd-x",
+    )
+    calls: list = []
+    runner = _reap_runner(
+        worktrees=_porcelain([(str(wt), "feature/FT-1-thing")]),
+        calls=calls,
+    )
+    receipt = fw.reap_worktree(ticket="FT-1", main_root=tmp_path / "main", runner=runner)
+    assert receipt["worktree_removed"] is True
+    assert receipt["skipped"] is None
+
+
 def test_reap_idempotent_when_nothing_to_remove(tmp_path: Path) -> None:
     calls: list = []
     runner = _reap_runner(
