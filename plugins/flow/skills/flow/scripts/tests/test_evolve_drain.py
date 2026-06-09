@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 
 import evolve_drain as ed
+import launch_ledger
 import lease
 
 
@@ -25,13 +26,14 @@ def _pool_run_dir(repo, key, slug="wip"):
     return repo / ".flow" / "worktrees" / f"feature-{key}-{slug}" / ".flow" / "runs" / key
 
 
-# decide() reads only `launch` from the select result; the in-flight picture comes
-# entirely from the `liveness` map the CLI builds over open PRs + in-flight beads.
-# So the scenarios below are expressed through the liveness map, not select fields.
+# decide() reads `launch` and `launched_pending` from the select result; the rest of
+# the in-flight picture comes from the `liveness` map the CLI builds over open PRs +
+# in-flight beads. So the scenarios below are expressed through the liveness map plus
+# launched_pending, not the other select fields.
 
 
-def _sel(launch=None):
-    return {"launch": launch or []}
+def _sel(launch=None, launched_pending=None):
+    return {"launch": launch or [], "launched_pending": launched_pending or []}
 
 
 # ─── decide() — the termination core ─────────────────────────────────────────
@@ -111,6 +113,29 @@ def test_corrupt_with_parked_still_waits():
     d = ed.decide(_sel(), {"flow-corrupt": "corrupt", "flow-parked": "absent"})
     assert d["action"] == "wait"
     assert d["parked"] == ["flow-parked"]
+
+
+def test_launched_pending_blocks_even_with_no_live_lease():
+    # a just-launched run is pre-lease (no run.lock yet) so liveness is empty, but it
+    # has NOT finished → block termination, don't abandon a held_hot bead behind it.
+    d = ed.decide(_sel(launched_pending=["flow-new"]), {})
+    assert d["action"] == "wait"
+    assert d["parked"] == []
+
+
+def test_launched_pending_not_parked_alongside_an_absent_key():
+    # a still-bootstrapping run is not human-handoff work: it waits, and its key never
+    # lands in parked even when a genuinely parked absent key is also in flight.
+    d = ed.decide(_sel(launched_pending=["flow-new"]), {"flow-new": "absent", "flow-old": "absent"})
+    assert d["action"] == "wait"
+    assert d["parked"] == ["flow-old"]
+
+
+def test_launched_pending_empty_still_done():
+    # guard against over-broad waiting: empty launched_pending + nothing live → done.
+    d = ed.decide(_sel(launched_pending=[]), {})
+    assert d["action"] == "done"
+    assert d["parked"] == []
 
 
 # ─── _run_dir_for / liveness_map — the worktree resolution ───────────────────
@@ -266,3 +291,33 @@ def test_cli_pre_pr_expired_run_done(monkeypatch, tmp_path, capsys):
     out = json.loads(capsys.readouterr().out)
     assert out["action"] == "done"
     assert out["liveness"]["flow-x"] == "expired_foreign"
+
+
+def test_cli_removes_launch_marker_once_registered(monkeypatch, tmp_path, capsys):
+    # a launched key that has REGISTERED (live lease here) drops out of the ledger:
+    # cli_main physically unlinks its marker, so it stays out of launched_pending past
+    # any later merge/teardown (the merged-teardown window is closed).
+    sel = {
+        "launch": [],
+        "skipped_in_flight": ["flow-k"],
+        "live_runs": ["flow-k"],
+        "launched_pending": ["flow-k"],
+    }
+    repo = tmp_path / "flow"
+    repo.mkdir()
+    monkeypatch.setattr(ed, "resolve_maintainer_repo", lambda ws: repo)
+    monkeypatch.setattr(ed, "_config_defaults", lambda ws: (5, 3))
+    monkeypatch.setattr(ed, "_open_pr_keys", lambda repo: [])
+    monkeypatch.setattr(ed, "liveness_map", lambda repo, keys: {})
+    monkeypatch.setattr(ed, "select", lambda ws, **kw: sel)
+
+    launch_ledger.add(repo, "flow-k")
+    marker = repo / ".flow" / "launch-ledger" / "flow-k"
+    assert marker.exists()
+
+    rc = ed.cli_main(["--workspace-root", str(tmp_path)])
+    assert rc == 0
+    assert not marker.exists()
+    # removal-on-registration: the key no longer holds launched_pending, so once its
+    # run has finished the loop can terminate (the merged-teardown window is closed).
+    assert json.loads(capsys.readouterr().out)["action"] == "done"

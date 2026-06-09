@@ -13,17 +13,22 @@ that occupies the open-PR cap may have left `bd ready` (its bead is claimed), so
 would make the loop quit the moment backpressure hits. Liveness over the open PRs
 is the authoritative picture.
 
-Termination: `action == "done"` iff `launch` is empty AND no in-flight run is
-BLOCKING. A run is blocking when its lease reads "live" (still working) OR
-"corrupt" (run.lock unparseable, ownership cannot be confirmed). Corrupt is
-treated live-equivalent because this decision gates a self-merge: an in-flight
-run we cannot confirm dead must never let the loop drain to done. A withheld hot
-bead (the in-run reviewer raised `held_guard`) leaves a ready PR + a branch but
-its session has ended, so its lease is non-blocking (expired/absent): it never
-reads as "wait," so the loop cannot spin on it — it terminates and reports it
-`parked` for the human. A still-running run reads "live" → the loop waits → it
-self-merges → the next turn's reap clears the cap / `hot_inflight` → the next
-batch launches. A corrupt lease blocks until a human runs `recover takeover`.
+Termination: `action == "done"` iff `launch` is empty AND `launched_pending` is
+empty AND no in-flight run is BLOCKING. A run is blocking when its lease reads
+"live" (still working) OR "corrupt" (run.lock unparseable, ownership cannot be
+confirmed). The third blocking reason is a non-empty `launched_pending`: a run
+fanned out on a prior turn that has not yet registered a branch/lease/PR is still
+in the launch→init blind window (its run dir reads "absent", which would
+otherwise be non-blocking), so it blocks termination until it registers (cli_main
+removes its marker then) or its marker TTL-expires. Corrupt is treated
+live-equivalent because this decision gates a self-merge: an in-flight run we
+cannot confirm dead must never let the loop drain to done. A withheld hot bead
+(the in-run reviewer raised `held_guard`) leaves a ready PR + a branch but its
+session has ended, so its lease is non-blocking (expired/absent): it never reads
+as "wait," so the loop cannot spin on it — it terminates and reports it `parked`
+for the human. A still-running run reads "live" → the loop waits → it self-merges
+→ the next turn's reap clears the cap / `hot_inflight` → the next batch launches.
+A corrupt lease blocks until a human runs `recover takeover`.
 
 Exit codes: 0 ok; 2 = a `bd`/`git`/`gh` call failed; 4 = not a maintainer setup.
 """
@@ -36,6 +41,7 @@ import json
 import sys
 from pathlib import Path
 
+import launch_ledger
 import lease
 from evolve_select import (
     NotMaintainer,
@@ -56,18 +62,27 @@ def decide(select_result: dict, liveness: dict[str, str]) -> dict:
     launch non-empty            -> launch that batch.
     launch empty, a blocking run -> wait (live OR corrupt: corrupt cannot be
                                    confirmed dead, so it blocks a self-merge).
+    launch empty, launched_pending non-empty -> wait (a launched-but-pre-lease run
+                                   is still in the launch->init window; it blocks
+                                   until it registers or its marker TTL-expires).
     launch empty, none blocking -> done (drained, or only parked-for-human remains).
 
     `liveness` is the complete in-flight picture (open PRs + in-flight ready beads);
-    `parked` is the keys whose run is not live — what the loop hands the human
-    (withheld hot PRs, non-green drafts, orphaned branches).
+    `launched_pending` (from the select result) is the still-pre-lease launched keys;
+    `parked` is the keys whose run is not live and not still bootstrapping — what the
+    loop hands the human (withheld hot PRs, non-green drafts, orphaned branches).
     """
     launch = list(select_result.get("launch") or [])
     if launch:
         return {"action": "launch", "launch": launch, "parked": []}
+    launched_pending = set(select_result.get("launched_pending") or [])
     blocking = sorted(k for k, state in liveness.items() if state in ("live", "corrupt"))
-    parked = sorted(k for k, state in liveness.items() if state not in ("live", "corrupt"))
-    if blocking:
+    parked = sorted(
+        k
+        for k, state in liveness.items()
+        if state not in ("live", "corrupt") and k not in launched_pending
+    )
+    if blocking or launched_pending:
         return {"action": "wait", "launch": [], "parked": parked}
     return {"action": "done", "launch": [], "parked": parked}
 
@@ -146,12 +161,19 @@ def cli_main(argv: list[str]) -> int:
 
     try:
         sel = select(ws, cap=cap, concurrency=concurrency, include_proposals=args.include_proposals)
-        inflight = sorted(
-            set(sel.get("skipped_in_flight") or [])
-            | set(_open_pr_keys(repo))
-            | set(sel.get("live_runs") or [])
-        )
+        open_pr_keys = set(_open_pr_keys(repo))
+        live_runs = set(sel.get("live_runs") or [])
+        inflight = sorted(set(sel.get("skipped_in_flight") or []) | open_pr_keys | live_runs)
         live = liveness_map(repo, inflight)
+        # a launched key that has registered (live lease OR open PR) leaves the blind
+        # window; physically drop its marker so it stays out of launched_pending past
+        # any later merge/teardown. NOT skipped_in_flight: select folds launched_pending
+        # into it, which would falsely mark an unregistered key registered.
+        pending = set(sel.get("launched_pending") or [])
+        registered = live_runs | open_pr_keys
+        for key in sorted(pending & registered):
+            launch_ledger.remove(repo, key)
+        sel["launched_pending"] = sorted(pending - registered)
     except NotMaintainer as exc:
         print(str(exc), file=sys.stderr)
         return 4
