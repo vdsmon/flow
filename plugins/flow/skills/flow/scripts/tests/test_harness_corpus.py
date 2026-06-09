@@ -36,6 +36,29 @@ def test_split_coverage():
             assert (decider, split) in seen, f"{decider} missing a {split} case"
 
 
+_BACKFILL_CASE_IDS = frozenset(
+    {
+        "esm-guard-snapshot-no-hot-label",
+        "hot-flow-worktree-guard",
+        "hot-machinery-edit-guard",
+        "edrn-launched-pending-blocks-done",
+        "esel-launched-hot-holds-next-hot",
+        "esel-inflight-not-relaunched",
+        "esm-ci-failed-no-merge",
+    }
+)
+
+
+def test_backfill_cases_present_with_provenance():
+    by_id = {c["case_id"]: c for c in _CASES}
+    for case_id in sorted(_BACKFILL_CASE_IDS):
+        assert case_id in by_id, f"backfill case {case_id} missing from corpus"
+        case = by_id[case_id]
+        assert case["split"] == "held_in", f"backfill case {case_id} must be held_in"
+        source = case.get("source")
+        assert isinstance(source, str) and source, f"backfill case {case_id} missing provenance"
+
+
 # ─── load_corpus validation rejections ───────────────────────────────────────
 
 
