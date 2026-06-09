@@ -569,3 +569,119 @@ def test_write_snapshot_accepts_precomputed_snapshot(tmp_path: Path) -> None:
     ok, detail = snapshot.verify_snapshot(workspace_root, "FT-1", skill_root=skill_root)
     assert ok is True
     assert detail == "match"
+
+
+# ─── Engine component (flow-2pp) ─────────────────────────────────────────────
+# The canonical snapshot gains an "engine" component: a tree hash over the MAIN
+# checkout's skill tree (resolved via `git worktree list`, invocation-path
+# independent), active ONLY when that checkout sits on a protected branch —
+# exactly the marketplace-tracks-main window where a mid-run `git pull` +
+# `claude plugin marketplace update` swaps engine code under a running pipeline.
+
+
+def _git(cwd: Path, *args: str) -> None:
+    import subprocess
+
+    subprocess.run(
+        ["git", "-c", "user.email=t@t.t", "-c", "user.name=t", *args],
+        cwd=str(cwd),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _make_engine_checkout(tmp_path: Path, branch: str = "main") -> tuple[Path, Path]:
+    """Real git repo shaped like the flow repo (skill tree under plugins/...).
+
+    Returns (repo_root, skill_root).
+    """
+    repo = tmp_path / "mainco"
+    skill = repo / "plugins" / "flow" / "skills" / "flow"
+    _write(snapshot.stage_registry_path(skill), _stage_registry_text())
+    _write(skill / "scripts" / "engine.py", "X = 1\n")
+    _write(skill / "SKILL.md", "# skill\n")
+    repo.mkdir(parents=True, exist_ok=True)
+    _git(repo, "init", "-q", "-b", branch)
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "init")
+    return repo, skill
+
+
+def test_engine_active_on_protected_branch(tmp_path: Path) -> None:
+    _repo, skill = _make_engine_checkout(tmp_path, branch="main")
+    workspace_root = _make_workspace(tmp_path, _bare_workspace_text())
+    snap = snapshot.compute_snapshot(workspace_root, skill_root=skill)
+    assert snap["engine"]["branch"] == "main"
+    assert snap["engine"]["tree_hash"]
+
+
+def test_engine_active_on_dev_branch(tmp_path: Path) -> None:
+    _repo, skill = _make_engine_checkout(tmp_path, branch="dev")
+    workspace_root = _make_workspace(tmp_path, _bare_workspace_text())
+    snap = snapshot.compute_snapshot(workspace_root, skill_root=skill)
+    assert snap["engine"]["branch"] == "dev"
+
+
+def test_engine_inactive_on_feature_branch(tmp_path: Path) -> None:
+    _repo, skill = _make_engine_checkout(tmp_path, branch="feature/x")
+    workspace_root = _make_workspace(tmp_path, _bare_workspace_text())
+    snap = snapshot.compute_snapshot(workspace_root, skill_root=skill)
+    assert snap["engine"] == {}
+
+
+def test_engine_inactive_outside_git(tmp_path: Path) -> None:
+    skill_root = _make_skill_root(tmp_path)
+    workspace_root = _make_workspace(tmp_path, _bare_workspace_text())
+    snap = snapshot.compute_snapshot(workspace_root, skill_root=skill_root)
+    assert snap["engine"] == {}
+    snapshot.write_snapshot(workspace_root, "FT-1", skill_root=skill_root)
+    ok, _ = snapshot.verify_snapshot(workspace_root, "FT-1", skill_root=skill_root)
+    assert ok
+
+
+def test_engine_drift_detected_and_named(tmp_path: Path) -> None:
+    _repo, skill = _make_engine_checkout(tmp_path, branch="main")
+    workspace_root = _make_workspace(tmp_path, _bare_workspace_text())
+    snapshot.write_snapshot(workspace_root, "FT-1", skill_root=skill)
+    _write(skill / "scripts" / "engine.py", "X = 2\n")
+    ok, detail = snapshot.verify_snapshot(workspace_root, "FT-1", skill_root=skill)
+    assert not ok
+    assert "engine" in detail
+
+
+def test_engine_excludes_stage_registry(tmp_path: Path) -> None:
+    # stage-registry.toml is already its own component; the engine hash skips it
+    # so one edit never lights two components.
+    _repo, skill = _make_engine_checkout(tmp_path, branch="main")
+    workspace_root = _make_workspace(tmp_path, _bare_workspace_text())
+    before = snapshot.compute_snapshot(workspace_root, skill_root=skill)
+    _write(snapshot.stage_registry_path(skill), _stage_registry_text() + "\n# edited\n")
+    after = snapshot.compute_snapshot(workspace_root, skill_root=skill)
+    assert before["engine"] == after["engine"]
+    comps = snapshot.drifted_components(before, after)
+    assert comps == ["stage_registry"]
+
+
+def test_engine_anchors_on_main_root_from_worktree_copy(tmp_path: Path) -> None:
+    # invocation-path independence: computing from a linked worktree's skill
+    # copy hashes the MAIN checkout's engine tree, and worktree-local edits
+    # (run-private) do not perturb it.
+    repo, skill = _make_engine_checkout(tmp_path, branch="main")
+    wt = tmp_path / "wt"
+    _git(repo, "worktree", "add", "-q", "-b", "feature/run", str(wt))
+    skill_wt = wt / "plugins" / "flow" / "skills" / "flow"
+    workspace_root = _make_workspace(tmp_path, _bare_workspace_text())
+    from_main = snapshot.compute_snapshot(workspace_root, skill_root=skill)
+    from_wt = snapshot.compute_snapshot(workspace_root, skill_root=skill_wt)
+    assert from_main["engine"] == from_wt["engine"]
+    _write(skill_wt / "scripts" / "engine.py", "X = 3\n")
+    after_wt_edit = snapshot.compute_snapshot(workspace_root, skill_root=skill_wt)
+    assert after_wt_edit["engine"] == from_main["engine"]
+
+
+def test_component_files_maps_engine_to_none(tmp_path: Path) -> None:
+    workspace_root = _make_workspace(tmp_path, _bare_workspace_text())
+    skill_root = _make_skill_root(tmp_path)
+    out = snapshot.component_files(["engine"], workspace_root=workspace_root, skill_root=skill_root)
+    assert out == {"engine": None}

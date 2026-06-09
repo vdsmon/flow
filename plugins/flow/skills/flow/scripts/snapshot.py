@@ -16,7 +16,12 @@ Snapshot content (hashed via canonical JSON -> sha256):
     a {stage: {manifest, tree_hash}} record. manifest is the matching
     .flow-bundle.toml text; tree_hash is a content hash over every *.py/*.sh/
     *.md/*.toml under the plugin_root. Bare workspaces have an empty dict here.
-  - master_hash: sha256 of the canonical-JSON of the three keys above.
+  - engine: {branch, tree_hash} over the MAIN checkout's own skill tree
+    (resolved via `git worktree list`, stage-registry.toml excluded), active
+    only when that checkout sits on a protected branch — the marketplace-
+    tracks-main window where a mid-run checkout advance swaps engine code.
+    {} when inactive (feature branch, detached, or not a git repo).
+  - master_hash: sha256 of the canonical-JSON of the four keys above.
 
 verify recomputes via compute_snapshot (the single source of hashing), compares
 master_hash to the stored snapshot.sha, and only consults snapshot.json to NAME
@@ -77,13 +82,14 @@ def _sha256_text(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def _tree_hash(plugin_root: Path) -> str:
+def _tree_hash(plugin_root: Path, *, exclude_names: frozenset[str] = frozenset()) -> str:
     """Content hash over sorted (relpath, sha256(bytes)) for tracked files.
 
     Tracked = *.py / *.sh / *.md / *.toml under plugin_root. The .toml glob
     excludes nothing relevant; compiled .pyc live in __pycache__ and are not
     matched. snapshot.json lives under workspace_root, never plugin_root, so
-    writing it can't perturb this hash.
+    writing it can't perturb this hash. `exclude_names` skips files by basename
+    (the engine component drops stage-registry.toml, already its own component).
     """
     # Single tree walk instead of one rglob per glob (compute_snapshot runs on
     # the do-loop hot path). Grouping by suffix in _TREE_GLOBS order preserves
@@ -91,6 +97,8 @@ def _tree_hash(plugin_root: Path) -> str:
     # the hash stays byte-identical to the 4-glob implementation.
     matched: dict[str, list[Path]] = {suffix: [] for suffix in _TREE_SUFFIXES}
     for path in plugin_root.rglob("*"):
+        if path.name in exclude_names:
+            continue
         for suffix in _TREE_SUFFIXES:
             if path.name.endswith(suffix):
                 matched[suffix].append(path)
@@ -109,6 +117,68 @@ def _tree_hash(plugin_root: Path) -> str:
             entries.append((relpath, hashlib.sha256(path.read_bytes()).hexdigest()))
     entries.sort()
     return _sha256_text(_canonical_json({"tree": entries}))
+
+
+_PROTECTED_BRANCHES = frozenset({"main", "master", "dev", "develop"})
+
+
+def _engine_component(skill_root: Path) -> dict[str, str]:
+    """{branch, tree_hash} over the MAIN checkout's skill tree; {} when inactive.
+
+    Threat (flow-2pp): in the marketplace-tracks-main setup, a mid-run
+    `git pull` + `claude plugin marketplace update` swaps dispatch_stage.py /
+    state.py / reference docs under a running pipeline with no drift detection
+    (the handlers component covers only external skill: bundles).
+
+    Anchoring: `_skill_root_from_script()` is BISTABLE mid-run — the do-loop
+    invokes engine scripts via the absolute installed path (main checkout) or a
+    repo-relative path (the run's worktree copy) depending on how the agent
+    typed the command (proven 2026-06-09, 12-transcript sweep on flow-2pp). So
+    the component anchors on the MAIN checkout resolved via `git worktree list`
+    — identical no matter which copy computes it — and hashes THAT engine tree.
+
+    Branch gate: active only when the main checkout sits on a protected branch.
+    machinery_edit refuses self-edits on protected branches, so the guard's
+    active window is exactly the complement of the legitimate self-edit window:
+    no false abort on a reflect self-heal, and no unguarded marketplace window.
+    Worktree engine copies stay uncovered (run-private; only the run itself
+    mutates them). Any resolution failure (not a git repo, git missing,
+    detached HEAD, tree gone) deactivates the component rather than crashing —
+    a bare/non-git install has no marketplace-advance window to guard.
+    """
+    import subprocess
+
+    def _git_text(args: list[str], cwd: Path) -> str:
+        res = subprocess.run(
+            ["git", *args], cwd=str(cwd), capture_output=True, text=True, timeout=30
+        )
+        if res.returncode != 0:
+            raise OSError(res.stderr.strip() or "git failed")
+        return res.stdout
+
+    try:
+        if not skill_root.is_dir():
+            return {}
+        toplevel = Path(_git_text(["rev-parse", "--show-toplevel"], skill_root).strip()).resolve()
+        porcelain = _git_text(["worktree", "list", "--porcelain"], skill_root)
+        first_stanza = porcelain.split("\n\n", 1)[0].splitlines()
+        main_root = Path(first_stanza[0].removeprefix("worktree ").strip()).resolve()
+        branch_lines = [ln for ln in first_stanza if ln.startswith("branch ")]
+        if not branch_lines:  # detached or bare main checkout
+            return {}
+        branch = branch_lines[0].removeprefix("branch refs/heads/").strip()
+        if branch not in _PROTECTED_BRANCHES:
+            return {}
+        rel = skill_root.resolve().relative_to(toplevel)
+        engine_root = main_root / rel
+        if not engine_root.is_dir():
+            return {}
+        return {
+            "branch": branch,
+            "tree_hash": _tree_hash(engine_root, exclude_names=frozenset({_STAGE_REGISTRY_NAME})),
+        }
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return {}
 
 
 def _handler_strings_by_stage(workspace_toml_text: str) -> dict[str, str]:
@@ -161,11 +231,13 @@ def _payload(
     workspace_toml_text: str,
     stage_registry_text: str,
     handlers: dict[str, dict[str, str]],
+    engine: dict[str, str],
 ) -> dict[str, Any]:
     return {
         "workspace_toml": workspace_toml_text,
         "stage_registry": stage_registry_text,
         "handlers": handlers,
+        "engine": engine,
     }
 
 
@@ -184,7 +256,8 @@ def compute_snapshot(
     workspace_toml_text = _read_text(workspace_toml_path(workspace_root))
     stage_registry_text = _read_text(stage_registry_path(skill_root))
     handlers = _handlers_component(workspace_toml_text, search_roots)
-    payload = _payload(workspace_toml_text, stage_registry_text, handlers)
+    engine = _engine_component(skill_root)
+    payload = _payload(workspace_toml_text, stage_registry_text, handlers, engine)
     snapshot = dict(payload)
     snapshot["master_hash"] = _sha256_text(_canonical_json(payload))
     return snapshot
@@ -221,14 +294,19 @@ def write_snapshot(
 def drifted_components(stored: dict[str, Any], current: dict[str, Any]) -> list[str]:
     """Ordered component labels that differ between stored and current snapshots.
 
-    Labels: "workspace_toml", "stage_registry", and "handler <stage>" entries.
-    Returns [] for the no-diff (inconclusive) case.
+    Labels: "workspace_toml", "stage_registry", "engine", and "handler <stage>"
+    entries. Returns [] for the no-diff (inconclusive) case.
     """
     changed: list[str] = []
     if stored.get("workspace_toml") != current.get("workspace_toml"):
         changed.append("workspace_toml")
     if stored.get("stage_registry") != current.get("stage_registry"):
         changed.append("stage_registry")
+    # .get defaults make a pre-engine stored snapshot (no key) equal to a
+    # current inactive component only when both are falsy; an active engine vs
+    # a missing key is a real mid-upgrade drift and SHOULD abort (fail closed).
+    if (stored.get("engine") or {}) != (current.get("engine") or {}):
+        changed.append("engine")
 
     stored_raw = stored.get("handlers")
     current_raw = current.get("handlers")
@@ -256,9 +334,9 @@ def component_files(
 
     workspace_toml and stage_registry map to their path relative to
     workspace_root (or None when the file lives outside it — a separate skill
-    checkout, so the edit cannot be a planned file of this run). A handler
-    tree component maps to None: a tree_hash names no single file, so a
-    handler drift is never owned (deliberate scope limit).
+    checkout, so the edit cannot be a planned file of this run). A handler or
+    engine tree component maps to None: a tree_hash names no single file, so
+    those drifts are never owned (deliberate scope limit).
     """
     out: dict[str, str | None] = {}
     for component in components:
