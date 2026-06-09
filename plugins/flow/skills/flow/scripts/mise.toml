@@ -2,7 +2,7 @@
 # Run from this directory: `mise run lint`, `mise run test`.
 
 [tools]
-python = "3.12"
+python = "3.14"
 ruff = "0.15.15"
 ty = "0.0.42"
 "pipx:pytest" = { version = "8.3.3", uvx_args = "--with pytest-cov", pipx_args = "--preinstall pytest-cov" }
