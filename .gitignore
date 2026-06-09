@@ -29,6 +29,9 @@ plugins/flow/**/.venv/
 **/.flow/runs/
 **/.flow/worktrees/
 **/.flow/*.lock
+# bootstrap claim flock targets (tickets/<key>.md stays tracked; *.lock above
+# does not reach the subdir)
+**/.flow/tickets/*.claim
 **/.flow/memory-root
 **/.flow/recall-pending.jsonl
 **/.flow/recall-pending.jsonl.lock

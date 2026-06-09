@@ -7,12 +7,15 @@ bootstrap must copy config in).
 
 from __future__ import annotations
 
+import multiprocessing
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
 import flow_worktree as fw
+import lease
 import state
 import triage
 
@@ -59,10 +62,13 @@ def _fake_runner(
     calls: list | None = None,
     main: Path | None = None,
     ignored: set[str] | None = None,
+    worktree_list: str | None = None,
 ) -> fw.Runner:
     def run(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
         if calls is not None:
             calls.append(args)
+        if args[:4] == ["git", "worktree", "list", "--porcelain"]:
+            return subprocess.CompletedProcess(args, 0, worktree_list or "", "")
         if args[:3] == ["git", "worktree", "add"]:
             wt = Path(args[5])  # git worktree add -b <branch> <path> <base>
             wt.mkdir(parents=True, exist_ok=True)
@@ -844,3 +850,181 @@ def test_real_decided_with_decision_clears_floor(tmp_path, monkeypatch):
     )
     res = _boot(tmp_path, main, base="@default", auto=False, planned=["some_helper.py"])
     assert res["ticket"] == "flow-x1"
+
+
+# ─── canonical per-ticket bootstrap claim (flow-594) ────────────────────────
+# Two concurrent bootstraps of the same ticket must serialize on the claim
+# (a flock under the MAIN checkout's .flow/tickets/), and the loser must
+# refuse (exit 4) when a live sibling run exists. The worktree-local run.lock
+# contract is untouched: bootstrap still holds no RUN lease.
+
+
+def _sibling_ticket_dir(tmp: Path) -> tuple[Path, Path]:
+    """A sibling worktree dir for FT-1 plus its .flow/runs/FT-1 ticket dir."""
+    sib = tmp / "sib"
+    td = sib / ".flow" / "runs" / "FT-1"
+    td.mkdir(parents=True)
+    return sib, td
+
+
+def _siblings_porcelain(sib: Path, branch: str = "feature/FT-1-old") -> str:
+    return _porcelain([(str(sib.parent / "main"), "main"), (str(sib), branch)])
+
+
+def test_bootstrap_refuses_live_sibling_lease(tmp_path: Path) -> None:
+    main = _main_checkout(tmp_path)
+    sib, td = _sibling_ticket_dir(tmp_path)
+    _seed_live_lease(td)
+    calls: list = []
+    runner = _fake_runner(calls=calls, worktree_list=_siblings_porcelain(sib))
+    with pytest.raises(fw._DuplicateClaim) as exc:
+        _run(tmp_path, main, runner=runner)
+    msg = str(exc.value)
+    assert str(sib) in msg and "live" in msg and "recover" in msg
+    # refused BEFORE any git mutation: no worktree add, no orphan dir
+    assert not any(c[:3] == ["git", "worktree", "add"] for c in calls)
+    assert not (tmp_path / "wt").exists()
+
+
+def test_cli_duplicate_claim_exits_4(tmp_path: Path, monkeypatch, capsys) -> None:
+    main = _main_checkout(tmp_path)
+    sib, td = _sibling_ticket_dir(tmp_path)
+    _seed_live_lease(td)
+    monkeypatch.setattr(
+        fw, "_default_runner", lambda: _fake_runner(worktree_list=_siblings_porcelain(sib))
+    )
+    rc = fw.cli_main(
+        [
+            "create",
+            "--ticket",
+            "FT-1",
+            "--plan-from",
+            str(_plan_file(tmp_path)),
+            "--base",
+            "main",
+            "--branch",
+            "feature/FT-1-x",
+            "--main-root",
+            str(main),
+            "--worktree-path",
+            str(tmp_path / "wt"),
+        ]
+    )
+    assert rc == 4
+    assert "FT-1" in capsys.readouterr().err
+
+
+def test_bootstrap_refuses_sibling_with_non_terminal_state(tmp_path: Path) -> None:
+    # the bootstrap->cmd_init window: the sibling has a seeded state.json but no
+    # run.lock yet. Fork 1 (settled): that IS a live sibling.
+    main = _main_checkout(tmp_path)
+    sib, td = _sibling_ticket_dir(tmp_path)
+    state.init(td, "FT-1", "jira", ["ticket", "plan", "implement"], run_id="r1")
+    with pytest.raises(fw._DuplicateClaim):
+        _run(tmp_path, main, runner=_fake_runner(worktree_list=_siblings_porcelain(sib)))
+
+
+def test_bootstrap_refuses_sibling_failed_mid_pipeline(tmp_path: Path) -> None:
+    # a failed stage with later stages still pending is recover-resumable, so it
+    # counts as non-terminal -> refuse (a resumable sibling double-shipping is
+    # exactly flow-594).
+    main = _main_checkout(tmp_path)
+    sib, td = _sibling_ticket_dir(tmp_path)
+    state.init(td, "FT-1", "jira", ["ticket", "plan", "implement"], run_id="r1")
+    state.force_stage_status(td, "ticket", "completed")
+    state.force_stage_status(td, "plan", "failed")
+    with pytest.raises(fw._DuplicateClaim):
+        _run(tmp_path, main, runner=_fake_runner(worktree_list=_siblings_porcelain(sib)))
+
+
+def test_bootstrap_proceeds_past_expired_sibling_lease(tmp_path: Path) -> None:
+    # a crashed run must not block re-running the ticket; reap owns its teardown.
+    main = _main_checkout(tmp_path)
+    sib, td = _sibling_ticket_dir(tmp_path)
+    lease.acquire(
+        td,
+        run_id="r1",
+        ttl_seconds=60,
+        now_iso="2020-01-01T00:00:00Z",
+        current_boot="other-boot",
+        hostname="other-host",
+        cwd="/x",
+    )
+    res = _run(tmp_path, main, runner=_fake_runner(worktree_list=_siblings_porcelain(sib)))
+    assert res["ticket"] == "FT-1"
+
+
+def test_bootstrap_proceeds_past_terminal_sibling_state(tmp_path: Path) -> None:
+    main = _main_checkout(tmp_path)
+    sib, td = _sibling_ticket_dir(tmp_path)
+    state.init(td, "FT-1", "jira", ["ticket", "plan"], run_id="r1")
+    state.force_stage_status(td, "ticket", "completed")
+    state.force_stage_status(td, "plan", "completed")
+    res = _run(tmp_path, main, runner=_fake_runner(worktree_list=_siblings_porcelain(sib)))
+    assert res["ticket"] == "FT-1"
+
+
+def test_bootstrap_refuses_corrupt_sibling_lock(tmp_path: Path) -> None:
+    # unconfirmable ownership (possibly live): refuse, and point at /flow recover.
+    main = _main_checkout(tmp_path)
+    sib, td = _sibling_ticket_dir(tmp_path)
+    lease.run_lock_path(td).write_text("{not json", encoding="utf-8")
+    with pytest.raises(fw._DuplicateClaim) as exc:
+        _run(tmp_path, main, runner=_fake_runner(worktree_list=_siblings_porcelain(sib)))
+    msg = str(exc.value)
+    assert "corrupt" in msg and "recover" in msg
+
+
+def test_bootstrap_no_siblings_creates_claim_file(tmp_path: Path) -> None:
+    main = _main_checkout(tmp_path)
+    res = _run(tmp_path, main)
+    assert res["ticket"] == "FT-1"
+    # the claim persists after release by design (flock targets are never deleted)
+    assert (main.resolve() / ".flow" / "tickets" / "FT-1.claim").exists()
+
+
+def _real_repo(tmp: Path) -> Path:
+    """A scratch git repo wrapping _main_checkout (so bootstrap runs real git)."""
+    main = _main_checkout(tmp)
+    subprocess.run(["git", "init", "-q", "-b", "main", str(main)], check=True)
+    (main / "README.md").write_text("x\n", encoding="utf-8")
+    git = ["git", "-C", str(main), "-c", "user.name=t", "-c", "user.email=t@example.com"]
+    subprocess.run([*git, "add", "README.md"], check=True)
+    subprocess.run([*git, "commit", "-q", "-m", "init"], check=True)
+    return main
+
+
+def _bootstrap_proc(main_str: str, plan_str: str, branch: str) -> None:
+    """Top-level so multiprocessing can pickle it on macOS spawn-start.
+
+    Exit 0 on a successful bootstrap, 4 on the duplicate-claim refusal."""
+    try:
+        fw.bootstrap(
+            ticket="FT-1",
+            plan_from=Path(plan_str),
+            base="main",
+            branch=branch,
+            main_root=Path(main_str),
+            mise_trust=False,
+        )
+    except fw._DuplicateClaim:
+        sys.exit(4)
+    sys.exit(0)
+
+
+def test_concurrent_bootstraps_exactly_one_wins(tmp_path: Path) -> None:
+    # two processes, same ticket, different branch names: the claim serializes
+    # them, the loser sees the winner's seeded non-terminal state and refuses.
+    main = _real_repo(tmp_path)
+    plan = _plan_file(tmp_path)
+    ctx = multiprocessing.get_context("spawn")
+    p1 = ctx.Process(target=_bootstrap_proc, args=(str(main), str(plan), "feature/FT-1-a"))
+    p2 = ctx.Process(target=_bootstrap_proc, args=(str(main), str(plan), "feature/FT-1-b"))
+    p1.start()
+    p2.start()
+    p1.join(timeout=60)
+    p2.join(timeout=60)
+    assert sorted([p1.exitcode, p2.exitcode]) == [0, 4]
+    pool = main.resolve() / ".flow" / "worktrees"
+    made = [d for d in (pool / "feature-FT-1-a", pool / "feature-FT-1-b") if d.exists()]
+    assert len(made) == 1

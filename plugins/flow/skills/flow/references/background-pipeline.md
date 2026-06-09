@@ -34,7 +34,7 @@ The bridge from the read-only front half to the autonomous tail is the worktree 
 After `EnterWorktree`, continuing into `/flow do`'s `init` resumes (idempotent, same `run_id`), `pick_next_pending` returns `ticket` (self-fetches ticket.json + stamps frontmatter), then skips the completed `plan` and lands on `implement`, which reads `plan.out`.
 The resume is driven entirely by `state.json` on disk and never consults in-context history, so it is identical whether spec flowed in or `do` was invoked standalone.
 
-The bootstrap holds **no lease** — the run's `init` acquires it under the seeded `run_id`, so there is no foreign-lease conflict.
+The bootstrap holds **no run lease** — the run's `init` acquires it under the seeded `run_id`, so there is no foreign-lease conflict. It does transiently hold a canonical per-ticket **bootstrap claim** (a flock under the main checkout's `.flow/tickets/`, released at bootstrap exit): two concurrent bootstraps of the same ticket serialize on it, and when a live sibling run exists the loser refuses with exit 4 instead of minting a duplicate worktree.
 
 ## Memory is shared, not per-worktree
 

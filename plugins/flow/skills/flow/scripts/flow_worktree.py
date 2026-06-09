@@ -20,14 +20,20 @@ concern.
      the worktree frontmatter so the commit + e2e stages do not block on a prompt
   7. print the worktree path (the spec session enters it via EnterWorktree)
 
-The bootstrap holds NO lease; the pipeline's cmd_init acquires it under the
-run_id seeded here (it sees that run_id as the owner, so resume is clean).
+The bootstrap holds NO run lease; the pipeline's cmd_init acquires it under the
+run_id seeded here (it sees that run_id as the owner, so resume is clean). It
+DOES transiently hold the canonical per-ticket bootstrap CLAIM — a flock on
+<main_root>/.flow/tickets/<ticket>.claim, held across worktree-add → state-seed
+→ frontmatter stamp, released at bootstrap exit — under which it refuses
+(exit 4) when a live sibling run already holds this ticket. The .claim file
+persists after release by design (deleting a flock target would race a waiter).
 
 Exit codes:
   0 = ok (may carry warnings on stderr)
   1 = git / worktree error
   2 = bad args / missing main workspace config
   3 = I/O error
+  4 = duplicate claim (a live sibling run already holds this ticket)
 """
 
 from __future__ import annotations
@@ -39,6 +45,7 @@ import sys
 from pathlib import Path
 
 import _atomicio
+import _locking
 import _workspace
 import lease
 import state
@@ -65,6 +72,10 @@ class _GitError(Exception):
 
 class _ConfigError(Exception):
     """missing/invalid main workspace config. Exit code 2."""
+
+
+class _DuplicateClaim(Exception):
+    """a live sibling run already holds this ticket. Exit code 4."""
 
 
 def _git(args: list[str], cwd: Path, runner: Runner) -> str:
@@ -215,6 +226,74 @@ def _parse_worktree_list(porcelain: str) -> list[tuple[str, str | None]]:
     return pairs
 
 
+def _is_ticket_branch(short_branch: str, ticket: str) -> bool:
+    """True when `short_branch` is this ticket's feature branch (exact or slugged)."""
+    return short_branch == f"feature/{ticket}" or short_branch.startswith(f"feature/{ticket}-")
+
+
+def _ticket_siblings(ticket: str, main_root: Path, runner: Runner) -> list[tuple[Path, str]]:
+    """All registered worktrees whose checked-out branch belongs to `ticket`."""
+    listing = _git(["worktree", "list", "--porcelain"], main_root, runner)
+    return [
+        (Path(path), sb)
+        for path, sb in _parse_worktree_list(listing)
+        if sb is not None and _is_ticket_branch(sb, ticket)
+    ]
+
+
+def _claim_path(main_root: Path, ticket: str) -> Path:
+    return main_root / ".flow" / "tickets" / f"{ticket}.claim"
+
+
+def _assert_no_live_sibling(ticket: str, main_root: Path, runner: Runner) -> None:
+    """Refuse (under the held bootstrap claim) when a sibling run is live.
+
+    Per sibling worktree, the run's <wt>/.flow/runs/<ticket> is classified via
+    lease.classify: a live or corrupt run.lock refuses; an expired lease is a
+    dead sibling (reap owns its teardown) and proceeds. A free lease with a
+    seeded NON-TERMINAL state.json (any stage pending/in_progress — which
+    includes a failed-mid-pipeline run, since /flow recover can resume it) also
+    refuses: that is the bootstrap→cmd_init window where the winner has seeded
+    state but not yet acquired its run lease.
+    """
+    unstick = (
+        f"resume/inspect it via `/flow recover {ticket}`, or tear down a dead "
+        f"sibling via `flow_worktree.py reap --ticket {ticket}`"
+    )
+    now = utcnow_iso()
+    boot = lease.boot_id()
+    host = lease.hostname()
+    for wt_path, _sb in _ticket_siblings(ticket, main_root, runner):
+        ticket_dir = wt_path / ".flow" / "runs" / ticket
+        info = lease.classify(ticket_dir, now, current_boot=boot, hostname=host)
+        lease_state = info.get("state")
+        if lease_state == "live":
+            raise _DuplicateClaim(
+                f"refusing to bootstrap {ticket}: sibling worktree {wt_path} holds a "
+                f"live run lease (state: live); a second concurrent run would "
+                f"double-ship the ticket. To unstick: {unstick}."
+            )
+        if lease_state == "corrupt":
+            raise _DuplicateClaim(
+                f"refusing to bootstrap {ticket}: sibling worktree {wt_path} has an "
+                f"unparseable run.lock (state: corrupt, possibly live). "
+                f"To unstick: {unstick}."
+            )
+        if lease_state == "free":
+            ticket_state, _code = state.read(ticket_dir)
+            if ticket_state is not None and any(
+                rec.status in ("pending", "in_progress") for rec in ticket_state.stages.values()
+            ):
+                raise _DuplicateClaim(
+                    f"refusing to bootstrap {ticket}: sibling worktree {wt_path} has a "
+                    f"seeded non-terminal run (state.json with pending/in_progress "
+                    f"stages, no run lease yet) — a just-bootstrapped or resumable "
+                    f"run. To unstick: {unstick}."
+                )
+        # expired_reboot_clearable / expired_foreign / free+terminal-or-absent:
+        # a dead sibling never blocks re-running the ticket.
+
+
 def reap_worktree(
     *,
     ticket: str,
@@ -250,7 +329,7 @@ def reap_worktree(
             if sb == branch:
                 target_path = Path(path)
                 break
-        elif sb == f"feature/{ticket}" or sb.startswith(f"feature/{ticket}-"):
+        elif _is_ticket_branch(sb, ticket):
             target_path = Path(path)
             resolved_branch = sb
             break
@@ -410,71 +489,84 @@ def bootstrap(
     worktree = _worktree_path(main_root, branch, worktree_override)
     warnings: list[str] = []
 
+    # The fetch inside _resolve_base stays OUTSIDE the claim, so a second launch
+    # never blocks on the winner's network round-trip; the claim window below is
+    # local-only ops, seconds.
     base = _resolve_base(base, main_root, run)
-    _git(["worktree", "add", "-b", branch, str(worktree), base], main_root, run)
 
-    # A gitignored planned file is silently dropped from the commit and hard-fails
-    # capture-implement-diff's `git add --intent-to-add` four stages later in the
-    # unattended tail. Catch it here, at the spec gate, while the user is present.
-    # Checked in the WORKTREE, not main_root: the worktree is checked out from
-    # `base`, which may carry .gitignore negations (e.g. a stacked PR off a feature
-    # branch) that main_root's current branch lacks; checking main_root would
-    # false-refuse a file `base` legitimately un-ignores. On a real ignore we remove
-    # the just-created worktree so refusing leaves no orphan.
-    if planned_files:
-        ignored = _gitignored(planned_files, worktree, run)
-        if ignored:
-            ignore_file_planned = any(
-                f == ".gitignore" or f.endswith("/.gitignore") for f in planned_files
-            )
-            if ignore_file_planned:
-                # The plan touches .gitignore, but that change is not committed yet,
-                # so check-ignore still flags these. Warn, do not refuse: the planned
-                # negation may legitimately un-ignore them.
+    # Canonical per-ticket bootstrap claim: two simultaneous bootstraps of the
+    # same ticket serialize here; the loser then sees the winner's seeded state
+    # via _assert_no_live_sibling and refuses (exit 4) before any git mutation.
+    # Held across worktree-add → state-seed → frontmatter stamp, so a sibling's
+    # check never observes a half-seeded run.
+    with _locking.flock_blocking(_claim_path(main_root, ticket)):
+        _assert_no_live_sibling(ticket, main_root, run)
+
+        _git(["worktree", "add", "-b", branch, str(worktree), base], main_root, run)
+
+        # A gitignored planned file is silently dropped from the commit and hard-fails
+        # capture-implement-diff's `git add --intent-to-add` four stages later in the
+        # unattended tail. Catch it here, at the spec gate, while the user is present.
+        # Checked in the WORKTREE, not main_root: the worktree is checked out from
+        # `base`, which may carry .gitignore negations (e.g. a stacked PR off a feature
+        # branch) that main_root's current branch lacks; checking main_root would
+        # false-refuse a file `base` legitimately un-ignores. On a real ignore we remove
+        # the just-created worktree so refusing leaves no orphan.
+        if planned_files:
+            ignored = _gitignored(planned_files, worktree, run)
+            if ignored:
+                ignore_file_planned = any(
+                    f == ".gitignore" or f.endswith("/.gitignore") for f in planned_files
+                )
+                if ignore_file_planned:
+                    # The plan touches .gitignore, but that change is not committed yet,
+                    # so check-ignore still flags these. Warn, do not refuse: the planned
+                    # negation may legitimately un-ignore them.
+                    warnings.append(
+                        "planned files are currently gitignored: "
+                        + ", ".join(ignored)
+                        + " (plan also touches .gitignore; ensure your negation un-ignores them)"
+                    )
+                else:
+                    run(["git", "worktree", "remove", "--force", str(worktree)], main_root)
+                    raise _ConfigError(
+                        "planned files are gitignored and would be silently dropped from "
+                        "the commit: "
+                        + ", ".join(ignored)
+                        + " (add a .gitignore negation to the plan's files, or fix the planned paths)"
+                    )
+
+        copied = _copy_config(main_root, worktree, extra_copy or [])
+        _ensure_flow_config(main_root, worktree, main_root / ".flow")
+
+        if mise_trust and ((worktree / "mise.toml").exists() or (worktree / ".mise.toml").exists()):
+            result = run(["mise", "trust"], worktree)
+            if result.returncode != 0:
                 warnings.append(
-                    "planned files are currently gitignored: "
-                    + ", ".join(ignored)
-                    + " (plan also touches .gitignore; ensure your negation un-ignores them)"
-                )
-            else:
-                run(["git", "worktree", "remove", "--force", str(worktree)], main_root)
-                raise _ConfigError(
-                    "planned files are gitignored and would be silently dropped from "
-                    "the commit: "
-                    + ", ".join(ignored)
-                    + " (add a .gitignore negation to the plan's files, or fix the planned paths)"
+                    f"mise trust failed: {result.stderr.strip()} "
+                    "(the tail may die on first `mise run`)"
                 )
 
-    copied = _copy_config(main_root, worktree, extra_copy or [])
-    _ensure_flow_config(main_root, worktree, main_root / ".flow")
+        head_sha = _git(["rev-parse", "HEAD"], worktree, run)
+        run_id = _seed_state(worktree, ticket, plan_text, head_sha)
 
-    if mise_trust and ((worktree / "mise.toml").exists() or (worktree / ".mise.toml").exists()):
-        result = run(["mise", "trust"], worktree)
-        if result.returncode != 0:
-            warnings.append(
-                f"mise trust failed: {result.stderr.strip()} (the tail may die on first `mise run`)"
-            )
-
-    head_sha = _git(["rev-parse", "HEAD"], worktree, run)
-    run_id = _seed_state(worktree, ticket, plan_text, head_sha)
-
-    fm_updates: dict[str, str] = {}
-    if planned_files:
-        # the implement pre-handler hook (records_diff_baseline) reads frontmatter
-        # `planned_files`; seeding it here keeps the tail from pausing to ask.
-        # Pass a TOML-array literal so ticket_frontmatter coerces it to a list.
-        fm_updates["planned_files"] = "[" + ", ".join(f'"{f}"' for f in planned_files) + "]"
-    if commit_type:
-        fm_updates["commit_type"] = commit_type
-    if commit_summary:
-        fm_updates["commit_summary"] = commit_summary
-    if e2e_recipe:
-        # the e2e stage reads frontmatter `e2e_recipe` (lint_ticket HARD GATE +
-        # the recipe-executor doc); seeding it here is what lets the opted-in
-        # e2e stage run unattended without pausing to ask.
-        fm_updates["e2e_recipe"] = e2e_recipe
-    if fm_updates:
-        ticket_frontmatter.update(worktree / ".flow" / "tickets" / f"{ticket}.md", fm_updates)
+        fm_updates: dict[str, str] = {}
+        if planned_files:
+            # the implement pre-handler hook (records_diff_baseline) reads frontmatter
+            # `planned_files`; seeding it here keeps the tail from pausing to ask.
+            # Pass a TOML-array literal so ticket_frontmatter coerces it to a list.
+            fm_updates["planned_files"] = "[" + ", ".join(f'"{f}"' for f in planned_files) + "]"
+        if commit_type:
+            fm_updates["commit_type"] = commit_type
+        if commit_summary:
+            fm_updates["commit_summary"] = commit_summary
+        if e2e_recipe:
+            # the e2e stage reads frontmatter `e2e_recipe` (lint_ticket HARD GATE +
+            # the recipe-executor doc); seeding it here is what lets the opted-in
+            # e2e stage run unattended without pausing to ask.
+            fm_updates["e2e_recipe"] = e2e_recipe
+        if fm_updates:
+            ticket_frontmatter.update(worktree / ".flow" / "tickets" / f"{ticket}.md", fm_updates)
 
     return {
         "ticket": ticket,
@@ -586,6 +678,9 @@ def cli_main(argv: list[str]) -> int:
     except _GitError as exc:
         sys.stderr.write(f"flow-worktree: {exc}\n")
         return 1
+    except _DuplicateClaim as exc:
+        sys.stderr.write(f"flow-worktree: {exc}\n")
+        return 4
     except OSError as exc:
         sys.stderr.write(f"flow-worktree: I/O error: {exc}\n")
         return 3
