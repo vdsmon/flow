@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 import flow_friction
+import harness_corpus
 import reflect_inputs
 import state
 import ticket_frontmatter
@@ -242,6 +243,54 @@ def test_bundle_includes_friction_for_this_run_only(tmp_repo: Path, tmp_path: Pa
     types = [f["type"] for f in payload["friction"]]
     assert "RECONCILE" in types
     assert "RETRY" not in types  # different run_id is excluded
+
+
+# ─── harness_eval block ──────────────────────────────────────────────────────
+
+
+def test_bundle_includes_harness_eval_block(tmp_repo: Path, tmp_path: Path) -> None:
+    head = _git(["rev-parse", "HEAD"], tmp_repo).strip()
+    ticket_dir = tmp_path / "runs" / "FT-1"
+    _seed_state(ticket_dir, head)
+    payload = reflect_inputs.bundle("FT-1", ticket_dir, tmp_repo)
+    block = payload["harness_eval"]
+    assert block["available"] is True
+    assert Path(block["eval_path"]).is_file()
+    assert Path(block["corpus_path"]).is_file()
+    cases = harness_corpus.load_corpus(Path(block["corpus_path"]))
+    expected_counts = {
+        "held_in": sum(1 for c in cases if c["split"] == "held_in"),
+        "held_out": sum(1 for c in cases if c["split"] == "held_out"),
+    }
+    assert block["case_counts"] == expected_counts
+    json.dumps(payload)
+
+
+def test_harness_eval_block_unavailable_when_files_missing(tmp_path: Path) -> None:
+    empty = tmp_path / "empty-scripts"
+    empty.mkdir()
+    block = reflect_inputs._harness_eval_block(scripts_dir=empty)
+    assert block["available"] is False
+    assert block["reason"]
+
+
+def test_harness_eval_block_tolerant_of_corpus_error(
+    tmp_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    head = _git(["rev-parse", "HEAD"], tmp_repo).strip()
+    ticket_dir = tmp_path / "runs" / "FT-1"
+    _seed_state(ticket_dir, head)
+
+    def _boom(path: object = None) -> list[dict[str, object]]:
+        raise harness_corpus.CorpusError("corpus exploded")
+
+    monkeypatch.setattr(reflect_inputs.harness_corpus, "load_corpus", _boom)
+    payload = reflect_inputs.bundle("FT-1", ticket_dir, tmp_repo)
+    assert payload["harness_eval"]["available"] is False
+    assert "corpus exploded" in payload["harness_eval"]["reason"]
+    assert payload["ticket"] == "FT-1"
+    assert "state" in payload
+    assert "friction" in payload
 
 
 # ─── reflect_config ──────────────────────────────────────────────────────────

@@ -9,7 +9,9 @@ Reads:
   - final diff via `diff_extract.diff_since_stage("ticket", ...)`
   - per-stage subagent reports via `state.json.stages.<name>.output_path`
 
-Output: single JSON object to stdout, structured for the reflect LLM.
+Output: single JSON object to stdout, structured for the reflect LLM. Includes
+a best-effort `harness_eval` availability block advertising the frozen-corpus
+regression eval (`harness_eval.py score`) to the reflect agent.
 
 Exit codes:
   0 = ok.
@@ -31,6 +33,7 @@ from typing import Any
 import _memory_paths
 import _workspace
 import diff_extract
+import harness_corpus
 import state
 import ticket_frontmatter
 
@@ -51,6 +54,28 @@ def _reflect_config(cwd: Path) -> dict[str, bool]:
         if isinstance(block.get(key), bool):
             cfg[key] = block[key]
     return cfg
+
+
+def _harness_eval_block(scripts_dir: Path | None = None) -> dict[str, Any]:
+    if scripts_dir is None:
+        scripts_dir = Path(__file__).resolve().parent
+    eval_path = scripts_dir / "harness_eval.py"
+    corpus_path = scripts_dir / "harness_corpus.json"
+    try:
+        if not eval_path.is_file():
+            return {"available": False, "reason": f"harness_eval.py not found at {eval_path}"}
+        cases = harness_corpus.load_corpus(corpus_path)
+    except (harness_corpus.CorpusError, OSError) as exc:
+        return {"available": False, "reason": str(exc)}
+    counts = {"held_in": 0, "held_out": 0}
+    for case in cases:
+        counts[case["split"]] += 1
+    return {
+        "available": True,
+        "eval_path": str(eval_path),
+        "corpus_path": str(corpus_path),
+        "case_counts": counts,
+    }
 
 
 def bundle(
@@ -133,6 +158,7 @@ def bundle(
         "subagent_reports": subagent_reports,
         "friction": friction,
         "reflect_config": _reflect_config(cwd),
+        "harness_eval": _harness_eval_block(),
     }
 
 
