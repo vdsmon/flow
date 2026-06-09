@@ -319,6 +319,7 @@ Adapter wraps a subprocess runner; tests inject a fake.
 | `bd comment <key>`      | `--stdin`                                          | ✗      | ✓       | `comment` (markdown via stdin)              |
 | `bd dep add <a> <b>`    | `--type`                                           | ✗      | ✓       | `link`                                      |
 | `git log`               | `--grep=<key>`, `--pretty=format:%H`, `-n 1`       | ✗      | ✗       | `is_shipped` evidence probe (read-only)     |
+| `bd history <key>`      | `--json`, `--limit 0`                              | ✓      | ✗       | `metric.revert-rate` status-timeline read (not via adapter) |
 
 ### State normalization
 

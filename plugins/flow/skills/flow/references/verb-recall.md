@@ -46,3 +46,11 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/recall.py --metric friction-per-run \
 ```
 
 Reads `.flow/<namespace>/friction.jsonl`, counts entries in the time window, and reports `total_events`, `runs`, `events_per_run`, `by_type`, and `by_severity`. `--namespace` is required. No `--checkpoint` option (friction-per-run has no checkpoint aggregation path).
+
+```bash
+python3 ${CLAUDE_SKILL_DIR}/scripts/recall.py --metric revert-rate \
+  --namespace <ns> --workspace-root . \
+  [--since YYYY-MM-DD] [--until YYYY-MM-DD]
+```
+
+Joins each in-window ship-event to its tracker status history (`bd history <key> --json`): a revert is a shipped bead reopened and re-closed AFTER its `shipped_at`. Reports `shipped`, `n_reverts`, `revert_rate`, and the attribution split `reverts_via_flow` / `reverts_not_attributed`, plus per-ticket detail and a `skipped` list (`history_unavailable`, `tracker_unsupported` on non-beads, `reopened_not_yet_reclosed`). `--namespace` is required. No `--checkpoint` option. Beads-only; non-beads workspaces short-circuit to an all-skipped report.
