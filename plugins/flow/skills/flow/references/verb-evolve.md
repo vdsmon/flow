@@ -94,10 +94,11 @@ Repeat the turn below until step **D** returns `done`. If the user invoked `/flo
 A launched run self-merges its own green PR, so this only ever finds a green evolve PR whose run **died before self-merging**. Green LEAF evolve PRs merge to the default branch unattended (immediate on green). Non-green and conflicted PRs always wait as draft PRs for the human — the gate survives where the risk is. Hot PRs auto-merge ONLY under `[evolve] auto_merge_hot` (default off; on solely in this maintainer self-target repo) AND isolation: at most one hot PR merges per pass, and the fleet must be quiesced around the pass. Off / non-maintainer keeps today's behavior (hot → `skipped_hot`). Note: the code (`classify`) enforces only the one-hot-per-pass serialization; ensuring no other evolve run is active (quiescing the fleet) before an auto-merge pass is the operator's responsibility.
 
 ```bash
+python3 ${CLAUDE_SKILL_DIR}/scripts/launch_ledger.py prune --workspace-root .  # hygiene: drop expired launch markers
 python3 ${CLAUDE_SKILL_DIR}/scripts/evolve_reap.py --workspace-root .
 ```
 
-Returns JSON `{merge:[{pr,key,is_draft,is_hot}], not_green, skipped_hot, version_recoverable, blocked}`. For each `merge` entry (skip all of this under `--dry-run`):
+Returns JSON `{merge:[{pr,key,is_draft,is_hot}], not_green, skipped_hot, version_recoverable, blocked}`. The `launch_ledger.py prune` on the first line is hygiene only (drops expired launch markers); SKIP it under `--dry-run` like every other side effect, since it deletes files. For each `merge` entry (skip all of this under `--dry-run`):
 
 **Guard property-check — run FIRST for any entry with `is_hot: true`.** A hot entry touches the harness, possibly the safety machinery itself. Before merging it, review the PR diff (`gh pr diff <pr>`) against the guard-property checklist: does this DELETE or weaken a safety property — lease exclusivity (one run per ticket), snapshot drift-detection, atomic-write + corrupt-file quarantine, content-ownership refusal, or self-edit flock serialization? Guard *code* may be refactored, sped up, or improved freely; a guard *property* may only be replaced by one that provably still holds, never simply dropped. Green does NOT prove the property holds — most of these have no direct test — so this review is the enforcer, not CI. If the diff removes a protection without a provably-equivalent replacement → do NOT merge: leave the PR as a draft for the human (skip its `gh pr ready` + `gh pr merge`), and report it under `held_guard`. Only a property-preserving hot entry proceeds to the steps below; a non-hot entry (`is_hot: false`) skips straight to them.
 
@@ -171,7 +172,7 @@ rm -rf <job_dir>                                          # Ctrl+X-equivalent: d
 python3 ${CLAUDE_SKILL_DIR}/scripts/evolve_drain.py --workspace-root .
 ```
 
-This runs `evolve_select` (which is DAG-aware via `bd ready`, drops in-flight beads, enforces backpressure ≥ `cap` open PRs, partitions ≤1 hot per batch / no shared primary-file anchor) and annotates each in-flight bead with its run's lease liveness. It returns JSON `{action: "launch"|"wait"|"done", launch:[keys], parked:[keys], liveness:{}, select:{...}}`:
+This runs `evolve_select` (which is DAG-aware via `bd ready`, drops in-flight beads, enforces backpressure ≥ `cap` open PRs, partitions ≤1 hot per batch / no shared primary-file anchor) and annotates each in-flight bead with its run's lease liveness. It returns JSON `{action: "launch"|"wait"|"done", launch:[keys], parked:[keys], liveness:{}, select:{...}}`. Inside `select`, `launched_pending` lists the keys held by the launch ledger — runs fanned out on a prior turn that have not yet registered a branch/lease (the launch→init window); the selector already counts them as in-flight, so they are neither re-launched nor allowed to break hot isolation.
 
 - **`launch`** (launch non-empty) → go to **C**.
 - **`wait`** (launch empty, but a **blocking** in-flight run remains) → go to **D-wait**. A run blocks when its lease reads `live` OR `corrupt`: a live run will self-merge and free serialization/backpressure; a corrupt lease (run.lock unparseable, ownership unconfirmable) does NOT self-free — it blocks until a human runs `recover takeover`. Both route to **D-wait**.
@@ -182,6 +183,9 @@ The termination is blocking-gated on purpose: a **withheld** hot bead (its in-ru
 **C. Launch.** For each key in `launch` (under `--dry-run`, print the command instead of running it). Read the per-key worker model from the step-**B** JSON (`result.select.model_per_key[key]`, present in the same JSON you already consumed) and append `--model <model>` when the key is present (absent → omit the flag, the run inherits the strong default model):
 
 ```bash
+# record the launch FIRST so the very next turn's select sees this key as in-flight
+# even before it registers a branch/lease (closes the re-launch + 2nd-hot-isolation window).
+python3 ${CLAUDE_SKILL_DIR}/scripts/launch_ledger.py add --key <key> --workspace-root .
 claude --bg [--model sonnet] "/flow <key> --auto"
 ```
 

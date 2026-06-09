@@ -446,3 +446,50 @@ def test_select_pre_pr_live_hot_blocks_second_hot(tmp_path):
     assert out["launch"] == []
     assert out["held_hot"] == ["flow-new"]
     assert out["live_runs"] == ["flow-old"]
+
+
+# ---- launch ledger — the launch->init blind-window regression ----
+
+
+def _ledger_add(repo: Path, key: str) -> None:
+    import launch_ledger
+
+    launch_ledger.add(repo, key)
+
+
+def test_select_launched_key_is_inflight_not_relaunched(tmp_path):
+    # a non-hot key in the launch ledger (no ref, no lease yet) must read as
+    # in-flight: held in skipped_in_flight, never re-launched.
+    ws = _marked_ws(tmp_path)
+    repo = es.resolve_maintainer_repo(ws)
+    assert repo is not None
+    _ledger_add(repo, "flow-hso")
+    run, _ = _dispatch(ready=[_cand("flow-hso"), _cand("flow-y")])
+    out = es.select(ws, cap=5, concurrency=3, runner=run)
+    assert out["launch"] == ["flow-y"]
+    assert out["skipped_in_flight"] == ["flow-hso"]
+    assert out["launched_pending"] == ["flow-hso"]
+
+
+def test_select_launched_hot_blocks_second_hot(tmp_path):
+    # the real incident: flow-jud(hot) was launched (ledger only, no ref/lease),
+    # and the next pass must NOT offer flow-4lb as a 2nd hot. flow-hso (non-hot,
+    # also launched) lands in skipped_in_flight, not re-launched.
+    ws = _marked_ws(tmp_path)
+    repo = es.resolve_maintainer_repo(ws)
+    assert repo is not None
+    _ledger_add(repo, "flow-jud")
+    _ledger_add(repo, "flow-hso")
+    run, _ = _dispatch(
+        ready=[
+            _cand("flow-4lb", labels=["evolve", "hot"], blast="z.py"),
+            _cand("flow-hso"),
+        ],
+        # _hot_inflight reads the launched key as hot only if bd list reports it hot
+        evolve_list=[{"id": "flow-jud", "labels": ["evolve", "hot"]}],
+    )
+    out = es.select(ws, cap=5, concurrency=3, runner=run)
+    assert out["launch"] == []
+    assert out["held_hot"] == ["flow-4lb"]
+    assert "flow-hso" in out["skipped_in_flight"]
+    assert set(out["launched_pending"]) == {"flow-jud", "flow-hso"}
