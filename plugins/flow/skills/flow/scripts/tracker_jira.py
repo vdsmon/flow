@@ -64,20 +64,20 @@ _RE_VALIDATOR = re.compile(r"(?i)\bvalidat(or|ion)\b.*\b(fail|error|reject)\b")
 
 # Closed-enum capabilities advertised by Jira Cloud. All true.
 _JIRA_CAPABILITIES: list[Capability] = [
-    {"name": "comments_adf", "supported": True, "payload_schema": None},
-    {"name": "comments_markdown", "supported": False, "payload_schema": None},
-    {"name": "attachments", "supported": True, "payload_schema": None},
-    {"name": "watchers", "supported": True, "payload_schema": None},
-    {"name": "sprints", "supported": True, "payload_schema": None},
-    {"name": "fix_versions", "supported": True, "payload_schema": None},
-    {"name": "components", "supported": True, "payload_schema": None},
-    {"name": "epic_link", "supported": True, "payload_schema": None},
-    {"name": "pr_links", "supported": True, "payload_schema": None},
-    {"name": "ci_links", "supported": True, "payload_schema": None},
-    {"name": "boards", "supported": True, "payload_schema": None},
-    {"name": "custom_fields", "supported": True, "payload_schema": None},
-    {"name": "transitions_with_validators", "supported": True, "payload_schema": None},
-    {"name": "resolutions", "supported": True, "payload_schema": None},
+    {"name": "comments_adf", "supported": True},
+    {"name": "comments_markdown", "supported": False},
+    {"name": "attachments", "supported": True},
+    {"name": "watchers", "supported": True},
+    {"name": "sprints", "supported": True},
+    {"name": "fix_versions", "supported": True},
+    {"name": "components", "supported": True},
+    {"name": "epic_link", "supported": True},
+    {"name": "pr_links", "supported": True},
+    {"name": "ci_links", "supported": True},
+    {"name": "boards", "supported": True},
+    {"name": "custom_fields", "supported": True},
+    {"name": "transitions_with_validators", "supported": True},
+    {"name": "resolutions", "supported": True},
 ]
 
 

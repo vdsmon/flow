@@ -83,20 +83,20 @@ _BD_TRANSITIONS: dict[str, list[str]] = {
 # CAPABILITY_ENUM from tracker.py. Only comments_markdown + resolutions are
 # True; beads is local-only and intentionally narrow.
 _BEADS_CAPABILITIES: list[Capability] = [
-    {"name": "comments_adf", "supported": False, "payload_schema": None},
-    {"name": "comments_markdown", "supported": True, "payload_schema": None},
-    {"name": "attachments", "supported": False, "payload_schema": None},
-    {"name": "watchers", "supported": False, "payload_schema": None},
-    {"name": "sprints", "supported": False, "payload_schema": None},
-    {"name": "fix_versions", "supported": False, "payload_schema": None},
-    {"name": "components", "supported": False, "payload_schema": None},
-    {"name": "epic_link", "supported": False, "payload_schema": None},
-    {"name": "pr_links", "supported": False, "payload_schema": None},
-    {"name": "ci_links", "supported": False, "payload_schema": None},
-    {"name": "boards", "supported": False, "payload_schema": None},
-    {"name": "custom_fields", "supported": False, "payload_schema": None},
-    {"name": "transitions_with_validators", "supported": False, "payload_schema": None},
-    {"name": "resolutions", "supported": True, "payload_schema": None},
+    {"name": "comments_adf", "supported": False},
+    {"name": "comments_markdown", "supported": True},
+    {"name": "attachments", "supported": False},
+    {"name": "watchers", "supported": False},
+    {"name": "sprints", "supported": False},
+    {"name": "fix_versions", "supported": False},
+    {"name": "components", "supported": False},
+    {"name": "epic_link", "supported": False},
+    {"name": "pr_links", "supported": False},
+    {"name": "ci_links", "supported": False},
+    {"name": "boards", "supported": False},
+    {"name": "custom_fields", "supported": False},
+    {"name": "transitions_with_validators", "supported": False},
+    {"name": "resolutions", "supported": True},
 ]
 
 # Priority maps: bd takes 0-4 integer. Protocol uses string. Round-trip

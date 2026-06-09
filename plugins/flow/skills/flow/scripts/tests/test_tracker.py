@@ -152,7 +152,6 @@ def test_capability_shape_accepts_closed_enum_names() -> None:
         cap: t.Capability = {
             "name": name,  # type: ignore[typeddict-item]
             "supported": True,
-            "payload_schema": None,
         }
         capabilities.append(cap)
     assert len(capabilities) == 14
@@ -163,7 +162,6 @@ def test_capability_supported_false_is_legal() -> None:
     cap: t.Capability = {
         "name": "attachments",
         "supported": False,
-        "payload_schema": None,
     }
     assert cap["supported"] is False
 

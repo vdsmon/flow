@@ -144,15 +144,10 @@ class Sprint(TypedDict):
 
 
 class Capability(TypedDict):
-    """Adapter-advertised capability flag, optionally with per-capability schema."""
+    """Adapter-advertised capability flag."""
 
     name: CAPABILITY_ENUM
     supported: bool
-    # Optional per-capability payload schema (e.g., the `sprints` capability may
-    # include a payload_schema describing allowed sprint field shape). The
-    # validator rejects extra/edit payloads that exercise a capability where
-    # supported=false.
-    payload_schema: dict[str, Any] | None
 
 
 # ─── Ticket shape ────────────────────────────────────────────────────────────
