@@ -36,21 +36,18 @@ Exit codes: 0 ok; 2 = a `bd`/`git`/`gh` call failed; 4 = not a maintainer setup.
 from __future__ import annotations
 
 import argparse
-import glob
 import json
 import sys
 from pathlib import Path
 
 import launch_ledger
 import lease
+from _evolve_common import run_dir_for as _run_dir_for
+from _timeutil import utcnow_iso
 from evolve_select import (
     NotMaintainer,
     ToolError,
     _config_defaults,
-    _default_runner,
-    _key_from_ref,
-    _loads,
-    _ok,
     select,
 )
 from maintainer import resolve_maintainer_repo
@@ -87,45 +84,21 @@ def decide(select_result: dict, liveness: dict[str, str]) -> dict:
     return {"action": "done", "launch": [], "parked": parked}
 
 
-def _open_pr_keys(repo: Path) -> list[str]:
-    """The evolve bead keys behind currently-open PRs (the cap-occupying runs)."""
-    run = _default_runner(repo)
-    raw = _ok(
-        run(["gh", "pr", "list", "--state", "open", "--json", "headRefName", "--limit", "200"]),
-        "gh pr list",
-    )
-    keys: set[str] = set()
-    for pr in _loads(raw):
-        if isinstance(pr, dict) and pr.get("headRefName"):
-            key = _key_from_ref(str(pr["headRefName"]))
-            if key:
-                keys.add(key)
-    return sorted(keys)
-
-
-def _run_dir_for(repo: Path, key: str) -> Path | None:
-    """The in-flight run's ticket dir, under the worktree pool for `key`.
-
-    Worktrees live at `<repo>/.flow/worktrees/feature-<key>-<slug>/` (see
-    flow_worktree._worktree_path); the run state is `.flow/runs/<key>/`. Absent =
-    no live lease to read (a leaked branch with no worktree), so the caller treats
-    it as non-live rather than waiting on it forever.
-    """
-    base = repo / ".flow" / "worktrees"
-    for wt in sorted(glob.glob(str(base / f"feature-{key}*"))):
-        run_dir = Path(wt) / ".flow" / "runs" / key
-        if run_dir.exists():
-            return run_dir
-    return None
-
-
 def liveness_map(repo: Path, keys: list[str]) -> dict[str, str]:
     """For each in-flight key, the lease state of its run ("live" = still working)."""
-    now = lease._utcnow_iso()
+    now = utcnow_iso()
+    current_boot = lease.boot_id()
+    host = lease.hostname()
     out: dict[str, str] = {}
     for key in keys:
         run_dir = _run_dir_for(repo, key)
-        out[key] = "absent" if run_dir is None else str(lease.classify(run_dir, now).get("state"))
+        out[key] = (
+            "absent"
+            if run_dir is None
+            else str(
+                lease.classify(run_dir, now, current_boot=current_boot, hostname=host).get("state")
+            )
+        )
     return out
 
 
@@ -161,7 +134,7 @@ def cli_main(argv: list[str]) -> int:
 
     try:
         sel = select(ws, cap=cap, concurrency=concurrency, include_proposals=args.include_proposals)
-        open_pr_keys = set(_open_pr_keys(repo))
+        open_pr_keys = set(sel.get("open_pr_keys") or [])
         live_runs = set(sel.get("live_runs") or [])
         inflight = sorted(set(sel.get("skipped_in_flight") or []) | open_pr_keys | live_runs)
         live = liveness_map(repo, inflight)

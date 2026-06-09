@@ -33,6 +33,7 @@ from typing import Any, Literal
 
 from _atomicio import atomic_write_text
 from _locking import flock_blocking
+from _timeutil import utcnow_iso
 
 SCHEMA_VERSION = 1
 
@@ -72,10 +73,6 @@ class StateUnrecoverable(Exception):
 
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
-
-
-def _utcnow_iso() -> str:
-    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
 def _ts_token() -> str:
@@ -215,7 +212,7 @@ def init(
         ticket=ticket,
         run_id=run_id or secrets.token_hex(8),
         backend=backend,
-        started_at=_utcnow_iso(),
+        started_at=utcnow_iso(),
         stages={name: StageRecord() for name in stages},
     )
     _write(ticket_dir, state)
@@ -237,7 +234,7 @@ def begin_stage(
         new_record = replace(
             record,
             status="in_progress",
-            started_at_iso=record.started_at_iso or _utcnow_iso(),
+            started_at_iso=record.started_at_iso or utcnow_iso(),
             started_at_sha=record.started_at_sha or head_sha,
             agent_id=agent_id or record.agent_id,
         )
@@ -265,7 +262,7 @@ def finish_stage(
         new_record = replace(
             record,
             status=status,
-            finished_at_iso=_utcnow_iso(),
+            finished_at_iso=utcnow_iso(),
             finished_at_sha=head_sha,
             output_path=output_path or record.output_path,
             skill_output=skill_output if skill_output is not None else record.skill_output,

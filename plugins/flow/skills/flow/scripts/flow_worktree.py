@@ -36,7 +36,6 @@ import argparse
 import secrets
 import shutil
 import sys
-from datetime import UTC, datetime
 from pathlib import Path
 
 import _atomicio
@@ -46,6 +45,7 @@ import state
 import ticket_frontmatter
 from _runner import Runner
 from _runner import default_runner as _default_runner
+from _timeutil import utcnow_iso
 
 # Gitignored dev config the autonomous tail needs but a fresh worktree won't have.
 _DEFAULT_COPY = [
@@ -215,10 +215,6 @@ def _parse_worktree_list(porcelain: str) -> list[tuple[str, str | None]]:
     return pairs
 
 
-def _utcnow_iso() -> str:
-    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
 def reap_worktree(
     *,
     ticket: str,
@@ -270,7 +266,9 @@ def reap_worktree(
 
     if target_path is not None:
         ticket_dir = target_path / ".flow" / "runs" / ticket
-        info = lease.classify(ticket_dir, _utcnow_iso())
+        info = lease.classify(
+            ticket_dir, utcnow_iso(), current_boot=lease.boot_id(), hostname=lease.hostname()
+        )
         if info.get("state") == "live":
             receipt["skipped"] = "lease live (run still in progress)"
             return receipt

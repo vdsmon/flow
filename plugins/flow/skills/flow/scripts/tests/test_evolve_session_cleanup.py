@@ -146,6 +146,30 @@ def test_lease_corrupt_skips(tmp_path):
     assert out["skipped"][0]["reason"] == "lease is corrupt"
 
 
+def test_lease_reboot_clearable_proceeds(tmp_path, monkeypatch):
+    # an expired lease from a previous boot on THIS host is non-live → proceeds;
+    # classify passes boot/hostname so it reads expired_reboot_clearable, not
+    # expired_foreign (display accuracy; neither state is a skip).
+    repo = tmp_path / "flow"
+    repo.mkdir()
+    rec = _record(repo, tmp_path)
+    run_dir = _run_dir(_worktree_cwd(repo, "flow-abc"), "flow-abc")
+    lease.acquire(
+        run_dir,
+        "run-test",
+        1,
+        "2020-01-01T00:00:00Z",
+        stage="reflect",
+        current_boot="boot-OLD",
+        hostname=lease.hostname(),
+        cwd=str(run_dir),
+    )
+    monkeypatch.setattr(lease, "boot_id", lambda runner=None: "boot-NEW")
+    out = _classify(repo, [rec], status="closed")
+    assert len(out["stoppable"]) == 1
+    assert "lease expired_reboot_clearable" in out["stoppable"][0]["reason"]
+
+
 def test_fresh_transcript_mtime_skips(tmp_path):
     # state=done, tempo=idle, bead terminal, lease expired — but the transcript was
     # just written → still mid-reflect (tempo lags) → skip. The load-bearing case.

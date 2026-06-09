@@ -87,7 +87,7 @@ class GitHubAdapter:
         try:
             return int(tail)
         except ValueError:
-            return 0
+            raise ForgeError(f"cannot parse PR number from URL {url!r}") from None
 
     def _pr_from_json(self, item: dict[str, Any]) -> PullRequest:
         url = str(item.get("url") or "")

@@ -34,11 +34,11 @@ import argparse
 import json
 import math
 import sys
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from _atomicio import atomic_write_text
+from _timeutil import utcnow_iso
 
 DEFAULT_PATH = Path.home() / ".config" / "flow" / "baseline-jira-workflow.json"
 
@@ -51,10 +51,6 @@ class _NoSamples(Exception):
 
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
-
-
-def _utcnow_iso() -> str:
-    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 # ─── Statistics ────────────────────────────────────────────────────────────────
@@ -169,7 +165,7 @@ def cli_main(argv: list[str]) -> int:
             sys.stderr.write(f"baseline-collect: invalid samples JSON: {exc}\n")
             return 1
         try:
-            baseline = build_baseline(samples, collected_at=_utcnow_iso(), source=args.source)
+            baseline = build_baseline(samples, collected_at=utcnow_iso(), source=args.source)
         except _NoSamples as exc:
             sys.stderr.write(f"baseline-collect: {exc}\n")
             return 1

@@ -35,7 +35,6 @@ import hashlib
 import json
 import os
 import sys
-import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -43,6 +42,7 @@ from typing import Any
 from _atomicio import atomic_write_text
 from _jsonl import iter_jsonl
 from _locking import LockContention, flock_retry
+from _timeutil import utcnow_iso
 
 VALID_OPS: tuple[str, ...] = ("create", "edit", "transition", "comment", "link")
 
@@ -74,10 +74,6 @@ def _quarantine_path(workspace_root: Path) -> Path:
 
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
-
-
-def _utcnow_iso() -> str:
-    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
 def _canonical_args(args: dict[str, Any]) -> str:
@@ -310,7 +306,7 @@ def _cmd_compact(args: argparse.Namespace, workspace_root: Path) -> int:
     return 0
 
 
-def cli_main(argv: list[str], clock: Clock = _utcnow_iso) -> int:
+def cli_main(argv: list[str], clock: Clock = utcnow_iso) -> int:
     args = _parse_args(argv)
     workspace_root = Path(args.workspace_root).resolve()
     if args.command == "append":

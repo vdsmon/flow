@@ -88,6 +88,23 @@ def test_open_pr_number_from_last_stdout_line():
     assert pr["number"] == 13
 
 
+def test_open_pr_malformed_url_raises():
+    from forge import ForgeError
+
+    fg, _ = _adapter({"create": "https://github.com/o/r/pull/not-a-number\n"})
+    with pytest.raises(ForgeError, match="cannot parse PR number"):
+        fg.open_pr("main", "feature/flow-x", "t", "b", draft=False)
+
+
+def test_detect_pr_malformed_url_without_number_raises():
+    from forge import ForgeError
+
+    listing = json.dumps([{"url": "https://github.com/o/r/pull/oops", "state": "OPEN"}])
+    fg, _ = _adapter({"list": listing})
+    with pytest.raises(ForgeError, match="cannot parse PR number"):
+        fg.detect_pr("feature/flow-x")
+
+
 def test_ci_rollup_green():
     view = json.dumps(
         {"statusCheckRollup": [{"name": "ci", "status": "COMPLETED", "conclusion": "SUCCESS"}]}

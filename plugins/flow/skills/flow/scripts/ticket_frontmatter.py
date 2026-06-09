@@ -33,7 +33,7 @@ Invariants:
   3. `^-?\\d+$` → TOML integer.
   4. `^\\[.*\\]$` → TOML array, parsed via `tomllib` so quoted items with
      commas survive; falls back to naive comma-split for bare-word lists.
-  5. `NOW` → UTC ISO8601 string via `_utcnow_iso()`.
+  5. `NOW` → UTC ISO8601 string via `_timeutil.utcnow_iso()`.
   6. Otherwise → TOML string (always double-quoted on write).
 
 Exit codes (per plan line 1017-1020):
@@ -62,6 +62,7 @@ from pathlib import Path
 from typing import Any
 
 from _atomicio import atomic_write_text
+from _timeutil import utcnow_iso
 
 DELIM = "+++"
 LOCK_RETRY_COUNT = 3
@@ -72,10 +73,6 @@ _BARE_KEY_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
-
-
-def _utcnow_iso() -> str:
-    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
 def _ts_token() -> str:
@@ -126,14 +123,11 @@ class _Flock:
                 fcntl.flock(self._fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 return self
             except BlockingIOError:
-                if attempt == LOCK_RETRY_COUNT - 1:
-                    os.close(self._fd)
-                    self._fd = None
-                    raise _LockContention(
-                        f"could not lock {self._lock_path} after {LOCK_RETRY_COUNT} attempts"
-                    ) from None
-                time.sleep(LOCK_RETRY_DELAY_S)
-        raise _LockContention(f"lock loop exited without lock on {self._lock_path}")
+                if attempt < LOCK_RETRY_COUNT - 1:
+                    time.sleep(LOCK_RETRY_DELAY_S)
+        os.close(self._fd)
+        self._fd = None
+        raise _LockContention(f"could not lock {self._lock_path} after {LOCK_RETRY_COUNT} attempts")
 
     def __exit__(self, *exc: object) -> None:
         if self._fd is not None:
@@ -296,7 +290,7 @@ def _coerce_value(raw: str) -> Any:
     if raw == "false":
         return False
     if raw == "NOW":
-        return _utcnow_iso()
+        return utcnow_iso()
     if _INT_RE.match(raw):
         return int(raw)
     if _LIST_RE.match(raw):

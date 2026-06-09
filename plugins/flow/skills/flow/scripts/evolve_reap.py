@@ -46,11 +46,13 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
-import subprocess
 import sys
 from pathlib import Path
 
+from _evolve_common import NotMaintainer, ToolError, bead_labels
+from _evolve_common import key_from_ref as _key_from_ref
+from _evolve_common import loads as _loads
+from _evolve_common import ok as _ok
 from _runner import CwdRunner as Runner
 from _runner import cwd_default_runner as _default_runner
 from _workspace import WorkspaceConfigError, load_workspace_toml
@@ -58,40 +60,7 @@ from maintainer import resolve_maintainer_repo
 from triage import is_hot_change
 
 _EVOLVE_STATUSES = "open,in_progress,blocked,deferred,closed"
-_FLOW_KEY_RE = re.compile(r"^feature/(flow-[a-z0-9]+(?:\.\d+)?)(?:-.*)?$", re.IGNORECASE)
 _MERGEABLE_STATES = {"CLEAN", "DRAFT"}  # DRAFT becomes CLEAN after `gh pr ready`
-
-
-class NotMaintainer(Exception):
-    """Raised when the run is not in maintainer mode. Exit 4."""
-
-
-class ToolError(Exception):
-    """Raised when an injected tool (gh/bd) fails. Exit 2."""
-
-
-def _ok(result: subprocess.CompletedProcess[str], what: str) -> str:
-    if result.returncode != 0:
-        raise ToolError(f"{what} failed: {result.stderr.strip()}")
-    return result.stdout or ""
-
-
-def _loads(raw: str) -> list:
-    try:
-        payload = json.loads(raw or "[]")
-    except json.JSONDecodeError:
-        return []
-    if isinstance(payload, list):
-        return payload
-    if isinstance(payload, dict):
-        items = payload.get("issues") or payload.get("prs") or []
-        return items if isinstance(items, list) else []
-    return []
-
-
-def _key_from_ref(ref: str) -> str | None:
-    m = _FLOW_KEY_RE.match(ref.removeprefix("origin/"))
-    return m.group(1) if m else None
 
 
 def rollup_is_green(rollup: list) -> bool:
@@ -228,7 +197,7 @@ def _labels_index(runner: Runner, *, include_proposals: bool = False) -> dict[st
     join the index under `include_proposals` or proposal orphans (runs that died
     before self-merging) would never reap and pile up unmerged.
     """
-    labels = ["evolve", "proposal"] if include_proposals else ["evolve"]
+    labels = bead_labels(include_proposals)
     index: dict[str, list[str]] = {}
     for label in labels:
         raw = _ok(

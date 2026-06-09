@@ -881,6 +881,23 @@ def test_upload_attachment_multipart_shape(monkeypatch: pytest.MonkeyPatch, tmp_
     assert sent.get_header("X-atlassian-token") == "no-check"
 
 
+def test_upload_attachment_escapes_quoted_filename(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    f = tmp_path / 'we"ird\\name.txt'
+    f.write_bytes(b"payload")
+    http = _FakeHttp([_Response([{"id": "10002"}])])
+    adapter = _make_adapter(monkeypatch, http)
+    adapter.upload_attachment("FT-1", str(f))
+    raw = cast("bytes", http.calls[0].data)
+    header_line = next(
+        line for line in raw.split(b"\r\n") if line.startswith(b"Content-Disposition")
+    )
+    assert header_line == (
+        b'Content-Disposition: form-data; name="file"; filename="we\\"ird\\\\name.txt"'
+    )
+
+
 # ─── Public surface ─────────────────────────────────────────────────────────
 
 

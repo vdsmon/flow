@@ -38,7 +38,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import subprocess
 import sys
 from pathlib import Path
@@ -50,8 +49,6 @@ from _runner import cwd_default_runner as _default_runner
 PLUGIN_JSON = "plugins/flow/.claude-plugin/plugin.json"
 MARKETPLACE_JSON = ".claude-plugin/marketplace.json"
 VERSION_FILES = frozenset({PLUGIN_JSON, MARKETPLACE_JSON})
-
-_VERSION_RE = re.compile(r'"version"\s*:\s*"(\d+)\.(\d+)\.(\d+)"')
 
 
 class ToolError(Exception):
@@ -68,7 +65,7 @@ class NonVersionConflict(Exception):
 
 def parse_version(text: str) -> tuple[int, int, int]:
     """First `"version": "X.Y.Z"` in the text → (X, Y, Z)."""
-    m = _VERSION_RE.search(text)
+    m = version.VERSION_RE.search(text)
     if not m:
         raise ToolError("no semantic version found")
     return int(m.group(1)), int(m.group(2)), int(m.group(3))
@@ -102,7 +99,7 @@ def _strip_version(text: str) -> str:
     # count=1: normalize only the FIRST (plugin/marketplace) version; a second
     # "version" field is compared literally, so a difference there trips the
     # equality check and aborts (safe) rather than being silently rewritten.
-    return _VERSION_RE.sub('"version": "0.0.0"', text, count=1)
+    return version.VERSION_RE.sub('"version": "0.0.0"', text, count=1)
 
 
 def recover(branch: str, *, cwd: Path, runner: Runner | None = None) -> dict:

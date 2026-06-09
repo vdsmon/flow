@@ -5,10 +5,11 @@ import json
 import evolve_drain as ed
 import launch_ledger
 import lease
+from _timeutil import utcnow_iso
 
 
 def _write_lease(run_dir, *, expired: bool = False) -> None:
-    now = "2020-01-01T00:00:00Z" if expired else lease._utcnow_iso()
+    now = "2020-01-01T00:00:00Z" if expired else utcnow_iso()
     ttl = 1 if expired else 3600
     lease.acquire(
         run_dir,
@@ -172,6 +173,28 @@ def test_liveness_map_surfaces_corrupt(tmp_path):
     assert ed.liveness_map(repo, ["flow-bad"]) == {"flow-bad": "corrupt"}
 
 
+def test_liveness_map_reboot_clearable_lease(tmp_path, monkeypatch):
+    # an expired lease from a previous boot on THIS host reads
+    # expired_reboot_clearable, not expired_foreign: liveness_map passes
+    # boot/hostname like recover.py. Both states are non-blocking for decide().
+    repo = tmp_path / "flow"
+    repo.mkdir()
+    run_dir = _pool_run_dir(repo, "flow-rb")
+    lease.acquire(
+        run_dir,
+        "run-test",
+        1,
+        "2020-01-01T00:00:00Z",
+        stage="implement",
+        current_boot="boot-OLD",
+        hostname=lease.hostname(),
+        cwd=str(run_dir),
+    )
+    monkeypatch.setattr(lease, "boot_id", lambda runner=None: "boot-NEW")
+    assert ed.liveness_map(repo, ["flow-rb"]) == {"flow-rb": "expired_reboot_clearable"}
+    assert ed.decide(_sel(), ed.liveness_map(repo, ["flow-rb"]))["action"] == "done"
+
+
 # ─── cli_main — --include-proposals threading ────────────────────────────────
 
 
@@ -180,7 +203,6 @@ def _stub_cli(monkeypatch, tmp_path, captured):
     repo.mkdir()
     monkeypatch.setattr(ed, "resolve_maintainer_repo", lambda ws: repo)
     monkeypatch.setattr(ed, "_config_defaults", lambda ws: (5, 3))
-    monkeypatch.setattr(ed, "_open_pr_keys", lambda repo: [])
     monkeypatch.setattr(ed, "liveness_map", lambda repo, keys: {})
 
     def fake_select(ws, *, cap, concurrency, include_proposals=False):
@@ -266,7 +288,6 @@ def _stub_cli_live(monkeypatch, tmp_path, sel):
     repo.mkdir()
     monkeypatch.setattr(ed, "resolve_maintainer_repo", lambda ws: repo)
     monkeypatch.setattr(ed, "_config_defaults", lambda ws: (5, 3))
-    monkeypatch.setattr(ed, "_open_pr_keys", lambda repo: [])
     monkeypatch.setattr(ed, "select", lambda ws, **kw: sel)
     return repo
 
@@ -293,6 +314,19 @@ def test_cli_pre_pr_expired_run_done(monkeypatch, tmp_path, capsys):
     assert out["liveness"]["flow-x"] == "expired_foreign"
 
 
+def test_cli_open_pr_keys_come_from_select(monkeypatch, tmp_path, capsys):
+    # cli_main reuses the open-PR keys select() already gathered (no second
+    # `gh pr list`): an open-PR key with no worktree run dir reads absent → parked.
+    sel = {"launch": [], "skipped_in_flight": [], "live_runs": [], "open_pr_keys": ["flow-pr"]}
+    _stub_cli_live(monkeypatch, tmp_path, sel)
+    rc = ed.cli_main(["--workspace-root", str(tmp_path)])
+    assert rc == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["liveness"] == {"flow-pr": "absent"}
+    assert out["action"] == "done"
+    assert out["parked"] == ["flow-pr"]
+
+
 def test_cli_removes_launch_marker_once_registered(monkeypatch, tmp_path, capsys):
     # a launched key that has REGISTERED (live lease here) drops out of the ledger:
     # cli_main physically unlinks its marker, so it stays out of launched_pending past
@@ -307,7 +341,6 @@ def test_cli_removes_launch_marker_once_registered(monkeypatch, tmp_path, capsys
     repo.mkdir()
     monkeypatch.setattr(ed, "resolve_maintainer_repo", lambda ws: repo)
     monkeypatch.setattr(ed, "_config_defaults", lambda ws: (5, 3))
-    monkeypatch.setattr(ed, "_open_pr_keys", lambda repo: [])
     monkeypatch.setattr(ed, "liveness_map", lambda repo, keys: {})
     monkeypatch.setattr(ed, "select", lambda ws, **kw: sel)
 

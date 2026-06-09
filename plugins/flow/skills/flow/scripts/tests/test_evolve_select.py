@@ -9,13 +9,14 @@ import pytest
 
 import evolve_select as es
 import lease
+from _timeutil import utcnow_iso
 
 Recorder = list[list[str]]
 
 
 def _write_lease(run_dir: Path, *, expired: bool = False) -> None:
     """Acquire a real lease in run_dir (live by default, expired on request)."""
-    now = "2020-01-01T00:00:00Z" if expired else lease._utcnow_iso()
+    now = "2020-01-01T00:00:00Z" if expired else utcnow_iso()
     ttl = 1 if expired else 3600
     lease.acquire(
         run_dir,
@@ -200,6 +201,7 @@ def test_select_launches_leaves(tmp_path):
     out = es.select(ws, cap=5, concurrency=3, runner=run)
     assert set(out["launch"]) == {"flow-a", "flow-b"}
     assert out["open_pr_count"] == 0
+    assert out["open_pr_keys"] == []
     assert ["bd", "ready", "-l", "evolve", "--json"] in calls
     assert out["include_proposals"] is False
 
@@ -293,6 +295,20 @@ def test_select_hot_inflight_from_open_pr(tmp_path):
     assert out["launch"] == []  # hot slot consumed by the in-flight hot PR
     assert out["held_hot"] == ["flow-new"]
     assert out["open_pr_count"] == 1
+    # the open-PR keys ride along so evolve_drain skips its own `gh pr list`
+    assert out["open_pr_keys"] == ["flow-old"]
+
+
+def test_select_open_pr_keys_only_from_prs_not_branches(tmp_path):
+    # a local/remote branch with no open PR must NOT surface in open_pr_keys
+    ws = _marked_ws(tmp_path)
+    run, _ = _dispatch(
+        ready=[],
+        prs=[{"headRefName": "feature/flow-pr-wip"}, {"headRefName": "main"}],
+        branches="feature/flow-branch-only-wip\n",
+    )
+    out = es.select(ws, cap=5, concurrency=3, runner=run)
+    assert out["open_pr_keys"] == ["flow-pr"]
 
 
 def _status_aware_runner(

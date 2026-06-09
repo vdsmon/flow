@@ -34,14 +34,18 @@ import argparse
 import glob
 import json
 import re
-import subprocess
 import sys
 from pathlib import Path
 
 import launch_ledger
 import lease
+from _evolve_common import NotMaintainer, ToolError, bead_labels
+from _evolve_common import key_from_ref as _key_from_ref
+from _evolve_common import loads as _loads
+from _evolve_common import ok as _ok
 from _runner import CwdRunner as Runner
 from _runner import cwd_default_runner as _default_runner
+from _timeutil import utcnow_iso
 from _workspace import WorkspaceConfigError, load_workspace_toml
 from maintainer import resolve_maintainer_repo
 
@@ -50,35 +54,7 @@ DEFAULT_CONCURRENCY = 3
 # a CLOSED or DEFERRED bead is never in flight regardless of a leaked feature/<key>-* branch
 _ACTIVE_STATUSES = "open,in_progress,blocked"
 _BRANCH_PREFIX = "feature/"
-_FLOW_KEY_RE = re.compile(r"^feature/(flow-[a-z0-9]+(?:\.\d+)?)(?:-.*)?$", re.IGNORECASE)
 _BLAST_RE = re.compile(r"^\s*BLAST[ _]RADIUS:\s*(.+?)\s*$", re.IGNORECASE | re.MULTILINE)
-
-
-class NotMaintainer(Exception):
-    """Raised when the run is not in maintainer mode. Exit 4."""
-
-
-class ToolError(Exception):
-    """Raised when an injected tool (bd/git/gh) fails. Exit 2."""
-
-
-def _ok(result: subprocess.CompletedProcess[str], what: str) -> str:
-    if result.returncode != 0:
-        raise ToolError(f"{what} failed: {result.stderr.strip()}")
-    return result.stdout or ""
-
-
-def _loads(raw: str) -> list:
-    try:
-        payload = json.loads(raw or "[]")
-    except json.JSONDecodeError:
-        return []
-    if isinstance(payload, list):
-        return payload
-    if isinstance(payload, dict):
-        items = payload.get("issues") or payload.get("prs") or []
-        return items if isinstance(items, list) else []
-    return []
 
 
 def primary_anchor(description: str) -> str | None:
@@ -93,12 +69,6 @@ def primary_anchor(description: str) -> str | None:
         return None
     first = m.group(1).split(",")[0].strip()
     return first or None
-
-
-def _key_from_ref(ref: str) -> str | None:
-    ref = ref.removeprefix("origin/")
-    m = _FLOW_KEY_RE.match(ref)
-    return m.group(1) if m else None
 
 
 def _is_inflight(key: str, refs: set[str]) -> bool:
@@ -187,8 +157,8 @@ def partition(
     }
 
 
-def _gather_refs(runner: Runner) -> tuple[set[str], int]:
-    """Return (in-flight head refs, open evolve-PR count)."""
+def _gather_refs(runner: Runner) -> tuple[set[str], set[str], int]:
+    """Return (in-flight head refs, open-PR head refs, open evolve-PR count)."""
     pr_raw = _ok(
         runner(["gh", "pr", "list", "--state", "open", "--json", "headRefName", "--limit", "200"]),
         "gh pr list",
@@ -207,19 +177,19 @@ def _gather_refs(runner: Runner) -> tuple[set[str], int]:
     }
     refs = pr_refs | branch_refs
     open_pr_count = sum(1 for r in pr_refs if r.startswith(f"{_BRANCH_PREFIX}flow-"))
-    return refs, open_pr_count
+    return refs, pr_refs, open_pr_count
 
 
 def _live_run_keys(repo: Path) -> set[str]:
     """Ticket keys with a LIVE (unexpired) pre-PR lease in the worktree pool.
 
     Globs `<repo>/.flow/worktrees/feature-*/.flow/runs/*` (mirrors
-    evolve_drain._run_dir_for's layout) and keeps only run dirs whose lease
+    _evolve_common.run_dir_for's layout) and keeps only run dirs whose lease
     classifies `live`. Live-only by design: an expired/absent lease contributes
     nothing, so an orphan still reads `done`/parked exactly as before.
     """
     base = repo / ".flow" / "worktrees"
-    now = lease._utcnow_iso()
+    now = utcnow_iso()
     live: set[str] = set()
     for run_dir in glob.glob(str(base / "feature-*" / ".flow" / "runs" / "*")):
         key = Path(run_dir).name
@@ -248,7 +218,7 @@ def _hot_inflight(
     inflight_flow_keys = {k for r in refs if (k := _key_from_ref(r))} | set(extra_keys)
     if not inflight_flow_keys:
         return False
-    labels = ["evolve", "proposal"] if include_proposals else ["evolve"]
+    labels = bead_labels(include_proposals)
     hot_keys: set[str] = set()
     for label in labels:
         raw = _ok(
@@ -291,7 +261,7 @@ def select(
     run = runner or _default_runner(repo)
 
     candidates = _ready_candidates(run, include_proposals)
-    refs, open_pr_count = _gather_refs(run)
+    refs, pr_refs, open_pr_count = _gather_refs(run)
     live_keys = _live_run_keys(repo)
     launched_keys = launch_ledger.live_keys(repo)  # pre-init launch->init window
     inflight_pre = live_keys | launched_keys
@@ -314,6 +284,9 @@ def select(
     result["cap"] = cap
     result["concurrency"] = concurrency
     result["open_pr_count"] = open_pr_count
+    # the flow keys behind the open PRs, so evolve_drain reuses this gather
+    # instead of re-running `gh pr list`
+    result["open_pr_keys"] = sorted({k for r in pr_refs if (k := _key_from_ref(r))})
     result["include_proposals"] = include_proposals
     result["live_runs"] = sorted(live_keys)
     result["launched_pending"] = sorted(launched_keys)

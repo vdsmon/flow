@@ -43,6 +43,7 @@ from _atomicio import atomic_write_text
 from _workspace import workspace_toml_path
 
 _TREE_GLOBS = ("*.py", "*.sh", "*.md", "*.toml")
+_TREE_SUFFIXES = tuple(glob.lstrip("*") for glob in _TREE_GLOBS)
 _SKILL_PREFIX = "skill:"
 _STAGE_REGISTRY_NAME = "stage-registry.toml"
 
@@ -84,10 +85,20 @@ def _tree_hash(plugin_root: Path) -> str:
     matched. snapshot.json lives under workspace_root, never plugin_root, so
     writing it can't perturb this hash.
     """
+    # Single tree walk instead of one rglob per glob (compute_snapshot runs on
+    # the do-loop hot path). Grouping by suffix in _TREE_GLOBS order preserves
+    # the old per-glob dedup priority for paths resolving to the same file, so
+    # the hash stays byte-identical to the 4-glob implementation.
+    matched: dict[str, list[Path]] = {suffix: [] for suffix in _TREE_SUFFIXES}
+    for path in plugin_root.rglob("*"):
+        for suffix in _TREE_SUFFIXES:
+            if path.name.endswith(suffix):
+                matched[suffix].append(path)
+                break
     entries: list[tuple[str, str]] = []
     seen: set[Path] = set()
-    for glob in _TREE_GLOBS:
-        for path in plugin_root.rglob(glob):
+    for suffix in _TREE_SUFFIXES:
+        for path in matched[suffix]:
             if not path.is_file():
                 continue
             resolved = path.resolve()
@@ -185,9 +196,17 @@ def write_snapshot(
     *,
     skill_root: Path,
     search_roots: list[Path] | None = None,
+    snapshot: dict[str, Any] | None = None,
 ) -> Path:
-    """Write snapshot.json (full dict) and snapshot.sha (master_hash); returns the json path."""
-    snapshot = compute_snapshot(workspace_root, skill_root=skill_root, search_roots=search_roots)
+    """Write snapshot.json (full dict) and snapshot.sha (master_hash); returns the json path.
+
+    `snapshot` lets a caller reuse a dict it already computed (e.g. via
+    classify_drift) instead of paying a second compute_snapshot.
+    """
+    if snapshot is None:
+        snapshot = compute_snapshot(
+            workspace_root, skill_root=skill_root, search_roots=search_roots
+        )
     json_path = snapshot_json_path(workspace_root, ticket)
     # sha before json: a partial-write survivor is then sha-present/json-absent, which
     # classify_drift fails CLOSED on, instead of the json-present/sha-absent state it
@@ -266,25 +285,28 @@ def classify_drift(
     *,
     skill_root: Path,
     search_roots: list[Path] | None = None,
-) -> tuple[bool, str, list[str]]:
+) -> tuple[bool, str, list[str], dict[str, Any] | None]:
     """Recompute and compare against the stored snapshot, naming drifted components.
 
-    (True, "no snapshot to verify", []) when no snapshot.sha exists; (True,
-    "match", []) on equality; otherwise (False, "drift: <what changed>", comps)
-    where comps is the ordered list from drifted_components (empty when the diff
-    is inconclusive or snapshot.json is missing/unreadable).
+    (True, "no snapshot to verify", [], None) when no snapshot.sha exists;
+    (True, "match", [], current) on equality; otherwise (False, "drift: <what
+    changed>", comps, current) where comps is the ordered list from
+    drifted_components (empty when the diff is inconclusive or snapshot.json is
+    missing/unreadable). The last element is the freshly computed snapshot
+    (None when compute itself failed), so a caller that reconciles can pass it
+    straight to write_snapshot instead of recomputing.
     """
     sha_path = snapshot_sha_path(workspace_root, ticket)
     if not sha_path.exists():
-        return True, "no snapshot to verify", []
+        return True, "no snapshot to verify", [], None
 
     stored_hash = _read_text(sha_path).strip()
     try:
         current = compute_snapshot(workspace_root, skill_root=skill_root, search_roots=search_roots)
     except OSError as exc:
-        return False, f"drift: tracked file vanished or unreadable mid-verify ({exc})", []
+        return False, f"drift: tracked file vanished or unreadable mid-verify ({exc})", [], None
     if current["master_hash"] == stored_hash:
-        return True, "match", []
+        return True, "match", [], current
 
     json_path = snapshot_json_path(workspace_root, ticket)
     if json_path.exists():
@@ -294,8 +316,8 @@ def classify_drift(
             stored = {}
         if isinstance(stored, dict):
             comps = drifted_components(stored, current)
-            return False, _name_drift(stored, current), comps
-    return False, "drift: master_hash mismatch", []
+            return False, _name_drift(stored, current), comps, current
+    return False, "drift: master_hash mismatch", [], current
 
 
 def verify_snapshot(
@@ -312,7 +334,7 @@ def verify_snapshot(
     else (False, "drift: <what changed>") naming the changed component(s) by
     diffing against snapshot.json when present.
     """
-    ok, detail, _ = classify_drift(
+    ok, detail, _, _ = classify_drift(
         workspace_root, ticket, skill_root=skill_root, search_roots=search_roots
     )
     return ok, detail

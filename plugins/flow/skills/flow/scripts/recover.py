@@ -11,18 +11,14 @@ import argparse
 import contextlib
 import json
 import sys
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import lease
 import state
+from _timeutil import utcnow_iso
 from _workspace import WorkspaceConfigError, load_workspace_toml
 from snapshot import verify_snapshot, write_snapshot
-
-
-def _now_iso() -> str:
-    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _ticket_dir(workspace_root: Path, ticket: str) -> Path:
@@ -54,7 +50,7 @@ def _ship_event_attention(workspace_root: Path) -> int:
 
 
 def detect(workspace_root: Path, ticket: str, *, now_iso: str | None = None) -> dict[str, Any]:
-    now_iso = now_iso or _now_iso()
+    now_iso = now_iso or utcnow_iso()
     td = _ticket_dir(workspace_root, ticket)
     ts, state_exit = state.read(td)
     stages = {name: rec.status for name, rec in ts.stages.items()} if ts is not None else None
@@ -75,7 +71,7 @@ def detect(workspace_root: Path, ticket: str, *, now_iso: str | None = None) -> 
 def takeover(
     workspace_root: Path, ticket: str, *, now_iso: str | None = None
 ) -> tuple[int, dict[str, Any]]:
-    now_iso = now_iso or _now_iso()
+    now_iso = now_iso or utcnow_iso()
     td = _ticket_dir(workspace_root, ticket)
     info = lease.classify(td, now_iso, current_boot=lease.boot_id(), hostname=lease.hostname())
     if info["state"] == "live":

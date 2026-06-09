@@ -31,6 +31,8 @@ import sys
 from pathlib import Path
 
 import lease
+from _atomicio import atomic_write_text
+from _timeutil import utcnow_iso
 from maintainer import resolve_maintainer_repo
 
 # bounds the launch→init window: a dead launch's marker self-expires after this,
@@ -56,10 +58,10 @@ def _age_seconds(now: str, ts: str) -> float | None:
 
 def add(repo: Path, key: str, *, now: str | None = None) -> None:
     """Write the launch marker for `key` (mkdir -p the ledger dir)."""
-    now = now or lease._utcnow_iso()
+    now = now or utcnow_iso()
     d = _ledger_dir(repo)
     d.mkdir(parents=True, exist_ok=True)
-    (d / key).write_text(now, encoding="utf-8")
+    atomic_write_text(d / key, now)
 
 
 def live_keys(repo: Path, *, now: str | None = None) -> set[str]:
@@ -68,7 +70,7 @@ def live_keys(repo: Path, *, now: str | None = None) -> set[str]:
     Robust to a missing ledger dir (returns empty) and to an unparseable/empty
     marker (skipped — never counted live).
     """
-    now = now or lease._utcnow_iso()
+    now = now or utcnow_iso()
     d = _ledger_dir(repo)
     live: set[str] = set()
     for marker in d.glob("*"):
@@ -97,7 +99,7 @@ def remove(repo: Path, key: str) -> None:
 
 def prune(repo: Path, *, now: str | None = None) -> list[str]:
     """Delete expired marker files. Returns the pruned key list (for reporting)."""
-    now = now or lease._utcnow_iso()
+    now = now or utcnow_iso()
     d = _ledger_dir(repo)
     pruned: list[str] = []
     for marker in d.glob("*"):

@@ -870,7 +870,13 @@ class JiraAdapter:
         boundary = "----flowjira" + str(int(time.time() * 1000))
         with open(path, "rb") as fh:
             file_bytes = fh.read()
-        filename = os.path.basename(path)
+        filename = (
+            os.path.basename(path)
+            .replace("\\", "\\\\")
+            .replace('"', '\\"')
+            .replace("\r", "_")
+            .replace("\n", "_")
+        )
         parts = (
             (
                 f"--{boundary}\r\n"

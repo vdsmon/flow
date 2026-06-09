@@ -36,6 +36,8 @@ def test_add_writes_marker_and_live(tmp_path):
     marker = repo / ".flow" / "launch-ledger" / "flow-x"
     assert marker.read_text().strip() == T0
     assert ll.live_keys(repo, now=T0) == {"flow-x"}
+    # atomic write leaves only the marker behind (no temp-file residue)
+    assert [p.name for p in marker.parent.iterdir()] == ["flow-x"]
 
 
 def test_live_keys_drops_expired_past_ttl(tmp_path):
