@@ -279,7 +279,10 @@ def classify_drift(
         return True, "no snapshot to verify", []
 
     stored_hash = _read_text(sha_path).strip()
-    current = compute_snapshot(workspace_root, skill_root=skill_root, search_roots=search_roots)
+    try:
+        current = compute_snapshot(workspace_root, skill_root=skill_root, search_roots=search_roots)
+    except OSError as exc:
+        return False, f"drift: tracked file vanished or unreadable mid-verify ({exc})", []
     if current["master_hash"] == stored_hash:
         return True, "match", []
 
