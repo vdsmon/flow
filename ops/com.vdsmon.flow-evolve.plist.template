@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- TEMPLATE. Copy to ~/Library/LaunchAgents/com.{{USER}}.flow-evolve.plist and
+     replace {{HOME}} with your absolute home path (launchd does not expand $HOME
+     in these fields). See ops/README.md. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.{{USER}}.flow-evolve</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>{{HOME}}/.flow-evolve/nightly-evolve.sh</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>0</integer>
+    <key>Minute</key>
+    <integer>17</integer>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>{{HOME}}/.flow-evolve/logs/launchd.out</string>
+  <key>StandardErrorPath</key>
+  <string>{{HOME}}/.flow-evolve/logs/launchd.err</string>
+  <key>RunAtLoad</key>
+  <false/>
+</dict>
+</plist>

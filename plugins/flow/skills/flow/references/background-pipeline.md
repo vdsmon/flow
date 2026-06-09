@@ -39,9 +39,9 @@ The bootstrap holds **no lease** — the run's `init` acquires it under the seed
 ## Memory is shared, not per-worktree
 
 Each ticket gets its own worktree, but the compounding-knowledge store must not fragment.
-The bootstrap writes `[memory].root` into the worktree's `workspace.toml`, pointing at the **main checkout's** `.flow`.
+The bootstrap writes the main checkout's `.flow` path into a gitignored `.flow/memory-root` sibling file in the worktree.
 So `reflect`'s `knowledge.jsonl` appends and `recall` reads all hit one store, serialized by the existing flock.
-The modified `workspace.toml` stays unstaged — the commit stage's ownership gate only commits planned files, so it never reaches the PR.
+The tracked `workspace.toml` stays byte-identical — no per-machine absolute path rides into a commit, and the sibling file is gitignored.
 
 ## PR delivery
 

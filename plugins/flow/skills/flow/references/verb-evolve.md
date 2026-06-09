@@ -4,15 +4,16 @@
 
 - **`/flow evolve audit`** — the cold-audit **producer** (§audit): scan flow's OWN codebase for evidence-backed improvements and file them as `audit` beads in flow's backlog. Read-then-file; it does not implement.
 - **`/flow evolve propose`** — the multi-angle **proposal producer** (§propose): fan out one agent per generative angle (feature gaps, simplification, reorg, dead-weight, architecture, symmetry), adversarially verify, and file a ranked set. Provably-safe findings become auto-drainable `audit` beads; judgment findings become plain `proposal` beads (non-`evolve`) in the maintainer's own backlog, run via `/flow <key>`. Read-then-file; it does not implement.
+- **`/flow evolve epic`** — the **high-altitude producer** (§epic): fan out web-reaching lenses for theme-scale work (capability tracks, architecture-era shifts, the meta-loop, unfinished tracks), gate on *conviction* not track-record (engage if grounded by a web cite / witness / bounded spike; refute only change-for-change's-sake), then file a parent `epic` bead + a tree of `proposal` children (the gearing into the per-ticket consumer). Maintainer-lane, weekly. Read-then-file; it does not implement.
 - **`/flow evolve drain`** — the **consumer** (§drain): a single looping pass that drains the whole backlog. Each turn it reaps finished orphans (merge the green leaf PRs of runs that died before self-merging + teardown merged-and-exited worktrees, lease-gated), then fans out the next launchable batch as background `/flow <key> --auto` runs (each run self-merges its own green PR via the `merge` stage, post-Layer-2). It loops — launching, waiting while runs are live, reaping — until nothing is startable, draining hot beads sequentially. This is the nightly loop's consumer.
 
-The producers are **Producer B** (cold-audit + generative). Producer A is the reflect sling (`references/stage-reflect.md`): lived friction during real runs. The cold-audit and provably-safe generative findings land in the same `evolve`-labelled backlog and dedup through the same `--dedup-key` seam; the consumer auto-ships them. The producers differ in disposition: judgment generative findings are instead filed as plain `proposal` beads (non-`evolve`) in the maintainer's own backlog — drain never sees them; the maintainer runs them via `/flow <key>` (the vision's auto-vs-propose line is now a backlog split, not a label filter).
+The producers are **Producer B** (cold-audit + generative — `audit` mines defect-grain fixes, `propose` mines single-PR judgment work, and the high-altitude `epic` mines theme-scale tracks). Producer A is the reflect sling (`references/stage-reflect.md`): lived friction during real runs. The cold-audit and provably-safe generative findings land in the same `evolve`-labelled backlog and dedup through the same `--dedup-key` seam; the consumer auto-ships them. The producers differ in disposition: judgment generative findings are instead filed as plain `proposal` beads (non-`evolve`) in the maintainer's own backlog — drain never sees them; the maintainer runs them via `/flow <key>` (the vision's auto-vs-propose line is now a backlog split, not a label filter).
 
 ## 0. Dispatch
 
 Match the **second whitespace token** of the args against the sub-verb set by exact string equality:
 
-- `audit` → §audit. `propose` → §propose. `drain` → §drain.
+- `audit` → §audit. `propose` → §propose. `epic` → §epic. `drain` → §drain.
 - **empty** (bare `/flow evolve`, no sub-verb) → print the sub-verb listing above and stop. Do NOT default to a sub-verb; the namespace is explicit.
 - **anything else** (unknown sub-verb) → print the listing + "unknown evolve sub-verb: `<token>`" and stop.
 
@@ -253,3 +254,54 @@ Rank by vision-alignment × value × evidence-strength × reviewability. Each `p
 ### D. Report
 
 Present the ranked proposal set: each proposal's title, disposition (`audit` auto-drains / `proposal` you run via `/flow <key>`), confidence, recommended default, and one-line rationale. Be honest when a pass found little — surfacing two real proposals and refuting the rest is success, not failure. The maintainer finds the `proposal` beads (`bd ready --label proposal`) and runs each via `/flow <key>`; the `audit` ones drain with §drain.
+
+## epic
+
+`/flow evolve epic`. Maintainer-gated (the Gate above ran). The **high-altitude producer**. Where `audit` mines defect-grain fixes and `propose` mines single-PR judgment work, `epic` goes after work no single PR can hold: net-new capability tracks, architecture-era shifts, cross-cutting initiatives, vision-tracks-not-yet-built — the kind of finding that becomes a parent epic with a tree of children. Read-then-file (with an optional bounded spike, §B); it does not implement and it does not auto-ship. Everything is scored against repo-root `VISION.md`.
+
+This producer is **audacious by mandate** and runs **weekly, not nightly** — at theme altitude a daily cadence has weak signal (see `references/loop-engineering.md`). Its brake is a **conviction gate, not an evidence gate**: it does NOT require a proven track record or weeks of telemetry. Sometimes a change is clearly better and this producer exists to propose it. What it refuses is change for the sake of change — the ouroboros the vision names. The line between the two is *grounding* (§B), not caution.
+
+### A. Lenses — fan out one read-only agent per angle (parallel, web-reaching)
+
+Spawn parallel read-only agents, one per angle. Each reads flow's code + `MODULE.md` / `inventory.md` (the map) + `VISION.md` + the loop's own history (the friction log via `flow_friction.py` aggregates, `recall --metric` trends, `knowledge.jsonl` `MACHINERY:` entries, open epics via `bd list --type epic --json`) — it **compounds** on what the loop has lived rather than re-deriving from a cold stare. Each candidate carries: concrete grounding (a `file:line`, a named gap, a web citation, or a spike result), a one-line rationale tied to the vision, a `BLAST RADIUS:` line, a rough decomposition (the child tickets it would split into), and an honest confidence (0-1). The angles:
+
+- **field-scan (the web angle)** — `WebSearch` / `WebFetch` the latest in agentic coding, loop engineering, Claude Code, LLM-harness design. Map each real advancement against what flow does today; propose epics that bring the good ones in. This is the audacious angle: the field moves weekly, and an advancement flow lacks is a real gap even with zero internal telemetry. Cite the source.
+- **capability-track gaps vs vision** — a whole workflow the vision implies flow should serve but no track builds yet. A candidate only if you can name the concrete workflow flow cannot serve end-to-end today.
+- **architecture-era shifts** — a structural premise that has aged at *system* scale: a layering that fights the grain now, an assumption (single-tracker, one-PR-per-ticket) a new reality outgrew. `propose` owns the single-seam version; `epic` owns the system-wide one.
+- **the meta-loop** — flow's OWN self-evolution loop judged against loop-engineering canon (`references/loop-engineering.md`): is maker separated from checker everywhere, is memory compounding or re-derived, is there a real separate-verifier stop. A gap here is the highest-leverage epic class — it improves the engine that produces every other improvement.
+- **unfinished tracks** — existing parent epics (e.g. flow-aut, flow-uo7) with stalled or never-built children: what closes the track? Lowest-ouroboros angle (the track was already judged worth starting), so weight it highest.
+
+A quiet angle is success — do NOT manufacture an epic to fill a lens. The ouroboros risk peaks at this altitude; an empty pass beats a padded one.
+
+### B. Ground each candidate — the conviction gate (adversarial, parallel)
+
+For each surviving candidate, spawn an independent skeptic. Unlike `propose`'s default-refute brake, the epic skeptic's default is **engage if grounded and clearly-better; refute only the groundless or frivolous**. A candidate SURVIVES if it carries at least one *externalized* grounding — not raw assertion:
+
+- a **web advancement** the field actually moved to (cited), OR
+- a **witnessed signal** — a friction aggregate, a metric trend, an unfinished-track gap, OR
+- a **spike result** (below).
+
+Engineering judgment is how the skeptic *weighs* these — it is not itself a fourth grounding. "It's clearly better" with no cite, no witness, no spike is the pure-vibes hole and the ouroboros in disguise; refute it. But the grounding bar is **cheap and fast** (a citation, a ten-minute experiment), explicitly NOT the weeks-of-data bar `audit` / `propose` lean on. The skeptic asks, per candidate: (a) grounded at all? (b) serves the thesis, or builds an empire that adds surface? (c) manufactured motion to justify the loop's own existence? (d) **decomposable into do-loop-sized children** (§C — an epic that cannot be cut is escalated as a question, not filed)? Refute on a miss of (a)/(d) or a yes on (b)/(c).
+
+**The spike (optional, bounded).** When a quick experiment would settle a candidate's worth better than more reading, the producer may run ONE throwaway spike: prototype the idea in a scratch worktree (or `$CLAUDE_JOB_DIR/tmp`), observe, discard it. Hard bounds — it **never touches `main` or the maintainer checkout**, it is time-boxed (a single spike ≤ ~15 min, at most a couple per run), and its only output is conviction captured into the epic's evidence. A spike substitutes for historical data: it lets the producer KNOW a change is better by trying it, not by waiting weeks to measure it. Spikes are optional; most candidates ground on a web cite or a witness without one.
+
+The real stop condition is the **maintainer-accept gate** — a *separate* verifier, never self-graded. This producer ranks and hands off; it never ships.
+
+### C. Decompose + file — the gearing (parallel)
+
+The consumer (`drain`) is per-ticket → one PR; an epic is not one PR. The gearing is a **parent epic bead + a tree of do-loop-sized child beads**, reusing existing seams — no new code:
+
+- **The parent is gated for free.** `evolve_select.py` filters `issue_type != "epic"` unconditionally (even `--include-proposals` cannot launch an epic-typed bead), so filing the parent `--type epic` means `drain` STRUCTURALLY never launches the whole epic as one run. Preserve that filter — it is load-bearing here, not decoration.
+- **File the parent** through the §audit step 3 seam (`flow_beads_create.py`), `--type epic`, label `epic`, with a **dedup-key of the form `epic:<capability-track>`** (e.g. `epic:tracker-agnostic-frontdoor`). The `<relfile>::<symptom>` scheme breaks for cross-cutting epics; a stable capability-track slug is what makes a re-run *converge* instead of re-pitching the same empire, and — because the dedup fingerprint is checked across all statuses incl. closed — what keeps a *shelved* epic dead. Choose the slug from the capability, not the wording.
+- **Children are plain `proposal` beads** (label `proposal` only, NOT `evolve`), filed `--type task --parent <epic-key>` through the same seam. Auto-shipping fragments of an UNACCEPTED epic is the ouroboros in its purest form; so children land in the maintainer's lane and run via `/flow <key>` at the spec-plan accept gate — the existing auto-vs-propose split, just rooted under an epic parent.
+- **Lazy by default.** File ONLY the parent epic; carry the decomposition as an ordered PREVIEW in its description (each child: title + one-line rationale + rough blast radius). Materialize children only when the maintainer accepts the epic and runs the expand step (§E). This keeps the backlog clean of children belonging to epics that get shelved.
+
+Rank survivors by **vision-leverage × ambition × decomposability × reviewability**. Vision-leverage dominates: an epic that closes an already-blessed unfinished track outranks a net-new empire (less ouroboros risk). Decomposability is FIRST a gate (§B.d), then a tie-breaker.
+
+### D. Report
+
+Present the ranked epic set. Each entry: title + capability-track slug, disposition (`epic` container; children run via `/flow <key>` after expand), the **decomposition preview** (the child tree, made visible before anything is built), confidence (0-1), a **recommended default** (build-now / shelve / needs-discussion), a one-line vision-leverage rationale, and the **grounding it cites** (which web advancement / witness / spike). The grounding is mandatory in the report — a maintainer must see at a glance this is not manufactured motion. Be honest when a pass found little: one real, well-grounded epic beats five padded ones. The maintainer finds filed epics with `bd list --type epic --json`, accepts one, and expands it (§E).
+
+### E. Expand an accepted epic (maintainer-run)
+
+When the maintainer accepts a lazily-filed epic, materialize its children: read the decomposition preview from the epic's description and file each child via `flow_beads_create.py --type task --parent <epic> --labels proposal --dedup-key "epic:<track>::child-<n>-<symptom>"`. Each child is then a normal ticket run via `/flow <key>` — do-loop-sized, gated at its own spec-plan accept. Children are deliberately NOT epic-aware; the altitude lives in the parent, the work lives in the leaves.

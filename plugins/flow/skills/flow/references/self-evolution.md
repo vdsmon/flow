@@ -20,6 +20,8 @@ Two halves: **producers** put evidence-backed work into one backlog; the **consu
                                                                             (dead runs) + loops
 ```
 
+This diagram is the **middle** loop. A `launchd` scheduler fires these producers + the `drain` consumer on a cadence, unattended — the nightly defect loop and the weekly epic loop. That outer loop and its runner live in `references/loop-engineering.md` (+ `ops/`); read it for how the loop runs on a clock rather than on demand.
+
 Everything below is **maintainer-gated** (`maintainer.py`: the `[maintainer] self_target = true` marker in `.flow/workspace.toml`). A stranger running flow neither wants flow editing its own source nor cares about flow-internal findings — for them the whole loop is dormant.
 
 ## Producers — fill the backlog
@@ -29,6 +31,8 @@ Everything below is **maintainer-gated** (`maintainer.py`: the `[maintainer] sel
 - **Sling to the backlog.** Anything too big / structural / not certain → `flow_beads_create.py` files a deduped `evolve` bead instead of editing. See `references/stage-reflect.md` (step 2b).
 
 **Producer B — the evolve cold audit (on demand).** `/flow evolve audit` fans out read-only evidence miners over flow's own code (quality gates, test gaps, dead code, doc drift, friction history, robustness, seam), synthesizes findings with stable file-anchored ids, and files each as a deduped `evolve` bead. Read-then-file; it does not implement. See `references/verb-evolve.md` (§audit). The generative half, `/flow evolve propose`, mines the judgment-side work (features, real refactors) and files it as plain `proposal` beads (non-`evolve`); the consumer never sees them — the maintainer runs them via `/flow <key>`.
+
+**The high-altitude generative producer — `/flow evolve epic` (weekly).** Above audit and propose sits the theme-altitude producer: web-reaching lenses surface work no single PR can hold (capability tracks, architecture-era shifts, the meta-loop itself), gated on *conviction* not track-record (engage if grounded by a web cite / witness / bounded spike; refute only change-for-change's-sake), then filed as a parent `epic` bead + a tree of `proposal` children — the gearing that feeds the per-ticket consumer at theme scale. Like propose's judgment half, it is **maintainer-lane**, not an auto-drain producer: the `epic`-typed parent is filtered out of `drain` for free (`evolve_select.py`'s `issue_type != "epic"`), so it never auto-launches, and the children run via `/flow <key>` at the maintainer's accept gate. See `references/verb-evolve.md` (§epic) and `references/loop-engineering.md` (the altitude axis + the weekly scheduler).
 
 Audit findings and reflect-sling friction land in the **same backlog** (flow's OWN beads, `evolve`-labelled) and dedup through the same `--dedup-key` → `evid:<fingerprint>` seam, so a re-run never refiles open work nor re-proposes a closed/rejected finding. The generative-judgment half of propose is the exception: it lands in the plain (non-`evolve`) `proposal` backlog the maintainer runs by hand.
 

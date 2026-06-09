@@ -95,3 +95,27 @@ def test_cli_skip_when_not_self_target(tmp_path, capsys):
     )
     assert rc == 0
     assert json.loads(capsys.readouterr().out)["action"] == "skip"
+
+
+# ─── _bead_labels error branches ─────────────────────────────────────────────
+
+
+def test_bead_labels_nonzero_returncode():
+    def runner(args):
+        return subprocess.CompletedProcess(args, 1, "", "bd error")
+
+    assert esm._bead_labels("flow-x", runner) == []
+
+
+def test_bead_labels_malformed_json():
+    def runner(args):
+        return subprocess.CompletedProcess(args, 0, "not valid json{{{", "")
+
+    assert esm._bead_labels("flow-x", runner) == []
+
+
+def test_bead_labels_empty_list():
+    def runner(args):
+        return subprocess.CompletedProcess(args, 0, "[]", "")
+
+    assert esm._bead_labels("flow-x", runner) == []
