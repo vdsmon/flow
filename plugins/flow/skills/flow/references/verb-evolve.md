@@ -121,7 +121,7 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/flow_worktree.py reap --ticket <key> --branc
 
 `bd close` here autodiscovers `.beads/*.db` from cwd, and this sub-verb is maintainer-gated with no `cd` in the loop, so the close inherits the maintainer-repo cwd and hits flow's own DB. With the close wired in, reaping a PR also closes its bead, so the loop leaves no merged-but-open beads behind. Veto for the human: convert a PR to draft or close it before the next turn and the reap skips it.
 
-**Then handle the `version_recoverable` set — merge-time version-conflict recovery (Option B).** A green non-hot DIRTY PR lands here: in a multi-bead drain every PR bumps the two version files, so as siblings merge main's version walks forward and a later PR conflicts on the version line ONLY (its code merges clean). Process this set **SERIALLY** — the bump walks X+1 → X+2, so each PR must re-fetch main AFTER the prior one merged (don't parallelize). For each `{pr, key, branch}` entry (skip under `--dry-run`):
+**Then handle the `version_recoverable` set — merge-time version-conflict recovery (Option B).** A green non-hot DIRTY PR lands here: the version is stamped at merge time (stage-merge §3), not per-PR, so siblings' merge-time stamps walk main's version forward and a later PR can go DIRTY on the version line ONLY if main merges during its post-stamp CI re-wait (its code merges clean). Process this set **SERIALLY** — the bump walks X+1 → X+2, so each PR must re-fetch main AFTER the prior one merged (don't parallelize). For each `{pr, key, branch}` entry (skip under `--dry-run`):
 
 ```bash
 # fetch the branch, check it out in a TEMP worktree (never the maintainer checkout)

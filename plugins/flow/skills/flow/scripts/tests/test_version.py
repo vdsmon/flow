@@ -140,6 +140,17 @@ def test_write_version_preserves_surrounding_bytes(tmp_path):
     assert market.read_text(encoding="utf-8") == _MARKETPLACE_FIXTURE.replace("0.27.57", "0.27.58")
 
 
+def test_set_version_replaces_only_first(tmp_path):
+    # count=1: only the FIRST "version" is rewritten, so a nested second "version"
+    # field (e.g. a dep pin) is preserved untouched.
+    f = tmp_path / "x.json"
+    f.write_text('{"version": "0.27.40", "dep": {"version": "9.9.9"}}', encoding="utf-8")
+    version._set_version_in_file(f, "0.27.43")
+    txt = f.read_text(encoding="utf-8")
+    assert '"version": "0.27.43"' in txt
+    assert '"version": "9.9.9"' in txt
+
+
 # ---- stamp (compute + write) ----
 
 

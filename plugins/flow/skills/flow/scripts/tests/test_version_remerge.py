@@ -237,10 +237,13 @@ def test_strip_version_normalizes_only_first():
     assert vr._strip_version(a) != vr._strip_version(c)
 
 
-def test_set_version_bumps_only_first(tmp_path):
-    f = tmp_path / "x.json"
-    f.write_text('{"version": "0.27.40", "dep": {"version": "9.9.9"}}')
-    vr._set_version_in_file(f, "0.27.43")
-    txt = f.read_text()
-    assert '"version": "0.27.43"' in txt
-    assert '"version": "9.9.9"' in txt
+def test_cli_version_module_tool_error_exit_2(tmp_path, monkeypatch, capsys):
+    # version.write_version raises version.ToolError, a DIFFERENT class from the
+    # local ToolError. cli_main must map it to exit 2, holding the 0/2/3 contract.
+    def fake_recover(branch, *, cwd, runner=None):
+        raise vr.version.ToolError("no version line to replace")
+
+    monkeypatch.setattr(vr, "recover", fake_recover)
+    rc = vr.cli_main(["recover", "--branch", "feature/flow-x", "--cwd", str(tmp_path)])
+    assert rc == 2
+    assert "no version line to replace" in capsys.readouterr().err

@@ -1,13 +1,14 @@
 """Merge-time version-conflict recovery (Option B): auto-resolve the version-only
 conflict a sibling-merge race leaves behind, re-push, leave the merge to the caller.
 
-In a multi-bead evolve drain every PR bumps the two version files
-(`plugins/flow/.claude-plugin/plugin.json` + `.claude-plugin/marketplace.json`).
-As siblings merge, main's version walks forward, so a later-merging PR goes DIRTY
-on the version line ONLY — the code merges clean. This helper merges the default
-branch into the feature branch (HEAD) and recovers ONLY when the git-reported
-conflict set is EXACTLY the two version files. Any other conflicting file → it
-aborts the merge and recovers nothing ("leave for human").
+The maintainer stamps the derived version into the two version files
+(`plugins/flow/.claude-plugin/plugin.json` + `.claude-plugin/marketplace.json`) at
+merge time (stage-merge §3), not per-PR. As siblings merge, their merge-time stamps
+walk main's version forward, so a later-merging PR can go DIRTY on the version line
+ONLY — the code merges clean. This helper merges the default branch into the feature
+branch (HEAD) and recovers ONLY when the git-reported conflict set is EXACTLY the two
+version files. Any other conflicting file → it aborts the merge and recovers nothing
+("leave for human").
 
 It RE-PUSHES the recovered branch but NEVER merges the PR. The caller (prose:
 stage-merge §3 / verb-evolve drain reap) re-waits CI on the new SHA, THEN merges —
@@ -42,6 +43,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import version
 from _runner import CwdRunner as Runner
 from _runner import cwd_default_runner as _default_runner
 
@@ -103,15 +105,6 @@ def _strip_version(text: str) -> str:
     return _VERSION_RE.sub('"version": "0.0.0"', text, count=1)
 
 
-def _set_version_in_file(path: Path, next_ver: str) -> None:
-    """Rewrite every `"version": "X.Y.Z"` in the file to next_ver; assert it changed."""
-    text = path.read_text(encoding="utf-8")
-    new_text = _VERSION_RE.sub(f'"version": "{next_ver}"', text, count=1)
-    if new_text == text:
-        raise ToolError(f"version replacement made no change in {path}")
-    path.write_text(new_text, encoding="utf-8")
-
-
 def recover(branch: str, *, cwd: Path, runner: Runner | None = None) -> dict:
     """Merge default into HEAD (the feature branch), auto-resolve a version-only
     conflict, push. Returns the JSON-able result dict. Raises NonVersionConflict
@@ -151,8 +144,10 @@ def recover(branch: str, *, cwd: Path, runner: Runner | None = None) -> dict:
         if _strip_version(ours) != _strip_version(theirs):
             _ok(run(["git", "merge", "--abort"]), "git merge --abort")
             raise NonVersionConflict([rel])
-        (cwd / rel).write_text(ours, encoding="utf-8")  # keep the PR's content...
-        _set_version_in_file(cwd / rel, next_ver)  # ...with the bumped version
+        (cwd / rel).write_text(ours, encoding="utf-8")  # keep the PR's content
+
+    version.write_version(cwd=cwd, version=next_ver)  # then bump the version in both files
+    for rel in (PLUGIN_JSON, MARKETPLACE_JSON):
         _ok(run(["git", "add", rel]), f"git add {rel}")
 
     remaining = _conflict_set(run)
@@ -181,7 +176,7 @@ def cli_main(argv: list[str]) -> int:
     except NonVersionConflict as exc:
         print(json.dumps({"status": "non_version_conflict", "files": exc.files}))
         return 3
-    except ToolError as exc:
+    except (ToolError, version.ToolError) as exc:
         print(str(exc), file=sys.stderr)
         return 2
     print(json.dumps(result))
