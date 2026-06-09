@@ -101,3 +101,26 @@ def test_cli_not_maintainer_exit_4(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path / "no-home"))
     out = _run_cli(["list", "--workspace-root", str(plain)])
     assert out.returncode == 4, out.stdout + out.stderr
+
+
+def test_prune_cli_exits_zero(tmp_path):
+    repo = _marked_repo(tmp_path)
+    out = _run_cli(["prune", "--workspace-root", str(repo)])
+    assert out.returncode == 0, out.stderr
+    assert "AttributeError" not in out.stderr
+
+
+def test_prune_cli_output_is_plain_lines(tmp_path):
+    # verify prune stdout is newline-delimited (not JSON) when keys are pruned;
+    # drive via cli_main with a monkeypatched prune to control which keys appear.
+    repo = _marked_repo(tmp_path)
+    import io
+    from contextlib import redirect_stdout
+    from unittest.mock import patch
+
+    fake_pruned = ["flow-b", "flow-a"]
+    buf = io.StringIO()
+    with patch.object(ll, "prune", return_value=fake_pruned), redirect_stdout(buf):
+        rc = ll.cli_main(["prune", "--workspace-root", str(repo)])
+    assert rc == 0
+    assert buf.getvalue().strip() == "flow-a\nflow-b"
