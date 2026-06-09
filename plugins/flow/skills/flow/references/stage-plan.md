@@ -66,7 +66,8 @@ You cannot wait for or solicit that approval yourself — just return a plan goo
      naming / a 1:1-chain argument), and **What would raise it** (reachable
      artefacts). Library-API claims must be Context7-verified, not left under
      Inferred. This is only a first pass: the main loop re-rates your plan
-     INDEPENDENTLY (via the `advisor` tool, or a `general-purpose` agent) before
+     INDEPENDENTLY (via the `advisor` tool, or a `general-purpose` agent — on a
+     Fable model the agent directly, advisor is absent by design) before
      the human gate, because a plan's author is the worst judge of its own
      confidence.
 
