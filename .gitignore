@@ -27,6 +27,7 @@ plugins/flow/**/.venv/
 # flow transient run state (workspace.toml + .initialized stay tracked)
 # unanchored **/ so a phantom nested <subdir>/.flow/... (drifted-cwd leak) is ignored too
 **/.flow/runs/
+**/.flow/worktrees/
 **/.flow/*.lock
 **/.flow/memory-root
 **/.flow/recall-pending.jsonl

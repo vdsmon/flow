@@ -207,7 +207,7 @@ def _worktree_path(main_root: Path, branch: str, override: str | None) -> Path:
     if override:
         return Path(override).expanduser().resolve()
     main = main_root.resolve()
-    return main / ".claude" / "worktrees" / branch.replace("/", "-")
+    return main / ".flow" / "worktrees" / branch.replace("/", "-")
 
 
 def _parse_worktree_list(porcelain: str) -> list[tuple[str, str | None]]:

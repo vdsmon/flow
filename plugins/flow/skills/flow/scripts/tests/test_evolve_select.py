@@ -351,7 +351,7 @@ def test_select_tool_error(tmp_path):
 
 
 def _pool_run_dir(repo: Path, key: str, slug: str = "wip") -> Path:
-    return repo / ".claude" / "worktrees" / f"feature-{key}-{slug}" / ".flow" / "runs" / key
+    return repo / ".flow" / "worktrees" / f"feature-{key}-{slug}" / ".flow" / "runs" / key
 
 
 def test_live_run_keys_finds_live_lease(tmp_path):

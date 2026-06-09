@@ -22,7 +22,7 @@ def _write_lease(run_dir, *, expired: bool = False) -> None:
 
 
 def _pool_run_dir(repo, key, slug="wip"):
-    return repo / ".claude" / "worktrees" / f"feature-{key}-{slug}" / ".flow" / "runs" / key
+    return repo / ".flow" / "worktrees" / f"feature-{key}-{slug}" / ".flow" / "runs" / key
 
 
 # decide() reads only `launch` from the select result; the in-flight picture comes
