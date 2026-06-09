@@ -28,7 +28,9 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Literal
 
+import ticket_frontmatter
 from _workspace import WorkspaceConfigError, load_workspace_toml
+from triage import is_hot_change
 
 Runner = Callable[[list[str]], subprocess.CompletedProcess[str]]
 
@@ -41,13 +43,16 @@ def decide(
     is_maintainer: bool,
     auto_merge_hot: bool,
     ci_status: str,
+    planned_files: list[str] | None = None,
 ) -> dict[str, Any]:
     """Pure self-merge gate. Returns {action, is_hot, reason}.
 
-    `action` is "skip" (leave the PR for the human) or "merge". `is_hot` tells the
-    caller whether the §6A independent property review must run before merging.
+    `action` is "skip" (leave the PR for the human) or "merge". `is_hot` is the
+    `hot` label OR a guard-file hit in `planned_files` (triage.is_hot_change); it
+    tells the caller whether the §6A independent property review must run before
+    merging.
     """
-    is_hot = "hot" in labels
+    is_hot = ("hot" in labels) or is_hot_change(planned_files or [])
     if not is_maintainer:
         return {"action": "skip", "is_hot": is_hot, "reason": "not maintainer self-target"}
     if "evolve" not in labels:
@@ -116,11 +121,15 @@ def cli_main(argv: list[str], runner: Runner | None = None) -> int:
     workspace_root = Path(args.workspace_root).resolve()
     run = runner or _default_runner()
     labels = _bead_labels(args.key, run)
+    fm = ticket_frontmatter.read(workspace_root / ".flow" / "tickets" / f"{args.key}.md")
+    pf = fm.get("planned_files")
+    planned_files = [str(x) for x in pf] if isinstance(pf, list) else []
     result = decide(
         labels,
         is_maintainer=is_maintainer(workspace_root),
         auto_merge_hot=_auto_merge_hot(workspace_root),
         ci_status=args.ci_status,
+        planned_files=planned_files,
     )
     sys.stdout.write(json.dumps(result, indent=2, sort_keys=True) + "\n")
     return 0
