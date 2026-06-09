@@ -20,6 +20,8 @@ Two halves: **producers** put evidence-backed work into one backlog; the **consu
                                                                             (dead runs) + loops
 ```
 
+This diagram is the **middle** loop. A `launchd` scheduler fires these producers + the `drain` consumer on a cadence, unattended — the nightly defect loop and the weekly epic loop. That outer loop and its runner live in `references/loop-engineering.md` (+ `ops/`); read it for how the loop runs on a clock rather than on demand.
+
 Everything below is **maintainer-gated** (`maintainer.py`: the `[maintainer] self_target = true` marker in `.flow/workspace.toml`). A stranger running flow neither wants flow editing its own source nor cares about flow-internal findings — for them the whole loop is dormant.
 
 ## Producers — fill the backlog
