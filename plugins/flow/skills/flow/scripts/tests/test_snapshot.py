@@ -404,3 +404,79 @@ def test_classify_drift_names_components(tmp_path: Path) -> None:
     assert ok is False
     assert comps == ["workspace_toml"]
     assert detail == "drift: workspace_toml"
+
+
+# ─── fail-closed on a vanished tracked file mid-verify ─────────────────────────
+
+
+def test_classify_drift_vanished_workspace_toml_fails_closed(tmp_path: Path) -> None:
+    skill_root = _make_skill_root(tmp_path)
+    workspace_root = _make_workspace(tmp_path, _bare_workspace_text())
+    snapshot.write_snapshot(workspace_root, "FT-1", skill_root=skill_root)
+
+    (workspace_root / ".flow" / "workspace.toml").unlink()
+
+    ok, detail, comps = snapshot.classify_drift(workspace_root, "FT-1", skill_root=skill_root)
+    assert ok is False
+    assert comps == []
+    assert detail != "no snapshot to verify"
+
+
+def test_classify_drift_vanished_stage_registry_fails_closed(tmp_path: Path) -> None:
+    skill_root = _make_skill_root(tmp_path)
+    workspace_root = _make_workspace(tmp_path, _bare_workspace_text())
+    snapshot.write_snapshot(workspace_root, "FT-1", skill_root=skill_root)
+
+    snapshot.stage_registry_path(skill_root).unlink()
+
+    ok, detail, comps = snapshot.classify_drift(workspace_root, "FT-1", skill_root=skill_root)
+    assert ok is False
+    assert comps == []
+    assert detail != "no snapshot to verify"
+
+
+def test_classify_drift_plugin_reinstall_race_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The primary threat: a tracked file vanishes between rglob-enumerate and read_bytes
+    during a plugin reinstall. Physical deletion can't reproduce the enumerate-then-vanish
+    race (rglob just never enumerates a gone file), so patch read_bytes to raise on the
+    real _tree_hash read path (snapshot.py:98) and prove classify_drift catches it into a
+    fail-closed abort."""
+    skill_root = _make_skill_root(tmp_path)
+    workspace_root = _make_workspace(tmp_path, _skill_workspace_text())
+    plugin_parent, _ = _make_plugin(tmp_path)
+    snapshot.write_snapshot(
+        workspace_root, "FT-1", skill_root=skill_root, search_roots=[plugin_parent]
+    )
+
+    def boom(self: Path) -> bytes:
+        raise FileNotFoundError("tracked plugin file removed during reinstall")
+
+    monkeypatch.setattr(Path, "read_bytes", boom)
+
+    ok, detail, comps = snapshot.classify_drift(
+        workspace_root, "FT-1", skill_root=skill_root, search_roots=[plugin_parent]
+    )
+    assert ok is False
+    assert comps == []
+    assert detail
+    assert detail != "no snapshot to verify"
+
+
+def test_verify_snapshot_surfaces_vanished_as_drift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    skill_root = _make_skill_root(tmp_path)
+    workspace_root = _make_workspace(tmp_path, _bare_workspace_text())
+    snapshot.write_snapshot(workspace_root, "FT-1", skill_root=skill_root)
+
+    def boom(*args: object, **kwargs: object) -> dict[str, object]:
+        raise FileNotFoundError("tracked plugin file removed during reinstall")
+
+    monkeypatch.setattr(snapshot, "compute_snapshot", boom)
+
+    ok, detail = snapshot.verify_snapshot(workspace_root, "FT-1", skill_root=skill_root)
+    assert ok is False
+    assert detail
+    assert detail != "no snapshot to verify"
