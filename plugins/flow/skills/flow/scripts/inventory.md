@@ -217,7 +217,7 @@ repo_slug = "rs"
 
 `validate_workspace.py` validates the block only when present (`KNOWN_FORGE_BACKENDS = ("github", "bitbucket")`); github needs no sub-keys, bitbucket requires `workspace` + `repo_slug`.
 
-## `.flow-bundle.toml` schema (phase 4)
+## `.flow-bundle.toml` schema
 
 External plugins declare which flow stages they provide handlers for via a top-level `.flow-bundle.toml`.
 `bundle-discover.py` walks `~/.claude/plugins/*/` and `<repo>/.claude/plugins/*/` (override: `FLOW_BUNDLE_SEARCH_ROOTS`, colon-separated) and parses each manifest.
@@ -297,7 +297,7 @@ Pre-flight refusal:
    `recall_top_n`.
 6. For backend=beads: `bd ready --json` returns parseable JSON.
 
-## Beads CLI surface (phase 6)
+## Beads CLI surface
 
 `bd` is the local-only beads tracker (v1.0.4).
 JSON output is supported globally via `--json`.
@@ -387,7 +387,7 @@ Every other capability is false → `set_sprint`, `add_watcher`, `set_fix_versio
 Plan line 990 calls for transient `bd` failures (network blips, lock contention) to append to `.flow/pending-mutations.jsonl` so `/flow sync` can retry.
 `pending-mutations.py` is phase-8 work; the adapter currently surfaces the error as `_BeadsError(TrackerError)` and lets the dispatcher (phase 7) decide.
 
-## Dispatcher state machine (phase 7-mvp)
+## Dispatcher state machine
 
 The dispatcher is a state-machine driver — NOT an orchestrator.
 It reads / writes `.flow/runs/<ticket>/state.json` and emits a handler-descriptor JSON for the SKILL.md prose layer to act on (call Agent, read reference doc, invoke a skill, or skip).
@@ -526,7 +526,7 @@ Phase 7-full replaces this with the canonical-snapshot pattern from the literal 
 
 ---
 
-## Phase 8-mvp helpers
+## Bookkeeping helpers
 
 Five bookkeeping scripts.
 All stdlib-only, library + thin CLI shape, atomic writes where they touch files, `fcntl.flock` where they touch shared mutable state.
@@ -632,7 +632,7 @@ Exit 0=applied or already_applied (idempotent), 1=usage/IO error, 2=refused (out
 
 ---
 
-## Phase 8b-mvp memory cohort
+## Memory cohort
 
 Four stdlib-only scripts that own `.flow/<namespace>/knowledge.jsonl`, `.flow/<namespace>/ship-events/<ticket>.json`, and the reflect-stage input bundle.
 Same library + thin-CLI shape as 8-mvp.
@@ -754,7 +754,7 @@ Exit codes: 0=primary success, 1=evidence JSON invalid, 2=dupe (informational),
 
 ---
 
-## Phase 5-mvp integration layer
+## Integration layer
 
 SKILL.md rewrite + 4 reference docs + `tracker_cli.py` + a small dispatcher descriptor extension.
 `/flow do <ticket>` now runs end-to-end against a bare workspace.
