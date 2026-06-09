@@ -7,8 +7,9 @@ Opens a PR for the run's feature branch — ready for review by default, or a dr
 1. Open or resolve the PR:
    ```bash
    python3 ${CLAUDE_SKILL_DIR}/scripts/create_pr.py \
-     --workspace-root . --ticket "$KEY" --base main
+     --workspace-root . --ticket "$KEY"
    ```
+   The base branch resolves from `[create_pr] base` in `workspace.toml`, default `main`; an explicit `--base` overrides both.
    - Exit 0 → prints `PR_URL=<url>`. The branch is pushed and the PR is open — ready by default, draft when configured (idempotent: an existing open PR for the branch is reused, never double-opened on resume).
    - Exit 2 → git or forge error (incl. a missing `[forge]` block); surface stderr, set `STATUS=failed`.
    - Exit 3 → refused (current branch is a protected/integration branch). Should never happen inside a run on a `feature/...` branch; surface and set `STATUS=failed`.

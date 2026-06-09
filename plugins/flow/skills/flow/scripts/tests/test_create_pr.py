@@ -164,3 +164,61 @@ def test_draft_config_reads_true(tmp_path):
         "[create_pr]\ndraft = true\n", encoding="utf-8"
     )
     assert cp._draft_config(tmp_path) is True
+
+
+def test_base_config_none_when_no_workspace(tmp_path):
+    assert cp._base_config(tmp_path) is None
+
+
+def test_base_config_reads_value(tmp_path):
+    (tmp_path / ".flow").mkdir()
+    (tmp_path / ".flow" / "workspace.toml").write_text(
+        '[create_pr]\nbase = "dev"\n', encoding="utf-8"
+    )
+    assert cp._base_config(tmp_path) == "dev"
+
+
+def test_base_config_non_string_is_none(tmp_path):
+    (tmp_path / ".flow").mkdir()
+    (tmp_path / ".flow" / "workspace.toml").write_text(
+        "[create_pr]\nbase = true\n", encoding="utf-8"
+    )
+    assert cp._base_config(tmp_path) is None
+
+
+def test_cli_base_from_config(tmp_path, monkeypatch):
+    (tmp_path / ".flow").mkdir()
+    (tmp_path / ".flow" / "workspace.toml").write_text(
+        '[create_pr]\nbase = "dev"\n', encoding="utf-8"
+    )
+    run, _ = _git_runner(branch="feature/flow-x")
+    fg = _FakeForge(existing=None)
+    monkeypatch.setattr(cp, "_default_runner", lambda _repo: run)
+    monkeypatch.setattr(cp, "_resolve_forge", lambda _ws: fg)
+    rc = cp.cli_main(["--workspace-root", str(tmp_path)])
+    assert rc == 0
+    assert fg.opened[0]["base"] == "dev"
+
+
+def test_cli_explicit_base_beats_config(tmp_path, monkeypatch):
+    (tmp_path / ".flow").mkdir()
+    (tmp_path / ".flow" / "workspace.toml").write_text(
+        '[create_pr]\nbase = "dev"\n', encoding="utf-8"
+    )
+    run, _ = _git_runner(branch="feature/flow-x")
+    fg = _FakeForge(existing=None)
+    monkeypatch.setattr(cp, "_default_runner", lambda _repo: run)
+    monkeypatch.setattr(cp, "_resolve_forge", lambda _ws: fg)
+    rc = cp.cli_main(["--workspace-root", str(tmp_path), "--base", "main"])
+    assert rc == 0
+    assert fg.opened[0]["base"] == "main"
+
+
+def test_cli_base_defaults_to_main(tmp_path, monkeypatch):
+    run, _ = _git_runner(branch="feature/flow-x")
+    fg = _FakeForge(existing=None)
+    monkeypatch.setattr(cp, "_default_runner", lambda _repo: run)
+    monkeypatch.setattr(cp, "_resolve_forge", lambda _ws: fg)
+    rc = cp.cli_main(["--workspace-root", str(tmp_path)])
+    assert rc == 0
+    assert fg.opened[0]["base"] == "main"

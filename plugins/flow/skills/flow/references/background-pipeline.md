@@ -43,6 +43,22 @@ The bootstrap writes the main checkout's `.flow` path into a gitignored `.flow/m
 So `reflect`'s `knowledge.jsonl` appends and `recall` reads all hit one store, serialized by the existing flock.
 The tracked `workspace.toml` stays byte-identical — no per-machine absolute path rides into a commit, and the sibling file is gitignored.
 
+### The namespace seam (individual vs batch runs converge)
+
+`_memory_paths.resolve_memory_base` resolves the base dir that holds the store, most specific first:
+
+1. `.flow/memory-root` (gitignored sibling, plain text single abs path): the worktree bootstrap writes it to redirect the store to the shared (main) `.flow` without touching the tracked workspace.toml.
+2. `.flow/workspace.toml` `[memory].root` when set (the init-time render path).
+3. the workspace-local `.flow` (non-worktree runs stay byte-identical).
+
+A knowledge entry's id is `sha256(namespace + ticket + type + normalized_body)[:16]` (`memory_append.compute_id`); workspace root, worktree path, branch, and timestamp are all excluded, so the same reflect finding produces the same id whether the ticket ran individually or as one of N concurrent drain worktrees, and the flock-serialized scan-before-append suppresses the second write as a duplicate.
+`knowledge_lock_path` resolves through the same base, so every redirected worktree contends on the one shared lock file, not a per-worktree copy.
+Shared through the redirect: `knowledge.jsonl`, `friction.jsonl`, `ship-events/`. Workspace-local by design: `recall-pending.jsonl` (`recall_pending.recall_pending_path` builds from the workspace root, not the memory base) and `.flow/runs/<ticket>/`.
+`friction.jsonl` events are uuid4-keyed — distinct by design, never deduplicated; the convergence story above is knowledge-only.
+A ship-event rerun never mutates the immutable primary `<ticket>.json`; `observe_ship_event.py` writes `<ticket>.json.dupe.<n>.json` beside it.
+These are preconditions, not unconditional guarantees: the redirect exists only for bootstrap-created worktrees (every batch launch passes through `flow_worktree.py create`, and reflect appends from the worktree cwd). A hand-made worktree without the sibling falls through to its own local `.flow` — fragmentation, not collision.
+Verified end-to-end by `scripts/tests/test_cross_queue_memory.py`.
+
 ## PR delivery
 
 `create_pr` / `review_loop` default to `none`.
