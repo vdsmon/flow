@@ -344,6 +344,72 @@ def test_module_md_importer_rows_match_imports() -> None:
     assert seam_check.module_md_importer_drift() == []
 
 
+# --- MODULE.md surface-cell completeness ------------------------------------
+
+
+def _surface(*subs: str) -> seam_check.Surface:
+    return seam_check.Surface(subcommands=frozenset(subs), global_flags=frozenset(), sub_flags={})
+
+
+def test_surface_cell_clean_row_matches() -> None:
+    text = "| `a.py` | x | `create` / `reap` |\n"
+    lookup = lambda name: _surface("create", "reap")  # noqa: E731
+    assert seam_check.module_md_surface_cell_drift(module_text=text, surface_lookup=lookup) == []
+
+
+def test_surface_cell_under_enumerated_row() -> None:
+    text = "| `a.py` | x | `create` |\n"
+    lookup = lambda name: _surface("create", "reap")  # noqa: E731
+    drifts = seam_check.module_md_surface_cell_drift(module_text=text, surface_lookup=lookup)
+    assert len(drifts) == 1
+    assert drifts[0].module == "a"
+    assert drifts[0].missing == frozenset({"reap"})
+
+
+def test_surface_cell_lib_row_skipped() -> None:
+    # `(lib)` rows are documented by importer list, not a CLI surface -> skipped
+    # even when the surface would be under-enumerated.
+    text = "| `a.py` (lib) | x | imported by `create` |\n"
+    lookup = lambda name: _surface("create", "reap")  # noqa: E731
+    assert seam_check.module_md_surface_cell_drift(module_text=text, surface_lookup=lookup) == []
+
+
+def test_surface_cell_zero_enumerated_row_skipped() -> None:
+    # The cell names none of the real subs (e.g. metric.py's `(via recall.py
+    # --metric)`) -> not a surface listing -> skipped.
+    text = "| `a.py` | x | (via recall.py --metric) |\n"
+    lookup = lambda name: _surface("create", "reap")  # noqa: E731
+    assert seam_check.module_md_surface_cell_drift(module_text=text, surface_lookup=lookup) == []
+
+
+def test_surface_cell_boundary_list_assigned() -> None:
+    # `list-assigned` in the cell must NOT count as enumerating a `list` sub.
+    text = "| `a.py` | x | `list-assigned` |\n"
+    lookup = lambda name: _surface("list", "list-assigned")  # noqa: E731
+    drifts = seam_check.module_md_surface_cell_drift(module_text=text, surface_lookup=lookup)
+    assert len(drifts) == 1
+    assert drifts[0].missing == frozenset({"list"})
+
+
+def test_main_fails_on_surface_cell_drift(monkeypatch) -> None:
+    monkeypatch.setattr(seam_check, "scripts_missing_from_module_md", lambda *a, **k: set())
+    monkeypatch.setattr(
+        seam_check, "scripts_missing_from_registry_descriptions", lambda *a, **k: set()
+    )
+    monkeypatch.setattr(seam_check, "module_md_importer_drift", lambda *a, **k: [])
+    monkeypatch.setattr(
+        seam_check,
+        "module_md_surface_cell_drift",
+        lambda *a, **k: [seam_check.SurfaceCellDrift(module="a", missing=frozenset({"reap"}))],
+    )
+    assert seam_check.main([]) == 1
+
+
+def test_module_md_surface_cells_match_argparse() -> None:
+    """Every live MODULE.md surface cell must fully enumerate the script's subcommands."""
+    assert seam_check.module_md_surface_cell_drift() == []
+
+
 # --- stage->reference_doc map re-enumeration drift ---------------------------
 
 
