@@ -13,6 +13,15 @@ This is the **outer loop** in flow's nested-loop architecture (see `plugins/flow
 
 On any feature branch it audits the current checkout and skips advancing — it never disturbs the working tree.
 
+`weekly-epic.sh` (Sunday 00:23) — the **high-altitude producer**, producer-only (no consumer; epics are judgment work that must not auto-ship):
+
+1. on a clean `main`: same advance step as the nightly runner
+2. **producer** — `claude --bg "/flow evolve epic"` (web-reaching theme-altitude lenses → files parent `epic` beads + a decomposition preview)
+3. **wait** — same transcript-mtime liveness, with longer thresholds (epic runs go quiet longer — web fetches + an optional bounded spike)
+4. **report** — lists the filed epics; the maintainer accepts + expands one by hand via `/flow <key>`
+
+Weekly, not nightly: at theme altitude a daily cadence has weak signal. See `plugins/flow/skills/flow/references/verb-evolve.md` (§epic) for the producer itself.
+
 ## Why `--bg` and not `-p`
 
 The cold audit goes silent for minutes mid-scoring. `claude -p` trips a stream-idle timeout on that silence and dies before filing — total loss. `--bg` has no idle watchdog, so it completes. The price is sequencing: `--bg` is fire-and-forget, so the runner must explicitly wait for the producer before draining, else `drain` runs on an empty backlog. `wait_for_session` measures liveness by transcript mtime (idle > 480s, or a new bead + idle > 180s, or a 25-min hard cap).
@@ -30,6 +39,7 @@ The cold audit goes silent for minutes mid-scoring. `claude -p` trips a stream-i
    ```
    launchctl load ~/Library/LaunchAgents/com.<you>.flow-evolve.plist
    ```
+5. **Weekly epic producer** (optional): same steps with `weekly-epic.sh.template` → `~/.flow-evolve/weekly-epic.sh` and `com.vdsmon.flow-epic.plist.template` → `~/Library/LaunchAgents/com.<you>.flow-epic.plist`. Test-fire by hand first, then `launchctl load`.
 
 ## Gotchas
 

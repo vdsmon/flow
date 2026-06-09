@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- TEMPLATE. Copy to ~/Library/LaunchAgents/com.{{USER}}.flow-epic.plist and
+     replace {{HOME}} with your absolute home path. Weekly: Sunday 00:23 (offset
+     from the nightly audit at 00:17 so the two never fire together). See ops/README.md. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.{{USER}}.flow-epic</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>{{HOME}}/.flow-evolve/weekly-epic.sh</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Weekday</key>
+    <integer>0</integer>
+    <key>Hour</key>
+    <integer>0</integer>
+    <key>Minute</key>
+    <integer>23</integer>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>{{HOME}}/.flow-evolve/logs/epic-launchd.out</string>
+  <key>StandardErrorPath</key>
+  <string>{{HOME}}/.flow-evolve/logs/epic-launchd.err</string>
+  <key>RunAtLoad</key>
+  <false/>
+</dict>
+</plist>
