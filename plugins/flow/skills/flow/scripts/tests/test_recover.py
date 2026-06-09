@@ -4,7 +4,6 @@ import socket
 from datetime import UTC, datetime
 from pathlib import Path
 
-import heartbeat
 import lease
 import recover
 import state
@@ -42,6 +41,8 @@ def test_detect_fresh(tmp_path: Path) -> None:
     assert rep["lease"]["state"] == "free"
     assert rep["snapshot"]["ok"] is True
     assert rep["ship_event_attention"] == 0
+    # heartbeat consumer was removed (flow-dwd): detect no longer emits a progress map.
+    assert "progress" not in rep
 
 
 def test_detect_no_state(tmp_path: Path) -> None:
@@ -133,39 +134,6 @@ def test_reload_snapshot_writes_sha(tmp_path: Path) -> None:
     assert rc == 0
     assert payload["snapshot_reloaded"] is True
     assert (td / "snapshot.sha").exists()
-
-
-def test_detect_progress_hung(tmp_path: Path) -> None:
-    td = _ws(tmp_path)
-    state.begin_stage(td, "plan", "sha")
-    heartbeat.write_progress(
-        td,
-        run_id="r",
-        stage="plan",
-        ticket="T-1",
-        seq=1,
-        current_op="x",
-        now_iso="2026-05-28T12:00:00Z",
-    )
-    rep = recover.detect(tmp_path, "T-1", now_iso="2026-05-28T12:05:00Z")
-    assert rep["progress"]["plan"] == heartbeat.HUNG
-    assert "ticket" not in rep["progress"]
-
-
-def test_detect_progress_ok(tmp_path: Path) -> None:
-    td = _ws(tmp_path)
-    state.begin_stage(td, "plan", "sha")
-    heartbeat.write_progress(
-        td,
-        run_id="r",
-        stage="plan",
-        ticket="T-1",
-        seq=1,
-        current_op="x",
-        now_iso="2026-05-28T12:05:00Z",
-    )
-    rep = recover.detect(tmp_path, "T-1", now_iso="2026-05-28T12:05:30Z")
-    assert rep["progress"]["plan"] == heartbeat.OK
 
 
 def test_detect_ship_event_attention(tmp_path: Path) -> None:

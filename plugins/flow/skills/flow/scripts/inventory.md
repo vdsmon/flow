@@ -831,7 +831,10 @@ Four files in `references/`:
 7. `tracker_cli` exit code 1 lumps network/auth/not-found → split in
    later phase.
 8. `timeout_min` in handler descriptor is informational only. No
-   enforcement until phase 7-full ships heartbeat.
+   enforcement; the heartbeat producer (`write_progress` / the `write`
+   CLI / `quarantine_stale`) was deleted as dead (flow-dwd) rather than
+   wired, so there is no producer to enforce against. `heartbeat.py`
+   survives as a read-only hung-detection inspection library.
 9. The do-loop bash prose uses `"<KEY>"` / `"$STAGE"` syntax — variable
    substitution into the actual Bash invocations is on Claude. Reference
    docs document the variable names; the loop in SKILL.md sets them from

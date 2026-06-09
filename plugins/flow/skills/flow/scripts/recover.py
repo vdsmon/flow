@@ -1,8 +1,8 @@
 """/flow recover: inspect + remediate a broken per-ticket run.
 
 Operates only on <workspace_root>/.flow/runs/<ticket>/. Reuses state, lease,
-snapshot, heartbeat. `detect` never mutates; the other subcommands do the
-narrow, user-confirmed remediations the SKILL.md recover prose drives.
+snapshot. `detect` never mutates; the other subcommands do the narrow,
+user-confirmed remediations the SKILL.md recover prose drives.
 """
 
 from __future__ import annotations
@@ -15,7 +15,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-import heartbeat
 import lease
 import state
 from _workspace import WorkspaceConfigError, load_workspace_toml
@@ -63,21 +62,12 @@ def detect(workspace_root: Path, ticket: str, *, now_iso: str | None = None) -> 
         td, now_iso, current_boot=lease.boot_id(), hostname=lease.hostname()
     )
     ok, detail = verify_snapshot(workspace_root, ticket, skill_root=_skill_root())
-    progress: dict[str, str] = {}
-    if ts is not None:
-        for name, rec in ts.stages.items():
-            if rec.status != "in_progress":
-                continue
-            prog = heartbeat.read_progress(td, name)
-            if prog is not None:
-                progress[name] = heartbeat.detect_hung(prog, now_iso)
     return {
         "ticket": ticket,
         "state_exit": state_exit,
         "stages": stages,
         "lease": lease_info,
         "snapshot": {"ok": ok, "detail": detail},
-        "progress": progress,
         "ship_event_attention": _ship_event_attention(workspace_root),
     }
 

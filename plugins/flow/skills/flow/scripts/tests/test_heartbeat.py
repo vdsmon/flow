@@ -1,45 +1,22 @@
 """Contract tests for heartbeat.py.
 
-Pure detection logic + round-trip IO. Every test injects now/wrote_at explicitly
-so nothing depends on real time. Real temp dirs exercise the atomic write and the
-quarantine rename.
+Consumer-only inspection library: pure hung-detection logic + read_progress IO.
+Every test injects now/wrote_at explicitly so nothing depends on real time. The
+producer side (write_progress / quarantine_stale / identity_ok / the `write` CLI)
+was deleted as dead (flow-dwd); .progress fixtures are built directly here.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 import heartbeat
 
 RUN_ID = "run-1"
 STAGE = "implement"
 TICKET = "FT-100"
-
-# stage start at 12:00; a fresh heartbeat lands at/after this.
-STARTED = "2026-05-28T12:00:00Z"
-
-
-def _write(
-    ticket_dir: Path,
-    *,
-    run_id: str = RUN_ID,
-    stage: str = STAGE,
-    ticket: str = TICKET,
-    seq: int = 1,
-    current_op: str = "edit file.py",
-    last_artifact: dict | None = None,
-    now: str = "2026-05-28T12:00:30Z",
-) -> heartbeat.Progress:
-    return heartbeat.write_progress(
-        ticket_dir,
-        run_id=run_id,
-        stage=stage,
-        ticket=ticket,
-        seq=seq,
-        current_op=current_op,
-        last_artifact=last_artifact,
-        now_iso=now,
-    )
 
 
 def _progress(
@@ -63,12 +40,19 @@ def _progress(
     )
 
 
-# ─── write / read round-trip ──────────────────────────────────────────────────
+def _put(ticket_dir: Path, progress: heartbeat.Progress) -> None:
+    heartbeat.progress_path(ticket_dir, progress.stage).write_text(
+        heartbeat._serialize(progress), encoding="utf-8"
+    )
 
 
-def test_write_then_read_round_trips(tmp_path: Path) -> None:
+# ─── read_progress ────────────────────────────────────────────────────────────
+
+
+def test_read_round_trips_a_serialized_progress(tmp_path: Path) -> None:
     artifact = {"path": "out.txt", "size": 42, "mtime_ns": 123}
-    written = _write(tmp_path, seq=7, current_op="run tests", last_artifact=artifact)
+    written = _progress(seq=7, current_op="run tests", last_artifact=artifact)
+    _put(tmp_path, written)
     assert heartbeat.progress_path(tmp_path, STAGE).exists()
 
     loaded = heartbeat.read_progress(tmp_path, STAGE)
@@ -80,8 +64,9 @@ def test_write_then_read_round_trips(tmp_path: Path) -> None:
     assert loaded.wrote_at == "2026-05-28T12:00:30Z"
 
 
-def test_write_then_read_with_null_artifact(tmp_path: Path) -> None:
-    written = _write(tmp_path, last_artifact=None)
+def test_read_with_null_artifact(tmp_path: Path) -> None:
+    written = _progress(last_artifact=None)
+    _put(tmp_path, written)
     loaded = heartbeat.read_progress(tmp_path, STAGE)
     assert loaded == written
     assert loaded is not None
@@ -103,100 +88,34 @@ def test_read_structurally_wrong_returns_none(tmp_path: Path) -> None:
     assert heartbeat.read_progress(tmp_path, STAGE) is None
 
 
-# ─── identity_ok ──────────────────────────────────────────────────────────────
+# ─── dead producer is gone (flow-dwd) ─────────────────────────────────────────
 
 
-def _identity_ok(progress: heartbeat.Progress) -> bool:
-    return heartbeat.identity_ok(
-        progress,
-        run_id=RUN_ID,
-        stage=STAGE,
-        ticket=TICKET,
-        stage_started_at_iso=STARTED,
-    )
+def test_producer_symbols_absent() -> None:
+    assert not hasattr(heartbeat, "write_progress")
+    assert not hasattr(heartbeat, "quarantine_stale")
+    assert not hasattr(heartbeat, "identity_ok")
 
 
-def test_identity_ok_true_when_all_match_and_not_older(tmp_path: Path) -> None:
-    assert _identity_ok(_progress(wrote_at="2026-05-28T12:00:00Z")) is True
-    assert _identity_ok(_progress(wrote_at="2026-05-28T12:05:00Z")) is True
-
-
-def test_identity_false_on_run_id_mismatch() -> None:
-    assert _identity_ok(_progress(run_id="other")) is False
-
-
-def test_identity_false_on_stage_mismatch() -> None:
-    assert _identity_ok(_progress(stage="plan")) is False
-
-
-def test_identity_false_on_ticket_mismatch() -> None:
-    assert _identity_ok(_progress(ticket="FT-999")) is False
-
-
-def test_identity_false_when_wrote_at_older_than_start() -> None:
-    assert _identity_ok(_progress(wrote_at="2026-05-28T11:59:59Z")) is False
-
-
-# ─── quarantine_stale ─────────────────────────────────────────────────────────
-
-
-def test_quarantine_moves_mismatched_file(tmp_path: Path) -> None:
-    # wrong run_id -> identity fails -> file is moved aside.
-    _write(tmp_path, run_id="foreign", now="2026-05-28T12:00:30Z")
-    moved = heartbeat.quarantine_stale(
-        tmp_path,
-        STAGE,
-        run_id=RUN_ID,
-        ticket=TICKET,
-        stage_started_at_iso=STARTED,
-    )
-    assert moved is True
-    assert not heartbeat.progress_path(tmp_path, STAGE).exists()
-    stale = list(tmp_path.glob(f"{STAGE}.progress.stale.*"))
-    assert len(stale) == 1
-    assert stale[0].name == f"{STAGE}.progress.stale.0"
-
-
-def test_quarantine_leaves_matching_file(tmp_path: Path) -> None:
-    _write(tmp_path, now="2026-05-28T12:00:30Z")
-    moved = heartbeat.quarantine_stale(
-        tmp_path,
-        STAGE,
-        run_id=RUN_ID,
-        ticket=TICKET,
-        stage_started_at_iso=STARTED,
-    )
-    assert moved is False
-    assert heartbeat.progress_path(tmp_path, STAGE).exists()
-    assert list(tmp_path.glob(f"{STAGE}.progress.stale.*")) == []
-
-
-def test_quarantine_absent_returns_false(tmp_path: Path) -> None:
-    assert (
-        heartbeat.quarantine_stale(
-            tmp_path,
-            STAGE,
-            run_id=RUN_ID,
-            ticket=TICKET,
-            stage_started_at_iso=STARTED,
+def test_write_subcommand_rejected() -> None:
+    with pytest.raises(SystemExit):
+        heartbeat.cli_main(
+            [
+                "write",
+                "--ticket-dir",
+                ".",
+                "--stage",
+                STAGE,
+                "--run-id",
+                RUN_ID,
+                "--ticket",
+                TICKET,
+                "--seq",
+                "1",
+                "--current-op",
+                "x",
+            ]
         )
-        is False
-    )
-
-
-def test_quarantine_picks_next_free_index(tmp_path: Path) -> None:
-    base = heartbeat.progress_path(tmp_path, STAGE)
-    base.with_name(f"{base.name}.stale.0").write_text("old", encoding="utf-8")
-    _write(tmp_path, run_id="foreign")
-    moved = heartbeat.quarantine_stale(
-        tmp_path,
-        STAGE,
-        run_id=RUN_ID,
-        ticket=TICKET,
-        stage_started_at_iso=STARTED,
-    )
-    assert moved is True
-    assert base.with_name(f"{base.name}.stale.1").exists()
 
 
 # ─── detect_hung ──────────────────────────────────────────────────────────────
