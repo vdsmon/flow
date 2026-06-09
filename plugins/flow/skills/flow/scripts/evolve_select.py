@@ -31,51 +31,27 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
-import glob
 import json
-import re
 import sys
 from pathlib import Path
 
 import launch_ledger
-import lease
-from _evolve_common import NotMaintainer, ToolError, bead_labels
+from _evolve_common import ACTIVE_STATUSES as _ACTIVE_STATUSES
+from _evolve_common import BRANCH_PREFIX as _BRANCH_PREFIX
+from _evolve_common import NotMaintainer, ToolError, bead_labels, primary_anchor
+from _evolve_common import gather_refs as _gather_refs_common
+from _evolve_common import is_inflight as _is_inflight
 from _evolve_common import key_from_ref as _key_from_ref
+from _evolve_common import live_run_keys as _live_run_keys
 from _evolve_common import loads as _loads
 from _evolve_common import ok as _ok
 from _runner import CwdRunner as Runner
 from _runner import cwd_default_runner as _default_runner
-from _timeutil import utcnow_iso
 from _workspace import WorkspaceConfigError, load_workspace_toml
 from maintainer import resolve_maintainer_repo
 
 DEFAULT_CAP = 5
 DEFAULT_CONCURRENCY = 3
-# a CLOSED or DEFERRED bead is never in flight regardless of a leaked feature/<key>-* branch
-_ACTIVE_STATUSES = "open,in_progress,blocked"
-_BRANCH_PREFIX = "feature/"
-_BLAST_RE = re.compile(r"^\s*BLAST[ _]RADIUS:\s*(.+?)\s*$", re.IGNORECASE | re.MULTILINE)
-
-
-def primary_anchor(description: str) -> str | None:
-    """First file path on the bead's `BLAST RADIUS:` line, else None.
-
-    Best-effort: the line is free-text prose written by the audit. A missing or
-    unparseable line just means this bead carries no anchor and falls back to
-    hot-only serialization.
-    """
-    m = _BLAST_RE.search(description or "")
-    if not m:
-        return None
-    first = m.group(1).split(",")[0].strip()
-    return first or None
-
-
-def _is_inflight(key: str, refs: set[str]) -> bool:
-    """A key is in-flight when a branch/PR head is `feature/<key>` or `feature/<key>-*`."""
-    exact = f"{_BRANCH_PREFIX}{key}"
-    pre = f"{exact}-"
-    return any(r == exact or r.startswith(pre) for r in refs)
 
 
 def partition(
@@ -158,44 +134,10 @@ def partition(
 
 
 def _gather_refs(runner: Runner) -> tuple[set[str], set[str], int]:
-    """Return (in-flight head refs, open-PR head refs, open evolve-PR count)."""
-    pr_raw = _ok(
-        runner(["gh", "pr", "list", "--state", "open", "--json", "headRefName", "--limit", "200"]),
-        "gh pr list",
-    )
-    pr_refs = {
-        str(p.get("headRefName"))
-        for p in _loads(pr_raw)
-        if isinstance(p, dict) and p.get("headRefName")
-    }
-    branch_raw = _ok(
-        runner(["git", "for-each-ref", "--format=%(refname:short)", "refs/heads", "refs/remotes"]),
-        "git for-each-ref",
-    )
-    branch_refs = {
-        line.strip().removeprefix("origin/") for line in branch_raw.splitlines() if line.strip()
-    }
-    refs = pr_refs | branch_refs
+    """Return (in-flight head refs, open-PR head refs, GLOBAL open flow-PR count)."""
+    refs, pr_refs = _gather_refs_common(runner)
     open_pr_count = sum(1 for r in pr_refs if r.startswith(f"{_BRANCH_PREFIX}flow-"))
     return refs, pr_refs, open_pr_count
-
-
-def _live_run_keys(repo: Path) -> set[str]:
-    """Ticket keys with a LIVE (unexpired) pre-PR lease in the worktree pool.
-
-    Globs `<repo>/.flow/worktrees/feature-*/.flow/runs/*` (mirrors
-    _evolve_common.run_dir_for's layout) and keeps only run dirs whose lease
-    classifies `live`. Live-only by design: an expired/absent lease contributes
-    nothing, so an orphan still reads `done`/parked exactly as before.
-    """
-    base = repo / ".flow" / "worktrees"
-    now = utcnow_iso()
-    live: set[str] = set()
-    for run_dir in glob.glob(str(base / "feature-*" / ".flow" / "runs" / "*")):
-        key = Path(run_dir).name
-        if lease.classify(Path(run_dir), now).get("state") == "live":
-            live.add(key)
-    return live
 
 
 def _hot_inflight(
