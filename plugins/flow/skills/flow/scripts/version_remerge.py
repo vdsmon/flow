@@ -97,13 +97,16 @@ def _conflict_set(run: Runner) -> set[str]:
 def _strip_version(text: str) -> str:
     """Normalize every version string to a placeholder, so two blobs can be compared
     modulo the version line."""
-    return _VERSION_RE.sub('"version": "0.0.0"', text)
+    # count=1: normalize only the FIRST (plugin/marketplace) version; a second
+    # "version" field is compared literally, so a difference there trips the
+    # equality check and aborts (safe) rather than being silently rewritten.
+    return _VERSION_RE.sub('"version": "0.0.0"', text, count=1)
 
 
 def _set_version_in_file(path: Path, next_ver: str) -> None:
     """Rewrite every `"version": "X.Y.Z"` in the file to next_ver; assert it changed."""
     text = path.read_text(encoding="utf-8")
-    new_text = _VERSION_RE.sub(f'"version": "{next_ver}"', text)
+    new_text = _VERSION_RE.sub(f'"version": "{next_ver}"', text, count=1)
     if new_text == text:
         raise ToolError(f"version replacement made no change in {path}")
     path.write_text(new_text, encoding="utf-8")

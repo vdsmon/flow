@@ -225,3 +225,22 @@ def test_cli_remerged_exit_0(tmp_path, monkeypatch, capsys):
     out = json.loads(capsys.readouterr().out)
     assert out["status"] == "remerged"
     assert out["version"] == "0.27.43"
+
+
+def test_strip_version_normalizes_only_first():
+    # count=1: only the FIRST "version" is normalized, so a difference in a second
+    # "version" field is preserved and trips the equality check (safe abort).
+    a = '{"version": "1.2.3", "dep": {"version": "9.9.9"}}'
+    b = '{"version": "4.5.6", "dep": {"version": "9.9.9"}}'
+    assert vr._strip_version(a) == vr._strip_version(b)
+    c = '{"version": "1.2.3", "dep": {"version": "8.8.8"}}'
+    assert vr._strip_version(a) != vr._strip_version(c)
+
+
+def test_set_version_bumps_only_first(tmp_path):
+    f = tmp_path / "x.json"
+    f.write_text('{"version": "0.27.40", "dep": {"version": "9.9.9"}}')
+    vr._set_version_in_file(f, "0.27.43")
+    txt = f.read_text()
+    assert '"version": "0.27.43"' in txt
+    assert '"version": "9.9.9"' in txt
