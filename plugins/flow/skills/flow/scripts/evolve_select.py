@@ -38,6 +38,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import launch_ledger
 import lease
 from _runner import CwdRunner as Runner
 from _runner import cwd_default_runner as _default_runner
@@ -292,11 +293,13 @@ def select(
     candidates = _ready_candidates(run, include_proposals)
     refs, open_pr_count = _gather_refs(run)
     live_keys = _live_run_keys(repo)
+    launched_keys = launch_ledger.live_keys(repo)  # pre-init launch->init window
+    inflight_pre = live_keys | launched_keys
     inflight_keys = {
         c["id"] for c in candidates if c.get("id") and _is_inflight(c["id"], refs)
-    } | live_keys
+    } | inflight_pre
     hot_inflight = _hot_inflight(
-        run, refs, include_proposals=include_proposals, extra_keys=live_keys
+        run, refs, include_proposals=include_proposals, extra_keys=inflight_pre
     )
 
     result = partition(
@@ -313,6 +316,7 @@ def select(
     result["open_pr_count"] = open_pr_count
     result["include_proposals"] = include_proposals
     result["live_runs"] = sorted(live_keys)
+    result["launched_pending"] = sorted(launched_keys)
     labels_by_id = {c["id"]: (c.get("labels") or []) for c in candidates if c.get("id")}
     result["model_per_key"] = {
         key: "sonnet"
