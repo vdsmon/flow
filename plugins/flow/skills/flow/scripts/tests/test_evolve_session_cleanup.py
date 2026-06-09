@@ -14,7 +14,7 @@ NOW_EPOCH = 1780956000.0  # epoch of NOW (UTC)
 
 
 def _worktree_cwd(repo, key, slug="wip"):
-    return repo.parent / f"{repo.name}.worktrees" / f"feature-{key}-{slug}"
+    return repo / ".claude" / "worktrees" / f"feature-{key}-{slug}"
 
 
 def _run_dir(cwd, key):

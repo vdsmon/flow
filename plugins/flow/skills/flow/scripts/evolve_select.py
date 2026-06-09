@@ -211,14 +211,14 @@ def _gather_refs(runner: Runner) -> tuple[set[str], int]:
 
 
 def _live_run_keys(repo: Path) -> set[str]:
-    """Ticket keys with a LIVE (unexpired) pre-PR lease in a sibling worktree.
+    """Ticket keys with a LIVE (unexpired) pre-PR lease in the worktree pool.
 
-    Globs `<repo>.worktrees/feature-*/.flow/runs/*` (mirrors evolve_drain._run_dir_for's
-    layout) and keeps only run dirs whose lease classifies `live`. Live-only by
-    design: an expired/absent lease contributes nothing, so an orphan still reads
-    `done`/parked exactly as before.
+    Globs `<repo>/.claude/worktrees/feature-*/.flow/runs/*` (mirrors
+    evolve_drain._run_dir_for's layout) and keeps only run dirs whose lease
+    classifies `live`. Live-only by design: an expired/absent lease contributes
+    nothing, so an orphan still reads `done`/parked exactly as before.
     """
-    base = repo.parent / f"{repo.name}.worktrees"
+    base = repo / ".claude" / "worktrees"
     now = lease._utcnow_iso()
     live: set[str] = set()
     for run_dir in glob.glob(str(base / "feature-*" / ".flow" / "runs" / "*")):
