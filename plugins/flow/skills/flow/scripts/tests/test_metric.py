@@ -650,3 +650,131 @@ def test_ttp_cli_namespace_required(tmp_path: Path, capsys) -> None:
     rc = metric.cli_main(["time-to-pr"])
     assert rc == 1
     assert "namespace" in capsys.readouterr().err
+
+
+# ─── flow_attribution stamp (forward-only, state.json reaped) ─────────────────
+
+
+def _write_stamped_ship_event(
+    root: Path,
+    ticket: str,
+    *,
+    shipped_at: str,
+    plan_started: str,
+    create_pr_finished: str,
+    observed_by_run_id: str = "abcdef0123456789",
+    namespace: str = "demo",
+) -> Path:
+    record = {
+        "ticket": ticket,
+        "shipped_at": shipped_at,
+        "evidence": {"merged": True},
+        "observed_at": "2026-05-20T10:00:00Z",
+        "observed_by_run_id": observed_by_run_id,
+        "flow_attribution": {
+            "plan_started_at_iso": plan_started,
+            "create_pr_finished_at_iso": create_pr_finished,
+        },
+    }
+    ship_dir = root / ".flow" / namespace / "ship-events"
+    ship_dir.mkdir(parents=True, exist_ok=True)
+    path = ship_dir / f"{ticket}.json"
+    path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return path
+
+
+def test_classify_via_flow_from_stamp_no_state(tmp_path: Path) -> None:
+    """A well-formed stamp attributes via-flow with NO state.json on disk."""
+    _seed_workspace(tmp_path)
+    _write_stamped_ship_event(
+        tmp_path,
+        "FT-1",
+        shipped_at="2026-05-20T10:00:00Z",
+        plan_started="2026-05-20T00:00:00Z",
+        create_pr_finished="2026-05-20T12:00:00Z",
+    )
+    event = metric.load_ship_events(tmp_path, "demo")[0]
+    assert metric.classify_attribution(tmp_path, event) == metric.ATTR_VIA_FLOW
+
+
+def test_compute_counts_stamped_via_flow(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path)
+    _write_stamped_ship_event(
+        tmp_path,
+        "FT-1",
+        shipped_at="2026-05-20T10:00:00Z",
+        plan_started="2026-05-20T00:00:00Z",
+        create_pr_finished="2026-05-20T12:00:00Z",
+    )
+    result = _compute(tmp_path)
+    assert result["shipped"] == 1
+    assert result[metric.ATTR_VIA_FLOW] == 1
+    assert result[metric.ATTR_NOT_ATTRIBUTED] == 0
+
+
+def test_classify_malformed_stamp_falls_back_not_attributed(tmp_path: Path) -> None:
+    """A stamp with an unparseable iso field falls back to the legacy join (no state -> not attributed)."""
+    _seed_workspace(tmp_path)
+    _write_stamped_ship_event(
+        tmp_path,
+        "FT-1",
+        shipped_at="2026-05-20T10:00:00Z",
+        plan_started="not-a-date",
+        create_pr_finished="2026-05-20T12:00:00Z",
+    )
+    event = metric.load_ship_events(tmp_path, "demo")[0]
+    assert metric.classify_attribution(tmp_path, event) == metric.ATTR_NOT_ATTRIBUTED
+
+
+def test_classify_legacy_join_still_works_without_stamp(tmp_path: Path) -> None:
+    """Back-compat: no stamp, but state.json present + valid -> via-flow via the join."""
+    _seed_workspace(tmp_path)
+    _write_ship_event(
+        tmp_path, "FT-1", shipped_at="2026-05-20T10:00:00Z", observed_by_run_id="run-aaa"
+    )
+    _write_state(tmp_path, "FT-1", run_id="run-aaa", reflect_status="completed")
+    event = metric.load_ship_events(tmp_path, "demo")[0]
+    assert metric.classify_attribution(tmp_path, event) == metric.ATTR_VIA_FLOW
+
+
+def test_ttp_measures_from_stamp_no_state(tmp_path: Path) -> None:
+    """REGRESSION GUARD: a stamped event with NO state.json must MEASURE from the stamp.
+
+    Without the restructure of the unconditional state.json read, this raises
+    FileNotFoundError and aborts the whole command.
+    """
+    _seed_workspace(tmp_path)
+    _write_stamped_ship_event(
+        tmp_path,
+        "FT-1",
+        shipped_at="2026-05-20T10:00:00Z",
+        plan_started="2026-05-20T00:00:00Z",
+        create_pr_finished="2026-05-20T12:00:00Z",
+    )
+    result = _compute_ttp(tmp_path)
+    assert result["n_measured"] == 1
+    assert result["n_skipped"] == 0
+    assert result["median_hours"] == 12.0
+    assert result["tickets"][0]["ticket"] == "FT-1"
+    assert result["tickets"][0]["time_to_pr_hours"] == 12.0
+    assert result["tickets"][0]["plan_started_at"] == "2026-05-20T00:00:00Z"
+    assert result["tickets"][0]["create_pr_finished_at"] == "2026-05-20T12:00:00Z"
+
+
+def test_ttp_legacy_join_still_measures(tmp_path: Path) -> None:
+    """Back-compat: a no-stamp event with valid state.json still measures from state."""
+    _seed_workspace(tmp_path)
+    _write_ship_event(
+        tmp_path, "FT-1", shipped_at="2026-05-20T10:00:00Z", observed_by_run_id="run-1"
+    )
+    _write_state(
+        tmp_path,
+        "FT-1",
+        run_id="run-1",
+        reflect_status="completed",
+        plan_started_at_iso="2026-05-20T00:00:00Z",
+        create_pr_finished_at_iso="2026-05-20T12:00:00Z",
+    )
+    result = _compute_ttp(tmp_path)
+    assert result["n_measured"] == 1
+    assert result["median_hours"] == 12.0

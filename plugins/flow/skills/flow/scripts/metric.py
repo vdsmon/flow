@@ -13,7 +13,16 @@ corruptions, and intent logs use suffixed names and are skipped here. Files that
 fail to parse or lack `shipped_at` are quarantined-skip (logged to a sidecar,
 never counted) so a single bad file cannot abort the metric.
 
-Attribution joins each ship event to its per-ticket state.json at
+Attribution is stamp-first. observe_ship_event.py stamps an owned
+`flow_attribution` block (plan_started + create_pr_finished iso timestamps) onto
+the durable ship event at observe time, while the run's state.json is still
+alive. A ship event carrying a well-formed stamp is `shipped_via_flow` directly;
+the run's worktree (and its state.json) is reaped after merge, so the legacy
+join below cannot resolve a recently-shipped ticket. Forward-only: tickets
+shipped before stamping landed have no stamp and a reaped state, so they stay
+`shipped_backend_not_attributed`.
+
+Legacy fallback (no stamp): joins each ship event to its per-ticket state.json at
 `.flow/runs/<ticket>/state.json`. A ticket is `shipped_via_flow` iff that state
 exists, its `ticket` matches, its `run_id` matches the ship event's observing
 run id (`observed_by_run_id`), and its `reflect` stage status is `completed`.
@@ -131,20 +140,47 @@ def _state_path(workspace_root: Path, ticket: str) -> Path:
     return workspace_root / ".flow" / "runs" / ticket / "state.json"
 
 
+def _read_stamp(ship_event: dict[str, Any]) -> tuple[datetime, datetime] | None:
+    """Parse a ship event's `flow_attribution` stamp into (plan_started, create_pr_finished).
+
+    Returns the two parsed datetimes iff `flow_attribution` is a dict and BOTH
+    iso fields parse. Otherwise None. The single predicate both classify and
+    time-to-pr share, so a stamped event is never routed to the reaped-state read.
+    """
+    stamp = ship_event.get("flow_attribution")
+    if not isinstance(stamp, dict):
+        return None
+    plan_started = parse_iso(stamp.get("plan_started_at_iso"))
+    create_pr_finished = parse_iso(stamp.get("create_pr_finished_at_iso"))
+    if plan_started is None or create_pr_finished is None:
+        return None
+    return plan_started, create_pr_finished
+
+
 def classify_attribution(workspace_root: Path, ship_event: dict[str, Any]) -> str:
     """Attribute one ship event to flow or backend.
 
-    Returns ATTR_VIA_FLOW iff `.flow/runs/<ticket>/state.json` exists AND its
-    `ticket` matches the ship event's ticket AND its `run_id` matches the ship
-    event's observing-run-id (`observed_by_run_id`) AND its `reflect` stage
-    status is `completed`. Otherwise ATTR_NOT_ATTRIBUTED.
+    Stamp-first: a WELL-FORMED `flow_attribution` block (a dict whose two iso
+    fields both parse) is direct evidence a flow run observed this ship at reflect
+    time and returns ATTR_VIA_FLOW. The stamp supersedes the reaped-state.json
+    proxy; the run's worktree is torn down after merge, so the legacy join below
+    cannot resolve a recently-shipped ticket.
 
-    A malformed or unreadable state.json yields ATTR_NOT_ATTRIBUTED (the metric
-    never counts a ticket as flow-attributed without a clean join).
+    Legacy fallback (no stamp / malformed stamp): ATTR_VIA_FLOW iff
+    `.flow/runs/<ticket>/state.json` exists AND its `ticket` matches the ship
+    event's ticket AND its `run_id` matches the ship event's observing-run-id
+    (`observed_by_run_id`) AND its `reflect` stage status is `completed`.
+    Otherwise ATTR_NOT_ATTRIBUTED. A malformed or unreadable state.json yields
+    ATTR_NOT_ATTRIBUTED (never count flow-attribution without a clean join).
+
+    Forward-only: tickets shipped before stamping landed have no stamp and a
+    reaped state, so they stay ATTR_NOT_ATTRIBUTED.
     """
     ticket = ship_event.get("ticket")
     if not isinstance(ticket, str) or not ticket:
         return ATTR_NOT_ATTRIBUTED
+    if _read_stamp(ship_event) is not None:
+        return ATTR_VIA_FLOW
     state_path = _state_path(workspace_root, ticket)
     if not state_path.is_file():
         return ATTR_NOT_ATTRIBUTED
@@ -239,12 +275,15 @@ def compute_time_to_pr(
 ) -> dict[str, Any]:
     """Compute observed time-to-PR over the half-open window [since, until).
 
-    Enumerates flow-attributed ship events whose `shipped_at` is in window, then
-    for each reads `plan.started_at_iso` -> `create_pr.finished_at_iso` from its
-    state.json and computes the duration in hours. Tickets with a missing/None/
-    unparseable timestamp or a negative duration are skip-and-recorded (counted
-    in `n_skipped`, never fed to the percentiles). `now_iso` is accepted for
-    symmetry with compute(); the window is the explicit since/until.
+    Enumerates flow-attributed ship events whose `shipped_at` is in window. A
+    STAMPED event reads `plan_started`/`create_pr_finished` from its
+    `flow_attribution` block and never touches state.json (the run's worktree is
+    reaped after merge). A LEGACY (no-stamp) event reads those timestamps from
+    `.flow/runs/<ticket>/state.json` via a GUARDED read; a missing/unreadable/
+    non-dict state is skip-and-recorded, never a crash. Tickets with a
+    missing/None/unparseable timestamp or a negative duration are skip-and-
+    recorded (counted in `n_skipped`, never fed to the percentiles). `now_iso` is
+    accepted for symmetry with compute(); the window is the explicit since/until.
     """
     since = parse_iso(since_iso)
     until = parse_iso(until_iso)
@@ -264,18 +303,37 @@ def compute_time_to_pr(
         if classify_attribution(workspace_root, event) != ATTR_VIA_FLOW:
             continue
         ticket = event.get("ticket")
-        state = json.loads(_state_path(workspace_root, str(ticket)).read_text(encoding="utf-8"))
-        stages = state.get("stages", {})
-        plan_stage = stages.get("plan") if isinstance(stages.get("plan"), dict) else {}
-        create_pr_stage = (
-            stages.get("create_pr") if isinstance(stages.get("create_pr"), dict) else {}
-        )
-        plan_started_raw = plan_stage.get("started_at_iso")
-        create_pr_finished_raw = create_pr_stage.get("finished_at_iso")
-        plan_started = parse_iso(plan_started_raw) if isinstance(plan_started_raw, str) else None
-        create_pr_finished = (
-            parse_iso(create_pr_finished_raw) if isinstance(create_pr_finished_raw, str) else None
-        )
+        stamp = _read_stamp(event)
+        if stamp is not None:
+            plan_started, create_pr_finished = stamp
+            plan_started_raw = event["flow_attribution"]["plan_started_at_iso"]
+            create_pr_finished_raw = event["flow_attribution"]["create_pr_finished_at_iso"]
+        else:
+            try:
+                state = json.loads(
+                    _state_path(workspace_root, str(ticket)).read_text(encoding="utf-8")
+                )
+            except (OSError, json.JSONDecodeError):
+                skipped.append({"ticket": ticket, "reason": "unreadable state.json"})
+                continue
+            if not isinstance(state, dict):
+                skipped.append({"ticket": ticket, "reason": "unreadable state.json"})
+                continue
+            stages = state.get("stages", {})
+            plan_stage = stages.get("plan") if isinstance(stages.get("plan"), dict) else {}
+            create_pr_stage = (
+                stages.get("create_pr") if isinstance(stages.get("create_pr"), dict) else {}
+            )
+            plan_started_raw = plan_stage.get("started_at_iso")
+            create_pr_finished_raw = create_pr_stage.get("finished_at_iso")
+            plan_started = (
+                parse_iso(plan_started_raw) if isinstance(plan_started_raw, str) else None
+            )
+            create_pr_finished = (
+                parse_iso(create_pr_finished_raw)
+                if isinstance(create_pr_finished_raw, str)
+                else None
+            )
         if plan_started is None:
             skipped.append({"ticket": ticket, "reason": "missing plan.started_at_iso"})
             continue

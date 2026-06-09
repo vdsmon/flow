@@ -18,7 +18,16 @@ Evidence JSON validation rejects with exit 1 if:
 - `ticket` missing / not str / mismatches --ticket arg
 - `shipped_at` missing / fails UTC ISO8601 Z regex
 - `evidence` missing / not dict
-- any extra top-level key present (script owns observed_at / observed_by_run_id)
+- any extra top-level key present (script owns observed_at / observed_by_run_id /
+  flow_attribution)
+
+When a coherent live run state.json is found at ship time (matching run_id, with
+both plan.started_at_iso and create_pr.finished_at_iso present), an owned
+`flow_attribution` block is stamped onto the durable record so metric.py can
+attribute the ship after the run's worktree (and its state.json) is reaped.
+Backend-only observations (no live state) carry no stamp. Forward-only: tickets
+shipped before this lands have no stamp and a reaped state, so they stay
+backend-not-attributed.
 
 Exit codes:
   0 = primary write succeeded
@@ -151,6 +160,47 @@ def _write_intent_log(primary: Path, record: dict[str, Any], err: str) -> None:
             os.fsync(fh.fileno())
 
 
+# ─── Attribution stamp ───────────────────────────────────────────────────────
+
+
+def _attribution_stamp(workspace_root: Path, ticket: str, run_id: str) -> dict[str, str] | None:
+    """Read the live run state.json and return durable attribution timestamps.
+
+    Returns `{"plan_started_at_iso": ..., "create_pr_finished_at_iso": ...}` ONLY
+    when the live state is coherent: its `run_id` equals `run_id` AND both
+    `stages.plan.started_at_iso` and `stages.create_pr.finished_at_iso` are
+    non-empty strings. Otherwise None.
+
+    Fully guarded: any OSError / json.JSONDecodeError / non-dict shape yields None,
+    never raises. This stamps the durable ship-event while state.json is alive
+    (pre-reap), since metric.py can no longer join to the reaped worktree path.
+    """
+    state_path = workspace_root / ".flow" / "runs" / ticket / "state.json"
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(state, dict) or state.get("run_id") != run_id:
+        return None
+    stages = state.get("stages")
+    if not isinstance(stages, dict):
+        return None
+    plan = stages.get("plan")
+    create_pr = stages.get("create_pr")
+    if not isinstance(plan, dict) or not isinstance(create_pr, dict):
+        return None
+    plan_started = plan.get("started_at_iso")
+    create_pr_finished = create_pr.get("finished_at_iso")
+    if not isinstance(plan_started, str) or not plan_started:
+        return None
+    if not isinstance(create_pr_finished, str) or not create_pr_finished:
+        return None
+    return {
+        "plan_started_at_iso": plan_started,
+        "create_pr_finished_at_iso": create_pr_finished,
+    }
+
+
 # ─── Public API ──────────────────────────────────────────────────────────────
 
 
@@ -177,6 +227,9 @@ def observe(
     record: dict[str, Any] = dict(validated)
     record["observed_at"] = _utcnow_iso()
     record["observed_by_run_id"] = run_id
+    stamp = _attribution_stamp(workspace_root, ticket, run_id)
+    if stamp is not None:
+        record["flow_attribution"] = stamp
     content = _serialize(record)
 
     try:
