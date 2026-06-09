@@ -32,7 +32,17 @@ classifier fails safe toward NOT stopping):
     orchestrator's own bg job sits at the same repo root with the same intent shape,
     so the self-job flag + the non-terminal-bead gate (its own bead is in_progress)
     are what exclude it, not cwd.
-  - state floor — `state ∈ {done, stopped}` AND `tempo == idle`.
+  - activity — `tempo == idle` (never stop a session reporting active work). NOTE:
+    `state` is deliberately NOT gated. A finished bg run rests at `state == working`
+    (or `blocked`) INDEFINITELY — a `session_cron` keepalive task, or simply a daemon
+    that never flips the field, holds it there; a clean `done` is the exception, not
+    the rule (witnessed: a whole drain's worth of finished runs all sat at `working`,
+    cron-bearing or not). Gating on `state ∈ {done, stopped}` therefore skipped the
+    COMMON case and leaked every run as a zombie. Doneness instead rests on the three
+    INDEPENDENT signals below; when `state` is not a clean terminal, the transcript
+    must be idle past a LONGER `stale_idle_threshold` before those signals are trusted
+    over the stale field. `claude stop` is non-destructive + resumable, so this
+    replaces an unreliable proxy with direct evidence — not an erosion of the fail-safe.
   - lease (PRIMARY guard) — resolve the worktree run dir for `<key>`
     (`<repo>/.flow/worktrees/feature-<key>-<slug>/.flow/runs/<key>/`, the pool glob
     reap/drain use) and call `lease.classify(run_dir, now)`; `live` or `corrupt`
@@ -42,8 +52,9 @@ classifier fails safe toward NOT stopping):
     as non-live and PROCEEDS — treating absent as skip would rebuild a silent
     no-op that never cleans up after reap.
   - transcript mtime — `state.json.linkScanPath` → the session transcript; mtime
-    fresher than `now - idle_threshold` → still writing (mid-reflect even if tempo
-    lags) → skip. Missing/empty/unreadable path → cannot prove idle → skip.
+    fresher than `now - idle_threshold` (or `now - stale_idle_threshold` when `state`
+    is not a clean terminal) → still writing (mid-reflect even if tempo lags) → skip.
+    Missing/empty/unreadable path → cannot prove idle → skip.
   - terminal bead — the `<key>` maps to a bead whose status ∈ {closed, blocked,
     deferred}. Open/in_progress → skip (it may relaunch). The bead lookup is
     injected (CLI backs it with `bd show <key> --json`).
@@ -54,7 +65,8 @@ after stop or dir-removal.
 
 CLI:
   evolve_session_cleanup.py --workspace-root <dir> [--self-job <basename>]
-                            [--idle-threshold-secs N] [--jobs-root <dir>] [--now <iso>]
+                            [--idle-threshold-secs N] [--stale-idle-threshold-secs N]
+                            [--jobs-root <dir>] [--now <iso>]
 
 Exit codes:
   0 = ok (prints the classification JSON)
@@ -79,6 +91,12 @@ from _timeutil import parse_iso
 from maintainer import resolve_maintainer_repo
 
 DEFAULT_IDLE_THRESHOLD_SECS = 300
+# When `state` is NOT a clean terminal (the common case — a finished bg run rests at
+# 'working'/'blocked'), the transcript must be idle past THIS longer threshold before
+# the three done-signals are trusted over the stale state field. Longer than the
+# normal idle threshold: extra caution before stopping a session whose own state field
+# still claims it is working.
+DEFAULT_STALE_IDLE_THRESHOLD_SECS = 600
 
 _FLOW_INTENT_RE = re.compile(r"/flow\s+(flow-[a-z0-9]+(?:\.\d+)?)\b", re.IGNORECASE)
 _TERMINAL_BEAD_STATUSES = {"closed", "blocked", "deferred"}
@@ -101,13 +119,15 @@ class JobRecord:
     """A parsed `~/.claude/jobs/<id>/state.json` plus its dir.
 
     job_dir is the absolute path to the job directory (named by the 8-hex
-    daemonShort); session_id is the full UUID from the record (the handle
-    `claude stop` accepts). The CLI builds these; classify is pure over them.
+    daemonShort). job_id is that basename — the handle `claude stop` accepts; the
+    full session UUID does NOT work (`claude stop <uuid>` → "No job matching"). The
+    session_id is kept only to locate the resumable transcript, never as a stop
+    handle. The CLI builds these; classify is pure over them.
     """
 
-    job_id: str  # the job dir basename (daemonShort, 8 hex)
+    job_id: str  # the job dir basename (daemonShort, 8 hex) — the `claude stop` handle
     job_dir: str  # absolute path to ~/.claude/jobs/<job_id>/
-    session_id: str  # full sessionId UUID
+    session_id: str  # full sessionId UUID (transcript handle, NOT a stop handle)
     state: str
     tempo: str
     cwd: str
@@ -163,6 +183,7 @@ def classify(
     *,
     self_job: str | None,
     idle_threshold_secs: int,
+    stale_idle_threshold_secs: int = DEFAULT_STALE_IDLE_THRESHOLD_SECS,
     bead_status: BeadStatusLookup,
 ) -> dict:
     """Pure core: bucket job records into stoppable / skipped.
@@ -192,8 +213,12 @@ def classify(
         if Path(rec.cwd).resolve() != repo_resolved:
             skip(rec, "cwd is not this repo's root")
             continue
-        if rec.state not in _STOPPABLE_STATES or rec.tempo != "idle":
-            skip(rec, f"state floor not met (state={rec.state!r}, tempo={rec.tempo!r})")
+        # tempo is the one hard activity signal: never stop a session reporting work.
+        # `state` is NOT gated — a finished bg run rests at 'working'/'blocked'
+        # indefinitely (module docstring), so doneness rests on the three independent
+        # signals below (lease non-live ∧ transcript idle ∧ bead terminal).
+        if rec.tempo != "idle":
+            skip(rec, f"tempo not idle (tempo={rec.tempo!r})")
             continue
 
         run_dir = _run_dir_for(repo, key)
@@ -204,10 +229,17 @@ def classify(
             skip(rec, f"lease is {lease_state}")
             continue
 
-        if now_ts is None or not _transcript_is_idle(
-            rec.link_scan_path, now_ts, idle_threshold_secs
-        ):
-            skip(rec, "transcript not provably idle")
+        # a clean terminal state trusts the normal idle threshold; a stale
+        # 'working'/'blocked' state demands the LONGER threshold before we override it.
+        clean_terminal = rec.state in _STOPPABLE_STATES
+        required_idle = idle_threshold_secs if clean_terminal else stale_idle_threshold_secs
+        if now_ts is None or not _transcript_is_idle(rec.link_scan_path, now_ts, required_idle):
+            skip(
+                rec,
+                "transcript not provably idle"
+                if clean_terminal
+                else f"transcript not idle past stale threshold ({stale_idle_threshold_secs}s)",
+            )
             continue
 
         status = bead_status(key)
@@ -218,10 +250,14 @@ def classify(
         stoppable.append(
             {
                 "session_id": rec.session_id,
+                "job_id": rec.job_id,  # the `claude stop` handle (NOT session_id)
                 "key": key,
                 "cwd": rec.cwd,
                 "job_dir": rec.job_dir,
-                "reason": f"done/idle, bead {status}, lease {lease_state}",
+                "reason": (
+                    f"{'done' if clean_terminal else f'stale-{rec.state}'}/idle, "
+                    f"bead {status}, lease {lease_state}"
+                ),
             }
         )
 
@@ -292,6 +328,7 @@ def cleanup(
     *,
     self_job: str | None,
     idle_threshold_secs: int,
+    stale_idle_threshold_secs: int = DEFAULT_STALE_IDLE_THRESHOLD_SECS,
     jobs_root: Path,
     now_iso: str,
     bead_status: BeadStatusLookup | None = None,
@@ -307,6 +344,7 @@ def cleanup(
         now_iso,
         self_job=self_job,
         idle_threshold_secs=idle_threshold_secs,
+        stale_idle_threshold_secs=stale_idle_threshold_secs,
         bead_status=lookup,
     )
 
@@ -327,6 +365,13 @@ def cli_main(argv: list[str]) -> int:
         default=DEFAULT_IDLE_THRESHOLD_SECS,
         help="a transcript with a fresher mtime than this is treated as still writing.",
     )
+    parser.add_argument(
+        "--stale-idle-threshold-secs",
+        type=int,
+        default=DEFAULT_STALE_IDLE_THRESHOLD_SECS,
+        help="idle bar for a session whose state field is not a clean terminal "
+        "(working/blocked); longer than --idle-threshold-secs.",
+    )
     parser.add_argument("--jobs-root", default=None, help="override (default ~/.claude/jobs).")
     parser.add_argument("--now", default=None, help="override the clock (ISO8601).")
     args = parser.parse_args(argv)
@@ -339,6 +384,7 @@ def cli_main(argv: list[str]) -> int:
             Path(args.workspace_root),
             self_job=args.self_job,
             idle_threshold_secs=args.idle_threshold_secs,
+            stale_idle_threshold_secs=args.stale_idle_threshold_secs,
             jobs_root=jobs_root,
             now_iso=now_iso,
         )
