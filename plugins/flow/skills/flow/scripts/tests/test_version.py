@@ -140,6 +140,31 @@ def test_write_version_preserves_surrounding_bytes(tmp_path):
     assert market.read_text(encoding="utf-8") == _MARKETPLACE_FIXTURE.replace("0.27.57", "0.27.58")
 
 
+def test_set_version_already_at_target_is_noop_success(tmp_path):
+    # flow-wkn: a file already stamped with the target version is a benign no-op,
+    # not "no version line to replace".
+    f = tmp_path / "x.json"
+    before = '{"name": "flow", "version": "0.27.61"}'
+    f.write_text(before, encoding="utf-8")
+    version._set_version_in_file(f, "0.27.61")
+    assert f.read_text(encoding="utf-8") == before
+
+
+def test_set_version_no_version_line_raises(tmp_path):
+    f = tmp_path / "x.json"
+    f.write_text('{"name": "flow"}', encoding="utf-8")
+    with pytest.raises(version.ToolError):
+        version._set_version_in_file(f, "0.27.61")
+
+
+def test_write_version_idempotent_same_version(tmp_path):
+    plugin, market = _seed_version_files(tmp_path)
+    version.write_version(cwd=tmp_path, version="0.27.58")
+    version.write_version(cwd=tmp_path, version="0.27.58")
+    assert plugin.read_text(encoding="utf-8") == _PLUGIN_FIXTURE.replace("0.27.57", "0.27.58")
+    assert market.read_text(encoding="utf-8") == _MARKETPLACE_FIXTURE.replace("0.27.57", "0.27.58")
+
+
 def test_set_version_replaces_only_first(tmp_path):
     # count=1: only the FIRST "version" is rewritten, so a nested second "version"
     # field (e.g. a dep pin) is preserved untouched.
