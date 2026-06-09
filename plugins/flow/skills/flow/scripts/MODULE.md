@@ -58,7 +58,7 @@ Pluggable PR-host seam, structural twin of the tracker seam. The `create_pr` and
 
 | Script | Role | Surface / touches |
 |--------|------|-------------------|
-| `_memory_paths.py` (lib) | Namespace resolution + `.flow/<ns>/` path conventions. `resolve_memory_base` reads the gitignored `.flow/memory-root` sibling first, then `workspace.toml [memory].root`, then local `.flow`. | imported widely |
+| `_memory_paths.py` (lib) | Namespace resolution + `.flow/<ns>/` path conventions. `resolve_memory_base` reads the gitignored `.flow/memory-root` sibling first, then `workspace.toml [memory].root`, then local `.flow`; every redirected worktree resolves the same store AND the same lock. | imported widely |
 | `memory_append.py` | Single-writer `knowledge.jsonl` append with sha-keyed idempotency. | `--type --text --branch --ticket [--id]` |
 | `recall.py` | BM25 ranker over `knowledge.jsonl`; `--metric` forwards to `metric.py`. | `<query> [--branch --tickets --top-n]` ; `--metric ...` |
 | `recall_pending.py` (lib) | Promote SessionStart recall-pending entries into the per-ticket recall log. | imported by dispatch_stage |
@@ -83,6 +83,7 @@ Pluggable PR-host seam, structural twin of the tracker seam. The `create_pr` and
 |--------|------|-------------------|
 | `metric.py` | Metrics calculator: shipped tickets/week, time-to-PR, friction events/run, and revert-rate — from ship-event and friction-jsonl evidence (revert-rate joins ship-events to `bd history`). | (via `recall.py --metric`) |
 | `baseline_collect.py` | Pre-migration time-to-PR baseline file + stats. | `build --samples-json` / `show` |
+| `harness_corpus.py` (lib) | Frozen decider-fixture corpus loader/validator + replayer (regression-eval, epic flow-63q): replays held_in/held_out cases from the sibling `harness_corpus.json` data file against the four pure deciders (`evolve_select.partition`, `evolve_drain.decide`, `evolve_self_merge.decide`, `triage.is_hot_change`); the injectable `resolve=` is the candidate-checkout seam. | no script consumer yet; the flow-63q.2 score CLI becomes the consumer. Frozen by `tests/test_harness_corpus.py` (full replay each CI run) |
 | `pending_mutations.py` (lib) | Transient tracker-mutation queue (create/edit/transition/comment/link). | imported by sync, tracker_cli |
 | `sync.py` | Drain `pending-mutations.jsonl` + reconcile against live tracker. | `--workspace-root` |
 
