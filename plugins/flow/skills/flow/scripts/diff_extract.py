@@ -248,9 +248,10 @@ def _ls_files_blobs(files: list[str], cwd: Path, runner: Runner) -> dict[str, di
 def _union_frontmatter_planned(files: list[str], ticket: str | None, cwd: Path) -> list[str]:
     """Union passed `--files` with the ticket frontmatter `planned_files`.
 
-    The spec bootstrap auto-adds version-bump files (plugin.json + marketplace.json)
-    to FRONTMATTER planned_files only, so a `--files`-only baseline drops them from
-    the captured implement.diff. Reads them back here so they survive.
+    The frontmatter `planned_files` can hold entries a `--files`-only baseline omits,
+    so a `--files`-only capture would drop them from the implement.diff. Reads them
+    back here so they survive. (The version files are no longer auto-added to
+    `planned_files`; they are stamped at merge time, not in the implement diff.)
 
     `--files` come first (input order preserved), then frontmatter-only entries in
     frontmatter order; exact-string dedup. Returns `files` unchanged when `ticket`
