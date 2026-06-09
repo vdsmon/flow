@@ -17,16 +17,11 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
 
 import pending_mutations
 from _workspace import WorkspaceConfigError, load_workspace_toml
-
-
-def _now_iso() -> str:
-    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 class _Tracker(Protocol):
