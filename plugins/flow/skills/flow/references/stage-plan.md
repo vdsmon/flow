@@ -45,7 +45,7 @@ You cannot wait for or solicit that approval yourself — just return a plan goo
    DEFAULT=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD)   # e.g. origin/main
    git show "$DEFAULT:<path>"   # the base version of the file you'd cite
    ```
-   The `git fetch` is read-only by discipline (it only updates remote-tracking refs / FETCH_HEAD, never the working tree). This differs from the version-bump advisory (verb-spec.md, stage-implement.md), which documents the same launcher-lags-`@default` mismatch: a version number is advisory and recomputed at implement, but a content/drift finding is cited at plan time and may stamp `planned_files`, so it must be verified against the right base now, at plan time, and cannot be deferred to implement.
+   The `git fetch` is read-only by discipline (it only updates remote-tracking refs / FETCH_HEAD, never the working tree). A content/drift finding is cited at plan time and may stamp `planned_files`, so it must be verified against the right base now, at plan time, and cannot be deferred to implement.
 
 3. Draft the plan with these sections:
    - **Goal** — one or two sentences on what success looks like.

@@ -88,3 +88,95 @@ def test_cli_next_tool_error_exit_2(monkeypatch, capsys):
     rc = version.cli_main(["next", "--cwd", "."])
     assert rc == 2
     assert "git show failed" in capsys.readouterr().err
+
+
+# ---- write_version (surgical file write) ----
+
+_PLUGIN_FIXTURE = """\
+{
+  "name": "flow",
+  "version": "0.27.57",
+  "description": "ticket pipeline",
+  "skills": "./skills"
+}
+"""
+
+_MARKETPLACE_FIXTURE = """\
+{
+  "name": "vdsmon-flow",
+  "owner": {"name": "Victor"},
+  "plugins": [
+    {
+      "name": "flow",
+      "source": "./plugins/flow",
+      "version": "0.27.57"
+    }
+  ]
+}
+"""
+
+
+def _seed_version_files(tmp_path):
+    plugin = tmp_path / version.PLUGIN_JSON
+    market = tmp_path / version.MARKETPLACE_JSON
+    plugin.parent.mkdir(parents=True, exist_ok=True)
+    market.parent.mkdir(parents=True, exist_ok=True)
+    plugin.write_text(_PLUGIN_FIXTURE, encoding="utf-8")
+    market.write_text(_MARKETPLACE_FIXTURE, encoding="utf-8")
+    return plugin, market
+
+
+def test_write_version_bumps_both_files(tmp_path):
+    plugin, market = _seed_version_files(tmp_path)
+    version.write_version(cwd=tmp_path, version="0.27.58")
+    assert '"version": "0.27.58"' in plugin.read_text(encoding="utf-8")
+    assert '"version": "0.27.58"' in market.read_text(encoding="utf-8")
+
+
+def test_write_version_preserves_surrounding_bytes(tmp_path):
+    plugin, market = _seed_version_files(tmp_path)
+    version.write_version(cwd=tmp_path, version="0.27.58")
+    assert plugin.read_text(encoding="utf-8") == _PLUGIN_FIXTURE.replace("0.27.57", "0.27.58")
+    assert market.read_text(encoding="utf-8") == _MARKETPLACE_FIXTURE.replace("0.27.57", "0.27.58")
+
+
+# ---- stamp (compute + write) ----
+
+
+def test_stamp_writes_and_returns_compute(tmp_path):
+    _seed_version_files(tmp_path)
+    run = _runner(current="0.27.57")
+    result = version.stamp(cwd=tmp_path, ref="origin/main", runner=run)
+    assert result == {"ref": "origin/main", "current": "0.27.57", "next": "0.27.58"}
+    assert '"version": "0.27.58"' in (tmp_path / version.PLUGIN_JSON).read_text(encoding="utf-8")
+    assert '"version": "0.27.58"' in (tmp_path / version.MARKETPLACE_JSON).read_text(
+        encoding="utf-8"
+    )
+
+
+# ---- CLI stamp ----
+
+
+def test_cli_stamp_ok(monkeypatch, capsys):
+    monkeypatch.setattr(
+        version,
+        "stamp",
+        lambda **_: {"ref": "origin/main", "current": "0.27.57", "next": "0.27.58"},
+    )
+    rc = version.cli_main(["stamp", "--ref", "origin/main", "--cwd", "."])
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out) == {
+        "ref": "origin/main",
+        "current": "0.27.57",
+        "next": "0.27.58",
+    }
+
+
+def test_cli_stamp_tool_error_exit_2(monkeypatch, capsys):
+    def _boom(**_):
+        raise version.ToolError("git show failed")
+
+    monkeypatch.setattr(version, "stamp", _boom)
+    rc = version.cli_main(["stamp", "--cwd", "."])
+    assert rc == 2
+    assert "git show failed" in capsys.readouterr().err
