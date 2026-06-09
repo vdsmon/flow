@@ -139,7 +139,7 @@ def cli_main(argv: list[str]) -> int:
         return 0
     if args.cmd == "prune":
         pruned = prune(repo)
-        print(json.dumps(sorted(pruned)) if args.json else "\n".join(sorted(pruned)))
+        print("\n".join(sorted(pruned)))
         return 0
     # list
     keys = sorted(live_keys(repo))
