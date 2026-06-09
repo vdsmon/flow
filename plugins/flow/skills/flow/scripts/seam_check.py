@@ -496,6 +496,68 @@ def module_md_importer_drift(
     return drifts
 
 
+@dataclass(frozen=True)
+class SurfaceCellDrift:
+    module: str
+    missing: frozenset[str]  # real subcommands absent from the surface cell
+
+
+def module_md_surface_cell_drift(
+    scripts_dir: Path = SCRIPTS_DIR,
+    module_text: str | None = None,
+    surface_lookup=surface_of,
+) -> list[SurfaceCellDrift]:
+    """Drift between a MODULE.md surface cell and a script's real argparse subcommands.
+
+    Per table row (a line containing `|`): the module stem is the first backticked
+    *.py token in the first non-empty `|`-cell. `(lib)` rows are skipped (libs are
+    documented by their importer list, not a CLI surface). The surface cell is the
+    LAST non-empty `|`-cell; a real subcommand counts as enumerated only as a
+    standalone token (boundary regex, so `list` does not match inside
+    `list-assigned`). A row enumerating ZERO real subcommands is not claiming to be
+    a surface listing (e.g. metric.py's forwarded `(via recall.py --metric)`) and is
+    skipped. A row enumerating >=1 but not all yields one descriptor.
+    """
+    if module_text is None:
+        module_text = (scripts_dir / "MODULE.md").read_text(encoding="utf-8")
+    drifts: list[SurfaceCellDrift] = []
+    for line in module_text.splitlines():
+        if "|" not in line:
+            continue
+        cells = [c for c in (c.strip() for c in line.split("|")) if c]
+        if not cells:
+            continue
+        first, last = cells[0], cells[-1]
+        if "(lib)" in first:
+            continue
+        module_stem: str | None = None
+        for span in _INLINE_SPAN_RE.finditer(first):
+            mm = _MODULE_NAME_RE.search(span.group(1))
+            if mm:
+                module_stem = mm.group(0)[: -len(".py")]
+                break
+        if module_stem is None:
+            continue
+        surface = surface_lookup(module_stem + ".py")
+        if surface is None or not surface.subcommands:
+            continue
+        present = {
+            sub
+            for sub in surface.subcommands
+            if re.search(rf"(?<![A-Za-z0-9-]){re.escape(sub)}(?![A-Za-z0-9-])", last)
+        }
+        if not present:
+            continue
+        if present != surface.subcommands:
+            drifts.append(
+                SurfaceCellDrift(
+                    module=module_stem,
+                    missing=frozenset(surface.subcommands - present),
+                )
+            )
+    return drifts
+
+
 def docs_over_stage_doc_citation_limit(
     registry_path: Path = SKILL_ROOT / "stage-registry.toml",
     docs: list[Path] | None = None,
@@ -579,6 +641,20 @@ def main(argv: list[str]) -> int:
                 msg=(
                     f"MODULE.md 'imported by' row for {drift.module}: "
                     f"missing {sorted(drift.missing)}, phantom {sorted(drift.phantom)}"
+                ),
+                raw="",
+            )
+        )
+
+    for drift in module_md_surface_cell_drift():
+        problems.append(
+            Problem(
+                doc="MODULE.md",
+                line=0,
+                level="ERROR",
+                msg=(
+                    f"MODULE.md surface cell for {drift.module}: "
+                    f"missing subcommand(s) {sorted(drift.missing)}"
                 ),
                 raw="",
             )
