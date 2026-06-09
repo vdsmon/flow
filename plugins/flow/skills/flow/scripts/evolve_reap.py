@@ -24,8 +24,11 @@ branch-delete step fail and an otherwise-clean merge exit 1.
 Eligibility (all required): branch is `feature/<key>-*`; the bead carries `evolve`;
 the check rollup is non-empty and all SUCCESS (green); mergeable (CLEAN, or DRAFT
 which just needs `gh pr ready`). A `hot` bead additionally needs `auto_merge_hot`
-plus isolation (it is the only hot-eligible PR this pass). Anything else lands in
-not_green / skipped_hot / blocked / ignored.
+plus isolation (it is the only hot-eligible PR this pass). A green non-hot PR that
+is DIRTY (conflicted) lands in `version_recoverable`: in a multi-bead drain every
+PR bumps the two version files, so main walks forward and later PRs conflict on the
+version line ONLY — the caller runs `version_remerge.py` to recover them. Anything
+else lands in not_green / skipped_hot / version_recoverable / blocked / ignored.
 
 CLI:
   evolve_reap.py --workspace-root <dir>
@@ -120,7 +123,15 @@ def _hot_eligible(pr: dict, labels: list[str]) -> bool:
 def classify(
     prs: list[dict], labels_index: dict[str, list[str]], *, auto_merge_hot: bool = False
 ) -> dict:
-    """Pure core: bucket open PRs into merge / not_green / skipped_hot / blocked.
+    """Pure core: bucket open PRs into merge / not_green / skipped_hot /
+    version_recoverable / blocked.
+
+    version_recoverable: a green NON-hot PR whose mergeStateStatus is DIRTY. In a
+    multi-bead drain every PR bumps the two version files, so main walks forward and
+    later PRs go DIRTY on the version line ONLY. This bucket is a CANDIDATE set; the
+    caller runs version_remerge.py, which authoritatively gates whether the conflict
+    is truly version-only (it aborts on any other conflict). A hot DIRTY PR is NOT
+    routed here (hot never auto-recovers) — it stays blocked.
 
     prs: parsed `gh pr list` items (number, headRefName, isDraft, mergeStateStatus,
     statusCheckRollup). labels_index: key -> labels, for every evolve bead.
@@ -132,6 +143,7 @@ def classify(
     merge: list[dict] = []
     not_green: list[dict] = []
     skipped_hot: list[dict] = []
+    version_recoverable: list[dict] = []
     blocked: list[dict] = []
 
     hot_eligible = [
@@ -155,13 +167,22 @@ def classify(
         if not rollup_is_green(pr.get("statusCheckRollup") or []):
             not_green.append(entry)
             continue
+        state = str(pr.get("mergeStateStatus", "")).upper()
         if "hot" in labels:
+            # hot never auto-recovers (conservative): a hot DIRTY PR stays blocked,
+            # not version_recoverable. Only the isolation-eligible hot promotes.
             if promote is not None and number == promote:
                 merge.append({**entry, "is_draft": bool(pr.get("isDraft")), "is_hot": True})
-            else:
+            elif state in _MERGEABLE_STATES:
                 skipped_hot.append(entry)
+            else:
+                blocked.append({**entry, "reason": state or "UNKNOWN"})
             continue
-        state = str(pr.get("mergeStateStatus", "")).upper()
+        if state == "DIRTY":
+            # green non-hot DIRTY: candidate for merge-time version-conflict recovery.
+            # version_remerge.py authoritatively gates whether it is truly version-only.
+            version_recoverable.append(entry)
+            continue
         if state not in _MERGEABLE_STATES:
             blocked.append({**entry, "reason": state or "UNKNOWN"})
             continue
@@ -171,6 +192,7 @@ def classify(
         "merge": merge,
         "not_green": not_green,
         "skipped_hot": skipped_hot,
+        "version_recoverable": version_recoverable,
         "blocked": blocked,
     }
 
