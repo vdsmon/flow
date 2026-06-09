@@ -156,17 +156,17 @@ The CI re-wait is **non-negotiable**: `version_remerge` pushed a brand-new merge
 python3 ${CLAUDE_SKILL_DIR}/scripts/evolve_session_cleanup.py --workspace-root . --self-job "$(basename "$CLAUDE_JOB_DIR")"
 ```
 
-Enumeration + liveness are filesystem-only — the script scans `~/.claude/jobs/*/state.json` directly and NEVER calls `claude agents --json` (it blocks on a TTY and the drain can run headless). Flags: `--workspace-root` (required; non-maintainer → exit 4, skip this step), `--self-job` (the orchestrator's own `$CLAUDE_JOB_DIR` basename, skipped outright), `--idle-threshold-secs` (default 300; a transcript with a fresher mtime is treated as still writing → not stopped). It returns JSON `{stoppable:[{session_id, key, cwd, job_dir, reason}], skipped:[{session_id, reason}]}`. The session→bead map is the job's `intent` (`/flow <key> --auto`), which also filters out foreign / non-flow jobs; the bg orchestrator records `cwd == repo root` (not the worktree), so a job is eligible only when its cwd is this repo's root. A session reaches `stoppable` only when its `<key>`'s bead is terminal (closed/blocked/deferred), `state ∈ {done,stopped}` + `tempo == idle`, its run lease is non-live (`live`/`corrupt` → skipped, the same mid-reflect guard reap uses; an already-reaped worktree reads `absent` → non-live → proceeds), and its transcript mtime is idle — any busy or unprovable signal skips it (fail-safe toward NOT stopping).
+Enumeration + liveness are filesystem-only — the script scans `~/.claude/jobs/*/state.json` directly and NEVER calls `claude agents --json` (it blocks on a TTY and the drain can run headless). Flags: `--workspace-root` (required; non-maintainer → exit 4, skip this step), `--self-job` (the orchestrator's own `$CLAUDE_JOB_DIR` basename, skipped outright), `--idle-threshold-secs` (default 300; a transcript with a fresher mtime is treated as still writing → not stopped), `--stale-idle-threshold-secs` (default 600; the longer idle bar applied when `state` is not a clean terminal — see below). It returns JSON `{stoppable:[{session_id, job_id, key, cwd, job_dir, reason}], skipped:[{session_id, reason}]}` — the `job_id` (the 8-hex dir basename) is the `claude stop` handle, NOT the session UUID. The session→bead map is the job's `intent` (`/flow <key> --auto`), which also filters out foreign / non-flow jobs; the bg orchestrator records `cwd == repo root` (not the worktree), so a job is eligible only when its cwd is this repo's root. A session reaches `stoppable` only when its `<key>`'s bead is terminal (closed/blocked/deferred), `tempo == idle`, its run lease is non-live (`live`/`corrupt` → skipped, the same mid-reflect guard reap uses; an already-reaped worktree reads `absent` → non-live → proceeds), and its transcript mtime is idle — any busy or unprovable signal skips it (fail-safe toward NOT stopping). `state` is deliberately NOT gated: a finished bg run rests at `state == working` (or `blocked`) indefinitely — a `session_cron` keepalive task, or a daemon that never flips the field — so gating on `done`/`stopped` skipped the COMMON case and leaked every drained run as a zombie. Doneness rests on the three independent signals (lease ∧ transcript ∧ bead) instead; when `state` is not a clean terminal, the transcript must be idle past the longer `--stale-idle-threshold-secs` before the stale field is overridden.
 
 For each `stoppable` entry (skip ALL of this under `--dry-run` — print the stoppable set and run nothing):
 
 ```bash
-# validate BOTH tokens before interpolating (defensive on the destructive path)
-timeout 10 claude stop <session_id> </dev/null || true   # kill process if still live; stdin detached + bounded (claude stop TTY-blocking is unverified)
+# validate tokens before interpolating (defensive on the destructive path)
+timeout 90 claude stop <job_id> </dev/null || true       # the 8-hex JOB id is the stop handle; `claude stop <session_uuid>` fails "No job matching". stdin detached + bounded
 rm -rf <job_dir>                                          # Ctrl+X-equivalent: drop the panel tombstone (the absolute path from the entry)
 ```
 
-`<session_id>` and `<job_dir>` come from the `stoppable` entry. Before the `claude stop`, validate `<session_id>` against a hex-token pattern (`^[0-9a-f-]+$`). Before the `rm -rf`, validate `<job_dir>` is under `~/.claude/jobs/` with an 8-hex basename (`^.*/\.claude/jobs/[0-9a-f]{8}$`) — this is the single destructive line, so guard the path it deletes, not just the stop handle. Use the entry's literal `<job_dir>`; do NOT reconstruct `~/.claude/jobs/<id>/` from `<session_id>` (the dir is named by the 8-hex `daemonShort`, not the full sessionId UUID). This is NON-DESTRUCTIVE to history: the transcript at `~/.claude/projects/<slug>/<session_id>.jsonl` is untouched, so the session stays resumable (`claude attach <session_id>`) after either stop or dir-removal. `rm` bypasses the daemon (safe for done/stopped jobs); a daemon-sanctioned dismiss is the cleaner long-term path if a future CLI offers one (none in 2.1.168).
+`<job_id>`, `<session_id>`, and `<job_dir>` come from the `stoppable` entry. **`claude stop` takes the `<job_id>` (the 8-hex dir basename), NOT the session UUID** — passing the UUID returns "No job matching" fast (the bug that left a whole drain's runs un-stopped; the follow-up `rm` was then silently re-materialized by the daemon, because the session was never actually stopped). Before the `claude stop`, validate `<job_id>` is 8-hex (`^[0-9a-f]{8}$`). Before the `rm -rf`, validate `<job_dir>` is under `~/.claude/jobs/` with an 8-hex basename (`^.*/\.claude/jobs/[0-9a-f]{8}$`) — the single destructive line, so guard the path it deletes. Use the entry's literal `<job_dir>`. **Order matters: the stop must land BEFORE the `rm`** — a still-registered job dir that is `rm`-ed gets re-created by the daemon, so only a stopped (or genuinely done) job stays removed. This is NON-DESTRUCTIVE to history: the transcript at `~/.claude/projects/<slug>/<session_id>.jsonl` is untouched, so the session stays resumable (`claude attach <session_id>`) after either stop or dir-removal. A daemon-sanctioned dismiss is the cleaner long-term path if a future CLI offers one (none in 2.1.169).
 
 **B. Decide the next action.**
 
@@ -208,6 +208,23 @@ Each spawns a detached run that auto-plans and either drives its PR to green-and
 `/flow evolve drain --include-proposals` widens the loop from the `evolve` backlog to **also auto-launch + reap plain `proposal` beads** — the judgment-side work (features, real refactors, reorgs) that §propose deliberately routes to the maintainer's own backlog so a human accepts it at the spec-plan gate. With this flag, each ready `proposal` bead is fanned out as a `/flow <key> --auto` run that self-plans and self-merges at ≥90% confidence, **bypassing that human accept**. This is the one place drain ships taste-and-fit work with no human in the loop; use it only when you genuinely want the proposal backlog drained autonomously.
 
 Mechanically it threads through the whole turn: `evolve_select` pulls a second `bd ready -l proposal` candidate set (merged by id) and drops its proposal-exclusion guard; `evolve_drain.py --include-proposals` carries the flag into select and echoes `include_proposals: true` in its JSON; `evolve_reap.py --include-proposals` widens its label index so proposal **orphans** (runs that died before self-merging) reap too — pass it on the step **A** invocation or those PRs never merge. Hot proposals serialize on the same single hot slot as hot evolve beads. Composable with `--dry-run` to preview what the dangerous mode would launch. The Report (below) names `include_proposals: true` so a run that auto-drained judgment work says so.
+
+### Post-drain: advance the checkout (DEFAULT, always run)
+
+When the loop exits (`done`), advance the maintainer checkout so the just-merged work goes live for the NEXT run. This is **default behaviour — always desirable, always run it** (the `vdsmon-flow` marketplace tracks the local `main` checkout, so an un-advanced checkout keeps serving the pre-drain code to every subsequent run). From the maintainer repo root, on `main`:
+
+```bash
+git fetch origin --quiet
+# .beads/*.jsonl is a passive export (Dolt is truth) — discard its churn so ff-only is clean
+git checkout -- .beads/ 2>/dev/null || true
+if git merge --ff-only origin/main; then
+  claude plugin marketplace update vdsmon-flow
+else
+  echo "ff-only skipped (checkout diverged/dirty) — advance by hand; NEVER force"
+fi
+```
+
+Try-and-skip, **never force**: a diverged or dirty tree leaves the advance for the human, not a `--force`. Skip this step entirely under `--dry-run`. If the orchestrator is NOT on `main` (a detached/standalone `do`), skip — only the main checkout the marketplace tracks should advance.
 
 ### Report
 

@@ -43,8 +43,9 @@ def _write_lease(run_dir, *, expired: bool = False, corrupt: bool = False) -> No
 _transcript_counter = [0]
 
 
-def _transcript(tmp_path, *, fresh: bool) -> str:
-    """A transcript file whose mtime is fresh (just-now) or idle (well past threshold).
+def _transcript(tmp_path, *, fresh: bool = False, idle_secs: float | None = None) -> str:
+    """A transcript file whose mtime is fresh (just-now), idle (well past threshold),
+    or idle by an explicit number of seconds (`idle_secs`, for boundary tests).
 
     Each call gets a unique filename so an overridden default never clobbers the
     mtime of a transcript an earlier call set.
@@ -52,7 +53,10 @@ def _transcript(tmp_path, *, fresh: bool) -> str:
     _transcript_counter[0] += 1
     path = tmp_path / f"transcript-{_transcript_counter[0]}.jsonl"
     path.write_text("{}\n", encoding="utf-8")
-    mtime = NOW_EPOCH - 5 if fresh else NOW_EPOCH - 10_000
+    if idle_secs is not None:
+        mtime = NOW_EPOCH - idle_secs
+    else:
+        mtime = NOW_EPOCH - 5 if fresh else NOW_EPOCH - 10_000
     os.utime(path, (mtime, mtime))
     return str(path)
 
@@ -111,6 +115,7 @@ def test_happy_path_terminal_bead_is_stoppable(tmp_path):
         assert len(out["stoppable"]) == 1, status
         entry = out["stoppable"][0]
         assert entry["session_id"] == rec.session_id
+        assert entry["job_id"] == rec.job_id  # the `claude stop` handle
         assert entry["key"] == "flow-abc"
         assert entry["cwd"] == rec.cwd
         assert entry["job_dir"] == rec.job_dir
@@ -174,19 +179,62 @@ def test_unreadable_transcript_path_skips(tmp_path):
 
 
 def test_tempo_not_idle_skips(tmp_path):
+    # tempo is the one hard activity signal — never stop a session reporting work,
+    # regardless of state.
     repo, _ = _setup_happy(tmp_path)
     rec = _record(tmp_path / "flow", tmp_path, tempo="active")
     out = _classify(repo, [rec])
     assert out["stoppable"] == []
-    assert "state floor not met" in out["skipped"][0]["reason"]
+    assert out["skipped"][0]["reason"] == "tempo not idle (tempo='active')"
 
 
-def test_state_not_terminal_skips(tmp_path):
+def test_stale_working_state_is_stoppable_via_override(tmp_path):
+    # the PRIMARY case: a finished bg run rests at state='working' (a session_cron
+    # keepalive or a daemon that never flips the field). With a long-idle transcript
+    # (past the stale threshold), a dead lease, and a terminal bead, it is stoppable —
+    # `state` is an unreliable proxy, overridden by the three direct signals.
     repo, _ = _setup_happy(tmp_path)
-    rec = _record(tmp_path / "flow", tmp_path, state="working")
+    rec = _record(
+        tmp_path / "flow",
+        tmp_path,
+        state="working",
+        link_scan_path=_transcript(tmp_path, idle_secs=10_000),
+    )
+    out = _classify(repo, [rec])
+    assert len(out["stoppable"]) == 1
+    entry = out["stoppable"][0]
+    assert entry["job_id"] == rec.job_id
+    assert "stale-working" in entry["reason"]
+
+
+def test_stale_working_idle_only_past_short_threshold_skips(tmp_path):
+    # idle past the normal threshold (300s) but NOT the longer stale threshold (600s):
+    # too soon to override a still-'working' state field → skip (fail-safe).
+    repo, _ = _setup_happy(tmp_path)
+    rec = _record(
+        tmp_path / "flow",
+        tmp_path,
+        state="working",
+        link_scan_path=_transcript(tmp_path, idle_secs=450),
+    )
     out = _classify(repo, [rec])
     assert out["stoppable"] == []
-    assert "state floor not met" in out["skipped"][0]["reason"]
+    assert "stale threshold" in out["skipped"][0]["reason"]
+
+
+def test_clean_terminal_state_uses_short_threshold(tmp_path):
+    # a clean state='done' run idle past the SHORT threshold (but not the stale one)
+    # is stoppable — the longer bar applies only when overriding a non-terminal state.
+    repo, _ = _setup_happy(tmp_path)
+    rec = _record(
+        tmp_path / "flow",
+        tmp_path,
+        state="done",
+        link_scan_path=_transcript(tmp_path, idle_secs=450),
+    )
+    out = _classify(repo, [rec])
+    assert len(out["stoppable"]) == 1
+    assert out["stoppable"][0]["reason"].startswith("done/idle")
 
 
 def test_intent_not_a_flow_launch_skips(tmp_path):
@@ -321,3 +369,44 @@ def test_cli_self_job_threads_through(tmp_path, monkeypatch, capsys):
     out = json.loads(capsys.readouterr().out)
     assert out["stoppable"] == []
     assert out["skipped"][0]["reason"] == "self-job"
+
+
+def test_cli_stale_threshold_flag_threads_through(tmp_path, monkeypatch, capsys):
+    # a state='working' job (the common finished-bg-run case) idle past the stale
+    # threshold is stoppable, and the stoppable entry carries job_id (the stop handle).
+    repo = tmp_path / "flow"
+    repo.mkdir()
+    monkeypatch.setattr(esc, "resolve_maintainer_repo", lambda ws: repo)
+    monkeypatch.setattr(esc, "_bd_status_lookup", lambda: lambda key: "closed")
+
+    _write_lease(_run_dir(_worktree_cwd(repo, "flow-abc"), "flow-abc"), expired=True)
+    transcript = _transcript(tmp_path, idle_secs=10_000)
+    state = json.dumps(
+        {
+            "state": "working",
+            "tempo": "idle",
+            "cwd": str(repo),
+            "intent": "/flow flow-abc --auto",
+            "sessionId": "deadbeef-0000-0000-0000-000000000000",
+            "linkScanPath": transcript,
+        }
+    )
+    jobs_root = _jobs_root_with(tmp_path, state)
+    job_basename = sorted(p.name for p in jobs_root.iterdir())[0]
+
+    rc = esc.cli_main(
+        [
+            "--workspace-root",
+            str(repo),
+            "--jobs-root",
+            str(jobs_root),
+            "--now",
+            NOW,
+            "--stale-idle-threshold-secs",
+            "600",
+        ]
+    )
+    assert rc == 0
+    out = json.loads(capsys.readouterr().out)
+    assert len(out["stoppable"]) == 1
+    assert out["stoppable"][0]["job_id"] == job_basename
