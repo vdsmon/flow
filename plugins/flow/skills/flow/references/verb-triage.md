@@ -13,7 +13,11 @@ concept; on a non-beads backend the list step prints "nothing to triage".
    Lists every `deferred` bead PLUS every `blocked` bead carrying the defer stem
    (decided-mode hot blocks — a `--auto` run that hit a post-decision
    implementation wall on a hot change), each with a `status` column and its last
-   "could not self-approve" open-question comment inline. A bare
+   "could not self-approve" open-question comment inline. Every row also carries
+   a `QUEUE` column: `evolve` when the bead has the `evolve` label, else
+   `day-job`. Add `--ready` to also surface the ready queues (one extra
+   `bd ready` call, partitioned by the same label; ready rows have no
+   open-question comment) — the default output without it is unchanged. A bare
    `triage.py --workspace-root .` still works (defaults to `list`). Add `--json`
    for a machine consumer; default is the human table.
 
