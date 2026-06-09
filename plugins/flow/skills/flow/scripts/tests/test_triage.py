@@ -344,6 +344,110 @@ def test_list_surfaces_blocked_with_stem_not_bare_blocked(tmp_path: Path) -> Non
     assert "flow-dag" not in keys  # bare dependency hold not surfaced
 
 
+# ─── list: --ready opt-in + queue tagging ─────────────────────────────────────
+
+
+def test_list_ready_adds_ready_rows_partitioned_by_queue(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path, backend="beads")
+    ready_json = json.dumps(
+        [
+            {"id": "flow-ev", "title": "Evolve bead", "labels": ["evolve"]},
+            {"id": "flow-dj", "title": "Day job bead"},
+            {"id": "flow-pr", "title": "Proposal bead", "labels": ["proposal"]},
+        ]
+    )
+    runner = _FakeRunner(
+        [_version_ok(), _cp(stdout="[]"), _cp(stdout="[]"), _cp(stdout=ready_json)]
+    )
+    code, out, _ = _run(["--workspace-root", str(tmp_path), "--ready", "--json"], runner)
+    assert code == 0
+    payload = json.loads(out)
+    rows = {r["key"]: r for r in payload}
+    assert set(rows) == {"flow-ev", "flow-dj", "flow-pr"}
+    assert all(r["status"] == "ready" for r in payload)
+    assert all(r["open_question"] == "" for r in payload)
+    assert rows["flow-ev"]["queue"] == "evolve"
+    assert rows["flow-dj"]["queue"] == "day-job"
+    assert rows["flow-pr"]["queue"] == "day-job"
+    assert ["bd", "ready", "--json"] in [c[0] for c in runner.calls]
+    assert not any("show" in c[0] for c in runner.calls)  # ready rows get no per-bead show
+
+
+def test_list_default_makes_no_ready_call(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path, backend="beads")
+    runner = _FakeRunner([_version_ok(), _cp(stdout="[]"), _cp(stdout="[]")])
+    code, _, _ = _run(["--workspace-root", str(tmp_path)], runner)
+    assert code == 0
+    assert not any("ready" in c[0] for c in runner.calls)
+
+
+def test_queue_field_on_deferred_and_blocked_rows(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path, backend="beads")
+    deferred_json = json.dumps([{"id": "flow-d", "title": "Deferred evolve", "labels": ["evolve"]}])
+    blocked_json = json.dumps([{"id": "flow-hb", "title": "Hot block"}])
+    issue_d = {
+        "id": "flow-d",
+        "title": "Deferred evolve",
+        "status": "deferred",
+        "comments": [_comment(_DEFER_COLON, "2026-06-01T10:00:00Z")],
+    }
+    issue_hb = {
+        "id": "flow-hb",
+        "title": "Hot block",
+        "status": "blocked",
+        "comments": [_tc(_DEFER_REAL, "2026-06-02T10:00:00Z")],
+    }
+    runner = _FakeRunner(
+        [
+            _version_ok(),
+            _cp(stdout=deferred_json),
+            _cp(stdout=blocked_json),
+            _show(issue_d),
+            _show(issue_hb),
+        ]
+    )
+    code, out, _ = _run(["--workspace-root", str(tmp_path), "--json"], runner)
+    assert code == 0
+    payload = json.loads(out)
+    queues = {row["key"]: row["queue"] for row in payload}
+    assert queues == {"flow-d": "evolve", "flow-hb": "day-job"}
+
+
+def test_list_ready_wrapper_shape(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path, backend="beads")
+    ready_wrap = json.dumps({"issues": [{"id": "flow-r", "title": "Ready", "labels": ["evolve"]}]})
+    runner = _FakeRunner(
+        [_version_ok(), _cp(stdout="[]"), _cp(stdout="[]"), _cp(stdout=ready_wrap)]
+    )
+    code, out, _ = _run(["--workspace-root", str(tmp_path), "--ready", "--json"], runner)
+    assert code == 0
+    payload = json.loads(out)
+    assert len(payload) == 1
+    assert payload[0]["key"] == "flow-r"
+    assert payload[0]["status"] == "ready"
+    assert payload[0]["queue"] == "evolve"
+
+
+def test_render_table_has_queue_column() -> None:
+    queueless = [{"key": "flow-a", "status": "deferred", "title": "T", "open_question": "q"}]
+    table = triage.render_table(queueless)
+    header = table.splitlines()[0]
+    assert "QUEUE" in header
+    assert header.index("STATUS") < header.index("QUEUE") < header.index("TITLE")
+    tagged = [
+        {"key": "flow-b", "status": "ready", "queue": "day-job", "title": "T", "open_question": ""}
+    ]
+    assert "day-job" in triage.render_table(tagged)
+
+
+def test_ready_with_no_rows_keeps_sentinel(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path, backend="beads")
+    runner = _FakeRunner([_version_ok(), _cp(stdout="[]"), _cp(stdout="[]"), _cp(stdout="[]")])
+    code, out, _ = _run(["--workspace-root", str(tmp_path), "--ready"], runner)
+    assert code == 0
+    assert "(no deferred tickets)" in out
+
+
 # ─── decided probe ───────────────────────────────────────────────────────────
 
 
