@@ -1,0 +1,924 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "case_id": "esel-launch-normal",
+      "split": "held_in",
+      "decider": "evolve_select.partition",
+      "args": {
+        "candidates": [
+          {
+            "id": "flow-b",
+            "priority": 2,
+            "labels": [],
+            "issue_type": "task",
+            "description": ""
+          },
+          {
+            "id": "flow-a",
+            "priority": 1,
+            "labels": [],
+            "issue_type": "task",
+            "description": ""
+          }
+        ],
+        "inflight_keys": [],
+        "hot_inflight": false,
+        "open_pr_count": 0,
+        "cap": 5,
+        "concurrency": 3
+      },
+      "expected": {
+        "launch": [
+          "flow-a",
+          "flow-b"
+        ],
+        "skipped_in_flight": [],
+        "held_backpressure": false,
+        "held_hot": [],
+        "held_anchor": []
+      }
+    },
+    {
+      "case_id": "esel-concurrency-cap",
+      "split": "held_in",
+      "decider": "evolve_select.partition",
+      "args": {
+        "candidates": [
+          {
+            "id": "flow-a",
+            "priority": 1,
+            "labels": [],
+            "issue_type": "task",
+            "description": ""
+          },
+          {
+            "id": "flow-b",
+            "priority": 2,
+            "labels": [],
+            "issue_type": "task",
+            "description": ""
+          },
+          {
+            "id": "flow-c",
+            "priority": 3,
+            "labels": [],
+            "issue_type": "task",
+            "description": ""
+          },
+          {
+            "id": "flow-d",
+            "priority": 4,
+            "labels": [],
+            "issue_type": "task",
+            "description": ""
+          }
+        ],
+        "inflight_keys": [],
+        "hot_inflight": false,
+        "open_pr_count": 0,
+        "cap": 5,
+        "concurrency": 3
+      },
+      "expected": {
+        "launch": [
+          "flow-a",
+          "flow-b",
+          "flow-c"
+        ],
+        "skipped_in_flight": [],
+        "held_backpressure": false,
+        "held_hot": [],
+        "held_anchor": []
+      }
+    },
+    {
+      "case_id": "esel-budget-exhaustion-break",
+      "split": "held_in",
+      "decider": "evolve_select.partition",
+      "args": {
+        "candidates": [
+          {
+            "id": "flow-a",
+            "priority": 1,
+            "labels": [],
+            "issue_type": "task",
+            "description": ""
+          },
+          {
+            "id": "flow-b",
+            "priority": 2,
+            "labels": [],
+            "issue_type": "task",
+            "description": ""
+          }
+        ],
+        "inflight_keys": [],
+        "hot_inflight": false,
+        "open_pr_count": 4,
+        "cap": 5,
+        "concurrency": 3
+      },
+      "expected": {
+        "launch": [
+          "flow-a"
+        ],
+        "skipped_in_flight": [],
+        "held_backpressure": false,
+        "held_hot": [],
+        "held_anchor": []
+      }
+    },
+    {
+      "case_id": "esel-backpressure",
+      "split": "held_in",
+      "decider": "evolve_select.partition",
+      "args": {
+        "candidates": [
+          {
+            "id": "flow-a",
+            "priority": 1,
+            "labels": [],
+            "issue_type": "task",
+            "description": ""
+          },
+          {
+            "id": "flow-inf",
+            "priority": 1,
+            "labels": [],
+            "issue_type": "task",
+            "description": ""
+          }
+        ],
+        "inflight_keys": [
+          "flow-inf"
+        ],
+        "hot_inflight": false,
+        "open_pr_count": 5,
+        "cap": 5,
+        "concurrency": 3
+      },
+      "expected": {
+        "launch": [],
+        "skipped_in_flight": [
+          "flow-inf"
+        ],
+        "held_backpressure": true,
+        "held_hot": [],
+        "held_anchor": []
+      }
+    },
+    {
+      "case_id": "esel-hot-second-held",
+      "split": "held_in",
+      "decider": "evolve_select.partition",
+      "args": {
+        "candidates": [
+          {
+            "id": "flow-h1",
+            "priority": 1,
+            "labels": [
+              "evolve",
+              "hot"
+            ],
+            "issue_type": "task",
+            "description": ""
+          },
+          {
+            "id": "flow-h2",
+            "priority": 2,
+            "labels": [
+              "evolve",
+              "hot"
+            ],
+            "issue_type": "task",
+            "description": ""
+          }
+        ],
+        "inflight_keys": [],
+        "hot_inflight": false,
+        "open_pr_count": 0,
+        "cap": 5,
+        "concurrency": 3
+      },
+      "expected": {
+        "launch": [
+          "flow-h1"
+        ],
+        "skipped_in_flight": [],
+        "held_backpressure": false,
+        "held_hot": [
+          "flow-h2"
+        ],
+        "held_anchor": []
+      }
+    },
+    {
+      "case_id": "esel-anchor-collision",
+      "split": "held_in",
+      "decider": "evolve_select.partition",
+      "args": {
+        "candidates": [
+          {
+            "id": "flow-a",
+            "priority": 1,
+            "labels": [],
+            "issue_type": "task",
+            "description": "audit hit.\nBLAST RADIUS: scripts/recall.py, ranking"
+          },
+          {
+            "id": "flow-b",
+            "priority": 2,
+            "labels": [],
+            "issue_type": "task",
+            "description": "same file.\nBLAST RADIUS: scripts/recall.py"
+          }
+        ],
+        "inflight_keys": [],
+        "hot_inflight": false,
+        "open_pr_count": 0,
+        "cap": 5,
+        "concurrency": 3
+      },
+      "expected": {
+        "launch": [
+          "flow-a"
+        ],
+        "skipped_in_flight": [],
+        "held_backpressure": false,
+        "held_hot": [],
+        "held_anchor": [
+          "flow-b"
+        ]
+      }
+    },
+    {
+      "case_id": "esel-epic-skipped",
+      "split": "held_in",
+      "decider": "evolve_select.partition",
+      "args": {
+        "candidates": [
+          {
+            "id": "flow-epic",
+            "priority": 1,
+            "labels": [],
+            "issue_type": "epic",
+            "description": ""
+          },
+          {
+            "id": "flow-leaf",
+            "priority": 2,
+            "labels": [],
+            "issue_type": "task",
+            "description": ""
+          }
+        ],
+        "inflight_keys": [],
+        "hot_inflight": false,
+        "open_pr_count": 0,
+        "cap": 5,
+        "concurrency": 3
+      },
+      "expected": {
+        "launch": [
+          "flow-leaf"
+        ],
+        "skipped_in_flight": [],
+        "held_backpressure": false,
+        "held_hot": [],
+        "held_anchor": []
+      }
+    },
+    {
+      "case_id": "esel-proposal-excluded-default",
+      "split": "held_in",
+      "decider": "evolve_select.partition",
+      "args": {
+        "candidates": [
+          {
+            "id": "flow-prop",
+            "priority": 1,
+            "labels": [
+              "evolve",
+              "proposal"
+            ],
+            "issue_type": "task",
+            "description": ""
+          },
+          {
+            "id": "flow-aud",
+            "priority": 2,
+            "labels": [
+              "evolve"
+            ],
+            "issue_type": "task",
+            "description": ""
+          }
+        ],
+        "inflight_keys": [],
+        "hot_inflight": false,
+        "open_pr_count": 0,
+        "cap": 5,
+        "concurrency": 3
+      },
+      "expected": {
+        "launch": [
+          "flow-aud"
+        ],
+        "skipped_in_flight": [],
+        "held_backpressure": false,
+        "held_hot": [],
+        "held_anchor": []
+      }
+    },
+    {
+      "case_id": "esel-ho-backpressure-hot-mix",
+      "split": "held_out",
+      "decider": "evolve_select.partition",
+      "args": {
+        "candidates": [
+          {
+            "id": "flow-h1",
+            "priority": 1,
+            "labels": [
+              "evolve",
+              "hot"
+            ],
+            "issue_type": "task",
+            "description": ""
+          },
+          {
+            "id": "flow-inf",
+            "priority": 1,
+            "labels": [
+              "evolve"
+            ],
+            "issue_type": "task",
+            "description": ""
+          },
+          {
+            "id": "flow-c",
+            "priority": 3,
+            "labels": [
+              "evolve"
+            ],
+            "issue_type": "task",
+            "description": ""
+          }
+        ],
+        "inflight_keys": [
+          "flow-inf"
+        ],
+        "hot_inflight": true,
+        "open_pr_count": 6,
+        "cap": 5,
+        "concurrency": 3
+      },
+      "expected": {
+        "launch": [],
+        "skipped_in_flight": [
+          "flow-inf"
+        ],
+        "held_backpressure": true,
+        "held_hot": [],
+        "held_anchor": []
+      }
+    },
+    {
+      "case_id": "esel-ho-hot-inflight-blocks-all",
+      "split": "held_out",
+      "decider": "evolve_select.partition",
+      "args": {
+        "candidates": [
+          {
+            "id": "flow-h1",
+            "priority": 1,
+            "labels": [
+              "evolve",
+              "hot"
+            ],
+            "issue_type": "task",
+            "description": ""
+          },
+          {
+            "id": "flow-h2",
+            "priority": 2,
+            "labels": [
+              "evolve",
+              "hot"
+            ],
+            "issue_type": "task",
+            "description": ""
+          },
+          {
+            "id": "flow-cold",
+            "priority": 3,
+            "labels": [
+              "evolve"
+            ],
+            "issue_type": "task",
+            "description": ""
+          }
+        ],
+        "inflight_keys": [],
+        "hot_inflight": true,
+        "open_pr_count": 1,
+        "cap": 5,
+        "concurrency": 3
+      },
+      "expected": {
+        "launch": [
+          "flow-cold"
+        ],
+        "skipped_in_flight": [],
+        "held_backpressure": false,
+        "held_hot": [
+          "flow-h1",
+          "flow-h2"
+        ],
+        "held_anchor": []
+      }
+    },
+    {
+      "case_id": "esel-ho-proposals-optin-order",
+      "split": "held_out",
+      "decider": "evolve_select.partition",
+      "args": {
+        "candidates": [
+          {
+            "id": "flow-zz",
+            "priority": 1,
+            "labels": [
+              "evolve",
+              "proposal"
+            ],
+            "issue_type": "task",
+            "description": ""
+          },
+          {
+            "id": "flow-aa",
+            "priority": 1,
+            "labels": [
+              "evolve"
+            ],
+            "issue_type": "task",
+            "description": ""
+          },
+          {
+            "id": "flow-bb",
+            "priority": 2,
+            "labels": [
+              "evolve"
+            ],
+            "issue_type": "task",
+            "description": ""
+          }
+        ],
+        "inflight_keys": [],
+        "hot_inflight": false,
+        "open_pr_count": 0,
+        "cap": 5,
+        "concurrency": 3,
+        "include_proposals": true
+      },
+      "expected": {
+        "launch": [
+          "flow-aa",
+          "flow-zz",
+          "flow-bb"
+        ],
+        "skipped_in_flight": [],
+        "held_backpressure": false,
+        "held_hot": [],
+        "held_anchor": []
+      }
+    },
+    {
+      "case_id": "edrn-launch",
+      "split": "held_in",
+      "decider": "evolve_drain.decide",
+      "args": {
+        "select_result": {
+          "launch": [
+            "flow-a",
+            "flow-b"
+          ],
+          "launched_pending": []
+        },
+        "liveness": {
+          "flow-c": "live"
+        }
+      },
+      "expected": {
+        "action": "launch",
+        "launch": [
+          "flow-a",
+          "flow-b"
+        ],
+        "parked": []
+      }
+    },
+    {
+      "case_id": "edrn-wait-live",
+      "split": "held_in",
+      "decider": "evolve_drain.decide",
+      "args": {
+        "select_result": {
+          "launch": [],
+          "launched_pending": []
+        },
+        "liveness": {
+          "flow-a": "live"
+        }
+      },
+      "expected": {
+        "action": "wait",
+        "launch": [],
+        "parked": []
+      }
+    },
+    {
+      "case_id": "edrn-wait-corrupt",
+      "split": "held_in",
+      "decider": "evolve_drain.decide",
+      "args": {
+        "select_result": {
+          "launch": [],
+          "launched_pending": []
+        },
+        "liveness": {
+          "flow-a": "corrupt"
+        }
+      },
+      "expected": {
+        "action": "wait",
+        "launch": [],
+        "parked": []
+      }
+    },
+    {
+      "case_id": "edrn-done-absent-parked",
+      "split": "held_in",
+      "decider": "evolve_drain.decide",
+      "args": {
+        "select_result": {
+          "launch": [],
+          "launched_pending": []
+        },
+        "liveness": {
+          "flow-b": "expired_foreign",
+          "flow-a": "absent"
+        }
+      },
+      "expected": {
+        "action": "done",
+        "launch": [],
+        "parked": [
+          "flow-a",
+          "flow-b"
+        ]
+      }
+    },
+    {
+      "case_id": "edrn-done-empty",
+      "split": "held_in",
+      "decider": "evolve_drain.decide",
+      "args": {
+        "select_result": {
+          "launch": [],
+          "launched_pending": []
+        },
+        "liveness": {}
+      },
+      "expected": {
+        "action": "done",
+        "launch": [],
+        "parked": []
+      }
+    },
+    {
+      "case_id": "edrn-ho-pending-excluded-parked",
+      "split": "held_out",
+      "decider": "evolve_drain.decide",
+      "args": {
+        "select_result": {
+          "launch": [],
+          "launched_pending": [
+            "flow-p"
+          ]
+        },
+        "liveness": {
+          "flow-p": "absent",
+          "flow-q": "absent"
+        }
+      },
+      "expected": {
+        "action": "wait",
+        "launch": [],
+        "parked": [
+          "flow-q"
+        ]
+      }
+    },
+    {
+      "case_id": "edrn-ho-mixed-live-absent",
+      "split": "held_out",
+      "decider": "evolve_drain.decide",
+      "args": {
+        "select_result": {
+          "launch": [],
+          "launched_pending": []
+        },
+        "liveness": {
+          "flow-a": "live",
+          "flow-c": "expired",
+          "flow-b": "absent"
+        }
+      },
+      "expected": {
+        "action": "wait",
+        "launch": [],
+        "parked": [
+          "flow-b",
+          "flow-c"
+        ]
+      }
+    },
+    {
+      "case_id": "edrn-ho-pending-key-also-live",
+      "split": "held_out",
+      "decider": "evolve_drain.decide",
+      "args": {
+        "select_result": {
+          "launch": [],
+          "launched_pending": [
+            "flow-p"
+          ]
+        },
+        "liveness": {
+          "flow-p": "live"
+        }
+      },
+      "expected": {
+        "action": "wait",
+        "launch": [],
+        "parked": []
+      }
+    },
+    {
+      "case_id": "esm-not-maintainer",
+      "split": "held_in",
+      "decider": "evolve_self_merge.decide",
+      "args": {
+        "labels": [
+          "evolve"
+        ],
+        "is_maintainer": false,
+        "auto_merge_hot": false,
+        "ci_status": "green"
+      },
+      "expected": {
+        "action": "skip",
+        "is_hot": false,
+        "reason": "not maintainer self-target"
+      }
+    },
+    {
+      "case_id": "esm-not-evolve",
+      "split": "held_in",
+      "decider": "evolve_self_merge.decide",
+      "args": {
+        "labels": [
+          "chore"
+        ],
+        "is_maintainer": true,
+        "auto_merge_hot": false,
+        "ci_status": "green"
+      },
+      "expected": {
+        "action": "skip",
+        "is_hot": false,
+        "reason": "not an evolve bead"
+      }
+    },
+    {
+      "case_id": "esm-proposal-skip",
+      "split": "held_in",
+      "decider": "evolve_self_merge.decide",
+      "args": {
+        "labels": [
+          "evolve",
+          "proposal"
+        ],
+        "is_maintainer": true,
+        "auto_merge_hot": false,
+        "ci_status": "green"
+      },
+      "expected": {
+        "action": "skip",
+        "is_hot": false,
+        "reason": "proposal bead \u2014 maintainer merges"
+      }
+    },
+    {
+      "case_id": "esm-ci-pending",
+      "split": "held_in",
+      "decider": "evolve_self_merge.decide",
+      "args": {
+        "labels": [
+          "evolve"
+        ],
+        "is_maintainer": true,
+        "auto_merge_hot": false,
+        "ci_status": "pending"
+      },
+      "expected": {
+        "action": "skip",
+        "is_hot": false,
+        "reason": "CI not green (pending)"
+      }
+    },
+    {
+      "case_id": "esm-hot-automerge-off",
+      "split": "held_in",
+      "decider": "evolve_self_merge.decide",
+      "args": {
+        "labels": [
+          "evolve",
+          "hot"
+        ],
+        "is_maintainer": true,
+        "auto_merge_hot": false,
+        "ci_status": "green"
+      },
+      "expected": {
+        "action": "skip",
+        "is_hot": true,
+        "reason": "hot bead and auto_merge_hot is off"
+      }
+    },
+    {
+      "case_id": "esm-merge-leaf-green",
+      "split": "held_in",
+      "decider": "evolve_self_merge.decide",
+      "args": {
+        "labels": [
+          "evolve"
+        ],
+        "is_maintainer": true,
+        "auto_merge_hot": false,
+        "ci_status": "green",
+        "planned_files": [
+          "plugins/flow/skills/flow/scripts/recall.py"
+        ]
+      },
+      "expected": {
+        "action": "merge",
+        "is_hot": false,
+        "reason": "eligible"
+      }
+    },
+    {
+      "case_id": "esm-ho-ci-failed",
+      "split": "held_out",
+      "decider": "evolve_self_merge.decide",
+      "args": {
+        "labels": [
+          "evolve"
+        ],
+        "is_maintainer": true,
+        "auto_merge_hot": true,
+        "ci_status": "failed"
+      },
+      "expected": {
+        "action": "skip",
+        "is_hot": false,
+        "reason": "CI not green (failed)"
+      }
+    },
+    {
+      "case_id": "esm-ho-hot-automerge-on",
+      "split": "held_out",
+      "decider": "evolve_self_merge.decide",
+      "args": {
+        "labels": [
+          "evolve",
+          "hot"
+        ],
+        "is_maintainer": true,
+        "auto_merge_hot": true,
+        "ci_status": "green"
+      },
+      "expected": {
+        "action": "merge",
+        "is_hot": true,
+        "reason": "eligible"
+      }
+    },
+    {
+      "case_id": "esm-ho-guard-file-no-label",
+      "split": "held_out",
+      "decider": "evolve_self_merge.decide",
+      "args": {
+        "labels": [
+          "evolve"
+        ],
+        "is_maintainer": true,
+        "auto_merge_hot": false,
+        "ci_status": "green",
+        "planned_files": [
+          "plugins/flow/skills/flow/scripts/lease.py"
+        ]
+      },
+      "expected": {
+        "action": "skip",
+        "is_hot": true,
+        "reason": "hot bead and auto_merge_hot is off"
+      }
+    },
+    {
+      "case_id": "esm-ho-empty-labels",
+      "split": "held_out",
+      "decider": "evolve_self_merge.decide",
+      "args": {
+        "labels": [],
+        "is_maintainer": true,
+        "auto_merge_hot": false,
+        "ci_status": "green"
+      },
+      "expected": {
+        "action": "skip",
+        "is_hot": false,
+        "reason": "not an evolve bead"
+      }
+    },
+    {
+      "case_id": "hot-empty-list",
+      "split": "held_in",
+      "decider": "triage.is_hot_change",
+      "args": {
+        "files": []
+      },
+      "expected": false
+    },
+    {
+      "case_id": "hot-nested-guard-basename",
+      "split": "held_in",
+      "decider": "triage.is_hot_change",
+      "args": {
+        "files": [
+          "plugins/flow/skills/flow/scripts/lease.py"
+        ]
+      },
+      "expected": true
+    },
+    {
+      "case_id": "hot-non-guard-files",
+      "split": "held_in",
+      "decider": "triage.is_hot_change",
+      "args": {
+        "files": [
+          "plugins/flow/skills/flow/scripts/recall.py",
+          "README.md"
+        ]
+      },
+      "expected": false
+    },
+    {
+      "case_id": "hot-skill-md",
+      "split": "held_in",
+      "decider": "triage.is_hot_change",
+      "args": {
+        "files": [
+          "SKILL.md"
+        ]
+      },
+      "expected": true
+    },
+    {
+      "case_id": "hot-ho-near-miss-basenames",
+      "split": "held_out",
+      "decider": "triage.is_hot_change",
+      "args": {
+        "files": [
+          "release.py",
+          "my_state.py",
+          "scripts/state.py.bak"
+        ]
+      },
+      "expected": false
+    },
+    {
+      "case_id": "hot-ho-mixed-nested-skill-md",
+      "split": "held_out",
+      "decider": "triage.is_hot_change",
+      "args": {
+        "files": [
+          "docs/notes.md",
+          "plugins/flow/skills/flow/SKILL.md"
+        ]
+      },
+      "expected": true
+    }
+  ]
+}
