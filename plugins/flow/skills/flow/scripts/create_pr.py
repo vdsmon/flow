@@ -19,7 +19,10 @@ Prints `PR_URL=<url>` on stdout; the do-loop captures that into
 notification read the `PR_URL=` token.
 
 CLI:
-  create_pr.py --workspace-root <dir> [--base main] [--ticket KEY] [--draft]
+  create_pr.py --workspace-root <dir> [--base BRANCH] [--ticket KEY] [--draft]
+
+The base branch resolves as: explicit `--base`, else `[create_pr] base` in
+`workspace.toml`, else `main`.
 
 Exit codes:
   0 = ok (prints PR_URL=<url>)
@@ -53,6 +56,19 @@ def _draft_config(workspace_root: Path) -> bool:
         return False
     value = section.get("draft")
     return value if isinstance(value, bool) else False
+
+
+def _base_config(workspace_root: Path) -> str | None:
+    """`[create_pr] base` from workspace.toml (non-empty str); None falls back to main."""
+    try:
+        config = load_workspace_toml(workspace_root)
+    except WorkspaceConfigError:
+        return None
+    section = config.get("create_pr")
+    if not isinstance(section, dict):
+        return None
+    value = section.get("base")
+    return value if isinstance(value, str) and value else None
 
 
 class ToolError(Exception):
@@ -123,7 +139,11 @@ def _resolve_forge(workspace_root: Path) -> Forge:
 def cli_main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description="Open or resolve a PR for the run branch.")
     parser.add_argument("--workspace-root", required=True)
-    parser.add_argument("--base", default="main")
+    parser.add_argument(
+        "--base",
+        default=None,
+        help="PR base branch (overrides the [create_pr] base workspace setting; default main).",
+    )
     parser.add_argument("--ticket", default=None)  # context only
     parser.add_argument(
         "--draft",
@@ -134,8 +154,9 @@ def cli_main(argv: list[str]) -> int:
     args = parser.parse_args(argv)
     ws = Path(args.workspace_root)
     draft = args.draft if args.draft is not None else _draft_config(ws)
+    base = args.base if args.base is not None else (_base_config(ws) or "main")
     try:
-        url = open_or_get_pr(ws, base=args.base, draft=draft)
+        url = open_or_get_pr(ws, base=base, draft=draft)
     except RefusedBranch as exc:
         print(str(exc), file=sys.stderr)
         return 3
