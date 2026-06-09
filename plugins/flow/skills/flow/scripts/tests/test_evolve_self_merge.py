@@ -53,6 +53,34 @@ def test_skip_hot_when_auto_merge_hot_off():
     assert "auto_merge_hot" in d["reason"]
 
 
+def test_merge_hot_via_guard_file_without_hot_label():
+    d = esm.decide(
+        ["evolve"],
+        is_maintainer=True,
+        auto_merge_hot=True,
+        ci_status="green",
+        planned_files=["plugins/flow/skills/flow/scripts/snapshot.py"],
+    )
+    assert d["is_hot"] is True
+    assert d["action"] == "merge"
+
+
+def test_non_guard_planned_files_leaves_is_hot_label_driven():
+    d = esm.decide(
+        ["evolve"],
+        is_maintainer=True,
+        auto_merge_hot=True,
+        ci_status="green",
+        planned_files=["plugins/flow/skills/flow/scripts/recall.py"],
+    )
+    assert d["is_hot"] is False
+
+
+def test_planned_files_absent_follows_label():
+    d = esm.decide(["evolve"], is_maintainer=True, auto_merge_hot=True, ci_status="green")
+    assert d["is_hot"] is False
+
+
 # ─── CLI (injected runner + tmp workspace) ───────────────────────────────────
 
 
@@ -95,6 +123,35 @@ def test_cli_skip_when_not_self_target(tmp_path, capsys):
     )
     assert rc == 0
     assert json.loads(capsys.readouterr().out)["action"] == "skip"
+
+
+def _ticket(ws, key, planned_files):
+    tickets = ws / ".flow" / "tickets"
+    tickets.mkdir(parents=True, exist_ok=True)
+    files = ", ".join(f'"{f}"' for f in planned_files)
+    body = f'+++\nticket = "{key}"\nstatus = "in_progress"\nplanned_files = [{files}]\n+++\nbody\n'
+    (tickets / f"{key}.md").write_text(body, encoding="utf-8")
+
+
+def test_cli_hot_via_planned_files_guard_file(tmp_path, capsys):
+    ws = _ws(tmp_path, self_target=True, auto_merge_hot=True)
+    _ticket(ws, "flow-x", ["plugins/flow/skills/flow/scripts/snapshot.py"])
+    rc = esm.cli_main(
+        ["--workspace-root", str(ws), "--key", "flow-x", "--ci-status", "green"],
+        runner=_runner(["evolve"]),
+    )
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out)["is_hot"] is True
+
+
+def test_cli_no_ticket_file_follows_label(tmp_path, capsys):
+    ws = _ws(tmp_path, self_target=True, auto_merge_hot=True)
+    rc = esm.cli_main(
+        ["--workspace-root", str(ws), "--key", "flow-x", "--ci-status", "green"],
+        runner=_runner(["evolve"]),
+    )
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out)["is_hot"] is False
 
 
 # ─── _bead_labels error branches ─────────────────────────────────────────────
