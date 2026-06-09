@@ -79,7 +79,7 @@ Pluggable PR-host seam, structural twin of the tracker seam. The `create_pr` and
 
 | Script | Role | Surface / touches |
 |--------|------|-------------------|
-| `metric.py` | Metrics calculator: shipped tickets/week, time-to-PR, and friction events/run — all from ship-event and friction-jsonl evidence. | (via `recall.py --metric`) |
+| `metric.py` | Metrics calculator: shipped tickets/week, time-to-PR, friction events/run, and revert-rate — from ship-event and friction-jsonl evidence (revert-rate joins ship-events to `bd history`). | (via `recall.py --metric`) |
 | `baseline_collect.py` | Pre-migration time-to-PR baseline file + stats. | `build --samples-json` / `show` |
 | `validate_postmortem.py` (lib) | Postmortem schema + week-over-week trend. | imports ticket_frontmatter, _memory_paths, _timeutil |
 | `pending_mutations.py` (lib) | Transient tracker-mutation queue (create/edit/transition/comment/link). | imported by sync, tracker_cli |

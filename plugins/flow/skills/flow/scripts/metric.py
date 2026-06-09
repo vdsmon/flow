@@ -44,6 +44,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 import sys
 import time
 from datetime import UTC, datetime, timedelta
@@ -51,6 +52,7 @@ from pathlib import Path
 from typing import Any
 
 import _memory_paths
+import _workspace
 from _jsonl import append_quarantine, iter_jsonl
 from _timeutil import parse_iso
 from baseline_collect import percentile
@@ -544,6 +546,190 @@ def compute_friction_per_run(
     }
 
 
+# ─── Revert rate ─────────────────────────────────────────────────────────────
+
+_REOPEN_STATES = frozenset({"open", "in_progress", "blocked"})
+
+
+def _status_history(
+    workspace_root: Path, namespace: str, ticket: str
+) -> list[tuple[datetime, str]] | None:
+    """Read a bead's status timeline via `bd history <ticket> --json --limit 0`.
+
+    Returns [(commit_date, status)] with unparseable dates dropped, sorted
+    ascending. Returns None on ANY failure (non-zero rc, bad JSON, bd absent) so
+    the caller skip-and-records rather than crashing. The thin subprocess wrapper
+    is also the monkeypatch seam for tests; BeadsAdapter is avoided (no history
+    method, and its constructor runs a bd-version preflight that raises).
+    `namespace` is unused (the bead key is global) but kept for call-site symmetry
+    with the other tracker-coupled seams.
+    """
+    try:
+        proc = subprocess.run(
+            ["bd", "history", ticket, "--json", "--limit", "0"],
+            cwd=workspace_root,
+            capture_output=True,
+            text=True,
+        )
+    except (FileNotFoundError, OSError):
+        return None
+    if proc.returncode != 0:
+        return None
+    try:
+        rows = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(rows, list):
+        return None
+    out: list[tuple[datetime, str]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        issue = row.get("Issue")
+        status = issue.get("status") if isinstance(issue, dict) else None
+        when = parse_iso(row.get("CommitDate"))
+        if when is None or not isinstance(status, str):
+            continue
+        out.append((when, status))
+    out.sort(key=lambda p: p[0])
+    return out
+
+
+def _collapse(timeline: list[tuple[datetime, str]]) -> list[tuple[datetime, str]]:
+    """Drop consecutive-equal statuses (bd history is global-commit-granular)."""
+    collapsed: list[tuple[datetime, str]] = []
+    for when, status in timeline:
+        if not collapsed or collapsed[-1][1] != status:
+            collapsed.append((when, status))
+    return collapsed
+
+
+def _classify_revert(
+    timeline: list[tuple[datetime, str]], shipped_at: datetime
+) -> tuple[bool, str | None, str | None, bool]:
+    """Decide reverted vs not from a collapsed timeline restricted to date > shipped_at.
+
+    A revert is a reopen (non-closed status) followed by a subsequent re-close.
+    Returns (reverted, reopened_at_iso, reclosed_at_iso, reopened_not_yet_reclosed).
+    reopened_not_yet_reclosed flags the in-flight case (reopen seen, no re-close).
+    """
+    post = [(when, status) for when, status in _collapse(timeline) if when > shipped_at]
+    reopened_at: datetime | None = None
+    for when, status in post:
+        if reopened_at is None:
+            if status in _REOPEN_STATES:
+                reopened_at = when
+        elif status == "closed":
+            return True, reopened_at.isoformat(), when.isoformat(), False
+    if reopened_at is not None:
+        return False, None, None, True
+    return False, None, None, False
+
+
+def compute_revert_rate(
+    workspace_root: Path,
+    namespace: str,
+    *,
+    since_iso: str,
+    until_iso: str,
+) -> dict[str, Any]:
+    """Compute the revert rate over the half-open window [since, until).
+
+    Denominator = every in-window ship-event that is DECIDABLE (clean-no-reopen or
+    reopened-and-reclosed); each lands in `tickets[]` and is counted in `shipped`.
+    A revert is a shipped bead reopened and re-closed AFTER its `shipped_at`,
+    detected by joining the ship-event to its tracker status history. Each revert
+    is attributed via classify_attribution so the count splits by flow attribution.
+
+    Undecidable / unmeasurable events are skip-and-recorded (not counted in
+    `shipped`): `history_unavailable` (bd read failed), `tracker_unsupported`
+    (non-beads backend short-circuit, no bd invocation), `reopened_not_yet_reclosed`
+    (in-flight reopen — the DECISION requires reopen AND re-close).
+    """
+    since = parse_iso(since_iso)
+    until = parse_iso(until_iso)
+    if since is None:
+        raise ValueError(f"since is not a UTC ISO8601 timestamp: {since_iso!r}")
+    if until is None:
+        raise ValueError(f"until is not a UTC ISO8601 timestamp: {until_iso!r}")
+
+    backend = _tracker_backend(workspace_root)
+
+    shipped = 0
+    n_reverts = 0
+    reverts_via_flow = 0
+    reverts_not_attributed = 0
+    tickets: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+
+    for event in load_ship_events(workspace_root, namespace):
+        shipped_at_dt = parse_iso(str(event.get("shipped_at")))
+        if shipped_at_dt is None or not (since <= shipped_at_dt < until):
+            continue
+        ticket = event.get("ticket")
+
+        if backend != "beads":
+            skipped.append({"ticket": ticket, "reason": "tracker_unsupported"})
+            continue
+
+        timeline = _status_history(workspace_root, namespace, str(ticket))
+        if timeline is None:
+            skipped.append({"ticket": ticket, "reason": "history_unavailable"})
+            continue
+
+        reverted, reopened_at, reclosed_at, in_flight = _classify_revert(timeline, shipped_at_dt)
+        if in_flight:
+            skipped.append({"ticket": ticket, "reason": "reopened_not_yet_reclosed"})
+            continue
+
+        attribution = classify_attribution(workspace_root, event)
+        shipped += 1
+        if reverted:
+            n_reverts += 1
+            if attribution == ATTR_VIA_FLOW:
+                reverts_via_flow += 1
+            else:
+                reverts_not_attributed += 1
+        tickets.append(
+            {
+                "ticket": ticket,
+                "shipped_at": event.get("shipped_at"),
+                "attribution": attribution,
+                "reverted": reverted,
+                "reopened_at": reopened_at,
+                "reclosed_at": reclosed_at,
+            }
+        )
+
+    tickets.sort(key=lambda t: (str(t["shipped_at"]), str(t["ticket"])))
+    revert_rate = round(n_reverts / shipped, 6) if shipped > 0 else 0
+    return {
+        "since": since_iso,
+        "until": until_iso,
+        "shipped": shipped,
+        "n_reverts": n_reverts,
+        "revert_rate": revert_rate,
+        "reverts_via_flow": reverts_via_flow,
+        "reverts_not_attributed": reverts_not_attributed,
+        "tickets": tickets,
+        "skipped": skipped,
+        "n_skipped": len(skipped),
+    }
+
+
+def _tracker_backend(workspace_root: Path) -> str | None:
+    """Read [tracker].backend from workspace.toml; None if absent/unreadable."""
+    try:
+        data = _workspace.load_workspace_toml(workspace_root)
+    except _workspace.WorkspaceConfigError:
+        return None
+    tracker = data.get("tracker")
+    if not isinstance(tracker, dict):
+        return None
+    backend = tracker.get("backend")
+    return backend if isinstance(backend, str) else None
+
+
 # ─── CLI ─────────────────────────────────────────────────────────────────────
 
 
@@ -585,6 +771,14 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     p_fpr.add_argument("--workspace-root", default=".")
     p_fpr.add_argument("--since", default=None, help="YYYY-MM-DD (inclusive day start, UTC)")
     p_fpr.add_argument("--until", default=None, help="YYYY-MM-DD (exclusive day start, UTC)")
+
+    p_rev = sub.add_parser(
+        "revert-rate", help="Compute the revert rate of shipped tickets in a window."
+    )
+    p_rev.add_argument("--namespace", default=None)
+    p_rev.add_argument("--workspace-root", default=".")
+    p_rev.add_argument("--since", default=None, help="YYYY-MM-DD (inclusive day start, UTC)")
+    p_rev.add_argument("--until", default=None, help="YYYY-MM-DD (exclusive day start, UTC)")
     return parser.parse_args(argv)
 
 
@@ -622,6 +816,20 @@ def cli_main(argv: list[str]) -> int:
             return 1
         workspace_root = Path(args.workspace_root).resolve()
         result = compute_friction_per_run(
+            workspace_root,
+            args.namespace,
+            since_iso=since_iso,
+            until_iso=until_iso,
+        )
+        sys.stdout.write(json.dumps(result, indent=2, sort_keys=True) + "\n")
+        return 0
+
+    if args.command == "revert-rate":
+        if not args.namespace:
+            sys.stderr.write("metric: --namespace is required\n")
+            return 1
+        workspace_root = Path(args.workspace_root).resolve()
+        result = compute_revert_rate(
             workspace_root,
             args.namespace,
             since_iso=since_iso,
@@ -685,6 +893,7 @@ __all__ = [
     "compute",
     "compute_checkpoint",
     "compute_friction_per_run",
+    "compute_revert_rate",
     "compute_time_to_pr",
     "default_window",
     "load_ship_events",
