@@ -332,6 +332,99 @@
       }
     },
     {
+      "case_id": "esel-launched-hot-holds-next-hot",
+      "split": "held_in",
+      "decider": "evolve_select.partition",
+      "args": {
+        "candidates": [
+          {
+            "id": "flow-4lb",
+            "priority": 1,
+            "labels": [
+              "evolve",
+              "hot"
+            ],
+            "issue_type": "task",
+            "description": ""
+          },
+          {
+            "id": "flow-hso",
+            "priority": 2,
+            "labels": [
+              "evolve"
+            ],
+            "issue_type": "task",
+            "description": ""
+          },
+          {
+            "id": "flow-bzz",
+            "priority": 3,
+            "labels": [
+              "evolve"
+            ],
+            "issue_type": "task",
+            "description": ""
+          }
+        ],
+        "inflight_keys": [
+          "flow-hso"
+        ],
+        "hot_inflight": true,
+        "open_pr_count": 0,
+        "cap": 5,
+        "concurrency": 3
+      },
+      "expected": {
+        "launch": [
+          "flow-bzz"
+        ],
+        "skipped_in_flight": [
+          "flow-hso"
+        ],
+        "held_backpressure": false,
+        "held_hot": [
+          "flow-4lb"
+        ],
+        "held_anchor": []
+      },
+      "source": "flow-98r"
+    },
+    {
+      "case_id": "esel-inflight-not-relaunched",
+      "split": "held_in",
+      "decider": "evolve_select.partition",
+      "args": {
+        "candidates": [
+          {
+            "id": "flow-wsv",
+            "priority": 1,
+            "labels": [
+              "evolve"
+            ],
+            "issue_type": "task",
+            "description": ""
+          }
+        ],
+        "inflight_keys": [
+          "flow-wsv"
+        ],
+        "hot_inflight": false,
+        "open_pr_count": 0,
+        "cap": 5,
+        "concurrency": 3
+      },
+      "expected": {
+        "launch": [],
+        "skipped_in_flight": [
+          "flow-wsv"
+        ],
+        "held_backpressure": false,
+        "held_hot": [],
+        "held_anchor": []
+      },
+      "source": "flow-594"
+    },
+    {
       "case_id": "esel-ho-backpressure-hot-mix",
       "split": "held_out",
       "decider": "evolve_select.partition",
@@ -597,6 +690,28 @@
       }
     },
     {
+      "case_id": "edrn-launched-pending-blocks-done",
+      "split": "held_in",
+      "decider": "evolve_drain.decide",
+      "args": {
+        "select_result": {
+          "launch": [],
+          "launched_pending": [
+            "flow-7f1"
+          ]
+        },
+        "liveness": {
+          "flow-7f1": "absent"
+        }
+      },
+      "expected": {
+        "action": "wait",
+        "launch": [],
+        "parked": []
+      },
+      "source": "flow-d4s"
+    },
+    {
       "case_id": "edrn-ho-pending-excluded-parked",
       "split": "held_out",
       "decider": "evolve_drain.decide",
@@ -779,6 +894,50 @@
       }
     },
     {
+      "case_id": "esm-guard-snapshot-no-hot-label",
+      "split": "held_in",
+      "decider": "evolve_self_merge.decide",
+      "args": {
+        "labels": [
+          "evolve"
+        ],
+        "is_maintainer": true,
+        "auto_merge_hot": false,
+        "ci_status": "green",
+        "planned_files": [
+          "plugins/flow/skills/flow/scripts/snapshot.py"
+        ]
+      },
+      "expected": {
+        "action": "skip",
+        "is_hot": true,
+        "reason": "hot bead and auto_merge_hot is off"
+      },
+      "source": "flow-bgh"
+    },
+    {
+      "case_id": "esm-ci-failed-no-merge",
+      "split": "held_in",
+      "decider": "evolve_self_merge.decide",
+      "args": {
+        "labels": [
+          "evolve"
+        ],
+        "is_maintainer": true,
+        "auto_merge_hot": false,
+        "ci_status": "failed",
+        "planned_files": [
+          "plugins/flow/skills/flow/scripts/recall.py"
+        ]
+      },
+      "expected": {
+        "action": "skip",
+        "is_hot": false,
+        "reason": "CI not green (failed)"
+      },
+      "source": "friction:756f84bb"
+    },
+    {
       "case_id": "esm-ho-ci-failed",
       "split": "held_out",
       "decider": "evolve_self_merge.decide",
@@ -894,6 +1053,31 @@
         ]
       },
       "expected": true
+    },
+    {
+      "case_id": "hot-flow-worktree-guard",
+      "split": "held_in",
+      "decider": "triage.is_hot_change",
+      "args": {
+        "files": [
+          "plugins/flow/skills/flow/scripts/flow_worktree.py"
+        ]
+      },
+      "expected": true,
+      "source": "flow-bgh"
+    },
+    {
+      "case_id": "hot-machinery-edit-guard",
+      "split": "held_in",
+      "decider": "triage.is_hot_change",
+      "args": {
+        "files": [
+          "plugins/flow/skills/flow/scripts/machinery_edit.py",
+          "plugins/flow/skills/flow/references/self-evolution.md"
+        ]
+      },
+      "expected": true,
+      "source": "flow-aen"
     },
     {
       "case_id": "hot-ho-near-miss-basenames",
