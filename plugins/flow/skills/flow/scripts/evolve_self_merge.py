@@ -13,6 +13,10 @@ directly. The CLI wires the I/O: read the bead's labels (`bd show`), the
 Gates (mirrors the drain reap's classify, but evaluated in-run):
 - not maintainer self-target / not an `evolve` bead / CI not green -> skip (leave the
   PR for the human; never an error).
+- harness eval not "pass" (the stage runs `harness_eval.py score` when the PR touches
+  scripts and feeds the verdict via `--eval-status`) -> skip: "regressed" names the
+  Self-Harness no-degradation rule; anything else blocks conservatively. Omitted ->
+  no-op (eval not applicable).
 - a `hot` bead self-merges only when `[evolve] auto_merge_hot` is on (else skip ->
   human). The independent property review is the merge stage's job, not this gate's.
 - otherwise -> merge. `is_hot` tells the stage whether to run the property review.
@@ -44,13 +48,16 @@ def decide(
     auto_merge_hot: bool,
     ci_status: str,
     planned_files: list[str] | None = None,
+    eval_status: str | None = None,
 ) -> dict[str, Any]:
     """Pure self-merge gate. Returns {action, is_hot, reason}.
 
     `action` is "skip" (leave the PR for the human) or "merge". `is_hot` is the
     `hot` label OR a guard-file hit in `planned_files` (triage.is_hot_change); it
     tells the caller whether the §6A independent property review must run before
-    merging.
+    merging. `eval_status` is the harness-eval verdict ("pass"/"regressed"/"error",
+    None when the eval did not run): "pass" continues, anything else skips
+    ("regressed" by the no-degradation rule, the rest conservatively).
     """
     is_hot = ("hot" in labels) or is_hot_change(planned_files or [])
     if not is_maintainer:
@@ -63,6 +70,12 @@ def decide(
         return {"action": "skip", "is_hot": is_hot, "reason": "proposal bead — maintainer merges"}
     if ci_status != "green":
         return {"action": "skip", "is_hot": is_hot, "reason": f"CI not green ({ci_status})"}
+    if eval_status is not None and eval_status != "pass":
+        if eval_status == "regressed":
+            reason = "harness eval regressed — no-degradation rule routes to the human"
+        else:
+            reason = "harness eval error — no non-regression evidence"
+        return {"action": "skip", "is_hot": is_hot, "reason": reason}
     if is_hot and not auto_merge_hot:
         return {"action": "skip", "is_hot": True, "reason": "hot bead and auto_merge_hot is off"}
     return {"action": "merge", "is_hot": is_hot, "reason": "eligible"}
@@ -114,6 +127,12 @@ def cli_main(argv: list[str], runner: Runner | None = None) -> int:
     parser.add_argument(
         "--ci-status", required=True, help="green|pending|failed (from review_loop)"
     )
+    parser.add_argument(
+        "--eval-status",
+        default=None,
+        choices=("pass", "regressed", "error"),
+        help="harness_eval verdict; omit when the eval did not run",
+    )
     args = parser.parse_args(argv)
 
     from maintainer import is_maintainer
@@ -130,6 +149,7 @@ def cli_main(argv: list[str], runner: Runner | None = None) -> int:
         auto_merge_hot=_auto_merge_hot(workspace_root),
         ci_status=args.ci_status,
         planned_files=planned_files,
+        eval_status=args.eval_status,
     )
     sys.stdout.write(json.dumps(result, indent=2, sort_keys=True) + "\n")
     return 0

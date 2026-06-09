@@ -34,16 +34,30 @@ CI=$(python3 ${CLAUDE_SKILL_DIR}/scripts/forge_cli.py --workspace-root . ci-roll
   | python3 -c 'import sys,json;print(json.load(sys.stdin)["status"])')
 ```
 
+**Harness non-regression eval (Self-Harness no-degradation rule).** When the PR touches the engine's own scripts, replay the frozen decider corpus against the candidate tree before asking the gate:
+
+```bash
+EVAL_STATUS=""
+if gh pr diff "$PR_ID" --name-only | grep -qE '^plugins/flow/skills/flow/scripts/.*\.py$'; then
+  python3 ${CLAUDE_SKILL_DIR}/scripts/harness_eval.py score \
+    --candidate plugins/flow/skills/flow/scripts \
+    > "$TICKET_DIR/stages/harness_eval.json"
+  case $? in 0) EVAL_STATUS=pass ;; 3) EVAL_STATUS=regressed ;; *) EVAL_STATUS=error ;; esac
+fi
+```
+
+Candidate = this run's own scripts tree (the self-edit branch); baseline + corpus = `harness_eval`'s defaults (the installed skill checkout it runs from). That means the eval does NOT see candidate-side edits to `harness_corpus.json` or `harness_eval.py` — it replays the installed copy against the baseline corpus; `tests/test_harness_corpus.py` (CI) is the real gate on corpus edits. An INTENTIONAL decider behavior change reads as `regressed` by design (the corpus is baseline-side); the human is the override. Non-scripts PRs skip the eval entirely (`EVAL_STATUS` stays empty → the gate sees no `--eval-status`).
+
 Ask the pure gate whether this run may self-merge:
 
 ```bash
 python3 ${CLAUDE_SKILL_DIR}/scripts/evolve_self_merge.py \
-  --workspace-root . --key "$KEY" --ci-status "$CI"
+  --workspace-root . --key "$KEY" --ci-status "$CI" ${EVAL_STATUS:+--eval-status "$EVAL_STATUS"}
 ```
 
-Returns `{"action": "merge"|"skip", "is_hot": bool, "reason": "..."}`. The gate skips when this is not the maintainer self-target, not an `evolve` bead, CI is not green, or a `hot` bead while `[evolve] auto_merge_hot` is off.
+Returns `{"action": "merge"|"skip", "is_hot": bool, "reason": "..."}`. The gate skips when this is not the maintainer self-target, not an `evolve` bead, CI is not green, the harness eval did not pass (`regressed` = the no-degradation rule; `error` = no non-regression evidence, blocked conservatively), or a `hot` bead while `[evolve] auto_merge_hot` is off.
 
-- **`action: "skip"`** → leave the PR as-is for the human (this is the normal outcome on a user project and for held hot beads), `STATUS=completed`. Done.
+- **`action: "skip"`** → leave the PR as-is for the human (this is the normal outcome on a user project and for held hot beads), `STATUS=completed`. Done. On an eval-driven skip (`regressed`/`error` reason), first post a PR comment naming the regressed case ids from `$TICKET_DIR/stages/harness_eval.json` (mirrors §2's `held_guard` pattern) so the maintainer sees WHICH frozen cases moved.
 - **`action: "merge"`** → continue. If `is_hot` is true, run §2 FIRST; otherwise skip to §3.
 
 ## 2. Independent guard-property review (hot beads only)
