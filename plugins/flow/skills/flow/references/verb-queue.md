@@ -1,22 +1,25 @@
 # queue verb
 
-`/flow queue <sub-verb>`. Maintainer-only. `queue` is a **namespace**: the day-job backlog's consumers, one sub-verb each. Day-job sibling of `/flow evolve` (`references/verb-evolve.md`) — the same loop shape over the project's OWN non-evolve backlog, with one structural difference: **nothing here ever merges a PR**. A day-job run's merge stage skips on a non-evolve bead, so every green PR parks as the maintainer's review queue.
+`/flow queue [<sub-verb>] [--dry-run]`. Maintainer-only. `queue` is a **namespace**: the day-job backlog's surfaces, one sub-verb each. Day-job sibling of `/flow evolve` (`references/verb-evolve.md`) — the same loop shape over the project's OWN non-evolve backlog, with one structural difference: **nothing here ever merges a PR**. A day-job run's merge stage skips on a non-evolve bead, so every green PR parks as the maintainer's review queue.
 
+- **bare `/flow queue`** (optionally `--dry-run`) — the read-only **status report** (§2-§4): ready beads, in-flight runs with lease liveness, queue-scoped backpressure. `--dry-run` additionally prints the exact batch a drain would launch — and still launches nothing.
 - **`/flow queue drain`** — the day-job **consumer** (§drain): a single looping pass that drains the ready day-job backlog. Each turn it reaps merged-and-exited runs (close the bead, delete the remote branch, tear down the worktree — lease-gated), then fans out the next launchable batch as background `/flow <key> --auto` runs. It loops — launching, waiting while runs are live, reaping — until nothing is startable. Open PRs awaiting the maintainer's review+merge are this queue's **normal success terminal**, not leftovers.
 
-`status` (the read-only queue overview) and the `--dry-run` modifier arrive with flow-hw1.1; until then `drain` is the only sub-verb.
+**Read-only invariant for the status path (load-bearing):** bare `/flow queue` (with or without `--dry-run`) performs NO side effects, ever. No launches, no merges, no `bd` mutations, no launch-ledger marker pruning or removal. The `action` field in its JSON is **advisory** — what a drain WOULD do next — never an instruction to do it here. Only `/flow queue drain` mutates.
 
 ## 0. Dispatch
 
 Match the **second whitespace token** of the args against the sub-verb set by exact string equality:
 
 - `drain` → §drain.
-- **empty** (bare `/flow queue`, no sub-verb) → print the sub-verb listing above, including the note that `status` and `--dry-run` arrive with flow-hw1.1, and stop. Do NOT default to a sub-verb; the namespace is explicit.
-- **anything else** (unknown sub-verb) → print the listing + "unknown queue sub-verb: `<token>`" and stop.
+- **empty** or `--dry-run` (bare `/flow queue`) → the status path: §2 gather, §3 render, plus §4 when `--dry-run` is present.
+- **anything else** (unknown sub-verb) → print the listing above + "unknown queue sub-verb: `<token>`" and stop.
+
+Namespace decision (mirrors `evolve`): there is no `scripts/queue.py` and there never will be — `queue` is a prose-level namespace, so `--dry-run` stays a prose-level modifier with no argparse home. The script cluster is `queue_select.py` (the select core) / `queue_status.py` (the status core) / `queue_drain.py` (the drain core).
 
 Every sub-verb runs the **Gate** below first.
 
-## Gate — maintainer only
+## 1. Gate — maintainer only
 
 ```bash
 python3 ${CLAUDE_SKILL_DIR}/scripts/maintainer.py --workspace-root .
@@ -24,6 +27,41 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/maintainer.py --workspace-root .
 
 - Exit 0 → prints the flow repo root; you are the maintainer, continue with the dispatched sub-verb. Run against that repo.
 - Exit 1 → not a maintainer setup (no `[maintainer]` marker). Print: "`/flow queue` is maintainer-only; this workspace is not the flow self-improvement target." Stop. Do NOT drain a user's project.
+
+## 2. Gather — status path
+
+```bash
+python3 ${CLAUDE_SKILL_DIR}/scripts/queue_status.py --workspace-root .
+```
+
+Optional `--cap N` / `--concurrency N` override the `[queue]` section of `workspace.toml` (defaults cap=5, concurrency=3).
+
+- Exit 0 → stdout is one JSON object: `{action, launch, parked, liveness, ready, select}`. Continue to §3.
+- Exit 2 → a `bd`/`git`/`gh` call failed; surface stderr and stop.
+- Exit 4 → not a maintainer setup (should not happen after the Gate); print the Gate's maintainer-only message and stop.
+
+Field map: `ready` is the full day-job backlog (`bd ready` minus epics and minus `evolve`/`proposal`/`hot` labels), each `{id, priority, labels, title}`, sorted by (priority, id) — deeper than `launch`, which stops at the budget. `select` is the canonical `queue_select` partition (`launch`, `skipped_in_flight`, `held_backpressure`, `held_anchor`, `open_pr_count`, `open_pr_keys`, `live_runs`, `launched_pending`, `model_per_key`, `cap`, `concurrency`). `liveness` maps each in-flight key to its run's lease state (`live` / `corrupt` block a drain; everything else is settled). `action`/`parked` are the advisory drain decision.
+
+## 3. Render — bare `/flow queue`
+
+Present, in order:
+
+1. **Ready** — a table of `ready`: id, priority, labels, title (id-only when title is absent).
+2. **Cap usage** — `select.open_pr_count` of `select.cap` open day-job PRs (queue-scoped: open PRs belonging to active evolve beads do NOT count toward this cap). Note `held_backpressure: true` when the cap is full.
+3. **In flight** — each `liveness` key with its lease state.
+4. **Parked** — `parked` keys (in-flight but not live: orphaned PRs/branches a human should look at).
+5. **Launched pending** — `select.launched_pending`: keys fanned out by a drain that have not yet registered a branch/lease (the launch→init blind window).
+6. The advisory `action` line: "a drain run now would: `<action>`".
+
+## 4. Render — `--dry-run` addition
+
+After §3, print the would-launch batch: for each key in `launch`, the exact command a drain would run, appending `--model <m>` only when `select.model_per_key[key]` exists (a `tier:trivial` downshift):
+
+```
+claude --bg [--model sonnet] "/flow <key> --auto"
+```
+
+Then close with the explicit line: **"printed only — nothing launched."** Empty `launch` → say so ("nothing launchable: backpressure / in-flight / empty backlog" per the select fields) and still print the closing line.
 
 ---
 

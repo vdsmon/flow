@@ -160,6 +160,89 @@ def test_pr151_regression_branch_39_main_42(tmp_path):
     assert (cwd / PLUGIN).read_text().count("0.27.43") == 1
 
 
+def test_flow_wkn_regression_branch_already_stamped_next(tmp_path):
+    # the live flow-wkn case: branch stamped 0.27.61 while main sits at 0.27.60, so
+    # NEXT computed from main is 0.27.61 — the ours blobs are ALREADY at the target.
+    # the stamp-replace no-op must succeed (add + commit + push), never raise
+    # "no version line to replace" mid-merge.
+    cwd = tmp_path
+    (cwd / PLUGIN).parent.mkdir(parents=True, exist_ok=True)
+    (cwd / MARKET).parent.mkdir(parents=True, exist_ok=True)
+    calls: list[list[str]] = []
+    run = _runner(
+        main_version="0.27.60",
+        merge_rc=1,
+        conflicts=[PLUGIN, MARKET],
+        calls=calls,
+        ours={PLUGIN: _plugin("0.27.61"), MARKET: _market("0.27.61")},
+        theirs={PLUGIN: _plugin("0.27.60"), MARKET: _market("0.27.60")},
+    )
+    out = vr.recover("feature/flow-wkn-version-remerge", cwd=cwd, runner=run)
+    assert out["status"] == "remerged"
+    assert out["version"] == "0.27.61"
+    assert (cwd / PLUGIN).read_text().count("0.27.61") == 1
+    assert (cwd / MARKET).read_text().count("0.27.61") == 1
+    assert ["git", "add", PLUGIN] in calls
+    assert ["git", "add", MARKET] in calls
+    assert ["git", "commit", "--no-edit"] in calls
+    assert ["git", "push"] in calls
+    assert not any(a[:3] == ["git", "merge", "--abort"] for a in calls)
+
+
+def test_write_version_tool_error_aborts_merge(tmp_path, monkeypatch):
+    # any ToolError inside the resolution block (working-tree writes through commit)
+    # must abort the merge before propagating — never exit leaving the index UU.
+    cwd = tmp_path
+    (cwd / PLUGIN).parent.mkdir(parents=True, exist_ok=True)
+    (cwd / MARKET).parent.mkdir(parents=True, exist_ok=True)
+    calls: list[list[str]] = []
+    run = _runner(
+        main_version="0.27.42",
+        merge_rc=1,
+        conflicts=[PLUGIN, MARKET],
+        calls=calls,
+        ours={PLUGIN: _plugin("0.27.39"), MARKET: _market("0.27.39")},
+        theirs={PLUGIN: _plugin("0.27.42"), MARKET: _market("0.27.42")},
+    )
+
+    def _boom(**_):
+        raise vr.version.ToolError("boom")
+
+    monkeypatch.setattr(vr.version, "write_version", _boom)
+    with pytest.raises(vr.version.ToolError):
+        vr.recover("feature/flow-x-foo", cwd=cwd, runner=run)
+    assert ["git", "merge", "--abort"] in calls
+    assert ["git", "commit", "--no-edit"] not in calls
+    assert ["git", "push"] not in calls
+
+
+def test_git_add_failure_aborts_merge(tmp_path):
+    cwd = tmp_path
+    (cwd / PLUGIN).parent.mkdir(parents=True, exist_ok=True)
+    (cwd / MARKET).parent.mkdir(parents=True, exist_ok=True)
+    calls: list[list[str]] = []
+    inner = _runner(
+        main_version="0.27.42",
+        merge_rc=1,
+        conflicts=[PLUGIN, MARKET],
+        calls=calls,
+        ours={PLUGIN: _plugin("0.27.39"), MARKET: _market("0.27.39")},
+        theirs={PLUGIN: _plugin("0.27.42"), MARKET: _market("0.27.42")},
+    )
+
+    def run(args: list[str]) -> subprocess.CompletedProcess[str]:
+        if args[:2] == ["git", "add"]:
+            calls.append(args)
+            return subprocess.CompletedProcess(args, 1, "", "add failed")
+        return inner(args)
+
+    with pytest.raises(vr.ToolError):
+        vr.recover("feature/flow-x-foo", cwd=cwd, runner=run)
+    assert ["git", "merge", "--abort"] in calls
+    assert ["git", "commit", "--no-edit"] not in calls
+    assert ["git", "push"] not in calls
+
+
 def test_nonversion_content_diff_in_version_file_aborts(tmp_path):
     # the discard-bug regression: the conflict set is EXACTLY the two version files
     # (so the file-level detector passes), BUT the PR's plugin.json carries a "hooks"
