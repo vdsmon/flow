@@ -38,3 +38,11 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/recall.py --metric time-to-pr \
 ```
 
 It counts flow-attributed shipped tickets in-window and reports observed time-to-PR (plan-start → create_pr-finish) as median_hours / p90_hours, the trio's third leg.
+
+```bash
+python3 ${CLAUDE_SKILL_DIR}/scripts/recall.py --metric friction-per-run \
+  --namespace <ns> --workspace-root . \
+  [--since YYYY-MM-DD] [--until YYYY-MM-DD]
+```
+
+Reads `.flow/<namespace>/friction.jsonl`, counts entries in the time window, and reports `total_events`, `runs`, `events_per_run`, `by_type`, and `by_severity`. `--namespace` is required. No `--checkpoint` option (friction-per-run has no checkpoint aggregation path).
