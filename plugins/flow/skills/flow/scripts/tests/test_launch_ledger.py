@@ -60,6 +60,21 @@ def test_prune_removes_expired_keeps_fresh(tmp_path):
     assert (d / "flow-new").exists()
 
 
+def test_remove_deletes_marker_and_drops_from_live(tmp_path):
+    repo = _marked_repo(tmp_path)
+    ll.add(repo, "flow-x", now=T0)
+    marker = repo / ".flow" / "launch-ledger" / "flow-x"
+    assert marker.exists()
+    ll.remove(repo, "flow-x")
+    assert not marker.exists()
+    assert ll.live_keys(repo, now=T0) == set()
+
+
+def test_remove_missing_key_is_noop(tmp_path):
+    repo = _marked_repo(tmp_path)
+    ll.remove(repo, "flow-absent")  # no raise on a missing marker / dir
+
+
 def test_live_keys_robust_to_garbage_marker(tmp_path):
     repo = _marked_repo(tmp_path)
     d = repo / ".flow" / "launch-ledger"

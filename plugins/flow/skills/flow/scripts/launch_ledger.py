@@ -84,6 +84,17 @@ def live_keys(repo: Path, *, now: str | None = None) -> set[str]:
     return live
 
 
+def remove(repo: Path, key: str) -> None:
+    """Delete the launch marker for `key` (no-op if absent).
+
+    Called once a launched run REGISTERS (acquires a lease / opens a PR): from
+    that point the lease + PR channels track it, so it must drop out of
+    launched_pending or the drain termination gate would wait on an
+    already-finished run until the TTL.
+    """
+    (_ledger_dir(repo) / key).unlink(missing_ok=True)
+
+
 def prune(repo: Path, *, now: str | None = None) -> list[str]:
     """Delete expired marker files. Returns the pruned key list (for reporting)."""
     now = now or lease._utcnow_iso()
@@ -147,7 +158,7 @@ def cli_main(argv: list[str]) -> int:
     return 0
 
 
-__all__ = ["LAUNCH_TTL_SECONDS", "NotMaintainer", "add", "cli_main", "live_keys", "prune"]
+__all__ = ["LAUNCH_TTL_SECONDS", "NotMaintainer", "add", "cli_main", "live_keys", "prune", "remove"]
 
 
 if __name__ == "__main__":
