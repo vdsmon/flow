@@ -205,7 +205,12 @@ def test_score_self_vs_self_is_clean(capsys):
     result = json.loads(out)
     assert rc == 0
     assert result["non_regression"] is True
-    assert result["cases"] == 35
+    # derive from the live corpus: backfill children grow it (35 -> 42 in
+    # PR #195 broke the hardcoded count; flow-63q.5 and any later backfill
+    # must not re-break this test)
+    import harness_corpus
+
+    assert result["cases"] == len(harness_corpus.load_corpus())
     assert result["baseline"] == str(SCRIPTS_DIR)
     assert result["candidate"] == str(SCRIPTS_DIR)
 
