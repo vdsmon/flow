@@ -23,12 +23,15 @@ branch-delete step fail and an otherwise-clean merge exit 1.
 
 Eligibility (all required): branch is `feature/<key>-*`; the bead carries `evolve`;
 the check rollup is non-empty and all SUCCESS (green); mergeable (CLEAN, or DRAFT
-which just needs `gh pr ready`). A `hot` bead additionally needs `auto_merge_hot`
-plus isolation (it is the only hot-eligible PR this pass). A green non-hot PR that
-is DIRTY (conflicted) lands in `version_recoverable`: in a multi-bead drain every
-PR bumps the two version files, so main walks forward and later PRs conflict on the
-version line ONLY — the caller runs `version_remerge.py` to recover them. Anything
-else lands in not_green / skipped_hot / version_recoverable / blocked / ignored.
+which just needs `gh pr ready`). A hot PR additionally needs `auto_merge_hot`
+plus isolation (it is the only hot-eligible PR this pass). Hotness is the `hot`
+label OR a diff touching a `triage._GUARD_FILES` guard file — a substantively-hot
+PR counts as hot even with no label, so it can't slip into the non-hot lane. A
+green non-hot PR that is DIRTY (conflicted) lands in `version_recoverable`: in a
+multi-bead drain every PR bumps the two version files, so main walks forward and
+later PRs conflict on the version line ONLY — the caller runs `version_remerge.py`
+to recover them. Anything else lands in
+not_green / skipped_hot / version_recoverable / blocked / ignored.
 
 CLI:
   evolve_reap.py --workspace-root <dir>
@@ -52,6 +55,7 @@ from _runner import CwdRunner as Runner
 from _runner import cwd_default_runner as _default_runner
 from _workspace import WorkspaceConfigError, load_workspace_toml
 from maintainer import resolve_maintainer_repo
+from triage import is_hot_change
 
 _EVOLVE_STATUSES = "open,in_progress,blocked,deferred,closed"
 _FLOW_KEY_RE = re.compile(r"^feature/(flow-[a-z0-9]+(?:\.\d+)?)(?:-.*)?$", re.IGNORECASE)
@@ -111,9 +115,27 @@ def rollup_is_green(rollup: list) -> bool:
     return True
 
 
+def _effective_hot(pr: dict, labels: list[str]) -> bool:
+    """Hotness for reap routing: the `hot` label OR a diff touching a guard file.
+
+    A substantively-hot PR (one whose changed paths hit `triage._GUARD_FILES`)
+    counts as hot even with no `hot` label, so it can't slip into the non-hot
+    auto-recover lane. Total: a malformed/absent `files` key defaults to [].
+    """
+    if "hot" in labels:
+        return True
+    files = pr.get("files")
+    if not isinstance(files, list):
+        return False
+    return is_hot_change([f.get("path", "") for f in files if isinstance(f, dict)])
+
+
 def _hot_eligible(pr: dict, labels: list[str]) -> bool:
-    """A hot PR is auto-merge-eligible when it is green AND mergeable (CLEAN/DRAFT)."""
-    if "hot" not in labels:
+    """A hot PR is auto-merge-eligible when it is green AND mergeable (CLEAN/DRAFT).
+
+    Hotness is the `hot` label OR a guard-file diff (see `_effective_hot`).
+    """
+    if not _effective_hot(pr, labels):
         return False
     if not rollup_is_green(pr.get("statusCheckRollup") or []):
         return False
@@ -131,10 +153,12 @@ def classify(
     later PRs go DIRTY on the version line ONLY. This bucket is a CANDIDATE set; the
     caller runs version_remerge.py, which authoritatively gates whether the conflict
     is truly version-only (it aborts on any other conflict). A hot DIRTY PR is NOT
-    routed here (hot never auto-recovers) — it stays blocked.
+    routed here (hot never auto-recovers) — it stays blocked. Hotness is the `hot`
+    label OR a guard-file diff (`_effective_hot`), so a guard-file PR with no label
+    is held back here too, not auto-recovered.
 
     prs: parsed `gh pr list` items (number, headRefName, isDraft, mergeStateStatus,
-    statusCheckRollup). labels_index: key -> labels, for every evolve bead.
+    statusCheckRollup, files). labels_index: key -> labels, for every evolve bead.
 
     auto_merge_hot: when True AND exactly one hot PR is auto-merge-eligible this
     pass, that one hot PR is promoted into `merge`; all other hot PRs stay in
@@ -168,7 +192,7 @@ def classify(
             not_green.append(entry)
             continue
         state = str(pr.get("mergeStateStatus", "")).upper()
-        if "hot" in labels:
+        if _effective_hot(pr, labels):
             # hot never auto-recovers (conservative): a hot DIRTY PR stays blocked,
             # not version_recoverable. Only the isolation-eligible hot promotes.
             if promote is not None and number == promote:
@@ -246,7 +270,7 @@ def reap(
                 "--state",
                 "open",
                 "--json",
-                "number,headRefName,isDraft,mergeStateStatus,statusCheckRollup",
+                "number,headRefName,isDraft,mergeStateStatus,statusCheckRollup,files",
                 "--limit",
                 "200",
             ]
