@@ -350,21 +350,21 @@ def test_select_tool_error(tmp_path):
 # ---- _live_run_keys — pre-PR lease scan ----
 
 
-def _sibling_run_dir(repo: Path, key: str, slug: str = "wip") -> Path:
-    return repo.parent / f"{repo.name}.worktrees" / f"feature-{key}-{slug}" / ".flow" / "runs" / key
+def _pool_run_dir(repo: Path, key: str, slug: str = "wip") -> Path:
+    return repo / ".claude" / "worktrees" / f"feature-{key}-{slug}" / ".flow" / "runs" / key
 
 
 def test_live_run_keys_finds_live_lease(tmp_path):
     repo = tmp_path / "flow"
     repo.mkdir()
-    _write_lease(_sibling_run_dir(repo, "flow-x"))
+    _write_lease(_pool_run_dir(repo, "flow-x"))
     assert es._live_run_keys(repo) == {"flow-x"}
 
 
 def test_live_run_keys_skips_expired(tmp_path):
     repo = tmp_path / "flow"
     repo.mkdir()
-    _write_lease(_sibling_run_dir(repo, "flow-x"), expired=True)
+    _write_lease(_pool_run_dir(repo, "flow-x"), expired=True)
     assert es._live_run_keys(repo) == set()
 
 
@@ -397,7 +397,7 @@ def test_select_pre_pr_live_run_is_inflight(tmp_path):
     ws = _marked_ws(tmp_path)
     repo = es.resolve_maintainer_repo(ws)
     assert repo is not None
-    _write_lease(_sibling_run_dir(repo, "flow-x"))
+    _write_lease(_pool_run_dir(repo, "flow-x"))
     run, _ = _dispatch(ready=[_cand("flow-x"), _cand("flow-y")])
     out = es.select(ws, cap=5, concurrency=3, runner=run)
     assert out["launch"] == ["flow-y"]
@@ -437,7 +437,7 @@ def test_select_pre_pr_live_hot_blocks_second_hot(tmp_path):
     ws = _marked_ws(tmp_path)
     repo = es.resolve_maintainer_repo(ws)
     assert repo is not None
-    _write_lease(_sibling_run_dir(repo, "flow-old"))
+    _write_lease(_pool_run_dir(repo, "flow-old"))
     run, _ = _dispatch(
         ready=[_cand("flow-new", labels=["evolve", "hot"], blast="z.py")],
         evolve_list=[{"id": "flow-old", "labels": ["evolve", "hot"]}],

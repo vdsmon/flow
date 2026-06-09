@@ -122,9 +122,9 @@ def _copy_config(main_root: Path, worktree: Path, extra: list[str]) -> list[str]
             continue
         dst = worktree / rel
         if src.is_dir():
-            # skip nested worktree checkouts (.claude/worktrees can be 10G+ of
+            # skip the nested worktree pool (.claude/worktrees can be 10G+ of
             # other tickets' trees); the tail needs hooks/skills/settings, never
-            # sibling worktrees.
+            # peer worktrees.
             shutil.copytree(
                 src, dst, dirs_exist_ok=True, ignore=shutil.ignore_patterns("worktrees")
             )
@@ -207,7 +207,7 @@ def _worktree_path(main_root: Path, branch: str, override: str | None) -> Path:
     if override:
         return Path(override).expanduser().resolve()
     main = main_root.resolve()
-    return main.parent / f"{main.name}.worktrees" / branch.replace("/", "-")
+    return main / ".claude" / "worktrees" / branch.replace("/", "-")
 
 
 def _parse_worktree_list(porcelain: str) -> list[tuple[str, str | None]]:

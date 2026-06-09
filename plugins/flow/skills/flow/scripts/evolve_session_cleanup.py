@@ -34,7 +34,7 @@ classifier fails safe toward NOT stopping):
     are what exclude it, not cwd.
   - state floor — `state ∈ {done, stopped}` AND `tempo == idle`.
   - lease (PRIMARY guard) — resolve the worktree run dir for `<key>`
-    (`<repo>.worktrees/feature-<key>-<slug>/.flow/runs/<key>/`, the sibling glob
+    (`<repo>/.claude/worktrees/feature-<key>-<slug>/.flow/runs/<key>/`, the pool glob
     reap/drain use) and call `lease.classify(run_dir, now)`; `live` or `corrupt`
     → skip. This is the same mechanism reap uses to skip a mid-reflect session, so
     the catastrophic kill-mid-reflect failure is inherited-guarded. An ABSENT run
@@ -126,14 +126,14 @@ def _key_from_intent(intent: str) -> str | None:
 
 
 def _run_dir_for(repo: Path, key: str) -> Path | None:
-    """The in-flight run's ticket dir under the sibling worktree for `key`.
+    """The in-flight run's ticket dir under the worktree pool for `key`.
 
-    Worktrees live at `<repo>.worktrees/feature-<key>-<slug>/`; the run state is
-    `.flow/runs/<key>/` (the lease lives in the worktree, not at cwd). Returns None
+    Worktrees live at `<repo>/.claude/worktrees/feature-<key>-<slug>/`; the run state
+    is `.flow/runs/<key>/` (the lease lives in the worktree, not at cwd). Returns None
     when no worktree run dir exists — the common post-reap case, which the caller
     treats as non-live (proceed), not skip.
     """
-    base = repo.parent / f"{repo.name}.worktrees"
+    base = repo / ".claude" / "worktrees"
     for wt in sorted(glob.glob(str(base / f"feature-{key}*"))):
         run_dir = Path(wt) / ".flow" / "runs" / key
         if run_dir.exists():
