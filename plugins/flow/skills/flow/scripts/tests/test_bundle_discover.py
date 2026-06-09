@@ -201,6 +201,70 @@ handler_string = "{handler}"
     assert "non-empty skill name" in result.invalid[0].reason
 
 
+@pytest.mark.parametrize(
+    "field",
+    ["required_capabilities", "required_outputs", "side_effects", "stage_compatibility"],
+)
+def test_list_field_not_a_list_rejected(tmp_path: Path, field: str) -> None:
+    _write_manifest(
+        tmp_path / "bad-list",
+        f"""schema_version = 1
+
+[bundle]
+name = "bad-list"
+description = ""
+
+[skills.create_pr]
+handler_string = "skill:bad-list:create"
+{field} = "pr_url"
+""",
+    )
+    result = bd.discover(roots=[tmp_path])
+    assert result.valid == []
+    assert len(result.invalid) == 1
+    assert "must be list[str]" in result.invalid[0].reason
+
+
+def test_list_field_with_non_str_element_rejected(tmp_path: Path) -> None:
+    _write_manifest(
+        tmp_path / "bad-element",
+        """schema_version = 1
+
+[bundle]
+name = "bad-element"
+description = ""
+
+[skills.create_pr]
+handler_string = "skill:bad-element:create"
+side_effects = [123]
+""",
+    )
+    result = bd.discover(roots=[tmp_path])
+    assert result.valid == []
+    assert len(result.invalid) == 1
+    assert "must be list[str]" in result.invalid[0].reason
+
+
+def test_args_schema_not_a_table_rejected(tmp_path: Path) -> None:
+    _write_manifest(
+        tmp_path / "bad-schema",
+        """schema_version = 1
+
+[bundle]
+name = "bad-schema"
+description = ""
+
+[skills.create_pr]
+handler_string = "skill:bad-schema:create"
+args_schema = "nope"
+""",
+    )
+    result = bd.discover(roots=[tmp_path])
+    assert result.valid == []
+    assert len(result.invalid) == 1
+    assert "must be a table" in result.invalid[0].reason
+
+
 def test_env_override_search_roots(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     plugin_root = tmp_path / "custom_root"
     _write_manifest(plugin_root / "ship-it", _full_manifest_text())
