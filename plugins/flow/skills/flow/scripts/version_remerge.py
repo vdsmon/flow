@@ -30,7 +30,10 @@ is that checkout (default ".").
 
 Exit codes:
   0 = ok (remerged / remerged_clean; prints JSON, pushed)
-  2 = tool error (a git command failed)
+  2 = tool error (a git command failed; a best-effort `git merge --abort` runs
+      first, so exit 2 does not leave a conflicted/mid-merge index behind — a
+      post-commit push failure leaves a committed-but-unpushed merge, which is
+      clean, not mid-merge)
   3 = non-version conflict (merge aborted; leave for human)
 """
 
@@ -131,28 +134,35 @@ def recover(branch: str, *, cwd: Path, runner: Runner | None = None) -> dict:
         _ok(run(["git", "merge", "--abort"]), "git merge --abort")
         raise NonVersionConflict(sorted(conflicts))
 
-    for rel in (PLUGIN_JSON, MARKETPLACE_JSON):
-        ours = _ok(run(["git", "show", f":2:{rel}"]), f"git show :2:{rel}")  # branch (PR) blob
-        theirs = _ok(
-            run(["git", "show", f":3:{rel}"]), f"git show :3:{rel}"
-        )  # incoming (main) blob
-        # the ONLY allowed difference is the version line; otherwise it is a real
-        # (non-version) conflict INSIDE a version file -> abort, never auto-resolve.
-        if _strip_version(ours) != _strip_version(theirs):
+    try:
+        for rel in (PLUGIN_JSON, MARKETPLACE_JSON):
+            ours = _ok(run(["git", "show", f":2:{rel}"]), f"git show :2:{rel}")  # branch (PR) blob
+            theirs = _ok(
+                run(["git", "show", f":3:{rel}"]), f"git show :3:{rel}"
+            )  # incoming (main) blob
+            # the ONLY allowed difference is the version line; otherwise it is a real
+            # (non-version) conflict INSIDE a version file -> abort, never auto-resolve.
+            if _strip_version(ours) != _strip_version(theirs):
+                _ok(run(["git", "merge", "--abort"]), "git merge --abort")
+                raise NonVersionConflict([rel])
+            (cwd / rel).write_text(ours, encoding="utf-8")  # keep the PR's content
+
+        version.write_version(cwd=cwd, version=next_ver)  # then bump the version in both files
+        for rel in (PLUGIN_JSON, MARKETPLACE_JSON):
+            _ok(run(["git", "add", rel]), f"git add {rel}")
+
+        remaining = _conflict_set(run)
+        if remaining:
             _ok(run(["git", "merge", "--abort"]), "git merge --abort")
-            raise NonVersionConflict([rel])
-        (cwd / rel).write_text(ours, encoding="utf-8")  # keep the PR's content
+            raise NonVersionConflict(sorted(remaining))
 
-    version.write_version(cwd=cwd, version=next_ver)  # then bump the version in both files
-    for rel in (PLUGIN_JSON, MARKETPLACE_JSON):
-        _ok(run(["git", "add", rel]), f"git add {rel}")
-
-    remaining = _conflict_set(run)
-    if remaining:
-        _ok(run(["git", "merge", "--abort"]), "git merge --abort")
-        raise NonVersionConflict(sorted(remaining))
-
-    _ok(run(["git", "commit", "--no-edit"]), "git commit")
+        _ok(run(["git", "commit", "--no-edit"]), "git commit")
+    except (ToolError, version.ToolError):
+        # never leave the worktree mid-merge (flow-wkn): best-effort abort, then
+        # propagate the original error. Bare run (not _ok) so a failing abort
+        # cannot mask it.
+        run(["git", "merge", "--abort"])
+        raise
     head = _ok(run(["git", "rev-parse", "HEAD"]), "git rev-parse").strip()
     _ok(run(["git", "push"]), "git push")
     return {"status": "remerged", "sha": head, "version": next_ver}
