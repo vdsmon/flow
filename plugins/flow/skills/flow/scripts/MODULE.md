@@ -90,7 +90,7 @@ Pluggable PR-host seam, structural twin of the tracker seam. The `create_pr` and
 | Script | Role | Surface / touches |
 |--------|------|-------------------|
 | `status.py` | Read-only run/stage/lease table (no network). | `[--ticket] --workspace-root [--json]` |
-| `triage.py` | `list`: read-only `deferred` + decided-mode `blocked` queue with each one's defer comment (beads only). `decided`: probe a bead's recorded triage decision; returns `{decided,answer,is_hot}` JSON. Houses `_GUARD_FILES` + `is_hot_change`. | `list [--workspace-root --json]` / `decided --key [--workspace-root --files]` |
+| `triage.py` | `list`: read-only `deferred` + decided-mode `blocked` queue with each one's defer comment (beads only). `decided`: probe a bead's recorded triage decision; returns `{decided,answer,is_hot}` JSON. Houses `_GUARD_FILES` + `is_hot_change`. | `list [--workspace-root --json]` / `decided --key [--workspace-root --files]` / `adjudicate-enabled [--workspace-root]` / `adjudicate-hot-enabled [--workspace-root]` |
 | `recover.py` | Inspect + remediate a broken run. | `detect` / `takeover` / `retry` / `skip` / `abort` / `reload-snapshot` |
 | `flow_friction.py` | Append-only `friction.jsonl` log (the reflect/self-evolution feedstock). | `--ticket --run-id --stage --type --body [--detail --severity]` |
 
