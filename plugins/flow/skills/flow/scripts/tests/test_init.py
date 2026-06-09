@@ -792,6 +792,35 @@ def test_resume_skips_bd_init_when_store_ready(tmp_path: Path) -> None:
     assert (tmp_path / ".flow" / ".initialized").exists()
 
 
+# ─── ensure_gitignore phase ──────────────────────────────────────────────────
+
+
+def test_init_seeds_flow_gitignore_when_absent(tmp_path: Path) -> None:
+    initmod.run_init(_jira_config(tmp_path))
+    gi = (tmp_path / ".gitignore").read_text(encoding="utf-8")
+    assert ".flow/*" in gi.splitlines()
+    assert "!.flow/workspace.toml" in gi.splitlines()
+    assert "!.flow/.initialized" in gi.splitlines()
+
+
+def test_init_gitignore_idempotent_when_already_seeded(tmp_path: Path) -> None:
+    gi_path = tmp_path / ".gitignore"
+    gi_path.write_text("node_modules/\n.flow/*\n", encoding="utf-8")
+    initmod.run_init(_jira_config(tmp_path))
+    content = gi_path.read_text(encoding="utf-8")
+    assert content.count(".flow/*") == 1  # not re-appended
+    assert "node_modules/" in content
+
+
+def test_init_gitignore_appends_preserving_existing(tmp_path: Path) -> None:
+    gi_path = tmp_path / ".gitignore"
+    gi_path.write_text("node_modules/\n", encoding="utf-8")  # no trailing-blank cleanup needed
+    initmod.run_init(_jira_config(tmp_path))
+    content = gi_path.read_text(encoding="utf-8")
+    assert "node_modules/" in content  # original preserved
+    assert ".flow/*" in content.splitlines()  # block appended
+
+
 # ─── [Y-init] recommended no-coverage + handler validation ────────────────────
 
 

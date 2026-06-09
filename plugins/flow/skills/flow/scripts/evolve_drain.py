@@ -91,12 +91,12 @@ def _open_pr_keys(repo: Path) -> list[str]:
 def _run_dir_for(repo: Path, key: str) -> Path | None:
     """The in-flight run's ticket dir, under the worktree pool for `key`.
 
-    Worktrees live at `<repo>/.claude/worktrees/feature-<key>-<slug>/` (see
+    Worktrees live at `<repo>/.flow/worktrees/feature-<key>-<slug>/` (see
     flow_worktree._worktree_path); the run state is `.flow/runs/<key>/`. Absent =
     no live lease to read (a leaked branch with no worktree), so the caller treats
     it as non-live rather than waiting on it forever.
     """
-    base = repo / ".claude" / "worktrees"
+    base = repo / ".flow" / "worktrees"
     for wt in sorted(glob.glob(str(base / f"feature-{key}*"))):
         run_dir = Path(wt) / ".flow" / "runs" / key
         if run_dir.exists():

@@ -60,12 +60,41 @@ PhaseLiteral = Literal[
     "validate_inputs",
     "bundle_compose",
     "mkdirs",
+    "ensure_gitignore",
     "bd_init",
     "write_workspace_toml",
     "verify_postconditions",
     "append_checkpoint",
     "finalize",
 ]
+
+# Ignore all transient .flow/ state (runs, worktrees, locks, memory-root,
+# per-namespace dirs); whitelist the config pair that stays tracked. Broad rule
+# so new transient files are ignored without enumerating each. _GITIGNORE_MARKER
+# is the idempotency probe — its presence means we already seeded.
+_GITIGNORE_MARKER = ".flow/*"
+_GITIGNORE_BLOCK = (
+    "# flow: ignore transient run state; keep config trackable\n"
+    ".flow/*\n"
+    "!.flow/workspace.toml\n"
+    "!.flow/.initialized\n"
+)
+
+
+def _ensure_gitignore(root: Path) -> dict[str, Any] | None:
+    """Append the `.flow/` ignore block to `<root>/.gitignore` unless already
+    seeded. Marker-guarded + append-only, so `--resume` / re-init never duplicate
+    the block or clobber the user's existing `.gitignore`."""
+    gitignore = root / ".gitignore"
+    existing = gitignore.read_text(encoding="utf-8") if gitignore.exists() else ""
+    if _GITIGNORE_MARKER in existing.splitlines():
+        return {"skipped": True, "reason": ".flow/ already gitignored"}
+    if existing and not existing.endswith("\n"):
+        existing += "\n"
+    block = ("\n" if existing else "") + _GITIGNORE_BLOCK
+    atomic_write_text(gitignore, existing + block)
+    return None
+
 
 # Phases run in order. Phases skipped by backend (e.g. bd_init for jira) are
 # still recorded as "completed" so --resume bookkeeping stays simple.
@@ -814,6 +843,10 @@ def _run_init_phases(
         return None
 
     _run_phase("mkdirs", _phase_mkdirs)
+
+    # Phase: ensure_gitignore — keep transient .flow/ state out of the project's
+    # git status (the worktree pool lives at .flow/worktrees/).
+    _run_phase("ensure_gitignore", lambda: _ensure_gitignore(root))
 
     # Phase: bd_init (beads only; jira records a skip)
     def _phase_bd_init() -> dict[str, Any] | None:

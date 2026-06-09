@@ -452,23 +452,23 @@ def test_parse_worktree_list_porcelain() -> None:
     blob = _porcelain(
         [
             ("/main", "main"),
-            ("/main/.claude/worktrees/feature-FT-1-thing", "feature/FT-1-thing"),
-            ("/main/.claude/worktrees/detached", None),
+            ("/main/.flow/worktrees/feature-FT-1-thing", "feature/FT-1-thing"),
+            ("/main/.flow/worktrees/detached", None),
         ]
     )
     pairs = fw._parse_worktree_list(blob)
     assert pairs == [
         ("/main", "main"),
-        ("/main/.claude/worktrees/feature-FT-1-thing", "feature/FT-1-thing"),
-        ("/main/.claude/worktrees/detached", None),
+        ("/main/.flow/worktrees/feature-FT-1-thing", "feature/FT-1-thing"),
+        ("/main/.flow/worktrees/detached", None),
     ]
 
 
-def test_worktree_path_derives_under_dot_claude_pool(tmp_path: Path) -> None:
+def test_worktree_path_derives_under_dot_flow_pool(tmp_path: Path) -> None:
     main = tmp_path / "repo"
     main.mkdir()
     assert fw._worktree_path(main, "feature/FT-1-x", None) == (
-        main.resolve() / ".claude" / "worktrees" / "feature-FT-1-x"
+        main.resolve() / ".flow" / "worktrees" / "feature-FT-1-x"
     )
 
 
@@ -479,17 +479,17 @@ def test_worktree_path_override_wins(tmp_path: Path) -> None:
 
 
 def test_copy_config_skips_nested_worktree_pool(tmp_path: Path) -> None:
-    # the pool now lives at main/.claude/worktrees; _copy_config copies .claude
-    # into each new worktree and must NOT pull peer worktrees back in (the 10G+
-    # recursion). This pins the ignore_patterns("worktrees") invariant the whole
-    # "keep copytree after the move" decision rests on.
+    # the HARNESS pool lives at main/.claude/worktrees (claude --worktree); flow's
+    # own pool is at .flow/worktrees. _copy_config copies .claude into each new
+    # worktree and must NOT pull the harness peer worktrees back in (the 10G+
+    # recursion). This pins the ignore_patterns("worktrees") invariant.
     main = tmp_path / "repo"
     claude = main / ".claude"
     (claude / "skills").mkdir(parents=True)
     (claude / "settings.json").write_text("{}", encoding="utf-8")
     (claude / "worktrees" / "feature-junk" / ".flow").mkdir(parents=True)
     (claude / "worktrees" / "feature-junk" / "big.bin").write_text("x", encoding="utf-8")
-    worktree = main / ".claude" / "worktrees" / "feature-FT-1-x"
+    worktree = main / ".flow" / "worktrees" / "feature-FT-1-x"
     worktree.mkdir(parents=True)
 
     copied = fw._copy_config(main, worktree, [])
@@ -536,7 +536,7 @@ def _seed_live_lease(ticket_dir: Path) -> None:
 
 
 def test_reap_removes_worktree_and_branch_when_free(tmp_path: Path) -> None:
-    wt = tmp_path / "main" / ".claude" / "worktrees" / "feature-FT-1-thing"
+    wt = tmp_path / "main" / ".flow" / "worktrees" / "feature-FT-1-thing"
     wt.mkdir(parents=True)
     calls: list = []
     runner = _reap_runner(
@@ -553,7 +553,7 @@ def test_reap_removes_worktree_and_branch_when_free(tmp_path: Path) -> None:
 
 
 def test_reap_skips_when_lease_live(tmp_path: Path) -> None:
-    wt = tmp_path / "main" / ".claude" / "worktrees" / "feature-FT-1-thing"
+    wt = tmp_path / "main" / ".flow" / "worktrees" / "feature-FT-1-thing"
     wt.mkdir(parents=True)
     _seed_live_lease(wt / ".flow" / "runs" / "FT-1")
     calls: list = []
@@ -573,7 +573,7 @@ def test_reap_skips_when_lease_live(tmp_path: Path) -> None:
 def test_reap_skips_when_lease_corrupt(tmp_path: Path) -> None:
     import lease
 
-    wt = tmp_path / "main" / ".claude" / "worktrees" / "feature-FT-1-thing"
+    wt = tmp_path / "main" / ".flow" / "worktrees" / "feature-FT-1-thing"
     ticket_dir = wt / ".flow" / "runs" / "FT-1"
     ticket_dir.mkdir(parents=True)
     lease.run_lock_path(ticket_dir).write_text("{not json", encoding="utf-8")
@@ -655,7 +655,7 @@ def test_reap_deletes_leaked_branch_when_worktree_gone(tmp_path: Path) -> None:
 
 
 def test_reap_remove_failure_skips_branch_delete(tmp_path: Path) -> None:
-    wt = tmp_path / "main" / ".claude" / "worktrees" / "feature-FT-1-thing"
+    wt = tmp_path / "main" / ".flow" / "worktrees" / "feature-FT-1-thing"
     wt.mkdir(parents=True)
     calls: list = []
     runner = _reap_runner(
