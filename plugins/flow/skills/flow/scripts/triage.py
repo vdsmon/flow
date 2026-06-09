@@ -5,7 +5,9 @@ Read-only. Lists every `deferred` bead (whole queue, unscoped by assignee) PLUS
 each with the last "could not self-approve" defer comment inline, so a human can
 answer it and reopen via the tracker_cli seams (the reopen mutation lives in
 verb-triage.md, not here). Deferred is a beads-native concept; non-beads
-backends short-circuit.
+backends short-circuit. Every row is tagged with its queue (`evolve` when the
+bead carries the evolve label, else `day-job`); `--ready` opt-in adds the ready
+queues via one extra `bd ready` call.
 
 `triage.py decided` is a separate probe used by the `--auto` path: it reads a
 bead's recorded triage decision + classifies whether the planned change is hot,
@@ -199,7 +201,19 @@ def _has_defer_stem(comments: list[Any]) -> bool:
     return any(_DEFER_STEM in _comment_text(c) for c in comments)
 
 
-def collect(config: dict[str, Any], *, runner: Any = None) -> list[dict[str, Any]]:
+def _queue_of(labels: list[Any]) -> str:
+    """Queue membership: `evolve` when the evolve label is present, else
+    `day-job` (the epic's literal non-evolve predicate; stricter candidate
+    filtering belongs to the drain's queue-select, not this read-only list)."""
+    return "evolve" if "evolve" in labels else "day-job"
+
+
+def collect(
+    config: dict[str, Any],
+    *,
+    include_ready: bool = False,
+    runner: Any = None,
+) -> list[dict[str, Any]]:
     adapter = BeadsAdapter(config, runner=runner)
 
     def _items(raw: Any) -> list[Any]:
@@ -211,6 +225,11 @@ def collect(config: dict[str, Any], *, runner: Any = None) -> list[dict[str, Any
 
     deferred = _items(adapter._run_json(["list", "--status", "deferred"]))
     blocked = _items(adapter._run_json(["list", "--status", "blocked"]))
+    # ready surfacing is opt-in: one extra `bd ready` call covers both queues
+    # (labels are in the payload, partitioned client-side). Issued here, after
+    # the two lists and before any per-bead show, so the injectable runner's
+    # call sequence stays deterministic.
+    ready = _items(adapter._run_json(["ready"])) if include_ready else []
 
     rows: list[dict[str, Any]] = []
     for item in deferred:
@@ -223,6 +242,7 @@ def collect(config: dict[str, Any], *, runner: Any = None) -> list[dict[str, Any
                 "key": key,
                 "title": str(item.get("title", "")),
                 "status": "deferred",
+                "queue": _queue_of(item.get("labels") or []),
                 "open_question": _open_question(ticket.get("comments") or []),
             }
         )
@@ -243,7 +263,21 @@ def collect(config: dict[str, Any], *, runner: Any = None) -> list[dict[str, Any
                 "key": key,
                 "title": str(item.get("title", "")),
                 "status": "blocked",
+                "queue": _queue_of(item.get("labels") or []),
                 "open_question": _open_question(comments),
+            }
+        )
+    # ready beads carry no defer comment by definition: no per-bead show.
+    for item in ready:
+        if not isinstance(item, dict):
+            continue
+        rows.append(
+            {
+                "key": str(item.get("id", "")),
+                "title": str(item.get("title", "")),
+                "status": "ready",
+                "queue": _queue_of(item.get("labels") or []),
+                "open_question": "",
             }
         )
     rows.sort(key=lambda r: r["key"])
@@ -258,7 +292,7 @@ def _truncate(text: str, width: int = 80) -> str:
 def render_table(rows: list[dict[str, Any]]) -> str:
     if not rows:
         return "(no deferred tickets)"
-    headers = ["KEY", "STATUS", "TITLE", "OPEN QUESTION"]
+    headers = ["KEY", "STATUS", "QUEUE", "TITLE", "OPEN QUESTION"]
     table = [headers]
     for r in rows:
         status = str(r.get("status", ""))
@@ -271,6 +305,7 @@ def render_table(rows: list[dict[str, Any]]) -> str:
             [
                 str(r["key"]),
                 status,
+                str(r.get("queue", "")),
                 _truncate(str(r["title"]), 40),
                 _truncate(str(r["open_question"])),
             ]
@@ -306,7 +341,7 @@ def _cmd_list(args: argparse.Namespace, runner: Any) -> int:
     if config["backend"] != "beads":
         sys.stdout.write("deferred is a beads concept; nothing to triage\n")
         return 0
-    rows = collect(config, runner=runner)
+    rows = collect(config, include_ready=args.ready, runner=runner)
     if args.json:
         sys.stdout.write(json.dumps(rows, indent=2, sort_keys=True) + "\n")
     else:
@@ -363,6 +398,11 @@ def cli_main(argv: list[str], runner: Any = None) -> int:
     p_list = sub.add_parser("list", help="list deferred + decided-mode hot-block beads")
     p_list.add_argument("--workspace-root", default=".")
     p_list.add_argument("--json", action="store_true")
+    p_list.add_argument(
+        "--ready",
+        action="store_true",
+        help="also list ready beads, tagged by queue (evolve / day-job)",
+    )
 
     p_decided = sub.add_parser("decided", help="probe a bead's recorded triage decision")
     p_decided.add_argument("--workspace-root", default=".")
