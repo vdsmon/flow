@@ -87,12 +87,32 @@ def test_pending_is_not_green():
     assert out["merge"] == []
 
 
-def test_dirty_is_blocked():
+def test_green_nonhot_dirty_is_version_recoverable():
     prs = [_pr(1, "flow-a", state="DIRTY")]
     out = er.classify(prs, _idx(**{"flow-a": ["evolve"]}))
-    assert out["blocked"] == [
-        {"pr": 1, "key": "flow-a", "branch": "feature/flow-a-some-desc", "reason": "DIRTY"}
+    assert out["version_recoverable"] == [
+        {"pr": 1, "key": "flow-a", "branch": "feature/flow-a-some-desc"}
     ]
+    assert out["blocked"] == []
+
+
+def test_hot_dirty_is_blocked_not_recoverable():
+    # hot never auto-recovers: a green hot DIRTY PR is blocked, NOT version_recoverable
+    # and NOT skipped_hot (skipped_hot means green+mergeable awaiting isolation).
+    prs = [_pr(1, "flow-h", state="DIRTY")]
+    out = er.classify(prs, _idx(**{"flow-h": ["evolve", "hot"]}))
+    assert out["blocked"] == [
+        {"pr": 1, "key": "flow-h", "branch": "feature/flow-h-some-desc", "reason": "DIRTY"}
+    ]
+    assert out["version_recoverable"] == []
+    assert out["skipped_hot"] == []
+
+
+def test_green_clean_still_merges():
+    prs = [_pr(1, "flow-a", state="CLEAN")]
+    out = er.classify(prs, _idx(**{"flow-a": ["evolve"]}))
+    assert out["merge"][0]["key"] == "flow-a"
+    assert out["version_recoverable"] == []
 
 
 def test_behind_is_blocked():
@@ -140,7 +160,10 @@ def test_non_flow_branch_ignored():
 def test_unknown_key_ignored():
     prs = [_pr(1, "flow-ghost")]
     out = er.classify(prs, _idx(**{"flow-a": ["evolve"]}))
-    assert all(out[b] == [] for b in ("merge", "not_green", "skipped_hot", "blocked"))
+    assert all(
+        out[b] == []
+        for b in ("merge", "not_green", "skipped_hot", "version_recoverable", "blocked")
+    )
 
 
 # ---- classify: auto_merge_hot ----
@@ -188,7 +211,10 @@ def test_hot_auto_merge_two_eligible_serialize():
     ]
 
 
-def test_hot_auto_merge_clean_promotes_dirty_skips():
+def test_hot_auto_merge_clean_promotes_dirty_blocks():
+    # the unpromoted hot PR is DIRTY (conflicted), so it is blocked, not skipped_hot:
+    # hot never auto-recovers, and skipped_hot is reserved for green+mergeable hots
+    # held back only by the one-hot-per-pass isolation.
     prs = [_pr(1, "flow-h"), _pr(2, "flow-g", state="DIRTY")]
     out = er.classify(
         prs, _idx(**{"flow-h": ["evolve", "hot"], "flow-g": ["evolve", "hot"]}), auto_merge_hot=True
@@ -202,7 +228,10 @@ def test_hot_auto_merge_clean_promotes_dirty_skips():
             "is_hot": True,
         }
     ]
-    assert out["skipped_hot"] == [{"pr": 2, "key": "flow-g", "branch": "feature/flow-g-some-desc"}]
+    assert out["skipped_hot"] == []
+    assert out["blocked"] == [
+        {"pr": 2, "key": "flow-g", "branch": "feature/flow-g-some-desc", "reason": "DIRTY"}
+    ]
 
 
 def test_hot_auto_merge_does_not_gate_non_hot_leaf():

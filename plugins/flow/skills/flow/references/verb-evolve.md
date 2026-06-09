@@ -97,7 +97,7 @@ A launched run self-merges its own green PR, so this only ever finds a green evo
 python3 ${CLAUDE_SKILL_DIR}/scripts/evolve_reap.py --workspace-root .
 ```
 
-Returns JSON `{merge:[{pr,key,is_draft,is_hot}], not_green, skipped_hot, blocked}`. For each `merge` entry (skip all of this under `--dry-run`):
+Returns JSON `{merge:[{pr,key,is_draft,is_hot}], not_green, skipped_hot, version_recoverable, blocked}`. For each `merge` entry (skip all of this under `--dry-run`):
 
 **Guard property-check — run FIRST for any entry with `is_hot: true`.** A hot entry touches the harness, possibly the safety machinery itself. Before merging it, review the PR diff (`gh pr diff <pr>`) against the guard-property checklist: does this DELETE or weaken a safety property — lease exclusivity (one run per ticket), snapshot drift-detection, atomic-write + corrupt-file quarantine, content-ownership refusal, or self-edit flock serialization? Guard *code* may be refactored, sped up, or improved freely; a guard *property* may only be replaced by one that provably still holds, never simply dropped. Green does NOT prove the property holds — most of these have no direct test — so this review is the enforcer, not CI. If the diff removes a protection without a provably-equivalent replacement → do NOT merge: leave the PR as a draft for the human (skip its `gh pr ready` + `gh pr merge`), and report it under `held_guard`. Only a property-preserving hot entry proceeds to the steps below; a non-hot entry (`is_hot: false`) skips straight to them.
 
@@ -117,6 +117,35 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/flow_worktree.py reap --ticket <key> --branc
 `<key>`, `<pr>`, and `<branch>` (== `headRefName`) all come from the `merge` entry. `--delete-branch` is dropped: gh's branch-delete step fails because the still-registered worktree under `flow.worktrees/` holds the local `feature/<key>-*` branch checked out, and that failure makes an otherwise-successful `gh pr merge` exit 1 — which short-circuited the old `&& bd close`, so the bead never closed and the remote branch was left undeleted. Now `gh pr merge --squash` alone exits 0 on a clean merge, so `bd close` runs; the remote branch is deleted explicitly with `git push origin --delete <branch>` (which also drops the local `refs/remotes/origin/<branch>` tracking ref that feeds `evolve_select._gather_refs`). Deleting the REMOTE ref is unaffected by the worktree holding the LOCAL branch. `bd close` and the remote delete are each gated on the merge succeeding and are independent of each other (separate statements inside the `if`, never chained behind one another), so a `bd close` hiccup never skips the remote delete. `gh pr merge` refuses a not-actually-mergeable PR, so it is a safe backstop if state changed since the classify; if it refuses, the `if` body is skipped and the bead stays open. Closing a bead whose PR never merged would mint the exact PR↔bead state-inconsistency this step exists to prevent. The `reap` step still owns the LOCAL worktree + local branch teardown. It is lease-gated: a worktree whose bg session is still running (typically the reflect stage, which runs after the PR is green) is SKIPPED and reaped on a later turn once the session ends.
 
 `bd close` here autodiscovers `.beads/*.db` from cwd, and this sub-verb is maintainer-gated with no `cd` in the loop, so the close inherits the maintainer-repo cwd and hits flow's own DB. With the close wired in, reaping a PR also closes its bead, so the loop leaves no merged-but-open beads behind. Veto for the human: convert a PR to draft or close it before the next turn and the reap skips it.
+
+**Then handle the `version_recoverable` set — merge-time version-conflict recovery (Option B).** A green non-hot DIRTY PR lands here: in a multi-bead drain every PR bumps the two version files, so as siblings merge main's version walks forward and a later PR conflicts on the version line ONLY (its code merges clean). Process this set **SERIALLY** — the bump walks X+1 → X+2, so each PR must re-fetch main AFTER the prior one merged (don't parallelize). For each `{pr, key, branch}` entry (skip under `--dry-run`):
+
+```bash
+# fetch the branch, check it out in a TEMP worktree (never the maintainer checkout)
+git fetch origin "$BRANCH"
+TMP=$(mktemp -d)
+git worktree add "$TMP" "$BRANCH"
+REMERGE=$(python3 ${CLAUDE_SKILL_DIR}/scripts/version_remerge.py recover \
+  --branch "$BRANCH" --cwd "$TMP" --workspace-root .)
+RC=$?
+if [ "$RC" -eq 3 ]; then
+  echo "non-version conflict on PR #$PR — leave for the human (report under blocked/held)"
+elif [ "$RC" -eq 0 ]; then
+  # the helper PUSHED a NEW SHA CI never validated. RE-WAIT CI (bounded) before merging —
+  # mandatory: it preserves "merge ONLY the CI-validated SHA". Poll with the Monitor tool
+  # (foreground sleep is blocked), capped at ~a stage timeout; on the cap, leave it for the
+  # next pass, do NOT hang.
+  # ... wait until forge_cli ci-rollup --pr "$PR" reports success ...
+  gh pr ready "$PR"        # only if it was a draft
+  if gh pr merge "$PR" --squash; then
+    bd close "$KEY" --reason "merged via PR #$PR (version-remerged)"
+    git push origin --delete "$BRANCH" || true
+  fi
+fi
+git worktree remove --force "$TMP"
+```
+
+The CI re-wait is **non-negotiable**: `version_remerge` pushed a brand-new merge commit, so the green that gated the original PR no longer applies — only a fresh green proves the auto-resolved merge is semantically correct, not just textually clean. **Non-blocking liveness caveat:** a non-hot orphan merging mid-wait can re-DIRTY a still-waiting PR (main moved again). That is fine — it converges across drain passes **as long as merges stay serial**: each pass re-fetches and re-resolves against the now-current main. Bound the wait, never hang; an un-converged PR is simply picked up again on the next turn. A HOT DIRTY PR never lands in `version_recoverable` (classify keeps it in `blocked`); hot conflicts are not auto-recovered.
 
 **A2. Cleanup finished sessions — stop + tombstone the idle done ones.** A launched `claude --bg /flow <key> --auto` run does not exit when its work finishes: after the PR merges + the reflect stage runs, the session goes idle but lingers as a job dir under `~/.claude/jobs/<id>/`, so a multi-bead drain leaves a pile of idle sessions in the agents panel for the maintainer to `claude stop` + Ctrl+X by hand. This step clears them. It is read-only classification + reviewable prose side effects (mirrors step A reap).
 

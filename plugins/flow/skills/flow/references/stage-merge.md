@@ -67,14 +67,43 @@ if [ -n "$(git status --porcelain --untracked-files=no)" ] || [ "$(git rev-parse
   echo "branch has uncommitted (tracked) or unpushed changes CI never validated — skipping self-merge"
   # STATUS=completed; the deferred drain reap (or the human) merges once state settles.
 else
-  python3 ${CLAUDE_SKILL_DIR}/scripts/forge_cli.py --workspace-root . mark-ready --pr "$PR_ID"   # if it was a draft
-  python3 ${CLAUDE_SKILL_DIR}/scripts/forge_cli.py --workspace-root . merge --pr "$PR_ID" --squash
-  bd close "$KEY" --reason "self-merged via PR #$PR_ID"
-  python3 ${CLAUDE_SKILL_DIR}/scripts/forge_cli.py --workspace-root . delete-branch --branch "$BRANCH"
+  MERGE_STATE=$(gh pr view "$PR_ID" --json mergeStateStatus -q .mergeStateStatus)
+  if [ "$MERGE_STATE" = "DIRTY" ]; then
+    # version-conflict recovery (Option B). A multi-bead drain walks main's version
+    # forward, so a sibling that merged first leaves this PR DIRTY on the version
+    # line ONLY. version_remerge re-merges main + auto-resolves IFF the conflict is
+    # exactly the two version files; any other conflict → it aborts and exits 3.
+    REMERGE=$(python3 ${CLAUDE_SKILL_DIR}/scripts/version_remerge.py recover \
+      --branch "$BRANCH" --workspace-root .)
+    RC=$?
+    if [ "$RC" -eq 3 ]; then
+      echo "non-version conflict — leaving PR #$PR_ID for the human"   # STATUS=completed; STOP, no self-merge
+    elif [ "$RC" -eq 0 ]; then
+      # the helper PUSHED a NEW SHA CI has NOT validated. RE-WAIT CI on it before
+      # merging — this is MANDATORY and non-negotiable: it preserves the "merge ONLY
+      # the CI-validated SHA" invariant. A textually-clean but semantically-wrong
+      # auto-resolve the conflict detector structurally cannot see is caught here.
+      # ... wait until `forge_cli.py ci-rollup --pr "$PR_ID"` reports success, polling
+      # with the Monitor tool (foreground sleep is blocked), bounded to ~a stage
+      # timeout; on the cap, leave the PR for the drain reap / human, do NOT hang ...
+      python3 ${CLAUDE_SKILL_DIR}/scripts/forge_cli.py --workspace-root . mark-ready --pr "$PR_ID"   # if it was a draft
+      python3 ${CLAUDE_SKILL_DIR}/scripts/forge_cli.py --workspace-root . merge --pr "$PR_ID" --squash
+      bd close "$KEY" --reason "self-merged via PR #$PR_ID (version-remerged)"
+      python3 ${CLAUDE_SKILL_DIR}/scripts/forge_cli.py --workspace-root . delete-branch --branch "$BRANCH"
+    else
+      echo "version_remerge tool error (exit $RC) — leaving PR #$PR_ID for the human"   # STATUS=completed
+    fi
+  else
+    # CLEAN / DRAFT: merge as today, no recovery needed.
+    python3 ${CLAUDE_SKILL_DIR}/scripts/forge_cli.py --workspace-root . mark-ready --pr "$PR_ID"   # if it was a draft
+    python3 ${CLAUDE_SKILL_DIR}/scripts/forge_cli.py --workspace-root . merge --pr "$PR_ID" --squash
+    bd close "$KEY" --reason "self-merged via PR #$PR_ID"
+    python3 ${CLAUDE_SKILL_DIR}/scripts/forge_cli.py --workspace-root . delete-branch --branch "$BRANCH"
+  fi
 fi
 ```
 
-The push-state check binds the merge to the CI'd SHA: `git rev-parse @{u}` is the last-pushed commit, so `HEAD == @{u}` proves every local commit was pushed and therefore CI'd. Close the bead and delete the **remote** branch only AFTER `merge` succeeds — a `bd close` on a PR that never merged would mint the exact PR↔bead inconsistency this guards against. The **local** worktree + branch are NOT torn down here: a run cannot remove the worktree it is standing in. Teardown is deferred to the drain reap step (`flow_worktree.py reap`, lease-gated), which reaps the worktree once this session exits.
+The push-state check binds the merge to the CI'd SHA: `git rev-parse @{u}` is the last-pushed commit, so `HEAD == @{u}` proves every local commit was pushed and therefore CI'd. The merge-state branch then splits CLEAN/DRAFT (merge as today) from DIRTY (run version-conflict recovery). **The CI re-wait after a successful remerge is mandatory and non-negotiable:** `version_remerge` pushed a brand-new merge commit that CI never validated, so merging it without re-waiting would break the "merge ONLY the CI-validated SHA" invariant the push-state guard upholds. The conflict detector is structural (it checks the conflicting *paths*); only a green CI proves the auto-resolved merge is also semantically correct. On exit 3 (a non-version conflict) the helper already ran `git merge --abort`, so the working tree is clean and the PR stays ready for the human. The hot §2 guard-property review still runs FIRST for a hot bead (a hot bead reaches §3 only after a clean §2 review); recovery sits entirely within §3 and does not reorder that. The §2 review cleared the branch diff D; `version_remerge` then pushes D′ = D + main's content for the two version files, and D′ is merged WITHOUT a re-review. This is safe and needs no second §2 pass: the strict detector proves ONLY the two version files conflicted (any other conflicting path → abort), so D′ adds nothing to the guard surface beyond main's already-reviewed version bump — the guard-relevant diff is unchanged from what §2 saw. The CI re-wait does NOT substitute for this argument (guard properties have no CI test); the structural detector is what makes the skip sound. Close the bead and delete the **remote** branch only AFTER `merge` succeeds — a `bd close` on a PR that never merged would mint the exact PR↔bead inconsistency this guards against. The **local** worktree + branch are NOT torn down here: a run cannot remove the worktree it is standing in. Teardown is deferred to the drain reap step (`flow_worktree.py reap`, lease-gated), which reaps the worktree once this session exits.
 
 `STATUS=completed` once the merge lands (or on a clean `skip`/`held_guard`). Only a tool failure on `merge` itself → `STATUS=failed`.
 
