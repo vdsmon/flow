@@ -1,0 +1,89 @@
+#!/bin/bash
+# flow nightly self-evolution: cold audit + drain (reap green PRs, launch fleet).
+# Maintainer local schedule (full-auto: green leaves + hot guard PRs auto-merge).
+#
+# TEMPLATE. Copy to ~/.flow-evolve/nightly-evolve.sh and replace the {{...}}
+# placeholders (see ops/README.md):
+#   {{REPO}}          absolute path to the flow checkout (e.g. $HOME/repos/personal/flow)
+#   {{MARKETPLACE}}   the plugin marketplace name that tracks that checkout (e.g. vdsmon-flow)
+#
+# Both phases run via `claude --bg` (detached sessions), NOT `claude -p`. The cold
+# audit is a long, quiet run (~15 min, minutes of silent high-effort scoring before
+# it files beads); `claude -p` trips a stream-idle timeout on that silence and dies
+# before filing = total loss. `--bg` has no idle watchdog, so it completes. The cost
+# is sequencing: --bg is fire-and-forget, so the runner must WAIT for the producer
+# to finish filing beads before it drains, else `evolve drain` runs on an empty backlog.
+#
+# TEST-FIRE BY HAND before arming the launchd timer, and watch it:
+#   ~/.flow-evolve/nightly-evolve.sh
+# Only once it cleanly audits + drains should you load the LaunchAgent.
+#
+# Safe by design: it never disturbs your working tree. It advances + updates the
+# plugin ONLY when the repo is sitting on a clean `main`; on any feature branch it
+# audits the current checkout and logs that it skipped advancing.
+
+set -uo pipefail
+# ~/.local/bin first: that's where `claude` lives. launchd runs with a minimal
+# env (no ~/.local/bin), so omitting it makes the job fail "claude: command not
+# found" — invisible to a by-hand test where the interactive shell already has it.
+export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${PATH:-}"
+
+REPO="{{REPO}}"
+LOG="$HOME/.flow-evolve/logs/$(date +%Y%m%d-%H%M%S).log"
+PROJ="$HOME/.claude/projects/$(echo "$REPO" | sed 's#/#-#g')"
+
+# Wait until a detached `claude --bg` session finishes. Liveness = its transcript's
+# mtime; the audit goes silent for minutes mid-scoring (observed up to ~360s), so
+# "idle" needs a generous threshold. Done = idle > 480s (truly quiet), OR a NEW bead
+# appeared above the pre-existing backlog AND idle > 180s (filing happens at the very
+# end), OR a 25-min hard cap (audit never runs longer). The new-bead signal baselines
+# the held backlog (flow held beads persist), so a pre-existing held bead never
+# false-fires the fast path — only an actual produce does.
+wait_for_session() {
+  local sid="$1" start now idle beads base t age
+  start="$(date +%s)"
+  base="$(cd "$REPO" && bd list -l evolve --status open --json 2>/dev/null | python3 -c 'import sys,json;print(len(json.load(sys.stdin)))' 2>/dev/null || echo 0)"
+  while true; do
+    sleep 30
+    now="$(date +%s)"
+    t="$(ls -t "$PROJ/${sid}"*.jsonl 2>/dev/null | head -1)"
+    if [ -n "$t" ]; then age="$(stat -f %m "$t" 2>/dev/null || echo "$now")"; idle=$(( now - age )); else idle=0; fi
+    beads="$(cd "$REPO" && bd list -l evolve --status open --json 2>/dev/null | python3 -c 'import sys,json;print(len(json.load(sys.stdin)))' 2>/dev/null || echo 0)"
+    if [ "$idle" -gt 480 ]; then echo "  producer idle ${idle}s -- done (beads=${beads}, base=${base})"; return 0; fi
+    if [ "$beads" -gt "$base" ] 2>/dev/null && [ "$idle" -gt 180 ]; then echo "  new bead(s) filed (${base}->${beads}), idle ${idle}s -- done"; return 0; fi
+    if [ $(( now - start )) -gt 1500 ]; then echo "  25-min cap reached (beads=${beads}) -- proceeding"; return 0; fi
+  done
+}
+
+{
+  echo "=== flow nightly evolve: $(date) ==="
+  cd "$REPO" || { echo "repo not found: $REPO"; exit 1; }
+
+  branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo '?')"
+  if [ "$branch" = "main" ]; then
+    git fetch origin --quiet || true
+    if git merge --ff-only origin/main; then
+      claude plugin marketplace update {{MARKETPLACE}} || true
+    else
+      echo "(ff-only skipped: working tree diverged/dirty — auditing as-is)"
+    fi
+  else
+    echo "(repo on '$branch', not main — auditing current checkout, not advancing)"
+  fi
+
+  echo "--- producer: claude --bg /flow evolve audit ---"
+  POUT="$(claude --bg "/flow evolve audit" 2>&1)"
+  echo "$POUT"
+  PSID="$(echo "$POUT" | grep -oiE '[0-9a-f]{8}' | head -1)"
+  if [ -z "$PSID" ]; then
+    echo "(could not capture producer session id — skipping wait, draining anyway)"
+  else
+    echo "--- waiting for producer $PSID to finish filing beads ---"
+    wait_for_session "$PSID"
+  fi
+
+  echo "--- consumer: claude --bg /flow evolve drain ---"
+  claude --bg "/flow evolve drain"
+
+  echo "=== done (drain detached; janitor + launch run in background): $(date) ==="
+} 2>&1 | tee "$LOG"
