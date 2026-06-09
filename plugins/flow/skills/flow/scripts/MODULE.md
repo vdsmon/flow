@@ -12,7 +12,7 @@ The live "which script does what" map. One line per script: purpose + CLI surfac
 | `state.py` (lib) | Atomic `state.json` read/write under flock, backup rotation, quarantine recovery. | imported by dispatch_stage, flow_worktree, diff_extract, recover, status, reflect_inputs |
 | `snapshot.py` (lib) | Canonical workspace snapshot at init; verify on each `next` (TOCTOU drift guard). | imported by dispatch_stage, validate_workspace, recover |
 | `lease.py` (lib) | Per-ticket run lease: acquire / refresh / release / expiry + takeover detection. | imported by dispatch_stage, recover, status, flow_worktree, evolve_drain, evolve_select, evolve_session_cleanup, launch_ledger |
-| `heartbeat.py` | Stage progress heartbeat + post-hoc hung detection: per-op progress writes during a stage; `recover detect` reads + classifies hung. | `write` / `read`; writes heartbeat progress under `<ticket_dir>`, imported by `recover` |
+| `heartbeat.py` | Post-hoc hung-detection inspection library: reads a `<ticket_dir>/<stage>.progress` file if one exists and classifies a stalled stage. No producer and no live poller; nothing writes the file today, so detection is inert. | `read`; reads progress under `<ticket_dir>` |
 | `validate_workspace.py` | HARD GATE: schema-validate `workspace.toml` + `stage-registry.toml` on every run. | exit 1 = violations to stderr |
 
 ## Bootstrap
