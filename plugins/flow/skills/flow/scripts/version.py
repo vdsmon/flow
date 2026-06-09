@@ -89,12 +89,14 @@ def compute(*, cwd: Path, ref: str | None = "origin/main", runner: Runner | None
 
 
 def _set_version_in_file(path: Path, version: str) -> None:
-    """Replace the first `"version": "X.Y.Z"` in the file, preserving the rest byte-for-byte."""
+    """Replace the first `"version": "X.Y.Z"` in the file, preserving the rest byte-for-byte.
+    Already at the target version is a benign no-op (flow-wkn), not an error."""
     text = path.read_text(encoding="utf-8")
-    new_text = VERSION_RE.sub(f'"version": "{version}"', text, count=1)
-    if new_text == text:
+    if not VERSION_RE.search(text):
         raise ToolError(f"no version line to replace in {path}")
-    path.write_text(new_text, encoding="utf-8")
+    new_text = VERSION_RE.sub(f'"version": "{version}"', text, count=1)
+    if new_text != text:
+        path.write_text(new_text, encoding="utf-8")
 
 
 def write_version(*, cwd: Path, version: str, runner: Runner | None = None) -> None:
