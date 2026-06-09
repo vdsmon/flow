@@ -18,13 +18,24 @@ FAILING = [
 ]
 
 
-def _pr(num: int, key: str, *, rollup=GREEN, state: str = "CLEAN", draft: bool = False) -> dict:
+def _pr(
+    num: int,
+    key: str,
+    *,
+    rollup=GREEN,
+    state: str = "CLEAN",
+    draft: bool = False,
+    files: list[str] | None = None,
+) -> dict:
+    # files default [] keeps every existing PR non-hot (the regression baseline);
+    # gh `pr list --json files` shape is [{"path": ...}].
     return {
         "number": num,
         "headRefName": f"feature/{key}-some-desc",
         "isDraft": draft,
         "mergeStateStatus": state,
         "statusCheckRollup": rollup,
+        "files": [{"path": p} for p in (files or [])],
     }
 
 
@@ -106,6 +117,66 @@ def test_hot_dirty_is_blocked_not_recoverable():
     ]
     assert out["version_recoverable"] == []
     assert out["skipped_hot"] == []
+
+
+# ---- classify: guard-file hotness (no `hot` label) ----
+
+
+def test_guard_file_dirty_no_label_is_blocked_not_recoverable():
+    # the flow-1fy bug: a guard-file PR (snapshot.py) DIRTY with no `hot` label must
+    # be treated as hot (blocked, never auto-recovered), not version_recoverable.
+    prs = [_pr(1, "flow-a", state="DIRTY", files=["snapshot.py"])]
+    out = er.classify(prs, _idx(**{"flow-a": ["evolve"]}))
+    assert out["blocked"] == [
+        {"pr": 1, "key": "flow-a", "branch": "feature/flow-a-some-desc", "reason": "DIRTY"}
+    ]
+    assert out["version_recoverable"] == []
+
+
+def test_non_guard_dirty_no_label_still_version_recoverable():
+    # no over-broadening: a non-guard DIRTY PR with no label stays version_recoverable.
+    prs = [_pr(1, "flow-a", state="DIRTY", files=["evolve_reap.py"])]
+    out = er.classify(prs, _idx(**{"flow-a": ["evolve"]}))
+    assert out["version_recoverable"] == [
+        {"pr": 1, "key": "flow-a", "branch": "feature/flow-a-some-desc"}
+    ]
+    assert out["blocked"] == []
+
+
+def test_guard_file_green_clean_skipped_hot_when_off():
+    prs = [_pr(1, "flow-a", files=["lease.py"])]
+    out = er.classify(prs, _idx(**{"flow-a": ["evolve"]}))
+    assert out["merge"] == []
+    assert out["skipped_hot"] == [{"pr": 1, "key": "flow-a", "branch": "feature/flow-a-some-desc"}]
+
+
+def test_guard_file_promotes_with_is_hot_true():
+    prs = [_pr(1, "flow-a", files=["state.py"])]
+    out = er.classify(prs, _idx(**{"flow-a": ["evolve"]}), auto_merge_hot=True)
+    assert out["merge"] == [
+        {
+            "pr": 1,
+            "key": "flow-a",
+            "branch": "feature/flow-a-some-desc",
+            "is_draft": False,
+            "is_hot": True,
+        }
+    ]
+    assert out["skipped_hot"] == []
+
+
+def test_guard_file_and_label_hot_serialize():
+    # the guard-file PR (no label) joins the isolation count: two hot-eligible PRs
+    # this pass → neither promotes, both land in skipped_hot.
+    prs = [_pr(1, "flow-a", files=["dispatch_stage.py"]), _pr(2, "flow-h")]
+    out = er.classify(
+        prs, _idx(**{"flow-a": ["evolve"], "flow-h": ["evolve", "hot"]}), auto_merge_hot=True
+    )
+    assert out["merge"] == []
+    assert out["skipped_hot"] == [
+        {"pr": 1, "key": "flow-a", "branch": "feature/flow-a-some-desc"},
+        {"pr": 2, "key": "flow-h", "branch": "feature/flow-h-some-desc"},
+    ]
 
 
 def test_green_clean_still_merges():
@@ -325,6 +396,16 @@ def test_reap_integration(tmp_path):
     ]
     assert out["skipped_hot"] == [{"pr": 2, "key": "flow-h", "branch": "feature/flow-h-some-desc"}]
     assert out["not_green"] == [{"pr": 3, "key": "flow-b", "branch": "feature/flow-b-some-desc"}]
+
+
+def test_reap_requests_files_field(tmp_path):
+    # classify reads guard-file hotness off pr["files"], so reap must request it.
+    ws = _marked_ws(tmp_path)
+    run, calls = _dispatch(prs=[], evolve_list=[])
+    er.reap(ws, runner=run)
+    pr_list = next(a for a in calls if a[:3] == ["gh", "pr", "list"])
+    json_fields = pr_list[pr_list.index("--json") + 1]
+    assert "files" in json_fields.split(",")
 
 
 def _auto_merge_hot_ws(tmp_path: Path) -> Path:
