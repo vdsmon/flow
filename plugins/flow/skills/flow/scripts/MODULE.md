@@ -83,6 +83,7 @@ Pluggable PR-host seam, structural twin of the tracker seam. The `create_pr` and
 |--------|------|-------------------|
 | `metric.py` | Metrics calculator: shipped tickets/week, time-to-PR, friction events/run, and revert-rate — from ship-event and friction-jsonl evidence (revert-rate joins ship-events to `bd history`). | (via `recall.py --metric`) |
 | `baseline_collect.py` | Pre-migration time-to-PR baseline file + stats. | `build --samples-json` / `show` |
+| `harness_corpus.py` (lib) | Frozen decider-fixture corpus loader/validator + replayer (regression-eval, epic flow-63q): replays held_in/held_out cases from the sibling `harness_corpus.json` data file against the four pure deciders (`evolve_select.partition`, `evolve_drain.decide`, `evolve_self_merge.decide`, `triage.is_hot_change`); the injectable `resolve=` is the candidate-checkout seam. | no script consumer yet; the flow-63q.2 score CLI becomes the consumer. Frozen by `tests/test_harness_corpus.py` (full replay each CI run) |
 | `pending_mutations.py` (lib) | Transient tracker-mutation queue (create/edit/transition/comment/link). | imported by sync, tracker_cli |
 | `sync.py` | Drain `pending-mutations.jsonl` + reconcile against live tracker. | `--workspace-root` |
 
