@@ -82,14 +82,13 @@ def _sha256_text(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def _tree_hash(plugin_root: Path, *, exclude_names: frozenset[str] = frozenset()) -> str:
+def _tree_hash(plugin_root: Path) -> str:
     """Content hash over sorted (relpath, sha256(bytes)) for tracked files.
 
     Tracked = *.py / *.sh / *.md / *.toml under plugin_root. The .toml glob
     excludes nothing relevant; compiled .pyc live in __pycache__ and are not
     matched. snapshot.json lives under workspace_root, never plugin_root, so
-    writing it can't perturb this hash. `exclude_names` skips files by basename
-    (the engine component drops stage-registry.toml, already its own component).
+    writing it can't perturb this hash.
     """
     # Single tree walk instead of one rglob per glob (compute_snapshot runs on
     # the do-loop hot path). Grouping by suffix in _TREE_GLOBS order preserves
@@ -97,8 +96,6 @@ def _tree_hash(plugin_root: Path, *, exclude_names: frozenset[str] = frozenset()
     # the hash stays byte-identical to the 4-glob implementation.
     matched: dict[str, list[Path]] = {suffix: [] for suffix in _TREE_SUFFIXES}
     for path in plugin_root.rglob("*"):
-        if path.name in exclude_names:
-            continue
         for suffix in _TREE_SUFFIXES:
             if path.name.endswith(suffix):
                 matched[suffix].append(path)
@@ -173,9 +170,24 @@ def _engine_component(skill_root: Path) -> dict[str, str]:
         engine_root = main_root / rel
         if not engine_root.is_dir():
             return {}
+        # Enumerate via git ls-files, not a filesystem walk: the main checkout
+        # carries untracked machine-local trees (scripts/.venv, .pytest_cache,
+        # editor scratch) whose churn is not an engine swap and must not abort
+        # runs. A tracked file deleted mid-advance raises on read -> {} ->
+        # master-hash mismatch -> abort (fail closed, same as any swap).
+        listed = _git_text(["ls-files", "--", rel.as_posix()], main_root)
+        entries: list[tuple[str, str]] = []
+        for line in listed.splitlines():
+            name = line.rsplit("/", 1)[-1]
+            if name == _STAGE_REGISTRY_NAME or not name.endswith(_TREE_SUFFIXES):
+                continue
+            file_path = main_root / line
+            relpath = file_path.relative_to(engine_root).as_posix()
+            entries.append((relpath, hashlib.sha256(file_path.read_bytes()).hexdigest()))
+        entries.sort()
         return {
             "branch": branch,
-            "tree_hash": _tree_hash(engine_root, exclude_names=frozenset({_STAGE_REGISTRY_NAME})),
+            "tree_hash": _sha256_text(_canonical_json({"tree": entries})),
         }
     except (OSError, ValueError, subprocess.SubprocessError):
         return {}

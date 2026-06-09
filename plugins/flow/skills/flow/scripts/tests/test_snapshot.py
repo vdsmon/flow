@@ -685,3 +685,19 @@ def test_component_files_maps_engine_to_none(tmp_path: Path) -> None:
     skill_root = _make_skill_root(tmp_path)
     out = snapshot.component_files(["engine"], workspace_root=workspace_root, skill_root=skill_root)
     assert out == {"engine": None}
+
+
+def test_engine_ignores_untracked_files(tmp_path: Path) -> None:
+    # machine-local untracked trees in the main checkout (a venv, pytest
+    # caches, editor scratch) churn without an engine swap; only git-tracked
+    # files feed the hash.
+    _repo, skill = _make_engine_checkout(tmp_path, branch="main")
+    workspace_root = _make_workspace(tmp_path, _bare_workspace_text())
+    before = snapshot.compute_snapshot(workspace_root, skill_root=skill)
+    _write(skill / "scripts" / ".venv" / "activate_this.py", "VENV = 1\n")
+    _write(skill / ".pytest_cache" / "README.md", "cache\n")
+    after = snapshot.compute_snapshot(workspace_root, skill_root=skill)
+    assert before["engine"] == after["engine"]
+    _write(skill / "scripts" / "engine.py", "X = 9\n")  # tracked file still trips
+    swapped = snapshot.compute_snapshot(workspace_root, skill_root=skill)
+    assert swapped["engine"] != before["engine"]
