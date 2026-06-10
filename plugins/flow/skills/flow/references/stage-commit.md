@@ -66,16 +66,16 @@ The applied patch comes from the recorded `implement.diff` — NOT from `git add
      --summary "<short summary>" \
      [--scope <scope>] \
      [--files <comma-list-from-baseline.planned_files>] \
-     > /tmp/flow-commit-<KEY>.txt
+     > "${TMPDIR:-/tmp}/flow-commit-<KEY>.txt"
    ```
-   - Exit 0 → commit skeleton at `/tmp/flow-commit-<KEY>.txt`.
+   - Exit 0 → commit skeleton at `${TMPDIR:-/tmp}/flow-commit-<KEY>.txt`.
    - Exit 1 → empty/whitespace `--summary` or `--ticket`. Abort.
    - Exit 2 → invalid `--type` (not in the allowed set) or a missing
      required flag (argparse usage error). Abort and fix the invocation.
 
 4. Fill in the body.
-   Step 3 created `/tmp/flow-commit-<KEY>.txt` via a shell redirect, so the file lives OUTSIDE the harness Read/Write tool tracking. The Write tool refuses to overwrite a path it has not Read in-session ("File has not been read yet"), which otherwise leaves the literal `# body - fill in below this line` skeleton in the commit.
-   Use the **Read tool** on `/tmp/flow-commit-<KEY>.txt` FIRST to register the path with the harness.
+   Step 3 created `${TMPDIR:-/tmp}/flow-commit-<KEY>.txt` via a shell redirect, so the file lives OUTSIDE the harness Read/Write tool tracking. The Write tool refuses to overwrite a path it has not Read in-session ("File has not been read yet"), which otherwise leaves the literal `# body - fill in below this line` skeleton in the commit.
+   Use the **Read tool** on `${TMPDIR:-/tmp}/flow-commit-<KEY>.txt` FIRST to register the path with the harness.
    Then append a body section describing *why* (not what — the diff shows what), referencing any failing-tests-now-green progress from implement stage.
    Then use the **Write tool** to write the completed message back to that same path.
 
@@ -89,7 +89,7 @@ The applied patch comes from the recorded `implement.diff` — NOT from `git add
 
 6. Commit:
    ```bash
-   git commit -F /tmp/flow-commit-<KEY>.txt
+   git commit -F "${TMPDIR:-/tmp}/flow-commit-<KEY>.txt"
    ```
 
 7. Transition the tracker ticket to `in_review`.
