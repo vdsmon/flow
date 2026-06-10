@@ -101,11 +101,11 @@ else
   git commit -m "chore: stamp plugin version" -- \
     plugins/flow/.claude-plugin/plugin.json .claude-plugin/marketplace.json
   git push origin "$BRANCH"
-  # ... wait until `forge_cli.py ci-rollup --pr "$PR_ID"` reports success, polling
-  # with the Monitor tool (foreground sleep is blocked), bounded to ~a stage
-  # timeout; on the cap, leave the PR for the drain reap / human (STATUS=completed),
+  # ↓ run the **Hardened CI re-wait probe** (defined at the end of §3) on $PR_ID / $BRANCH;
+  # proceed ONLY on a green break — every other terminal (failed / PR-merged-or-closed /
+  # probe-error-budget / cap) leaves the PR for the drain reap / human (STATUS=completed),
   # do NOT hang. On EACH poll iteration, also heartbeat the run lease (below) so
-  # this long re-wait does not let it go stale ...
+  # this long re-wait does not let it go stale.
   # heartbeat: refresh the run lease each poll so a long CI re-wait does not let it
   # go stale (a stale lease lets a parallel drain reap merge this live PR + reap the
   # worktree -- flow-ztfv). $TICKET_DIR holds state.json (run_id) and run.lock.
@@ -157,9 +157,10 @@ else
       # merging — this is MANDATORY and non-negotiable: it preserves the "merge ONLY
       # the CI-validated SHA" invariant. A textually-clean but semantically-wrong
       # auto-resolve the conflict detector structurally cannot see is caught here.
-      # ... wait until `forge_cli.py ci-rollup --pr "$PR_ID"` reports success, polling
-      # with the Monitor tool (foreground sleep is blocked), bounded to ~a stage
-      # timeout; on the cap, leave the PR for the drain reap / human, do NOT hang ...
+      # ↓ run the **Hardened CI re-wait probe** (defined at the end of §3) on $PR_ID /
+      # $BRANCH; proceed to mark-ready+merge ONLY on a green break — every other terminal
+      # (failed / PR-merged-or-closed / probe-error-budget / cap) leaves the PR for the
+      # drain reap / human, do NOT hang.
       python3 ${CLAUDE_SKILL_DIR}/scripts/forge_cli.py --workspace-root . mark-ready --pr "$PR_ID"   # if it was a draft
       python3 ${CLAUDE_SKILL_DIR}/scripts/forge_cli.py --workspace-root . merge --pr "$PR_ID" --squash
       bd close "$KEY" --reason "self-merged via PR #$PR_ID (version-remerged)"
@@ -176,6 +177,29 @@ else
   fi
 fi
 ```
+
+**Hardened CI re-wait probe.** Both re-wait sites above run this as a single `Monitor` (foreground `sleep` is blocked). It reads the `forge_cli ci-rollup` PROCESS EXIT CODE (not a piped status string), so an intermittently-erroring `gh` trips a consecutive-error budget and breaks instead of spinning; it short-circuits when the PR leaves the OPEN state (`detect-pr` returns `null` → merged/closed); and the iteration cap is the guaranteed terminal exit. §3 already binds `BRANCH` and `PR_ID`. Proceed past the re-wait ONLY on a `green` break — every other terminal (`failed` / PR-merged-or-closed / probe-error-budget / cap) leaves the PR for the drain reap / human, do NOT hang. Heartbeat the run lease on each poll (the `lease.py refresh` shown at each call site) so the long re-wait does not let the lease go stale.
+
+```
+Monitor(
+  description="merge CI re-wait on PR #$PR_ID",
+  command='budget=3; errs=0; n=0; cap=25; prev=""; while :; do
+      n=$((n+1)); [ "$n" -gt "$cap" ] && { echo "[$(date +%T)] cap $cap hit — leave for next pass"; break; }
+      pr=$(python3 ${CLAUDE_SKILL_DIR}/scripts/forge_cli.py --workspace-root . detect-pr --branch "$BRANCH"); drc=$?
+      if [ "$drc" -eq 0 ] && [ "$(printf %s "$pr" | tr -d " \t\n")" = "null" ]; then echo "[$(date +%T)] PR #$PR_ID no longer open (merged/closed)"; break; fi
+      out=$(python3 ${CLAUDE_SKILL_DIR}/scripts/forge_cli.py --workspace-root . ci-rollup --pr "$PR_ID"); crc=$?
+      s=""; [ "$crc" -eq 0 ] && s=$(printf %s "$out" | python3 -c "import sys,json;print(json.load(sys.stdin).get(\"status\",\"\"))" 2>/dev/null)
+      if [ "$crc" -ne 0 ] || [ -z "$s" ]; then errs=$((errs+1)); echo "[$(date +%T)] ci-rollup probe error ($errs/$budget)"; [ "$errs" -ge "$budget" ] && { echo "error budget exhausted — leave for next pass"; break; }; sleep 60; continue; fi
+      errs=0; [ "$s" != "$prev" ] && { echo "[$(date +%T)] CI: $s"; prev=$s; }
+      case "$s" in green|failed) break;; esac
+      sleep 60
+    done',
+  timeout_ms=1620000,
+  persistent=false
+)
+```
+
+The terminal `CI_STATUS` enum is `green` / `failed` (NOT `success` / `failure`, NOT `red`); `ci_rollup` folds the superseded `CANCELLED`/`STALE`/`NEUTRAL`/`SKIPPED` entries into `pending`, so those re-poll rather than trip a false `failed`. **Anti-pattern:** never `ci-rollup ... 2>/dev/null | python -c '...get("status","pending")'` — piping past the exit code makes an errored `gh` read as `pending` forever (a silent infinite spin); the probe reads `$?` first, which is the fix.
 
 The version stamp runs ONCE, at the top of the merge branch (after the push-state guard, before the merge-state read), because the merge point is the only place the version is well-timed: it is computed from the current `origin/main`, so the stamped number is correct relative to whatever siblings already merged. The bump is semantic, not always-patch: a `feat` commit type bumps MINOR (`X.(Y+1).0`), anything else bumps PATCH — the type comes from the ticket frontmatter's `commit_type` via `--commit-type`, with a HEAD-subject conventional-prefix fallback when that is empty. Only which field increments varies; the next-from-fresh-`origin/main` concurrency design is unchanged. The stamp pushes a new SHA, hence the bounded CI re-wait before reading `MERGE_STATE` — same invariant, same Monitor-bounded pattern as the `version_remerge` re-wait below; on the cap, leave the PR (`STATUS=completed`) rather than hang. `version_remerge` is RETAINED, not replaced: the stamp puts a version line back on the branch, so if main moves again during the re-wait the PR can still go DIRTY on the version line and the DIRTY branch's `version_remerge` recovery resolves it. The duplicate-stamp guard covers the OTHER way main can move during the re-wait: a sibling walking main to the SAME version this branch stamped merges CLEAN — identical content on both sides of the version line — so it is invisible to the `MERGE_STATE`-DIRTY recovery and would land a PR with no version walk (the live flow-5ba/PR#213 incident). The guard re-fetches and compares the branch's stamped version against fresh `origin/main` BEFORE `MERGE_STATE` is read; equal → re-stamp + push + the same mandatory CI re-wait, then the guard repeats. `version_remerge recover` carries the mirror-image check on its clean-merge path: after a clean re-merge it compares the working tree's version against main's and restamps on equality (`restamped` instead of `remerged_clean`); the mandatory exit-0 CI re-wait below covers `restamped` exactly like `remerged`.
 
