@@ -14,7 +14,7 @@
 
 3. Write the answers to a tmp JSON file:
    ```bash
-   ANSWERS=$(mktemp /tmp/flow-init-XXXXXX.json)
+   ANSWERS=$(mktemp "${TMPDIR:-/tmp}/flow-init-XXXXXX.json")
    cat > "$ANSWERS" <<EOF
    {
      "backend": "<backend>",
