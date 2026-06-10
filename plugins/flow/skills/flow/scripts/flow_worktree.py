@@ -41,8 +41,10 @@ from __future__ import annotations
 import argparse
 import secrets
 import shutil
+import subprocess
 import sys
 from pathlib import Path
+from typing import cast
 
 import _atomicio
 import _locking
@@ -345,16 +347,26 @@ def reap_worktree(
 
     if target_path is not None:
         ticket_dir = target_path / ".flow" / "runs" / ticket
-        info = lease.classify(
-            ticket_dir, utcnow_iso(), current_boot=lease.boot_id(), hostname=lease.hostname()
+
+        # Hold the lease flock ACROSS classify + the worktree-remove so a
+        # concurrent acquire cannot go live between the decision and the
+        # destructive mutation (the flow-72d9 incident family). classify_then's
+        # teardown runs only when the lease is non-live/non-corrupt; it runs a
+        # git subprocess only (no lease re-entry — flock is non-reentrant).
+        outcome = lease.classify_then(
+            ticket_dir,
+            utcnow_iso(),
+            lambda: run(["git", "worktree", "remove", "--force", str(target_path)], main_root),
+            current_boot=lease.boot_id(),
+            hostname=lease.hostname(),
         )
-        if info.get("state") == "live":
-            receipt["skipped"] = "lease live (run still in progress)"
+        if not outcome["torn_down"]:
+            if outcome["state"] == "live":
+                receipt["skipped"] = "lease live (run still in progress)"
+            else:
+                receipt["skipped"] = "lease corrupt (run.lock unparseable; possibly live)"
             return receipt
-        if info.get("state") == "corrupt":
-            receipt["skipped"] = "lease corrupt (run.lock unparseable; possibly live)"
-            return receipt
-        result = run(["git", "worktree", "remove", "--force", str(target_path)], main_root)
+        result = cast(subprocess.CompletedProcess[str], outcome["result"])
         if result.returncode != 0:
             receipt["skipped"] = f"worktree remove failed: {result.stderr.strip()}"
             return receipt

@@ -607,6 +607,104 @@ def test_takeover_clear_race_corrupt_replaced_by_live(
     assert list(tmp_path.glob("run.lock.quarantine.*")) == []
 
 
+# ─── classify_then ───────────────────────────────────────────────────────────
+
+
+def test_classify_then_runs_teardown_when_free(tmp_path: Path) -> None:
+    calls = []
+
+    def teardown() -> str:
+        calls.append("run")
+        return "torn"
+
+    result = lease.classify_then(tmp_path, NOW, teardown, current_boot="boot-A", hostname="host-1")
+    assert calls == ["run"]
+    assert result["torn_down"] is True
+    assert result["state"] == "free"
+    assert result["result"] == "torn"
+
+
+def test_classify_then_runs_teardown_when_expired_reboot_clearable(tmp_path: Path) -> None:
+    _acquire(tmp_path, "run-1", boot="boot-A", host="host-1")  # expires 12:05
+    after = "2026-05-28T13:00:00Z"
+    calls = []
+
+    def teardown() -> str:
+        calls.append("run")
+        return "torn"
+
+    result = lease.classify_then(
+        tmp_path, after, teardown, current_boot="boot-B", hostname="host-1"
+    )
+    assert calls == ["run"]
+    assert result["torn_down"] is True
+    assert result["state"] == "expired_reboot_clearable"
+
+
+def test_classify_then_skips_teardown_when_live(tmp_path: Path) -> None:
+    _acquire(tmp_path, "run-1", boot="boot-A", host="host-1")
+    calls = []
+
+    def teardown() -> str:
+        calls.append("run")
+        return "torn"
+
+    result = lease.classify_then(tmp_path, NOW, teardown, current_boot="boot-A", hostname="host-1")
+    assert calls == []
+    assert result["torn_down"] is False
+    assert result["state"] == "live"
+    holder = cast(dict[str, Any], result["holder"])
+    assert holder["run_id"] == "run-1"
+    assert "result" not in result
+
+
+def test_classify_then_skips_teardown_when_corrupt(tmp_path: Path) -> None:
+    lease.run_lock_path(tmp_path).write_text("{not json", encoding="utf-8")
+    calls = []
+
+    def teardown() -> str:
+        calls.append("run")
+        return "torn"
+
+    result = lease.classify_then(tmp_path, NOW, teardown, current_boot="boot-A", hostname="host-1")
+    assert calls == []
+    assert result["torn_down"] is False
+    assert result["state"] == "corrupt"
+
+
+def test_classify_then_race_free_replaced_by_live_skips_teardown(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # the TOCTOU itself: a concurrent acquirer wins the flock first and writes a
+    # live lease into a previously-free dir. classify_then classifies inside its
+    # flock span, so it must see the live lease and NOT run the teardown. The
+    # teardown-not-called assertion is load-bearing: it is what distinguishes
+    # this single-flock seam from a classify-then-mutate that releases the lock
+    # before the external teardown.
+    real_flock = lease.flock_blocking
+    calls = []
+
+    def teardown() -> str:
+        calls.append("run")
+        return "torn"
+
+    @contextlib.contextmanager
+    def racing_flock(path: Path) -> Iterator[None]:
+        with real_flock(path):
+            lease.run_lock_path(tmp_path).write_text(
+                _racer_lease_json("2026-05-28T12:30:00Z"), encoding="utf-8"
+            )
+            yield
+
+    monkeypatch.setattr(lease, "flock_blocking", racing_flock)
+    result = lease.classify_then(tmp_path, NOW, teardown, current_boot="boot-A", hostname="host-1")
+    assert calls == []
+    assert result["torn_down"] is False
+    assert result["state"] == "live"
+    holder = cast(dict[str, Any], result["holder"])
+    assert holder["run_id"] == "racer"
+
+
 # ─── CLI ───────────────────────────────────────────────────────────────────────
 
 
