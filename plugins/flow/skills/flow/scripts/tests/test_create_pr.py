@@ -115,10 +115,17 @@ def test_forge_error_is_tool_error(tmp_path):
         cp.open_or_get_pr(tmp_path, runner=run, forge=fg)
 
 
-def test_open_ready_omits_draft(tmp_path):
+def test_open_draft_by_default(tmp_path):
     run, _ = _git_runner()
     fg = _FakeForge()
     cp.open_or_get_pr(tmp_path, base="main", runner=run, forge=fg)
+    assert fg.opened[0]["draft"] is True
+
+
+def test_open_ready_when_draft_false(tmp_path):
+    run, _ = _git_runner()
+    fg = _FakeForge()
+    cp.open_or_get_pr(tmp_path, base="main", draft=False, runner=run, forge=fg)
     assert fg.opened[0]["draft"] is False
 
 
@@ -154,7 +161,15 @@ def test_cli_refused_protected_branch(tmp_path, monkeypatch):
     assert rc == 3
 
 
-def test_draft_config_default_false_when_no_workspace(tmp_path):
+def test_draft_config_default_true_when_no_workspace(tmp_path):
+    assert cp._draft_config(tmp_path) is True
+
+
+def test_draft_config_reads_false(tmp_path):
+    (tmp_path / ".flow").mkdir()
+    (tmp_path / ".flow" / "workspace.toml").write_text(
+        "[create_pr]\ndraft = false\n", encoding="utf-8"
+    )
     assert cp._draft_config(tmp_path) is False
 
 
