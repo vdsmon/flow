@@ -217,7 +217,11 @@ This runs `evolve_select` (which is DAG-aware via `bd ready`, drops in-flight be
 
 The termination is blocking-gated on purpose: a **withheld** hot bead (its in-run reviewer raised `held_guard`) leaves a ready PR + branch but its session has ended, so its lease is expired/absent (non-blocking) — it reads as `parked`, never `wait`, so the loop cannot spin on it. The other blocking states are `corrupt` (treated live-equivalent because an in-flight run that cannot be confirmed dead must never let the loop drain to `done`; a corrupt lease blocks until a human runs `recover takeover`) and a `launched_pending` key (a just-launched run still in its pre-lease bootstrap window, which must not be abandoned with a hot bead held behind it). It terminates and hands the withheld bead (plus any hot beads stuck behind it in `held_hot`) to the human.
 
-**C. Launch.** For each key in `launch` (under `--dry-run`, print the command instead of running it). Read the per-key worker model from the step-**B** JSON (`result.select.model_per_key[key]`, present in the same JSON you already consumed) and append `--model <model>` when the key is present (absent → omit the flag, the run inherits the strong default model):
+**C. Launch.**
+
+**Pre-launch advance (clean-boundary, conditional).** Before fanning out this batch, advance the maintainer checkout when — and only when — nothing is mid-pipeline, so the about-to-launch runs pick up just-merged code (same-drain compounding instead of next-drain: a fix merged earlier this drain, e.g. a bare-`git push` fix or a lease-heartbeat, governs the very next batch rather than waiting for the next drain). The gate, read from the step-**B** JSON you already consumed: no `liveness` value is `live` or `corrupt` (equivalently `select.live_runs` is empty) AND `select.launched_pending` is empty. When it holds, run the **§Post-drain advance recipe** below (`git fetch` + `git checkout -- .beads/` + `git merge --ff-only origin/main` → `claude plugin marketplace update vdsmon-flow`, try-and-skip, **never force**), then proceed to the launch loop; it inherits §Post-drain's carve-outs (skip under `--dry-run`, skip when the orchestrator is not on `main`). When the gate does NOT hold — any `live`/`corrupt` lease, or a non-empty `launched_pending` — **skip** the advance and launch on the current checkout: a running session reads its stage reference docs on demand, so swapping the checkout underfoot mid-pipeline could change a stage's prose beneath an in-flight run. The advance lands BEFORE the `launch_ledger.py add` / `claude --bg` loop so the just-launched runs see the freshly-advanced plugin; the unconditional final advance still runs at §Post-drain when the loop exits.
+
+For each key in `launch` (under `--dry-run`, print the command instead of running it). Read the per-key worker model from the step-**B** JSON (`result.select.model_per_key[key]`, present in the same JSON you already consumed) and append `--model <model>` when the key is present (absent → omit the flag, the run inherits the strong default model):
 
 ```bash
 # record the launch FIRST so the very next turn's select sees this key as in-flight
@@ -259,7 +263,7 @@ else
 fi
 ```
 
-Try-and-skip, **never force**: a diverged or dirty tree leaves the advance for the human, not a `--force`. Skip this step entirely under `--dry-run`. If the orchestrator is NOT on `main` (a detached/standalone `do`), skip — only the main checkout the marketplace tracks should advance.
+Try-and-skip, **never force**: a diverged or dirty tree leaves the advance for the human, not a `--force`. Skip this step entirely under `--dry-run`. If the orchestrator is NOT on `main` (a detached/standalone `do`), skip — only the main checkout the marketplace tracks should advance. Step **C** runs this same recipe mid-drain at clean batch boundaries (nothing `live`/`corrupt`, `launched_pending` empty) so a merged fix compounds within the same drain; this post-drain run stays the unconditional final advance, covering the case where the last batch was non-empty or no clean boundary occurred.
 
 ### Report
 
