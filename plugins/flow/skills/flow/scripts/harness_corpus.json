@@ -938,6 +938,44 @@
       "source": "friction:756f84bb"
     },
     {
+      "case_id": "esm-eval-regressed-blocks",
+      "split": "held_in",
+      "decider": "evolve_self_merge.decide",
+      "args": {
+        "labels": [
+          "evolve"
+        ],
+        "is_maintainer": true,
+        "auto_merge_hot": false,
+        "ci_status": "green",
+        "eval_status": "regressed"
+      },
+      "expected": {
+        "action": "skip",
+        "is_hot": false,
+        "reason": "harness eval regressed \u2014 no-degradation rule routes to the human"
+      }
+    },
+    {
+      "case_id": "esm-eval-error-blocks",
+      "split": "held_in",
+      "decider": "evolve_self_merge.decide",
+      "args": {
+        "labels": [
+          "evolve"
+        ],
+        "is_maintainer": true,
+        "auto_merge_hot": false,
+        "ci_status": "green",
+        "eval_status": "error"
+      },
+      "expected": {
+        "action": "skip",
+        "is_hot": false,
+        "reason": "harness eval error \u2014 no non-regression evidence"
+      }
+    },
+    {
       "case_id": "esm-ho-ci-failed",
       "split": "held_out",
       "decider": "evolve_self_merge.decide",
@@ -1009,6 +1047,25 @@
         "action": "skip",
         "is_hot": false,
         "reason": "not an evolve bead"
+      }
+    },
+    {
+      "case_id": "esm-ho-eval-pass-merges",
+      "split": "held_out",
+      "decider": "evolve_self_merge.decide",
+      "args": {
+        "labels": [
+          "evolve"
+        ],
+        "is_maintainer": true,
+        "auto_merge_hot": false,
+        "ci_status": "green",
+        "eval_status": "pass"
+      },
+      "expected": {
+        "action": "merge",
+        "is_hot": false,
+        "reason": "eligible"
       }
     },
     {
