@@ -46,7 +46,7 @@ def test_detect_fresh(tmp_path: Path) -> None:
     assert rep["lease"]["state"] == "free"
     assert rep["snapshot"]["ok"] is True
     assert rep["ship_event_attention"] == 0
-    # heartbeat consumer was removed (flow-dwd): detect no longer emits a progress map.
+    # progress-map consumer was removed (flow-dwd): detect no longer emits a progress map.
     assert "progress" not in rep
 
 

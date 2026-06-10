@@ -14,7 +14,8 @@ Invariants:
 
 Schema version: 1. Stage lifecycle: `pending → in_progress → (completed |
 failed)`. The `dispatched | timed_out | hung` states from the literal plan
-spec are deferred to phase 7-full (when heartbeat + lease lifecycle land).
+spec were never adopted: lease lifecycle landed separately (lease.py), and
+hung detection was removed as dead code.
 """
 
 from __future__ import annotations
