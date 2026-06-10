@@ -28,6 +28,15 @@ def test_next_version_patch_bump():
     assert vr.next_version((1, 0, 9)) == "1.0.10"
 
 
+def test_next_version_feat_bumps_minor():
+    assert vr.next_version((0, 27, 42), "feat") == "0.28.0"
+
+
+@pytest.mark.parametrize("commit_type", ["fix", "chore", None])
+def test_next_version_non_feat_bumps_patch(commit_type):
+    assert vr.next_version((0, 27, 42), commit_type) == "0.27.43"
+
+
 def test_is_version_only_conflict_exact_two():
     assert vr.is_version_only_conflict({PLUGIN, MARKET})
 
@@ -62,11 +71,13 @@ def _runner(
     calls: list[list[str]],
     ours: dict[str, str] | None = None,
     theirs: dict[str, str] | None = None,
+    log_subjects: list[str] | None = None,
 ):
     """Canned git runner. `git merge` returns merge_rc; `git diff --diff-filter=U`
     returns `conflicts` (one per line). `git show <default>:<rel>` answers main's
     blob (for the NEXT computation); `git show :2:<rel>` / `:3:<rel>` answer the
     per-file OURS (branch) / THEIRS (main) conflict blobs from `ours` / `theirs`.
+    `git log` answers `log_subjects` (the branch-only commit-subject scan).
     """
     ours = ours or {}
     theirs = theirs or {}
@@ -77,6 +88,8 @@ def _runner(
             return subprocess.CompletedProcess(args, 0, "origin/main\n", "")
         if args[:2] == ["git", "fetch"]:
             return subprocess.CompletedProcess(args, 0, "", "")
+        if args[:2] == ["git", "log"]:
+            return subprocess.CompletedProcess(args, 0, "\n".join(log_subjects or []) + "\n", "")
         if args[:2] == ["git", "show"]:
             ref = args[2]
             for rel in (PLUGIN, MARKET):
@@ -189,6 +202,84 @@ def test_flow_wkn_regression_branch_already_stamped_next(tmp_path):
     assert not any(a[:3] == ["git", "merge", "--abort"] for a in calls)
 
 
+def test_recover_explicit_feat_bumps_minor(tmp_path):
+    cwd = tmp_path
+    (cwd / PLUGIN).parent.mkdir(parents=True, exist_ok=True)
+    (cwd / MARKET).parent.mkdir(parents=True, exist_ok=True)
+    calls: list[list[str]] = []
+    run = _runner(
+        main_version="0.27.42",
+        merge_rc=1,
+        conflicts=[PLUGIN, MARKET],
+        calls=calls,
+        ours={PLUGIN: _plugin("0.27.39"), MARKET: _market("0.27.39")},
+        theirs={PLUGIN: _plugin("0.27.42"), MARKET: _market("0.27.42")},
+    )
+    out = vr.recover("feature/flow-x-foo", cwd=cwd, commit_type="feat", runner=run)
+    assert out["status"] == "remerged"
+    assert out["version"] == "0.28.0"
+    assert out["bump"] == "minor"
+    assert out["commit_type"] == "feat"
+    assert (cwd / PLUGIN).read_text().count("0.28.0") == 1
+    assert (cwd / MARKET).read_text().count("0.28.0") == 1
+    # explicit flag wins: no branch-only subject scan needed
+    assert not any(a[:2] == ["git", "log"] for a in calls)
+
+
+def test_recover_flagless_scan_finds_feat_behind_stamp_chore(tmp_path):
+    # the orphan-reap regression: the branch HEAD at remerge time is the
+    # "chore: stamp plugin version" commit, but the run's own commit is a feat.
+    # the branch-only scan must still resolve feat → minor.
+    cwd = tmp_path
+    (cwd / PLUGIN).parent.mkdir(parents=True, exist_ok=True)
+    (cwd / MARKET).parent.mkdir(parents=True, exist_ok=True)
+    calls: list[list[str]] = []
+    run = _runner(
+        main_version="0.27.42",
+        merge_rc=1,
+        conflicts=[PLUGIN, MARKET],
+        calls=calls,
+        ours={PLUGIN: _plugin("0.27.39"), MARKET: _market("0.27.39")},
+        theirs={PLUGIN: _plugin("0.27.42"), MARKET: _market("0.27.42")},
+        log_subjects=["chore: stamp plugin version", "feat: add queue verb"],
+    )
+    out = vr.recover("feature/flow-x-foo", cwd=cwd, runner=run)
+    assert out["status"] == "remerged"
+    assert out["version"] == "0.28.0"
+    assert out["bump"] == "minor"
+    assert out["commit_type"] == "feat"
+    scan = [a for a in calls if a[:2] == ["git", "log"]]
+    assert scan and "--no-merges" in scan[0] and "origin/main..HEAD" in scan[0]
+
+
+def test_recover_flagless_scan_no_feat_bumps_patch(tmp_path):
+    cwd = tmp_path
+    (cwd / PLUGIN).parent.mkdir(parents=True, exist_ok=True)
+    (cwd / MARKET).parent.mkdir(parents=True, exist_ok=True)
+    calls: list[list[str]] = []
+    run = _runner(
+        main_version="0.27.42",
+        merge_rc=1,
+        conflicts=[PLUGIN, MARKET],
+        calls=calls,
+        ours={PLUGIN: _plugin("0.27.39"), MARKET: _market("0.27.39")},
+        theirs={PLUGIN: _plugin("0.27.42"), MARKET: _market("0.27.42")},
+        log_subjects=["chore: stamp plugin version", "fix: stop the bleeding"],
+    )
+    out = vr.recover("feature/flow-x-foo", cwd=cwd, runner=run)
+    assert out["version"] == "0.27.43"
+    assert out["bump"] == "patch"
+    assert out["commit_type"] is None
+
+
+def test_remerged_clean_shape_unchanged_under_commit_type(tmp_path):
+    cwd = tmp_path
+    calls: list[list[str]] = []
+    run = _runner(main_version="0.27.42", merge_rc=0, conflicts=[], calls=calls)
+    out = vr.recover("feature/flow-x-foo", cwd=cwd, commit_type="feat", runner=run)
+    assert out == {"status": "remerged_clean", "sha": "deadbeef", "version": None}
+
+
 def test_write_version_tool_error_aborts_merge(tmp_path, monkeypatch):
     # any ToolError inside the resolution block (working-tree writes through commit)
     # must abort the merge before propagating — never exit leaving the index UU.
@@ -287,7 +378,7 @@ def test_non_version_conflict_aborts(tmp_path):
 
 
 def test_cli_non_version_conflict_exit_3(tmp_path, monkeypatch, capsys):
-    def fake_recover(branch, *, cwd, runner=None):
+    def fake_recover(branch, *, cwd, commit_type=None, runner=None):
         raise vr.NonVersionConflict([PLUGIN, MARKET, "scripts/foo.py"])
 
     monkeypatch.setattr(vr, "recover", fake_recover)
@@ -299,7 +390,7 @@ def test_cli_non_version_conflict_exit_3(tmp_path, monkeypatch, capsys):
 
 
 def test_cli_remerged_exit_0(tmp_path, monkeypatch, capsys):
-    def fake_recover(branch, *, cwd, runner=None):
+    def fake_recover(branch, *, cwd, commit_type=None, runner=None):
         return {"status": "remerged", "sha": "abc", "version": "0.27.43"}
 
     monkeypatch.setattr(vr, "recover", fake_recover)
@@ -308,6 +399,37 @@ def test_cli_remerged_exit_0(tmp_path, monkeypatch, capsys):
     out = json.loads(capsys.readouterr().out)
     assert out["status"] == "remerged"
     assert out["version"] == "0.27.43"
+
+
+def test_cli_recover_plumbs_commit_type(tmp_path, monkeypatch, capsys):
+    seen: dict = {}
+
+    def fake_recover(branch, *, cwd, commit_type=None, runner=None):
+        seen["commit_type"] = commit_type
+        return {
+            "status": "remerged",
+            "sha": "abc",
+            "version": "0.28.0",
+            "bump": "minor",
+            "commit_type": commit_type,
+        }
+
+    monkeypatch.setattr(vr, "recover", fake_recover)
+    rc = vr.cli_main(
+        [
+            "recover",
+            "--branch",
+            "feature/flow-x",
+            "--cwd",
+            str(tmp_path),
+            "--commit-type",
+            "feat",
+        ]
+    )
+    assert rc == 0
+    assert seen["commit_type"] == "feat"
+    out = json.loads(capsys.readouterr().out)
+    assert out["bump"] == "minor"
 
 
 def test_strip_version_normalizes_only_first():
@@ -323,7 +445,7 @@ def test_strip_version_normalizes_only_first():
 def test_cli_version_module_tool_error_exit_2(tmp_path, monkeypatch, capsys):
     # version.write_version raises version.ToolError, a DIFFERENT class from the
     # local ToolError. cli_main must map it to exit 2, holding the 0/2/3 contract.
-    def fake_recover(branch, *, cwd, runner=None):
+    def fake_recover(branch, *, cwd, commit_type=None, runner=None):
         raise vr.version.ToolError("no version line to replace")
 
     monkeypatch.setattr(vr, "recover", fake_recover)

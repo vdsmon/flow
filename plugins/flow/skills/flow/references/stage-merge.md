@@ -72,12 +72,17 @@ else
   # origin/main. FETCH FIRST so origin/main is current — a stale ref makes every
   # concurrent drain run stamp the SAME number, forcing the DIRTY/version_remerge
   # serial recovery this design exists to reduce. version.py stamp then writes the
-  # next patch into both version files; commit + push them as a NEW branch SHA.
+  # next version into both version files — MINOR on a feat commit type, PATCH
+  # otherwise (the frontmatter commit_type feeds --commit-type; empty falls back
+  # to the HEAD subject's conventional prefix, then patch) — and the new files
+  # are committed + pushed as a NEW branch SHA.
   # Then RE-WAIT CI on that SHA — the stamp pushed a commit CI never saw, and the
   # "merge ONLY the CI-validated SHA" invariant the push-state guard upholds
   # requires CI to re-validate it (the same mandatory re-wait version_remerge does).
   git fetch --quiet origin
-  python3 ${CLAUDE_SKILL_DIR}/scripts/version.py stamp --ref origin/main --cwd .
+  COMMIT_TYPE=$(sed -n 's/^commit_type = "\(.*\)"$/\1/p' ".flow/tickets/$KEY.md" | head -1)
+  python3 ${CLAUDE_SKILL_DIR}/scripts/version.py stamp --ref origin/main --cwd . \
+    --commit-type "$COMMIT_TYPE"
   git commit -m "chore: stamp plugin version" -- \
     plugins/flow/.claude-plugin/plugin.json .claude-plugin/marketplace.json
   git push
@@ -92,7 +97,7 @@ else
     # line ONLY. version_remerge re-merges main + auto-resolves IFF the conflict is
     # exactly the two version files; any other conflict → it aborts and exits 3.
     REMERGE=$(python3 ${CLAUDE_SKILL_DIR}/scripts/version_remerge.py recover \
-      --branch "$BRANCH" --workspace-root .)
+      --branch "$BRANCH" --workspace-root . --commit-type "$COMMIT_TYPE")
     RC=$?
     if [ "$RC" -eq 3 ]; then
       echo "non-version conflict — leaving PR #$PR_ID for the human"   # STATUS=completed; STOP, no self-merge
@@ -121,7 +126,7 @@ else
 fi
 ```
 
-The version stamp runs ONCE, at the top of the merge branch (after the push-state guard, before the merge-state read), because the merge point is the only place the version is well-timed: it is computed from the current `origin/main`, so the stamped number is correct relative to whatever siblings already merged. The stamp pushes a new SHA, hence the bounded CI re-wait before reading `MERGE_STATE` — same invariant, same Monitor-bounded pattern as the `version_remerge` re-wait below; on the cap, leave the PR (`STATUS=completed`) rather than hang. `version_remerge` is RETAINED, not replaced: the stamp puts a version line back on the branch, so if main moves again during the re-wait the PR can still go DIRTY on the version line and the DIRTY branch's `version_remerge` recovery resolves it.
+The version stamp runs ONCE, at the top of the merge branch (after the push-state guard, before the merge-state read), because the merge point is the only place the version is well-timed: it is computed from the current `origin/main`, so the stamped number is correct relative to whatever siblings already merged. The bump is semantic, not always-patch: a `feat` commit type bumps MINOR (`X.(Y+1).0`), anything else bumps PATCH — the type comes from the ticket frontmatter's `commit_type` via `--commit-type`, with a HEAD-subject conventional-prefix fallback when that is empty. Only which field increments varies; the next-from-fresh-`origin/main` concurrency design is unchanged. The stamp pushes a new SHA, hence the bounded CI re-wait before reading `MERGE_STATE` — same invariant, same Monitor-bounded pattern as the `version_remerge` re-wait below; on the cap, leave the PR (`STATUS=completed`) rather than hang. `version_remerge` is RETAINED, not replaced: the stamp puts a version line back on the branch, so if main moves again during the re-wait the PR can still go DIRTY on the version line and the DIRTY branch's `version_remerge` recovery resolves it.
 
 The push-state check binds the merge to the CI'd SHA: `git rev-parse @{u}` is the last-pushed commit, so `HEAD == @{u}` proves every local commit was pushed and therefore CI'd. The merge-state branch then splits CLEAN/DRAFT (merge as today) from DIRTY (run version-conflict recovery). **The CI re-wait after a successful remerge is mandatory and non-negotiable:** `version_remerge` pushed a brand-new merge commit that CI never validated, so merging it without re-waiting would break the "merge ONLY the CI-validated SHA" invariant the push-state guard upholds. The conflict detector is structural (it checks the conflicting *paths*); only a green CI proves the auto-resolved merge is also semantically correct. On exit 3 (a non-version conflict) the helper already ran `git merge --abort`, so the working tree is clean and the PR stays ready for the human. The hot §2 guard-property review still runs FIRST for a hot bead (a hot bead reaches §3 only after a clean §2 review); recovery sits entirely within §3 and does not reorder that. The §2 review cleared the branch diff D; `version_remerge` then pushes D′ = D + main's content for the two version files, and D′ is merged WITHOUT a re-review. This is safe and needs no second §2 pass: the strict detector proves ONLY the two version files conflicted (any other conflicting path → abort), so D′ adds nothing to the guard surface beyond main's already-reviewed version bump — the guard-relevant diff is unchanged from what §2 saw. The CI re-wait does NOT substitute for this argument (guard properties have no CI test); the structural detector is what makes the skip sound. Close the bead and delete the **remote** branch only AFTER `merge` succeeds — a `bd close` on a PR that never merged would mint the exact PR↔bead inconsistency this guards against. The **local** worktree + branch are NOT torn down here: a run cannot remove the worktree it is standing in. Teardown is deferred to the drain reap step (`flow_worktree.py reap`, lease-gated), which reaps the worktree once this session exits.
 
