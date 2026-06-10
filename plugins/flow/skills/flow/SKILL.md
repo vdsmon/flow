@@ -171,7 +171,7 @@ The verbose detail — full exit-code matrices, the PR-ready notification protoc
         --stage "$STAGE" --status "$STATUS" \
         [--output-path "$OUTPUT_PATH"])
       ```
-      `advance` is `finish` + `next` in one round-trip: it records HEAD itself (do not pass it), finishes `$STAGE` with `$STATUS`, and returns the NEXT descriptor (parses EXACTLY like `next` in (b), plus a `finished` object). `--output-path` is for subagent/skill stages (and any inline stage that captured output); omit otherwise. Handle its exit codes exactly as `next` in (a).
+      `advance` is `finish` + `next` in one round-trip: it records HEAD itself (do not pass it), finishes `$STAGE` with `$STATUS`, and returns the NEXT descriptor (parses EXACTLY like `next` in (b), plus a `finished` object). `--output-path` is for subagent/skill stages (and any inline stage that captured output); omit otherwise. It must name an existing, already-written file — `advance` exits 1 without finishing the stage if it is missing; write the file, then re-run the same `advance`. Handle its exit codes exactly as `next` in (a).
       **PR-ready notification:** when `$STAGE` is `review_loop` finishing `completed`, fire the best-effort PushNotification with the PR URL (full protocol + the `create_pr` fallback + the no-PushNotification fallback: `references/verb-do.md`).
 
    f. Loop back to (b) with the `DESCRIPTOR` that `advance` just returned. The standalone `next` in (a) runs only once, for the first stage.

@@ -531,6 +531,94 @@ def test_finish_before_init_returns_exit_2(tmp_path: Path, monkeypatch: pytest.M
     assert rc == 2
 
 
+def test_finish_rejects_missing_output_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_workspace(tmp_path, stages=["ticket"], compounding=False)
+    _stub_git_head(monkeypatch)
+    ds.cmd_init(tmp_path, "FT-1")
+    ds.cmd_next(tmp_path, "FT-1")
+    missing = tmp_path / ".flow" / "runs" / "FT-1" / "stages" / "ticket.out"
+    rc, payload = ds.cmd_finish(tmp_path, "FT-1", "ticket", "completed", output_path=str(missing))
+    assert rc == 1
+    assert str(missing) in payload["error"]
+    state_path = tmp_path / ".flow" / "runs" / "FT-1" / "state.json"
+    state_data = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state_data["stages"]["ticket"]["status"] == "in_progress"
+    assert state_data["stages"]["ticket"]["output_path"] is None
+
+
+def test_finish_records_existing_output_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_workspace(tmp_path, stages=["ticket"], compounding=False)
+    _stub_git_head(monkeypatch)
+    ds.cmd_init(tmp_path, "FT-1")
+    ds.cmd_next(tmp_path, "FT-1")
+    out = tmp_path / ".flow" / "runs" / "FT-1" / "stages" / "ticket.out"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text("report", encoding="utf-8")
+    rc, _ = ds.cmd_finish(tmp_path, "FT-1", "ticket", "completed", output_path=str(out))
+    assert rc == 0
+    state_path = tmp_path / ".flow" / "runs" / "FT-1" / "state.json"
+    state_data = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state_data["stages"]["ticket"]["output_path"] == str(out)
+
+
+def test_advance_missing_output_path_does_not_advance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_workspace(tmp_path, stages=["ticket", "plan"], compounding=False)
+    _stub_git_head(monkeypatch)
+    ds.cmd_init(tmp_path, "FT-1")
+    ds.cmd_next(tmp_path, "FT-1")
+    out = tmp_path / ".flow" / "runs" / "FT-1" / "stages" / "ticket.out"
+    rc, payload = ds.cmd_advance(tmp_path, "FT-1", "ticket", "completed", output_path=str(out))
+    assert rc == 1
+    assert "finished" not in payload
+    assert "stage" not in payload
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text("report", encoding="utf-8")
+    rc, payload = ds.cmd_advance(tmp_path, "FT-1", "ticket", "completed", output_path=str(out))
+    assert rc == 0
+    assert payload["finished"] == {"stage": "ticket", "status": "completed"}
+    assert payload["stage"] == "plan"
+
+
+def test_finish_output_path_relative_resolves_against_workspace_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_workspace(tmp_path, stages=["ticket", "plan"], compounding=False)
+    _stub_git_head(monkeypatch)
+    ds.cmd_init(tmp_path, "FT-1")
+    ds.cmd_next(tmp_path, "FT-1")
+    rel = ".flow/runs/FT-1/stages/ticket.out"
+    rc, _ = ds.cmd_finish(tmp_path, "FT-1", "ticket", "completed", output_path=rel)
+    assert rc == 1
+    out = tmp_path / rel
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text("report", encoding="utf-8")
+    rc, _ = ds.cmd_finish(tmp_path, "FT-1", "ticket", "completed", output_path=rel)
+    assert rc == 0
+    state_path = tmp_path / ".flow" / "runs" / "FT-1" / "state.json"
+    state_data = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state_data["stages"]["ticket"]["output_path"] == rel
+
+
+def test_finish_rejects_output_path_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_workspace(tmp_path, stages=["ticket"], compounding=False)
+    _stub_git_head(monkeypatch)
+    ds.cmd_init(tmp_path, "FT-1")
+    ds.cmd_next(tmp_path, "FT-1")
+    d = tmp_path / ".flow" / "runs" / "FT-1" / "stages"
+    d.mkdir(parents=True, exist_ok=True)
+    rc, payload = ds.cmd_finish(tmp_path, "FT-1", "ticket", "completed", output_path=str(d))
+    assert rc == 1
+    assert str(d) in payload["error"]
+
+
 # ─── status ──────────────────────────────────────────────────────────────────
 
 
