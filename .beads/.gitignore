@@ -64,6 +64,11 @@ backup/
 *.db-shm
 db.sqlite
 bd.db
+# Interaction audit log (append-only, written by bd on every issue mutation;
+# derivable from the Dolt DB via bd history — tracking it just keeps the main
+# checkout permanently dirty)
+interactions.jsonl
+
 # NOTE: Do NOT add negation patterns here.
 # They would override fork protection in .git/info/exclude.
 # Config files (metadata.json, config.yaml) are tracked by git by default
