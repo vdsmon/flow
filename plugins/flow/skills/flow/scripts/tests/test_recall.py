@@ -283,6 +283,84 @@ def test_load_missing_file_returns_empty(tmp_path: Path) -> None:
     assert recall._load_entries(tmp_path / "missing.jsonl") == []
 
 
+# ─── supersession filter ─────────────────────────────────────────────────────
+
+
+def test_superseded_ids_collects_targets() -> None:
+    entries = [
+        _make_entry("a" * 16, "first"),
+        {**_make_entry("b" * 16, "second"), "supersedes": "a" * 16},
+    ]
+    assert recall.superseded_ids(entries) == {"a" * 16}
+
+
+def test_superseded_ids_ignores_empty_and_missing() -> None:
+    entries = [
+        _make_entry("a" * 16, "no field"),
+        {**_make_entry("b" * 16, "empty"), "supersedes": ""},
+        {**_make_entry("c" * 16, "none"), "supersedes": None},
+    ]
+    assert recall.superseded_ids(entries) == set()
+
+
+def test_filter_superseded_resolves_chain() -> None:
+    # A <- B <- C: B.supersedes=A, C.supersedes=B. Only C survives.
+    a = _make_entry("a" * 16, "claim A")
+    b = {**_make_entry("b" * 16, "claim B"), "supersedes": "a" * 16}
+    c = {**_make_entry("c" * 16, "claim C"), "supersedes": "b" * 16}
+    survivors = recall.filter_superseded([a, b, c])
+    assert [e["id"] for e in survivors] == ["c" * 16]
+
+
+def test_filter_superseded_keeps_unreferenced() -> None:
+    a = _make_entry("a" * 16, "kept")
+    b = {**_make_entry("b" * 16, "tombstone"), "supersedes": "a" * 16}
+    d = _make_entry("d" * 16, "independent")
+    survivors = recall.filter_superseded([a, b, d])
+    ids = {e["id"] for e in survivors}
+    assert ids == {"b" * 16, "d" * 16}
+
+
+def test_cli_excludes_superseded_by_default(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _seed_workspace(tmp_path)
+    _write_entries(
+        tmp_path,
+        "demo",
+        [
+            _make_entry("a" * 16, "fsync matters"),
+            {**_make_entry("b" * 16, "fsync matters more"), "supersedes": "a" * 16},
+        ],
+    )
+    rc = recall.cli_main(["fsync", "--workspace-root", str(tmp_path)])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    ids = {r["id"] for r in payload}
+    assert "a" * 16 not in ids
+    assert "b" * 16 in ids
+
+
+def test_cli_include_superseded_returns_dead_entry(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _seed_workspace(tmp_path)
+    _write_entries(
+        tmp_path,
+        "demo",
+        [
+            _make_entry("a" * 16, "fsync matters"),
+            {**_make_entry("b" * 16, "fsync matters more"), "supersedes": "a" * 16},
+        ],
+    )
+    rc = recall.cli_main(["fsync", "--include-superseded", "--workspace-root", str(tmp_path)])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    ids = {r["id"] for r in payload}
+    assert "a" * 16 in ids
+    assert "b" * 16 in ids
+
+
 # ─── CLI ─────────────────────────────────────────────────────────────────────
 
 

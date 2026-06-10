@@ -293,6 +293,105 @@ def test_cli_invalid_type_returns_3(tmp_path: Path, capsys: pytest.CaptureFixtur
     assert rc == 3
 
 
+# ─── supersession (id-targeted tombstone records) ────────────────────────────
+
+
+def test_supersedes_field_recorded_and_target_preserved(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path)
+    first = memory_append.append(tmp_path, "LEARNED", "original claim", "main", "FT-1")
+    second = memory_append.append(
+        tmp_path, "LEARNED", "corrected claim", "main", "FT-1", supersedes=first["id"]
+    )
+    assert second["supersedes"] == first["id"]
+    kpath = _memory_paths.knowledge_path(tmp_path, "demo")
+    entries = _read_jsonl(kpath)
+    # both present: append-only, target not removed.
+    assert len(entries) == 2
+    by_id = {e["id"]: e for e in entries}
+    assert by_id[first["id"]].get("supersedes") is None
+    assert by_id[second["id"]]["supersedes"] == first["id"]
+
+
+def test_append_without_supersedes_has_no_key(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path)
+    entry = memory_append.append(tmp_path, "LEARNED", "plain entry", "main", "FT-1")
+    assert "supersedes" not in entry
+    entries = _read_jsonl(_memory_paths.knowledge_path(tmp_path, "demo"))
+    assert "supersedes" not in entries[0]
+
+
+def test_unknown_supersede_target_raises_and_no_write(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path)
+    memory_append.append(tmp_path, "LEARNED", "real entry", "main", "FT-1")
+    kpath = _memory_paths.knowledge_path(tmp_path, "demo")
+    before = kpath.read_text(encoding="utf-8")
+    with pytest.raises(memory_append._UnknownSupersedeTarget):
+        memory_append.append(
+            tmp_path, "LEARNED", "ghost", "main", "FT-1", supersedes="ffffffffffffffff"
+        )
+    # no partial write: file byte-for-byte unchanged.
+    assert kpath.read_text(encoding="utf-8") == before
+
+
+def test_supersedes_not_in_id_formula(tmp_path: Path) -> None:
+    # supersedes is metadata, not a hash input: same body+type+ticket -> same id
+    # whether or not a supersedes target is attached.
+    _seed_workspace(tmp_path)
+    target = memory_append.append(tmp_path, "LEARNED", "target", "main", "FT-1")
+    plain_id = memory_append.compute_id("demo", "FT-1", "LEARNED", "same text")
+    entry = memory_append.append(
+        tmp_path, "LEARNED", "same text", "main", "FT-1", supersedes=target["id"]
+    )
+    assert entry["id"] == plain_id
+
+
+def test_cli_unknown_supersede_target_returns_5(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _seed_workspace(tmp_path)
+    rc = memory_append.cli_main(
+        [
+            "--type",
+            "LEARNED",
+            "--text",
+            "ghost",
+            "--branch",
+            "main",
+            "--ticket",
+            "FT-1",
+            "--supersedes",
+            "ffffffffffffffff",
+            "--workspace-root",
+            str(tmp_path),
+        ]
+    )
+    assert rc == 5
+
+
+def test_cli_supersedes_threaded(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    _seed_workspace(tmp_path)
+    first = memory_append.append(tmp_path, "LEARNED", "v1", "main", "FT-1")
+    rc = memory_append.cli_main(
+        [
+            "--type",
+            "LEARNED",
+            "--text",
+            "v2",
+            "--branch",
+            "main",
+            "--ticket",
+            "FT-1",
+            "--supersedes",
+            first["id"],
+            "--workspace-root",
+            str(tmp_path),
+        ]
+    )
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["supersedes"] == first["id"]
+
+
 def test_cli_missing_workspace_returns_4(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
