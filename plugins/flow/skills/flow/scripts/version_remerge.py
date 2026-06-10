@@ -22,6 +22,14 @@ version-only: the branch and main blobs must be identical modulo the version lin
 PR added a manifest field main lacks) → abort, never auto-resolve — a `--theirs`
 take would have silently discarded that legitimate PR change.
 
+The CLEAN-merge path carries the mirror-image duplicate-stamp check (flow-5fp / live
+PR #213): a sibling that walks main to the SAME version this branch stamped merges
+CLEAN, invisible to the DIRTY recovery, and would land with no version walk. After a
+clean merge the working tree's version is compared against main's — equal → restamp
+to next-from-main, commit, push (`restamped`); different → push as-is
+(`remerged_clean`). A branch that never stamped but whose tree sits at main's
+version restamps too: intended, the restamp is idempotent-correct.
+
 CLI:
   version_remerge.py recover --branch <feature/...> --workspace-root . [--cwd <path>]
     [--commit-type <type>]
@@ -32,7 +40,7 @@ otherwise); without `--commit-type` the type is resolved by scanning the branch-
 commit subjects (`origin/<default>..HEAD --no-merges`) for a feat prefix.
 
 Exit codes:
-  0 = ok (remerged / remerged_clean; prints JSON, pushed)
+  0 = ok (remerged / remerged_clean / restamped; prints JSON, pushed)
   2 = tool error (a git command failed; a best-effort `git merge --abort` runs
       first, so exit 2 does not leave a conflicted/mid-merge index behind — a
       post-commit push failure leaves a committed-but-unpushed merge, which is
@@ -148,6 +156,47 @@ def recover(
 
     merge = run(["git", "merge", default_ref, "--no-edit"])
     if merge.returncode == 0:
+        # duplicate-stamp check (flow-5fp): a sibling that walked main to the SAME
+        # version this branch stamped merges CLEAN (identical content on both sides
+        # of the version line), so the conflict path below never sees it. Equal
+        # versions -> restamp to next-from-main. A never-stamped branch whose tree
+        # sits at main's version restamps too: intended, the restamp is
+        # idempotent-correct. No merge --abort on this path: the clean merge
+        # already committed, a later failure never leaves a mid-merge index.
+        try:
+            tree_plugin = (cwd / PLUGIN_JSON).read_text(encoding="utf-8")
+        except OSError as exc:
+            raise ToolError(f"read {PLUGIN_JSON} failed: {exc}") from exc
+        if parse_version(tree_plugin) == parse_version(main_plugin):
+            try:
+                version.write_version(cwd=cwd, version=next_ver)
+            except OSError as exc:
+                raise ToolError(f"write version files failed: {exc}") from exc
+            for rel in (PLUGIN_JSON, MARKETPLACE_JSON):
+                _ok(run(["git", "add", rel]), f"git add {rel}")
+            _ok(
+                run(
+                    [
+                        "git",
+                        "commit",
+                        "-m",
+                        "chore: stamp plugin version",
+                        "--",
+                        PLUGIN_JSON,
+                        MARKETPLACE_JSON,
+                    ]
+                ),
+                "git commit",
+            )
+            head = _ok(run(["git", "rev-parse", "HEAD"]), "git rev-parse").strip()
+            _ok(run(["git", "push"]), "git push")
+            return {
+                "status": "restamped",
+                "sha": head,
+                "version": next_ver,
+                "bump": "minor" if commit_type == "feat" else "patch",
+                "commit_type": commit_type,
+            }
         head = _ok(run(["git", "rev-parse", "HEAD"]), "git rev-parse").strip()
         _ok(run(["git", "push"]), "git push")
         return {"status": "remerged_clean", "sha": head, "version": None}
@@ -186,6 +235,11 @@ def recover(
         # cannot mask it.
         run(["git", "merge", "--abort"])
         raise
+    except OSError as exc:
+        # a raw working-tree read/write failure (e.g. disk full) gets the same
+        # abort, wrapped so cli_main maps it to exit 2 instead of a traceback.
+        run(["git", "merge", "--abort"])
+        raise ToolError(f"working-tree write failed: {exc}") from exc
     head = _ok(run(["git", "rev-parse", "HEAD"]), "git rev-parse").strip()
     _ok(run(["git", "push"]), "git push")
     return {
