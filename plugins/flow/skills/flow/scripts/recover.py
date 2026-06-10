@@ -73,14 +73,12 @@ def takeover(
 ) -> tuple[int, dict[str, Any]]:
     now_iso = now_iso or utcnow_iso()
     td = _ticket_dir(workspace_root, ticket)
-    info = lease.classify(td, now_iso, current_boot=lease.boot_id(), hostname=lease.hostname())
-    if info["state"] == "live":
-        return 1, {"error": "lease is live; cannot take over", "holder": info["holder"]}
-    quarantined: Path | None = None
-    if info["state"] == "corrupt":
-        quarantined = lease.quarantine_corrupt_lock(td)
-    else:
-        lease.run_lock_path(td).unlink(missing_ok=True)
+    result = lease.takeover_clear(
+        td, now_iso, current_boot=lease.boot_id(), hostname=lease.hostname()
+    )
+    if not result["cleared"]:
+        return 1, {"error": "lease is live; cannot take over", "holder": result["holder"]}
+    quarantined = result["quarantined"]
     reset: list[str] = []
     ts, _ = state.read(td)
     if ts is not None:

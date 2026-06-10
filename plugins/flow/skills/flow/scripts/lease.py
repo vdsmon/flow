@@ -357,8 +357,8 @@ def classify(
     corrupt. holder is the lease as a dict, or None when free or corrupt.
 
     Non-mutating: a corrupt run.lock yields {"state": "corrupt"} but is never
-    touched here. The RENAME-to-quarantine remediation lives in
-    quarantine_corrupt_lock, called by the human-driven recover takeover.
+    touched here. Remediation lives in takeover_clear, which classifies and
+    mutates under one flock for the human-driven recover takeover.
     """
     try:
         lease = read_lease(ticket_dir)
@@ -379,21 +379,77 @@ def classify(
     return {"state": "expired_foreign", "holder": holder}
 
 
-def quarantine_corrupt_lock(ticket_dir: Path) -> Path | None:
-    """Rename a corrupt run.lock to run.lock.quarantine.<ts> for forensics.
+def _quarantine_locked(ticket_dir: Path) -> Path | None:
+    """Rename run.lock to run.lock.quarantine.<ts>. Caller MUST hold the flock.
 
-    Mutex-safe: the rename runs under the same flock as acquire/refresh/release,
-    so it never races a concurrent write. Returns the quarantine dst Path, or
-    None when run.lock is absent. The takeover caller has already classified the
-    lock as non-live (corrupt), so renaming it cannot strand a live holder.
+    Extracted so takeover_clear can quarantine inside its own flock span:
+    flock_blocking opens a fresh fd per call and LOCK_EX blocks across fds even
+    within one process, so nesting the public quarantine_corrupt_lock would
+    self-deadlock. Returns the quarantine dst Path, or None when absent.
+    """
+    src = run_lock_path(ticket_dir)
+    if not src.exists():
+        return None
+    dst = ticket_dir / f"run.lock.quarantine.{_ts_token()}"
+    os.replace(src, dst)
+    return dst
+
+
+def quarantine_corrupt_lock(ticket_dir: Path) -> Path | None:
+    """Rename a still-corrupt run.lock to run.lock.quarantine.<ts> for forensics.
+
+    Re-verifies corruption under the flock before renaming: any classification
+    the caller did outside the flock is stale by the time the rename runs (a
+    concurrent acquire may have replaced the corrupt file with a valid live
+    lease). A lock that is absent or parses as a valid Lease is left alone and
+    None is returned; only a lock that still raises LeaseError is renamed.
     """
     with flock_blocking(_flock_path(ticket_dir)):
-        src = run_lock_path(ticket_dir)
-        if not src.exists():
-            return None
-        dst = ticket_dir / f"run.lock.quarantine.{_ts_token()}"
-        os.replace(src, dst)
-        return dst
+        try:
+            read_lease(ticket_dir)
+        except LeaseError:
+            return _quarantine_locked(ticket_dir)
+        return None
+
+
+def takeover_clear(
+    ticket_dir: Path,
+    now_iso: str,
+    *,
+    current_boot: str | None = None,
+    hostname: str | None = None,
+) -> dict[str, object]:
+    """Classify and remediate the lease for recover takeover under ONE flock.
+
+    Closes the classify-then-mutate TOCTOU: the decision and the remediation
+    (quarantine-rename or unlink) happen inside a single flock span, so a
+    concurrent acquire cannot land between them. classify is lock-free
+    internally, so calling it with the flock held is safe.
+
+    Returns {"cleared", "state", "holder", "quarantined"}: live -> cleared
+    False with the holder; corrupt -> rename to quarantine; free / expired_*
+    -> unlink.
+    """
+    with flock_blocking(_flock_path(ticket_dir)):
+        info = classify(ticket_dir, now_iso, current_boot=current_boot, hostname=hostname)
+        lock_state = info["state"]
+        if lock_state == "live":
+            return {
+                "cleared": False,
+                "state": lock_state,
+                "holder": info["holder"],
+                "quarantined": None,
+            }
+        if lock_state == "corrupt":
+            dst = _quarantine_locked(ticket_dir)
+            return {"cleared": True, "state": lock_state, "holder": None, "quarantined": dst}
+        run_lock_path(ticket_dir).unlink(missing_ok=True)
+        return {
+            "cleared": True,
+            "state": lock_state,
+            "holder": info["holder"],
+            "quarantined": None,
+        }
 
 
 # ─── Internal write (flock already held) ──────────────────────────────────────
@@ -566,4 +622,5 @@ __all__ = [
     "refresh",
     "release",
     "run_lock_path",
+    "takeover_clear",
 ]
