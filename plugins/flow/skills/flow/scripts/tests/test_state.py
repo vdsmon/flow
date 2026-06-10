@@ -134,7 +134,7 @@ def test_finish_stage_marks_failed_with_detail(tmp_path: Path) -> None:
 def test_finish_stage_rejects_non_terminal_status(tmp_path: Path) -> None:
     _seed(tmp_path)
     with pytest.raises(ValueError, match=r"completed\|failed"):
-        state.finish_stage(tmp_path, "ticket", "in_progress", "h")  # type: ignore[arg-type]
+        state.finish_stage(tmp_path, "ticket", "in_progress", "h")
 
 
 def test_finish_stage_persists_skill_output(tmp_path: Path) -> None:
