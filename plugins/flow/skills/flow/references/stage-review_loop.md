@@ -22,7 +22,7 @@ A *bare* foreground `sleep` is blocked (`sleep` inside a single bounded Bash cal
 ```
 Monitor(
   description="CI for PR #<PR_ID>",
-  command='prev=""; while true; do s=$(python3 ${CLAUDE_SKILL_DIR}/scripts/forge_cli.py --workspace-root . ci-rollup --pr "<PR_ID>" 2>/dev/null | python3 -c "import sys,json;print(json.load(sys.stdin).get(\"status\",\"pending\"))"); if [ "$s" != "$prev" ]; then echo "[$(date +%T)] CI: $s"; prev=$s; fi; if [ "$s" = "green" ] || [ "$s" = "failed" ]; then break; fi; sleep 60; done',
+  command='prev=""; while true; do s=$(python3 ${CLAUDE_SKILL_DIR}/scripts/forge_cli.py --workspace-root . ci-rollup --pr "<PR_ID>" 2>/dev/null | python3 -c "import sys,json;print(json.load(sys.stdin).get(\"status\",\"pending\"))" 2>/dev/null || echo pending); if [ "$s" != "$prev" ]; then echo "[$(date +%T)] CI: $s"; prev=$s; fi; if [ "$s" = "green" ] || [ "$s" = "failed" ]; then break; fi; sleep 60; done',
   timeout_ms=1500000, persistent=false
 )
 ```
