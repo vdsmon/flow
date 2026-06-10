@@ -646,6 +646,54 @@ def test_reap_remove_failure_skips_branch_delete(tmp_path: Path) -> None:
     assert not any(c[:3] == ["git", "branch", "-D"] for c in calls)
 
 
+def test_reap_skips_remove_when_lease_goes_live_under_flock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # the classify-then-mutate TOCTOU: the dir is free when reap looks, but a
+    # concurrent acquire wins the flock first and writes a live lease. Because
+    # classify_then classifies AND would run the worktree-remove teardown under
+    # one flock span, the live lease is observed and the remove is never issued.
+    # The "remove never issued" assertion is load-bearing.
+    import contextlib
+    from collections.abc import Iterator
+
+    wt = tmp_path / "main" / ".flow" / "worktrees" / "feature-FT-1-thing"
+    ticket_dir = wt / ".flow" / "runs" / "FT-1"
+    ticket_dir.mkdir(parents=True)
+    real_flock = lease.flock_blocking
+
+    @contextlib.contextmanager
+    def racing_flock(path: Path) -> Iterator[None]:
+        with real_flock(path):
+            lease.run_lock_path(ticket_dir).write_text(
+                lease._serialize(
+                    lease.Lease(
+                        run_id="racer",
+                        boot_id="boot-x",
+                        hostname="host-x",
+                        cwd="/cwd-x",
+                        acquired_at="2999-01-01T00:00:00Z",
+                        lease_expires_at="2999-01-01T01:00:00Z",
+                    )
+                ),
+                encoding="utf-8",
+            )
+            yield
+
+    monkeypatch.setattr(lease, "flock_blocking", racing_flock)
+    calls: list = []
+    runner = _reap_runner(
+        worktrees=_porcelain([(str(wt), "feature/FT-1-thing")]),
+        calls=calls,
+    )
+    receipt = fw.reap_worktree(ticket="FT-1", main_root=tmp_path / "main", runner=runner)
+    assert receipt["worktree_removed"] is False
+    assert receipt["branch_deleted"] is False
+    assert receipt["skipped"] == "lease live (run still in progress)"
+    assert not any(c[:4] == ["git", "worktree", "remove", "--force"] for c in calls)
+    assert not any(c[:3] == ["git", "branch", "-D"] for c in calls)
+
+
 def test_reap_cli_prints_receipt(tmp_path: Path, monkeypatch, capsys) -> None:
     calls: list = []
     runner = _reap_runner(

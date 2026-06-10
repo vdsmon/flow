@@ -32,9 +32,13 @@ classifier fails safe toward NOT stopping):
     orchestrator's own bg job sits at the same repo root with the same intent shape,
     so the self-job flag + the non-terminal-bead gate (its own bead is in_progress)
     are what exclude it, not cwd.
-  - activity — `tempo == idle` (never stop a session reporting active work). NOTE:
-    `state` is deliberately NOT gated. A finished bg run rests at `state == working`
-    (or `blocked`) INDEFINITELY — a `session_cron` keepalive task, or simply a daemon
+  - activity — `tempo ∈ {idle, blocked}` (never stop a session reporting active work).
+    `blocked` is admitted because a bg run that DIED blocked (rate limit, permission
+    ask, auth outage) rests at `tempo == blocked` forever; the terminal-bead gate
+    below separates that dead zombie from a genuine needs-input run, and the three
+    independent signals (lease non-live ∧ transcript idle past stale ∧ bead terminal)
+    still gate it. NOTE: `state` is deliberately NOT gated. A finished bg run rests at
+    `state == working` (or `blocked`) INDEFINITELY — a `session_cron` keepalive task, or simply a daemon
     that never flips the field, holds it there; a clean `done` is the exception, not
     the rule (witnessed: a whole drain's worth of finished runs all sat at `working`,
     cron-bearing or not). Gating on `state ∈ {done, stopped}` therefore skipped the
@@ -200,11 +204,16 @@ def classify(
         if Path(rec.cwd).resolve() != repo_resolved:
             skip(rec, "cwd is not this repo's root")
             continue
-        # tempo is the one hard activity signal: never stop a session reporting work.
-        # `state` is NOT gated — a finished bg run rests at 'working'/'blocked'
-        # indefinitely (module docstring), so doneness rests on the three independent
-        # signals below (lease non-live ∧ transcript idle ∧ bead terminal).
-        if rec.tempo != "idle":
+        # tempo is the activity signal: never stop a session reporting active work.
+        # `idle` and `blocked` are both admitted — a bg run that DIED blocked (rate
+        # limit, permission ask, auth outage) rests at tempo=blocked forever, and the
+        # bead-terminal gate below separates that dead zombie (bead terminal → eligible)
+        # from a genuine needs-input run (bead open/in_progress → skipped). Any other
+        # non-idle tempo (e.g. `active`) is real work → skip. `state` is NOT gated — a
+        # finished bg run rests at 'working'/'blocked' indefinitely (module docstring),
+        # so doneness rests on the three independent signals below (lease non-live ∧
+        # transcript idle ∧ bead terminal).
+        if rec.tempo not in ("idle", "blocked"):
             skip(rec, f"tempo not idle (tempo={rec.tempo!r})")
             continue
 
@@ -224,7 +233,9 @@ def classify(
 
         # a clean terminal state trusts the normal idle threshold; a stale
         # 'working'/'blocked' state demands the LONGER threshold before we override it.
-        clean_terminal = rec.state in _STOPPABLE_STATES
+        # tempo=blocked never trusts the short bar even if state reads clean — a
+        # dead-blocked zombie must clear the stale-idle bar.
+        clean_terminal = rec.state in _STOPPABLE_STATES and rec.tempo != "blocked"
         required_idle = idle_threshold_secs if clean_terminal else stale_idle_threshold_secs
         if now_ts is None or not _transcript_is_idle(rec.link_scan_path, now_ts, required_idle):
             skip(

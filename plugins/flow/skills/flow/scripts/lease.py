@@ -455,6 +455,44 @@ def takeover_clear(
         }
 
 
+def classify_then(
+    ticket_dir: Path,
+    now_iso: str,
+    teardown: Callable[[], object],
+    *,
+    current_boot: str | None = None,
+    hostname: str | None = None,
+) -> dict[str, object]:
+    """Classify the lease under the flock; run teardown() while STILL holding it,
+    iff the lease is non-live/non-corrupt. Closes the classify-then-mutate TOCTOU
+    for an EXTERNAL teardown (e.g. `git worktree remove`): the decision and the
+    mutation share one flock span, so a concurrent acquire cannot land between
+    them. Returns {"torn_down": bool, "state": str, "holder": dict|None,
+    "result": <teardown return>|absent}.
+
+    Two non-obvious invariants the caller must respect:
+
+    (i) flock non-reentrancy — teardown must NOT call any lease function that
+    re-takes the flock (flock_blocking opens a fresh fd per call and LOCK_EX
+    blocks across fds even within one process, so re-entering self-deadlocks).
+    reap's teardown only runs a git subprocess, which is safe.
+
+    (ii) doomed-inode — when teardown deletes the worktree containing the lock
+    file, the held flock fd survives the unlink (POSIX): the file is gone from
+    the namespace but the open fd keeps the inode alive until close. A later
+    acquirer that recreates the lock path lands on a fresh inode and is no longer
+    mutually excluded from this span, but that is safe: classify already observed
+    non-live under the lock and the worktree is being torn down regardless.
+    """
+    with flock_blocking(_flock_path(ticket_dir)):
+        info = classify(ticket_dir, now_iso, current_boot=current_boot, hostname=hostname)
+        state = info["state"]
+        if state in ("live", "corrupt"):
+            return {"torn_down": False, "state": state, "holder": info["holder"]}
+        result = teardown()
+        return {"torn_down": True, "state": state, "holder": info["holder"], "result": result}
+
+
 # ─── Internal write (flock already held) ──────────────────────────────────────
 
 
@@ -617,6 +655,7 @@ __all__ = [
     "assert_lease_still_mine",
     "boot_id",
     "classify",
+    "classify_then",
     "cli_main",
     "hostname",
     "is_expired",

@@ -246,6 +246,59 @@ def test_stale_working_idle_only_past_short_threshold_skips(tmp_path):
     assert "stale threshold" in out["skipped"][0]["reason"]
 
 
+def test_blocked_tempo_terminal_bead_is_stoppable(tmp_path):
+    # a bg run that DIED in tempo=blocked (rate limit, permission ask, auth outage)
+    # is eligible once the three doneness signals hold: dead lease, transcript idle
+    # past the stale threshold, terminal bead. state=blocked is not a clean terminal,
+    # so the longer stale bar applies.
+    repo, _ = _setup_happy(tmp_path)
+    for status in ("closed", "blocked", "deferred"):
+        rec = _record(
+            tmp_path / "flow",
+            tmp_path,
+            state="blocked",
+            tempo="blocked",
+            link_scan_path=_transcript(tmp_path, idle_secs=10_000),
+        )
+        out = _classify(repo, [rec], status=status)
+        assert len(out["stoppable"]) == 1, status
+        entry = out["stoppable"][0]
+        assert entry["job_id"] == rec.job_id
+        assert "stale-blocked" in entry["reason"]
+
+
+def test_blocked_tempo_open_bead_skips(tmp_path):
+    # a genuine needs-input run blocked on a permission ask: bead still open → skip.
+    # the terminal-bead gate separates a dead-blocked zombie from a live one.
+    repo, _ = _setup_happy(tmp_path)
+    rec = _record(
+        tmp_path / "flow",
+        tmp_path,
+        state="blocked",
+        tempo="blocked",
+        link_scan_path=_transcript(tmp_path, idle_secs=10_000),
+    )
+    out = _classify(repo, [rec], status="open")
+    assert out["stoppable"] == []
+    assert out["skipped"][0]["reason"].startswith("bead flow-abc not terminal")
+
+
+def test_blocked_tempo_idle_only_past_short_threshold_skips(tmp_path):
+    # tempo=blocked idle past the short threshold (300s) but not the stale one (600s):
+    # too soon to override the stale field → skip (fail-safe).
+    repo, _ = _setup_happy(tmp_path)
+    rec = _record(
+        tmp_path / "flow",
+        tmp_path,
+        state="blocked",
+        tempo="blocked",
+        link_scan_path=_transcript(tmp_path, idle_secs=450),
+    )
+    out = _classify(repo, [rec])
+    assert out["stoppable"] == []
+    assert "stale threshold" in out["skipped"][0]["reason"]
+
+
 def test_clean_terminal_state_uses_short_threshold(tmp_path):
     # a clean state='done' run idle past the SHORT threshold (but not the stale one)
     # is stoppable — the longer bar applies only when overriding a non-terminal state.
