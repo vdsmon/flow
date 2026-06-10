@@ -241,6 +241,18 @@ def test_assert_lease_still_mine_boot_mismatch(tmp_path: Path) -> None:
         lease.assert_lease_still_mine(tmp_path, "run-1", current_boot="boot-B")
 
 
+def test_assert_lease_still_mine_unknown_current_boot_skips_check(tmp_path: Path) -> None:
+    # sandboxed runs can't read sysctl, so boot_id() returns "" — that must
+    # not read as a reboot (false lost-lease exit 7).
+    _acquire(tmp_path, "run-1", boot="boot-A")
+    lease.assert_lease_still_mine(tmp_path, "run-1", current_boot="")  # no raise
+
+
+def test_assert_lease_still_mine_unknown_lease_boot_skips_check(tmp_path: Path) -> None:
+    _acquire(tmp_path, "run-1", boot="")
+    lease.assert_lease_still_mine(tmp_path, "run-1", current_boot="boot-B")  # no raise
+
+
 def test_assert_lease_still_mine_hostname_mismatch(tmp_path: Path) -> None:
     _acquire(tmp_path, "run-1", host="host-1")
     with pytest.raises(lease.LeaseLost):

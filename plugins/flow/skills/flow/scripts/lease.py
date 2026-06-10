@@ -318,7 +318,11 @@ def assert_lease_still_mine(
     """Raise LeaseLost if the lease is gone or no longer identifies as ours.
 
     Does NOT check expiry: the owner may legitimately resume a stage past
-    expiry. Boot/hostname are checked only when provided.
+    expiry. Boot/hostname are checked only when provided. The boot check also
+    needs BOTH ids truthy (same convention as classify/acquire): boot_id()
+    returns "" when the source is unreadable (e.g. sysctl denied under the
+    harness Bash sandbox), and an unknown boot must fall through, not read as
+    a reboot.
 
     Raises:
         LeaseLost, LeaseError
@@ -328,7 +332,7 @@ def assert_lease_still_mine(
         raise LeaseLost("run.lock is gone")
     if lease.run_id != run_id:
         raise LeaseLost(f"run_id mismatch: on-disk {lease.run_id!r} != {run_id!r}")
-    if current_boot is not None and lease.boot_id != current_boot:
+    if current_boot and lease.boot_id and lease.boot_id != current_boot:
         raise LeaseLost(f"boot_id mismatch: on-disk {lease.boot_id!r} != {current_boot!r}")
     if hostname is not None and lease.hostname != hostname:
         raise LeaseLost(f"hostname mismatch: on-disk {lease.hostname!r} != {hostname!r}")
