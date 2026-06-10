@@ -55,7 +55,7 @@ Present, in order:
 
 ## 4. Render — `--dry-run` addition
 
-After §3, print the would-launch batch: for each key in `launch`, the exact command a drain would run, appending `--model <m>` only when `select.model_per_key[key]` exists (a `tier:trivial` downshift):
+After §3, print the would-launch batch: for each key in `launch`, the exact command a drain would run, appending `--model <m>` only when `select.model_per_key[key]` exists. Hot is excluded upstream on this queue, so the only models reachable are `sonnet` for a `tier:trivial` bead and `[evolve] worker_model` for any other bead when that knob is set; an unset knob with no tier omits the flag and inherits the launcher default:
 
 ```
 claude --bg [--model sonnet] "/flow <key> --auto"
@@ -96,7 +96,7 @@ When `bead_active` is true and the `bd close` FAILS, skip the branch delete + wo
 
 **C. Act on `action`.**
 
-- **`launch`** → for each key in `launch`, read the per-key worker model from the step-**A** JSON (`result.select.model_per_key[key]`) and append `--model <model>` when present (absent → omit the flag; the run inherits the strong default model):
+- **`launch`** → for each key in `launch`, read the per-key worker model from the step-**A** JSON (`result.select.model_per_key[key]`) and append `--model <model>` when present. Hot is excluded upstream here, so only `sonnet` (a `tier:trivial` bead) or `[evolve] worker_model` (any other bead when set) is reachable; absent → omit the flag and inherit the launcher default:
 
   ```bash
   # record the launch FIRST so the very next turn's select sees this key as in-flight
