@@ -595,6 +595,45 @@ def test_capture_implement_diff_rejects_gitignored_planned_file(
         diff_extract.capture_implement_diff(ticket_dir, tmp_repo)
 
 
+def test_capture_implement_diff_staged_deletion_and_gitignore_is_committable(
+    tmp_repo: Path, tmp_path: Path
+) -> None:
+    """A `git rm --cached` path that a same-change .gitignore covers is committable.
+
+    The path is untracked-new to `git ls-files` but `git diff HEAD` already emits
+    its deletion, so it must NOT trip the gitignore guard.
+    """
+    (tmp_repo / "settings.json").write_text("{}\n", encoding="utf-8")
+    _git(["add", "settings.json"], tmp_repo)
+    _git(["commit", "-m", "add settings"], tmp_repo)
+    _git(["rm", "--cached", "settings.json"], tmp_repo)
+    (tmp_repo / ".gitignore").write_text("settings.json\n", encoding="utf-8")
+    _git(["add", ".gitignore"], tmp_repo)
+    ticket_dir = tmp_path / "runs" / "FT-1"
+    diff_extract.record_baseline(
+        "implement", ticket_dir, tmp_repo, files=["settings.json", ".gitignore"]
+    )
+    out = diff_extract.capture_implement_diff(ticket_dir, tmp_repo)
+    content = out.read_text(encoding="utf-8")
+    assert content.strip() != ""
+    assert "settings.json" in content
+    assert ".gitignore" in content
+
+
+def test_capture_implement_diff_staged_deletion_preserved_in_index(
+    tmp_repo: Path, tmp_path: Path
+) -> None:
+    """A staged deletion must survive capture: not intent-to-added, not reset."""
+    (tmp_repo / "settings.json").write_text("{}\n", encoding="utf-8")
+    _git(["add", "settings.json"], tmp_repo)
+    _git(["commit", "-m", "add settings"], tmp_repo)
+    _git(["rm", "--cached", "settings.json"], tmp_repo)
+    ticket_dir = tmp_path / "runs" / "FT-1"
+    diff_extract.record_baseline("implement", ticket_dir, tmp_repo, files=["settings.json"])
+    diff_extract.capture_implement_diff(ticket_dir, tmp_repo)
+    assert "D\tsettings.json" in _git(["diff", "--cached", "--name-status"], tmp_repo)
+
+
 def test_capture_implement_diff_untracked_patch_applies_to_index(
     tmp_repo: Path, tmp_path: Path
 ) -> None:
