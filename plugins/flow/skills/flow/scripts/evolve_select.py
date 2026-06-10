@@ -233,11 +233,17 @@ def select(
     result["live_runs"] = sorted(live_keys)
     result["launched_pending"] = sorted(launched_keys)
     labels_by_id = {c["id"]: (c.get("labels") or []) for c in candidates if c.get("id")}
-    result["model_per_key"] = {
-        key: "sonnet"
-        for key in result["launch"]
-        if "tier:trivial" in labels_by_id.get(key, []) and "hot" not in labels_by_id.get(key, [])
-    }
+    worker_model = _worker_model(workspace_root)
+    model_per_key: dict[str, str] = {}
+    for key in result["launch"]:
+        labels = labels_by_id.get(key, [])
+        if "hot" in labels:
+            continue
+        if "tier:trivial" in labels:
+            model_per_key[key] = "sonnet"
+        elif worker_model:
+            model_per_key[key] = worker_model
+    result["model_per_key"] = model_per_key
     return result
 
 
@@ -255,6 +261,18 @@ def _config_defaults(workspace_root: Path) -> tuple[int, int]:
         cap if isinstance(cap, int) and cap > 0 else DEFAULT_CAP,
         conc if isinstance(conc, int) and conc > 0 else DEFAULT_CONCURRENCY,
     )
+
+
+def _worker_model(workspace_root: Path) -> str | None:
+    try:
+        config = load_workspace_toml(workspace_root)
+    except WorkspaceConfigError:
+        return None
+    section = config.get("evolve")
+    if not isinstance(section, dict):
+        return None
+    val = section.get("worker_model")
+    return val if isinstance(val, str) and val else None
 
 
 def cli_main(argv: list[str]) -> int:

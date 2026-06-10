@@ -22,6 +22,8 @@ self_target = true
 cap = 10
 concurrency = 8
 auto_merge_hot = true
+# model tiering for spawned worker runs: fable for the interactive orchestrator, opus for spawned worker runs, sonnet for trivial.
+worker_model = "opus"
 # lift the hot hard-floor for this maintainer self-target repo (the human reviews
 # every PR; the floor was pure friction). Merge-time guard-property review + CI gate.
 adjudicate_hot = true
