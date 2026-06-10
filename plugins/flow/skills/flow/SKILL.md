@@ -148,7 +148,7 @@ The verbose detail — full exit-code matrices, the PR-ready notification protoc
           """
         )
         ```
-        **Capture the Agent's response** with the Write tool (NOT shell redirect — `"`/`\` would break it): `mkdir -p "$TICKET_DIR/stages"`, then Write `file_path = <TICKET_DIR>/stages/<STAGE>.out`, `content = <the Agent's full response>`. Remember that path for `--output-path` on `advance`.
+        **Capture the Agent's response** with the Write tool (NOT shell redirect — `"`/`\` would break it): `mkdir -p "$TICKET_DIR/stages"`, then Write `file_path = <TICKET_DIR>/stages/<STAGE>.out`, `content = <the Agent's full response>`. Remember that path for `--output-path` on `advance`. (In a backgrounded `--auto` run the worktree-isolation guard blocks the Write tool here — fall back to a Bash heredoc to the same path; see the "Backgrounded `--auto` run" section of `references/verb-do.md` for the collision-safe recipe.)
 
       - **`skill:<name>[:<args>]`** — The descriptor carries `skill_name` + `skill_args` (no raw handler string), and usually NO `reference_doc` (a skill stage's own SKILL.md is the protocol; do not read `reference_doc` for it, and never treat a missing one as an error). Reconstruct the handler string `skill:<skill_name>[:<skill_args>]`, then:
         1. Verify the handler is installed:
@@ -158,7 +158,7 @@ The verbose detail — full exit-code matrices, the PR-ready notification protoc
            ```
            Exit 1 (not installed) or Exit 2 (manifest invalid) → surface the error, set `STATUS=failed`, fall through to (e) to record it (do NOT bare-break). Exit 0 → the stdout JSON gives authoritative `skill_name` / `skill_args` / `invocation`.
         2. Invoke the skill via the Skill tool using `skill_name`, passing `skill_args` verbatim. Wait for it to finish.
-        3. Capture its final response: `mkdir -p "$TICKET_DIR/stages"`, then Write to `<TICKET_DIR>/stages/<STAGE>.out` (same as the subagent branch). Set `STATUS=completed` (or `failed` if the skill reported failure).
+        3. Capture its final response: `mkdir -p "$TICKET_DIR/stages"`, then Write to `<TICKET_DIR>/stages/<STAGE>.out` (same as the subagent branch, including the bg `--auto` Write-blocked heredoc fallback in `references/verb-do.md`). Set `STATUS=completed` (or `failed` if the skill reported failure).
 
       - **`none`** — Skip; transition to (e) with status=completed.
 

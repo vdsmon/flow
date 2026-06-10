@@ -106,3 +106,16 @@ Do not silently overwrite or `--force`.
 ## Backgrounded `--auto` run (cwd pinned at repo root)
 
 A `claude --bg /flow <key> --auto` run has its session cwd pinned at the repository root, so `EnterWorktree(path=<worktree>)` refuses and the bg-isolation guard blocks `Edit`/`Write` inside the linked worktree (for this session and any spawned subagent). Before the loop runs, `cd` the persistent Bash cwd into the seeded worktree once; then `--workspace-root .` resolves against the worktree for every dispatch call, and spawned subagents fall back to Bash/Python string-replace edits against absolute worktree paths. See `references/verb-spec.md` step 7 for the canonical explanation.
+
+### Orchestrator `.out` capture when Write is blocked
+
+The same guard blocks the orchestrator's own step-d capture of a subagent/skill response: `$TICKET_DIR/stages/<STAGE>.out` lives inside the worktree, so the Write tool SKILL.md step d prescribes is rejected. The orchestrator holds the response only as in-context text it must emit into a shell command — a heredoc is the mechanism, and the robustness lever is the delimiter, not the transport. Write the `.out` with a quoted heredoc using a long collision-safe sentinel:
+
+```bash
+mkdir -p "$TICKET_DIR/stages"
+cat > "$TICKET_DIR/stages/<STAGE>.out" <<'FLOW_OUT_SENTINEL_9f3a'
+<the subagent/skill response, emitted verbatim>
+FLOW_OUT_SENTINEL_9f3a
+```
+
+then pass `--output-path "$TICKET_DIR/stages/<STAGE>.out"` to `advance` in step (e) exactly as the Write path would have. Two properties make this safe: the sentinel `FLOW_OUT_SENTINEL_9f3a` is long and random so it will not appear on a line by itself in the body (if it ever does, extend both sentinels and retry); and because the delimiter is **quoted** (`<<'...'`), the shell expands nothing inside the body — `$`, backticks, and `\` pass through literally, which is the exact safety the SKILL.md "NOT shell redirect — `"`/`\` would break it" parenthetical protects. `cat >` is the default writer; `python3 <<'FLOW_OUT_SENTINEL_9f3a' ...` is interchangeable (the delimiter and quoting are what matter, not the writer binary). This is the orchestrator analogue of the subagent string-replace fallback above; observed first on flow-495l/PR#233, where all four stage `.out` files were written via heredoc.
