@@ -814,6 +814,26 @@ def test_init_stale_foreign_lease_returns_5(
     assert payload["holder"]["run_id"] == "old-run"
 
 
+def test_cli_init_stale_foreign_lease_exits_5(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # recovery prose routes on the process exit code: 5 must survive cli_main.
+    _write_workspace(tmp_path)
+    _stub_git_head(monkeypatch)
+    td = tmp_path / ".flow" / "runs" / "FT-1"
+    boot, host = _identity()
+    lease.acquire(
+        td, "old-run", 1, "2020-01-01T00:00:00Z", current_boot=boot, hostname=host, cwd=str(td)
+    )
+    rc = ds.cli_main(["init", "--ticket", "FT-1", "--workspace-root", str(tmp_path)])
+    assert rc == 5
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert payload["holder"]["run_id"] == "old-run"
+    assert "recover --takeover" in payload["hint"]
+    assert "stale lease" in captured.err
+
+
 def test_next_refuses_on_snapshot_drift(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _write_workspace(tmp_path)
     _stub_git_head(monkeypatch)
@@ -836,6 +856,28 @@ def test_next_lost_lease_returns_7(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     rc, payload = ds.cmd_next(tmp_path, "FT-1")
     assert rc == 7
     assert payload["error"] == "lost lease"
+
+
+def test_next_refresh_lease_lost_returns_7(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # the refresh-time LeaseLost branch is shadowed by _guard_lease_ownership for
+    # any file-forgeable condition; reach it by failing refresh itself.
+    _write_workspace(tmp_path, stages=["ticket"], compounding=False)
+    _stub_git_head(monkeypatch)
+    ds.cmd_init(tmp_path, "FT-1")
+
+    def lost(*args: Any, **kwargs: Any) -> Any:
+        del args, kwargs
+        raise lease.LeaseLost("taken over mid-refresh")
+
+    monkeypatch.setattr(ds.lease, "refresh", lost)
+    rc, payload = ds.cmd_next(tmp_path, "FT-1")
+    assert rc == lease.EXIT_LEASE_LOST
+    assert payload["error"] == "lost lease"
+    assert payload["detail"] == "taken over mid-refresh"
+    # refresh guard fires before begin_stage: ticket stays pending.
+    state_path = tmp_path / ".flow" / "runs" / "FT-1" / "state.json"
+    data = json.loads(state_path.read_text(encoding="utf-8"))
+    assert data["stages"]["ticket"]["status"] == "pending"
 
 
 def test_finish_releases_lease_on_terminal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1208,6 +1250,52 @@ def test_finish_corrupt_lock_returns_lease_lost_no_advance(
     assert payload["error"] == "corrupt run.lock"
     assert "recover" in payload["hint"]
     # finish did not run: ticket stays in_progress (begun by cmd_next, not closed).
+    state_path = tmp_path / ".flow" / "runs" / "FT-1" / "state.json"
+    data = json.loads(state_path.read_text(encoding="utf-8"))
+    assert data["stages"]["ticket"]["status"] == "in_progress"
+
+
+def test_cli_next_corrupt_lock_exits_7(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # recovery prose routes on the process exit code: 7 must survive cli_main.
+    _write_workspace(tmp_path, stages=["ticket"], handlers={"ticket": "inline"}, compounding=False)
+    _stub_git_head(monkeypatch)
+    ds.cmd_init(tmp_path, "FT-1")
+    _corrupt_lock(tmp_path)
+    capsys.readouterr()
+    rc = ds.cli_main(["next", "--ticket", "FT-1", "--workspace-root", str(tmp_path)])
+    assert rc == lease.EXIT_LEASE_LOST
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["error"] == "corrupt run.lock"
+
+
+def test_cli_advance_corrupt_lock_exits_7(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _write_workspace(tmp_path, stages=["ticket"], handlers={"ticket": "inline"}, compounding=False)
+    _stub_git_head(monkeypatch)
+    ds.cmd_init(tmp_path, "FT-1")
+    ds.cmd_next(tmp_path, "FT-1")
+    _corrupt_lock(tmp_path)
+    capsys.readouterr()
+    rc = ds.cli_main(
+        [
+            "advance",
+            "--ticket",
+            "FT-1",
+            "--workspace-root",
+            str(tmp_path),
+            "--stage",
+            "ticket",
+            "--status",
+            "completed",
+        ]
+    )
+    assert rc == lease.EXIT_LEASE_LOST
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["error"] == "corrupt run.lock"
+    # finish never ran: ticket stays in_progress.
     state_path = tmp_path / ".flow" / "runs" / "FT-1" / "state.json"
     data = json.loads(state_path.read_text(encoding="utf-8"))
     assert data["stages"]["ticket"]["status"] == "in_progress"
