@@ -79,10 +79,12 @@ The applied patch comes from the recorded `implement.diff` — NOT from `git add
    Then append a body section describing *why* (not what — the diff shows what), referencing any failing-tests-now-green progress from implement stage.
    Then use the **Write tool** to write the completed message back to that same path.
 
-5. Apply the recorded patch:
+5. Reset the index to HEAD, then apply the recorded patch:
    ```bash
+   git reset --quiet HEAD
    git apply --cached --binary <ticket-dir>/implement.diff
    ```
+   The `git reset` (mixed, to HEAD) leaves the working tree untouched and is a no-op for a normal ticket (the index is already HEAD after capture). It is REQUIRED for an untrack-only ticket: `capture-implement-diff` deliberately leaves the staged deletion in the index (it must be staged when capture runs so `git diff HEAD` emits it), and `git apply --cached` validates the HEAD-relative patch against the index, so a leftover staged deletion makes it fail with a misleading `does not exist in index`. This mirrors stage-implement.md's own pre-flight note (`git reset` first if you staged anything; the working-tree deletion stays intact).
    If apply fails:
    - The working tree drifted from the baseline. Surface the error.
    - Abort with status=failed; `/flow recover <KEY>` → `retry --stage implement` (re-records the baseline against the current tree, then commit re-applies cleanly).

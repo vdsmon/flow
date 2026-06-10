@@ -634,6 +634,42 @@ def test_capture_implement_diff_staged_deletion_preserved_in_index(
     assert "D\tsettings.json" in _git(["diff", "--cached", "--name-status"], tmp_repo)
 
 
+def test_capture_implement_diff_untrack_only_patch_applies_after_reset(
+    tmp_repo: Path, tmp_path: Path
+) -> None:
+    """An untrack-only patch applies through the commit stage after a reset to HEAD.
+
+    `capture_implement_diff` leaves the staged deletion in the index (so `git diff
+    HEAD` emits it), so the HEAD-relative patch cannot apply against that dirty index
+    (`git apply --cached` errors "does not exist in index"). The `git reset --quiet
+    HEAD` here models the fixed commit stage (stage-commit.md step 5): a mixed reset
+    that cleans the index back to HEAD while leaving the working tree untouched.
+    Without it the apply returns rc=1.
+    """
+    (tmp_repo / "settings.json").write_text("{}\n", encoding="utf-8")
+    _git(["add", "settings.json"], tmp_repo)
+    _git(["commit", "-m", "add settings"], tmp_repo)
+    _git(["rm", "--cached", "settings.json"], tmp_repo)
+    (tmp_repo / ".gitignore").write_text("settings.json\n", encoding="utf-8")
+    _git(["add", ".gitignore"], tmp_repo)
+    ticket_dir = tmp_path / "runs" / "FT-1"
+    diff_extract.record_baseline(
+        "implement", ticket_dir, tmp_repo, files=["settings.json", ".gitignore"]
+    )
+    out = diff_extract.capture_implement_diff(ticket_dir, tmp_repo)
+    _git(["reset", "--quiet", "HEAD"], tmp_repo)
+    apply = subprocess.run(
+        ["git", "apply", "--cached", "--binary", str(out)],
+        cwd=str(tmp_repo),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert apply.returncode == 0, apply.stderr
+    assert "D\tsettings.json" in _git(["diff", "--cached", "--name-status"], tmp_repo)
+    assert ".gitignore" in _git(["diff", "--cached", "--name-only"], tmp_repo)
+
+
 def test_capture_implement_diff_untracked_patch_applies_to_index(
     tmp_repo: Path, tmp_path: Path
 ) -> None:
