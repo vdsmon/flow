@@ -65,7 +65,11 @@ two outcomes a maintainer sees here:
   The `DECISION:` stem means a relaunch reads it as already-decided (no re-ask);
   the `(advisor)` marker is informational. `triage.py list` tags any surfaced row
   whose open-question carries `(advisor)` so an advisor ruling is distinguishable
-  from a human `TRIAGE-DECISION:` at a glance. These beads are usually already
+  from a human `TRIAGE-DECISION:` at a glance. A proceed may carry mandatory
+  in-run commitments — closeable holes (a missing test, an unmapped error, an
+  undocumented-but-correct behavior change) the run closes itself instead of
+  parking (maintainer policy, flow-5fp), recorded in the `DECISION:` comment.
+  These beads are usually already
   in-flight or shipped, so they appear in the deferred/blocked queue only if a
   later wall lands them there.
 - A `block` ruling (rulable, but unsafe to auto-ship — broad blast radius,
@@ -75,6 +79,9 @@ two outcomes a maintainer sees here:
   like any other hot block, and the reopen flow above applies unchanged. Writing
   a `DECISION:` for a block would let a relaunch re-proceed a non-hot block,
   defeating it — so block deliberately reuses the defer-stem, not a decision.
+  The bar is raised (flow-5fp): a closeable hole is never block-grounds — block
+  is reserved for uncloseable/unsafe walls (user-only information, true
+  irreversibility, broad blast, hot).
 
 Note: the defer-comment pick is coupled to verb-spec.md's wording
 (`flow --auto could not self-approve`). If that stem changes, triage degrades to
