@@ -237,6 +237,129 @@ def test_unknown_key_ignored():
     )
 
 
+# ---- classify: duplicate version stamp ----
+
+
+def test_dup_stamp_clean_nonhot_routes_version_recoverable():
+    # branch version == main's current version: a sibling merged first and stamped
+    # the same next version, git sees identical version-line changes → CLEAN. Must
+    # never auto-merge; version_remerge's recover path restamps it.
+    prs = [_pr(1, "flow-a")]
+    out = er.classify(
+        prs,
+        _idx(**{"flow-a": ["evolve"]}),
+        main_version="1.2.3",
+        branch_versions={"feature/flow-a-some-desc": "1.2.3"},
+    )
+    assert out["merge"] == []
+    assert out["version_recoverable"] == [
+        {"pr": 1, "key": "flow-a", "branch": "feature/flow-a-some-desc"}
+    ]
+
+
+def test_dup_stamp_draft_nonhot_routes_version_recoverable():
+    prs = [_pr(1, "flow-a", state="DRAFT", draft=True)]
+    out = er.classify(
+        prs,
+        _idx(**{"flow-a": ["evolve"]}),
+        main_version="1.2.3",
+        branch_versions={"feature/flow-a-some-desc": "1.2.3"},
+    )
+    assert out["merge"] == []
+    assert out["version_recoverable"] == [
+        {"pr": 1, "key": "flow-a", "branch": "feature/flow-a-some-desc"}
+    ]
+
+
+def test_distinct_version_clean_still_merges():
+    prs = [_pr(1, "flow-a")]
+    out = er.classify(
+        prs,
+        _idx(**{"flow-a": ["evolve"]}),
+        main_version="1.2.3",
+        branch_versions={"feature/flow-a-some-desc": "1.2.4"},
+    )
+    assert [e["key"] for e in out["merge"]] == ["flow-a"]
+    assert out["version_recoverable"] == []
+
+
+def test_unknown_branch_version_fails_open_to_merge():
+    prs = [_pr(1, "flow-a")]
+    out = er.classify(prs, _idx(**{"flow-a": ["evolve"]}), main_version="1.2.3", branch_versions={})
+    assert [e["key"] for e in out["merge"]] == ["flow-a"]
+    assert out["version_recoverable"] == []
+
+
+def test_unknown_main_version_fails_open():
+    # unknown main with a known branch version, AND the None == None trap (both
+    # unknown): neither may read as a duplicate.
+    prs = [_pr(1, "flow-a")]
+    out = er.classify(
+        prs,
+        _idx(**{"flow-a": ["evolve"]}),
+        main_version=None,
+        branch_versions={"feature/flow-a-some-desc": "1.2.3"},
+    )
+    assert [e["key"] for e in out["merge"]] == ["flow-a"]
+
+    out = er.classify(prs, _idx(**{"flow-a": ["evolve"]}), main_version=None, branch_versions={})
+    assert [e["key"] for e in out["merge"]] == ["flow-a"]
+    assert out["version_recoverable"] == []
+
+
+def test_no_version_kwargs_keeps_legacy_routing():
+    prs = [_pr(1, "flow-a")]
+    out = er.classify(prs, _idx(**{"flow-a": ["evolve"]}))
+    assert [e["key"] for e in out["merge"]] == ["flow-a"]
+    assert out["version_recoverable"] == []
+
+
+def test_dup_stamp_dirty_still_version_recoverable():
+    prs = [_pr(1, "flow-a", state="DIRTY")]
+    out = er.classify(
+        prs,
+        _idx(**{"flow-a": ["evolve"]}),
+        main_version="1.2.3",
+        branch_versions={"feature/flow-a-some-desc": "1.2.3"},
+    )
+    assert out["version_recoverable"] == [
+        {"pr": 1, "key": "flow-a", "branch": "feature/flow-a-some-desc"}
+    ]
+    assert out["blocked"] == []
+
+
+def test_dup_stamp_hot_not_promoted_lands_skipped_hot():
+    # a duplicate-stamp hot never promotes, even alone under auto_merge_hot.
+    prs = [_pr(1, "flow-h")]
+    out = er.classify(
+        prs,
+        _idx(**{"flow-h": ["evolve", "hot"]}),
+        auto_merge_hot=True,
+        main_version="1.2.3",
+        branch_versions={"feature/flow-h-some-desc": "1.2.3"},
+    )
+    assert out["merge"] == []
+    assert out["skipped_hot"] == [{"pr": 1, "key": "flow-h", "branch": "feature/flow-h-some-desc"}]
+
+
+def test_dup_stamp_hot_excluded_from_isolation_count():
+    # the dup-stamp hot does not count toward one-hot isolation: the sibling
+    # distinct-version hot is the single eligible one and still promotes.
+    prs = [_pr(1, "flow-h"), _pr(2, "flow-g")]
+    out = er.classify(
+        prs,
+        _idx(**{"flow-h": ["evolve", "hot"], "flow-g": ["evolve", "hot"]}),
+        auto_merge_hot=True,
+        main_version="1.2.3",
+        branch_versions={
+            "feature/flow-h-some-desc": "1.2.3",
+            "feature/flow-g-some-desc": "1.2.4",
+        },
+    )
+    assert [e["key"] for e in out["merge"]] == ["flow-g"]
+    assert out["skipped_hot"] == [{"pr": 1, "key": "flow-h", "branch": "feature/flow-h-some-desc"}]
+
+
 # ---- classify: auto_merge_hot ----
 
 
@@ -445,6 +568,98 @@ def test_reap_not_maintainer(tmp_path, monkeypatch):
     )
     with pytest.raises(er.NotMaintainer):
         er.reap(plain)
+
+
+# ---- _gather_versions ----
+
+_PLUGIN_JSON = "plugins/flow/.claude-plugin/plugin.json"
+
+
+def _git_version_runner(
+    *, versions: dict[str, str], default_ref: str = "origin/main", fetch_rc: int = 0
+) -> tuple[Callable[..., subprocess.CompletedProcess[str]], Recorder]:
+    """git-only fake: symbolic-ref → default_ref, fetch → fetch_rc, show → plugin.json
+    fixture for refs present in `versions` (keyed by the ref before the colon)."""
+    calls: Recorder = []
+
+    def run(args: list[str]) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        if args[:2] == ["git", "symbolic-ref"]:
+            return subprocess.CompletedProcess(args, 0, default_ref + "\n", "")
+        if args[:2] == ["git", "fetch"]:
+            return subprocess.CompletedProcess(args, fetch_rc, "", "boom" if fetch_rc else "")
+        if args[:2] == ["git", "show"]:
+            ref = args[2].split(":", 1)[0]
+            if ref in versions:
+                body = json.dumps({"name": "flow", "version": versions[ref]})
+                return subprocess.CompletedProcess(args, 0, body, "")
+            return subprocess.CompletedProcess(args, 1, "", f"fatal: bad ref {args[2]}")
+        return subprocess.CompletedProcess(args, 1, "", f"unexpected: {args}")
+
+    return run, calls
+
+
+def test_gather_versions_reads_main_and_branches(tmp_path):
+    branch = "feature/flow-a-some-desc"
+    run, calls = _git_version_runner(versions={"origin/main": "1.2.3", f"origin/{branch}": "1.2.3"})
+    main_version, branch_versions = er._gather_versions(run, tmp_path, [branch])
+    assert main_version == "1.2.3"
+    assert branch_versions == {branch: "1.2.3"}
+    # exact refs matter: the branch read MUST hit the post-fetch remote-tracking
+    # ref origin/<branch>, never the bare local branch name (stale-local trap).
+    shows = [a for a in calls if a[:2] == ["git", "show"]]
+    assert ["git", "show", f"origin/main:{_PLUGIN_JSON}"] in shows
+    assert ["git", "show", f"origin/{branch}:{_PLUGIN_JSON}"] in shows
+    assert all(a[2].split(":", 1)[0].startswith("origin/") for a in shows)
+
+
+def test_gather_versions_fetch_failure_fails_open(tmp_path):
+    run, _ = _git_version_runner(versions={"origin/main": "1.2.3"}, fetch_rc=1)
+    assert er._gather_versions(run, tmp_path, ["feature/flow-a-some-desc"]) == (None, {})
+
+
+def test_gather_versions_branch_show_failure_omits_branch(tmp_path):
+    run, _ = _git_version_runner(versions={"origin/main": "1.2.3"})
+    main_version, branch_versions = er._gather_versions(run, tmp_path, ["feature/flow-a-some-desc"])
+    assert main_version == "1.2.3"
+    assert branch_versions == {}
+
+
+def test_gather_versions_no_candidates_no_git_calls(tmp_path):
+    run, calls = _git_version_runner(versions={})
+    assert er._gather_versions(run, tmp_path, []) == (None, {})
+    assert calls == []
+
+
+# ---- reap integration: duplicate version stamp ----
+
+
+def test_reap_git_failure_keeps_legacy_classification(tmp_path):
+    # _dispatch exits 1 on every git command: version gather degrades to unknown
+    # and the green CLEAN PR keeps merging (strictly fail-open).
+    ws = _marked_ws(tmp_path)
+    run, _ = _dispatch(prs=[_pr(1, "flow-a")], evolve_list=[{"id": "flow-a", "labels": ["evolve"]}])
+    out = er.reap(ws, runner=run)
+    assert [e["key"] for e in out["merge"]] == ["flow-a"]
+    assert out["version_recoverable"] == []
+
+
+def test_reap_dup_stamp_routed_end_to_end(tmp_path):
+    ws = _marked_ws(tmp_path)
+    branch = "feature/flow-a-some-desc"
+    git_run, _ = _git_version_runner(versions={"origin/main": "1.2.3", f"origin/{branch}": "1.2.3"})
+
+    def run(args: list[str]) -> subprocess.CompletedProcess[str]:
+        if args[:3] == ["gh", "pr", "list"]:
+            return subprocess.CompletedProcess(args, 0, json.dumps([_pr(1, "flow-a")]), "")
+        if args[:2] == ["bd", "list"]:
+            body = json.dumps([{"id": "flow-a", "labels": ["evolve"]}])
+            return subprocess.CompletedProcess(args, 0, body, "")
+        return git_run(args)
+
+    out = er.reap(ws, runner=run)
+    assert out["merge"] == []
+    assert out["version_recoverable"] == [{"pr": 1, "key": "flow-a", "branch": branch}]
 
 
 # ---- _labels_index / reap: include_proposals ----
