@@ -7,7 +7,7 @@ Backend-aware:
   - beads: matches `<prefix>-[0-9a-z]{4,}` (mirrors `_BD_ID_RE` in
            `tracker_beads.py`).
 
-Exit codes (per plan line 1012-1013):
+Exit codes:
   0 = match (key on stdout).
   1 = environment error (no git repo, no workspace.toml, malformed toml).
   3 = no match (empty stdout). Callers MUST treat this as "no ticket context".

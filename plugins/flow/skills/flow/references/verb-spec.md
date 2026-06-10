@@ -48,7 +48,7 @@ Everything from the bootstrap onward is shared by the self-approve branch; the d
 6. (Normal mode) Persist the approved plan and bootstrap the worktree.
    The tail branches off whatever `--base` you pass. Interactive: branch off your integration branch (the example uses the current branch) — stacking on a feature branch is a feature. Autonomous (`--auto`): pass `--base @default` AND `--auto`, so the run branches off the freshly-fetched default branch (never inheriting the launcher's HEAD) and the bootstrap code-enforces the hot hard-floor (see step 5's auto-approve branch).
    ```bash
-   PLAN=/tmp/flow-plan-$KEY.md   # write the approved plan text here (Write tool)
+   PLAN="${TMPDIR:-/tmp}/flow-plan-$KEY.md"   # write the approved plan text here (Write tool); bare /tmp is not sandbox-writable
    python3 ${CLAUDE_SKILL_DIR}/scripts/flow_worktree.py create \
      --ticket "$KEY" \
      --plan-from "$PLAN" \
