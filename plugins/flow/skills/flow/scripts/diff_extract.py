@@ -2,7 +2,7 @@
 
 Library + thin CLI. Stdlib-only.
 
-Subcommands (per plan line 955):
+Subcommands:
 
   since --ref <git-ref>
       git diff --numstat <ref>..HEAD; emits {files_touched, insertions,
@@ -22,7 +22,7 @@ Subcommands (per plan line 955):
       --binary --raw <head_sha> -- <files>`, writes to
       <ticket-dir>/implement.diff.
 
-Exit codes (per plan line 1014-1016):
+Exit codes:
   0 = ok
   1 = missing baseline / state.json
   2 = git error (stderr propagated)

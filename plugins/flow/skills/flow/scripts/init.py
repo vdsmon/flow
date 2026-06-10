@@ -3,7 +3,7 @@
 Library + thin CLI. Stdlib-only (`tomllib` for reads, hand-written TOML for the
 single small workspace.toml output).
 
-Contract (per plan build-sequence step 4):
+Contract:
 
 - Pure CLI. NO stdin. Caller (the /flow SKILL.md prose) collects user answers
   via AskUserQuestion, then invokes init.py with everything as flags or via
