@@ -22,6 +22,7 @@ from typing import Any
 from _runner import CwdRunner as Runner
 from _runner import cwd_default_runner as _default_runner
 from forge import (
+    CI_STATUS,
     Capability,
     CICheck,
     CIStatus,
@@ -244,7 +245,7 @@ def _classify_rollup(rollup: list) -> CIStatus:
             any_failed = True
 
     if not rollup:
-        status_lit: str = "pending"
+        status_lit: CI_STATUS = "pending"
         detail = "no checks registered yet"
     elif any_failed:
         status_lit = "failed"
@@ -255,4 +256,4 @@ def _classify_rollup(rollup: list) -> CIStatus:
     else:
         status_lit = "green"
         detail = f"{len(checks)} checks, all green"
-    return {"status": status_lit, "checks": checks, "detail": detail}  # type: ignore[typeddict-item]
+    return {"status": status_lit, "checks": checks, "detail": detail}
