@@ -189,7 +189,7 @@ def recover(
                 "git commit",
             )
             head = _ok(run(["git", "rev-parse", "HEAD"]), "git rev-parse").strip()
-            _ok(run(["git", "push"]), "git push")
+            _ok(run(["git", "push", "origin", branch]), "git push")
             return {
                 "status": "restamped",
                 "sha": head,
@@ -198,7 +198,7 @@ def recover(
                 "commit_type": commit_type,
             }
         head = _ok(run(["git", "rev-parse", "HEAD"]), "git rev-parse").strip()
-        _ok(run(["git", "push"]), "git push")
+        _ok(run(["git", "push", "origin", branch]), "git push")
         return {"status": "remerged_clean", "sha": head, "version": None}
 
     conflicts = _conflict_set(run)
@@ -241,7 +241,7 @@ def recover(
         run(["git", "merge", "--abort"])
         raise ToolError(f"working-tree write failed: {exc}") from exc
     head = _ok(run(["git", "rev-parse", "HEAD"]), "git rev-parse").strip()
-    _ok(run(["git", "push"]), "git push")
+    _ok(run(["git", "push", "origin", branch]), "git push")
     return {
         "status": "remerged",
         "sha": head,

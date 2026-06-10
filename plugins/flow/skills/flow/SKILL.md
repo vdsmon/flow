@@ -2,7 +2,7 @@
 name: flow
 description: Ticket pipeline. /flow <ticket> plans in plan mode (ExitPlanMode = the one gate), then enters a worktree and runs the autonomous implement→PR tail in the same session; background it (/bg) anytime to run unattended. You spec and review the draft PR. Multi-tracker engine (Jira | beads), pluggable handlers, compounding memory.
 when_to_use: User runs /flow <ticket> or /flow spec <ticket> to spec a ticket and run it to a draft PR, /flow do <ticket> to run/resume the pipeline standalone, or /flow init, recall, status, triage, recover, sync, baseline. A bare ticket key with no verb defaults to spec. Also use proactively when opening a worktree under a project with .flow/.initialized.
-allowed-tools: Bash(python3:*), Bash(git:*), Bash(bd:*), Bash(jq:*), Bash(cat:*), Bash(mkdir:*), Bash(mktemp:*), Bash(rm:*), Read, Write, Edit, Agent, AskUserQuestion, PushNotification, EnterWorktree
+allowed-tools: Bash(python3:*), Bash(git:*), Bash(bd:*), Bash(jq:*), Bash(cat:*), Bash(mkdir:*), Bash(mktemp:*), Bash(rm:*), Bash(nohup:*), Read, Write, Edit, Agent, AskUserQuestion, PushNotification, EnterWorktree
 ---
 
 # /flow
@@ -182,6 +182,8 @@ The verbose detail — full exit-code matrices, the PR-ready notification protoc
      --workspace-root . --ticket "$KEY"
    ```
    `release` is a no-op when the lease is not ours (the exit-7 takeover case), so it is safe to call unconditionally here. Do not call it on the init-abort paths of step 3.
+
+   **`--auto` self-teardown (last act):** when this run was launched with `--auto`, after `release` (and after reading `create_pr.out` for the PR link), schedule the session's own panel teardown as the **last tool call** of the run, then emit the final summary. Recipe + guards: `references/verb-do.md`. An attended run NEVER does this.
 
    When the loop exited cleanly: surface "ticket <KEY> pipeline complete. State: `cat .flow/runs/<KEY>/state.json | jq`."
 
