@@ -1,6 +1,6 @@
 # do verb — detail
 
-The do-loop **skeleton** lives in SKILL.md (it is the hot path, run every iteration of a possibly-backgrounded run). This file carries the verbose detail the skeleton points to: the full exit-code matrices, the PR-ready notification protocol, friction logging, the post-implement reconcile, and the timeout / drift notes.
+The do-loop **skeleton** lives in SKILL.md (it is the hot path, run every iteration of a possibly-backgrounded run). This file carries the verbose detail the skeleton points to: the full exit-code matrices, the PR-ready notification protocol, the --auto self-teardown, friction logging, the post-implement reconcile, and the timeout / drift notes.
 
 ## PR-ready notification (unconditional, best-effort)
 
@@ -10,6 +10,39 @@ If the PushNotification tool is NOT available in the current harness (some surfa
 A blocker needs no special ping: an `AskUserQuestion` surfaces natively as "needs input" in `claude agents` when the session is backgrounded, and inline when it is attached.
 
 **Firing point (do-loop step e):** fire only when `$STAGE` is `review_loop` with `$STATUS` completed (CI green and every actionable reviewer thread resolved), reading the PR URL from the captured `create_pr.out`. Only when `review_loop`'s handler is `none` (no CI/review loop wired) do you fall back to firing at `create_pr` completed.
+
+## Self-teardown at run completion (--auto only)
+
+**Why.** A finished `claude --bg "/flow <key> --auto"` session lingers in the `claude agents` panel until a drain turn's A2 cleanup collects it — often a long time (drain turns are event-driven, and A2 waits on a 300s transcript-idle bar). Self-teardown clears the panel at completion. The evolve drain's A2 cleanup (`references/verb-evolve.md`) stays as the safety net for runs that die before reaching this tail.
+
+**When.** `--auto` runs ONLY. Fire it once, as the last tool call of the do-loop's step 5, on every loop-exit path — clean done, blocked, drift, lost lease (the lease is already released; the --auto run takes no further action on any of them). Attended runs — including `/flow do <ticket>` resumes and interactive runs backgrounded via `/bg` — must NEVER kill their own session. Detection is session context: this session ran the spec `--auto` path, or was launched `/flow <key> --auto`. Never infer it from state files — `--auto` is stamped nowhere.
+
+**The command:**
+```bash
+JOB_DIR="${CLAUDE_JOB_DIR:-}"
+JOB_ID="${JOB_DIR##*/}"
+if printf '%s' "$JOB_ID" | grep -qxE '[0-9a-f]{8}' \
+   && printf '%s' "$JOB_DIR" | grep -qE '/\.claude/jobs/[0-9a-f]{8}$'; then
+  TEARDOWN="sleep 30; timeout 90 claude stop $JOB_ID </dev/null; rm -rf \"$JOB_DIR\""
+  if command -v setsid >/dev/null 2>&1; then
+    setsid nohup sh -c "$TEARDOWN" >/dev/null 2>&1 </dev/null &
+  else
+    nohup sh -c "$TEARDOWN" >/dev/null 2>&1 </dev/null &
+  fi
+fi
+true
+```
+
+**Guards:**
+- `$CLAUDE_JOB_DIR` unset/empty → `JOB_ID` empty → the 8-hex grep fails → **silent skip**. A foreground or attended session has no job dir, so this one guard covers both.
+- `claude stop` takes the **8-hex job id** — the `$CLAUDE_JOB_DIR` basename — NOT the session UUID. Passing the UUID fails "No job matching".
+- **Stop before rm:** the daemon re-materializes a still-registered job dir, so an rm-first teardown silently undoes itself.
+- The rm path is validated under `~/.claude/jobs/` with an 8-hex basename BEFORE the single destructive line.
+- Detached via `setsid` when available (own session — survives the stop's process-group kill), else `nohup ... &` (macOS has no setsid binary); stdin/stdout/stderr detached.
+- **Best-effort:** a teardown failure must never fail, block, or delay the run. No friction entry on failure.
+- Non-destructive to history: the transcript lives outside the job dir, so `claude attach <session_id>` still works after stop + dir removal.
+
+**Why sleep 30.** The schedule is the last *tool call*; the final summary (including the PR-link block) streams *after* it. 10s risks stopping the session mid-stream of its own completion message; 30s is still effectively instant next to A2's event-driven-turn + 300s-idle bar. Do not optimize it back down.
 
 ## Exit-code handling (init / next / advance)
 
