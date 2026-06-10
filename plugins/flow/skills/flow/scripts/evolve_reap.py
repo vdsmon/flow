@@ -35,8 +35,11 @@ main's CURRENT version (duplicate stamp: a sibling merged first stamping the sam
 next version, both sides changed the version line identically so git reports CLEAN)
 also lands in `version_recoverable` — merging it would mint two releases sharing one
 version number. A duplicate-stamp hot is never promoted (and never counts toward
-one-hot isolation); it stays in skipped_hot. Anything else lands in
-not_green / skipped_hot / version_recoverable / blocked / ignored.
+one-hot isolation); it stays in skipped_hot. A green PR whose run lease still
+reads live/corrupt lands in skipped_live (held, not merged) — the run
+self-merges in its own merge stage, so the reap stays an orphan-only safety-net.
+Anything else lands in
+not_green / skipped_hot / skipped_live / version_recoverable / blocked / ignored.
 
 CLI:
   evolve_reap.py --workspace-root <dir>
@@ -54,13 +57,16 @@ import json
 import sys
 from pathlib import Path
 
+import lease
 import version
 from _evolve_common import NotMaintainer, ToolError, bead_labels
 from _evolve_common import key_from_ref as _key_from_ref
 from _evolve_common import loads as _loads
 from _evolve_common import ok as _ok
+from _evolve_common import run_dir_for as _run_dir_for
 from _runner import CwdRunner as Runner
 from _runner import cwd_default_runner as _default_runner
+from _timeutil import utcnow_iso
 from _workspace import WorkspaceConfigError, load_workspace_toml
 from maintainer import resolve_maintainer_repo
 from triage import is_hot_change
@@ -124,9 +130,10 @@ def classify(
     auto_merge_hot: bool = False,
     main_version: str | None = None,
     branch_versions: dict[str, str] | None = None,
+    liveness: dict[str, str] | None = None,
 ) -> dict:
     """Pure core: bucket open PRs into merge / not_green / skipped_hot /
-    version_recoverable / blocked.
+    skipped_live / version_recoverable / blocked.
 
     version_recoverable: a green NON-hot PR whose mergeStateStatus is DIRTY, or a
     green non-hot CLEAN/DRAFT PR with a DUPLICATE version stamp (branch plugin
@@ -152,10 +159,16 @@ def classify(
     main_version / branch_versions (keyed by headRefName): fresh plugin versions
     for the duplicate-stamp check; unknown on either side (None / missing branch)
     means not-a-duplicate, so a failed gather degrades to legacy routing.
+
+    liveness (key -> lease state): when provided, a green PR whose run lease reads
+    "live" or "corrupt" is held in skipped_live (the live run owns its own merge),
+    regardless of hot/dirty. None (the default) preserves legacy routing
+    byte-for-byte. Built in reap(); classify stays pure.
     """
     merge: list[dict] = []
     not_green: list[dict] = []
     skipped_hot: list[dict] = []
+    skipped_live: list[dict] = []
     version_recoverable: list[dict] = []
     blocked: list[dict] = []
 
@@ -185,6 +198,13 @@ def classify(
 
         if not rollup_is_green(pr.get("statusCheckRollup") or []):
             not_green.append(entry)
+            continue
+        if liveness is not None and liveness.get(key) in ("live", "corrupt"):
+            # a live (or unconfirmable-corrupt) run's green PR is hands-off: its own
+            # merge stage owns the merge. The reap is an orphan-only safety-net, so a
+            # parallel drain must not merge it out from under the live session
+            # (flow-ztfv). Holds regardless of hot/dirty.
+            skipped_live.append(entry)
             continue
         state = str(pr.get("mergeStateStatus", "")).upper()
         if _effective_hot(pr, labels):
@@ -216,6 +236,7 @@ def classify(
         "merge": merge,
         "not_green": not_green,
         "skipped_hot": skipped_hot,
+        "skipped_live": skipped_live,
         "version_recoverable": version_recoverable,
         "blocked": blocked,
     }
@@ -320,12 +341,26 @@ def reap(
         if isinstance(pr, dict) and _key_from_ref(ref := str(pr.get("headRefName", ""))) in index
     ]
     main_version, branch_versions = _gather_versions(run, repo, branches)
+    now = utcnow_iso()
+    current_boot = lease.boot_id()
+    host = lease.hostname()
+    liveness: dict[str, str] = {}
+    for key in index:
+        run_dir = _run_dir_for(repo, key)
+        liveness[key] = (
+            "absent"
+            if run_dir is None
+            else str(
+                lease.classify(run_dir, now, current_boot=current_boot, hostname=host).get("state")
+            )
+        )
     return classify(
         prs,
         index,
         auto_merge_hot=auto_merge_hot,
         main_version=main_version,
         branch_versions=branch_versions,
+        liveness=liveness,
     )
 
 
