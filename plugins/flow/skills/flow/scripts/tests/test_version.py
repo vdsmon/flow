@@ -24,6 +24,47 @@ def test_bump_patch_malformed_raises(bad):
         version.bump_patch(bad)
 
 
+# ---- bump_minor / bump_for_type (pure) ----
+
+
+def test_bump_minor_increments_minor_resets_patch():
+    assert version.bump_minor("0.27.56") == "0.28.0"
+    assert version.bump_minor("1.0.9") == "1.1.0"
+
+
+@pytest.mark.parametrize("bad", ["x.y", "1.2", "1.2.x"])
+def test_bump_minor_malformed_raises(bad):
+    with pytest.raises(ValueError):
+        version.bump_minor(bad)
+
+
+def test_bump_for_type_feat_is_minor():
+    assert version.bump_for_type("0.27.56", "feat") == "0.28.0"
+
+
+@pytest.mark.parametrize("commit_type", ["fix", "chore", None, "wat"])
+def test_bump_for_type_non_feat_is_patch(commit_type):
+    assert version.bump_for_type("0.27.56", commit_type) == "0.27.57"
+
+
+# ---- parse_commit_type (pure) ----
+
+
+@pytest.mark.parametrize(
+    ("subject", "expected"),
+    [
+        ("feat: add queue verb", "feat"),
+        ("feat(queue): add verb", "feat"),
+        ("feat!: breaking add", "feat"),
+        ("fix: stop the bleeding", "fix"),
+        ("merge branch 'main' into x", None),
+        ("Update README", None),
+    ],
+)
+def test_parse_commit_type(subject, expected):
+    assert version.parse_commit_type(subject) == expected
+
+
 # ---- canned runner: dispatches on the git subcommand ----
 
 
@@ -31,12 +72,14 @@ def _plugin(version_str: str) -> str:
     return json.dumps({"name": "flow", "version": version_str}, indent=2)
 
 
-def _runner(*, current: str, show_rc: int = 0):
+def _runner(*, current: str, show_rc: int = 0, log_subject: str = ""):
     def run(args: list[str]) -> subprocess.CompletedProcess[str]:
         if args[:2] == ["git", "show"]:
             if show_rc != 0:
                 return subprocess.CompletedProcess(args, show_rc, "", "no such ref")
             return subprocess.CompletedProcess(args, 0, _plugin(current), "")
+        if args[:2] == ["git", "log"]:
+            return subprocess.CompletedProcess(args, 0, f"{log_subject}\n", "")
         return subprocess.CompletedProcess(args, 0, "", "")
 
     return run
@@ -59,7 +102,53 @@ def test_compute_shape(tmp_path):
         "ref": "origin/main",
         "current": "0.27.56",
         "next": "0.27.57",
+        "bump": "patch",
+        "commit_type": None,
     }
+
+
+def test_compute_explicit_feat_bumps_minor(tmp_path):
+    run = _runner(current="0.27.56")
+    assert version.compute(cwd=tmp_path, ref="origin/main", runner=run, commit_type="feat") == {
+        "ref": "origin/main",
+        "current": "0.27.56",
+        "next": "0.28.0",
+        "bump": "minor",
+        "commit_type": "feat",
+    }
+
+
+def test_compute_explicit_fix_bumps_patch(tmp_path):
+    run = _runner(current="0.27.56")
+    result = version.compute(cwd=tmp_path, ref="origin/main", runner=run, commit_type="fix")
+    assert result["next"] == "0.27.57"
+    assert result["bump"] == "patch"
+    assert result["commit_type"] == "fix"
+
+
+def test_compute_head_subject_fallback_feat(tmp_path):
+    # no explicit flag: the HEAD commit subject's conventional prefix decides.
+    run = _runner(current="0.27.56", log_subject="feat(queue): add verb")
+    result = version.compute(cwd=tmp_path, ref="origin/main", runner=run)
+    assert result["next"] == "0.28.0"
+    assert result["bump"] == "minor"
+    assert result["commit_type"] == "feat"
+
+
+def test_compute_head_subject_fallback_non_conventional_is_patch(tmp_path):
+    run = _runner(current="0.27.56", log_subject="Update README")
+    result = version.compute(cwd=tmp_path, ref="origin/main", runner=run)
+    assert result["next"] == "0.27.57"
+    assert result["bump"] == "patch"
+    assert result["commit_type"] is None
+
+
+def test_compute_empty_string_commit_type_is_unset(tmp_path):
+    # prose passes --commit-type "$COMMIT_TYPE" unconditionally; empty → fallback.
+    run = _runner(current="0.27.56", log_subject="feat: add queue verb")
+    result = version.compute(cwd=tmp_path, ref="origin/main", runner=run, commit_type="")
+    assert result["next"] == "0.28.0"
+    assert result["commit_type"] == "feat"
 
 
 # ---- CLI ----
@@ -183,11 +272,37 @@ def test_stamp_writes_and_returns_compute(tmp_path):
     _seed_version_files(tmp_path)
     run = _runner(current="0.27.57")
     result = version.stamp(cwd=tmp_path, ref="origin/main", runner=run)
-    assert result == {"ref": "origin/main", "current": "0.27.57", "next": "0.27.58"}
+    assert result == {
+        "ref": "origin/main",
+        "current": "0.27.57",
+        "next": "0.27.58",
+        "bump": "patch",
+        "commit_type": None,
+    }
     assert '"version": "0.27.58"' in (tmp_path / version.PLUGIN_JSON).read_text(encoding="utf-8")
     assert '"version": "0.27.58"' in (tmp_path / version.MARKETPLACE_JSON).read_text(
         encoding="utf-8"
     )
+
+
+def test_stamp_feat_writes_minor(tmp_path):
+    _seed_version_files(tmp_path)
+    run = _runner(current="0.27.57")
+    result = version.stamp(cwd=tmp_path, ref="origin/main", runner=run, commit_type="feat")
+    assert result["next"] == "0.28.0"
+    assert result["bump"] == "minor"
+    assert '"version": "0.28.0"' in (tmp_path / version.PLUGIN_JSON).read_text(encoding="utf-8")
+    assert '"version": "0.28.0"' in (tmp_path / version.MARKETPLACE_JSON).read_text(
+        encoding="utf-8"
+    )
+
+
+def test_stamp_head_subject_fallback(tmp_path):
+    _seed_version_files(tmp_path)
+    run = _runner(current="0.27.57", log_subject="feat(queue): add verb")
+    result = version.stamp(cwd=tmp_path, ref="origin/main", runner=run)
+    assert result["next"] == "0.28.0"
+    assert result["commit_type"] == "feat"
 
 
 # ---- CLI stamp ----
@@ -216,3 +331,61 @@ def test_cli_stamp_tool_error_exit_2(monkeypatch, capsys):
     rc = version.cli_main(["stamp", "--cwd", "."])
     assert rc == 2
     assert "git show failed" in capsys.readouterr().err
+
+
+def test_cli_stamp_plumbs_commit_type(monkeypatch, capsys):
+    seen: dict = {}
+
+    def fake_stamp(**kwargs):
+        seen.update(kwargs)
+        return {
+            "ref": "origin/main",
+            "current": "0.27.57",
+            "next": "0.28.0",
+            "bump": "minor",
+            "commit_type": "feat",
+        }
+
+    monkeypatch.setattr(version, "stamp", fake_stamp)
+    rc = version.cli_main(["stamp", "--cwd", ".", "--commit-type", "feat"])
+    assert rc == 0
+    assert seen["commit_type"] == "feat"
+    assert json.loads(capsys.readouterr().out)["bump"] == "minor"
+
+
+def test_cli_next_plumbs_commit_type(monkeypatch, capsys):
+    seen: dict = {}
+
+    def fake_compute(**kwargs):
+        seen.update(kwargs)
+        return {
+            "ref": "origin/main",
+            "current": "0.27.57",
+            "next": "0.28.0",
+            "bump": "minor",
+            "commit_type": "feat",
+        }
+
+    monkeypatch.setattr(version, "compute", fake_compute)
+    rc = version.cli_main(["next", "--cwd", ".", "--commit-type", "feat"])
+    assert rc == 0
+    assert seen["commit_type"] == "feat"
+
+
+def test_cli_commit_type_defaults_empty(monkeypatch, capsys):
+    seen: dict = {}
+
+    def fake_stamp(**kwargs):
+        seen.update(kwargs)
+        return {
+            "ref": "origin/main",
+            "current": "0.27.57",
+            "next": "0.27.58",
+            "bump": "patch",
+            "commit_type": None,
+        }
+
+    monkeypatch.setattr(version, "stamp", fake_stamp)
+    rc = version.cli_main(["stamp", "--cwd", "."])
+    assert rc == 0
+    assert seen["commit_type"] == ""

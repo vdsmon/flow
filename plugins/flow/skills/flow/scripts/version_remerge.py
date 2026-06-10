@@ -24,9 +24,12 @@ take would have silently discarded that legitimate PR change.
 
 CLI:
   version_remerge.py recover --branch <feature/...> --workspace-root . [--cwd <path>]
+    [--commit-type <type>]
 
 Operates on a checkout whose current branch (HEAD) is the feature branch; `--cwd`
-is that checkout (default ".").
+is that checkout (default "."). The re-stamp is type-aware (minor on feat, patch
+otherwise); without `--commit-type` the type is resolved by scanning the branch-only
+commit subjects (`origin/<default>..HEAD --no-merges`) for a feat prefix.
 
 Exit codes:
   0 = ok (remerged / remerged_clean; prints JSON, pushed)
@@ -74,10 +77,25 @@ def parse_version(text: str) -> tuple[int, int, int]:
     return int(m.group(1)), int(m.group(2)), int(m.group(3))
 
 
-def next_version(version: tuple[int, int, int]) -> str:
-    """Deterministic patch bump: X.Y.Z → X.Y.(Z+1)."""
-    major, minor, patch = version
-    return f"{major}.{minor}.{patch + 1}"
+def next_version(parsed: tuple[int, int, int], commit_type: str | None = None) -> str:
+    """Type-aware bump (delegates to version.bump_for_type): feat → X.(Y+1).0,
+    otherwise X.Y.(Z+1)."""
+    return version.bump_for_type(".".join(str(p) for p in parsed), commit_type)
+
+
+def _branch_commit_type(run: Runner, default_ref: str) -> str | None:
+    """Flagless fallback: scan the branch-only commit subjects for a feat. The branch
+    HEAD at remerge time is usually the `chore: stamp plugin version` commit, so a
+    HEAD-subject read would misclassify every feat branch; any feat among
+    `{default_ref}..HEAD --no-merges` resolves to feat."""
+    raw = _ok(
+        run(["git", "log", "--no-merges", "--format=%s", f"{default_ref}..HEAD"]),
+        "git log",
+    )
+    subjects = [line for line in raw.splitlines() if line.strip()]
+    if any(version.parse_commit_type(s) == "feat" for s in subjects):
+        return "feat"
+    return None
 
 
 def is_version_only_conflict(conflicts: set[str]) -> bool:
@@ -105,10 +123,13 @@ def _strip_version(text: str) -> str:
     return version.VERSION_RE.sub('"version": "0.0.0"', text, count=1)
 
 
-def recover(branch: str, *, cwd: Path, runner: Runner | None = None) -> dict:
+def recover(
+    branch: str, *, cwd: Path, commit_type: str | None = None, runner: Runner | None = None
+) -> dict:
     """Merge default into HEAD (the feature branch), auto-resolve a version-only
     conflict, push. Returns the JSON-able result dict. Raises NonVersionConflict
     (exit 3) on any other conflict and ToolError (exit 2) on git failure.
+    An empty/None `commit_type` falls back to the branch-only commit-subject scan.
     """
     run = runner or _default_runner(cwd)
 
@@ -119,9 +140,11 @@ def recover(branch: str, *, cwd: Path, runner: Runner | None = None) -> dict:
     if not default_ref:
         raise ToolError("could not resolve origin default branch")
     _ok(run(["git", "fetch", "--quiet", "origin"]), "git fetch")
+    if not commit_type:
+        commit_type = _branch_commit_type(run, default_ref)
 
     main_plugin = _ok(run(["git", "show", f"{default_ref}:{PLUGIN_JSON}"]), "git show plugin.json")
-    next_ver = next_version(parse_version(main_plugin))
+    next_ver = next_version(parse_version(main_plugin), commit_type)
 
     merge = run(["git", "merge", default_ref, "--no-edit"])
     if merge.returncode == 0:
@@ -165,7 +188,13 @@ def recover(branch: str, *, cwd: Path, runner: Runner | None = None) -> dict:
         raise
     head = _ok(run(["git", "rev-parse", "HEAD"]), "git rev-parse").strip()
     _ok(run(["git", "push"]), "git push")
-    return {"status": "remerged", "sha": head, "version": next_ver}
+    return {
+        "status": "remerged",
+        "sha": head,
+        "version": next_ver,
+        "bump": "minor" if commit_type == "feat" else "patch",
+        "commit_type": commit_type,
+    }
 
 
 def cli_main(argv: list[str]) -> int:
@@ -175,11 +204,16 @@ def cli_main(argv: list[str]) -> int:
     rec.add_argument("--branch", required=True, help="the feature branch (HEAD; context only)")
     rec.add_argument("--workspace-root", default=".", help="workspace root (context only)")
     rec.add_argument("--cwd", default=".", help="the feature-branch checkout to operate on")
+    rec.add_argument(
+        "--commit-type",
+        default="",
+        help="conventional-commit type (feat → minor bump); empty → branch commit scan",
+    )
     args = parser.parse_args(argv)
 
     cwd = Path(args.cwd).resolve()
     try:
-        result = recover(args.branch, cwd=cwd)
+        result = recover(args.branch, cwd=cwd, commit_type=args.commit_type)
     except NonVersionConflict as exc:
         print(json.dumps({"status": "non_version_conflict", "files": exc.files}))
         return 3
