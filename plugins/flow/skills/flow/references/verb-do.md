@@ -102,3 +102,7 @@ The prose-driven model has no live poller, so hung detection is post-hoc: `/flow
 If `git apply --cached --binary <implement.diff>` fails in stage-commit, the working tree has drifted from the baseline.
 The commit stage handler documents the recovery path.
 Do not silently overwrite or `--force`.
+
+## Backgrounded `--auto` run (cwd pinned at repo root)
+
+A `claude --bg /flow <key> --auto` run has its session cwd pinned at the repository root, so `EnterWorktree(path=<worktree>)` refuses and the bg-isolation guard blocks `Edit`/`Write` inside the linked worktree (for this session and any spawned subagent). Before the loop runs, `cd` the persistent Bash cwd into the seeded worktree once; then `--workspace-root .` resolves against the worktree for every dispatch call, and spawned subagents fall back to Bash/Python string-replace edits against absolute worktree paths. See `references/verb-spec.md` step 7 for the canonical explanation.
