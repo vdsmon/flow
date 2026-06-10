@@ -360,6 +360,70 @@ def test_dup_stamp_hot_excluded_from_isolation_count():
     assert out["skipped_hot"] == [{"pr": 1, "key": "flow-h", "branch": "feature/flow-h-some-desc"}]
 
 
+# ---- classify: lease-liveness gate (flow-ztfv) ----
+
+
+def test_live_lease_holds_green_clean_nonhot():
+    prs = [_pr(1, "flow-a")]
+    out = er.classify(prs, _idx(**{"flow-a": ["evolve"]}), liveness={"flow-a": "live"})
+    assert out["skipped_live"] == [{"pr": 1, "key": "flow-a", "branch": "feature/flow-a-some-desc"}]
+    assert out["merge"] == []
+
+
+def test_corrupt_lease_holds_green_clean_nonhot():
+    prs = [_pr(1, "flow-a")]
+    out = er.classify(prs, _idx(**{"flow-a": ["evolve"]}), liveness={"flow-a": "corrupt"})
+    assert out["skipped_live"] == [{"pr": 1, "key": "flow-a", "branch": "feature/flow-a-some-desc"}]
+    assert out["merge"] == []
+
+
+def test_live_lease_holds_green_dirty_over_version_recoverable():
+    prs = [_pr(1, "flow-a", state="DIRTY")]
+    out = er.classify(prs, _idx(**{"flow-a": ["evolve"]}), liveness={"flow-a": "live"})
+    assert out["skipped_live"] == [{"pr": 1, "key": "flow-a", "branch": "feature/flow-a-some-desc"}]
+    assert out["version_recoverable"] == []
+
+
+def test_live_lease_holds_green_hot_over_skipped_hot():
+    prs = [_pr(1, "flow-h")]
+    out = er.classify(prs, _idx(**{"flow-h": ["evolve", "hot"]}), liveness={"flow-h": "live"})
+    assert out["skipped_live"] == [{"pr": 1, "key": "flow-h", "branch": "feature/flow-h-some-desc"}]
+    assert out["skipped_hot"] == []
+    assert out["merge"] == []
+
+
+def test_live_lease_holds_green_guard_file_over_skipped_hot():
+    prs = [_pr(1, "flow-a", files=["lease.py"])]
+    out = er.classify(prs, _idx(**{"flow-a": ["evolve"]}), liveness={"flow-a": "live"})
+    assert out["skipped_live"] == [{"pr": 1, "key": "flow-a", "branch": "feature/flow-a-some-desc"}]
+    assert out["skipped_hot"] == []
+
+
+def test_non_live_lease_states_merge_green_clean():
+    # a non-live lease state (orphan) is reapable: the green PR merges.
+    for state in ("expired_foreign", "absent", "free"):
+        prs = [_pr(1, "flow-a")]
+        out = er.classify(prs, _idx(**{"flow-a": ["evolve"]}), liveness={"flow-a": state})
+        assert [e["key"] for e in out["merge"]] == ["flow-a"], state
+        assert out["skipped_live"] == [], state
+
+
+def test_liveness_none_default_keeps_legacy_merge():
+    # default (omitted) liveness -> byte-identical to today: green clean merges.
+    prs = [_pr(1, "flow-a")]
+    out = er.classify(prs, _idx(**{"flow-a": ["evolve"]}))
+    assert [e["key"] for e in out["merge"]] == ["flow-a"]
+    assert out["skipped_live"] == []
+
+
+def test_non_green_live_lease_stays_not_green():
+    # a non-green PR lands in not_green before the liveness gate; untouched.
+    prs = [_pr(1, "flow-a", rollup=PENDING)]
+    out = er.classify(prs, _idx(**{"flow-a": ["evolve"]}), liveness={"flow-a": "live"})
+    assert out["not_green"] == [{"pr": 1, "key": "flow-a", "branch": "feature/flow-a-some-desc"}]
+    assert out["skipped_live"] == []
+
+
 # ---- classify: auto_merge_hot ----
 
 

@@ -103,7 +103,14 @@ else
   # ... wait until `forge_cli.py ci-rollup --pr "$PR_ID"` reports success, polling
   # with the Monitor tool (foreground sleep is blocked), bounded to ~a stage
   # timeout; on the cap, leave the PR for the drain reap / human (STATUS=completed),
-  # do NOT hang ...
+  # do NOT hang. On EACH poll iteration, also heartbeat the run lease (below) so
+  # this long re-wait does not let it go stale ...
+  # heartbeat: refresh the run lease each poll so a long CI re-wait does not let it
+  # go stale (a stale lease lets a parallel drain reap merge this live PR + reap the
+  # worktree -- flow-ztfv). $TICKET_DIR holds state.json (run_id) and run.lock.
+  RUN_ID=$(python3 -c "import json;print(json.load(open('$TICKET_DIR/state.json'))['run_id'])")
+  python3 ${CLAUDE_SKILL_DIR}/scripts/lease.py refresh \
+    --ticket-dir "$TICKET_DIR" --run-id "$RUN_ID" --ttl-seconds 1800
   # duplicate-stamp guard (flow-5fp): a sibling drain run can walk main to the SAME
   # version this branch stamped while we re-waited CI. Identical content on both
   # sides of the version line merges CLEAN, so the DIRTY branch below never fires
@@ -125,8 +132,13 @@ else
     git commit -m "chore: stamp plugin version" -- \
       plugins/flow/.claude-plugin/plugin.json .claude-plugin/marketplace.json
     git push origin "$BRANCH"
-    # ... bounded CI re-wait on the new SHA (same Monitor-bounded pattern as above),
-    # then REPEAT this guard from the `git fetch` ...
+    # ... bounded CI re-wait on the new SHA (same Monitor-bounded pattern as above);
+    # heartbeat the run lease on each poll too (same refresh as the first re-wait,
+    # flow-ztfv) so the restamp's re-wait does not let the lease go stale, then
+    # REPEAT this guard from the `git fetch` ...
+    RUN_ID=$(python3 -c "import json;print(json.load(open('$TICKET_DIR/state.json'))['run_id'])")
+    python3 ${CLAUDE_SKILL_DIR}/scripts/lease.py refresh \
+      --ticket-dir "$TICKET_DIR" --run-id "$RUN_ID" --ttl-seconds 1800
   fi
   MERGE_STATE=$(gh pr view "$PR_ID" --json mergeStateStatus -q .mergeStateStatus)
   if [ "$MERGE_STATE" = "DIRTY" ]; then
