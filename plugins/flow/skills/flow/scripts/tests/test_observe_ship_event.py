@@ -353,3 +353,88 @@ def test_cli_missing_workspace_returns_3(
         ]
     )
     assert rc == 3
+
+
+# ─── arm (flow / control) ────────────────────────────────────────────────────
+
+
+def test_arm_defaults_to_flow(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path)
+    path, _ = observe_ship_event.observe(tmp_path, "FT-1", _payload(), "abcdef0123456789")
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert data["arm"] == "flow"
+
+
+def test_arm_control_stamps_record(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path)
+    path, _ = observe_ship_event.observe(
+        tmp_path, "FT-1", _payload(), "abcdef0123456789", arm="control"
+    )
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert data["arm"] == "control"
+
+
+def test_arm_invalid_raises(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path)
+    with pytest.raises(observe_ship_event._EvidenceInvalid, match="arm"):
+        observe_ship_event.observe(tmp_path, "FT-1", _payload(), "abcdef0123456789", arm="bogus")
+
+
+def test_arm_present_in_dupe_write(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path)
+    observe_ship_event.observe(tmp_path, "FT-1", _payload(), "abcdef0123456789", arm="control")
+    p_dupe, is_dupe = observe_ship_event.observe(
+        tmp_path, "FT-1", _payload(), "abcdef0123456789", arm="control"
+    )
+    assert is_dupe is True
+    data = json.loads(p_dupe.read_text(encoding="utf-8"))
+    assert data["arm"] == "control"
+
+
+def test_arm_in_input_evidence_rejected_as_extra_key(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path)
+    with pytest.raises(observe_ship_event._EvidenceInvalid, match="extra"):
+        observe_ship_event.validate_evidence(_payload(extras={"arm": "control"}), "FT-1")
+
+
+def test_cli_arm_control_round_trip(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """Deliverable (c): CLI threads --arm control into the written record."""
+    _seed_workspace(tmp_path)
+    rc = observe_ship_event.cli_main(
+        [
+            "--ticket",
+            "FT-1",
+            "--evidence-json",
+            json.dumps(_payload()),
+            "--run-id",
+            "abcdef0123456789",
+            "--workspace-root",
+            str(tmp_path),
+            "--arm",
+            "control",
+        ]
+    )
+    assert rc == 0
+    out = json.loads(capsys.readouterr().out)
+    data = json.loads(Path(out["path"]).read_text(encoding="utf-8"))
+    assert data["arm"] == "control"
+
+
+def test_cli_arm_defaults_to_flow(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    _seed_workspace(tmp_path)
+    rc = observe_ship_event.cli_main(
+        [
+            "--ticket",
+            "FT-1",
+            "--evidence-json",
+            json.dumps(_payload()),
+            "--run-id",
+            "abcdef0123456789",
+            "--workspace-root",
+            str(tmp_path),
+        ]
+    )
+    assert rc == 0
+    out = json.loads(capsys.readouterr().out)
+    data = json.loads(Path(out["path"]).read_text(encoding="utf-8"))
+    assert data["arm"] == "flow"
