@@ -36,7 +36,7 @@ Invariants:
   5. `NOW` → UTC ISO8601 string via `_timeutil.utcnow_iso()`.
   6. Otherwise → TOML string (always double-quoted on write).
 
-Exit codes (per plan line 1017-1020):
+Exit codes:
   0 = ok (read always returns 0, emitting {} when the file is absent or its
       frontmatter is malformed)
   1 = lock contention (couldn't acquire after 3 x 1s retry)

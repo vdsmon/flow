@@ -1,0 +1,9 @@
+{
+  "sandbox": {
+    "filesystem": {
+      "allowWrite": [
+        "/Users/victordsm/repos/personal/flow/.git"
+      ]
+    }
+  }
+}
