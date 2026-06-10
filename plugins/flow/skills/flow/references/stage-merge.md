@@ -99,7 +99,7 @@ else
     --commit-type "$COMMIT_TYPE"
   git commit -m "chore: stamp plugin version" -- \
     plugins/flow/.claude-plugin/plugin.json .claude-plugin/marketplace.json
-  git push
+  git push origin "$BRANCH"
   # ... wait until `forge_cli.py ci-rollup --pr "$PR_ID"` reports success, polling
   # with the Monitor tool (foreground sleep is blocked), bounded to ~a stage
   # timeout; on the cap, leave the PR for the drain reap / human (STATUS=completed),
@@ -124,7 +124,7 @@ else
       --commit-type "$COMMIT_TYPE"
     git commit -m "chore: stamp plugin version" -- \
       plugins/flow/.claude-plugin/plugin.json .claude-plugin/marketplace.json
-    git push
+    git push origin "$BRANCH"
     # ... bounded CI re-wait on the new SHA (same Monitor-bounded pattern as above),
     # then REPEAT this guard from the `git fetch` ...
   fi

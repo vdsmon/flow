@@ -133,7 +133,7 @@ def test_remerged_clean_when_no_conflict(tmp_path):
     assert out["status"] == "remerged_clean"
     assert out["sha"] == "deadbeef"
     assert out["version"] is None
-    assert ["git", "push"] in calls
+    assert ["git", "push", "origin", "feature/flow-x-foo"] in calls
     assert not any(a[:3] == ["git", "merge", "--abort"] for a in calls)
 
 
@@ -157,7 +157,7 @@ def test_version_only_conflict_resolves_and_bumps(tmp_path):
     assert (cwd / PLUGIN).read_text().count("0.27.43") == 1
     assert (cwd / MARKET).read_text().count("0.27.43") == 1
     assert ["git", "commit", "--no-edit"] in calls
-    assert ["git", "push"] in calls
+    assert ["git", "push", "origin", "feature/flow-x-foo"] in calls
     assert not any(a[:3] == ["git", "merge", "--abort"] for a in calls)
 
 
@@ -208,7 +208,7 @@ def test_flow_wkn_regression_branch_already_stamped_next(tmp_path):
     assert ["git", "add", PLUGIN] in calls
     assert ["git", "add", MARKET] in calls
     assert ["git", "commit", "--no-edit"] in calls
-    assert ["git", "push"] in calls
+    assert ["git", "push", "origin", "feature/flow-wkn-version-remerge"] in calls
     assert not any(a[:3] == ["git", "merge", "--abort"] for a in calls)
 
 
@@ -311,7 +311,7 @@ def test_clean_merge_same_version_restamps(tmp_path):
     assert ["git", "add", MARKET] in calls
     commit = next(a for a in calls if a[:2] == ["git", "commit"])
     assert PLUGIN in commit and MARKET in commit
-    assert ["git", "push"] in calls
+    assert ["git", "push", "origin", "feature/flow-x-foo"] in calls
     assert not any(a[:3] == ["git", "merge", "--abort"] for a in calls)
 
 
@@ -370,7 +370,7 @@ def test_clean_path_missing_version_file_maps_tool_error(tmp_path):
     run = _runner(main_version="0.27.42", merge_rc=0, conflicts=[], calls=calls)
     with pytest.raises(vr.ToolError):
         vr.recover("feature/flow-x-foo", cwd=cwd, runner=run)
-    assert ["git", "push"] not in calls
+    assert not any(a[:2] == ["git", "push"] for a in calls)
 
 
 def test_clean_path_oserror_maps_tool_error(tmp_path, monkeypatch):
@@ -385,7 +385,7 @@ def test_clean_path_oserror_maps_tool_error(tmp_path, monkeypatch):
     monkeypatch.setattr(type(cwd), "read_text", boom)
     with pytest.raises(vr.ToolError):
         vr.recover("feature/flow-x-foo", cwd=cwd, runner=run)
-    assert ["git", "push"] not in calls
+    assert not any(a[:2] == ["git", "push"] for a in calls)
 
 
 def test_dirty_path_oserror_aborts_and_maps_tool_error(tmp_path, monkeypatch):
@@ -413,7 +413,7 @@ def test_dirty_path_oserror_aborts_and_maps_tool_error(tmp_path, monkeypatch):
         vr.recover("feature/flow-x-foo", cwd=cwd, runner=run)
     assert ["git", "merge", "--abort"] in calls
     assert not any(a[:2] == ["git", "commit"] for a in calls)
-    assert ["git", "push"] not in calls
+    assert not any(a[:2] == ["git", "push"] for a in calls)
 
 
 def test_cli_restamped_exit_0(tmp_path, monkeypatch, capsys):
@@ -458,7 +458,7 @@ def test_write_version_tool_error_aborts_merge(tmp_path, monkeypatch):
         vr.recover("feature/flow-x-foo", cwd=cwd, runner=run)
     assert ["git", "merge", "--abort"] in calls
     assert ["git", "commit", "--no-edit"] not in calls
-    assert ["git", "push"] not in calls
+    assert not any(a[:2] == ["git", "push"] for a in calls)
 
 
 def test_git_add_failure_aborts_merge(tmp_path):
@@ -485,7 +485,7 @@ def test_git_add_failure_aborts_merge(tmp_path):
         vr.recover("feature/flow-x-foo", cwd=cwd, runner=run)
     assert ["git", "merge", "--abort"] in calls
     assert ["git", "commit", "--no-edit"] not in calls
-    assert ["git", "push"] not in calls
+    assert not any(a[:2] == ["git", "push"] for a in calls)
 
 
 def test_nonversion_content_diff_in_version_file_aborts(tmp_path):
@@ -512,7 +512,7 @@ def test_nonversion_content_diff_in_version_file_aborts(tmp_path):
         vr.recover("feature/flow-x-foo", cwd=cwd, runner=run)
     assert PLUGIN in exc.value.files
     assert ["git", "merge", "--abort"] in calls
-    assert ["git", "push"] not in calls
+    assert not any(a[:2] == ["git", "push"] for a in calls)
 
 
 def test_non_version_conflict_aborts(tmp_path):
@@ -528,7 +528,7 @@ def test_non_version_conflict_aborts(tmp_path):
         vr.recover("feature/flow-x-foo", cwd=cwd, runner=run)
     assert "scripts/foo.py" in exc.value.files
     assert ["git", "merge", "--abort"] in calls
-    assert ["git", "push"] not in calls
+    assert not any(a[:2] == ["git", "push"] for a in calls)
 
 
 def test_cli_non_version_conflict_exit_3(tmp_path, monkeypatch, capsys):
