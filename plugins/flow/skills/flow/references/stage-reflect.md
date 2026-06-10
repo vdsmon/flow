@@ -41,10 +41,14 @@ The taxonomy is closed:
    ```
    - Exit 0 → JSON payload to stdout: `{ticket, run_id, state,
      ticket_frontmatter, final_diff, subagent_reports[], friction[],
-     reflect_config}`.
+     reflect_config, harness_eval}`.
      `reflect_config` is `{machinery: bool, claude_memory: bool}` (machinery
      defaults false, claude_memory defaults true; a `[reflect]` block in
      `workspace.toml` overrides). It gates step 2b and step 2c below.
+     `harness_eval` is a best-effort advertisement of the frozen-corpus
+     regression eval (`available`, `eval_path`, `corpus_path`, per-split
+     `case_counts`); `available: false` means skip the step-2b corpus-delta
+     pre-check, nothing else.
    - Exit 1 → state.json missing/corrupt, or the diff environment is broken (git not on PATH, bad `--cwd`).
      Abort with status=failed.
    - Exit 2 → git ran but returned an error (bad ref). Abort.
@@ -78,6 +82,16 @@ The taxonomy is closed:
    **You are empowered to FIX the process you just ran, right now.** You are the highest-fidelity judge of this harness that will ever exist for this run: you lived every stage, and no later reviewer (`/skill-polish`, a human, a future session) will have the context you have at this moment. Recording friction for someone else to maybe act on later is the lossy path — it decays, it gets deprioritized, the fix arrives with half the understanding. Default to fixing it yourself, here. The only gate is blast radius:
 
    - **APPLY NOW (the default).** Surgical, high-confidence fixes to flow's OWN process files: a `references/*.md` clarification, a localized bug in a flow engine script (`scripts/*.py`). These carry zero re-review churn and are revertible (rationale, incl. the `skill_root==worktree` dogfood exception: self-evolution.md §Producers — Producer A). Flow's own scripts and reference docs are NOT in the run's canonical snapshot on any tree machinery_edit will accept (it refuses protected-branch skill roots, and worktree copies are never hashed), so editing them mid-run is safe; only the MAIN checkout's engine tree on a protected branch is snapshot-hashed (the `engine` component), and that tree is already un-editable by the sanctioned path. Re-Read the file before editing (a sibling fleet agent may have shifted the anchor; "anchor not found" usually means it is already fixed — treat that as done). If you touch a script, run its test suite and add a regression test for the bug you fixed. Do not ask permission to improve the tool you are running; that is the whole point of reflecting from inside the run.
+     - **Corpus-delta advisory pre-check — run BEFORE the apply (after it there is no pristine baseline).** Applies only when the fix touches a flow engine script (`scripts/*.py`) AND the bundle's `harness_eval.available` is true; a prose-only `references/*.md` edit cannot move the deciders — skip. Score the intended edit against a scratch copy:
+       ```bash
+       SCRATCH=$(mktemp -d)
+       cp -R "${CLAUDE_SKILL_DIR}/scripts/." "$SCRATCH/"
+       # apply the intended fix to the COPY (raw edit is fine here, the scratch
+       # dir is private; machinery_edit would refuse an out-of-tree path anyway)
+       python3 ${CLAUDE_SKILL_DIR}/scripts/harness_eval.py score --candidate "$SCRATCH"
+       rm -rf "$SCRATCH"
+       ```
+       `--baseline` defaults to the live, still-unedited checkout the invoked script lives in — which is exactly why this runs before the apply. The outcome is advisory and feeds the dividing question below; there is no new gate: exit 0 → proceed to the `machinery_edit.py` apply and note `non_regression: true` in the `MACHINERY:` entry. Exit 3 → the delta is direct evidence the edit is NOT strictly correct: answer the dividing question No, route to PROPOSE + RECORD, and paste the per-split `regressed`/`detail` JSON into both the human-facing reflect output and the entry. Exit 1/2 → eval unavailable or errored: say so and proceed on judgment alone; the pre-check never blocks reflect. Caveats: replays are not atomic — a sibling agent or an earlier APPLY-NOW edit in the SAME reflect pass can mutate the baseline mid-score, so treat a surprising delta as a re-check prompt, not a verdict; the corpus exercises only the four pure deciders, so exit 0 on a non-decider file is absence-of-regression, NOT positive evidence of correctness; a fix to `harness_eval.py`/`harness_corpus.py` itself is scored by the live scorer against the candidate's deciders only.
      - **Apply the edit through `scripts/machinery_edit.py`, NOT the raw Edit tool.** `machinery_edit.py` holds a single global flock across the whole read -> replace -> atomic-write, so concurrent machinery writers serialize and any concurrent reader sees old-or-new, never a torn file; it also refuses `stage-registry.toml` and any path outside the skill tree (rationale: self-evolution.md §Guardrails — machinery_edit flock). Invoke it per fix:
        ```bash
        PAYLOAD=$(mktemp); printf '%s' "$(jq -n --arg f "<rel-or-abs path>" --arg old "<unique anchor>" --arg new "<replacement>" '{file:$f,old:$old,new:$new}')" > "$PAYLOAD"
@@ -96,6 +110,7 @@ The taxonomy is closed:
          --type chore --labels evolve,machinery \
          --dedup-key "<primary-relfile>::<short-symptom>, e.g. references/stage-commit.md::double-transition"
        ```
+       When the slung finding carries a CONCRETE `scripts/*.py` edit and `harness_eval.available` is true, run the same scratch-copy corpus score from the APPLY-NOW pre-check above and include the delta summary in the `--description` next to the confidence statement (or `corpus delta: not scored — no concrete edit yet` / `corpus delta: not scored — eval unavailable`), so the downstream evolve consumer sees a regressing proposal before pickup.
        The `--dedup-key` is anchored on the finding's primary file path (not free wording) and reduced to a deterministic fingerprint, so reflect does not refile the same machinery friction every run (nor re-propose one already closed/rejected). Keep the `::` separator: the file component (basename) now also anchors a fuzzy same-file dedup pass, so a re-discovery worded differently still converges instead of minting a new key. Exit 0 → filed; it prints the bead key — note that key in the `MACHINERY:` entry so the two are linked. Exit 5 → a bead for this finding already exists (prints its key); reference that key in the entry and move on, do NOT refile. Exit 4 → not a maintainer setup: dormant, nothing filed, the knowledge entry stands alone. This is the normal user-mode path, NOT an error. Exit 2 → bd error: log and move on (the knowledge entry already captured the finding). If the finding touches a hot file — `SKILL.md` / `stage-registry.toml` / `CLAUDE.md` / a wired handler, or a safety-machinery guard file (`lease.py`, `snapshot.py`, `_atomicio.py`, `_locking.py`, `state.py`, `dispatch_stage.py`, `diff_extract.py`, `machinery_edit.py`, `flow_friction.py`) — add `hot` to `--labels` (`evolve,machinery,hot`) so the consumer routes the bead through the hot path and its property-check review.
    <!-- SYNC: this 9-file hot guard list is duplicated by design in references/verb-evolve.md §audit step 2 — keep both in sync (flow-837; not extracted to a constant per maintainer decision) -->
    - **NEVER at reflect-time:** the repo/PR artifacts (fixtures, docs, code in the ticket's tree). That is the post-PR-churn boundary, and it is the ONLY category reflect must not touch.
