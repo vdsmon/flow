@@ -12,6 +12,7 @@ Atomicity: O_EXCL on create. No temp+rename (that would allow overwrite).
 CLI:
   observe_ship_event.py --ticket <key> --evidence-json '<json>'
                         --run-id <16-hex> [--workspace-root <dir>]
+                        [--arm {flow,control}]
 
 Evidence JSON validation rejects with exit 1 if:
 - not a JSON object at top level
@@ -19,7 +20,12 @@ Evidence JSON validation rejects with exit 1 if:
 - `shipped_at` missing / fails UTC ISO8601 Z regex
 - `evidence` missing / not dict
 - any extra top-level key present (script owns observed_at / observed_by_run_id /
-  flow_attribution)
+  flow_attribution / arm)
+
+The script-owned `arm` key (enum {flow, control}, default 'flow', set via --arm or the
+`arm` param on observe()) tags which experiment lane a ship-event belongs to. It rides
+into both the primary and dupe writes. An `arm` key inside --evidence-json is still
+rejected as an extra top-level input key.
 
 When a coherent live run state.json is found at ship time (matching run_id, with
 both plan.started_at_iso and create_pr.finished_at_iso present), an owned
@@ -58,6 +64,7 @@ _SHIPPED_AT_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 _RUN_ID_RE = re.compile(r"^[0-9a-f]{16}$")
 
 _ALLOWED_TOP_KEYS: frozenset[str] = frozenset({"ticket", "shipped_at", "evidence"})
+_ALLOWED_ARMS: frozenset[str] = frozenset({"flow", "control"})
 
 
 # ─── Errors ──────────────────────────────────────────────────────────────────
@@ -206,6 +213,7 @@ def observe(
     ticket: str,
     evidence_payload: dict[str, Any],
     run_id: str,
+    arm: str = "flow",
 ) -> tuple[Path, bool]:
     """Write a ship-event evidence file.
 
@@ -219,11 +227,14 @@ def observe(
     validated = validate_evidence(evidence_payload, ticket)
     if not _RUN_ID_RE.match(run_id):
         raise _EvidenceInvalid(f"run_id {run_id!r} not 16 hex chars")
+    if arm not in _ALLOWED_ARMS:
+        raise _EvidenceInvalid(f"arm {arm!r} not in {sorted(_ALLOWED_ARMS)}")
     namespace = _memory_paths.resolve_namespace(workspace_root)
     primary = _memory_paths.ship_event_path(workspace_root, namespace, ticket)
     record: dict[str, Any] = dict(validated)
     record["observed_at"] = utcnow_iso()
     record["observed_by_run_id"] = run_id
+    record["arm"] = arm
     stamp = _attribution_stamp(workspace_root, ticket, run_id)
     if stamp is not None:
         record["flow_attribution"] = stamp
@@ -264,6 +275,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--evidence-json", required=True, help="JSON string.")
     parser.add_argument("--run-id", required=True, help="16-hex run_id from dispatcher.")
     parser.add_argument("--workspace-root", default=".")
+    parser.add_argument("--arm", choices=["flow", "control"], default="flow")
     return parser.parse_args(argv)
 
 
@@ -276,7 +288,7 @@ def cli_main(argv: list[str]) -> int:
         sys.stderr.write(f"observe-ship-event: --evidence-json not JSON: {exc}\n")
         return 1
     try:
-        path, is_dupe = observe(workspace_root, args.ticket, payload, args.run_id)
+        path, is_dupe = observe(workspace_root, args.ticket, payload, args.run_id, args.arm)
     except _EvidenceInvalid as exc:
         sys.stderr.write(f"observe-ship-event: {exc}\n")
         return 1
