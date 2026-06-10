@@ -58,8 +58,8 @@ Pluggable PR-host seam, structural twin of the tracker seam. The `create_pr` and
 | Script | Role | Surface / touches |
 |--------|------|-------------------|
 | `_memory_paths.py` (lib) | Namespace resolution + `.flow/<ns>/` path conventions. `resolve_memory_base` reads the gitignored `.flow/memory-root` sibling first, then `workspace.toml [memory].root`, then local `.flow`; every redirected worktree resolves the same store AND the same lock. | imported widely |
-| `memory_append.py` | Single-writer `knowledge.jsonl` append with sha-keyed idempotency. | `--type --text --branch --ticket [--id]` |
-| `recall.py` | BM25 ranker over `knowledge.jsonl`; `--metric` forwards to `metric.py`. | `<query> [--branch --tickets --top-n]` ; `--metric ...` |
+| `memory_append.py` | Single-writer `knowledge.jsonl` append with sha-keyed idempotency. | `--type --text --branch --ticket [--id --supersedes]` |
+| `recall.py` | BM25 ranker over `knowledge.jsonl`; `--metric` forwards to `metric.py`. | `<query> [--branch --tickets --top-n --include-superseded]` ; `--metric ...` |
 | `recall_pending.py` (lib) | Promote SessionStart recall-pending entries into the per-ticket recall log. | imported by dispatch_stage |
 | `reflect_inputs.py` | Bundle the reflect-stage inputs (state + frontmatter + diff + subagent reports + friction + reflect_config + a best-effort `harness_eval` availability block advertising the corpus regression eval). | `--ticket --ticket-dir --ticket-frontmatter --cwd` |
 | `observe_ship_event.py` | Sole writer of `ship-events/<ticket>.json` (atomic, dupe-safe). | `--ticket --evidence-json --run-id --workspace-root` |

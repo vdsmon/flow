@@ -24,6 +24,7 @@ Exit codes:
   2 = lock contention.
   3 = invalid type.
   4 = I/O error, or workspace memory config missing/invalid.
+  5 = unknown --supersedes target id (not present in knowledge.jsonl).
 """
 
 from __future__ import annotations
@@ -65,6 +66,10 @@ class _InvalidType(Exception):
 
 class _DuplicateId(Exception):
     """Entry with this id already present."""
+
+
+class _UnknownSupersedeTarget(Exception):
+    """--supersedes named an id not present in knowledge.jsonl."""
 
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -115,12 +120,14 @@ def append(
     branch: str,
     ticket: str,
     id_override: str | None = None,
+    supersedes: str | None = None,
 ) -> dict[str, Any]:
     """Append one entry to knowledge.jsonl. Returns the entry.
 
     Raises:
         _InvalidType
         _DuplicateId
+        _UnknownSupersedeTarget
         LockContention
         _memory_paths._MemoryConfigError
         OSError
@@ -136,6 +143,8 @@ def append(
     with flock_retry(lpath):
         if _scan_for_id(kpath, entry_id, quarantine_sidecar):
             raise _DuplicateId(entry_id)
+        if supersedes is not None and not _scan_for_id(kpath, supersedes, quarantine_sidecar):
+            raise _UnknownSupersedeTarget(supersedes)
         entry = {
             "id": entry_id,
             "ts": _utcnow_iso_ms(),
@@ -145,6 +154,11 @@ def append(
             "ticket": ticket,
             "body": body,
         }
+        # supersedes is a tombstone pointer (metadata like ts), NOT a hash input,
+        # so a superseding entry's id stays stable across recover reruns. Only
+        # present when set, to avoid churning every record with a null field.
+        if supersedes is not None:
+            entry["supersedes"] = supersedes
         kpath.parent.mkdir(parents=True, exist_ok=True)
         with kpath.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(entry, sort_keys=True) + "\n")
@@ -165,6 +179,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--branch", required=True)
     parser.add_argument("--ticket", required=True)
     parser.add_argument("--id", dest="id_override", default=None)
+    parser.add_argument("--supersedes", default=None)
     parser.add_argument("--workspace-root", default=".")
     return parser.parse_args(argv)
 
@@ -180,6 +195,7 @@ def cli_main(argv: list[str]) -> int:
             branch=args.branch,
             ticket=args.ticket,
             id_override=args.id_override,
+            supersedes=args.supersedes,
         )
     except _InvalidType as exc:
         sys.stderr.write(f"memory-append: {exc}\n")
@@ -187,6 +203,9 @@ def cli_main(argv: list[str]) -> int:
     except _DuplicateId as exc:
         sys.stderr.write(f"memory-append: duplicate id {exc}; no-op\n")
         return 1
+    except _UnknownSupersedeTarget as exc:
+        sys.stderr.write(f"memory-append: unknown supersedes target id {exc}\n")
+        return 5
     except LockContention as exc:
         sys.stderr.write(f"memory-append: {exc}\n")
         return 2

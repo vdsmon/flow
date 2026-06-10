@@ -86,6 +86,26 @@ def _load_entries(knowledge_path: Path) -> list[dict[str, Any]]:
     return list(iter_jsonl(knowledge_path, sidecar))
 
 
+# ─── Supersession ────────────────────────────────────────────────────────────
+
+
+def superseded_ids(entries: list[dict[str, Any]]) -> set[str]:
+    """The dead-set: every non-empty `supersedes` target across all entries."""
+    dead: set[str] = set()
+    for e in entries:
+        target = e.get("supersedes")
+        if isinstance(target, str) and target:
+            dead.add(target)
+    return dead
+
+
+def filter_superseded(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Drop entries whose id is named by some other entry's `supersedes`. Resolves
+    an A<-B<-C chain for free: A and B are both referenced, only C survives."""
+    dead = superseded_ids(entries)
+    return [e for e in entries if e.get("id") not in dead]
+
+
 # ─── BM25 ────────────────────────────────────────────────────────────────────
 
 
@@ -222,6 +242,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--branch", default=None)
     parser.add_argument("--tickets", default=None, help="comma-separated ticket keys.")
     parser.add_argument("--top-n", type=int, default=5)
+    parser.add_argument("--include-superseded", action="store_true")
     parser.add_argument("--workspace-root", default=".")
     return parser.parse_args(argv)
 
@@ -242,6 +263,8 @@ def cli_main(argv: list[str]) -> int:
         return 1
     kpath = _memory_paths.knowledge_path(workspace_root, namespace)
     entries = _load_entries(kpath)
+    if not args.include_superseded:
+        entries = filter_superseded(entries)
     tickets: list[str] = []
     if args.tickets:
         tickets = [t.strip() for t in args.tickets.split(",") if t.strip()]
@@ -267,6 +290,8 @@ __all__ = [
     "K1",
     "TICKET_EXACT_BONUS",
     "cli_main",
+    "filter_superseded",
     "rank",
+    "superseded_ids",
     "tokenize",
 ]
