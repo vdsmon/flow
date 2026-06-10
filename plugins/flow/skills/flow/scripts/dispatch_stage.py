@@ -427,6 +427,16 @@ def cmd_finish(
     if guard is not None:
         return guard
 
+    if output_path is not None:
+        p = Path(output_path).expanduser()
+        if not p.is_absolute():
+            p = workspace_root / p
+        if not p.is_file():
+            return 1, {
+                "error": f"--output-path names a missing file: {p}",
+                "hint": "write the stage output file first, then re-run finish/advance",
+            }
+
     head_sha = _git_head_sha(workspace_root)
     try:
         new_state = state.finish_stage(
