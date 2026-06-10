@@ -19,7 +19,6 @@ class StageEntry:
     description: str = ""
     default_handler: str = "none"
     default_timeout_min: int = 10
-    default_heartbeat_required: bool = False
     default_max_no_progress_min: int = 10
     required_capabilities: list[str] = field(default_factory=list)
     required_predecessors: list[str] = field(default_factory=list)
@@ -58,7 +57,6 @@ def load_registry(path: Path) -> list[StageEntry]:
                 description=str(entry.get("description", "")),
                 default_handler=str(entry.get("default_handler", "none")),
                 default_timeout_min=int(entry.get("default_timeout_min", 10)),
-                default_heartbeat_required=bool(entry.get("default_heartbeat_required", False)),
                 default_max_no_progress_min=int(entry.get("default_max_no_progress_min", 10)),
                 required_capabilities=_str_list(entry.get("required_capabilities")),
                 required_predecessors=_str_list(entry.get("required_predecessors")),
