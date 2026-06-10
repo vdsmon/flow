@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import subprocess
 
+import pytest
+
 import evolve_self_merge as esm
 
 # ─── decide() — the pure gate ────────────────────────────────────────────────
@@ -81,6 +83,86 @@ def test_planned_files_absent_follows_label():
     assert d["is_hot"] is False
 
 
+# ─── decide() — the harness-eval gate ────────────────────────────────────────
+
+
+def test_eval_regressed_blocks_merge():
+    d = esm.decide(
+        ["evolve"],
+        is_maintainer=True,
+        auto_merge_hot=False,
+        ci_status="green",
+        eval_status="regressed",
+    )
+    assert d["action"] == "skip"
+    assert "regress" in d["reason"]
+
+
+def test_eval_error_blocks_merge():
+    d = esm.decide(
+        ["evolve"],
+        is_maintainer=True,
+        auto_merge_hot=False,
+        ci_status="green",
+        eval_status="error",
+    )
+    assert d["action"] == "skip"
+    assert "no non-regression evidence" in d["reason"]
+
+
+def test_eval_unexpected_value_blocks():
+    d = esm.decide(
+        ["evolve"],
+        is_maintainer=True,
+        auto_merge_hot=False,
+        ci_status="green",
+        eval_status="garbage",
+    )
+    assert d["action"] == "skip"
+    assert "no non-regression evidence" in d["reason"]
+
+
+def test_eval_pass_merges():
+    d = esm.decide(
+        ["evolve"],
+        is_maintainer=True,
+        auto_merge_hot=False,
+        ci_status="green",
+        eval_status="pass",
+    )
+    assert d["action"] == "merge"
+
+
+def test_eval_none_is_noop():
+    d = esm.decide(["evolve"], is_maintainer=True, auto_merge_hot=False, ci_status="green")
+    assert d == {"action": "merge", "is_hot": False, "reason": "eligible"}
+
+
+def test_eval_gate_sits_after_ci_gate():
+    d = esm.decide(
+        ["evolve"],
+        is_maintainer=True,
+        auto_merge_hot=False,
+        ci_status="pending",
+        eval_status="regressed",
+    )
+    assert d["action"] == "skip"
+    assert "green" in d["reason"]
+
+
+def test_eval_gate_sits_before_hot_gate():
+    d = esm.decide(
+        ["evolve", "hot"],
+        is_maintainer=True,
+        auto_merge_hot=False,
+        ci_status="green",
+        eval_status="regressed",
+    )
+    assert d["action"] == "skip"
+    assert "regress" in d["reason"]
+    assert d["is_hot"] is True
+
+
 # ─── CLI (injected runner + tmp workspace) ───────────────────────────────────
 
 
@@ -152,6 +234,56 @@ def test_cli_no_ticket_file_follows_label(tmp_path, capsys):
     )
     assert rc == 0
     assert json.loads(capsys.readouterr().out)["is_hot"] is False
+
+
+def test_cli_eval_status_flows_to_decide(tmp_path, capsys):
+    ws = _ws(tmp_path, self_target=True, auto_merge_hot=True)
+    rc = esm.cli_main(
+        [
+            "--workspace-root",
+            str(ws),
+            "--key",
+            "flow-x",
+            "--ci-status",
+            "green",
+            "--eval-status",
+            "regressed",
+        ],
+        runner=_runner(["evolve"]),
+    )
+    assert rc == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["action"] == "skip"
+    assert "regress" in out["reason"]
+
+
+def test_cli_omitted_eval_flag_unchanged(tmp_path, capsys):
+    ws = _ws(tmp_path, self_target=True, auto_merge_hot=True)
+    rc = esm.cli_main(
+        ["--workspace-root", str(ws), "--key", "flow-x", "--ci-status", "green"],
+        runner=_runner(["evolve"]),
+    )
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out)["action"] == "merge"
+
+
+def test_cli_rejects_unknown_eval_status(tmp_path):
+    ws = _ws(tmp_path, self_target=True, auto_merge_hot=True)
+    with pytest.raises(SystemExit) as exc:
+        esm.cli_main(
+            [
+                "--workspace-root",
+                str(ws),
+                "--key",
+                "flow-x",
+                "--ci-status",
+                "green",
+                "--eval-status",
+                "garbage",
+            ],
+            runner=_runner(["evolve"]),
+        )
+    assert exc.value.code == 2
 
 
 # ─── _bead_labels error branches ─────────────────────────────────────────────
