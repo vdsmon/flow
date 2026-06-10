@@ -166,6 +166,21 @@ def _untracked_files(files: list[str], cwd: Path, runner: Runner) -> list[str]:
     return [f for f in files if f not in tracked]
 
 
+def _staged_deletions(files: list[str], cwd: Path, runner: Runner) -> list[str]:
+    """Return the subset of `files` staged as a deletion relative to HEAD.
+
+    `git rm --cached <p>` untracks a path while keeping its working copy, so it is
+    absent from `git ls-files` (reads as untracked-new) yet `git diff HEAD` already
+    emits the deletion and needs no intent-to-add. `git diff --cached --diff-filter=D`
+    is the exact query; `git ls-files --deleted` is NOT (it lists working-tree-deleted
+    paths, the opposite case).
+    """
+    if not files:
+        return []
+    raw = _git(["diff", "--cached", "--diff-filter=D", "--name-only", "--", *files], cwd, runner)
+    return [line for line in raw.splitlines() if line]
+
+
 def _gitignored(files: list[str], cwd: Path, runner: Runner) -> list[str]:
     """Return the subset of `files` git ignores. check-ignore exits 0 when a path
     is ignored, 1 when none are, so it bypasses `_git` (which raises on non-zero)."""
@@ -330,6 +345,12 @@ def capture_implement_diff(
     # newly created files show up in the diff against head_sha; without this
     # `git diff` emits nothing for them and they vanish from the patch.
     untracked = _untracked_files(existing, cwd, r) if existing else []
+    # a `git rm --cached` path is absent from `git ls-files` (reads as untracked) but
+    # `git diff HEAD` already emits its deletion; carve it out so it skips the gitignore
+    # guard, the intent-to-add, and the finally reset.
+    if untracked:
+        staged_deleted = set(_staged_deletions(untracked, cwd, r))
+        untracked = [p for p in untracked if p not in staged_deleted]
     # `git add --intent-to-add` hard-fails on a gitignored path, which would abort
     # the commit stage with an opaque git error. Surface it as a diagnosable one
     # instead (the bootstrap gate normally catches this earlier; this is the
