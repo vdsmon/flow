@@ -43,7 +43,7 @@ The cold-audit producer. Mine flow's own codebase for evidence-backed improvemen
 Spawn parallel read-only audit agents (the `Agent` tool with `Explore` / `general-purpose`, or a `Workflow` fan-out when available), one per evidence source. Every finding MUST cite concrete evidence — a `file:line` or a reproduced command — or it is not a candidate. No "could be cleaner". Mine, at least:
 
 - **quality gates** — run `mise run lint`, `mise run test`, `python3 seam_check.py` from `scripts/`; every real failure / warning / lint-suppression is a finding.
-- **test gaps** — public functions / branches with no test (use `MODULE.md` to map script → test).
+- **test gaps** — public functions / branches with no test (use `MODULE.md` to map script → test). A claimed-missing test MUST be positively confirmed absent against the LIVE suite before it becomes a finding — a single grep-pattern miss can claim an already-tested path (flow-aod: both "missing" dispatch tests existed at the very test-count the evidence cited). Two independent probes, both required: (1) content-grep the whole `tests/` dir for the symbol AND its branch markers (function name, exit code, error string — a test may exercise the branch under a different name); (2) collect the live suite and grep node ids — from `scripts/`, run `mise exec python -- pytest tests/ --collect-only -q` once bare to confirm it reports N>0 tests collected, then piped `| grep -i <term>`. Grep finding nothing (empty output, exit 1) IS the clean-empty result; VOID means pytest itself errored or collected 0 — a VOID probe confirms nothing. Only both probes clean-and-empty support the claim, and the finding's evidence MUST stamp the exact probe commands + their empty results, so the plan stage can falsify the premise cheaply.
 - **dead code & complexity** — unused defs (prove zero refs), very long / tangled functions.
 - **doc drift** — `MODULE.md` / `inventory.md` / `SKILL.md` / `references/*.md` claims vs the actual code. For a PR-introduced *vocabulary/phrasing* drift (a renamed term, a reworded invariant, a changed concept name), the stale phrasing typically lives in EVERY reference describing that subsystem, not just the file the diff surfaced: grep the whole `references/*.md` + `SKILL.md` doc set for the old phrasing and enumerate ALL loci (every `file:line`) in the finding's description/evidence, so the one bead that fixes it names every locus — and when that bead is later spec'd its "Files to change" (and thus the stamped `planned_files`) covers them together. The finding's dedup identity still anchors on its single primary file (per §2); the multi-locus list belongs in the evidence, not the key.
 - **friction & history** — unaddressed `MACHINERY:` entries in `knowledge.jsonl`, `TODO`/`FIXME`, recent git-log pain.
@@ -58,6 +58,16 @@ Dedup the raw findings (merge ones about the same root issue), drop the vague / 
 ### 3. File each candidate (dedup through the seam)
 
 For each candidate, file it into flow's beads. The `--dedup-key` is the stable `id`; it stops refiling open work AND re-proposing findings already closed or rejected, so the loop converges:
+
+**Freshness gate — before any `bd create`.** The miners read the maintainer checkout, which can lag `origin/<default>`; a finding can ship upstream between mining and filing. Once per filing batch, fetch and resolve the default branch the same way `flow_worktree.py create --base @default` does, including the unset-`origin/HEAD` fallback:
+
+```bash
+git fetch --quiet origin
+DEFAULT=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD) \
+  || { git remote set-head origin --auto >/dev/null; DEFAULT=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD); }
+```
+
+Then re-verify each candidate's evidence AT that ref, not the working checkout: a `file:line` cite → `git show "$DEFAULT:<path>"` and confirm the cited content is still there; a claimed-missing artifact (a test, a flag, a doc section) → `git grep <symbol-or-name> "$DEFAULT" -- <scope>` and confirm it is genuinely absent at the ref. A candidate whose ask already exists on `origin/<default>` is dropped before filing (count it in the step-4 report), not filed-then-caught at plan time. Prior art: flow-5ba (the audit filed a bead asking for a test PR#189 had already merged — the evidence snapshot predated the merge), flow-cam (a claimed-missing test was a grep miss — the at-ref `git grep` is what re-verifies a "missing" claim by command, not memory); the plan stage's drift-vs-@default discipline (flow-749) is the downstream net this gate front-runs. `flow_beads_create.py` stays dedup-only (the `evid:`/`evidfile:` fingerprints); it cannot verify a semantic claim like "test X is absent", so freshness is the filer's duty here.
 
 ```bash
 python3 ${CLAUDE_SKILL_DIR}/scripts/flow_beads_create.py \
@@ -77,7 +87,7 @@ The `--dedup-key` is reduced to a deterministic `evid:` fingerprint, so re-runs 
 
 ### 4. Report
 
-Summarise: candidates found, filed (with keys), skipped-as-duplicate, dropped-as-noise. Be honest if the audit found little — a quiet run as the easy wins drain is success (the loop is self-limiting), not failure. Do not manufacture findings to fill the report.
+Summarise: candidates found, filed (with keys), skipped-as-duplicate, dropped-as-noise, dropped-as-already-shipped (stale evidence — the freshness gate in step 3). Be honest if the audit found little — a quiet run as the easy wins drain is success (the loop is self-limiting), not failure. Do not manufacture findings to fill the report.
 
 The user reviews the backlog (`bd ready --label evolve`) and ships from it — or runs `/flow evolve drain` to drain it autonomously.
 
@@ -93,7 +103,7 @@ Repeat the turn below until step **D** returns `done`. If the user invoked `/flo
 
 **A. Reap — merge orphan green leaf PRs (safety-net), first each turn.** Reaping first frees backpressure (open-PR cap) and clears `hot_inflight` for a hot that just landed, so the launch step sees an honest picture.
 
-A launched run self-merges its own green PR, so this only ever finds a green evolve PR whose run **died before self-merging**. Green LEAF evolve PRs merge to the default branch unattended (immediate on green). Non-green and conflicted PRs always wait as draft PRs for the human — the gate survives where the risk is. Hot PRs auto-merge ONLY under `[evolve] auto_merge_hot` (default off; on solely in this maintainer self-target repo) AND isolation: at most one hot PR merges per pass, and the fleet must be quiesced around the pass. Off / non-maintainer keeps today's behavior (hot → `skipped_hot`). Note: the code (`classify`) enforces only the one-hot-per-pass serialization; ensuring no other evolve run is active (quiescing the fleet) before an auto-merge pass is the operator's responsibility.
+A launched run self-merges its own green PR, so this only ever finds a green evolve PR whose run **died before self-merging**. Green LEAF evolve PRs merge to the default branch unattended (immediate on green). Non-green and conflicted PRs always wait as draft PRs for the human — the gate survives where the risk is. A green PR whose branch plugin version equals current main's (a **duplicate stamp**: a sibling merged first stamping the same next version; both sides changed the version line identically, so git reports CLEAN and the duplicate is invisible to the merge state) never auto-merges in any lane — non-hot → `version_recoverable`, hot → excluded from promotion, stays `skipped_hot`. A never-stamped orphan (a branch that died before its merge-stage stamp and so still sits at main's version) routes there too and gets restamped — intended. Hot PRs auto-merge ONLY under `[evolve] auto_merge_hot` (default off; on solely in this maintainer self-target repo) AND isolation: at most one hot PR merges per pass, and the fleet must be quiesced around the pass. Off / non-maintainer keeps today's behavior (hot → `skipped_hot`). Note: the code (`classify`) enforces only the one-hot-per-pass serialization; ensuring no other evolve run is active (quiescing the fleet) before an auto-merge pass is the operator's responsibility.
 
 ```bash
 python3 ${CLAUDE_SKILL_DIR}/scripts/launch_ledger.py prune --workspace-root .  # hygiene: drop expired launch markers
@@ -121,7 +131,7 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/flow_worktree.py reap --ticket <key> --branc
 
 `bd close` here autodiscovers `.beads/*.db` from cwd, and this sub-verb is maintainer-gated with no `cd` in the loop, so the close inherits the maintainer-repo cwd and hits flow's own DB. With the close wired in, reaping a PR also closes its bead, so the loop leaves no merged-but-open beads behind. Veto for the human: convert a PR to draft or close it before the next turn and the reap skips it.
 
-**Then handle the `version_recoverable` set — merge-time version-conflict recovery (Option B).** A green non-hot DIRTY PR lands here: the version is stamped at merge time (stage-merge §3), not per-PR, so siblings' merge-time stamps walk main's version forward and a later PR can go DIRTY on the version line ONLY if main merges during its post-stamp CI re-wait (its code merges clean). Process this set **SERIALLY** — each merge walks main's version forward, so each PR must re-fetch main AFTER the prior one merged (don't parallelize). For each `{pr, key, branch}` entry (skip under `--dry-run`):
+**Then handle the `version_recoverable` set — merge-time version-conflict recovery (Option B).** A green non-hot PR lands here two ways: **DIRTY** (version-line conflict), or **CLEAN/DRAFT with a duplicate stamp** (branch plugin version == main's current; live hit flow-5ba/PR#213). The version is stamped at merge time (stage-merge §3), not per-PR, so siblings' merge-time stamps walk main's version forward: a later PR goes DIRTY on the version line ONLY if main merges during its post-stamp CI re-wait (its code merges clean), and goes duplicate-CLEAN when both sides stamped the same next version (identical version-line change, so no conflict to see). The same recipe below handles both — `recover`'s clean path restamps a same-version branch. Process this set **SERIALLY** — each merge walks main's version forward, so each PR must re-fetch main AFTER the prior one merged (don't parallelize). For each `{pr, key, branch}` entry (skip under `--dry-run`):
 
 ```bash
 # fetch the branch, check it out in a TEMP worktree (never the maintainer checkout)
@@ -201,7 +211,7 @@ Each spawns a detached run that auto-plans and either drives its PR to green-and
 
 ### --dry-run
 
-`/flow evolve drain --dry-run`: run ONE turn's **A** reap classification (`evolve_reap.py`, print the `merge`/`not_green`/`skipped_hot`/`blocked` sets, do NOT merge) + **A2** session-cleanup classification (`evolve_session_cleanup.py`, print the `stoppable` set, do NOT `claude stop` or `rm`) + **B** (`evolve_drain.py`, print the action + would-launch keys + parked), then STOP. No merges, no stops, no launches, no loop.
+`/flow evolve drain --dry-run`: run ONE turn's **A** reap classification (`evolve_reap.py`, print the `merge`/`not_green`/`skipped_hot`/`version_recoverable`/`blocked` sets, do NOT merge) + **A2** session-cleanup classification (`evolve_session_cleanup.py`, print the `stoppable` set, do NOT `claude stop` or `rm`) + **B** (`evolve_drain.py`, print the action + would-launch keys + parked), then STOP. No merges, no stops, no launches, no loop.
 
 ### --include-proposals (dangerous)
 

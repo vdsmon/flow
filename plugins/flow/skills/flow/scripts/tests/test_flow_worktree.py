@@ -7,7 +7,9 @@ bootstrap must copy config in).
 
 from __future__ import annotations
 
+import fcntl
 import multiprocessing
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -981,6 +983,40 @@ def test_bootstrap_no_siblings_creates_claim_file(tmp_path: Path) -> None:
     assert res["ticket"] == "FT-1"
     # the claim persists after release by design (flock targets are never deleted)
     assert (main.resolve() / ".flow" / "tickets" / "FT-1.claim").exists()
+
+
+def _assert_claim_released(claim: Path) -> None:
+    """LOCK_NB re-acquire on a fresh fd of the same path: conflicts iff another
+    descriptor in this process still holds the flock."""
+    fd = os.open(str(claim), os.O_RDWR)
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            pytest.fail("bootstrap leaked the claim flock")
+    finally:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
+
+
+def test_bootstrap_claim_released_after_success(tmp_path: Path) -> None:
+    # same-process LOCK_NB re-acquire is the leak detector; the concurrent test
+    # can't see an in-process fd leak (the OS frees flocks at process exit).
+    main = _main_checkout(tmp_path)
+    _run(tmp_path, main)
+    _assert_claim_released(main.resolve() / ".flow" / "tickets" / "FT-1.claim")
+
+
+def test_bootstrap_claim_released_after_refusal(tmp_path: Path) -> None:
+    # a refused bootstrap (exit 4) must not leave the claim held, or the
+    # relaunch the refusal message asks for would block.
+    main = _main_checkout(tmp_path)
+    sib, td = _sibling_ticket_dir(tmp_path)
+    _seed_live_lease(td)
+    runner = _fake_runner(worktree_list=_siblings_porcelain(sib))
+    with pytest.raises(fw._DuplicateClaim):
+        _run(tmp_path, main, runner=runner)
+    _assert_claim_released(main.resolve() / ".flow" / "tickets" / "FT-1.claim")
 
 
 def _real_repo(tmp: Path) -> Path:

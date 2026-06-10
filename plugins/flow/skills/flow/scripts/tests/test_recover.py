@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+import contextlib
+import json
 import socket
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
+
+import pytest
 
 import lease
 import recover
@@ -41,7 +46,7 @@ def test_detect_fresh(tmp_path: Path) -> None:
     assert rep["lease"]["state"] == "free"
     assert rep["snapshot"]["ok"] is True
     assert rep["ship_event_attention"] == 0
-    # heartbeat consumer was removed (flow-dwd): detect no longer emits a progress map.
+    # progress-map consumer was removed (flow-dwd): detect no longer emits a progress map.
     assert "progress" not in rep
 
 
@@ -92,6 +97,47 @@ def test_takeover_quarantines_corrupt_lock(tmp_path: Path) -> None:
     assert len(quarantined) == 1
     assert quarantined[0].read_text(encoding="utf-8") == "{not json"
     assert payload["quarantined"] == str(quarantined[0])
+
+
+def test_takeover_refuses_when_corrupt_lock_becomes_live(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # TOCTOU regression: a corrupt lock replaced by a valid live lease (a
+    # concurrent acquirer winning the flock first) must refuse takeover and
+    # leave the lease + stages untouched.
+    td = _ws(tmp_path)
+    state.begin_stage(td, "ticket", "sha")
+    lock = lease.run_lock_path(td)
+    lock.write_text("{not json", encoding="utf-8")
+    boot, host = _identity()
+    live = json.dumps(
+        {
+            "run_id": "racer",
+            "boot_id": boot,
+            "hostname": host,
+            "cwd": str(td),
+            "acquired_at": _now(),
+            "lease_expires_at": "2099-01-01T00:00:00Z",
+        }
+    )
+    real_flock = lease.flock_blocking
+
+    @contextlib.contextmanager
+    def racing_flock(path: Path) -> Iterator[None]:
+        with real_flock(path):
+            lock.write_text(live, encoding="utf-8")
+            yield
+
+    monkeypatch.setattr(lease, "flock_blocking", racing_flock)
+    rc, payload = recover.takeover(tmp_path, "T-1", now_iso=_now())
+    assert rc == 1
+    assert "live" in payload["error"]
+    on_disk = lease.read_lease(td)
+    assert on_disk is not None
+    assert on_disk.run_id == "racer"
+    ts, _ = state.read(td)
+    assert ts is not None
+    assert ts.stages["ticket"].status == "in_progress"
 
 
 def test_retry_resets_failed_to_pending(tmp_path: Path) -> None:

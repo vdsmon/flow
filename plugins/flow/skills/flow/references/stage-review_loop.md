@@ -17,7 +17,7 @@ PR_ID=$(printf '%s' "$PR_URL" | grep -oE '[0-9]+$')   # trailing number: gh /pul
 
 ## 1. Wait for CI (Monitor, not a foreground sleep)
 
-Foreground `sleep` is blocked, so launch a **Monitor** that polls the one-shot rollup and emits only on state change (every emitted line is a notification; CI phases span minutes):
+A *bare* foreground `sleep` is blocked (`sleep` inside a single bounded Bash call is fine — that is the fallback's mechanism, below). Primary recipe: launch a **Monitor** that polls the one-shot rollup and emits only on state change (every emitted line is a notification; CI phases span minutes):
 
 ```
 Monitor(
@@ -28,6 +28,20 @@ Monitor(
 ```
 
 Run exactly ONE CI Monitor at a time (stop the prior one before re-arming after a fix). Break on `green` or `failed`.
+
+**Headless fallback — bounded foreground poll.** In a headless/turn-bounded session (a detached `--auto` run relaunched per turn, or a run interrupted at a turn boundary, e.g. by a rate limit) a Monitor or background task dies at turn end and its completion notification never arrives (observed in the flow-aod run: the bounded poll reached CI green in ~30s after the Monitor path silently died). There, poll in ONE Bash call with an explicit iteration cap and `timeout: 600000` (the Bash max):
+
+```bash
+i=0; while [ $i -lt 8 ]; do
+  s=$(python3 ${CLAUDE_SKILL_DIR}/scripts/forge_cli.py --workspace-root . ci-rollup --pr "$PR_ID" 2>/dev/null \
+    | python3 -c 'import sys,json;print(json.load(sys.stdin).get("status","pending"))')
+  echo "[$(date +%T)] CI: $s"
+  if [ "$s" = "green" ] || [ "$s" = "failed" ]; then break; fi
+  sleep 60; i=$((i+1))
+done
+```
+
+8 × 60s = 480s keeps one call comfortably under the 600s Bash ceiling even with slow rollup calls. If still `pending` at the cap, re-issue the same call — each call is one turn-safe unit. Break on `green`/`failed` exactly like the Monitor; the §2 fix-cycle cap is unchanged. This is a fallback, not a coequal default — attached/long-lived sessions keep using the Monitor.
 
 ## 2. On CI failed — drive fixes (delegated, bounded)
 

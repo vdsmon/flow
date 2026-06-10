@@ -502,7 +502,6 @@ Phase 7-full replaces this with the canonical-snapshot pattern from the literal 
 | Background lease refresher thread                | 7-full    |
 | `--emit-canonical-snapshot` content-tree hash    | 7-full    |
 | FS capability probe (flock detection)            | 7-full    |
-| Heartbeat `.progress` files + hung detection     | 7-full    |
 | `lint-ticket.py` HARD GATE pre-stage             | 8-mvp ✓   |
 | `branch-ticket.py` ticket resolution             | 8-mvp ✓   |
 | `ticket-frontmatter.py` TOML r/w                 | 8-mvp ✓   |
@@ -832,10 +831,10 @@ Four files in `references/`:
 7. `tracker_cli` exit code 1 lumps network/auth/not-found → split in
    later phase.
 8. `timeout_min` in handler descriptor is informational only. No
-   enforcement; the heartbeat producer (`write_progress` / the `write`
+   enforcement; the progress producer (`write_progress` / the `write`
    CLI / `quarantine_stale`) was deleted as dead (flow-dwd) rather than
-   wired, so there is no producer to enforce against. `heartbeat.py`
-   survives as a read-only hung-detection inspection library.
+   wired, so there is no producer to enforce against. The read-only
+   hung-detection remnant was deleted too (flow-qp7).
 9. The do-loop bash prose uses `"<KEY>"` / `"$STAGE"` syntax — variable
    substitution into the actual Bash invocations is on Claude. Reference
    docs document the variable names; the loop in SKILL.md sets them from

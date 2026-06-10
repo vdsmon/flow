@@ -115,15 +115,25 @@ def _runner(
     return run
 
 
+def _write_tree(cwd, version: str) -> None:
+    """Materialize both version files in the fake checkout at `version` (the clean
+    path reads the merged working tree)."""
+    (cwd / PLUGIN).parent.mkdir(parents=True, exist_ok=True)
+    (cwd / MARKET).parent.mkdir(parents=True, exist_ok=True)
+    (cwd / PLUGIN).write_text(_plugin(version), encoding="utf-8")
+    (cwd / MARKET).write_text(_market(version), encoding="utf-8")
+
+
 def test_remerged_clean_when_no_conflict(tmp_path):
     cwd = tmp_path
+    _write_tree(cwd, "0.27.43")  # already stamped past main: no restamp
     calls: list[list[str]] = []
     run = _runner(main_version="0.27.42", merge_rc=0, conflicts=[], calls=calls)
     out = vr.recover("feature/flow-x-foo", cwd=cwd, runner=run)
     assert out["status"] == "remerged_clean"
     assert out["sha"] == "deadbeef"
     assert out["version"] is None
-    assert ["git", "push"] in calls
+    assert ["git", "push", "origin", "feature/flow-x-foo"] in calls
     assert not any(a[:3] == ["git", "merge", "--abort"] for a in calls)
 
 
@@ -147,7 +157,7 @@ def test_version_only_conflict_resolves_and_bumps(tmp_path):
     assert (cwd / PLUGIN).read_text().count("0.27.43") == 1
     assert (cwd / MARKET).read_text().count("0.27.43") == 1
     assert ["git", "commit", "--no-edit"] in calls
-    assert ["git", "push"] in calls
+    assert ["git", "push", "origin", "feature/flow-x-foo"] in calls
     assert not any(a[:3] == ["git", "merge", "--abort"] for a in calls)
 
 
@@ -198,7 +208,7 @@ def test_flow_wkn_regression_branch_already_stamped_next(tmp_path):
     assert ["git", "add", PLUGIN] in calls
     assert ["git", "add", MARKET] in calls
     assert ["git", "commit", "--no-edit"] in calls
-    assert ["git", "push"] in calls
+    assert ["git", "push", "origin", "feature/flow-wkn-version-remerge"] in calls
     assert not any(a[:3] == ["git", "merge", "--abort"] for a in calls)
 
 
@@ -274,10 +284,154 @@ def test_recover_flagless_scan_no_feat_bumps_patch(tmp_path):
 
 def test_remerged_clean_shape_unchanged_under_commit_type(tmp_path):
     cwd = tmp_path
+    _write_tree(cwd, "0.28.0")  # already stamped past main: no restamp
     calls: list[list[str]] = []
     run = _runner(main_version="0.27.42", merge_rc=0, conflicts=[], calls=calls)
     out = vr.recover("feature/flow-x-foo", cwd=cwd, commit_type="feat", runner=run)
     assert out == {"status": "remerged_clean", "sha": "deadbeef", "version": None}
+
+
+# ---- clean-merge duplicate-stamp restamp (flow-5fp) ----
+
+
+def test_clean_merge_same_version_restamps(tmp_path):
+    # the live flow-5ba/PR#213 case: a sibling walked main to the SAME version this
+    # branch stamped, so the merge is CLEAN and the DIRTY recovery never fires.
+    cwd = tmp_path
+    _write_tree(cwd, "0.27.42")
+    calls: list[list[str]] = []
+    run = _runner(main_version="0.27.42", merge_rc=0, conflicts=[], calls=calls)
+    out = vr.recover("feature/flow-x-foo", cwd=cwd, runner=run)
+    assert out["status"] == "restamped"
+    assert out["sha"] == "deadbeef"
+    assert out["version"] == "0.27.43"
+    assert (cwd / PLUGIN).read_text().count("0.27.43") == 1
+    assert (cwd / MARKET).read_text().count("0.27.43") == 1
+    assert ["git", "add", PLUGIN] in calls
+    assert ["git", "add", MARKET] in calls
+    commit = next(a for a in calls if a[:2] == ["git", "commit"])
+    assert PLUGIN in commit and MARKET in commit
+    assert ["git", "push", "origin", "feature/flow-x-foo"] in calls
+    assert not any(a[:3] == ["git", "merge", "--abort"] for a in calls)
+
+
+def test_clean_merge_restamp_feat_bumps_minor(tmp_path):
+    cwd = tmp_path
+    _write_tree(cwd, "0.27.42")
+    calls: list[list[str]] = []
+    run = _runner(main_version="0.27.42", merge_rc=0, conflicts=[], calls=calls)
+    out = vr.recover("feature/flow-x-foo", cwd=cwd, commit_type="feat", runner=run)
+    assert out == {
+        "status": "restamped",
+        "sha": "deadbeef",
+        "version": "0.28.0",
+        "bump": "minor",
+        "commit_type": "feat",
+    }
+
+
+def test_never_stamped_branch_at_main_version_restamps(tmp_path):
+    # a branch that never stamped but whose tree inherited main's version restamps
+    # too: maintainer-accepted intended behavior, the restamp is idempotent-correct
+    # (it writes next-from-main either way).
+    cwd = tmp_path
+    _write_tree(cwd, "0.27.42")
+    calls: list[list[str]] = []
+    run = _runner(
+        main_version="0.27.42",
+        merge_rc=0,
+        conflicts=[],
+        calls=calls,
+        log_subjects=["fix: never stamped this branch"],
+    )
+    out = vr.recover("feature/flow-x-foo", cwd=cwd, runner=run)
+    assert out["status"] == "restamped"
+    assert out["version"] == "0.27.43"
+
+
+def test_clean_merge_different_version_no_restamp(tmp_path):
+    # explicit negative: tree version != main's -> no restamp commit, shape unchanged.
+    cwd = tmp_path
+    _write_tree(cwd, "0.27.43")
+    calls: list[list[str]] = []
+    run = _runner(main_version="0.27.42", merge_rc=0, conflicts=[], calls=calls)
+    out = vr.recover("feature/flow-x-foo", cwd=cwd, runner=run)
+    assert out["status"] == "remerged_clean"
+    assert not any(a[:2] == ["git", "commit"] for a in calls)
+    assert not any(a[:2] == ["git", "add"] for a in calls)
+    assert (cwd / PLUGIN).read_text().count("0.27.43") == 1
+
+
+def test_clean_path_missing_version_file_maps_tool_error(tmp_path):
+    # no on-disk version files: the working-tree read must surface as ToolError
+    # (exit 2 via cli_main), never a raw FileNotFoundError traceback.
+    cwd = tmp_path
+    calls: list[list[str]] = []
+    run = _runner(main_version="0.27.42", merge_rc=0, conflicts=[], calls=calls)
+    with pytest.raises(vr.ToolError):
+        vr.recover("feature/flow-x-foo", cwd=cwd, runner=run)
+    assert not any(a[:2] == ["git", "push"] for a in calls)
+
+
+def test_clean_path_oserror_maps_tool_error(tmp_path, monkeypatch):
+    cwd = tmp_path
+    _write_tree(cwd, "0.27.42")
+    calls: list[list[str]] = []
+    run = _runner(main_version="0.27.42", merge_rc=0, conflicts=[], calls=calls)
+
+    def boom(self, *args, **kwargs):
+        raise PermissionError("denied")
+
+    monkeypatch.setattr(type(cwd), "read_text", boom)
+    with pytest.raises(vr.ToolError):
+        vr.recover("feature/flow-x-foo", cwd=cwd, runner=run)
+    assert not any(a[:2] == ["git", "push"] for a in calls)
+
+
+def test_dirty_path_oserror_aborts_and_maps_tool_error(tmp_path, monkeypatch):
+    # a raw OSError inside the resolution block (e.g. disk full on the working-tree
+    # write) must still abort the merge AND map to ToolError, not escape as a
+    # traceback past cli_main (flow-wkn class).
+    cwd = tmp_path
+    (cwd / PLUGIN).parent.mkdir(parents=True, exist_ok=True)
+    (cwd / MARKET).parent.mkdir(parents=True, exist_ok=True)
+    calls: list[list[str]] = []
+    run = _runner(
+        main_version="0.27.42",
+        merge_rc=1,
+        conflicts=[PLUGIN, MARKET],
+        calls=calls,
+        ours={PLUGIN: _plugin("0.27.39"), MARKET: _market("0.27.39")},
+        theirs={PLUGIN: _plugin("0.27.42"), MARKET: _market("0.27.42")},
+    )
+
+    def boom(self, *args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(type(cwd), "write_text", boom)
+    with pytest.raises(vr.ToolError):
+        vr.recover("feature/flow-x-foo", cwd=cwd, runner=run)
+    assert ["git", "merge", "--abort"] in calls
+    assert not any(a[:2] == ["git", "commit"] for a in calls)
+    assert not any(a[:2] == ["git", "push"] for a in calls)
+
+
+def test_cli_restamped_exit_0(tmp_path, monkeypatch, capsys):
+    def fake_recover(branch, *, cwd, commit_type=None, runner=None):
+        return {
+            "status": "restamped",
+            "sha": "abc",
+            "version": "0.27.43",
+            "bump": "patch",
+            "commit_type": None,
+        }
+
+    monkeypatch.setattr(vr, "recover", fake_recover)
+    rc = vr.cli_main(["recover", "--branch", "feature/flow-x", "--cwd", str(tmp_path)])
+    assert rc == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["status"] == "restamped"
+    assert out["version"] == "0.27.43"
 
 
 def test_write_version_tool_error_aborts_merge(tmp_path, monkeypatch):
@@ -304,7 +458,7 @@ def test_write_version_tool_error_aborts_merge(tmp_path, monkeypatch):
         vr.recover("feature/flow-x-foo", cwd=cwd, runner=run)
     assert ["git", "merge", "--abort"] in calls
     assert ["git", "commit", "--no-edit"] not in calls
-    assert ["git", "push"] not in calls
+    assert not any(a[:2] == ["git", "push"] for a in calls)
 
 
 def test_git_add_failure_aborts_merge(tmp_path):
@@ -331,7 +485,7 @@ def test_git_add_failure_aborts_merge(tmp_path):
         vr.recover("feature/flow-x-foo", cwd=cwd, runner=run)
     assert ["git", "merge", "--abort"] in calls
     assert ["git", "commit", "--no-edit"] not in calls
-    assert ["git", "push"] not in calls
+    assert not any(a[:2] == ["git", "push"] for a in calls)
 
 
 def test_nonversion_content_diff_in_version_file_aborts(tmp_path):
@@ -358,7 +512,7 @@ def test_nonversion_content_diff_in_version_file_aborts(tmp_path):
         vr.recover("feature/flow-x-foo", cwd=cwd, runner=run)
     assert PLUGIN in exc.value.files
     assert ["git", "merge", "--abort"] in calls
-    assert ["git", "push"] not in calls
+    assert not any(a[:2] == ["git", "push"] for a in calls)
 
 
 def test_non_version_conflict_aborts(tmp_path):
@@ -374,7 +528,7 @@ def test_non_version_conflict_aborts(tmp_path):
         vr.recover("feature/flow-x-foo", cwd=cwd, runner=run)
     assert "scripts/foo.py" in exc.value.files
     assert ["git", "merge", "--abort"] in calls
-    assert ["git", "push"] not in calls
+    assert not any(a[:2] == ["git", "push"] for a in calls)
 
 
 def test_cli_non_version_conflict_exit_3(tmp_path, monkeypatch, capsys):

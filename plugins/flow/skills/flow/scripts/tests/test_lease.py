@@ -10,9 +10,12 @@ foreign-run_id acquirers wins.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import multiprocessing
+import subprocess
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, cast
 
@@ -259,6 +262,23 @@ def test_assert_lease_still_mine_hostname_mismatch(tmp_path: Path) -> None:
         lease.assert_lease_still_mine(tmp_path, "run-1", hostname="host-2")
 
 
+def test_assert_lease_still_mine_empty_current_boot_does_not_raise(tmp_path: Path) -> None:
+    # sandbox blocked the boot probe -> current_boot "" is inconclusive, not a mismatch.
+    _acquire(tmp_path, "run-1", boot="boot-A", host="host-1")
+    lease.assert_lease_still_mine(tmp_path, "run-1", current_boot="", hostname="host-1")
+
+
+def test_assert_lease_still_mine_empty_ondisk_boot_does_not_raise(tmp_path: Path) -> None:
+    # symmetric case: an empty on-disk boot id is inconclusive against a known current boot.
+    _acquire(tmp_path, "run-1", boot="", host="host-1")
+    lease.assert_lease_still_mine(tmp_path, "run-1", current_boot="boot-A", hostname="host-1")
+
+
+def test_assert_lease_still_mine_both_empty_boot_does_not_raise(tmp_path: Path) -> None:
+    _acquire(tmp_path, "run-1", boot="", host="host-1")
+    lease.assert_lease_still_mine(tmp_path, "run-1", current_boot="", hostname="host-1")
+
+
 def test_assert_lease_still_mine_ignores_expiry(tmp_path: Path) -> None:
     _acquire(tmp_path, "run-1")  # expires 12:05
     # owner resuming past expiry must still pass the identity check.
@@ -381,6 +401,70 @@ def test_boot_id_returns_empty_on_failure(monkeypatch: pytest.MonkeyPatch) -> No
     assert lease.boot_id(runner) == ""
 
 
+def test_boot_id_linux_reads_proc(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sys, "platform", "linux")
+    constructed: list[str] = []
+
+    class FakePath:
+        def __init__(self, path):
+            constructed.append(path)
+
+        def read_text(self):
+            return "uuid-value\n"
+
+    monkeypatch.setattr(lease, "Path", FakePath)
+    calls: list[list[str]] = []
+
+    def runner(args: list[str]) -> str:
+        calls.append(args)
+        return ""
+
+    assert lease.boot_id(runner) == "uuid-value"
+    assert constructed == ["/proc/sys/kernel/random/boot_id"]
+    assert calls == []
+
+
+def test_boot_id_linux_returns_empty_on_oserror(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sys, "platform", "linux")
+
+    class FakePath:
+        def __init__(self, path):
+            pass
+
+        def read_text(self):
+            raise OSError("no /proc")
+
+    monkeypatch.setattr(lease, "Path", FakePath)
+
+    def runner(args: list[str]) -> str:
+        return ""
+
+    assert lease.boot_id(runner) == ""
+
+
+def test_boot_id_darwin_returns_empty_on_subprocess_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(sys, "platform", "darwin")
+
+    def runner(args: list[str]) -> str:
+        raise subprocess.CalledProcessError(1, ["sysctl"])
+
+    assert lease.boot_id(runner) == ""
+
+
+def test_boot_id_unknown_platform_returns_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sys, "platform", "win32")
+    calls: list[list[str]] = []
+
+    def runner(args: list[str]) -> str:
+        calls.append(args)
+        return "should-not-be-used"
+
+    assert lease.boot_id(runner) == ""
+    assert calls == []
+
+
 # ─── corrupt run.lock ──────────────────────────────────────────────────────────
 
 
@@ -428,6 +512,99 @@ def test_quarantine_corrupt_lock_renames(tmp_path: Path) -> None:
 
 def test_quarantine_corrupt_lock_absent_returns_none(tmp_path: Path) -> None:
     assert lease.quarantine_corrupt_lock(tmp_path) is None
+
+
+def test_quarantine_corrupt_lock_skips_now_valid_lock(tmp_path: Path) -> None:
+    # a lock that parses as a valid lease (a concurrent acquire won the race
+    # since the caller classified it corrupt) must never be quarantined.
+    _acquire(tmp_path, "run-1")
+    assert lease.quarantine_corrupt_lock(tmp_path) is None
+    on_disk = lease.read_lease(tmp_path)
+    assert on_disk is not None
+    assert on_disk.run_id == "run-1"
+    assert list(tmp_path.glob("run.lock.quarantine.*")) == []
+
+
+# ─── takeover_clear ────────────────────────────────────────────────────────────
+
+
+def _racer_lease_json(expires_at: str) -> str:
+    return json.dumps(
+        {
+            "run_id": "racer",
+            "boot_id": "boot-A",
+            "hostname": "host-1",
+            "cwd": "/work",
+            "acquired_at": NOW,
+            "lease_expires_at": expires_at,
+        }
+    )
+
+
+def test_takeover_clear_quarantines_corrupt(tmp_path: Path) -> None:
+    lock = lease.run_lock_path(tmp_path)
+    lock.write_text("{not json", encoding="utf-8")
+    result = lease.takeover_clear(tmp_path, NOW)
+    assert result["cleared"] is True
+    assert result["state"] == "corrupt"
+    dst = result["quarantined"]
+    assert isinstance(dst, Path)
+    assert dst.name.startswith("run.lock.quarantine.")
+    assert dst.read_text(encoding="utf-8") == "{not json"
+    assert not lock.exists()
+
+
+def test_takeover_clear_refuses_live(tmp_path: Path) -> None:
+    _acquire(tmp_path, "run-1")
+    result = lease.takeover_clear(tmp_path, NOW, current_boot="boot-A", hostname="host-1")
+    assert result["cleared"] is False
+    assert result["state"] == "live"
+    holder = cast(dict[str, Any], result["holder"])
+    assert holder["run_id"] == "run-1"
+    assert lease.run_lock_path(tmp_path).exists()
+
+
+def test_takeover_clear_unlinks_expired(tmp_path: Path) -> None:
+    _acquire(tmp_path, "run-1", boot="boot-A")  # expires 12:05
+    after = "2026-05-28T13:00:00Z"
+    result = lease.takeover_clear(tmp_path, after, current_boot="boot-A", hostname="host-1")
+    assert result["cleared"] is True
+    assert result["state"] == "expired_foreign"
+    assert result["quarantined"] is None
+    assert not lease.run_lock_path(tmp_path).exists()
+
+
+def test_takeover_clear_free_is_noop(tmp_path: Path) -> None:
+    result = lease.takeover_clear(tmp_path, NOW)
+    assert result["cleared"] is True
+    assert result["state"] == "free"
+    assert result["quarantined"] is None
+
+
+def test_takeover_clear_race_corrupt_replaced_by_live(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # the TOCTOU itself: a concurrent acquirer wins the flock first and replaces
+    # the corrupt lock with a valid live lease. takeover_clear classifies inside
+    # its flock span, so it must see the live lease and refuse.
+    lock = lease.run_lock_path(tmp_path)
+    lock.write_text("{not json", encoding="utf-8")
+    real_flock = lease.flock_blocking
+
+    @contextlib.contextmanager
+    def racing_flock(path: Path) -> Iterator[None]:
+        with real_flock(path):
+            lock.write_text(_racer_lease_json("2026-05-28T12:30:00Z"), encoding="utf-8")
+            yield
+
+    monkeypatch.setattr(lease, "flock_blocking", racing_flock)
+    result = lease.takeover_clear(tmp_path, NOW, current_boot="boot-A", hostname="host-1")
+    assert result["cleared"] is False
+    assert result["state"] == "live"
+    on_disk = lease.read_lease(tmp_path)
+    assert on_disk is not None
+    assert on_disk.run_id == "racer"
+    assert list(tmp_path.glob("run.lock.quarantine.*")) == []
 
 
 # ─── CLI ───────────────────────────────────────────────────────────────────────

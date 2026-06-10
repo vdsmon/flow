@@ -1,6 +1,6 @@
 """Shared UTC ISO8601 timestamp parsing and formatting.
 
-heartbeat.py / recall_pending.py / lease.py / metric.py each grew a byte-near
+recall_pending.py / lease.py / metric.py each grew a byte-near
 copy of the parser; one caller grew the strict (Z-required) variant. This
 is the one copy. require_z makes the divergent contract explicit and testable.
 The format side (iso_z / utcnow_iso) is the matching emitter: second
