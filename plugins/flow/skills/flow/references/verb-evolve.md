@@ -59,6 +59,16 @@ Dedup the raw findings (merge ones about the same root issue), drop the vague / 
 
 For each candidate, file it into flow's beads. The `--dedup-key` is the stable `id`; it stops refiling open work AND re-proposing findings already closed or rejected, so the loop converges:
 
+**Freshness gate — before any `bd create`.** The miners read the maintainer checkout, which can lag `origin/<default>`; a finding can ship upstream between mining and filing. Once per filing batch, fetch and resolve the default branch the same way `flow_worktree.py create --base @default` does, including the unset-`origin/HEAD` fallback:
+
+```bash
+git fetch --quiet origin
+DEFAULT=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD) \
+  || { git remote set-head origin --auto >/dev/null; DEFAULT=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD); }
+```
+
+Then re-verify each candidate's evidence AT that ref, not the working checkout: a `file:line` cite → `git show "$DEFAULT:<path>"` and confirm the cited content is still there; a claimed-missing artifact (a test, a flag, a doc section) → `git grep <symbol-or-name> "$DEFAULT" -- <scope>` and confirm it is genuinely absent at the ref. A candidate whose ask already exists on `origin/<default>` is dropped before filing (count it in the step-4 report), not filed-then-caught at plan time. Prior art: flow-5ba (the audit filed a bead asking for a test PR#189 had already merged — the evidence snapshot predated the merge), flow-cam (a claimed-missing test was a grep miss — the at-ref `git grep` is what re-verifies a "missing" claim by command, not memory); the plan stage's drift-vs-@default discipline (flow-749) is the downstream net this gate front-runs. `flow_beads_create.py` stays dedup-only (the `evid:`/`evidfile:` fingerprints); it cannot verify a semantic claim like "test X is absent", so freshness is the filer's duty here.
+
 ```bash
 python3 ${CLAUDE_SKILL_DIR}/scripts/flow_beads_create.py \
   --workspace-root . \
@@ -77,7 +87,7 @@ The `--dedup-key` is reduced to a deterministic `evid:` fingerprint, so re-runs 
 
 ### 4. Report
 
-Summarise: candidates found, filed (with keys), skipped-as-duplicate, dropped-as-noise. Be honest if the audit found little — a quiet run as the easy wins drain is success (the loop is self-limiting), not failure. Do not manufacture findings to fill the report.
+Summarise: candidates found, filed (with keys), skipped-as-duplicate, dropped-as-noise, dropped-as-already-shipped (stale evidence — the freshness gate in step 3). Be honest if the audit found little — a quiet run as the easy wins drain is success (the loop is self-limiting), not failure. Do not manufacture findings to fill the report.
 
 The user reviews the backlog (`bd ready --label evolve`) and ships from it — or runs `/flow evolve drain` to drain it autonomously.
 
