@@ -153,6 +153,48 @@ def test_ticket_branch_runs_both_queries(tmp_path: Path) -> None:
     assert all(rec.get("hook_time_resolved_ticket") == "FT-1" for rec in lines)
 
 
+# ─── supersession exclusion via the REAL recall.py subprocess ──────────────────
+
+
+def test_build_context_excludes_superseded_entry(tmp_path: Path) -> None:
+    """The hook reaches knowledge.jsonl only through a recall.py subprocess, so the
+    default supersession exclusion applies transitively. Seed a pair X<-Y (both
+    branch=main, both would surface absent the filter); Y supersedes X. The
+    rendered block must contain Y's marker and omit X's marker.
+    """
+    _init_workspace(tmp_path, with_knowledge=False)
+    ns = tmp_path / ".flow" / "mem"
+    ns.mkdir(parents=True, exist_ok=True)
+    entries = [
+        {
+            "id": "supx",
+            "type": "gotcha",
+            "branch": "main",
+            "ticket": "FT-1",
+            "body": "supersededmarkerxxx stale claim about cooldown",
+            "ts": "2026-05-01T00:00:00Z",
+        },
+        {
+            "id": "supy",
+            "type": "gotcha",
+            "branch": "main",
+            "ticket": "FT-1",
+            "body": "survivormarkeryyy corrected claim about cooldown",
+            "ts": "2026-05-02T00:00:00Z",
+            "supersedes": "supx",
+        },
+    ]
+    (ns / "knowledge.jsonl").write_text(
+        "".join(json.dumps(e) + "\n" for e in entries), encoding="utf-8"
+    )
+    _init_repo(tmp_path)
+
+    block = hook.build_context(tmp_path, tmp_path)
+    assert block.startswith("## /flow recall")
+    assert "survivormarkeryyy" in block
+    assert "supersededmarkerxxx" not in block
+
+
 # ─── non-flow dir returns empty ────────────────────────────────────────────────
 
 

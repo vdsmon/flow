@@ -5,8 +5,8 @@ from the HEAD commit) live here; the host calls (detect/open PR) go through the
 pluggable forge seam (`forge.py`), so this same handler serves GitHub (`gh`) and
 Bitbucket (`bkt`) workspaces. Wired as `create_pr = "inline"` in the dogfood
 workspace and requires a `[forge]` block; other workspaces keep `create_pr = "none"`.
-PRs open ready for review by default; set `[create_pr] draft = true` in
-`workspace.toml` (or pass `--draft`) to open drafts.
+PRs open as drafts by default; set `[create_pr] draft = false` in
+`workspace.toml` to open ready for review (`--draft` forces a draft).
 
 Idempotent on resume: if a PR already exists for the branch it returns that URL
 instead of erroring, so a re-run after a crash does not double-open. The title comes
@@ -46,16 +46,16 @@ _PROTECTED = {"main", "master", "dev", "develop"}
 
 
 def _draft_config(workspace_root: Path) -> bool:
-    """`[create_pr] draft` from workspace.toml (bool); default False (open, ready)."""
+    """`[create_pr] draft` from workspace.toml (bool); default True (open as draft)."""
     try:
         config = load_workspace_toml(workspace_root)
     except WorkspaceConfigError:
-        return False
+        return True
     section = config.get("create_pr")
     if not isinstance(section, dict):
-        return False
+        return True
     value = section.get("draft")
-    return value if isinstance(value, bool) else False
+    return value if isinstance(value, bool) else True
 
 
 def _base_config(workspace_root: Path) -> str | None:
@@ -89,7 +89,7 @@ def open_or_get_pr(
     workspace_root: Path,
     *,
     base: str = "main",
-    draft: bool = False,
+    draft: bool = True,
     runner: Runner | None = None,
     forge: Forge | None = None,
 ) -> str:
@@ -97,8 +97,8 @@ def open_or_get_pr(
 
     Git mechanics (rev-parse, protected-branch refusal, push, title from the HEAD
     commit) stay here; the host calls (detect/open PR) go through the forge seam, so
-    this same handler serves GitHub and Bitbucket. Opens ready-for-review by default;
-    `draft=True` opens a draft PR. `forge` is injectable for tests.
+    this same handler serves GitHub and Bitbucket. Opens a draft by default;
+    `draft=False` opens ready for review. `forge` is injectable for tests.
     """
     run = runner or _default_runner(workspace_root)
     branch = _ok(run(["git", "rev-parse", "--abbrev-ref", "HEAD"]), "git rev-parse").strip()
