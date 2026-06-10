@@ -150,7 +150,7 @@ def test_capability_shape_accepts_closed_enum_names() -> None:
     )
     for name in enum_values:
         cap: t.Capability = {
-            "name": name,  # type: ignore[typeddict-item]
+            "name": name,
             "supported": True,
         }
         capabilities.append(cap)

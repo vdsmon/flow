@@ -62,7 +62,7 @@ def _http_error(
     headers: Message = Message()
     if retry_after is not None:
         headers["Retry-After"] = retry_after
-    return urllib.error.HTTPError(url, status, "err", headers, fp)  # type: ignore[arg-type]
+    return urllib.error.HTTPError(url, status, "err", headers, fp)
 
 
 class _FakeHttp:
@@ -80,7 +80,7 @@ class _FakeHttp:
             raise AssertionError(f"unexpected extra request: {req.method} {req.full_url}") from e
         if isinstance(entry, BaseException):
             raise entry
-        return entry  # type: ignore[return-value]
+        return entry
 
 
 def _body_dict(req: urllib.request.Request) -> dict[str, Any]:
