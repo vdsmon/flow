@@ -145,6 +145,16 @@ def _marked_ws(tmp_path: Path) -> Path:
     return d
 
 
+def _worker_ws(tmp_path: Path) -> Path:
+    d = tmp_path / "flow"
+    (d / ".flow").mkdir(parents=True)
+    (d / ".flow" / "workspace.toml").write_text(
+        '[maintainer]\nself_target = true\n\n[evolve]\nworker_model = "opus"\n',
+        encoding="utf-8",
+    )
+    return d
+
+
 def _dispatch(
     *,
     ready: list[dict],
@@ -308,6 +318,53 @@ def test_select_plain_bead_no_downshift(tmp_path):
     out = qs.select(ws, cap=5, concurrency=3, runner=run)
     assert out["launch"] == ["flow-p"]
     assert "flow-p" not in out["model_per_key"]
+
+
+def test_select_worker_model_plain_bead(tmp_path):
+    ws = _worker_ws(tmp_path)
+    run, _ = _dispatch(ready=[_cand("flow-p")])  # non-trivial
+    out = qs.select(ws, cap=5, concurrency=3, runner=run)
+    assert out["model_per_key"]["flow-p"] == "opus"
+
+
+def test_select_worker_model_trivial_beats_worker_model(tmp_path):
+    ws = _worker_ws(tmp_path)
+    run, _ = _dispatch(ready=[_cand("flow-t", labels=["tier:trivial"])])
+    out = qs.select(ws, cap=5, concurrency=3, runner=run)
+    assert out["model_per_key"]["flow-t"] == "sonnet"
+
+
+def test_select_worker_model_unset_plain_omitted(tmp_path):
+    ws = _marked_ws(tmp_path)
+    run, _ = _dispatch(ready=[_cand("flow-p")])
+    out = qs.select(ws, cap=5, concurrency=3, runner=run)
+    assert "flow-p" not in out["model_per_key"]
+
+
+def test_worker_model_reads_evolve_section(tmp_path):
+    d = tmp_path / "flow"
+    (d / ".flow").mkdir(parents=True)
+    (d / ".flow" / "workspace.toml").write_text(
+        '[evolve]\nworker_model = "opus"\n', encoding="utf-8"
+    )
+    assert qs._worker_model(d) == "opus"
+
+
+def test_worker_model_absent_section_is_none(tmp_path):
+    d = tmp_path / "flow"
+    (d / ".flow").mkdir(parents=True)
+    (d / ".flow" / "workspace.toml").write_text(
+        "[maintainer]\nself_target = true\n", encoding="utf-8"
+    )
+    assert qs._worker_model(d) is None
+
+
+def test_worker_model_empty_or_nonstr_is_none(tmp_path):
+    for body in ('[evolve]\nworker_model = ""\n', "[evolve]\nworker_model = 5\n"):
+        d = tmp_path / f"flow-{hash(body) & 0xFFFF}"
+        (d / ".flow").mkdir(parents=True)
+        (d / ".flow" / "workspace.toml").write_text(body, encoding="utf-8")
+        assert qs._worker_model(d) is None, body
 
 
 def test_select_not_maintainer_raises(tmp_path, monkeypatch):
