@@ -118,6 +118,23 @@ def test_check_ownership_unplanned_sibling_in_new_dir_is_unowned(
     assert "pkg/mod.py" not in payload["unowned_changes"]
 
 
+def test_check_ownership_excludes_bootstrap_claude_dir(tmp_repo: Path, tmp_path: Path) -> None:
+    # Regression: flow_worktree._copy_config bootstrap-copies the whole .claude/
+    # dir into each run worktree; .claude/settings.json is untracked and not
+    # gitignored, so it surfaces under --untracked-files=all and false-flags as
+    # unowned, exiting 3 and blocking the commit stage. It must be excluded like
+    # .flow/ run scratch.
+    ticket_dir = tmp_repo / ".flow" / "runs" / "FT-1"
+    diff_extract.record_baseline("implement", ticket_dir, tmp_repo, files=["a.py"])
+    (tmp_repo / "a.py").write_text("print('hi')\n", encoding="utf-8")
+    (tmp_repo / ".claude").mkdir()
+    (tmp_repo / ".claude" / "settings.json").write_text("{}\n", encoding="utf-8")
+    payload = diff_extract.check_ownership(ticket_dir, tmp_repo)
+    assert payload["ok"] is True
+    assert ".claude/settings.json" not in payload["unowned_changes"]
+    assert ".claude/settings.json" not in payload["changed"]
+
+
 def test_check_ownership_non_ascii_planned_file(tmp_repo: Path, tmp_path: Path) -> None:
     # Regression: git C-quotes non-ASCII paths in --porcelain/ls-files output
     # unless core.quotePath=false (e.g. "pkg/caf\303\251.py"). The quoted string
