@@ -250,6 +250,23 @@ def test_assert_lease_still_mine_hostname_mismatch(tmp_path: Path) -> None:
         lease.assert_lease_still_mine(tmp_path, "run-1", hostname="host-2")
 
 
+def test_assert_lease_still_mine_empty_current_boot_does_not_raise(tmp_path: Path) -> None:
+    # sandbox blocked the boot probe -> current_boot "" is inconclusive, not a mismatch.
+    _acquire(tmp_path, "run-1", boot="boot-A", host="host-1")
+    lease.assert_lease_still_mine(tmp_path, "run-1", current_boot="", hostname="host-1")
+
+
+def test_assert_lease_still_mine_empty_ondisk_boot_does_not_raise(tmp_path: Path) -> None:
+    # symmetric case: an empty on-disk boot id is inconclusive against a known current boot.
+    _acquire(tmp_path, "run-1", boot="", host="host-1")
+    lease.assert_lease_still_mine(tmp_path, "run-1", current_boot="boot-A", hostname="host-1")
+
+
+def test_assert_lease_still_mine_both_empty_boot_does_not_raise(tmp_path: Path) -> None:
+    _acquire(tmp_path, "run-1", boot="", host="host-1")
+    lease.assert_lease_still_mine(tmp_path, "run-1", current_boot="", hostname="host-1")
+
+
 def test_assert_lease_still_mine_ignores_expiry(tmp_path: Path) -> None:
     _acquire(tmp_path, "run-1")  # expires 12:05
     # owner resuming past expiry must still pass the identity check.

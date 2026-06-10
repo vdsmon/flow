@@ -89,7 +89,7 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/ticket_frontmatter.py update \
   .flow/tickets/<KEY>.md \
   --set 'planned_files=["a/b.py", "c/d.py"]'
 ```
-then re-run the `record-baseline` command (do-loop step c) with the full comma-separated `--files` list. HEAD is unchanged (no commit has landed), so this only widens ownership and re-captures any modified tracked file's original blob. Confirm with `diff_extract.py capture-implement-diff --ticket <KEY> --ticket-dir <ticket-dir> --cwd .` + `git apply --cached --check --binary <ticket-dir>/implement.diff` that the patch carries every file and applies cleanly. (`capture-implement-diff` takes ONLY `--ticket`/`--ticket-dir`/`--cwd` — NOT `--stage`; passing `--stage` errors with `unrecognized arguments`.)
+then re-run the `record-baseline` command (do-loop step c) with the full comma-separated `--files` list. HEAD is unchanged (no commit has landed), so this only widens ownership and re-captures any modified tracked file's original blob. Confirm with `diff_extract.py capture-implement-diff --ticket <KEY> --ticket-dir <ticket-dir> --cwd .` + `git apply --cached --check --binary <ticket-dir>/implement.diff` that the patch carries every file and applies cleanly. (`capture-implement-diff` takes ONLY `--ticket`/`--ticket-dir`/`--cwd` — NOT `--stage`; passing `--stage` errors with `unrecognized arguments`.) Run the apply-check with a clean index: if anything is staged (e.g. via `git rm`), `git reset` first — the check validates against the index, and a pre-staged deletion fails with `does not exist in index` even though the patch is fine.
 
 ## Timeout note (mvp hole)
 
