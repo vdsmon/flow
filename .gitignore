@@ -5,6 +5,7 @@
 
 # Claude Code local/transient state
 .claude/settings.local.json
+.claude/settings.json
 .claude/scheduled_tasks.*
 .claude/shell-snapshots/
 .claude/todos/
