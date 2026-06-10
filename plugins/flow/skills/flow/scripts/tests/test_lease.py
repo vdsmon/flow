@@ -13,6 +13,7 @@ from __future__ import annotations
 import contextlib
 import json
 import multiprocessing
+import subprocess
 import sys
 from collections.abc import Iterator
 from pathlib import Path
@@ -369,6 +370,70 @@ def test_boot_id_returns_empty_on_failure(monkeypatch: pytest.MonkeyPatch) -> No
         raise OSError("nope")
 
     assert lease.boot_id(runner) == ""
+
+
+def test_boot_id_linux_reads_proc(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sys, "platform", "linux")
+    constructed: list[str] = []
+
+    class FakePath:
+        def __init__(self, path):
+            constructed.append(path)
+
+        def read_text(self):
+            return "uuid-value\n"
+
+    monkeypatch.setattr(lease, "Path", FakePath)
+    calls: list[list[str]] = []
+
+    def runner(args: list[str]) -> str:
+        calls.append(args)
+        return ""
+
+    assert lease.boot_id(runner) == "uuid-value"
+    assert constructed == ["/proc/sys/kernel/random/boot_id"]
+    assert calls == []
+
+
+def test_boot_id_linux_returns_empty_on_oserror(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sys, "platform", "linux")
+
+    class FakePath:
+        def __init__(self, path):
+            pass
+
+        def read_text(self):
+            raise OSError("no /proc")
+
+    monkeypatch.setattr(lease, "Path", FakePath)
+
+    def runner(args: list[str]) -> str:
+        return ""
+
+    assert lease.boot_id(runner) == ""
+
+
+def test_boot_id_darwin_returns_empty_on_subprocess_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(sys, "platform", "darwin")
+
+    def runner(args: list[str]) -> str:
+        raise subprocess.CalledProcessError(1, ["sysctl"])
+
+    assert lease.boot_id(runner) == ""
+
+
+def test_boot_id_unknown_platform_returns_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sys, "platform", "win32")
+    calls: list[list[str]] = []
+
+    def runner(args: list[str]) -> str:
+        calls.append(args)
+        return "should-not-be-used"
+
+    assert lease.boot_id(runner) == ""
+    assert calls == []
 
 
 # ─── corrupt run.lock ──────────────────────────────────────────────────────────
