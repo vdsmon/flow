@@ -626,8 +626,8 @@ Exit 0=applied or already_applied (idempotent), 1=usage/IO error, 2=refused (out
 5. **`since`/`since-stage`** uses `--numstat`; renames surface only in
    `capture-implement-diff` (`--raw`).
 6. **Dispatcher integration** — helpers ship as standalone CLIs. Subprocess
-   wiring into `dispatch_stage.py` (with exit-code matrix per plan line
-   1010-1020) lands in phase 5 or phase 8-glue.
+   wiring into `dispatch_stage.py` (with exit-code matrix) lands in phase 5
+   or phase 8-glue.
 
 ---
 

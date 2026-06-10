@@ -1,7 +1,7 @@
 """BM25 ranker over `.flow/<namespace>/knowledge.jsonl`.
 
-Library + thin CLI. Stdlib-only. Hand-rolled BM25 implementation per plan spec
-(no rank-bm25 dep).
+Library + thin CLI. Stdlib-only. Hand-rolled BM25 implementation (no
+rank-bm25 dep).
 
 BM25 pinned params:
   k1 = 1.5
