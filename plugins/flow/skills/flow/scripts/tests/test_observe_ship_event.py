@@ -438,3 +438,134 @@ def test_cli_arm_defaults_to_flow(tmp_path: Path, capsys: pytest.CaptureFixture[
     out = json.loads(capsys.readouterr().out)
     data = json.loads(Path(out["path"]).read_text(encoding="utf-8"))
     assert data["arm"] == "flow"
+
+
+# ─── tier (free-form, caller-supplied) ───────────────────────────────────────
+
+
+def test_tier_defaults_to_empty(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path)
+    path, _ = observe_ship_event.observe(tmp_path, "FT-1", _payload(), "abcdef0123456789")
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert data["tier"] == ""
+
+
+def test_tier_stamps_record(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path)
+    path, _ = observe_ship_event.observe(
+        tmp_path, "FT-1", _payload(), "abcdef0123456789", tier="tier:trivial"
+    )
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert data["tier"] == "tier:trivial"
+
+
+def test_tier_present_in_dupe_write(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path)
+    observe_ship_event.observe(
+        tmp_path, "FT-1", _payload(), "abcdef0123456789", tier="tier:trivial"
+    )
+    p_dupe, is_dupe = observe_ship_event.observe(
+        tmp_path, "FT-1", _payload(), "abcdef0123456789", tier="tier:trivial"
+    )
+    assert is_dupe is True
+    data = json.loads(p_dupe.read_text(encoding="utf-8"))
+    assert data["tier"] == "tier:trivial"
+
+
+def test_tier_in_input_evidence_rejected_as_extra_key(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path)
+    with pytest.raises(observe_ship_event._EvidenceInvalid, match="extra"):
+        observe_ship_event.validate_evidence(_payload(extras={"tier": "tier:trivial"}), "FT-1")
+
+
+def test_cli_tier_round_trip(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    _seed_workspace(tmp_path)
+    rc = observe_ship_event.cli_main(
+        [
+            "--ticket",
+            "FT-1",
+            "--evidence-json",
+            json.dumps(_payload()),
+            "--run-id",
+            "abcdef0123456789",
+            "--workspace-root",
+            str(tmp_path),
+            "--tier",
+            "tier:small",
+        ]
+    )
+    assert rc == 0
+    out = json.loads(capsys.readouterr().out)
+    data = json.loads(Path(out["path"]).read_text(encoding="utf-8"))
+    assert data["tier"] == "tier:small"
+
+
+def test_cli_tier_defaults_to_empty(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    _seed_workspace(tmp_path)
+    rc = observe_ship_event.cli_main(
+        [
+            "--ticket",
+            "FT-1",
+            "--evidence-json",
+            json.dumps(_payload()),
+            "--run-id",
+            "abcdef0123456789",
+            "--workspace-root",
+            str(tmp_path),
+        ]
+    )
+    assert rc == 0
+    out = json.loads(capsys.readouterr().out)
+    data = json.loads(Path(out["path"]).read_text(encoding="utf-8"))
+    assert data["tier"] == ""
+
+
+# ─── plugin_version (self-read, fully guarded) ───────────────────────────────
+
+
+def _live_plugin_version() -> str:
+    path = Path(observe_ship_event.__file__).resolve().parents[3] / ".claude-plugin" / "plugin.json"
+    return json.loads(path.read_text(encoding="utf-8"))["version"]
+
+
+def test_plugin_version_stamps_live_version(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path)
+    path, _ = observe_ship_event.observe(tmp_path, "FT-1", _payload(), "abcdef0123456789")
+    data = json.loads(path.read_text(encoding="utf-8"))
+    live = _live_plugin_version()
+    assert isinstance(data["plugin_version"], str)
+    assert data["plugin_version"]
+    assert data["plugin_version"] == live
+
+
+def test_plugin_version_present_in_dupe_write(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path)
+    observe_ship_event.observe(tmp_path, "FT-1", _payload(), "abcdef0123456789")
+    p_dupe, is_dupe = observe_ship_event.observe(tmp_path, "FT-1", _payload(), "abcdef0123456789")
+    assert is_dupe is True
+    data = json.loads(p_dupe.read_text(encoding="utf-8"))
+    assert data["plugin_version"] == _live_plugin_version()
+
+
+def test_plugin_version_in_input_evidence_rejected_as_extra_key(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path)
+    with pytest.raises(observe_ship_event._EvidenceInvalid, match="extra"):
+        observe_ship_event.validate_evidence(_payload(extras={"plugin_version": "9.9.9"}), "FT-1")
+
+
+def test_plugin_version_guarded_to_empty_on_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_workspace(tmp_path)
+    monkeypatch.setattr(observe_ship_event, "_plugin_version", lambda: "")
+    path, _ = observe_ship_event.observe(tmp_path, "FT-1", _payload(), "abcdef0123456789")
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert data["plugin_version"] == ""
+
+
+def test_plugin_version_helper_swallows_oserror(monkeypatch: pytest.MonkeyPatch) -> None:
+    def boom(self: Path, *a: object, **k: object) -> str:
+        raise OSError(13, "permission denied")
+
+    monkeypatch.setattr(Path, "read_text", boom)
+    assert observe_ship_event._plugin_version() == ""

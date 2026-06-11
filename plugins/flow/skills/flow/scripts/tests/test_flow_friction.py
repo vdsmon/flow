@@ -200,3 +200,36 @@ def test_cli_missing_config_returns_4(tmp_path: Path) -> None:
         ]
     )
     assert rc == 4
+
+
+# ─── plugin_version (self-read, fully guarded) ───────────────────────────────
+
+
+def _live_plugin_version() -> str:
+    path = Path(flow_friction.__file__).resolve().parents[3] / ".claude-plugin" / "plugin.json"
+    return json.loads(path.read_text(encoding="utf-8"))["version"]
+
+
+def test_append_stamps_plugin_version(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path)
+    entry = flow_friction.append(tmp_path, "FT-1", "r", "implement", "RETRY", "x")
+    live = _live_plugin_version()
+    assert isinstance(entry["plugin_version"], str)
+    assert entry["plugin_version"]
+    assert entry["plugin_version"] == live
+
+
+def test_plugin_version_in_jsonl_line(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path)
+    flow_friction.append(tmp_path, "FT-1", "r", "implement", "RETRY", "x")
+    rows = _read_jsonl(_memory_paths.friction_path(tmp_path, "demo"))
+    assert rows[0]["plugin_version"] == _live_plugin_version()
+
+
+def test_append_succeeds_when_plugin_version_guarded_empty(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    _seed_workspace(tmp_path)
+    monkeypatch.setattr(flow_friction, "_plugin_version", lambda: "")
+    entry = flow_friction.append(tmp_path, "FT-1", "r", "implement", "RETRY", "x")
+    assert entry["plugin_version"] == ""

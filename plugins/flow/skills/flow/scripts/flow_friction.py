@@ -10,6 +10,9 @@ Friction is operational telemetry, not recall knowledge: it lives in a SEPARATE
 file from knowledge.jsonl, is high-cardinality and time-ordered, and is never
 deduplicated (each entry is a distinct event, keyed by a uuid4).
 
+Each entry carries a self-read `plugin_version` stamp (the flow plugin version at
+append time; '' if the version can't be read).
+
 Exit codes:
   0 = appended.
   2 = lock contention.
@@ -56,6 +59,17 @@ def _utcnow_iso_ms() -> str:
     return f"{secs}.{ms:03d}Z"
 
 
+def _plugin_version() -> str:
+    """Self-read flow plugin version; '' on any failure (never raises)."""
+    try:
+        path = Path(__file__).resolve().parents[3] / ".claude-plugin" / "plugin.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        v = data.get("version", "")
+        return v if isinstance(v, str) else ""
+    except (OSError, json.JSONDecodeError, IndexError, ValueError):
+        return ""
+
+
 def append(
     workspace_root: Path,
     ticket: str,
@@ -91,6 +105,7 @@ def append(
         "type": type_,
         "severity": severity,
         "body": body,
+        "plugin_version": _plugin_version(),
     }
     if detail:
         entry["detail"] = detail
