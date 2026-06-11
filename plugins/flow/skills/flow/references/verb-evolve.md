@@ -368,3 +368,29 @@ When the maintainer accepts a lazily-filed epic, materialize its children: read 
 - **pre-existing child** (preview `PRE-EXISTING CHILD to RE-PARENT (do NOT re-file): <key>`) → reparent in place with a bare `bd update <key> --parent <epic>`. NEVER re-file it, and do NOT relabel it — the existing bead keeps its own identity, status, and labels.
 
 The distinction matters because the `epic:<track>::child-N-<symptom>` dedup namespace is disjoint from a pre-existing bead's `<relfile>::<symptom>` key, so a naive re-file does NOT dedup-collide and WOULD mint a duplicate. Each child is then a normal ticket run via `/flow <key>` — do-loop-sized, gated at its own spec-plan accept. Children are deliberately NOT epic-aware; the altitude lives in the parent, the work lives in the leaves.
+
+---
+
+## curate (maintainer one-shot)
+
+A **manual maintainer recipe**, NOT a routed `/flow evolve` sub-verb: a one-shot backlog cleanup that retro-curates stale `DECISION`/`FACT` entries in `.flow/<namespace>/knowledge.jsonl`. It is **propose-only** — the engine never auto-decides supersession; a human (or an agent under maintainer supervision) confirms every entry before anything is written. The standing producer for future rot is the reflect-stage supersession (flow-ufvu.2); this recipe is for draining the pre-existing backlog once.
+
+The flow is three steps:
+
+1. **Propose (read-only).** Emit a worklist of curatable, non-superseded entries:
+
+```bash
+python3 ${CLAUDE_SKILL_DIR}/scripts/sweep_knowledge.py propose [--type DECISION,FACT] > worklist.json
+```
+
+Each worklist item is `{id, ticket, ts, type, body}`, in file order. `--type` is a comma-separated filter (default `DECISION,FACT`); already-superseded entries are excluded. This step touches nothing.
+
+2. **Author a manifest (the judgment step).** Cross-check each worklist entry against the current code + merged PRs. PROPOSE-ONLY is binding: **only entries you have confirmed as superseded go in the manifest** — an entry whose claim still holds is left alone. The manifest is a JSON array or JSONL of records, each `{superseded_id, superseding_ticket, rationale}` with an optional `branch` (absent → derived `feature/<superseding_ticket>`). The `rationale` becomes the tombstone record's body; it should say why the entry is moot and what replaced it.
+
+3. **Apply (write).** Apply each confirmed supersession:
+
+```bash
+python3 ${CLAUDE_SKILL_DIR}/scripts/sweep_knowledge.py apply --manifest worklist-confirmed.json
+```
+
+Each record is applied through the `memory_append --supersedes` seam: an append-only tombstone `DECISION` entry whose `supersedes` points at the dead id (the target is never rewritten or removed). It is **idempotent** — a record whose target is already superseded is reported `skipped` and re-running the same manifest appends nothing. It **refuses an unknown id**: that record is reported `error`, the rest of the batch still processes, and the command exits non-zero if any record errored. The output is a per-record results summary (`applied` / `skipped` / `error`).
