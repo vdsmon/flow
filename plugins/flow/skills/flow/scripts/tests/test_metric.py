@@ -444,6 +444,44 @@ def test_cli_bad_date_returns_1(tmp_path: Path, capsys) -> None:
     assert rc == 1
 
 
+def test_cli_no_flow_dir_tickets_per_week(tmp_path: Path, capsys) -> None:
+    rc = metric.cli_main(
+        ["tickets-per-week", "--namespace", "demo", "--workspace-root", str(tmp_path)]
+    )
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "no .flow" in err
+    assert str(tmp_path.resolve()) in err
+
+
+def test_cli_no_flow_dir_time_to_pr(tmp_path: Path, capsys) -> None:
+    rc = metric.cli_main(["time-to-pr", "--namespace", "demo", "--workspace-root", str(tmp_path)])
+    assert rc == 1
+    assert "no .flow" in capsys.readouterr().err
+
+
+def test_cli_tpw_output_includes_resolved_workspace_root(tmp_path: Path, capsys) -> None:
+    _seed_workspace(tmp_path)
+    _write_ship_event(tmp_path, "FT-1", shipped_at="2026-05-20T10:00:00Z")
+    rc = metric.cli_main(
+        [
+            "tickets-per-week",
+            "--namespace",
+            "demo",
+            "--workspace-root",
+            str(tmp_path),
+            "--since",
+            "2026-05-14",
+            "--until",
+            "2026-05-28",
+        ]
+    )
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert "resolved_workspace_root" in payload
+    assert payload["resolved_workspace_root"] == str(tmp_path.resolve())
+
+
 # ─── time-to-pr ──────────────────────────────────────────────────────────────
 
 
