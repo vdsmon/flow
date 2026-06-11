@@ -123,7 +123,12 @@ def _ticket_dir(workspace_root: Path, ticket: str) -> Path:
     return workspace_root / ".flow" / "runs" / ticket
 
 
-def cmd_init(workspace_root: Path, ticket: str, force: bool = False) -> tuple[int, dict[str, Any]]:
+def cmd_init(
+    workspace_root: Path,
+    ticket: str,
+    force: bool = False,
+    session_nonce: str = "",
+) -> tuple[int, dict[str, Any]]:
     result, ws = vw.validate(workspace_root)
     if ws is None:
         return 1, {
@@ -134,7 +139,10 @@ def cmd_init(workspace_root: Path, ticket: str, force: bool = False) -> tuple[in
 
     # run_id is the stable per-ticket identity. Reuse the existing one whenever a
     # valid state is present (resume AND --force reset stay the same logical run),
-    # so the lease sees us as the owner rather than a foreign run.
+    # so the lease sees us as the owner rather than a foreign run. run_id alone is
+    # NOT a re-acquire credential: a second `/flow do` reads the same state.json,
+    # so re-acquiring a still-LIVE lease requires the session nonce minted at the
+    # original acquire and carried (out of band) by the owning session.
     existing, exit_code = state.read(td)
     have_valid = existing is not None and exit_code == 0
     resuming = have_valid and not force
@@ -142,7 +150,7 @@ def cmd_init(workspace_root: Path, ticket: str, force: bool = False) -> tuple[in
 
     boot, host, cwd, now = lease.boot_id(), socket.gethostname(), str(workspace_root), utcnow_iso()
     try:
-        lease.acquire(
+        held = lease.acquire(
             td,
             run_id,
             _INIT_TTL_S,
@@ -151,6 +159,7 @@ def cmd_init(workspace_root: Path, ticket: str, force: bool = False) -> tuple[in
             current_boot=boot,
             hostname=host,
             cwd=cwd,
+            session_nonce=session_nonce,
             force=force,
         )
     except lease.LeaseHeld as exc:
@@ -202,6 +211,7 @@ def cmd_init(workspace_root: Path, ticket: str, force: bool = False) -> tuple[in
         return 0, {
             "ticket": ticket,
             "run_id": run_id,
+            "session_nonce": held.session_nonce,
             "stages": ws.stages,
             "ticket_dir": str(td),
             "resumed": True,
@@ -213,6 +223,7 @@ def cmd_init(workspace_root: Path, ticket: str, force: bool = False) -> tuple[in
     return 0, {
         "ticket": ticket,
         "run_id": run_id,
+        "session_nonce": held.session_nonce,
         "stages": ws.stages,
         "ticket_dir": str(td),
         "resumed": False,
@@ -543,6 +554,11 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         action="store_true",
         help="Overwrite existing state with a fresh all-pending run.",
     )
+    p_init.add_argument(
+        "--session-nonce",
+        default="",
+        help="Nonce from a prior init, to re-acquire this session's own live lease.",
+    )
     sub.add_parser("next", parents=[common], help="Pick next pending stage.")
     sub.add_parser("status", parents=[common], help="Emit full state.json.")
     sub.add_parser("release", parents=[common], help="Release the run lease.")
@@ -588,7 +604,9 @@ def cli_main(argv: list[str]) -> int:
     workspace_root = Path(args.workspace_root).expanduser().resolve()
 
     if args.cmd == "init":
-        rc, payload = cmd_init(workspace_root, args.ticket, force=args.force)
+        rc, payload = cmd_init(
+            workspace_root, args.ticket, force=args.force, session_nonce=args.session_nonce
+        )
     elif args.cmd == "next":
         rc, payload = cmd_next(workspace_root, args.ticket)
     elif args.cmd == "finish":

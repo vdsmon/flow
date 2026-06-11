@@ -17,6 +17,17 @@ lock-free on purpose: it is called from inside the held flock (flock is not
 reentrant across fds under blocking LOCK_EX), and atomic_write_text uses
 os.replace so a concurrent reader sees old-or-new, never a torn file.
 
+Session nonce: a per-acquire secret minted into the lease and returned to the
+acquiring session. The run_id alone is NOT enough to gate a re-acquire, because it
+is the stable per-ticket identity persisted in state.json: a second `/flow do` on
+the same ticket reads the same state.json, presents the same run_id, and the
+owner-re-acquire branch would otherwise pass while the first run's lease is still
+live (the two-concurrent-runs collision this mutex exists to prevent). The nonce
+closes that hole: re-acquiring a LIVE owner lease requires the matching nonce,
+which only the original session holds (it is not derivable from state.json). An
+EXPIRED owner lease (the prior session is gone) resumes and rotates the nonce; a
+`force` takeover also rotates it.
+
 Reboot handling: a stale-but-expired foreign lease is reboot-clearable (the holder
 cannot exist after a reboot) only when it is from the SAME hostname AND its boot_id
 differs from the current boot, so it is overwritten. The same-hostname requirement
@@ -30,6 +41,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import secrets
 import socket
 import subprocess
 import sys
@@ -60,6 +72,7 @@ class Lease:
     lease_expires_at: str
     stage: str | None = None
     pid: int = 0  # informational only; never used for liveness gating
+    session_nonce: str = ""  # per-acquire secret; gates re-acquire of a live owner lease
 
 
 class LeaseError(Exception):
@@ -92,6 +105,10 @@ class LeaseLost(LeaseError):
 def _ts_token() -> str:
     # colon-free so it is usable in a filename (mirrors state._ts_token).
     return datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+
+
+def _new_nonce() -> str:
+    return secrets.token_hex(8)
 
 
 def _expiry_iso(now_iso: str, ttl_seconds: int) -> str:
@@ -163,6 +180,7 @@ def _deserialize(raw: str) -> Lease:
         lease_expires_at=str(data["lease_expires_at"]),
         stage=data.get("stage"),
         pid=int(data.get("pid", 0)),
+        session_nonce=str(data.get("session_nonce", "")),
     )
 
 
@@ -209,14 +227,23 @@ def acquire(
     current_boot: str,
     hostname: str,
     cwd: str,
+    session_nonce: str = "",
     force: bool = False,
 ) -> Lease:
     """Acquire (or owner-re-acquire) the ticket lease under the flock.
 
+    `session_nonce` is the nonce the caller already holds (from a prior acquire),
+    presented to re-acquire its own LIVE lease. A fresh acquirer passes "".
+
     Branch order matters: run_id-match is checked before expiry so an owner can
-    resume past expiry. Foreign cases split: live -> LeaseHeld; expired and
-    boot differs (both boot ids truthy) -> reboot-clearable overwrite; expired
-    and force -> overwrite; else expired -> LeaseExpiredForeign.
+    resume past expiry. Within the owner branch: `force` (explicit reset/takeover)
+    rotates the nonce and proceeds; a LIVE owner lease may otherwise be re-acquired
+    ONLY by presenting the matching nonce (a second session resuming the same
+    state.json has none -> LeaseHeld); an EXPIRED owner lease (the prior session is
+    gone) resumes and rotates the nonce. Foreign cases split: live -> LeaseHeld;
+    expired and boot differs (both boot ids truthy) -> reboot-clearable overwrite;
+    expired and force -> overwrite; else expired -> LeaseExpiredForeign. Every
+    write that is not a verified same-session re-acquire mints a fresh nonce.
 
     Raises:
         LeaseHeld, LeaseExpiredForeign, LeaseError
@@ -236,10 +263,42 @@ def acquire(
                 acquired_at=now_iso,
                 lease_expires_at=expires_at,
                 stage=stage,
+                session_nonce=_new_nonce(),
             )
 
         if existing.run_id == run_id:
             # owner re-acquire / resume: preserve acquired_at, move expiry/stage.
+            if force:
+                # explicit reset / takeover by the owner: rotate the nonce.
+                return _write_lease(
+                    ticket_dir,
+                    run_id=run_id,
+                    boot_id=current_boot,
+                    hostname=hostname,
+                    cwd=cwd,
+                    acquired_at=existing.acquired_at,
+                    lease_expires_at=expires_at,
+                    stage=stage,
+                    session_nonce=_new_nonce(),
+                )
+            if not is_expired(existing, now_iso):
+                # LIVE owner lease: only the original session (holding the nonce)
+                # may re-acquire. An empty presented nonce never matches, so a
+                # second `/flow do` reading the same state.json is rejected.
+                if session_nonce and session_nonce == existing.session_nonce:
+                    return _write_lease(
+                        ticket_dir,
+                        run_id=run_id,
+                        boot_id=current_boot,
+                        hostname=hostname,
+                        cwd=cwd,
+                        acquired_at=existing.acquired_at,
+                        lease_expires_at=expires_at,
+                        stage=stage,
+                        session_nonce=existing.session_nonce,
+                    )
+                raise LeaseHeld(existing)
+            # EXPIRED owner lease: the prior session is gone; resume and rotate.
             return _write_lease(
                 ticket_dir,
                 run_id=run_id,
@@ -249,6 +308,7 @@ def acquire(
                 acquired_at=existing.acquired_at,
                 lease_expires_at=expires_at,
                 stage=stage,
+                session_nonce=_new_nonce(),
             )
 
         # foreign lease.
@@ -271,6 +331,7 @@ def acquire(
                 acquired_at=now_iso,
                 lease_expires_at=expires_at,
                 stage=stage,
+                session_nonce=_new_nonce(),
             )
         raise LeaseExpiredForeign(existing)
 
@@ -305,6 +366,7 @@ def refresh(
             acquired_at=existing.acquired_at,
             lease_expires_at=expires_at,
             stage=stage,
+            session_nonce=existing.session_nonce,
         )
 
 
@@ -506,6 +568,7 @@ def _write_lease(
     acquired_at: str,
     lease_expires_at: str,
     stage: str | None,
+    session_nonce: str,
 ) -> Lease:
     lease = Lease(
         run_id=run_id,
@@ -516,6 +579,7 @@ def _write_lease(
         lease_expires_at=lease_expires_at,
         stage=stage,
         pid=os.getpid(),
+        session_nonce=session_nonce,
     )
     atomic_write_text(run_lock_path(ticket_dir), _serialize(lease))
     return lease
@@ -536,6 +600,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     p_acq.add_argument("--ttl-seconds", type=int, required=True)
     p_acq.add_argument("--stage", default=None)
     p_acq.add_argument("--now", default=None)
+    p_acq.add_argument("--session-nonce", default="")
     p_acq.add_argument("--force", action="store_true")
 
     p_ref = sub.add_parser("refresh", parents=[common])
@@ -576,6 +641,7 @@ def cli_main(argv: list[str]) -> int:
                 current_boot=boot_id(),
                 hostname=socket.gethostname(),
                 cwd=os.getcwd(),
+                session_nonce=args.session_nonce,
                 force=args.force,
             )
         except LeaseHeld as exc:

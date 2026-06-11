@@ -100,7 +100,9 @@ def test_init_is_idempotent_preserves_progress(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # Second init without --force must resume: same run_id, completed stage
-    # stays completed (no replay of a finished commit stage).
+    # stays completed (no replay of a finished commit stage). The first init's
+    # lease is still LIVE here, so the resuming call must carry the session nonce
+    # the first init returned (the same-session resume credential).
     _write_workspace(tmp_path, stages=["ticket", "plan"], compounding=False)
     _stub_git_head(monkeypatch)
     rc, first = ds.cmd_init(tmp_path, "FT-1")
@@ -109,14 +111,46 @@ def test_init_is_idempotent_preserves_progress(
     ds.cmd_next(tmp_path, "FT-1")
     ds.cmd_finish(tmp_path, "FT-1", "ticket", "completed")
 
-    rc, second = ds.cmd_init(tmp_path, "FT-1")
+    rc, second = ds.cmd_init(tmp_path, "FT-1", session_nonce=first["session_nonce"])
     assert rc == 0
     assert second["resumed"] is True
     assert second["run_id"] == first["run_id"]
+    # the nonce is preserved across a verified same-session re-acquire.
+    assert second["session_nonce"] == first["session_nonce"]
 
     state_path = tmp_path / ".flow" / "runs" / "FT-1" / "state.json"
     state_data = json.loads(state_path.read_text(encoding="utf-8"))
     assert state_data["stages"]["ticket"]["status"] == "completed"
+
+
+def test_init_resume_without_nonce_on_live_lease_is_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # flow-2orc: a second `/flow do` in the same worktree reads the same
+    # state.json (same run_id) while the first run's lease is still live. Without
+    # the session nonce it must NOT re-acquire (the two-concurrent-runs collision).
+    _write_workspace(tmp_path, stages=["ticket", "plan"], compounding=False)
+    _stub_git_head(monkeypatch)
+    rc, first = ds.cmd_init(tmp_path, "FT-1")
+    assert rc == 0
+
+    rc2, payload = ds.cmd_init(tmp_path, "FT-1")  # no session_nonce: a fresh session
+    assert rc2 == 1
+    assert payload["error"] == "ticket locked by another live run"
+    assert payload["holder"]["run_id"] == first["run_id"]
+
+
+def test_init_resume_with_wrong_nonce_on_live_lease_is_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_workspace(tmp_path, stages=["ticket", "plan"], compounding=False)
+    _stub_git_head(monkeypatch)
+    rc, _first = ds.cmd_init(tmp_path, "FT-1")
+    assert rc == 0
+
+    rc2, payload = ds.cmd_init(tmp_path, "FT-1", session_nonce="deadbeefdeadbeef")
+    assert rc2 == 1
+    assert payload["error"] == "ticket locked by another live run"
 
 
 def test_init_force_resets_to_all_pending(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -186,7 +220,7 @@ def test_init_resume_triggers_recall_promotion(
     # Promotion must fire on the resume path too, not only on fresh init.
     _write_workspace(tmp_path, stages=["ticket", "plan"], compounding=False)
     _stub_git_head(monkeypatch, "abc123")
-    ds.cmd_init(tmp_path, "FT-1")
+    _, first = ds.cmd_init(tmp_path, "FT-1")
 
     calls: list[str] = []
 
@@ -196,7 +230,8 @@ def test_init_resume_triggers_recall_promotion(
         return []
 
     monkeypatch.setattr(ds.recall_pending, "promote_matching", fake_promote)
-    rc, payload = ds.cmd_init(tmp_path, "FT-1")
+    # same-session resume against the still-live lease: carry the nonce.
+    rc, payload = ds.cmd_init(tmp_path, "FT-1", session_nonce=first["session_nonce"])
     assert rc == 0
     assert payload["resumed"] is True
     assert calls == ["FT-1"]
@@ -834,7 +869,7 @@ def test_init_snapshot_write_failure_fail_closed(
     # surviving sha so the drift guard stays active (fail-closed).
     _write_workspace(tmp_path)
     _stub_git_head(monkeypatch)
-    rc, _ = ds.cmd_init(tmp_path, "FT-1")
+    rc, first = ds.cmd_init(tmp_path, "FT-1")
     assert rc == 0
     sha_path = tmp_path / ".flow" / "runs" / "FT-1" / "snapshot.sha"
     assert sha_path.exists()
@@ -842,7 +877,7 @@ def test_init_snapshot_write_failure_fail_closed(
     capsys.readouterr()
 
     monkeypatch.setattr(ds, "write_snapshot", _boom_write)
-    rc, payload = ds.cmd_init(tmp_path, "FT-1")
+    rc, payload = ds.cmd_init(tmp_path, "FT-1", session_nonce=first["session_nonce"])
     assert rc == 0
     assert payload["snapshot_write_failed"] is True
     assert payload["snapshot_guard_active"] is True

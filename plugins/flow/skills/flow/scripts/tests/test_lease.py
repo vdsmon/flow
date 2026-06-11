@@ -40,6 +40,7 @@ def _acquire(
     boot: str = "boot-A",
     host: str = "host-1",
     cwd: str = "/work",
+    session_nonce: str = "",
     force: bool = False,
 ) -> lease.Lease:
     return lease.acquire(
@@ -51,6 +52,7 @@ def _acquire(
         current_boot=boot,
         hostname=host,
         cwd=cwd,
+        session_nonce=session_nonce,
         force=force,
     )
 
@@ -89,6 +91,73 @@ def test_owner_reacquire_succeeds_even_when_expired(tmp_path: Path) -> None:
     ls = _acquire(tmp_path, "run-1", now=after_expiry)
     assert ls.run_id == "run-1"
     assert ls.acquired_at == NOW  # original acquired_at kept
+
+
+# ─── acquire: session-nonce gate on live owner re-acquire (flow-2orc) ───────────
+
+
+def test_fresh_acquire_mints_nonempty_nonce(tmp_path: Path) -> None:
+    ls = _acquire(tmp_path, "run-1")
+    assert ls.session_nonce != ""
+
+
+def test_live_owner_reacquire_with_matching_nonce_succeeds(tmp_path: Path) -> None:
+    first = _acquire(tmp_path, "run-1", now=NOW)  # live until 12:05
+    # same session, still inside the live window, presenting its own nonce.
+    second = _acquire(
+        tmp_path, "run-1", now="2026-05-28T12:02:00Z", session_nonce=first.session_nonce
+    )
+    assert second.run_id == "run-1"
+    assert second.acquired_at == NOW  # preserved
+    assert second.session_nonce == first.session_nonce  # preserved, not rotated
+
+
+def test_live_owner_reacquire_without_nonce_raises_lease_held(tmp_path: Path) -> None:
+    # the flow-2orc collision: a second session reads the same state.json (same
+    # run_id) while the first lease is live, but holds no nonce.
+    _acquire(tmp_path, "run-1", now=NOW)
+    with pytest.raises(lease.LeaseHeld):
+        _acquire(tmp_path, "run-1", now="2026-05-28T12:02:00Z")  # no session_nonce
+
+
+def test_live_owner_reacquire_with_wrong_nonce_raises_lease_held(tmp_path: Path) -> None:
+    _acquire(tmp_path, "run-1", now=NOW)
+    with pytest.raises(lease.LeaseHeld):
+        _acquire(tmp_path, "run-1", now="2026-05-28T12:02:00Z", session_nonce="not-the-nonce")
+
+
+def test_expired_owner_reacquire_without_nonce_rotates(tmp_path: Path) -> None:
+    # the real production resume: a new session, the prior lease already expired.
+    # It must succeed WITHOUT a nonce and rotate to a fresh one.
+    first = _acquire(tmp_path, "run-1", now=NOW)  # expires 12:05
+    after_expiry = "2026-05-28T13:00:00Z"
+    second = _acquire(tmp_path, "run-1", now=after_expiry)  # no session_nonce
+    assert second.run_id == "run-1"
+    assert second.session_nonce != ""
+    assert second.session_nonce != first.session_nonce  # rotated
+
+
+def test_force_reacquire_on_live_owner_lease_rotates_nonce(tmp_path: Path) -> None:
+    # an explicit owner takeover/reset rotates the nonce even on a live lease.
+    first = _acquire(tmp_path, "run-1", now=NOW)
+    second = _acquire(tmp_path, "run-1", now="2026-05-28T12:02:00Z", force=True)
+    assert second.run_id == "run-1"
+    assert second.session_nonce != first.session_nonce
+
+
+def test_refresh_preserves_session_nonce(tmp_path: Path) -> None:
+    first = _acquire(tmp_path, "run-1", now=NOW)
+    refreshed = lease.refresh(
+        tmp_path,
+        "run-1",
+        TTL,
+        LATER,
+        stage="implement",
+        current_boot="boot-A",
+        hostname="host-1",
+        cwd="/work",
+    )
+    assert refreshed.session_nonce == first.session_nonce
 
 
 # ─── acquire: foreign live ─────────────────────────────────────────────────────
@@ -723,6 +792,41 @@ def test_cli_acquire_then_held(tmp_path: Path, capsys: pytest.CaptureFixture[str
     held = json.loads(capsys.readouterr().out)
     assert held["error"] == "lease_held"
     assert held["holder"]["run_id"] == "run-1"
+
+
+def test_cli_acquire_live_owner_reacquire_needs_nonce(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    rc = lease.cli_main(
+        ["acquire", "--ticket-dir", str(tmp_path), "--run-id", "run-1", "--ttl-seconds", "300"]
+    )
+    assert rc == 0
+    nonce = json.loads(capsys.readouterr().out)["session_nonce"]
+    assert nonce != ""
+
+    # same run_id, live lease, no nonce -> LeaseHeld (exit 1).
+    rc_no = lease.cli_main(
+        ["acquire", "--ticket-dir", str(tmp_path), "--run-id", "run-1", "--ttl-seconds", "300"]
+    )
+    assert rc_no == 1
+    assert json.loads(capsys.readouterr().out)["error"] == "lease_held"
+
+    # presenting the carried nonce re-acquires.
+    rc_ok = lease.cli_main(
+        [
+            "acquire",
+            "--ticket-dir",
+            str(tmp_path),
+            "--run-id",
+            "run-1",
+            "--ttl-seconds",
+            "300",
+            "--session-nonce",
+            nonce,
+        ]
+    )
+    assert rc_ok == 0
+    assert json.loads(capsys.readouterr().out)["session_nonce"] == nonce
 
 
 def test_cli_release_and_classify(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
