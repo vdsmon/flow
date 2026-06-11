@@ -1,6 +1,6 @@
 {
   "name": "flow",
-  "version": "0.34.0",
+  "version": "0.35.0",
   "description": "Ticket pipeline. /flow <ticket> plans in plan mode (ExitPlanMode = the one gate), then enters a worktree and runs the autonomous implement→PR tail in the same session; background it (/bg) anytime to run unattended. You spec and review the draft PR. Multi-tracker engine (Jira | beads), pluggable per-stage handlers, compounding memory layer (reflect-stage extraction + SessionStart recall).",
   "author": {
     "name": "Victor De Simone",
