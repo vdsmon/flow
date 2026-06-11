@@ -21,6 +21,12 @@ REPO="{{REPO}}"
 LOG="$HOME/.flow-evolve/logs/epic-$(date +%Y%m%d-%H%M%S).log"
 PROJ="$HOME/.claude/projects/$(echo "$REPO" | sed 's#/#-#g')"
 
+# Deadman run-record: one append-only line per fire. The SessionStart hook
+# (plugins/flow/hooks/session-start.py) reads this and warns when the latest
+# weekly record is >8d stale. Absence of the file = schedule not armed here.
+RECORD="$HOME/.flow-evolve/run-record.jsonl"
+record() { printf '{"schedule":"weekly","phase":"%s","ts":"%s","outcome":"%s"}\n' "$1" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${2:-}" >>"$RECORD"; }
+
 # Block until the detached producer finishes filing. Liveness = transcript mtime.
 # Done = idle > 600s (epic runs go quiet longer than the audit — web fetches + an
 # optional spike), OR a new epic bead appeared AND idle > 240s, OR a 40-min hard cap.
@@ -42,6 +48,7 @@ wait_for_session() {
 
 {
   echo "=== flow weekly epic: $(date) ==="
+  record start
   cd "$REPO" || { echo "repo not found: $REPO"; exit 1; }
 
   branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo '?')"
@@ -67,5 +74,7 @@ wait_for_session() {
 
   echo "--- filed epics (maintainer reviews + expands by hand) ---"
   bd list --type epic --status open 2>&1 || true
+
+  record end ok
   echo "=== done: $(date) ==="
 } 2>&1 | tee "$LOG"

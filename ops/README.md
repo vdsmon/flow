@@ -41,6 +41,12 @@ The cold audit goes silent for minutes mid-scoring. `claude -p` trips a stream-i
    ```
 5. **Weekly epic producer** (optional): same steps with `weekly-epic.sh.template` → `~/.flow-evolve/weekly-epic.sh` and `com.vdsmon.flow-epic.plist.template` → `~/Library/LaunchAgents/com.<you>.flow-epic.plist`. Test-fire by hand first, then `launchctl load`.
 
+## Deadman (staleness surface)
+
+A dead loop used to be discovered only by noticing PRs stopped appearing. Each runner now appends a one-line run-record per fire to `~/.flow-evolve/run-record.jsonl` (`{schedule, phase, ts, outcome}`, at start and end). The SessionStart hook (`plugins/flow/hooks/session-start.py`) reads it and, inside any `.flow` workspace, prints a `## /flow ops` warning when the latest **nightly** record is >36h stale or the latest **weekly** record is >8d stale. Absence of the file means no schedule is armed on this machine, so the check self-gates to nowhere.
+
+**Redeploy is manual.** The runners are copy-deployed (`~/.flow-evolve/*.sh`), so the run-record lines are inert on the live machine until you re-copy the templates over the deployed scripts (Install steps 2 and 5). The hook half ships with the plugin and activates on the next marketplace update; it stays silent until the file appears.
+
 ## Gotchas
 
 - **launchd runs with a minimal PATH** (no `~/.local/bin`, where `claude` lives). The runner exports it itself; a by-hand test masks this because your interactive shell already has it. Test via `launchctl start com.<you>.flow-evolve` to catch a PATH regression.

@@ -32,6 +32,12 @@ REPO="{{REPO}}"
 LOG="$HOME/.flow-evolve/logs/$(date +%Y%m%d-%H%M%S).log"
 PROJ="$HOME/.claude/projects/$(echo "$REPO" | sed 's#/#-#g')"
 
+# Deadman run-record: one append-only line per fire. The SessionStart hook
+# (plugins/flow/hooks/session-start.py) reads this and warns when the latest
+# nightly record is >36h stale. Absence of the file = schedule not armed here.
+RECORD="$HOME/.flow-evolve/run-record.jsonl"
+record() { printf '{"schedule":"nightly","phase":"%s","ts":"%s","outcome":"%s"}\n' "$1" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${2:-}" >>"$RECORD"; }
+
 # Wait until a detached `claude --bg` session finishes. Liveness = its transcript's
 # mtime; the audit goes silent for minutes mid-scoring (observed up to ~360s), so
 # "idle" needs a generous threshold. Done = idle > 480s (truly quiet), OR a NEW bead
@@ -57,6 +63,7 @@ wait_for_session() {
 
 {
   echo "=== flow nightly evolve: $(date) ==="
+  record start
   cd "$REPO" || { echo "repo not found: $REPO"; exit 1; }
 
   branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo '?')"
@@ -85,5 +92,6 @@ wait_for_session() {
   echo "--- consumer: claude --bg /flow evolve drain ---"
   claude --bg "/flow evolve drain"
 
+  record end ok
   echo "=== done (drain detached; janitor + launch run in background): $(date) ==="
 } 2>&1 | tee "$LOG"
