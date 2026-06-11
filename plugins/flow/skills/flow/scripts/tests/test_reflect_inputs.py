@@ -10,6 +10,7 @@ import pytest
 
 import flow_friction
 import harness_corpus
+import memory_append
 import reflect_inputs
 import state
 import ticket_frontmatter
@@ -348,3 +349,123 @@ def test_reflect_config_non_bool_value_ignored(tmp_repo: Path, tmp_path: Path) -
     _seed_state(ticket_dir, head)
     payload = reflect_inputs.bundle("FT-1", ticket_dir, tmp_repo)
     assert payload["reflect_config"]["machinery"] is False
+
+
+# ─── recalled_entries ────────────────────────────────────────────────────────
+
+
+def _write_recall_log(ticket_dir: Path, lines: list[dict]) -> Path:
+    ticket_dir.mkdir(parents=True, exist_ok=True)
+    log = ticket_dir / "recall-log.jsonl"
+    with log.open("w", encoding="utf-8") as fh:
+        for line in lines:
+            fh.write(json.dumps(line) + "\n")
+    return log
+
+
+def test_recalled_entries_joins_ids_to_knowledge_bodies(tmp_repo: Path, tmp_path: Path) -> None:
+    _write_workspace(tmp_repo)
+    head = _git(["rev-parse", "HEAD"], tmp_repo).strip()
+    ticket_dir = tmp_path / "runs" / "FT-1"
+    _seed_state(ticket_dir, head)
+    e1 = memory_append.append(tmp_repo, "FACT", "first body", "br", "FT-1")
+    e2 = memory_append.append(tmp_repo, "LEARNED", "second body", "br", "FT-1")
+    _write_recall_log(ticket_dir, [{"returned_ids": [e1["id"], e2["id"]]}])
+    payload = reflect_inputs.bundle("FT-1", ticket_dir, tmp_repo)
+    recalled = payload["recalled_entries"]
+    by_id = {r["id"]: r for r in recalled}
+    assert e1["id"] in by_id
+    assert e2["id"] in by_id
+    assert by_id[e1["id"]]["body"] == "first body"
+    assert by_id[e2["id"]]["type"] == "LEARNED"
+    assert by_id[e1["id"]]["ts"] == e1["ts"]
+    assert by_id[e1["id"]]["branch"] == "br"
+    assert by_id[e1["id"]]["ticket"] == "FT-1"
+
+
+def test_recalled_entries_dedups_first_seen_order(tmp_repo: Path, tmp_path: Path) -> None:
+    _write_workspace(tmp_repo)
+    head = _git(["rev-parse", "HEAD"], tmp_repo).strip()
+    ticket_dir = tmp_path / "runs" / "FT-1"
+    _seed_state(ticket_dir, head)
+    a = memory_append.append(tmp_repo, "FACT", "alpha", "br", "FT-1")
+    b = memory_append.append(tmp_repo, "FACT", "beta", "br", "FT-1")
+    _write_recall_log(
+        ticket_dir,
+        [
+            {"returned_ids": [a["id"], b["id"]]},
+            {"returned_ids": [b["id"], a["id"]]},
+        ],
+    )
+    payload = reflect_inputs.bundle("FT-1", ticket_dir, tmp_repo)
+    ids = [r["id"] for r in payload["recalled_entries"]]
+    assert ids == [a["id"], b["id"]]
+
+
+def test_recalled_entries_drops_superseded(tmp_repo: Path, tmp_path: Path) -> None:
+    _write_workspace(tmp_repo)
+    head = _git(["rev-parse", "HEAD"], tmp_repo).strip()
+    ticket_dir = tmp_path / "runs" / "FT-1"
+    _seed_state(ticket_dir, head)
+    a = memory_append.append(tmp_repo, "FACT", "old truth", "br", "FT-1")
+    memory_append.append(tmp_repo, "FACT", "new truth", "br", "FT-1", supersedes=a["id"])
+    _write_recall_log(ticket_dir, [{"returned_ids": [a["id"]]}])
+    payload = reflect_inputs.bundle("FT-1", ticket_dir, tmp_repo)
+    ids = [r["id"] for r in payload["recalled_entries"]]
+    assert a["id"] not in ids
+
+
+def test_recalled_entries_drops_unjoinable_id(tmp_repo: Path, tmp_path: Path) -> None:
+    _write_workspace(tmp_repo)
+    head = _git(["rev-parse", "HEAD"], tmp_repo).strip()
+    ticket_dir = tmp_path / "runs" / "FT-1"
+    _seed_state(ticket_dir, head)
+    e1 = memory_append.append(tmp_repo, "FACT", "present body", "br", "FT-1")
+    _write_recall_log(ticket_dir, [{"returned_ids": [e1["id"], "ghost-id-not-in-knowledge"]}])
+    payload = reflect_inputs.bundle("FT-1", ticket_dir, tmp_repo)
+    ids = [r["id"] for r in payload["recalled_entries"]]
+    assert ids == [e1["id"]]
+    assert "ghost-id-not-in-knowledge" not in ids
+
+
+def test_recalled_entries_empty_when_no_recall_log(tmp_repo: Path, tmp_path: Path) -> None:
+    _write_workspace(tmp_repo)
+    head = _git(["rev-parse", "HEAD"], tmp_repo).strip()
+    ticket_dir = tmp_path / "runs" / "FT-1"
+    _seed_state(ticket_dir, head)
+    memory_append.append(tmp_repo, "FACT", "body", "br", "FT-1")
+    payload = reflect_inputs.bundle("FT-1", ticket_dir, tmp_repo)
+    assert payload["recalled_entries"] == []
+
+
+def test_recalled_entries_empty_when_namespace_unresolvable(tmp_repo: Path, tmp_path: Path) -> None:
+    # No workspace.toml -> namespace resolution fails; recalled_entries degrades to
+    # [] but the rest of the bundle still populates.
+    head = _git(["rev-parse", "HEAD"], tmp_repo).strip()
+    ticket_dir = tmp_path / "runs" / "FT-1"
+    _seed_state(ticket_dir, head)
+    _write_recall_log(ticket_dir, [{"returned_ids": ["whatever-id"]}])
+    payload = reflect_inputs.bundle("FT-1", ticket_dir, tmp_repo)
+    assert payload["recalled_entries"] == []
+    assert payload["ticket"] == "FT-1"
+    assert "state" in payload
+
+
+def test_recalled_entries_tolerates_malformed_log_line_no_sidecar(
+    tmp_repo: Path, tmp_path: Path
+) -> None:
+    _write_workspace(tmp_repo)
+    head = _git(["rev-parse", "HEAD"], tmp_repo).strip()
+    ticket_dir = tmp_path / "runs" / "FT-1"
+    _seed_state(ticket_dir, head)
+    e1 = memory_append.append(tmp_repo, "FACT", "good body", "br", "FT-1")
+    ticket_dir.mkdir(parents=True, exist_ok=True)
+    log = ticket_dir / "recall-log.jsonl"
+    with log.open("w", encoding="utf-8") as fh:
+        fh.write("{ this is not valid json\n")
+        fh.write(json.dumps({"returned_ids": [e1["id"]]}) + "\n")
+    payload = reflect_inputs.bundle("FT-1", ticket_dir, tmp_repo)
+    ids = [r["id"] for r in payload["recalled_entries"]]
+    assert ids == [e1["id"]]
+    sidecars = list(ticket_dir.glob("recall-log.jsonl.quarantine*"))
+    assert sidecars == []

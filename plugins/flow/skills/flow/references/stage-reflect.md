@@ -27,6 +27,7 @@ The taxonomy is closed:
 - `<ticket-dir>/state.json` — full run history.
 - `.flow/tickets/<KEY>.md` — ticket frontmatter.
 - `<ticket-dir>/stages/*.out` — captured subagent reports.
+- `<ticket-dir>/recall-log.jsonl` — the per-run recalled-entry ids the dispatcher promoted (`returned_ids`).
 - The git diff since stage `ticket`.
 
 ## Steps
@@ -41,7 +42,12 @@ The taxonomy is closed:
    ```
    - Exit 0 → JSON payload to stdout: `{ticket, run_id, state,
      ticket_frontmatter, final_diff, subagent_reports[], friction[],
-     reflect_config, harness_eval}`.
+     recalled_entries[], reflect_config, harness_eval}`.
+     `recalled_entries` is the entries recalled INTO this run — the recall-log
+     `returned_ids` joined to the live `knowledge.jsonl` bodies — each
+     `{id, type, body, ts, branch, ticket}`; `[]` when nothing was recalled or
+     the join is unavailable (no recall-log, namespace unresolvable, dead-set
+     filtered). It feeds the supersession sub-step (3b).
      `reflect_config` is `{machinery: bool, claude_memory: bool}` (machinery
      defaults false, claude_memory defaults true; a `[reflect]` block in
      `workspace.toml` overrides). It gates step 2b and step 2c below.
@@ -144,6 +150,16 @@ The taxonomy is closed:
    - Exit 3 → invalid type. Bug in your prompt; fix and retry.
    - Exit 4 → I/O error, or the workspace memory config is missing/invalid.
      Log and skip.
+
+3b. **Supersede recalled entries this run disproved (lens A — always on).** For each `recalled_entries` item from the bundle, judge whether THIS run's `final_diff` disproves the behavior the entry asserts. The recalled entry was live context for this run; if your own change made it false, the dead entry must be retired so the next recall does not surface stale truth.
+
+   - **AUTO-supersede ONLY when the disproof is ground truth** — the contradicting change is PRESENT in `final_diff` (this run itself changed the behavior the entry describes, not merely a guess that it looks stale). Append a NEW entry that cites this run / PR and states what is now true, supersedes-targeting the dead entry by its exact id:
+     ```bash
+     ${CLAUDE_SKILL_DIR}/scripts/memory_append.py        --type <FACT|LEARNED|DEVIATION>        --text "<what is now true; cite this run/PR>"        --branch "$(git rev-parse --abbrev-ref HEAD)"        --ticket <KEY>        --supersedes <recalled_entries[i].id>        --workspace-root .
+     ```
+     Use the exact `recalled_entries[i].id` for `--supersedes`. The `--type` respects the closed taxonomy — typically `FACT`/`LEARNED` for the corrected truth, or `DEVIATION` when the point is that the old entry was disproven.
+   - **Anything ambiguous, indirect, or inference-based** — the entry merely looks stale, or the contradiction is NOT in `final_diff` — do NOT auto-supersede. Surface a one-line proposal note in the human-facing reflect output instead (`Proposed supersede: <id> — <why it may be stale>`), a binding skeptic correction the maintainer adjudicates. The auto path is reserved for diff-grounded disproof.
+   - Exit handling is the same table as step 3, plus: exit 5 → unknown supersedes target (the recalled id is no longer in `knowledge.jsonl` — a sibling already retired it). Skip + log; do NOT fail the stage.
 
 4. **Zero novel signal path**: if you genuinely have nothing to append, emit exactly:
    ```
