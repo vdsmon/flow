@@ -34,6 +34,7 @@ import _memory_paths
 import _workspace
 import diff_extract
 import harness_corpus
+import recall
 import state
 import ticket_frontmatter
 
@@ -76,6 +77,76 @@ def _harness_eval_block(scripts_dir: Path | None = None) -> dict[str, Any]:
         "corpus_path": str(corpus_path),
         "case_counts": counts,
     }
+
+
+def _lenient_jsonl(path: Path) -> list[Any]:
+    """Per-line json.loads, skipping blanks + malformed lines. Read-only — never
+    writes a quarantine sidecar (mirrors the friction read in bundle()).
+    """
+    out: list[Any] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            out.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return out
+
+
+def _recalled_ids(log_path: Path) -> list[str]:
+    ids: list[str] = []
+    seen: set[str] = set()
+    for rec in _lenient_jsonl(log_path):
+        if not isinstance(rec, dict):
+            continue
+        for rid in rec.get("returned_ids", []):
+            if isinstance(rid, str) and rid and rid not in seen:
+                seen.add(rid)
+                ids.append(rid)
+    return ids
+
+
+def _recalled_entries(ticket_dir: Path, cwd: Path) -> list[dict[str, Any]]:
+    """Entries recalled INTO this run, joined recall-log `returned_ids` -> live
+    knowledge bodies. Best-effort: any missing log / knowledge / memory-config
+    degrades to []. Read-only (no quarantine sidecar): mirrors the friction read.
+    """
+    log_path = ticket_dir / "recall-log.jsonl"
+    if not log_path.exists():
+        return []
+    try:
+        recalled_ids = _recalled_ids(log_path)
+        if not recalled_ids:
+            return []
+        namespace = _memory_paths.resolve_namespace(cwd)
+        kpath = _memory_paths.knowledge_path(cwd, namespace)
+        if not kpath.exists():
+            return []
+        by_id: dict[str, dict[str, Any]] = {
+            e["id"]: e
+            for e in _lenient_jsonl(kpath)
+            if isinstance(e, dict) and isinstance(e.get("id"), str)
+        }
+        dead = recall.superseded_ids(list(by_id.values()))
+        out: list[dict[str, Any]] = []
+        for rid in recalled_ids:
+            e = by_id.get(rid)
+            if rid in dead or e is None:
+                continue
+            out.append(
+                {
+                    "id": rid,
+                    "type": e.get("type"),
+                    "body": e.get("body"),
+                    "ts": e.get("ts"),
+                    "branch": e.get("branch"),
+                    "ticket": e.get("ticket"),
+                }
+            )
+        return out
+    except (_memory_paths._MemoryConfigError, OSError):
+        return []
 
 
 def bundle(
@@ -157,6 +228,7 @@ def bundle(
         "final_diff": diff_payload,
         "subagent_reports": subagent_reports,
         "friction": friction,
+        "recalled_entries": _recalled_entries(ticket_dir, cwd),
         "reflect_config": _reflect_config(cwd),
         "harness_eval": _harness_eval_block(),
     }
