@@ -718,6 +718,8 @@ Atomic + crash-safe.
 | `--ticket` | Ticket key (must match the `ticket` field in evidence JSON). |
 | `--evidence-json` | JSON string. Top-level keys allowed: `ticket`, `shipped_at`, `evidence`. Extras rejected. |
 | `--run-id` | 16-hex run_id from caller. Injected as `observed_by_run_id`. |
+| `--arm` | Experiment lane `{flow, control}`. Default `flow`. Stamped as `arm`. |
+| `--tier` | Free-form tier label captured at ship time. Default `""`. Stamped as `tier`. |
 | `--workspace-root` | Default `.`. |
 
 Two-phase write:
@@ -727,6 +729,10 @@ Two-phase write:
    next monotonic `n` from existing `.dupe.*.json` siblings (max + 1 or 1),
    then O_EXCL-create `<ticket>.json.dupe.<n>.json` with
    `superseded_by_dupe: false`. Exit 2.
+
+Script-owned top-level keys (rejected as `--evidence-json` inputs): `observed_at`,
+`observed_by_run_id`, `flow_attribution`, `arm`, `tier`, `plugin_version`
+(self-read from `plugins/flow/.claude-plugin/plugin.json`, `""` on any failure).
 
 On non-EEXIST I/O error: write intent log to `<ticket>.json.quarantine-intent.<ts>.json` (best-effort) BEFORE re-raising.
 `/flow recover` in phase 8c replays the intent log.
