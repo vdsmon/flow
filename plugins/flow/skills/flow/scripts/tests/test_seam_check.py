@@ -492,3 +492,102 @@ def test_main_fails_on_stage_doc_citation_offender(monkeypatch) -> None:
 def test_live_corpus_no_stage_doc_reenumeration() -> None:
     """No live /flow doc statically re-enumerates the stage->reference_doc map."""
     assert seam_check.docs_over_stage_doc_citation_limit() == {}
+
+
+# --- descriptor-key phantom gate ---------------------------------------------
+
+
+def test_descriptor_key_phantom_flagged(tmp_path) -> None:
+    # A doc citing a key dispatch_stage.py does not emit (via the enumeration
+    # anchor) -> flagged.
+    doc = tmp_path / "verb-x.md"
+    doc.write_text("Otherwise -> handler descriptor with `stage`, `bogus_key`.\n", encoding="utf-8")
+    phantoms = seam_check.descriptor_key_phantoms(docs=[doc])
+    keys = {k for _, _, k in phantoms}
+    assert "bogus_key" in keys
+    assert "stage" not in keys  # stage is really emitted
+
+
+def test_descriptor_key_clean_doc_empty(tmp_path) -> None:
+    doc = tmp_path / "verb-x.md"
+    doc.write_text("Otherwise -> handler descriptor with `stage`, `roles`.\n", encoding="utf-8")
+    assert seam_check.descriptor_key_phantoms(docs=[doc]) == []
+
+
+def test_descriptor_key_json_form_phantom(tmp_path) -> None:
+    # JSON form: a `"done"`-bearing code span citing a missing key -> flagged.
+    doc = tmp_path / "verb-x.md"
+    doc.write_text('a `{"done": false, "gone_key": "x"}` span\n', encoding="utf-8")
+    keys = {k for _, _, k in seam_check.descriptor_key_phantoms(docs=[doc])}
+    assert "gone_key" in keys
+    assert "done" not in keys
+
+
+def test_live_corpus_descriptor_enumeration_recognized() -> None:
+    # The live SKILL.md enumeration must actually be picked up by the prose
+    # scanner: converts a future reword of the `handler descriptor with` anchor
+    # from a silent false-negative into a red build.
+    cited = {k for _, _, k in seam_check.prose_cited_descriptor_keys()}
+    for key in ("head_sha", "stage", "roles", "reference_doc", "ticket_dir"):
+        assert key in cited
+
+
+def test_live_corpus_descriptor_keys_green() -> None:
+    assert seam_check.descriptor_key_phantoms() == []
+
+
+def test_main_fails_on_descriptor_key_phantom(monkeypatch) -> None:
+    monkeypatch.setattr(seam_check, "scripts_missing_from_module_md", lambda *a, **k: set())
+    monkeypatch.setattr(
+        seam_check, "scripts_missing_from_registry_descriptions", lambda *a, **k: set()
+    )
+    monkeypatch.setattr(seam_check, "module_md_importer_drift", lambda *a, **k: [])
+    monkeypatch.setattr(
+        seam_check, "descriptor_key_phantoms", lambda *a, **k: [("SKILL.md", 9, "gone_key")]
+    )
+    assert seam_check.main([]) == 1
+
+
+# --- role-literal phantom gate -----------------------------------------------
+
+
+def test_role_phantom_flagged(tmp_path) -> None:
+    doc = tmp_path / "verb-x.md"
+    doc.write_text('if `descriptor.roles` includes `"gone_role"`:\n', encoding="utf-8")
+    registry = tmp_path / "stage-registry.toml"
+    registry.write_text(
+        '[[stage]]\nname = "x"\nroles = ["records_diff_baseline"]\n', encoding="utf-8"
+    )
+    roles = {r for _, _, r in seam_check.role_literal_phantoms(registry_path=registry, docs=[doc])}
+    assert "gone_role" in roles
+
+
+def test_role_unrelated_backtick_literal_not_flagged(tmp_path) -> None:
+    # A backtick-double-quoted literal on a line with NO `roles` anchor must NOT
+    # be treated as a role citation.
+    doc = tmp_path / "verb-x.md"
+    doc.write_text('classify the PR as `"not_shipped"` for the metric.\n', encoding="utf-8")
+    registry = tmp_path / "stage-registry.toml"
+    registry.write_text('[[stage]]\nname = "x"\nroles = []\n', encoding="utf-8")
+    assert seam_check.role_literal_phantoms(registry_path=registry, docs=[doc]) == []
+
+
+def test_live_corpus_role_records_diff_baseline_recognized() -> None:
+    cited = {r for _, _, r in seam_check.prose_cited_roles()}
+    assert "records_diff_baseline" in cited
+
+
+def test_live_corpus_roles_green() -> None:
+    assert seam_check.role_literal_phantoms() == []
+
+
+def test_main_fails_on_role_phantom(monkeypatch) -> None:
+    monkeypatch.setattr(seam_check, "scripts_missing_from_module_md", lambda *a, **k: set())
+    monkeypatch.setattr(
+        seam_check, "scripts_missing_from_registry_descriptions", lambda *a, **k: set()
+    )
+    monkeypatch.setattr(seam_check, "module_md_importer_drift", lambda *a, **k: [])
+    monkeypatch.setattr(
+        seam_check, "role_literal_phantoms", lambda *a, **k: [("SKILL.md", 116, "gone_role")]
+    )
+    assert seam_check.main([]) == 1

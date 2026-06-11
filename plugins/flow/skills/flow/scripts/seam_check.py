@@ -584,6 +584,115 @@ def docs_over_stage_doc_citation_limit(
     return out
 
 
+def descriptor_keys_emitted(scripts_dir: Path = SCRIPTS_DIR) -> set[str]:
+    """Every stdout-JSON descriptor key dispatch_stage.py can emit (authoritative).
+
+    AST-walk dispatch_stage.py: collect every ast.Dict string-literal key PLUS
+    every `name["k"] = ...` subscript-assignment string key (e.g.
+    `payload["reference_doc"] = ...`). Keys built via dict(k=...) kwargs or
+    .update() are NOT collected; over-collecting is safe (only risks a false
+    negative), and the live green-check test guards the current emitted state.
+    """
+    path = scripts_dir / "dispatch_stage.py"
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except (OSError, SyntaxError):
+        return set()
+    keys: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Dict):
+            for k in node.keys:
+                if isinstance(k, ast.Constant) and isinstance(k.value, str):
+                    keys.add(k.value)
+        elif isinstance(node, ast.Assign):
+            for target in node.targets:
+                if (
+                    isinstance(target, ast.Subscript)
+                    and isinstance(target.slice, ast.Constant)
+                    and isinstance(target.slice.value, str)
+                ):
+                    keys.add(target.slice.value)
+    return keys
+
+
+def prose_cited_descriptor_keys(docs: list[Path] | None = None) -> list[tuple[str, int, str]]:
+    """Descriptor keys the do-loop prose cites, in two zero-FP forms.
+
+    JSON form: inside any code span containing the substring `"done"` (the
+    descriptor discriminator), every `"<key>":` token. Enumeration form: on a
+    logical line containing the literal anchor `handler descriptor with`, every
+    backtick inline-code token matching ^[a-z_]+$. Returns (doc_name, line, key).
+    """
+    if docs is None:
+        docs = docs_to_check()
+    json_key_re = re.compile(r'"([a-z_]+)"\s*:')
+    cited: list[tuple[str, int, str]] = []
+    for doc in docs:
+        text = doc.read_text(encoding="utf-8")
+        for lineno, span in _slash_spans(text):
+            if '"done"' not in span:
+                continue
+            for key in json_key_re.findall(span):
+                cited.append((doc.name, lineno, key))
+        for lineno, logical in _logical_lines(text):
+            if "handler descriptor with" not in logical:
+                continue
+            for m in _INLINE_SPAN_RE.finditer(logical):
+                tok = m.group(1).strip()
+                if re.fullmatch(r"[a-z_]+", tok):
+                    cited.append((doc.name, lineno, tok))
+    return cited
+
+
+def descriptor_key_phantoms(
+    scripts_dir: Path = SCRIPTS_DIR, docs: list[Path] | None = None
+) -> list[tuple[str, int, str]]:
+    """Prose-cited descriptor keys dispatch_stage.py no longer emits (phantom-only)."""
+    emitted = descriptor_keys_emitted(scripts_dir)
+    return [(d, ln, k) for (d, ln, k) in prose_cited_descriptor_keys(docs) if k not in emitted]
+
+
+def registry_roles(registry_path: Path = SKILL_ROOT / "stage-registry.toml") -> set[str]:
+    """Union of every [[stage]].roles array in stage-registry.toml (authoritative)."""
+    data = tomllib.loads(registry_path.read_text(encoding="utf-8"))
+    roles: set[str] = set()
+    for stage in data.get("stage", []):
+        roles |= set(stage.get("roles", []))
+    return roles
+
+
+def prose_cited_roles(docs: list[Path] | None = None) -> list[tuple[str, int, str]]:
+    """Role string literals prose cites, anchored to a `roles`-bearing logical line.
+
+    On a logical line containing the literal token `roles`, every inline-code
+    (backtick) span whose inner content is a double-quoted identifier
+    (^"[a-z_]+"$); the quotes are stripped to yield the role. The same-line
+    `roles` anchor excludes unrelated backtick-double-quoted literals elsewhere
+    (e.g. `"not_shipped"`, `"flow"`). Returns (doc_name, line, role).
+    """
+    if docs is None:
+        docs = docs_to_check()
+    cited: list[tuple[str, int, str]] = []
+    for doc in docs:
+        text = doc.read_text(encoding="utf-8")
+        for lineno, logical in _logical_lines(text):
+            if "roles" not in logical:
+                continue
+            for m in _INLINE_SPAN_RE.finditer(logical):
+                inner = m.group(1).strip()
+                if re.fullmatch(r'"[a-z_]+"', inner):
+                    cited.append((doc.name, lineno, inner[1:-1]))
+    return cited
+
+
+def role_literal_phantoms(
+    registry_path: Path = SKILL_ROOT / "stage-registry.toml", docs: list[Path] | None = None
+) -> list[tuple[str, int, str]]:
+    """Prose-cited roles stage-registry.toml no longer declares (phantom-only)."""
+    declared = registry_roles(registry_path)
+    return [(d, ln, r) for (d, ln, r) in prose_cited_roles(docs) if r not in declared]
+
+
 def docs_to_check() -> list[Path]:
     docs = [SKILL_ROOT / "SKILL.md"]
     refs = SKILL_ROOT / "references"
@@ -669,6 +778,34 @@ def main(argv: list[str]) -> int:
                 msg=(
                     f"cites {count} distinct stage-docs (limit {STAGE_DOC_CITATION_LIMIT}): "
                     f"re-enumerates the stage->reference_doc map canonical in stage-registry.toml"
+                ),
+                raw="",
+            )
+        )
+
+    for doc_name, line, key in descriptor_key_phantoms():
+        problems.append(
+            Problem(
+                doc=doc_name,
+                line=line,
+                level="ERROR",
+                msg=(
+                    f"cites descriptor key '{key}' dispatch_stage.py no longer emits "
+                    f"(phantom; do-loop would read a missing key)"
+                ),
+                raw="",
+            )
+        )
+
+    for doc_name, line, role in role_literal_phantoms():
+        problems.append(
+            Problem(
+                doc=doc_name,
+                line=line,
+                level="ERROR",
+                msg=(
+                    f"cites role '{role}' stage-registry.toml no longer declares "
+                    f"(phantom; descriptor.roles check would never match)"
                 ),
                 raw="",
             )
