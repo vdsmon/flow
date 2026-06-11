@@ -934,6 +934,13 @@ def _resolve_window(args: argparse.Namespace, now_iso: str) -> tuple[str, str]:
     return since_iso, until_iso
 
 
+def _check_flow_dir(workspace_root: Path) -> str | None:
+    """Return an error string if workspace_root has no .flow directory, else None."""
+    if not (workspace_root / ".flow").is_dir():
+        return f"metric: no .flow directory at resolved workspace root: {workspace_root}\n"
+    return None
+
+
 def _add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--namespace", default=None)
     parser.add_argument("--workspace-root", default=".")
@@ -976,6 +983,10 @@ def _run_arm_compare(args: argparse.Namespace, since_iso: str, until_iso: str) -
         sys.stderr.write("metric: --namespace is required\n")
         return 1
     workspace_root = Path(args.workspace_root).resolve()
+    err = _check_flow_dir(workspace_root)
+    if err:
+        sys.stderr.write(err)
+        return 1
     try:
         result = compute_arm_compare(
             workspace_root,
@@ -993,6 +1004,74 @@ def _run_arm_compare(args: argparse.Namespace, since_iso: str, until_iso: str) -
     return 0
 
 
+def _run_time_to_pr(args: argparse.Namespace, since_iso: str, until_iso: str, now_iso: str) -> int:
+    if not args.namespace:
+        sys.stderr.write("metric: --namespace is required when not --checkpoint\n")
+        return 1
+    workspace_root = Path(args.workspace_root).resolve()
+    err = _check_flow_dir(workspace_root)
+    if err:
+        sys.stderr.write(err)
+        return 1
+    try:
+        result = compute_time_to_pr(
+            workspace_root,
+            args.namespace,
+            since_iso=since_iso,
+            until_iso=until_iso,
+            now_iso=now_iso,
+        )
+    except ValueError as exc:
+        sys.stderr.write(f"metric: {exc}\n")
+        return 1
+    out = dict(result)
+    out["resolved_workspace_root"] = str(workspace_root)
+    sys.stdout.write(json.dumps(out, indent=2, sort_keys=True) + "\n")
+    return 0
+
+
+def _run_friction_per_run(args: argparse.Namespace, since_iso: str, until_iso: str) -> int:
+    if not args.namespace:
+        sys.stderr.write("metric: --namespace is required\n")
+        return 1
+    workspace_root = Path(args.workspace_root).resolve()
+    err = _check_flow_dir(workspace_root)
+    if err:
+        sys.stderr.write(err)
+        return 1
+    result = compute_friction_per_run(
+        workspace_root,
+        args.namespace,
+        since_iso=since_iso,
+        until_iso=until_iso,
+    )
+    out = dict(result)
+    out["resolved_workspace_root"] = str(workspace_root)
+    sys.stdout.write(json.dumps(out, indent=2, sort_keys=True) + "\n")
+    return 0
+
+
+def _run_revert_rate(args: argparse.Namespace, since_iso: str, until_iso: str) -> int:
+    if not args.namespace:
+        sys.stderr.write("metric: --namespace is required\n")
+        return 1
+    workspace_root = Path(args.workspace_root).resolve()
+    err = _check_flow_dir(workspace_root)
+    if err:
+        sys.stderr.write(err)
+        return 1
+    result = compute_revert_rate(
+        workspace_root,
+        args.namespace,
+        since_iso=since_iso,
+        until_iso=until_iso,
+    )
+    out = dict(result)
+    out["resolved_workspace_root"] = str(workspace_root)
+    sys.stdout.write(json.dumps(out, indent=2, sort_keys=True) + "\n")
+    return 0
+
+
 def cli_main(argv: list[str]) -> int:
     args = _parse_args(argv)
     now_iso = utcnow_iso()
@@ -1003,51 +1082,13 @@ def cli_main(argv: list[str]) -> int:
         return 1
 
     if args.command == "time-to-pr":
-        if not args.namespace:
-            sys.stderr.write("metric: --namespace is required when not --checkpoint\n")
-            return 1
-        workspace_root = Path(args.workspace_root).resolve()
-        try:
-            result = compute_time_to_pr(
-                workspace_root,
-                args.namespace,
-                since_iso=since_iso,
-                until_iso=until_iso,
-                now_iso=now_iso,
-            )
-        except ValueError as exc:
-            sys.stderr.write(f"metric: {exc}\n")
-            return 1
-        sys.stdout.write(json.dumps(result, indent=2, sort_keys=True) + "\n")
-        return 0
+        return _run_time_to_pr(args, since_iso, until_iso, now_iso)
 
     if args.command == "friction-per-run":
-        if not args.namespace:
-            sys.stderr.write("metric: --namespace is required\n")
-            return 1
-        workspace_root = Path(args.workspace_root).resolve()
-        result = compute_friction_per_run(
-            workspace_root,
-            args.namespace,
-            since_iso=since_iso,
-            until_iso=until_iso,
-        )
-        sys.stdout.write(json.dumps(result, indent=2, sort_keys=True) + "\n")
-        return 0
+        return _run_friction_per_run(args, since_iso, until_iso)
 
     if args.command == "revert-rate":
-        if not args.namespace:
-            sys.stderr.write("metric: --namespace is required\n")
-            return 1
-        workspace_root = Path(args.workspace_root).resolve()
-        result = compute_revert_rate(
-            workspace_root,
-            args.namespace,
-            since_iso=since_iso,
-            until_iso=until_iso,
-        )
-        sys.stdout.write(json.dumps(result, indent=2, sort_keys=True) + "\n")
-        return 0
+        return _run_revert_rate(args, since_iso, until_iso)
 
     if args.command == "arm-compare":
         return _run_arm_compare(args, since_iso, until_iso)
@@ -1080,6 +1121,10 @@ def cli_main(argv: list[str]) -> int:
         return 1
 
     workspace_root = Path(args.workspace_root).resolve()
+    err = _check_flow_dir(workspace_root)
+    if err:
+        sys.stderr.write(err)
+        return 1
     try:
         result = compute(
             workspace_root,
@@ -1091,7 +1136,9 @@ def cli_main(argv: list[str]) -> int:
     except ValueError as exc:
         sys.stderr.write(f"metric: {exc}\n")
         return 1
-    sys.stdout.write(json.dumps(result, indent=2, sort_keys=True) + "\n")
+    out = dict(result)
+    out["resolved_workspace_root"] = str(workspace_root)
+    sys.stdout.write(json.dumps(out, indent=2, sort_keys=True) + "\n")
     return 0
 
 

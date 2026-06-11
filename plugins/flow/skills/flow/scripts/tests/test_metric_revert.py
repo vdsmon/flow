@@ -327,3 +327,9 @@ def test_cli_namespace_required(tmp_path: Path, capsys) -> None:
     rc = metric.cli_main(["revert-rate", "--workspace-root", str(tmp_path)])
     assert rc == 1
     assert "namespace" in capsys.readouterr().err
+
+
+def test_cli_no_flow_dir(tmp_path: Path, capsys) -> None:
+    rc = metric.cli_main(["revert-rate", "--namespace", "demo", "--workspace-root", str(tmp_path)])
+    assert rc == 1
+    assert "no .flow" in capsys.readouterr().err
