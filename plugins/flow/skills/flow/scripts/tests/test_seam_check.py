@@ -492,3 +492,162 @@ def test_main_fails_on_stage_doc_citation_offender(monkeypatch) -> None:
 def test_live_corpus_no_stage_doc_reenumeration() -> None:
     """No live /flow doc statically re-enumerates the stage->reference_doc map."""
     assert seam_check.docs_over_stage_doc_citation_limit() == {}
+
+
+# --- descriptor-key gate -----------------------------------------------------
+
+_DISPATCH_SRC = """
+def cmd_next(next_stage, sha, r, ref):
+    payload = {"done": False, "stage": next_stage, "head_sha": sha, "roles": r}
+    payload["reference_doc"] = ref
+    return 0, payload
+
+
+def blocked(failed, detail):
+    return 0, {"done": False, "blocked_by": failed, "reason": detail}
+"""
+
+
+def test_emitted_keys_include_dict_and_subscript_assigns(tmp_path) -> None:
+    src = tmp_path / "dispatch_stage.py"
+    src.write_text(_DISPATCH_SRC, encoding="utf-8")
+    emitted = seam_check.emitted_descriptor_keys(src)
+    assert emitted is not None
+    # dict-literal keys AND the `payload["reference_doc"] = ...` subscript assign.
+    assert {"done", "stage", "head_sha", "roles", "blocked_by", "reason"} <= emitted
+    assert "reference_doc" in emitted
+
+
+def test_emitted_keys_none_on_unparseable(tmp_path) -> None:
+    src = tmp_path / "dispatch_stage.py"
+    src.write_text("def x( :\n", encoding="utf-8")
+    assert seam_check.emitted_descriptor_keys(src) is None
+
+
+def test_prose_descriptor_anchors_extract_keys() -> None:
+    text = (
+        "handler descriptor with `stage`, `handler_type`, optional `reference_doc`.\n"
+        "if `descriptor.roles` includes something.\n"
+        '`{"done": false, "blocked_by": "<s>", "reason": "<t>"}`\n'
+    )
+    keys = {k for _, k in seam_check.prose_descriptor_key_citations(text)}
+    assert {
+        "stage",
+        "handler_type",
+        "reference_doc",
+        "roles",
+        "done",
+        "blocked_by",
+        "reason",
+    } <= keys
+
+
+def test_prose_descriptor_ignores_foreign_json_without_done() -> None:
+    # Another script's JSON object (no `"done"` key) must not leak its keys.
+    text = '`{"backend": "beads", "prefix": "flow"}`\n'
+    assert seam_check.prose_descriptor_key_citations(text) == []
+
+
+def test_descriptor_key_drift_flags_renamed_citation(tmp_path) -> None:
+    doc = tmp_path / "SKILL.md"
+    doc.write_text("handler descriptor with `stage`, `head_commit`.\n", encoding="utf-8")
+    # Truth emits `head_sha`, prose says the renamed-away `head_commit`.
+    drift = seam_check.descriptor_key_drift(docs=[doc], emitted={"stage", "head_sha"})
+    assert ("SKILL.md", 1, "head_commit") in drift
+    assert all(d[2] != "stage" for d in drift)
+
+
+def test_descriptor_key_drift_noop_without_emitted(tmp_path) -> None:
+    doc = tmp_path / "SKILL.md"
+    doc.write_text("handler descriptor with `whatever`.\n", encoding="utf-8")
+    # An empty/None emitted set (unparseable dispatch) makes the gate no-op
+    # rather than mass-flag every citation.
+    assert seam_check.descriptor_key_drift(docs=[doc], emitted=set()) == []
+
+
+def test_main_fails_on_descriptor_key_drift(monkeypatch) -> None:
+    monkeypatch.setattr(seam_check, "scripts_missing_from_module_md", lambda *a, **k: set())
+    monkeypatch.setattr(
+        seam_check, "scripts_missing_from_registry_descriptions", lambda *a, **k: set()
+    )
+    monkeypatch.setattr(seam_check, "module_md_importer_drift", lambda *a, **k: [])
+    monkeypatch.setattr(seam_check, "module_md_surface_cell_drift", lambda *a, **k: [])
+    monkeypatch.setattr(seam_check, "docs_over_stage_doc_citation_limit", lambda *a, **k: {})
+    monkeypatch.setattr(seam_check, "role_literal_drift", lambda *a, **k: [])
+    monkeypatch.setattr(
+        seam_check, "descriptor_key_drift", lambda *a, **k: [("SKILL.md", 7, "head_commit")]
+    )
+    assert seam_check.main([]) == 1
+
+
+def test_live_descriptor_keys_all_emitted() -> None:
+    """Every descriptor key cited in the live docs is emitted by dispatch_stage."""
+    assert seam_check.descriptor_key_drift() == []
+
+
+def test_live_skill_cites_the_do_loop_descriptor_keys() -> None:
+    """The anchors fire on the real SKILL.md, not just synthetic input."""
+    text = (seam_check.SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
+    cited = {k for _, k in seam_check.prose_descriptor_key_citations(text)}
+    assert {"done", "blocked_by", "reason", "stage", "head_sha", "roles"} <= cited
+
+
+# --- role-literal gate -------------------------------------------------------
+
+
+def test_registry_roles_unions_arrays(tmp_path) -> None:
+    registry = tmp_path / "stage-registry.toml"
+    registry.write_text(
+        '[[stage]]\nname = "a"\nroles = ["records_diff_baseline"]\n\n'
+        '[[stage]]\nname = "b"\nroles = ["reflect_anchor", "ship_observer"]\n',
+        encoding="utf-8",
+    )
+    assert seam_check.registry_roles(registry) == {
+        "records_diff_baseline",
+        "reflect_anchor",
+        "ship_observer",
+    }
+
+
+def test_prose_role_citation_membership_idiom() -> None:
+    text = 'if `descriptor.roles` includes `"records_diff_baseline"`:\n'
+    assert seam_check.prose_role_citations(text) == [(1, "records_diff_baseline")]
+
+
+def test_prose_role_citation_ignores_non_membership_roles_mention() -> None:
+    # A bare `roles` list-of-keys mention (no membership verb) yields nothing.
+    text = "the descriptor with `stage`, `roles`, `reference_doc`.\n"
+    assert seam_check.prose_role_citations(text) == []
+
+
+def test_role_literal_drift_flags_renamed_role(tmp_path) -> None:
+    doc = tmp_path / "SKILL.md"
+    doc.write_text('if `descriptor.roles` includes `"records_baseline"`:\n', encoding="utf-8")
+    drift = seam_check.role_literal_drift(docs=[doc], roles={"records_diff_baseline"})
+    assert ("SKILL.md", 1, "records_baseline") in drift
+
+
+def test_role_literal_drift_clean(tmp_path) -> None:
+    doc = tmp_path / "SKILL.md"
+    doc.write_text('if `descriptor.roles` includes `"records_diff_baseline"`:\n', encoding="utf-8")
+    assert seam_check.role_literal_drift(docs=[doc], roles={"records_diff_baseline"}) == []
+
+
+def test_main_fails_on_role_literal_drift(monkeypatch) -> None:
+    monkeypatch.setattr(seam_check, "scripts_missing_from_module_md", lambda *a, **k: set())
+    monkeypatch.setattr(
+        seam_check, "scripts_missing_from_registry_descriptions", lambda *a, **k: set()
+    )
+    monkeypatch.setattr(seam_check, "module_md_importer_drift", lambda *a, **k: [])
+    monkeypatch.setattr(seam_check, "module_md_surface_cell_drift", lambda *a, **k: [])
+    monkeypatch.setattr(seam_check, "docs_over_stage_doc_citation_limit", lambda *a, **k: {})
+    monkeypatch.setattr(seam_check, "descriptor_key_drift", lambda *a, **k: [])
+    monkeypatch.setattr(
+        seam_check, "role_literal_drift", lambda *a, **k: [("SKILL.md", 116, "records_baseline")]
+    )
+    assert seam_check.main([]) == 1
+
+
+def test_live_role_citations_all_in_registry() -> None:
+    """Every role literal cited in the live docs exists in a registry roles array."""
+    assert seam_check.role_literal_drift() == []

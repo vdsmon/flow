@@ -73,6 +73,24 @@ _STAGE_DOC_RE = re.compile(r"stage-[a-z0-9_]+\.md")
 # flow-0n8 regression class). Fire condition is count >= limit.
 STAGE_DOC_CITATION_LIMIT = 3
 
+# A dotted descriptor field read in prose, e.g. `descriptor.roles`. The do-loop
+# names the dispatch payload `descriptor`, so `descriptor.<field>` is an
+# unambiguous read of one emitted key.
+_DESCRIPTOR_FIELD_RE = re.compile(r"descriptor\.([a-z_][a-z0-9_]*)")
+# A JSON object key in prose, `"key":` (the trailing colon distinguishes a key
+# from a quoted value like `"<stage>"`). Scoped to descriptor branch spans only.
+_JSON_KEY_RE = re.compile(r"\"([a-z_][a-z0-9_]*)\"\s*:")
+# The do-loop enumerates the handler descriptor inline: "handler descriptor with
+# `stage`, `handler_type`, ...". Backticked tokens after this phrase are keys.
+_DESCRIPTOR_ENUM_ANCHOR = "descriptor with"
+# A backticked lower_snake token (an enumerated descriptor key in prose).
+_BACKTICK_IDENT_RE = re.compile(r"`([a-z_][a-z0-9_]*)`")
+# The roles-membership idiom: `descriptor.roles` includes `"records_diff_baseline"`.
+# The quoted token after the anchor is a role literal whose only validator is the
+# registry roles array (SKILL.md prose, no argparse surface).
+_ROLE_MEMBERSHIP_RE = re.compile(r"roles[`\s]*(?:includes?|contains?|has)\b")
+_ROLE_LITERAL_RE = re.compile(r"[\"'`]+([a-z][a-z0-9_]+)[\"'`]+")
+
 # An inline-code span: text between a pair of backticks on one line.
 _INLINE_SPAN_RE = re.compile(r"`([^`]*)`")
 # A fenced-code block delimiter (``` or ~~~), ignoring leading whitespace.
@@ -584,6 +602,147 @@ def docs_over_stage_doc_citation_limit(
     return out
 
 
+# --- descriptor-key + role-literal gates (dispatch_stage stdout contract) -----
+
+# The script whose stdout-JSON the do-loop parses by key. seam_check otherwise
+# only validates argparse flags/subcommands; the emitted descriptor keys
+# (done, blocked_by, stage, head_sha, roles, reference_doc, ...) have no surface
+# and so no gate. A key rename there passes argparse + unit tests and breaks
+# every run at the SKILL.md descriptor parse.
+_DESCRIPTOR_SCRIPT = "dispatch_stage.py"
+
+
+def emitted_descriptor_keys(script_path: Path | None = None) -> set[str] | None:
+    """The set of string keys dispatch_stage.py can emit in its stdout JSON.
+
+    Extracted statically: every string key of every dict literal, PLUS every
+    string-constant subscript assignment target (`payload["reference_doc"] = ...`,
+    which is not a dict literal). Over-capture is safe and intended — the gate is
+    one-directional (a prose-cited key absent from THIS set is the drift), so a
+    superset only suppresses false errors, never causes one. Returns None if the
+    script is missing or unparseable (the gate then no-ops rather than mass-fail).
+    """
+    if script_path is None:
+        script_path = SCRIPTS_DIR / _DESCRIPTOR_SCRIPT
+    try:
+        tree = ast.parse(script_path.read_text(encoding="utf-8"))
+    except (OSError, SyntaxError):
+        return None
+    keys: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Dict):
+            for k in node.keys:
+                if isinstance(k, ast.Constant) and isinstance(k.value, str):
+                    keys.add(k.value)
+        elif isinstance(node, ast.Assign):
+            for tgt in node.targets:
+                if (
+                    isinstance(tgt, ast.Subscript)
+                    and isinstance(tgt.slice, ast.Constant)
+                    and isinstance(tgt.slice.value, str)
+                ):
+                    keys.add(tgt.slice.value)
+    return keys
+
+
+def prose_descriptor_key_citations(text: str) -> list[tuple[int, str]]:
+    """Descriptor keys the prose reads off the dispatch payload, by structural anchor.
+
+    Three anchors, each unambiguous so a foreign JSON key (another script's
+    stdout, of which the corpus has many) cannot leak in:
+      1. `descriptor.<field>` dotted access.
+      2. backticked tokens after the "handler descriptor with" enumeration phrase.
+      3. JSON `"key":` pairs inside a `{...}` span whose discriminator key is
+         `"done"` (the descriptor's done/blocked branches; no other prose JSON
+         object carries a `"done"` key).
+    Returns (line, key). Bare-backtick mentions (run_id, holder, finished,
+    reconciled_drift) carry no structural anchor and are intentionally not gated.
+    """
+    out: list[tuple[int, str]] = []
+    for lineno, logical in _logical_lines(text):
+        for m in _DESCRIPTOR_FIELD_RE.finditer(logical):
+            out.append((lineno, m.group(1)))
+        idx = logical.find(_DESCRIPTOR_ENUM_ANCHOR)
+        if idx != -1:
+            for m in _BACKTICK_IDENT_RE.finditer(logical[idx + len(_DESCRIPTOR_ENUM_ANCHOR) :]):
+                out.append((lineno, m.group(1)))
+        for span in re.findall(r"\{[^{}]*\}", logical):
+            keys = _JSON_KEY_RE.findall(span)
+            if "done" in keys:
+                out.extend((lineno, k) for k in keys)
+    return out
+
+
+def descriptor_key_drift(
+    docs: list[Path] | None = None, emitted: set[str] | None = None
+) -> list[tuple[str, int, str]]:
+    """Prose-cited descriptor keys absent from dispatch_stage's emitted set.
+
+    Same missing-only direction as the surface-cell gate: the script's emitted
+    keys are truth; a citation that is not among them is stale (a rename). The
+    reverse (emitted keys the prose never parses) is normal and not flagged.
+    """
+    if emitted is None:
+        emitted = emitted_descriptor_keys()
+    if not emitted:
+        return []
+    if docs is None:
+        docs = docs_to_check()
+    drifts: list[tuple[str, int, str]] = []
+    for doc in docs:
+        for lineno, key in prose_descriptor_key_citations(doc.read_text(encoding="utf-8")):
+            if key not in emitted:
+                drifts.append((doc.name, lineno, key))
+    return drifts
+
+
+def registry_roles(registry_path: Path = SKILL_ROOT / "stage-registry.toml") -> set[str]:
+    """Union of every `roles` array across the registry's stages."""
+    data = tomllib.loads(registry_path.read_text(encoding="utf-8"))
+    roles: set[str] = set()
+    for stage in data.get("stage", []):
+        for r in stage.get("roles", []) or []:
+            roles.add(str(r))
+    return roles
+
+
+def prose_role_citations(text: str) -> list[tuple[int, str]]:
+    """Role literals the prose tests against `descriptor.roles`, by the membership idiom.
+
+    Anchored on `roles ... includes/contains/has`; the quoted lower_snake tokens
+    after the anchor on that logical line are role literals. Returns (line, role).
+    """
+    out: list[tuple[int, str]] = []
+    for lineno, logical in _logical_lines(text):
+        m = _ROLE_MEMBERSHIP_RE.search(logical)
+        if not m:
+            continue
+        for lm in _ROLE_LITERAL_RE.finditer(logical[m.end() :]):
+            out.append((lineno, lm.group(1)))
+    return out
+
+
+def role_literal_drift(
+    docs: list[Path] | None = None, roles: set[str] | None = None
+) -> list[tuple[str, int, str]]:
+    """Prose role literals absent from the registry roles arrays (a renamed role).
+
+    The role string is round-tripped through the dispatch descriptor untyped, so
+    a registry rename leaves the SKILL.md literal stale with no other validator.
+    Missing-only: a cited role not in any registry array is the drift.
+    """
+    if roles is None:
+        roles = registry_roles()
+    if docs is None:
+        docs = docs_to_check()
+    drifts: list[tuple[str, int, str]] = []
+    for doc in docs:
+        for lineno, role in prose_role_citations(doc.read_text(encoding="utf-8")):
+            if role not in roles:
+                drifts.append((doc.name, lineno, role))
+    return drifts
+
+
 def docs_to_check() -> list[Path]:
     docs = [SKILL_ROOT / "SKILL.md"]
     refs = SKILL_ROOT / "references"
@@ -670,6 +829,31 @@ def main(argv: list[str]) -> int:
                     f"cites {count} distinct stage-docs (limit {STAGE_DOC_CITATION_LIMIT}): "
                     f"re-enumerates the stage->reference_doc map canonical in stage-registry.toml"
                 ),
+                raw="",
+            )
+        )
+
+    for doc_name, lineno, key in descriptor_key_drift():
+        problems.append(
+            Problem(
+                doc=doc_name,
+                line=lineno,
+                level="ERROR",
+                msg=(
+                    f"prose cites descriptor key {key!r} not emitted by "
+                    f"{_DESCRIPTOR_SCRIPT} (renamed or stale)"
+                ),
+                raw="",
+            )
+        )
+
+    for doc_name, lineno, role in role_literal_drift():
+        problems.append(
+            Problem(
+                doc=doc_name,
+                line=lineno,
+                level="ERROR",
+                msg=f"prose cites role {role!r} absent from stage-registry roles arrays",
                 raw="",
             )
         )
