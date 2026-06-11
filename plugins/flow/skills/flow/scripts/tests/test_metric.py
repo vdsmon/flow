@@ -17,6 +17,7 @@ import metric
 def _seed_workspace(root: Path, namespace: str = "demo") -> None:
     flow = root / ".flow"
     (flow / namespace / "ship-events").mkdir(parents=True, exist_ok=True)
+    (flow / ".initialized").touch()
     (flow / "workspace.toml").write_text(
         f'[tracker]\nbackend = "jira"\n\n[memory]\nnamespace = "{namespace}"\n',
         encoding="utf-8",
@@ -391,6 +392,20 @@ def test_cli_happy_prints_json(tmp_path: Path, capsys) -> None:
     assert payload["shipped"] == 1
     assert payload["since"] == "2026-05-14T00:00:00Z"
     assert payload["until"] == "2026-05-28T00:00:00Z"
+    assert payload["resolved_workspace_root"] == str(tmp_path.resolve())
+
+
+def test_cli_not_a_workspace_fails_loud(tmp_path: Path, capsys) -> None:
+    # A valid --namespace against a dir with no .flow/.initialized (the wrong-cwd
+    # bug, flow-c9v6) must fail loud — exit 1 + the resolved abs root on stderr —
+    # instead of returning all-zeros at exit 0.
+    not_ws = tmp_path / "not_a_workspace"
+    not_ws.mkdir()
+    rc = metric.cli_main(
+        ["tickets-per-week", "--namespace", "demo", "--workspace-root", str(not_ws)]
+    )
+    assert rc == 1
+    assert str(not_ws.resolve()) in capsys.readouterr().err
 
 
 def test_cli_checkpoint_requires_mode(tmp_path: Path, capsys) -> None:
