@@ -23,6 +23,7 @@ import subprocess
 import sys
 import tomllib
 from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +33,12 @@ _SCRIPTS_DIR = Path(__file__).resolve().parent.parent / "skills" / "flow" / "scr
 _DEFAULT_TOP_N = 5
 _DEFAULT_RECALL_BY = ("branch", "current-ticket")
 _SNIPPET_LEN = 160
+
+# evolve-loop deadman: ops/*-evolve.sh.template append a run-record line per fire to
+# ~/.flow-evolve/run-record.jsonl. Absence of the file means no schedule is armed on
+# this machine, so the warning self-gates. Thresholds give one missed fire of slack.
+_STALE_THRESHOLDS_S = {"nightly": 36 * 3600, "weekly": 8 * 86400}
+_SCHEDULE_LABEL = {"nightly": "nightly evolve", "weekly": "weekly epic"}
 
 
 # ─── Runner ──────────────────────────────────────────────────────────────────
@@ -199,6 +206,72 @@ def _render(entries: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+# ─── Evolve-loop staleness (deadman) ───────────────────────────────────────────
+
+
+def _run_record_path() -> Path:
+    return Path.home() / ".flow-evolve" / "run-record.jsonl"
+
+
+def _now() -> datetime:
+    return datetime.now(UTC)
+
+
+def _stale_line(sched: str, age_s: float, threshold_s: int) -> str:
+    label = _SCHEDULE_LABEL.get(sched, sched)
+    if threshold_s >= 2 * 86400:
+        age, thr = f"{age_s / 86400:.1f}d", f"{threshold_s // 86400}d"
+    else:
+        age, thr = f"{age_s / 3600:.0f}h", f"{threshold_s // 3600}h"
+    return (
+        f"- ⚠️ {label} loop stale: last run {age} ago (>{thr}); "
+        f"check the launchd timer and ~/.flow-evolve/logs."
+    )
+
+
+def staleness_block(record_path: Path, now: datetime) -> str:
+    """Warn when an armed evolve schedule's last run-record is stale.
+
+    Returns "" when the record file is absent (no schedule armed here) or when
+    every armed schedule is fresh. Any io/parse error is swallowed -> "".
+    """
+    try:
+        text = record_path.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    latest: dict[str, datetime] = {}
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if not isinstance(rec, dict):
+            continue
+        sched = str(rec.get("schedule") or "")
+        ts_raw = str(rec.get("ts") or "")
+        if sched not in _STALE_THRESHOLDS_S or not ts_raw:
+            continue
+        try:
+            ts = datetime.fromisoformat(ts_raw)
+        except ValueError:
+            continue
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=UTC)
+        if sched not in latest or ts > latest[sched]:
+            latest[sched] = ts
+    warnings: list[str] = []
+    for sched, threshold in _STALE_THRESHOLDS_S.items():
+        last = latest.get(sched)
+        if last is not None and (now - last).total_seconds() > threshold:
+            warnings.append(_stale_line(sched, (now - last).total_seconds(), threshold))
+    if not warnings:
+        return ""
+    return "\n".join(["## /flow ops", "", *warnings])
+
+
 # ─── Orchestration ─────────────────────────────────────────────────────────────
 
 
@@ -260,9 +333,16 @@ def cli_main(argv: list[str]) -> int:
         workspace_root = find_workspace_root(cwd)
         if workspace_root is None:
             return 0
-        block = build_context(workspace_root, cwd)
-        if block:
-            sys.stdout.write(block + "\n")
+        blocks = [
+            b
+            for b in (
+                build_context(workspace_root, cwd),
+                staleness_block(_run_record_path(), _now()),
+            )
+            if b
+        ]
+        if blocks:
+            sys.stdout.write("\n\n".join(blocks) + "\n")
     except Exception:
         # A hook crash must never break the session; swallow everything.
         return 0

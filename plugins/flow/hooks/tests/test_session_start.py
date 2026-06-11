@@ -11,6 +11,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import subprocess
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import ModuleType
 
@@ -193,6 +194,86 @@ def test_build_context_excludes_superseded_entry(tmp_path: Path) -> None:
     assert block.startswith("## /flow recall")
     assert "survivormarkeryyy" in block
     assert "supersededmarkerxxx" not in block
+
+
+# ─── evolve-loop staleness (deadman) ───────────────────────────────────────────
+
+
+def _now() -> datetime:
+    return datetime(2026, 6, 11, 12, 0, 0, tzinfo=UTC)
+
+
+def _write_record(path: Path, *rows: dict) -> None:
+    path.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+
+
+def _ts(now: datetime, **delta: float) -> str:
+    return (now - timedelta(**delta)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def test_staleness_absent_file_is_silent(tmp_path: Path) -> None:
+    assert hook.staleness_block(tmp_path / "missing.jsonl", _now()) == ""
+
+
+def test_staleness_fresh_runs_are_silent(tmp_path: Path) -> None:
+    now = _now()
+    rec = tmp_path / "run-record.jsonl"
+    _write_record(
+        rec,
+        {"schedule": "nightly", "phase": "end", "ts": _ts(now, hours=10), "outcome": "ok"},
+        {"schedule": "weekly", "phase": "end", "ts": _ts(now, days=3), "outcome": "ok"},
+    )
+    assert hook.staleness_block(rec, now) == ""
+
+
+def test_staleness_nightly_stale_warns(tmp_path: Path) -> None:
+    now = _now()
+    rec = tmp_path / "run-record.jsonl"
+    _write_record(
+        rec, {"schedule": "nightly", "phase": "end", "ts": _ts(now, hours=40), "outcome": "ok"}
+    )
+    block = hook.staleness_block(rec, now)
+    assert block.startswith("## /flow ops")
+    assert "nightly evolve loop stale" in block
+    assert ">36h" in block
+
+
+def test_staleness_weekly_stale_warns(tmp_path: Path) -> None:
+    now = _now()
+    rec = tmp_path / "run-record.jsonl"
+    _write_record(
+        rec, {"schedule": "weekly", "phase": "end", "ts": _ts(now, days=9), "outcome": "ok"}
+    )
+    block = hook.staleness_block(rec, now)
+    assert "weekly epic loop stale" in block
+    assert ">8d" in block
+
+
+def test_staleness_uses_latest_record_per_schedule(tmp_path: Path) -> None:
+    """A fresh end record after an old start record clears the warning."""
+    now = _now()
+    rec = tmp_path / "run-record.jsonl"
+    _write_record(
+        rec,
+        {"schedule": "nightly", "phase": "start", "ts": _ts(now, hours=50), "outcome": ""},
+        {"schedule": "nightly", "phase": "end", "ts": _ts(now, hours=2), "outcome": "ok"},
+    )
+    assert hook.staleness_block(rec, now) == ""
+
+
+def test_staleness_tolerates_garbage_lines(tmp_path: Path) -> None:
+    now = _now()
+    rec = tmp_path / "run-record.jsonl"
+    rec.write_text(
+        "not json\n"
+        + json.dumps({"schedule": "nightly", "ts": "garbage-ts"})
+        + "\n"
+        + json.dumps({"schedule": "nightly", "phase": "end", "ts": _ts(now, hours=40)})
+        + "\n",
+        encoding="utf-8",
+    )
+    block = hook.staleness_block(rec, now)
+    assert "nightly evolve loop stale" in block
 
 
 # ─── non-flow dir returns empty ────────────────────────────────────────────────
