@@ -8,6 +8,7 @@ import their shared leaf modules when run under sys.executable.
 
 from __future__ import annotations
 
+import datetime
 import importlib.util
 import json
 import subprocess
@@ -205,7 +206,10 @@ def test_non_flow_dir_returns_empty(tmp_path: Path) -> None:
     assert hook.build_context(tmp_path, tmp_path) == ""
 
 
-def test_cli_main_silent_outside_workspace(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+def test_cli_main_silent_outside_workspace(
+    tmp_path: Path, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(hook, "_EVOLVE_RECORD", tmp_path / "nonexistent.jsonl")
     assert hook.cli_main([str(tmp_path)]) == 0
     assert capsys.readouterr().out == ""
 
@@ -255,3 +259,126 @@ def test_runner_raising_does_not_crash(
     # cli_main is the outer net: any exception from the runner -> exit 0, silent.
     monkeypatch.setattr(hook, "_default_runner", raising_runner)
     assert hook.cli_main([str(flow_workspace)]) == 0
+
+
+# ─── schedule staleness ────────────────────────────────────────────────────────
+
+_NOW = 1_750_000_000.0  # fixed reference epoch for all staleness tests
+
+
+def _record(tmp_path: Path, lines: list[dict]) -> Path:
+    p = tmp_path / "run-record.jsonl"
+    p.write_text("".join(json.dumps(rec) + "\n" for rec in lines), encoding="utf-8")
+    return p
+
+
+def test_staleness_no_record_file(tmp_path: Path) -> None:
+    result = hook._check_schedule_staleness(record_path=tmp_path / "absent.jsonl", now=_NOW)
+    assert result == ""
+
+
+def test_staleness_fresh_nightly(tmp_path: Path) -> None:
+    ts = datetime.datetime.fromtimestamp(_NOW - 3600, tz=datetime.UTC).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+    rec = _record(tmp_path, [{"schedule": "nightly", "event": "end", "outcome": "ok", "ts": ts}])
+    assert hook._check_schedule_staleness(record_path=rec, now=_NOW) == ""
+
+
+def test_staleness_stale_nightly(tmp_path: Path) -> None:
+    ts = datetime.datetime.fromtimestamp(_NOW - 40 * 3600, tz=datetime.UTC).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+    rec = _record(tmp_path, [{"schedule": "nightly", "event": "end", "outcome": "ok", "ts": ts}])
+    result = hook._check_schedule_staleness(record_path=rec, now=_NOW)
+    assert "## /flow schedule health" in result
+    assert "nightly loop stale" in result
+    assert "40h" in result
+    assert "weekly" not in result
+
+
+def test_staleness_fresh_weekly(tmp_path: Path) -> None:
+    ts = datetime.datetime.fromtimestamp(_NOW - 2 * 24 * 3600, tz=datetime.UTC).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+    rec = _record(tmp_path, [{"schedule": "weekly", "event": "end", "outcome": "ok", "ts": ts}])
+    assert hook._check_schedule_staleness(record_path=rec, now=_NOW) == ""
+
+
+def test_staleness_stale_weekly(tmp_path: Path) -> None:
+    ts = datetime.datetime.fromtimestamp(_NOW - 9 * 24 * 3600, tz=datetime.UTC).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+    rec = _record(tmp_path, [{"schedule": "weekly", "event": "end", "outcome": "ok", "ts": ts}])
+    result = hook._check_schedule_staleness(record_path=rec, now=_NOW)
+    assert "weekly loop stale" in result
+    assert "9d" in result
+    assert "nightly" not in result
+
+
+def test_staleness_both_stale(tmp_path: Path) -> None:
+    lines = [
+        {
+            "schedule": "nightly",
+            "event": "end",
+            "ts": datetime.datetime.fromtimestamp(_NOW - 48 * 3600, tz=datetime.UTC).strftime(
+                "%Y-%m-%dT%H:%M:%SZ"
+            ),
+        },
+        {
+            "schedule": "weekly",
+            "event": "end",
+            "ts": datetime.datetime.fromtimestamp(_NOW - 10 * 24 * 3600, tz=datetime.UTC).strftime(
+                "%Y-%m-%dT%H:%M:%SZ"
+            ),
+        },
+    ]
+    rec = _record(tmp_path, lines)
+    result = hook._check_schedule_staleness(record_path=rec, now=_NOW)
+    assert "nightly loop stale" in result
+    assert "weekly loop stale" in result
+
+
+def test_staleness_no_end_record(tmp_path: Path) -> None:
+    ts = datetime.datetime.fromtimestamp(_NOW - 1000, tz=datetime.UTC).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+    rec = _record(tmp_path, [{"schedule": "nightly", "event": "start", "ts": ts}])
+    assert hook._check_schedule_staleness(record_path=rec, now=_NOW) == ""
+
+
+def test_staleness_uses_latest_end(tmp_path: Path) -> None:
+    lines = [
+        {
+            "schedule": "nightly",
+            "event": "end",
+            "ts": datetime.datetime.fromtimestamp(_NOW - 48 * 3600, tz=datetime.UTC).strftime(
+                "%Y-%m-%dT%H:%M:%SZ"
+            ),
+        },
+        {
+            "schedule": "nightly",
+            "event": "end",
+            "ts": datetime.datetime.fromtimestamp(_NOW - 1 * 3600, tz=datetime.UTC).strftime(
+                "%Y-%m-%dT%H:%M:%SZ"
+            ),
+        },
+    ]
+    rec = _record(tmp_path, lines)
+    # Latest end is 1h ago — fresh; earlier stale record ignored.
+    assert hook._check_schedule_staleness(record_path=rec, now=_NOW) == ""
+
+
+def test_cli_main_includes_staleness_block(
+    tmp_path: Path, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ts = datetime.datetime.fromtimestamp(_NOW - 48 * 3600, tz=datetime.UTC).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+    rec = _record(tmp_path, [{"schedule": "nightly", "event": "end", "ts": ts}])
+    monkeypatch.setattr(hook, "_EVOLVE_RECORD", rec)
+    # Use a nonexistent cwd to skip the workspace/recall path entirely.
+    hook.cli_main([str(tmp_path / "not-a-workspace")])
+    out = capsys.readouterr().out
+    assert "## /flow schedule health" in out
+    assert "nightly loop stale" in out

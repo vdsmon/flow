@@ -18,9 +18,11 @@ not fatal.
 from __future__ import annotations
 
 import contextlib
+import datetime
 import json
 import subprocess
 import sys
+import time
 import tomllib
 from collections.abc import Callable
 from pathlib import Path
@@ -32,6 +34,69 @@ _SCRIPTS_DIR = Path(__file__).resolve().parent.parent / "skills" / "flow" / "scr
 _DEFAULT_TOP_N = 5
 _DEFAULT_RECALL_BY = ("branch", "current-ticket")
 _SNIPPET_LEN = 160
+
+_EVOLVE_RECORD = Path.home() / ".flow-evolve" / "run-record.jsonl"
+_NIGHTLY_STALE_S = 36 * 3600
+_WEEKLY_STALE_S = 8 * 24 * 3600
+
+
+# ─── Schedule staleness ───────────────────────────────────────────────────────
+
+
+def _check_schedule_staleness(
+    record_path: Path | None = None,
+    now: float | None = None,
+) -> str:
+    """Warn when nightly/weekly evolve loops haven't completed recently.
+
+    Reads run-record.jsonl (written by the ops shell templates) and checks the
+    recency of the latest "end" record per schedule name. Returns "" when the
+    record file is absent (schedule not armed on this machine) or all loops are
+    fresh.
+    """
+    path = record_path if record_path is not None else _EVOLVE_RECORD
+    if not path.exists():
+        return ""
+    current = now if now is not None else time.time()
+
+    latest: dict[str, float] = {}
+    try:
+        for raw in path.read_text(encoding="utf-8").splitlines():
+            raw = raw.strip()
+            if not raw:
+                continue
+            try:
+                rec = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            if rec.get("event") != "end":
+                continue
+            schedule = str(rec.get("schedule", ""))
+            ts_str = str(rec.get("ts", ""))
+            if not schedule or not ts_str:
+                continue
+            try:
+                ts = datetime.datetime.fromisoformat(ts_str.replace("Z", "+00:00")).timestamp()
+            except (ValueError, OverflowError):
+                continue
+            if ts > latest.get(schedule, 0.0):
+                latest[schedule] = ts
+    except OSError:
+        return ""
+
+    warnings: list[str] = []
+    nightly_last = latest.get("nightly", 0.0)
+    if nightly_last > 0 and (current - nightly_last) > _NIGHTLY_STALE_S:
+        age_h = int((current - nightly_last) / 3600)
+        warnings.append(f"- **nightly loop stale**: last completed {age_h}h ago (threshold 36h)")
+    weekly_last = latest.get("weekly", 0.0)
+    if weekly_last > 0 and (current - weekly_last) > _WEEKLY_STALE_S:
+        age_d = int((current - weekly_last) / 86400)
+        warnings.append(f"- **weekly loop stale**: last completed {age_d}d ago (threshold 8d)")
+
+    if not warnings:
+        return ""
+    return "\n".join(["## /flow schedule health", "", *warnings])
 
 
 # ─── Runner ──────────────────────────────────────────────────────────────────
@@ -257,6 +322,9 @@ def build_context(workspace_root: Path, cwd: Path, runner: Runner | None = None)
 def cli_main(argv: list[str]) -> int:
     cwd = Path(argv[0]).resolve() if argv else Path.cwd()
     try:
+        stale_block = _check_schedule_staleness()
+        if stale_block:
+            sys.stdout.write(stale_block + "\n")
         workspace_root = find_workspace_root(cwd)
         if workspace_root is None:
             return 0

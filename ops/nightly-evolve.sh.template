@@ -30,6 +30,7 @@ export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/us
 
 REPO="{{REPO}}"
 LOG="$HOME/.flow-evolve/logs/$(date +%Y%m%d-%H%M%S).log"
+RECORD="$HOME/.flow-evolve/run-record.jsonl"
 PROJ="$HOME/.claude/projects/$(echo "$REPO" | sed 's#/#-#g')"
 
 # Wait until a detached `claude --bg` session finishes. Liveness = its transcript's
@@ -55,6 +56,7 @@ wait_for_session() {
   done
 }
 
+echo '{"schedule":"nightly","event":"start","ts":"'"$(date -u +%Y-%m-%dT%H:%M:%SZ)"'"}' >> "$RECORD" || true
 {
   echo "=== flow nightly evolve: $(date) ==="
   cd "$REPO" || { echo "repo not found: $REPO"; exit 1; }
@@ -86,4 +88,5 @@ wait_for_session() {
   claude --bg "/flow evolve drain"
 
   echo "=== done (drain detached; janitor + launch run in background): $(date) ==="
+  echo '{"schedule":"nightly","event":"end","outcome":"ok","ts":"'"$(date -u +%Y-%m-%dT%H:%M:%SZ)"'"}' >> "$RECORD" || true
 } 2>&1 | tee "$LOG"
