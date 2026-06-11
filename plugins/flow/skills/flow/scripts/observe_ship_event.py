@@ -12,7 +12,7 @@ Atomicity: O_EXCL on create. No temp+rename (that would allow overwrite).
 CLI:
   observe_ship_event.py --ticket <key> --evidence-json '<json>'
                         --run-id <16-hex> [--workspace-root <dir>]
-                        [--arm {flow,control}]
+                        [--arm {flow,control}] [--tier <str>]
 
 Evidence JSON validation rejects with exit 1 if:
 - not a JSON object at top level
@@ -20,7 +20,7 @@ Evidence JSON validation rejects with exit 1 if:
 - `shipped_at` missing / fails UTC ISO8601 Z regex
 - `evidence` missing / not dict
 - any extra top-level key present (script owns observed_at / observed_by_run_id /
-  flow_attribution / arm)
+  flow_attribution / arm / tier / plugin_version)
 
 The script-owned `arm` key (enum {flow, control}, default 'flow', set via --arm or the
 `arm` param on observe()) tags which experiment lane a ship-event belongs to. It rides
@@ -79,6 +79,17 @@ class _EvidenceInvalid(Exception):
 
 def _ts_token() -> str:
     return time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+
+
+def _plugin_version() -> str:
+    """Self-read flow plugin version; '' on any failure (never raises)."""
+    try:
+        path = Path(__file__).resolve().parents[3] / ".claude-plugin" / "plugin.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        v = data.get("version", "")
+        return v if isinstance(v, str) else ""
+    except (OSError, json.JSONDecodeError, IndexError, ValueError):
+        return ""
 
 
 def validate_evidence(payload: Any, ticket: str) -> dict[str, Any]:
@@ -214,6 +225,7 @@ def observe(
     evidence_payload: dict[str, Any],
     run_id: str,
     arm: str = "flow",
+    tier: str = "",
 ) -> tuple[Path, bool]:
     """Write a ship-event evidence file.
 
@@ -235,6 +247,8 @@ def observe(
     record["observed_at"] = utcnow_iso()
     record["observed_by_run_id"] = run_id
     record["arm"] = arm
+    record["tier"] = tier
+    record["plugin_version"] = _plugin_version()
     stamp = _attribution_stamp(workspace_root, ticket, run_id)
     if stamp is not None:
         record["flow_attribution"] = stamp
@@ -276,6 +290,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--run-id", required=True, help="16-hex run_id from dispatcher.")
     parser.add_argument("--workspace-root", default=".")
     parser.add_argument("--arm", choices=["flow", "control"], default="flow")
+    parser.add_argument("--tier", default="")
     return parser.parse_args(argv)
 
 
@@ -288,7 +303,9 @@ def cli_main(argv: list[str]) -> int:
         sys.stderr.write(f"observe-ship-event: --evidence-json not JSON: {exc}\n")
         return 1
     try:
-        path, is_dupe = observe(workspace_root, args.ticket, payload, args.run_id, args.arm)
+        path, is_dupe = observe(
+            workspace_root, args.ticket, payload, args.run_id, args.arm, args.tier
+        )
     except _EvidenceInvalid as exc:
         sys.stderr.write(f"observe-ship-event: {exc}\n")
         return 1
