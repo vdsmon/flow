@@ -439,6 +439,33 @@ def test_select_trivial_non_hot_downshifts_to_sonnet(tmp_path):
     assert out["model_per_key"]["flow-t"] == "sonnet"
 
 
+def test_select_light_non_hot_downshifts_to_sonnet(tmp_path):
+    ws = _marked_ws(tmp_path)
+    run, _ = _dispatch(ready=[_cand("flow-l", labels=["evolve", "tier:light"])])
+    out = es.select(ws, cap=5, concurrency=3, runner=run)
+    assert out["launch"] == ["flow-l"]
+    assert out["model_per_key"]["flow-l"] == "sonnet"
+
+
+def test_select_light_hot_never_downshifts(tmp_path):
+    # a mis-stamped tier:light+hot bead launches (single hot, no in-flight) but is
+    # ABSENT from model_per_key — hot's continue precedes the tier check.
+    ws = _marked_ws(tmp_path)
+    run, _ = _dispatch(
+        ready=[_cand("flow-lh", labels=["evolve", "tier:light", "hot"], blast="z.py")]
+    )
+    out = es.select(ws, cap=5, concurrency=3, runner=run)
+    assert "flow-lh" in out["launch"]
+    assert "flow-lh" not in out["model_per_key"]
+
+
+def test_select_worker_model_light_beats_worker_model(tmp_path):
+    ws = _worker_ws(tmp_path)
+    run, _ = _dispatch(ready=[_cand("flow-l", labels=["evolve", "tier:light"])])
+    out = es.select(ws, cap=5, concurrency=3, runner=run)
+    assert out["model_per_key"]["flow-l"] == "sonnet"
+
+
 def test_select_trivial_hot_never_downshifts(tmp_path):
     # belt-and-suspenders: a mis-stamped tier:trivial+hot bead launches (single hot,
     # no in-flight, so it takes the hot slot) but is ABSENT from model_per_key.
