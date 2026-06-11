@@ -79,20 +79,43 @@ These three readings were pre-registered.
 
 3. **Interaction (the scaffolding hypothesis).** Not confirmed at N=6: 1 wave for, 2 against, 2 push, 1 uninformative. The harness lowered sonnet's overflow threshold (W3) rather than rescuing it.
 
+## Sensitivity analysis: quality-first re-scoring (post-hoc, labeled)
+
+After the registered run completed, the maintainer challenged the scoring design itself: flow's intent is output quality, and speed should matter only when quality is exactly equal — a quality delta compounds over the artifact's life (a closed concurrency seam pays on every future takeover) while a speed cost is paid once. The registered protocol violated that ordering twice over: the /10 rubric **saturated** on 4 of 6 waves (no exceeds-spec axis), and the time-to-PR tiebreak then decided them — smuggling speed into a quality verdict. This section re-scores the same artifacts under a quality-first protocol (depth/exceeds-spec considered, speed never decisive). The registered result above stands as the experiment of record; this is the labeled sensitivity read.
+
+| Wave | Registered winner | Quality-first winner | Basis |
+| --- | --- | --- | --- |
+| W1 | ov (speed) | true tie | near-identical prose fixes; no quality separation exists |
+| W2 | ov (speed) | true tie | byte-identical core fix across all four cells |
+| W3 | sv (speed) | **of (flow)** | only cell matching the spec-named `.flow/.initialized` convention; sv was arguably the weakest of the three 9s (CLI-layer stamp, loose guard) |
+| W4 | ov (speed) | **sf (flow)** | trap-EXIT crash-capture + hung-run grace detection strictly exceeded both vanillas; the registered scorecard itself flagged this |
+| W5 | ov (speed) | ov | quality and speed agreed (wider anchors, better fail-mode docs) |
+| W6 | of (score) | of | won on score under both protocols |
+
+**Quality-first tally: flow 3, vanilla 1, ties 2 — inverting the registered 5–1.** Post-merge ground truth already corroborates the re-read: follow-up beads flow-g8l7 and flow-grp4 were filed against the W3/W4 *registered* winners to harvest exactly the qualities the quality-first winners had (the `.initialized` convention; crash-capture + hung-run detection) — post-merge defects the losing artifacts did not carry.
+
+The defensible synthesis across both protocols: **the harness never produced a worse artifact than vanilla, twice produced a strictly deeper one, and decisively won the hardest task; its cost is time (6–25 min/run) and sonnet context pressure, not quality.** The registered headline ("vanilla 5–1") is an artifact of rubric saturation plus the speed tiebreak.
+
 ## Caveats and threats to validity
 
 - N=6.
 - The judge was unblinded (branch names reveal the cells), mitigated by evidence-cited scoring.
-- The rubric caps at 10 with a speed tiebreak, which undervalued W4 `sf`'s strictly-deeper engineering.
+- The rubric caps at 10 with a speed tiebreak, which undervalued W4 `sf`'s strictly-deeper engineering — the design flaw the sensitivity section corrects; both reads are presented.
+- The sensitivity re-scoring is post-hoc by the same unblinded judge; it gains credibility from the post-merge harvest beads (g8l7, grp4), not from the judge alone.
 - The 4 DNFs are uninformative for their cells.
 - All tasks ran against the self-target repo.
 
 ## Verdict and recommendation
 
-**Bound** the flow machinery to high-complexity / hot / concurrency work.
+Two protocols, two reads, one synthesis:
 
-W6 (complex hot concurrency) was the only wave flow won, and it won on exactly the dimensions a plan-plus-review pipeline surfaces: seam completeness, migration convention, and prose wiring. Below that complexity the harness is net overhead (6-25 min/run) with no measured quality gain; vanilla wins on speed at quality parity.
+- **Registered protocol** (quality capped at 10, speed tiebreak): vanilla 5–1; flow pays off only at the complexity ceiling. Taken alone it recommends bounding the machinery to high-complexity / hot / concurrency work.
+- **Quality-first protocol** (speed never decisive): flow 3, vanilla 1, ties 2; flow won every wave where quality could differ except W5, and post-merge follow-up beads against the registered W3/W4 winners corroborate the inversion.
 
-This confirms the epic's pre-stated live possibility: vanilla wins small leaves, and flow pays off at complexity and concurrency scale. That confirmation is itself the finding. It anchors to VISION.md's "'Better' must be measurable, or it is vibes" — the machinery earns its place where the measurement shows it does, and the measurement places that at the complexity ceiling.
+**Synthesis: flow's output quality is equal-or-better everywhere measured and decisively better at the complexity ceiling; its cost is wall-clock time, not quality.** Where breakage is cheap and tasks are trivially small, vanilla's speed is real and the harness is overhead (W1–W2's byte-identical convergence is genuine ceiling, not rubric blindness). Where the work has any depth — conventions to honor, failure modes to close, seams to wire — the harness's plan-plus-review pipeline surfaced quality vanilla missed, and that delta compounds for the life of the artifact.
+
+This refines the epic's pre-stated live possibility rather than confirming it flat: vanilla wins small leaves *on time only*; flow pays off increasingly with complexity, reaching decisive at concurrency/guard scale. It anchors to VISION.md's "'Better' must be measurable, or it is vibes" — both protocols are reported precisely so the claim stays measurable.
+
+**Future replication runs Protocol v2** (recorded on the flow-xqt epic, 2026-06-11): pairwise forced-choice per wave aggregated Bradley-Terry/Elo (no cap, no saturation), a severity-weighted defect ledger as the tie-grounding evidence, speed reporting-only and never decisive, and follow-up-fix / revert tracking per merged artifact as the slow objective referee.
 
 Secondary forward pointer (not a recommendation of this doc): the harness context weight lowered sonnet's overflow threshold (W3 `sf` DNF). That feeds worker-model tiering and context-budget work.
