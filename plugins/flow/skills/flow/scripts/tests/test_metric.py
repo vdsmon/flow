@@ -778,3 +778,44 @@ def test_ttp_legacy_join_still_measures(tmp_path: Path) -> None:
     result = _compute_ttp(tmp_path)
     assert result["n_measured"] == 1
     assert result["median_hours"] == 12.0
+
+
+# ─── ub76: cwd silent-zeros guard + resolved-root stamp ──────────────────────
+
+
+def test_cli_no_flow_fails_loud(tmp_path: Path, capsys) -> None:
+    # A workspace-root with no `.flow/` (the cwd bug) must fail loud, not zero.
+    rc = metric.cli_main(
+        ["tickets-per-week", "--namespace", "demo", "--workspace-root", str(tmp_path)]
+    )
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "no .flow" in err
+    assert str(tmp_path.resolve()) in err
+
+
+def test_cli_happy_stamps_resolved_root(tmp_path: Path, capsys) -> None:
+    _seed_workspace(tmp_path)
+    _write_ship_event(tmp_path, "FT-1", shipped_at="2026-05-20T10:00:00Z")
+    rc = metric.cli_main(
+        [
+            "tickets-per-week",
+            "--namespace",
+            "demo",
+            "--workspace-root",
+            str(tmp_path),
+            "--since",
+            "2026-05-14",
+            "--until",
+            "2026-05-28",
+        ]
+    )
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["resolved_workspace_root"] == str(tmp_path.resolve())
+
+
+def test_ttp_cli_no_flow_fails_loud(tmp_path: Path, capsys) -> None:
+    rc = metric.cli_main(["time-to-pr", "--namespace", "demo", "--workspace-root", str(tmp_path)])
+    assert rc == 1
+    assert str(tmp_path.resolve()) in capsys.readouterr().err

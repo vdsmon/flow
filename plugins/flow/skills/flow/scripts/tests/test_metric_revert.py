@@ -327,3 +327,36 @@ def test_cli_namespace_required(tmp_path: Path, capsys) -> None:
     rc = metric.cli_main(["revert-rate", "--workspace-root", str(tmp_path)])
     assert rc == 1
     assert "namespace" in capsys.readouterr().err
+
+
+# ─── ub76: cwd silent-zeros guard + resolved-root stamp ──────────────────────
+
+
+def test_cli_no_flow_fails_loud(tmp_path: Path, capsys) -> None:
+    rc = metric.cli_main(["revert-rate", "--namespace", "demo", "--workspace-root", str(tmp_path)])
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "no .flow" in err
+    assert str(tmp_path.resolve()) in err
+
+
+def test_cli_happy_stamps_resolved_root(tmp_path: Path, monkeypatch, capsys) -> None:
+    _seed_workspace(tmp_path)
+    _write_ship_event(tmp_path, "FT-1", "2026-06-03T00:00:00Z")
+    _patch_history(monkeypatch, {"FT-1": [("2026-06-03T00:00:00Z", "closed")]})
+    rc = metric.cli_main(
+        [
+            "revert-rate",
+            "--namespace",
+            "demo",
+            "--workspace-root",
+            str(tmp_path),
+            "--since",
+            "2026-06-01",
+            "--until",
+            "2026-06-08",
+        ]
+    )
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["resolved_workspace_root"] == str(tmp_path.resolve())

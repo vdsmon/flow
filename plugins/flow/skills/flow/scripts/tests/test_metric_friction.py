@@ -240,3 +240,37 @@ def test_passthrough_from_recall(tmp_path: Path, capsys) -> None:
         ]
     )
     assert rc == 0
+
+
+# ─── ub76: cwd silent-zeros guard + resolved-root stamp ──────────────────────
+
+
+def test_cli_no_flow_fails_loud(tmp_path: Path, capsys) -> None:
+    rc = metric.cli_main(
+        ["friction-per-run", "--namespace", "demo", "--workspace-root", str(tmp_path)]
+    )
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "no .flow" in err
+    assert str(tmp_path.resolve()) in err
+
+
+def test_cli_happy_stamps_resolved_root(tmp_path: Path, capsys) -> None:
+    _seed_workspace(tmp_path)
+    _write_friction(tmp_path, [_entry(ts="2026-06-02T10:00:00.000Z")])
+    rc = metric.cli_main(
+        [
+            "friction-per-run",
+            "--namespace",
+            "demo",
+            "--workspace-root",
+            str(tmp_path),
+            "--since",
+            "2026-06-01",
+            "--until",
+            "2026-06-08",
+        ]
+    )
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["resolved_workspace_root"] == str(tmp_path.resolve())

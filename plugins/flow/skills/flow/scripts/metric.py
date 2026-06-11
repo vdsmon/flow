@@ -249,6 +249,7 @@ def compute(
     return {
         "since": since_iso,
         "until": until_iso,
+        "resolved_workspace_root": str(workspace_root),
         "shipped": shipped,
         ATTR_VIA_FLOW: via_flow,
         ATTR_NOT_ATTRIBUTED: not_attributed,
@@ -352,6 +353,7 @@ def compute_time_to_pr(
     return {
         "since": since_iso,
         "until": until_iso,
+        "resolved_workspace_root": str(workspace_root),
         "n_measured": len(hours),
         "n_skipped": len(skipped),
         "median_hours": percentile(hours, 50.0),
@@ -530,6 +532,7 @@ def compute_friction_per_run(
     return {
         "since": since_iso,
         "until": until_iso,
+        "resolved_workspace_root": str(workspace_root),
         "total_events": total_events,
         "runs": run_count,
         "events_per_run": events_per_run,
@@ -698,6 +701,7 @@ def compute_revert_rate(
     return {
         "since": since_iso,
         "until": until_iso,
+        "resolved_workspace_root": str(workspace_root),
         "shipped": shipped,
         "n_reverts": n_reverts,
         "revert_rate": revert_rate,
@@ -922,6 +926,24 @@ def compute_arm_compare(
 # ─── CLI ─────────────────────────────────────────────────────────────────────
 
 
+def _workspace_guard_error(workspace_root: Path) -> str | None:
+    """Return an error string if `workspace_root` is not a flow workspace, else None.
+
+    The single-workspace metrics resolve `--workspace-root` (default `.`) and
+    silently read zero events when the cwd has no `.flow/` (e.g. invoked from the
+    scripts dir), reporting all-zeros at exit 0. That false negative could fool an
+    unguarded consumer (the trend roll-up, a scheduled producer) into a "no data"
+    conclusion. Fail loud on a missing `.flow/`, naming the resolved root, matching
+    validate_workspace's not-a-workspace style. An empty events store under a real
+    `.flow/` is a legitimate zero (nothing shipped this window), so it is NOT an
+    error; the `resolved_workspace_root` stamp lets a consumer tell real-zero from
+    wrong-cwd.
+    """
+    if not (workspace_root / ".flow").is_dir():
+        return f"no .flow workspace at resolved root {workspace_root}"
+    return None
+
+
 def _resolve_window(args: argparse.Namespace, now_iso: str) -> tuple[str, str]:
     """Resolve (since, until) from --since/--until day flags, defaulting per now."""
     default_since, default_until = default_window(now_iso)
@@ -971,11 +993,102 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def _emit(result: dict[str, Any]) -> int:
+    sys.stdout.write(json.dumps(result, indent=2, sort_keys=True) + "\n")
+    return 0
+
+
+def _resolve_guarded(args: argparse.Namespace) -> tuple[Path | None, int]:
+    """Resolve --workspace-root and run the no-.flow guard.
+
+    Returns (resolved_root, 0) when the resolved root is a flow workspace;
+    (None, 1) after writing the loud error when `.flow/` is absent.
+    """
+    workspace_root = Path(args.workspace_root).resolve()
+    guard = _workspace_guard_error(workspace_root)
+    if guard is not None:
+        sys.stderr.write(f"metric: {guard}\n")
+        return None, 1
+    return workspace_root, 0
+
+
+def _run_tickets(args: argparse.Namespace, since_iso: str, until_iso: str, now_iso: str) -> int:
+    if not args.namespace:
+        sys.stderr.write("metric: --namespace is required when not --checkpoint\n")
+        return 1
+    workspace_root, rc = _resolve_guarded(args)
+    if workspace_root is None:
+        return rc
+    try:
+        result = compute(
+            workspace_root,
+            args.namespace,
+            since_iso=since_iso,
+            until_iso=until_iso,
+            now_iso=now_iso,
+        )
+    except ValueError as exc:
+        sys.stderr.write(f"metric: {exc}\n")
+        return 1
+    return _emit(result)
+
+
+def _run_time_to_pr(args: argparse.Namespace, since_iso: str, until_iso: str, now_iso: str) -> int:
+    if not args.namespace:
+        sys.stderr.write("metric: --namespace is required when not --checkpoint\n")
+        return 1
+    workspace_root, rc = _resolve_guarded(args)
+    if workspace_root is None:
+        return rc
+    try:
+        result = compute_time_to_pr(
+            workspace_root,
+            args.namespace,
+            since_iso=since_iso,
+            until_iso=until_iso,
+            now_iso=now_iso,
+        )
+    except ValueError as exc:
+        sys.stderr.write(f"metric: {exc}\n")
+        return 1
+    return _emit(result)
+
+
+def _run_friction(args: argparse.Namespace, since_iso: str, until_iso: str) -> int:
+    if not args.namespace:
+        sys.stderr.write("metric: --namespace is required\n")
+        return 1
+    workspace_root, rc = _resolve_guarded(args)
+    if workspace_root is None:
+        return rc
+    return _emit(
+        compute_friction_per_run(
+            workspace_root, args.namespace, since_iso=since_iso, until_iso=until_iso
+        )
+    )
+
+
+def _run_revert(args: argparse.Namespace, since_iso: str, until_iso: str) -> int:
+    if not args.namespace:
+        sys.stderr.write("metric: --namespace is required\n")
+        return 1
+    workspace_root, rc = _resolve_guarded(args)
+    if workspace_root is None:
+        return rc
+    return _emit(
+        compute_revert_rate(
+            workspace_root, args.namespace, since_iso=since_iso, until_iso=until_iso
+        )
+    )
+
+
 def _run_arm_compare(args: argparse.Namespace, since_iso: str, until_iso: str) -> int:
     if not args.namespace:
         sys.stderr.write("metric: --namespace is required\n")
         return 1
-    workspace_root = Path(args.workspace_root).resolve()
+    workspace_root, rc = _resolve_guarded(args)
+    if workspace_root is None:
+        return rc
     try:
         result = compute_arm_compare(
             workspace_root,
@@ -989,8 +1102,30 @@ def _run_arm_compare(args: argparse.Namespace, since_iso: str, until_iso: str) -
     except ValueError as exc:
         sys.stderr.write(f"metric: {exc}\n")
         return 1
-    sys.stdout.write(json.dumps(result, indent=2, sort_keys=True) + "\n")
-    return 0
+    return _emit(result)
+
+
+def _run_checkpoint(args: argparse.Namespace, since_iso: str, until_iso: str, now_iso: str) -> int:
+    if args.mode is None:
+        sys.stderr.write("metric: --checkpoint requires --mode personal|work\n")
+        return 1
+    manifest_path = (
+        Path(args.manifest_path).expanduser()
+        if args.manifest_path
+        else _default_checkpoint_manifest_path()
+    )
+    try:
+        result = compute_checkpoint(
+            args.mode,
+            since_iso=since_iso,
+            until_iso=until_iso,
+            now_iso=now_iso,
+            manifest_path=manifest_path,
+        )
+    except ValueError as exc:
+        sys.stderr.write(f"metric: {exc}\n")
+        return 1
+    return _emit(result)
 
 
 def cli_main(argv: list[str]) -> int:
@@ -1003,96 +1138,16 @@ def cli_main(argv: list[str]) -> int:
         return 1
 
     if args.command == "time-to-pr":
-        if not args.namespace:
-            sys.stderr.write("metric: --namespace is required when not --checkpoint\n")
-            return 1
-        workspace_root = Path(args.workspace_root).resolve()
-        try:
-            result = compute_time_to_pr(
-                workspace_root,
-                args.namespace,
-                since_iso=since_iso,
-                until_iso=until_iso,
-                now_iso=now_iso,
-            )
-        except ValueError as exc:
-            sys.stderr.write(f"metric: {exc}\n")
-            return 1
-        sys.stdout.write(json.dumps(result, indent=2, sort_keys=True) + "\n")
-        return 0
-
+        return _run_time_to_pr(args, since_iso, until_iso, now_iso)
     if args.command == "friction-per-run":
-        if not args.namespace:
-            sys.stderr.write("metric: --namespace is required\n")
-            return 1
-        workspace_root = Path(args.workspace_root).resolve()
-        result = compute_friction_per_run(
-            workspace_root,
-            args.namespace,
-            since_iso=since_iso,
-            until_iso=until_iso,
-        )
-        sys.stdout.write(json.dumps(result, indent=2, sort_keys=True) + "\n")
-        return 0
-
+        return _run_friction(args, since_iso, until_iso)
     if args.command == "revert-rate":
-        if not args.namespace:
-            sys.stderr.write("metric: --namespace is required\n")
-            return 1
-        workspace_root = Path(args.workspace_root).resolve()
-        result = compute_revert_rate(
-            workspace_root,
-            args.namespace,
-            since_iso=since_iso,
-            until_iso=until_iso,
-        )
-        sys.stdout.write(json.dumps(result, indent=2, sort_keys=True) + "\n")
-        return 0
-
+        return _run_revert(args, since_iso, until_iso)
     if args.command == "arm-compare":
         return _run_arm_compare(args, since_iso, until_iso)
-
     if getattr(args, "checkpoint", False):
-        if args.mode is None:
-            sys.stderr.write("metric: --checkpoint requires --mode personal|work\n")
-            return 1
-        manifest_path = (
-            Path(args.manifest_path).expanduser()
-            if args.manifest_path
-            else _default_checkpoint_manifest_path()
-        )
-        try:
-            result = compute_checkpoint(
-                args.mode,
-                since_iso=since_iso,
-                until_iso=until_iso,
-                now_iso=now_iso,
-                manifest_path=manifest_path,
-            )
-        except ValueError as exc:
-            sys.stderr.write(f"metric: {exc}\n")
-            return 1
-        sys.stdout.write(json.dumps(result, indent=2, sort_keys=True) + "\n")
-        return 0
-
-    if not args.namespace:
-        sys.stderr.write("metric: --namespace is required when not --checkpoint\n")
-        return 1
-
-    workspace_root = Path(args.workspace_root).resolve()
-    try:
-        result = compute(
-            workspace_root,
-            args.namespace,
-            since_iso=since_iso,
-            until_iso=until_iso,
-            now_iso=now_iso,
-        )
-    except ValueError as exc:
-        sys.stderr.write(f"metric: {exc}\n")
-        return 1
-    sys.stdout.write(json.dumps(result, indent=2, sort_keys=True) + "\n")
-    return 0
+        return _run_checkpoint(args, since_iso, until_iso, now_iso)
+    return _run_tickets(args, since_iso, until_iso, now_iso)
 
 
 if __name__ == "__main__":
