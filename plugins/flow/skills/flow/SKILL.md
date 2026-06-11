@@ -97,14 +97,14 @@ The verbose detail — full exit-code matrices, the PR-ready notification protoc
    python3 ${CLAUDE_SKILL_DIR}/scripts/dispatch_stage.py init \
      --workspace-root . --ticket "$KEY"
    ```
-   Capture the `run_id` from stdout JSON. Exit 0 → proceed to the loop. Exit 1 (with a `holder` block) or Exit 5 (stale lease) → surface the holder + `/flow recover <ticket>`, abort; do NOT call `release` (nothing was acquired). Full matrix: `references/verb-do.md`.
+   Capture the `run_id` AND the `session_nonce` from stdout JSON; carry that nonce (`$NONCE`) verbatim on every later `next`/`advance`/`release` call below — it is the per-session lease component that blocks a second `/flow do` from re-acquiring this live lease. Exit 0 → proceed to the loop. Exit 1 (with a `holder` block) or Exit 5 (stale lease) → surface the holder + `/flow recover <ticket>`, abort; do NOT call `release` (nothing was acquired). Full matrix: `references/verb-do.md`.
 
 4. **Orchestration loop** — repeat until done:
 
    a. Obtain the next `DESCRIPTOR`. On the FIRST iteration (right after `init`), call `next`; on every later iteration, reuse the payload `advance` already returned in step (e) and skip this standalone `next`:
       ```bash
       DESCRIPTOR=$(python3 ${CLAUDE_SKILL_DIR}/scripts/dispatch_stage.py next \
-        --workspace-root . --ticket "$KEY")
+        --workspace-root . --ticket "$KEY" --session-nonce "$NONCE")
       ```
       `next` refreshes the lease + verifies the snapshot. Exit 0 → continue to (b) (a self-inflicted *owned* drift — a planned `workspace.toml`/`stage-registry.toml` edit — auto-reconciles upstream in dispatch and returns exit 0 with a `reconciled_drift` marker, so it never trips this exit-1 path). Exit 1 (drift/violations/corrupt) or Exit 7 (lost lease) → surface + `/flow recover <ticket>`, break the loop. Full matrix: `references/verb-do.md`.
 
@@ -167,7 +167,7 @@ The verbose detail — full exit-code matrices, the PR-ready notification protoc
    e. Advance the stage — finish it AND fetch the next descriptor in one call:
       ```bash
       DESCRIPTOR=$(python3 ${CLAUDE_SKILL_DIR}/scripts/dispatch_stage.py advance \
-        --workspace-root . --ticket "$KEY" \
+        --workspace-root . --ticket "$KEY" --session-nonce "$NONCE" \
         --stage "$STAGE" --status "$STATUS" \
         [--output-path "$OUTPUT_PATH"])
       ```
@@ -179,9 +179,9 @@ The verbose detail — full exit-code matrices, the PR-ready notification protoc
 5. After the loop exits — on **every** path (clean done, blocked, drift, or lost lease) — release the lease:
    ```bash
    python3 ${CLAUDE_SKILL_DIR}/scripts/dispatch_stage.py release \
-     --workspace-root . --ticket "$KEY"
+     --workspace-root . --ticket "$KEY" --session-nonce "$NONCE"
    ```
-   `release` is a no-op when the lease is not ours (the exit-7 takeover case), so it is safe to call unconditionally here. Do not call it on the init-abort paths of step 3.
+   `release` is a no-op when the lease is not ours — the exit-7 takeover case, now including a rotated `session_nonce` — so it is safe to call unconditionally here. Do not call it on the init-abort paths of step 3.
 
    **`--auto` self-teardown (last act):** when this run was launched with `--auto`, after `release` (and after reading `create_pr.out` for the PR link), schedule the session's own panel teardown as the **last tool call** of the run, then emit the final summary. Recipe + guards: `references/verb-do.md`. An attended run NEVER does this.
 
