@@ -118,8 +118,8 @@ def _do_append(
     if not isinstance(args, dict):
         raise _InvalidArgs("args must be a dict")
 
-    canonical = _canonical_args(args)
-    key = hashlib.sha256((ticket + op + canonical).encode("utf-8")).hexdigest()[:16]
+    key = compute_key(ticket, op, args)
+    canonical = _canonical_args(args)  # still needed for args_fingerprint
     fingerprint = hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
 
     path = pending_mutations_path(workspace_root)
