@@ -47,8 +47,9 @@ true
 ## Exit-code handling (init / next / advance)
 
 **`dispatch_stage.py init` (do-loop step 3):**
-- Exit 0 → run initialized; proceed to the loop.
+- Exit 0 → run initialized; proceed to the loop. The stdout JSON carries a `session_nonce` — the per-acquire lease component minted on this acquire (a fresh run) or carried forward (a same-session resume that presented it). Capture it and pass it back as `--session-nonce` on every later `next`/`advance`/`release`; it is what lets a refresh/release detect a force/takeover, and (on a re-init) what distinguishes the same session resuming from a second `/flow do`.
 - Exit 1 **with a `holder` block in the stdout JSON** → the ticket is locked by a live run.
+  This now also fires when a SECOND `/flow do` re-inits a live lease without the owner's `session_nonce` (the bug flow-8i6l closed: run_id alone, read from `state.json`, no longer re-acquires a live lease). A genuine same-session resume passes `--session-nonce`; a crash-resume waits for the lease to expire (then init resumes via the expired-owner path) or uses `/flow recover`.
   Surface the holder JSON and the hint `/flow recover <ticket>`, then abort.
   (Exit 1 *without* a `holder` block is a validate-workspace failure: surface stderr violations and abort, same as the step-2 hard gate.)
 - Exit 5 → a stale lease from a dead run holds the ticket.
@@ -66,7 +67,7 @@ true
     Surface the violations and abort.
   - bare `error` (e.g. `unrecoverable state.json`) → the run state is corrupt.
     Surface the error + the `/flow recover <ticket>` hint.
-- Exit 7 → lost lease; another run took over this ticket.
+- Exit 7 → lost lease; another run took over this ticket (a changed run_id/boot/host, a gone lock, or — since flow-8i6l — a rotated `session_nonce` from a `--force`/takeover). Passing `--session-nonce` is what surfaces the rotated-nonce case; omit it (or pass none) and the check degrades to run_id-only, never a false positive.
   Surface the hint `/flow recover <ticket>`, then break the loop.
 
 A `--status failed` advance returns `{blocked_by}`, which the skeleton's descriptor parse treats as the block-and-break case.

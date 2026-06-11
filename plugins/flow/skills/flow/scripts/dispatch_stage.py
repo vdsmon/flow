@@ -123,7 +123,12 @@ def _ticket_dir(workspace_root: Path, ticket: str) -> Path:
     return workspace_root / ".flow" / "runs" / ticket
 
 
-def cmd_init(workspace_root: Path, ticket: str, force: bool = False) -> tuple[int, dict[str, Any]]:
+def cmd_init(
+    workspace_root: Path,
+    ticket: str,
+    force: bool = False,
+    session_nonce: str | None = None,
+) -> tuple[int, dict[str, Any]]:
     result, ws = vw.validate(workspace_root)
     if ws is None:
         return 1, {
@@ -140,9 +145,14 @@ def cmd_init(workspace_root: Path, ticket: str, force: bool = False) -> tuple[in
     resuming = have_valid and not force
     run_id = existing.run_id if (existing is not None and exit_code == 0) else secrets.token_hex(8)
 
+    # session_nonce is the per-session lease component run_id cannot supply: a
+    # caller presenting the live owner's nonce re-acquires; one without it (a
+    # second /flow do, which can only read run_id from state.json) is blocked at
+    # acquire. The first acquire of a run presents none and acquire mints one; it
+    # is returned so the dispatching session can carry it on later dispatch calls.
     boot, host, cwd, now = lease.boot_id(), socket.gethostname(), str(workspace_root), utcnow_iso()
     try:
-        lease.acquire(
+        acquired = lease.acquire(
             td,
             run_id,
             _INIT_TTL_S,
@@ -151,6 +161,7 @@ def cmd_init(workspace_root: Path, ticket: str, force: bool = False) -> tuple[in
             current_boot=boot,
             hostname=host,
             cwd=cwd,
+            session_nonce=session_nonce,
             force=force,
         )
     except lease.LeaseHeld as exc:
@@ -202,6 +213,7 @@ def cmd_init(workspace_root: Path, ticket: str, force: bool = False) -> tuple[in
         return 0, {
             "ticket": ticket,
             "run_id": run_id,
+            "session_nonce": acquired.session_nonce,
             "stages": ws.stages,
             "ticket_dir": str(td),
             "resumed": True,
@@ -213,6 +225,7 @@ def cmd_init(workspace_root: Path, ticket: str, force: bool = False) -> tuple[in
     return 0, {
         "ticket": ticket,
         "run_id": run_id,
+        "session_nonce": acquired.session_nonce,
         "stages": ws.stages,
         "ticket_dir": str(td),
         "resumed": False,
@@ -267,18 +280,25 @@ def _gate_drift(
     return None, reconciled_label, current_snapshot
 
 
-def _guard_lease_ownership(td: Path, run_id: str) -> tuple[int, dict[str, Any]] | None:
+def _guard_lease_ownership(
+    td: Path, run_id: str, session_nonce: str | None = None
+) -> tuple[int, dict[str, Any]] | None:
     """Confirm an existing lease is still ours. Returns an error tuple, or None if ok.
 
     A run with no lease (legacy / direct test call) proceeds without one. A
-    LeaseLost means another run took over; a bare LeaseError means a corrupt
+    LeaseLost means another run took over (a rotated session_nonce, a changed
+    run_id/boot/host, or a gone lock); a bare LeaseError means a corrupt
     run.lock we cannot read, so ownership is unconfirmable and the caller must
     stop before mutating state.
     """
     try:
         if lease.read_lease(td) is not None:
             lease.assert_lease_still_mine(
-                td, run_id, current_boot=lease.boot_id(), hostname=socket.gethostname()
+                td,
+                run_id,
+                current_boot=lease.boot_id(),
+                hostname=socket.gethostname(),
+                session_nonce=session_nonce,
             )
     except lease.LeaseLost as exc:
         return lease.EXIT_LEASE_LOST, {
@@ -295,7 +315,9 @@ def _guard_lease_ownership(td: Path, run_id: str) -> tuple[int, dict[str, Any]] 
     return None
 
 
-def cmd_next(workspace_root: Path, ticket: str) -> tuple[int, dict[str, Any]]:
+def cmd_next(
+    workspace_root: Path, ticket: str, session_nonce: str | None = None
+) -> tuple[int, dict[str, Any]]:
     result, snapshot = vw.validate(workspace_root)
     if snapshot is None:
         return 1, {
@@ -319,7 +341,7 @@ def cmd_next(workspace_root: Path, ticket: str) -> tuple[int, dict[str, Any]]:
     # Lease: if one exists it must still be ours (detects a takeover). A run with
     # no lease (legacy / direct test call) proceeds without one.
     boot, host = lease.boot_id(), socket.gethostname()
-    guard = _guard_lease_ownership(td, ts.run_id)
+    guard = _guard_lease_ownership(td, ts.run_id, session_nonce)
     if guard is not None:
         return guard
 
@@ -392,6 +414,7 @@ def cmd_next(workspace_root: Path, ticket: str) -> tuple[int, dict[str, Any]]:
                 current_boot=boot,
                 hostname=host,
                 cwd=str(workspace_root),
+                session_nonce=session_nonce,
             )
         except lease.LeaseLost as exc:
             return lease.EXIT_LEASE_LOST, {
@@ -412,6 +435,7 @@ def cmd_finish(
     output_path: str | None = None,
     skill_output: dict[str, Any] | None = None,
     failure_detail: str | None = None,
+    session_nonce: str | None = None,
 ) -> tuple[int, dict[str, Any]]:
     if status_value not in ("completed", "failed"):
         return 1, {"error": f"--status must be completed|failed, got {status_value!r}"}
@@ -423,7 +447,7 @@ def cmd_finish(
             return 1, {"error": f"unrecoverable state.json at {td}"}
         return 2, {"error": f"no state.json at {td}; run `dispatch init` first"}
 
-    guard = _guard_lease_ownership(td, ts.run_id)
+    guard = _guard_lease_ownership(td, ts.run_id, session_nonce)
     if guard is not None:
         return guard
 
@@ -466,7 +490,7 @@ def cmd_finish(
         and state.find_failed(new_state) is None
     ):
         with contextlib.suppress(Exception):
-            lease.release(td, new_state.run_id)
+            lease.release(td, new_state.run_id, session_nonce)
 
     return 0, {
         "stage": stage_name,
@@ -483,6 +507,7 @@ def cmd_advance(
     output_path: str | None = None,
     skill_output: dict[str, Any] | None = None,
     failure_detail: str | None = None,
+    session_nonce: str | None = None,
 ) -> tuple[int, dict[str, Any]]:
     """Finish the current stage and return the next descriptor in one call.
 
@@ -500,10 +525,11 @@ def cmd_advance(
         output_path=output_path,
         skill_output=skill_output,
         failure_detail=failure_detail,
+        session_nonce=session_nonce,
     )
     if finish_rc != 0:
         return finish_rc, finish_payload
-    next_rc, next_payload = cmd_next(workspace_root, ticket)
+    next_rc, next_payload = cmd_next(workspace_root, ticket, session_nonce)
     return next_rc, {"finished": {"stage": stage_name, "status": status_value}, **next_payload}
 
 
@@ -517,12 +543,14 @@ def cmd_status(workspace_root: Path, ticket: str) -> tuple[int, dict[str, Any]]:
     return exit_code, asdict(ts)
 
 
-def cmd_release(workspace_root: Path, ticket: str) -> tuple[int, dict[str, Any]]:
+def cmd_release(
+    workspace_root: Path, ticket: str, session_nonce: str | None = None
+) -> tuple[int, dict[str, Any]]:
     td = _ticket_dir(workspace_root, ticket)
     ts, _ = state.read(td)
     released = False
     if ts is not None:
-        released = lease.release(td, ts.run_id)
+        released = lease.release(td, ts.run_id, session_nonce)
     return 0, {"ticket": ticket, "released": released}
 
 
@@ -536,6 +564,11 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--ticket", required=True)
     common.add_argument("--workspace-root", default=".")
+    common.add_argument(
+        "--session-nonce",
+        default=None,
+        help="Per-session lease nonce carried from init; omit it if lost (run_id fallback).",
+    )
 
     p_init = sub.add_parser("init", parents=[common], help="Initialize per-ticket state.json.")
     p_init.add_argument(
@@ -588,9 +621,11 @@ def cli_main(argv: list[str]) -> int:
     workspace_root = Path(args.workspace_root).expanduser().resolve()
 
     if args.cmd == "init":
-        rc, payload = cmd_init(workspace_root, args.ticket, force=args.force)
+        rc, payload = cmd_init(
+            workspace_root, args.ticket, force=args.force, session_nonce=args.session_nonce
+        )
     elif args.cmd == "next":
-        rc, payload = cmd_next(workspace_root, args.ticket)
+        rc, payload = cmd_next(workspace_root, args.ticket, args.session_nonce)
     elif args.cmd == "finish":
         skill_output, err = _parse_skill_output_arg(args.skill_output)
         if err:
@@ -604,6 +639,7 @@ def cli_main(argv: list[str]) -> int:
             output_path=args.output_path,
             skill_output=skill_output,
             failure_detail=args.failure_detail,
+            session_nonce=args.session_nonce,
         )
     elif args.cmd == "advance":
         skill_output, err = _parse_skill_output_arg(args.skill_output)
@@ -618,11 +654,12 @@ def cli_main(argv: list[str]) -> int:
             output_path=args.output_path,
             skill_output=skill_output,
             failure_detail=args.failure_detail,
+            session_nonce=args.session_nonce,
         )
     elif args.cmd == "status":
         rc, payload = cmd_status(workspace_root, args.ticket)
     elif args.cmd == "release":
-        rc, payload = cmd_release(workspace_root, args.ticket)
+        rc, payload = cmd_release(workspace_root, args.ticket, args.session_nonce)
     else:
         sys.stderr.write(f"unknown subcommand {args.cmd!r}\n")
         return 1

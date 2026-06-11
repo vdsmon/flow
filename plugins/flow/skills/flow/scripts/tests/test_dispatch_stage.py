@@ -99,17 +99,20 @@ def test_init_fails_when_workspace_invalid(tmp_path: Path) -> None:
 def test_init_is_idempotent_preserves_progress(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Second init without --force must resume: same run_id, completed stage
-    # stays completed (no replay of a finished commit stage).
+    # Second init that resumes a LIVE lease must present the session_nonce the
+    # first init minted (the same session re-entering): same run_id, completed
+    # stage stays completed (no replay of a finished commit stage).
     _write_workspace(tmp_path, stages=["ticket", "plan"], compounding=False)
     _stub_git_head(monkeypatch)
     rc, first = ds.cmd_init(tmp_path, "FT-1")
     assert rc == 0
     assert first["resumed"] is False
-    ds.cmd_next(tmp_path, "FT-1")
-    ds.cmd_finish(tmp_path, "FT-1", "ticket", "completed")
+    assert first["session_nonce"]
+    nonce = first["session_nonce"]
+    ds.cmd_next(tmp_path, "FT-1", nonce)
+    ds.cmd_finish(tmp_path, "FT-1", "ticket", "completed", session_nonce=nonce)
 
-    rc, second = ds.cmd_init(tmp_path, "FT-1")
+    rc, second = ds.cmd_init(tmp_path, "FT-1", session_nonce=nonce)
     assert rc == 0
     assert second["resumed"] is True
     assert second["run_id"] == first["run_id"]
@@ -117,6 +120,23 @@ def test_init_is_idempotent_preserves_progress(
     state_path = tmp_path / ".flow" / "runs" / "FT-1" / "state.json"
     state_data = json.loads(state_path.read_text(encoding="utf-8"))
     assert state_data["stages"]["ticket"]["status"] == "completed"
+
+
+def test_init_second_run_on_live_lease_is_blocked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # flow-8i6l: a second /flow do reuses run_id from state.json but cannot
+    # present the live owner's nonce, so its init must be blocked (exit 1 +
+    # recover hint) rather than silently re-acquiring the live lease.
+    _write_workspace(tmp_path, stages=["ticket", "plan"], compounding=False)
+    _stub_git_head(monkeypatch)
+    rc, first = ds.cmd_init(tmp_path, "FT-1")
+    assert rc == 0
+
+    rc, blocked = ds.cmd_init(tmp_path, "FT-1")  # no nonce: a fresh session
+    assert rc == 1
+    assert blocked["error"] == "ticket locked by another live run"
+    assert blocked["holder"]["run_id"] == first["run_id"]
 
 
 def test_init_force_resets_to_all_pending(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -186,7 +206,7 @@ def test_init_resume_triggers_recall_promotion(
     # Promotion must fire on the resume path too, not only on fresh init.
     _write_workspace(tmp_path, stages=["ticket", "plan"], compounding=False)
     _stub_git_head(monkeypatch, "abc123")
-    ds.cmd_init(tmp_path, "FT-1")
+    _, first = ds.cmd_init(tmp_path, "FT-1")
 
     calls: list[str] = []
 
@@ -196,7 +216,7 @@ def test_init_resume_triggers_recall_promotion(
         return []
 
     monkeypatch.setattr(ds.recall_pending, "promote_matching", fake_promote)
-    rc, payload = ds.cmd_init(tmp_path, "FT-1")
+    rc, payload = ds.cmd_init(tmp_path, "FT-1", session_nonce=first["session_nonce"])
     assert rc == 0
     assert payload["resumed"] is True
     assert calls == ["FT-1"]
@@ -831,10 +851,11 @@ def test_init_snapshot_write_failure_fail_closed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     # first init writes a valid sha; a later init whose write fails keeps the
-    # surviving sha so the drift guard stays active (fail-closed).
+    # surviving sha so the drift guard stays active (fail-closed). The resume
+    # init carries the first init's session_nonce (same session re-entering).
     _write_workspace(tmp_path)
     _stub_git_head(monkeypatch)
-    rc, _ = ds.cmd_init(tmp_path, "FT-1")
+    rc, first = ds.cmd_init(tmp_path, "FT-1")
     assert rc == 0
     sha_path = tmp_path / ".flow" / "runs" / "FT-1" / "snapshot.sha"
     assert sha_path.exists()
@@ -842,7 +863,7 @@ def test_init_snapshot_write_failure_fail_closed(
     capsys.readouterr()
 
     monkeypatch.setattr(ds, "write_snapshot", _boom_write)
-    rc, payload = ds.cmd_init(tmp_path, "FT-1")
+    rc, payload = ds.cmd_init(tmp_path, "FT-1", session_nonce=first["session_nonce"])
     assert rc == 0
     assert payload["snapshot_write_failed"] is True
     assert payload["snapshot_guard_active"] is True

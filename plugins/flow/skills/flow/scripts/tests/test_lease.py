@@ -40,6 +40,7 @@ def _acquire(
     boot: str = "boot-A",
     host: str = "host-1",
     cwd: str = "/work",
+    session_nonce: str | None = None,
     force: bool = False,
 ) -> lease.Lease:
     return lease.acquire(
@@ -51,6 +52,7 @@ def _acquire(
         current_boot=boot,
         hostname=host,
         cwd=cwd,
+        session_nonce=session_nonce,
         force=force,
     )
 
@@ -170,6 +172,68 @@ def test_force_does_not_bypass_live_foreign(tmp_path: Path) -> None:
         _acquire(tmp_path, "run-2", now=NOW, force=True)
 
 
+# ─── session_nonce: the per-session mutex component (flow-8i6l) ─────────────────
+
+
+def test_acquire_mints_nonce_on_free_dir(tmp_path: Path) -> None:
+    ls = _acquire(tmp_path, "run-1")
+    assert ls.session_nonce  # non-empty
+    on_disk = lease.read_lease(tmp_path)
+    assert on_disk is not None
+    assert on_disk.session_nonce == ls.session_nonce
+
+
+def test_live_owner_reacquire_without_nonce_raises_held(tmp_path: Path) -> None:
+    # THE BUG: a second /flow do reuses run_id from state.json but cannot present
+    # the live owner's nonce, so it must be blocked, not silently re-acquire.
+    first = _acquire(tmp_path, "run-1")
+    assert first.session_nonce
+    with pytest.raises(lease.LeaseHeld) as exc:
+        _acquire(tmp_path, "run-1", now=NOW)  # still live, no nonce presented
+    assert exc.value.holder.run_id == "run-1"
+
+
+def test_live_owner_reacquire_with_wrong_nonce_raises_held(tmp_path: Path) -> None:
+    _acquire(tmp_path, "run-1")
+    with pytest.raises(lease.LeaseHeld):
+        _acquire(tmp_path, "run-1", now=NOW, session_nonce="not-the-nonce")
+
+
+def test_live_owner_reacquire_with_matching_nonce_succeeds(tmp_path: Path) -> None:
+    # still-live re-acquire (12:03 < the 12:05 expiry): the matching nonce lets
+    # the same session re-enter, preserving the nonce + acquired_at.
+    still_live = "2026-05-28T12:03:00Z"
+    first = _acquire(tmp_path, "run-1", stage="plan")
+    second = _acquire(
+        tmp_path, "run-1", now=still_live, stage="implement", session_nonce=first.session_nonce
+    )
+    assert second.run_id == "run-1"
+    assert second.session_nonce == first.session_nonce  # preserved on re-acquire
+    assert second.acquired_at == NOW  # acquired_at preserved
+    assert second.stage == "implement"
+
+
+def test_expired_owner_reacquire_rotates_nonce(tmp_path: Path) -> None:
+    # an expired owner is a legitimate resume of our own dead run: the prior
+    # session is gone, so the nonce rotates (and acquired_at is preserved).
+    first = _acquire(tmp_path, "run-1", now=NOW)  # expires 12:05
+    after_expiry = "2026-05-28T13:00:00Z"
+    second = _acquire(tmp_path, "run-1", now=after_expiry)  # no nonce presented
+    assert second.run_id == "run-1"
+    assert second.session_nonce
+    assert second.session_nonce != first.session_nonce  # rotated
+    assert second.acquired_at == NOW  # original acquired_at kept
+
+
+def test_force_rotates_nonce_on_live_owner(tmp_path: Path) -> None:
+    # --force is an explicit reset/takeover: it overwrites the live owned lease
+    # and rotates the nonce even though none is presented.
+    first = _acquire(tmp_path, "run-1")
+    forced = _acquire(tmp_path, "run-1", now=NOW, force=True)
+    assert forced.session_nonce
+    assert forced.session_nonce != first.session_nonce
+
+
 # ─── refresh ───────────────────────────────────────────────────────────────────
 
 
@@ -215,6 +279,57 @@ def test_refresh_on_free_dir_raises_lease_lost(tmp_path: Path) -> None:
             hostname="host-1",
             cwd="/work",
         )
+
+
+def test_refresh_after_force_takeover_raises_lost(tmp_path: Path) -> None:
+    # this is what proves the carried-nonce threading earns its keep: a force
+    # takeover rotates the on-disk nonce, so the evicted session's refresh (which
+    # carries the OLD nonce) detects it lost the lease.
+    first = _acquire(tmp_path, "run-1")
+    _acquire(tmp_path, "run-1", now=NOW, force=True)  # takeover rotates the nonce
+    with pytest.raises(lease.LeaseLost):
+        lease.refresh(
+            tmp_path,
+            "run-1",
+            TTL,
+            LATER,
+            current_boot="boot-A",
+            hostname="host-1",
+            cwd="/work",
+            session_nonce=first.session_nonce,  # the now-evicted session's nonce
+        )
+
+
+def test_refresh_with_matching_nonce_ok(tmp_path: Path) -> None:
+    first = _acquire(tmp_path, "run-1")
+    ls = lease.refresh(
+        tmp_path,
+        "run-1",
+        TTL,
+        LATER,
+        current_boot="boot-A",
+        hostname="host-1",
+        cwd="/work",
+        session_nonce=first.session_nonce,
+    )
+    assert ls.session_nonce == first.session_nonce  # preserved across refresh
+
+
+def test_refresh_empty_caller_nonce_falls_back_to_run_id(tmp_path: Path) -> None:
+    # a caller that lost its nonce (e.g. across a compaction) passes None; the
+    # both-non-empty rule skips the nonce check and refresh succeeds on run_id.
+    _acquire(tmp_path, "run-1")
+    ls = lease.refresh(
+        tmp_path,
+        "run-1",
+        TTL,
+        LATER,
+        current_boot="boot-A",
+        hostname="host-1",
+        cwd="/work",
+        session_nonce=None,
+    )
+    assert ls.run_id == "run-1"
 
 
 # ─── assert_lease_still_mine ───────────────────────────────────────────────────
@@ -285,6 +400,18 @@ def test_assert_lease_still_mine_ignores_expiry(tmp_path: Path) -> None:
     lease.assert_lease_still_mine(tmp_path, "run-1")  # no raise
 
 
+def test_assert_lease_still_mine_nonce_mismatch_raises(tmp_path: Path) -> None:
+    first = _acquire(tmp_path, "run-1")
+    _acquire(tmp_path, "run-1", now=NOW, force=True)  # rotates the nonce
+    with pytest.raises(lease.LeaseLost):
+        lease.assert_lease_still_mine(tmp_path, "run-1", session_nonce=first.session_nonce)
+
+
+def test_assert_lease_still_mine_empty_caller_nonce_skips_check(tmp_path: Path) -> None:
+    _acquire(tmp_path, "run-1")
+    lease.assert_lease_still_mine(tmp_path, "run-1", session_nonce=None)  # no raise
+
+
 # ─── release ───────────────────────────────────────────────────────────────────
 
 
@@ -302,6 +429,20 @@ def test_release_by_non_owner_returns_false(tmp_path: Path) -> None:
 
 def test_release_on_free_dir_returns_false(tmp_path: Path) -> None:
     assert lease.release(tmp_path, "run-1") is False
+
+
+def test_release_after_force_takeover_returns_false(tmp_path: Path) -> None:
+    # an evicted session (old nonce) must NOT drop the new owner's lease.
+    first = _acquire(tmp_path, "run-1")
+    _acquire(tmp_path, "run-1", now=NOW, force=True)  # takeover rotates the nonce
+    assert lease.release(tmp_path, "run-1", first.session_nonce) is False
+    assert lease.run_lock_path(tmp_path).exists()
+
+
+def test_release_with_matching_nonce_removes(tmp_path: Path) -> None:
+    first = _acquire(tmp_path, "run-1")
+    assert lease.release(tmp_path, "run-1", first.session_nonce) is True
+    assert not lease.run_lock_path(tmp_path).exists()
 
 
 # ─── classify ──────────────────────────────────────────────────────────────────
