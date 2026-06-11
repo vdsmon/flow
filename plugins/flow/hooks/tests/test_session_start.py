@@ -11,6 +11,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import subprocess
+import time as _time_module
 from pathlib import Path
 from types import ModuleType
 
@@ -255,3 +256,114 @@ def test_runner_raising_does_not_crash(
     # cli_main is the outer net: any exception from the runner -> exit 0, silent.
     monkeypatch.setattr(hook, "_default_runner", raising_runner)
     assert hook.cli_main([str(flow_workspace)]) == 0
+
+
+# ─── schedule staleness tests ─────────────────────────────────────────────────
+
+
+def _write_record(path: Path, lines: list[str]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def test_staleness_absent_record_returns_empty(tmp_path: Path) -> None:
+    evolve_dir = tmp_path / "evolve"
+    evolve_dir.mkdir()
+    assert hook._check_schedule_staleness(evolve_dir) == ""
+
+
+def test_staleness_recent_ok_returns_empty(tmp_path: Path) -> None:
+    evolve_dir = tmp_path / "evolve"
+    now = int(_time_module.time())
+    _write_record(
+        evolve_dir / "nightly.run-record",
+        [f"start {now - 3600}", f"end {now - 100} ok"],
+    )
+    assert hook._check_schedule_staleness(evolve_dir) == ""
+
+
+def test_staleness_fail_outcome_fires(tmp_path: Path) -> None:
+    evolve_dir = tmp_path / "evolve"
+    now = int(_time_module.time())
+    _write_record(
+        evolve_dir / "nightly.run-record",
+        [f"start {now - 3600}", f"end {now - 100} fail"],
+    )
+    result = hook._check_schedule_staleness(evolve_dir)
+    assert "## /flow schedule" in result
+    assert "fail" in result
+    assert "nightly" in result
+
+
+def test_staleness_last_end_too_old_fires(tmp_path: Path) -> None:
+    evolve_dir = tmp_path / "evolve"
+    now = int(_time_module.time())
+    old_ts = now - 40 * 3600
+    _write_record(
+        evolve_dir / "nightly.run-record",
+        [f"start {old_ts - 1800}", f"end {old_ts} ok"],
+    )
+    result = hook._check_schedule_staleness(evolve_dir)
+    assert "## /flow schedule" in result
+    assert "nightly" in result
+    assert "stale" in result
+
+
+def test_staleness_zombie_start_no_end_fires(tmp_path: Path) -> None:
+    evolve_dir = tmp_path / "evolve"
+    now = int(_time_module.time())
+    _write_record(
+        evolve_dir / "nightly.run-record",
+        [f"start {now - 4 * 3600}"],
+    )
+    result = hook._check_schedule_staleness(evolve_dir)
+    assert "## /flow schedule" in result
+    assert "nightly" in result
+    assert "hung" in result
+
+
+def test_staleness_zombie_within_grace_suppressed(tmp_path: Path) -> None:
+    evolve_dir = tmp_path / "evolve"
+    now = int(_time_module.time())
+    _write_record(
+        evolve_dir / "nightly.run-record",
+        [f"start {now - 600}"],
+    )
+    assert hook._check_schedule_staleness(evolve_dir) == ""
+
+
+def test_staleness_weekly_separate(tmp_path: Path) -> None:
+    evolve_dir = tmp_path / "evolve"
+    now = int(_time_module.time())
+    old_ts = now - 9 * 24 * 3600
+    _write_record(
+        evolve_dir / "weekly.run-record",
+        [f"start {old_ts - 3600}", f"end {old_ts} ok"],
+    )
+    result = hook._check_schedule_staleness(evolve_dir)
+    assert "## /flow schedule" in result
+    assert "weekly" in result
+    assert "stale" in result
+
+
+def test_staleness_unreadable_file_returns_empty(tmp_path: Path) -> None:
+    evolve_dir = tmp_path / "evolve"
+    _write_record(evolve_dir / "nightly.run-record", ["garbage line", "not parseable at all"])
+    assert hook._check_schedule_staleness(evolve_dir) == ""
+
+
+def test_cli_main_staleness_composes_with_recall(
+    flow_workspace: Path, tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    evolve_dir = tmp_path / "evolve"
+    now = int(_time_module.time())
+    _write_record(
+        evolve_dir / "nightly.run-record",
+        [f"start {now - 3600}", f"end {now - 100} fail"],
+    )
+    result = hook.cli_main([str(flow_workspace)], _evolve_dir=evolve_dir)
+    assert result == 0
+    out = capsys.readouterr().out
+    assert "## /flow schedule" in out
+    assert "fail" in out
+    assert "## /flow recall" in out

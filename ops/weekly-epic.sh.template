@@ -41,6 +41,11 @@ wait_for_session() {
 }
 
 {
+  RUN_RECORD="$HOME/.flow-evolve/weekly.run-record"
+  _RUN_OUTCOME=fail
+  trap 'printf "end %s %s\n" "$(date +%s)" "$_RUN_OUTCOME" >> "$RUN_RECORD"' EXIT
+  printf "start %s\n" "$(date +%s)" >> "$RUN_RECORD"
+
   echo "=== flow weekly epic: $(date) ==="
   cd "$REPO" || { echo "repo not found: $REPO"; exit 1; }
 
@@ -63,6 +68,10 @@ wait_for_session() {
   if [ -n "$PSID" ]; then
     echo "--- waiting for producer $PSID to finish filing epics ---"
     wait_for_session "$PSID"
+    _RUN_OUTCOME=ok
+  else
+    _RUN_OUTCOME=fail
+    echo "(could not capture producer session id — skipping wait)"
   fi
 
   echo "--- filed epics (maintainer reviews + expands by hand) ---"

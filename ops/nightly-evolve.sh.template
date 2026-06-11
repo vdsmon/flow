@@ -56,6 +56,11 @@ wait_for_session() {
 }
 
 {
+  RUN_RECORD="$HOME/.flow-evolve/nightly.run-record"
+  _RUN_OUTCOME=fail
+  trap 'printf "end %s %s\n" "$(date +%s)" "$_RUN_OUTCOME" >> "$RUN_RECORD"' EXIT
+  printf "start %s\n" "$(date +%s)" >> "$RUN_RECORD"
+
   echo "=== flow nightly evolve: $(date) ==="
   cd "$REPO" || { echo "repo not found: $REPO"; exit 1; }
 
@@ -76,6 +81,7 @@ wait_for_session() {
   echo "$POUT"
   PSID="$(echo "$POUT" | grep -oiE '[0-9a-f]{8}' | head -1)"
   if [ -z "$PSID" ]; then
+    _RUN_OUTCOME=fail
     echo "(could not capture producer session id — skipping wait, draining anyway)"
   else
     echo "--- waiting for producer $PSID to finish filing beads ---"
@@ -84,6 +90,7 @@ wait_for_session() {
 
   echo "--- consumer: claude --bg /flow evolve drain ---"
   claude --bg "/flow evolve drain"
+  if [ -n "$PSID" ]; then _RUN_OUTCOME=ok; fi
 
   echo "=== done (drain detached; janitor + launch run in background): $(date) ==="
 } 2>&1 | tee "$LOG"

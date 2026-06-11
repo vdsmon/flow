@@ -41,6 +41,39 @@ The cold audit goes silent for minutes mid-scoring. `claude -p` trips a stream-i
    ```
 5. **Weekly epic producer** (optional): same steps with `weekly-epic.sh.template` → `~/.flow-evolve/weekly-epic.sh` and `com.vdsmon.flow-epic.plist.template` → `~/Library/LaunchAgents/com.<you>.flow-epic.plist`. Test-fire by hand first, then `launchctl load`.
 
+## Observability / staleness warning
+
+Each template fire appends to a durable run-record in `~/.flow-evolve/`:
+
+- `nightly.run-record` — written by `nightly-evolve.sh`
+- `weekly.run-record` — written by `weekly-epic.sh`
+
+**Format** (plain text, one event per line):
+
+```
+start <epoch>
+end <epoch> ok|fail
+```
+
+`start` is written immediately when the brace group opens (before any `cd` or network call). `end` is written by an EXIT trap, so it fires even on early abort — `_RUN_OUTCOME` defaults to `fail` and is set to `ok` only after a successful producer-launch + drain (nightly) or producer-launch + wait (weekly). Any early exit (bad repo, failed producer launch, `set -uo pipefail` abort) records `outcome=fail`.
+
+**The `session-start.py` hook reads these files on every `SessionStart`** and prints a `## /flow schedule` warning block when any of three conditions apply:
+
+| Condition | Threshold | Meaning |
+|-----------|-----------|---------|
+| Last `end` recorded `fail` | — | Something died |
+| Last `end` too old | >36h nightly, >8d weekly | Loop stopped running |
+| `start` with no `end`, past grace | >3h nightly, >6h weekly | Run is hung |
+
+Absent record file = schedule not armed on this machine = silent (no warning).
+
+**Mandatory redeploy step:** the templates are copy-deployed to `~/.flow-evolve/`. A fix to the template is inert on the live machine until re-copied. After merging a template change, copy the updated template:
+
+```
+cp ops/nightly-evolve.sh.template ~/.flow-evolve/nightly-evolve.sh
+cp ops/weekly-epic.sh.template ~/.flow-evolve/weekly-epic.sh
+```
+
 ## Gotchas
 
 - **launchd runs with a minimal PATH** (no `~/.local/bin`, where `claude` lives). The runner exports it itself; a by-hand test masks this because your interactive shell already has it. Test via `launchctl start com.<you>.flow-evolve` to catch a PATH regression.

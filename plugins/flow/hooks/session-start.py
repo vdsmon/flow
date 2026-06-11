@@ -21,6 +21,7 @@ import contextlib
 import json
 import subprocess
 import sys
+import time
 import tomllib
 from collections.abc import Callable
 from pathlib import Path
@@ -254,12 +255,96 @@ def build_context(workspace_root: Path, cwd: Path, runner: Runner | None = None)
     return _render(deduped[:top_n])
 
 
-def cli_main(argv: list[str]) -> int:
+_NIGHTLY_STALE_SECS = 36 * 3600
+_WEEKLY_STALE_SECS = 8 * 24 * 3600
+_NIGHTLY_ZOMBIE_GRACE = 3 * 3600
+_WEEKLY_ZOMBIE_GRACE = 6 * 3600
+
+
+def _parse_run_record(text: str) -> tuple[float | None, float | None, str | None]:
+    """Parse run-record text; return (last_start, last_end_ts, last_end_outcome)."""
+    last_start: float | None = None
+    last_end_ts: float | None = None
+    last_end_outcome: str | None = None
+    for line in text.splitlines():
+        parts = line.split()
+        if len(parts) < 2:
+            continue
+        try:
+            ts = int(parts[1])
+        except ValueError:
+            continue
+        if parts[0] == "start":
+            last_start = float(ts)
+        elif parts[0] == "end" and len(parts) >= 3:
+            last_end_ts = float(ts)
+            last_end_outcome = parts[2]
+    return last_start, last_end_ts, last_end_outcome
+
+
+def _staleness_line(
+    schedule: str,
+    last_start: float | None,
+    last_end_ts: float | None,
+    last_end_outcome: str | None,
+    stale_secs: int,
+    zombie_grace: int,
+    now: float,
+) -> str:
+    if last_end_ts is not None:
+        if last_end_outcome == "fail":
+            return f"- **{schedule}** last run recorded `fail`"
+        if (now - last_end_ts) > stale_secs:
+            hours = int((now - last_end_ts) / 3600)
+            return f"- **{schedule}** last completed {hours}h ago (stale >{stale_secs // 3600}h)"
+    elif last_start is not None and (now - last_start) > zombie_grace:
+        hours_elapsed = int((now - last_start) / 3600)
+        return f"- **{schedule}** started {hours_elapsed}h ago with no completion (hung?)"
+    return ""
+
+
+def _check_schedule_staleness(evolve_dir: Path) -> str:
+    """Read nightly/weekly run-records and return a warning block if stale.
+
+    Returns "" on any exception or when no record file exists (schedule not armed).
+    Run-record format per line: `start <epoch>` or `end <epoch> ok|fail`.
+    """
+    try:
+        now = time.time()
+        warn_lines: list[str] = []
+        for schedule, record_name, stale_secs, zombie_grace in (
+            ("nightly", "nightly.run-record", _NIGHTLY_STALE_SECS, _NIGHTLY_ZOMBIE_GRACE),
+            ("weekly", "weekly.run-record", _WEEKLY_STALE_SECS, _WEEKLY_ZOMBIE_GRACE),
+        ):
+            record_path = evolve_dir / record_name
+            if not record_path.exists():
+                continue
+            raw = record_path.read_text(encoding="utf-8").strip()
+            if not raw:
+                continue
+            last_start, last_end_ts, last_end_outcome = _parse_run_record(raw)
+            line = _staleness_line(
+                schedule, last_start, last_end_ts, last_end_outcome, stale_secs, zombie_grace, now
+            )
+            if line:
+                warn_lines.append(line)
+        if not warn_lines:
+            return ""
+        return "## /flow schedule\n\n" + "\n".join(warn_lines)
+    except Exception:
+        return ""
+
+
+def cli_main(argv: list[str], *, _evolve_dir: Path | None = None) -> int:
+    evolve_dir = _evolve_dir if _evolve_dir is not None else Path.home() / ".flow-evolve"
     cwd = Path(argv[0]).resolve() if argv else Path.cwd()
     try:
         workspace_root = find_workspace_root(cwd)
         if workspace_root is None:
             return 0
+        stale_block = _check_schedule_staleness(evolve_dir)
+        if stale_block:
+            sys.stdout.write(stale_block + "\n")
         block = build_context(workspace_root, cwd)
         if block:
             sys.stdout.write(block + "\n")
@@ -273,4 +358,4 @@ if __name__ == "__main__":
     raise SystemExit(cli_main(sys.argv[1:]))
 
 
-__all__ = ["build_context", "cli_main", "find_workspace_root"]
+__all__ = ["_check_schedule_staleness", "build_context", "cli_main", "find_workspace_root"]
