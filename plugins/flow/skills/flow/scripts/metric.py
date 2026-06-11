@@ -722,6 +722,203 @@ def _tracker_backend(workspace_root: Path) -> str | None:
     return backend if isinstance(backend, str) else None
 
 
+# ─── Arm compare ─────────────────────────────────────────────────────────────
+
+
+class ArmCompareEmpty(Exception):
+    """Signals an empty in-window corpus so cli_main can fail loud (h8s7 guard)."""
+
+
+def _arm_time_to_pr_hours(event: dict[str, Any]) -> tuple[float | None, str | None]:
+    """Resolve one event's time-to-PR hours. Returns (hours, skip_reason).
+
+    Stamp first (flow_attribution plan_started -> create_pr_finished); else
+    evidence.start_ts -> evidence.pr_ts. Missing/unparseable/negative -> (None, reason).
+    """
+    stamp = _read_stamp(event)
+    if stamp is not None:
+        start, finish = stamp
+    else:
+        evidence = event.get("evidence")
+        evidence = evidence if isinstance(evidence, dict) else {}
+        start = parse_iso(evidence.get("start_ts"))
+        finish = parse_iso(evidence.get("pr_ts"))
+        if start is None or finish is None:
+            return None, "missing_start_or_pr_ts"
+    duration = (finish - start).total_seconds() / 3600.0
+    if duration < 0:
+        return None, "negative_duration"
+    return duration, None
+
+
+def _arm_revert(
+    workspace_root: Path,
+    namespace: str,
+    backend: str | None,
+    ticket: Any,
+    shipped_at: datetime,
+) -> tuple[bool, str | None]:
+    """Per-arm revert decision. Returns (is_revert, skip_reason).
+
+    skip_reason mirrors compute_revert_rate's undecidable buckets
+    (tracker_unsupported / history_unavailable / reopened_not_yet_reclosed); when
+    it is None the event is decidable and is_revert is authoritative.
+    """
+    if backend != "beads":
+        return False, "tracker_unsupported"
+    timeline = _status_history(workspace_root, namespace, str(ticket))
+    if timeline is None:
+        return False, "history_unavailable"
+    reverted, _, _, in_flight = _classify_revert(timeline, shipped_at)
+    if in_flight:
+        return False, "reopened_not_yet_reclosed"
+    return reverted, None
+
+
+def _arm_axis(flow_val: Any, control_val: Any, *, flow_better_lt: bool) -> str | None:
+    """Score one axis: "flow" / "control", or None when undecidable for either arm."""
+    if flow_val is None or control_val is None:
+        return None
+    if flow_better_lt:
+        return "flow" if flow_val < control_val else "control"
+    return "flow" if flow_val > control_val else "control"
+
+
+def _arm_verdict(flow_block: dict[str, Any], control_block: dict[str, Any]) -> dict[str, Any]:
+    """Render the pre-registered verdict from the two per-arm blocks.
+
+    flow wins iff it takes >= 2 of the three axes; a flow-arm revert with zero
+    control-arm reverts forces flow_wins false (GUARD).
+    """
+    axis_ttp = _arm_axis(
+        flow_block["median_time_to_pr_hours"],
+        control_block["median_time_to_pr_hours"],
+        flow_better_lt=True,
+    )
+    axis_iv = _arm_axis(
+        flow_block["interventions_per_pr"],
+        control_block["interventions_per_pr"],
+        flow_better_lt=True,
+    )
+    axis_cr = _arm_axis(
+        flow_block["completion_rate"],
+        control_block["completion_rate"],
+        flow_better_lt=False,
+    )
+    favored_flow_count = sum(1 for a in (axis_ttp, axis_iv, axis_cr) if a == "flow")
+    flow_wins = favored_flow_count >= 2
+    guard_triggered = flow_block["reverts"] > 0 and control_block["reverts"] == 0
+    if guard_triggered:
+        flow_wins = False
+    return {
+        "time_to_pr": axis_ttp,
+        "interventions_per_pr": axis_iv,
+        "completion_rate": axis_cr,
+        "favored_flow_count": favored_flow_count,
+        "flow_wins": flow_wins,
+        "guard_triggered": guard_triggered,
+    }
+
+
+def compute_arm_compare(
+    workspace_root: Path,
+    namespace: str,
+    *,
+    since_iso: str,
+    until_iso: str,
+) -> dict[str, Any]:
+    """Compare flow-arm vs control-arm ship-events over [since, until).
+
+    Partitions in-window events on `event["arm"]` (absent -> "flow"; legacy events
+    read as flow). Per arm computes median_time_to_pr_hours, interventions_per_pr,
+    completion_rate, and reverts, then a pre-registered verdict (flow wins iff it
+    takes >=2 of the three axes), with a GUARD override: any flow-arm revert with
+    zero control-arm reverts forces flow_wins=false.
+
+    Raises ArmCompareEmpty when the in-window corpus is empty (h8s7 guard); the CLI
+    maps it to a loud non-zero exit rather than an all-zeros verdict at exit 0.
+    """
+    since = parse_iso(since_iso)
+    until = parse_iso(until_iso)
+    if since is None:
+        raise ValueError(f"since is not a UTC ISO8601 timestamp: {since_iso!r}")
+    if until is None:
+        raise ValueError(f"until is not a UTC ISO8601 timestamp: {until_iso!r}")
+
+    backend = _tracker_backend(workspace_root)
+
+    arms = ("flow", "control")
+    hours: dict[str, list[float]] = {a: [] for a in arms}
+    ttp_skipped: dict[str, list[dict[str, Any]]] = {a: [] for a in arms}
+    interventions: dict[str, list[int]] = {a: [] for a in arms}
+    outcomes: dict[str, list[str]] = {a: [] for a in arms}
+    reverts: dict[str, int] = {a: 0 for a in arms}
+    reverts_skipped: dict[str, list[dict[str, Any]]] = {a: [] for a in arms}
+    n_events: dict[str, int] = {a: 0 for a in arms}
+
+    total = 0
+    for event in load_ship_events(workspace_root, namespace):
+        shipped_at = parse_iso(str(event.get("shipped_at")))
+        if shipped_at is None or not (since <= shipped_at < until):
+            continue
+        arm = event.get("arm", "flow")
+        if arm not in arms:
+            arm = "flow"
+        total += 1
+        n_events[arm] += 1
+        ticket = event.get("ticket")
+
+        dur, reason = _arm_time_to_pr_hours(event)
+        if dur is None:
+            ttp_skipped[arm].append({"ticket": ticket, "reason": reason})
+        else:
+            hours[arm].append(dur)
+
+        evidence = event.get("evidence")
+        evidence = evidence if isinstance(evidence, dict) else {}
+        iv = evidence.get("interventions")
+        if isinstance(iv, int) and not isinstance(iv, bool):
+            interventions[arm].append(iv)
+        outcome = evidence.get("outcome")
+        if outcome in ("merged", "abandoned"):
+            outcomes[arm].append(outcome)
+
+        is_revert, skip_reason = _arm_revert(workspace_root, namespace, backend, ticket, shipped_at)
+        if skip_reason is not None:
+            reverts_skipped[arm].append({"ticket": ticket, "reason": skip_reason})
+        elif is_revert:
+            reverts[arm] += 1
+
+    if total == 0:
+        raise ArmCompareEmpty(str(_memory_paths.ship_events_dir(workspace_root, namespace)))
+
+    def _arm_block(arm: str) -> dict[str, Any]:
+        ivs = interventions[arm]
+        outs = outcomes[arm]
+        merged = sum(1 for o in outs if o == "merged")
+        return {
+            "n_events": n_events[arm],
+            "median_time_to_pr_hours": (percentile(hours[arm], 50.0) if hours[arm] else None),
+            "interventions_per_pr": (sum(ivs) / len(ivs) if ivs else None),
+            "completion_rate": (merged / len(outs) if outs else None),
+            "reverts": reverts[arm],
+            "time_to_pr_skipped": ttp_skipped[arm],
+            "reverts_skipped": reverts_skipped[arm],
+        }
+
+    flow_block = _arm_block("flow")
+    control_block = _arm_block("control")
+    return {
+        "since": since_iso,
+        "until": until_iso,
+        "resolved_workspace_root": str(workspace_root),
+        "total_ship_events": total,
+        "flow": flow_block,
+        "control": control_block,
+        "verdict": _arm_verdict(flow_block, control_block),
+    }
+
+
 # ─── CLI ─────────────────────────────────────────────────────────────────────
 
 
@@ -766,7 +963,34 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         "revert-rate", help="Compute the revert rate of shipped tickets in a window."
     )
     _add_common_args(p_rev)
+
+    p_arm = sub.add_parser(
+        "arm-compare", help="Compare flow-arm vs control-arm ship-events in a window."
+    )
+    _add_common_args(p_arm)
     return parser.parse_args(argv)
+
+
+def _run_arm_compare(args: argparse.Namespace, since_iso: str, until_iso: str) -> int:
+    if not args.namespace:
+        sys.stderr.write("metric: --namespace is required\n")
+        return 1
+    workspace_root = Path(args.workspace_root).resolve()
+    try:
+        result = compute_arm_compare(
+            workspace_root,
+            args.namespace,
+            since_iso=since_iso,
+            until_iso=until_iso,
+        )
+    except ArmCompareEmpty as exc:
+        sys.stderr.write(f"metric: arm-compare found no in-window ship-events under {exc}\n")
+        return 1
+    except ValueError as exc:
+        sys.stderr.write(f"metric: {exc}\n")
+        return 1
+    sys.stdout.write(json.dumps(result, indent=2, sort_keys=True) + "\n")
+    return 0
 
 
 def cli_main(argv: list[str]) -> int:
@@ -825,6 +1049,9 @@ def cli_main(argv: list[str]) -> int:
         sys.stdout.write(json.dumps(result, indent=2, sort_keys=True) + "\n")
         return 0
 
+    if args.command == "arm-compare":
+        return _run_arm_compare(args, since_iso, until_iso)
+
     if getattr(args, "checkpoint", False):
         if args.mode is None:
             sys.stderr.write("metric: --checkpoint requires --mode personal|work\n")
@@ -875,9 +1102,11 @@ if __name__ == "__main__":
 __all__ = [
     "ATTR_NOT_ATTRIBUTED",
     "ATTR_VIA_FLOW",
+    "ArmCompareEmpty",
     "classify_attribution",
     "cli_main",
     "compute",
+    "compute_arm_compare",
     "compute_checkpoint",
     "compute_friction_per_run",
     "compute_revert_rate",
