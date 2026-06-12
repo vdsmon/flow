@@ -190,7 +190,7 @@ def select(
         labels = labels_by_id.get(key, [])
         if "hot" in labels:
             continue
-        if "tier:trivial" in labels:
+        if "tier:trivial" in labels or "tier:light" in labels:
             model_per_key[key] = "sonnet"
         elif worker_model:
             model_per_key[key] = worker_model

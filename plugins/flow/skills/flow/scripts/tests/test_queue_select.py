@@ -312,6 +312,21 @@ def test_select_trivial_downshifts_to_sonnet(tmp_path):
     assert out["model_per_key"]["flow-t"] == "sonnet"
 
 
+def test_select_light_downshifts_to_sonnet(tmp_path):
+    ws = _marked_ws(tmp_path)
+    run, _ = _dispatch(ready=[_cand("flow-l", labels=["tier:light"])])
+    out = qs.select(ws, cap=5, concurrency=3, runner=run)
+    assert out["launch"] == ["flow-l"]
+    assert out["model_per_key"]["flow-l"] == "sonnet"
+
+
+def test_select_worker_model_light_beats_worker_model(tmp_path):
+    ws = _worker_ws(tmp_path)
+    run, _ = _dispatch(ready=[_cand("flow-l", labels=["tier:light"])])
+    out = qs.select(ws, cap=5, concurrency=3, runner=run)
+    assert out["model_per_key"]["flow-l"] == "sonnet"
+
+
 def test_select_plain_bead_no_downshift(tmp_path):
     ws = _marked_ws(tmp_path)
     run, _ = _dispatch(ready=[_cand("flow-p")])
