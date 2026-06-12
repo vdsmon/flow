@@ -280,6 +280,34 @@ def observe(
     return dupe_path, True
 
 
+def observe_revert(
+    workspace_root: Path,
+    namespace: str,
+    record: dict[str, Any],
+) -> tuple[Path, bool]:
+    """Write a durable, immutable revert event keyed by `reverting_commit_sha`.
+
+    `record` must carry a non-empty `reverting_commit_sha` (the natural key). The
+    file lands at `revert-events/<reverting_sha>.json`. Returns `(path, is_new)`:
+    `(path, True)` on a fresh write, `(path, False)` when the file already exists
+    (idempotent no-op; the existing file is never mutated).
+
+    Raises `ValueError` if `reverting_commit_sha` is missing/empty.
+    Raises `OSError` on non-EEXIST I/O errors.
+    """
+    sha = record.get("reverting_commit_sha")
+    if not isinstance(sha, str) or not sha:
+        raise ValueError("revert record missing non-empty reverting_commit_sha")
+    path = _memory_paths.revert_event_path(workspace_root, namespace, sha)
+    out = dict(record)
+    out["observed_at"] = utcnow_iso()
+    try:
+        _write_o_excl(path, _serialize(out))
+        return path, True
+    except FileExistsError:
+        return path, False
+
+
 # ─── CLI ─────────────────────────────────────────────────────────────────────
 
 
@@ -326,4 +354,4 @@ if __name__ == "__main__":
     raise SystemExit(cli_main(sys.argv[1:]))
 
 
-__all__ = ["cli_main", "observe", "validate_evidence"]
+__all__ = ["cli_main", "observe", "observe_revert", "validate_evidence"]

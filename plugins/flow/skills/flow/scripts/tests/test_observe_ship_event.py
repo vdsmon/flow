@@ -569,3 +569,60 @@ def test_plugin_version_helper_swallows_oserror(monkeypatch: pytest.MonkeyPatch)
 
     monkeypatch.setattr(Path, "read_text", boom)
     assert observe_ship_event._plugin_version() == ""
+
+
+# ─── observe_revert (durable immutable revert events) ────────────────────────
+
+
+def _revert_record(reverting_sha: str = "a" * 40) -> dict:
+    return {
+        "kind": "revert",
+        "ticket": "FT-1",
+        "reverted_commit_sha": "b" * 40,
+        "reverting_commit_sha": reverting_sha,
+        "reverting_subject": 'Revert "feat: thing"',
+        "source": "git",
+    }
+
+
+def test_observe_revert_writes_event(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path)
+    path, is_new = observe_ship_event.observe_revert(tmp_path, "demo", _revert_record())
+    assert is_new is True
+    assert path == _memory_paths.revert_event_path(tmp_path, "demo", "a" * 40)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert data["kind"] == "revert"
+    assert data["ticket"] == "FT-1"
+    assert data["reverting_commit_sha"] == "a" * 40
+    assert data["source"] == "git"
+    assert "observed_at" in data
+
+
+def test_observe_revert_idempotent_no_overwrite(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path)
+    path, first = observe_ship_event.observe_revert(tmp_path, "demo", _revert_record())
+    assert first is True
+    before = path.read_bytes()
+    before_mtime = path.stat().st_mtime_ns
+    path2, second = observe_ship_event.observe_revert(
+        tmp_path, "demo", _revert_record() | {"ticket": "FT-MUTATED"}
+    )
+    assert path2 == path
+    assert second is False
+    assert path.read_bytes() == before
+    assert path.stat().st_mtime_ns == before_mtime
+
+
+def test_observe_revert_missing_sha_raises(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path)
+    bad = _revert_record()
+    del bad["reverting_commit_sha"]
+    with pytest.raises(ValueError, match="reverting_commit_sha"):
+        observe_ship_event.observe_revert(tmp_path, "demo", bad)
+
+
+def test_observe_revert_does_not_mutate_caller(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path)
+    rec = _revert_record()
+    observe_ship_event.observe_revert(tmp_path, "demo", rec)
+    assert "observed_at" not in rec

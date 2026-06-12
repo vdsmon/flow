@@ -93,3 +93,11 @@ def ship_events_dir(workspace_root: Path, namespace: str) -> Path:
 
 def ship_event_path(workspace_root: Path, namespace: str, ticket: str) -> Path:
     return ship_events_dir(workspace_root, namespace) / f"{ticket}.json"
+
+
+def revert_events_dir(workspace_root: Path, namespace: str) -> Path:
+    return namespace_root(workspace_root, namespace) / "revert-events"
+
+
+def revert_event_path(workspace_root: Path, namespace: str, reverting_sha: str) -> Path:
+    return revert_events_dir(workspace_root, namespace) / f"{reverting_sha}.json"
