@@ -533,6 +533,104 @@ def test_merge_entries_flag_is_hot():
     assert {e["key"]: e["is_hot"] for e in out["merge"]} == {"flow-h": True, "flow-a": False}
 
 
+# ---- classify: main-CI health gate (flow-a1ti.3) ----
+
+
+def test_main_red_holds_merge_leaf():
+    # a green non-hot leaf that would merge routes into held_main_red and empties merge.
+    prs = [_pr(1, "flow-a")]
+    out = er.classify(prs, _idx(**{"flow-a": ["evolve"]}), main_ci_status="failed")
+    assert out["merge"] == []
+    assert out["held_main_red"] == [
+        {
+            "pr": 1,
+            "key": "flow-a",
+            "branch": "feature/flow-a-some-desc",
+            "is_draft": False,
+            "is_hot": False,
+        }
+    ]
+
+
+def test_main_red_does_not_promote_hot():
+    # a hot-eligible PR (auto_merge_hot on, isolated) is NOT promoted under red main;
+    # it lands in held_main_red, not merge.
+    prs = [_pr(1, "flow-h")]
+    out = er.classify(
+        prs, _idx(**{"flow-h": ["evolve", "hot"]}), auto_merge_hot=True, main_ci_status="failed"
+    )
+    assert out["merge"] == []
+    assert out["held_main_red"] == [
+        {
+            "pr": 1,
+            "key": "flow-h",
+            "branch": "feature/flow-h-some-desc",
+            "is_draft": False,
+            "is_hot": True,
+        }
+    ]
+
+
+def test_main_red_holds_dirty_recovery_candidate():
+    # the recover recipe ends in its own merge within the turn, so a red main must
+    # hold DIRTY candidates too, not let them bypass via version_recoverable.
+    prs = [_pr(1, "flow-a", state="DIRTY")]
+    out = er.classify(prs, _idx(**{"flow-a": ["evolve"]}), main_ci_status="failed")
+    assert out["version_recoverable"] == []
+    assert out["held_main_red"] == [
+        {
+            "pr": 1,
+            "key": "flow-a",
+            "branch": "feature/flow-a-some-desc",
+            "is_draft": False,
+            "is_hot": False,
+        }
+    ]
+
+
+def test_main_red_holds_duplicate_stamp_recovery_candidate():
+    # same hold for the duplicate-stamp restamp path.
+    prs = [_pr(1, "flow-a")]
+    out = er.classify(
+        prs,
+        _idx(**{"flow-a": ["evolve"]}),
+        main_version="1.2.3",
+        branch_versions={"feature/flow-a-some-desc": "1.2.3"},
+        main_ci_status="failed",
+    )
+    assert out["version_recoverable"] == []
+    assert out["merge"] == []
+    assert {e["key"] for e in out["held_main_red"]} == {"flow-a"}
+
+
+def test_held_main_red_key_always_present():
+    # the bucket is present (empty) even when main is not red.
+    prs = [_pr(1, "flow-a")]
+    out = er.classify(prs, _idx(**{"flow-a": ["evolve"]}))
+    assert out["held_main_red"] == []
+
+
+def test_main_red_none_is_byte_for_byte_legacy():
+    prs = [_pr(1, "flow-a")]
+    legacy = er.classify(prs, _idx(**{"flow-a": ["evolve"]}))
+    explicit_none = er.classify(prs, _idx(**{"flow-a": ["evolve"]}), main_ci_status=None)
+    assert legacy == explicit_none
+    assert legacy["merge"] != []
+    assert legacy["held_main_red"] == []
+
+
+def test_main_green_preserves_buckets_byte_for_byte():
+    prs = [_pr(1, "flow-a"), _pr(2, "flow-h"), _pr(3, "flow-b", rollup=PENDING)]
+    idx = _idx(**{"flow-a": ["evolve"], "flow-h": ["evolve", "hot"], "flow-b": ["evolve"]})
+    legacy = er.classify(prs, idx)
+    green = er.classify(prs, idx, main_ci_status="green")
+    # green is a no-op: every legacy bucket is preserved, held_main_red stays empty.
+    legacy.pop("held_main_red")
+    held = green.pop("held_main_red")
+    assert green == legacy
+    assert held == []
+
+
 # ---- reap integration ----
 
 
@@ -785,3 +883,76 @@ def test_reap_include_proposals_reaps_proposal_orphan(tmp_path):
     run, _ = _label_aware_list_runner(prs=prs, by_label=by_label)
     on = er.reap(ws, runner=run, include_proposals=True)
     assert {e["key"] for e in on["merge"]} == {"flow-a", "flow-prop"}
+
+
+# ---- reap: main-CI probe + deduped P0 filing (flow-a1ti.3) ----
+
+
+def _red_main_runner(*, prs, evolve_list, open_beads, check_runs_failed=True):
+    calls: Recorder = []
+    concl = "failure" if check_runs_failed else "success"
+
+    def run(args):
+        calls.append(args)
+        if args[:3] == ["gh", "pr", "list"]:
+            return subprocess.CompletedProcess(args, 0, json.dumps(prs), "")
+        if args[:2] == ["bd", "list"] and "-l" in args:
+            return subprocess.CompletedProcess(args, 0, json.dumps(evolve_list), "")
+        if args[:2] == ["bd", "list"] and "--status" in args and "open" in args:
+            return subprocess.CompletedProcess(args, 0, json.dumps(open_beads), "")
+        if args[:2] == ["git", "rev-parse"]:
+            return subprocess.CompletedProcess(args, 0, "deadbeef\n", "")
+        if args[:2] == ["gh", "api"]:
+            payload = json.dumps(
+                [{"name": "lint-and-test", "status": "completed", "conclusion": concl}]
+            )
+            return subprocess.CompletedProcess(args, 0, payload, "")
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    return run, calls
+
+
+def test_reap_red_main_holds_and_files_p0(tmp_path):
+    ws = _marked_ws(tmp_path)
+    run, calls = _red_main_runner(
+        prs=[_pr(1, "flow-a")],
+        evolve_list=[{"id": "flow-a", "labels": ["evolve"]}],
+        open_beads=[],
+    )
+    out = er.reap(ws, runner=run)
+    assert out["merge"] == []
+    assert {e["key"] for e in out["held_main_red"]} == {"flow-a"}
+    creates = [a for a in calls if a[:2] == ["bd", "create"]]
+    assert len(creates) == 1
+    title = creates[0][creates[0].index("--title") + 1]
+    assert "main-ci-red" in title
+    assert "deadbeef" in title
+    assert "lint-and-test" in title
+    assert "P0" in creates[0]
+
+
+def test_reap_red_main_dedups_when_p0_already_open(tmp_path):
+    ws = _marked_ws(tmp_path)
+    run, calls = _red_main_runner(
+        prs=[_pr(1, "flow-a")],
+        evolve_list=[{"id": "flow-a", "labels": ["evolve"]}],
+        open_beads=[{"id": "flow-x", "title": "main-ci-red: oldsha lint-and-test"}],
+    )
+    out = er.reap(ws, runner=run)
+    assert {e["key"] for e in out["held_main_red"]} == {"flow-a"}
+    creates = [a for a in calls if a[:2] == ["bd", "create"]]
+    assert creates == []  # an open P0 already covers this; do not refile
+
+
+def test_reap_green_main_files_no_p0_and_merges(tmp_path):
+    ws = _marked_ws(tmp_path)
+    run, calls = _red_main_runner(
+        prs=[_pr(1, "flow-a")],
+        evolve_list=[{"id": "flow-a", "labels": ["evolve"]}],
+        open_beads=[],
+        check_runs_failed=False,
+    )
+    out = er.reap(ws, runner=run)
+    assert {e["key"] for e in out["merge"]} == {"flow-a"}
+    assert out["held_main_red"] == []
+    assert [a for a in calls if a[:2] == ["bd", "create"]] == []

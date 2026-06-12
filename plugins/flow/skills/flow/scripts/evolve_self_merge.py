@@ -49,6 +49,7 @@ def decide(
     ci_status: str,
     planned_files: list[str] | None = None,
     eval_status: str | None = None,
+    main_ci_status: str | None = None,
 ) -> dict[str, Any]:
     """Pure self-merge gate. Returns {action, is_hot, reason}.
 
@@ -70,6 +71,14 @@ def decide(
         return {"action": "skip", "is_hot": is_hot, "reason": "proposal bead — maintainer merges"}
     if ci_status != "green":
         return {"action": "skip", "is_hot": is_hot, "reason": f"CI not green ({ci_status})"}
+    if main_ci_status == "failed":
+        # the per-drain-turn main-CI health gate: a genuinely red main pauses auto-merge
+        # this turn (None / green / pending / a transient probe "error" all no-op then resume).
+        return {
+            "action": "skip",
+            "is_hot": is_hot,
+            "reason": "main CI red — auto-merge paused this turn",
+        }
     if eval_status is not None and eval_status != "pass":
         if eval_status == "regressed":
             reason = "harness eval regressed — no-degradation rule routes to the human"
@@ -133,6 +142,11 @@ def cli_main(argv: list[str], runner: Runner | None = None) -> int:
         choices=("pass", "regressed", "error"),
         help="harness_eval verdict; omit when the eval did not run",
     )
+    parser.add_argument(
+        "--main-ci-status",
+        default=None,
+        help="main's CI health (main_ci_health.py probe); only 'failed' pauses the merge",
+    )
     args = parser.parse_args(argv)
 
     from maintainer import is_maintainer
@@ -150,6 +164,7 @@ def cli_main(argv: list[str], runner: Runner | None = None) -> int:
         ci_status=args.ci_status,
         planned_files=planned_files,
         eval_status=args.eval_status,
+        main_ci_status=args.main_ci_status,
     )
     sys.stdout.write(json.dumps(result, indent=2, sort_keys=True) + "\n")
     return 0

@@ -1160,6 +1160,26 @@
         ]
       },
       "expected": true
+    },
+    {
+      "case_id": "esm-main-ci-red-holds",
+      "split": "held_in",
+      "decider": "evolve_self_merge.decide",
+      "args": {
+        "labels": [
+          "evolve",
+          "hot"
+        ],
+        "is_maintainer": true,
+        "auto_merge_hot": true,
+        "ci_status": "green",
+        "main_ci_status": "failed"
+      },
+      "expected": {
+        "action": "skip",
+        "is_hot": true,
+        "reason": "main CI red \u2014 auto-merge paused this turn"
+      }
     }
   ]
 }

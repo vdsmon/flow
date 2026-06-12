@@ -38,8 +38,12 @@ version number. A duplicate-stamp hot is never promoted (and never counts toward
 one-hot isolation); it stays in skipped_hot. A green PR whose run lease still
 reads live/corrupt lands in skipped_live (held, not merged) — the run
 self-merges in its own merge stage, so the reap stays an orphan-only safety-net.
-Anything else lands in
-not_green / skipped_hot / skipped_live / version_recoverable / blocked / ignored.
+Before any promotion, reap() probes main's OWN CI health for the turn
+(main_ci_health.py): when main is genuinely red (failed), every would-be-merge (the
+promoted hot AND the non-hot leaves) routes into held_main_red instead, no hot promotes,
+and reap() files ONE deduped P0 naming the failing sha + check(s). Green / pending / a
+transient probe error all resume normally. Anything else lands in
+not_green / skipped_hot / skipped_live / version_recoverable / blocked / held_main_red / ignored.
 
 CLI:
   evolve_reap.py --workspace-root <dir>
@@ -53,11 +57,13 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import sys
 from pathlib import Path
 
 import lease
+import main_ci_health
 import version
 from _evolve_common import NotMaintainer, ToolError, bead_labels
 from _evolve_common import key_from_ref as _key_from_ref
@@ -131,6 +137,7 @@ def classify(
     main_version: str | None = None,
     branch_versions: dict[str, str] | None = None,
     liveness: dict[str, str] | None = None,
+    main_ci_status: str | None = None,
 ) -> dict:
     """Pure core: bucket open PRs into merge / not_green / skipped_hot /
     skipped_live / version_recoverable / blocked.
@@ -164,6 +171,14 @@ def classify(
     "live" or "corrupt" is held in skipped_live (the live run owns its own merge),
     regardless of hot/dirty. None (the default) preserves legacy routing
     byte-for-byte. Built in reap(); classify stays pure.
+
+    main_ci_status (the per-drain-turn main-CI verdict from main_ci_health.py): when
+    "failed" (main's own CI is genuinely red), every PR that would route into `merge`
+    (the promoted hot AND the non-hot leaves) routes into `held_main_red` instead, and
+    no hot promotes this turn. None or any non-"failed" value (green / pending / a
+    transient probe "error") is a no-op, preserving legacy routing byte-for-byte.
+    `held_main_red` is always present (empty when main is not red). reap() probes the
+    verdict and files the deduped P0; classify stays pure.
     """
     merge: list[dict] = []
     not_green: list[dict] = []
@@ -171,6 +186,7 @@ def classify(
     skipped_live: list[dict] = []
     version_recoverable: list[dict] = []
     blocked: list[dict] = []
+    held_main_red: list[dict] = []
 
     def _duplicate_stamp(ref: str) -> bool:
         # explicit None guards: unknown-vs-unknown must never read as a duplicate.
@@ -211,7 +227,8 @@ def classify(
             # hot never auto-recovers (conservative): a hot DIRTY PR stays blocked,
             # not version_recoverable. Only the isolation-eligible hot promotes.
             if promote is not None and number == promote:
-                merge.append({**entry, "is_draft": bool(pr.get("isDraft")), "is_hot": True})
+                target = held_main_red if main_ci_status == "failed" else merge
+                target.append({**entry, "is_draft": bool(pr.get("isDraft")), "is_hot": True})
             elif state in _MERGEABLE_STATES:
                 skipped_hot.append(entry)
             else:
@@ -220,17 +237,30 @@ def classify(
         if state == "DIRTY":
             # green non-hot DIRTY: candidate for merge-time version-conflict recovery.
             # version_remerge.py authoritatively gates whether it is truly version-only.
-            version_recoverable.append(entry)
+            # recovery ends in its own merge this turn, so a red main holds it too.
+            if main_ci_status == "failed":
+                held_main_red.append(
+                    {**entry, "is_draft": bool(pr.get("isDraft")), "is_hot": False}
+                )
+            else:
+                version_recoverable.append(entry)
             continue
         if state in _MERGEABLE_STATES and _duplicate_stamp(ref):
             # duplicate stamp: merging as-is would mint two releases sharing one
-            # version number; the recover recipe restamps it instead.
-            version_recoverable.append(entry)
+            # version number; the recover recipe restamps it instead. same red-main
+            # hold as DIRTY: the restamp path also merges within the turn.
+            if main_ci_status == "failed":
+                held_main_red.append(
+                    {**entry, "is_draft": bool(pr.get("isDraft")), "is_hot": False}
+                )
+            else:
+                version_recoverable.append(entry)
             continue
         if state not in _MERGEABLE_STATES:
             blocked.append({**entry, "reason": state or "UNKNOWN"})
             continue
-        merge.append({**entry, "is_draft": bool(pr.get("isDraft")), "is_hot": False})
+        target = held_main_red if main_ci_status == "failed" else merge
+        target.append({**entry, "is_draft": bool(pr.get("isDraft")), "is_hot": False})
 
     return {
         "merge": merge,
@@ -239,6 +269,7 @@ def classify(
         "skipped_live": skipped_live,
         "version_recoverable": version_recoverable,
         "blocked": blocked,
+        "held_main_red": held_main_red,
     }
 
 
@@ -309,6 +340,34 @@ def _auto_merge_hot(workspace_root: Path) -> bool:
     return value if isinstance(value, bool) else False
 
 
+_MAIN_RED_STEM = "main-ci-red"
+
+
+def _file_main_red_p0(run: Runner, sha: str | None, failing_checks: list[str]) -> None:
+    """Best-effort: file ONE deduped P0 naming the failing main sha + check(s).
+
+    At-most-one-open: scan `bd list --status open --json` titles for the
+    `main-ci-red` stem and file via `bd create -p P0` only when none is open. Filing
+    directly (not flow_beads_create.py: its dedup is closed-inclusive, so it would
+    never refile after a human closes the P0, and it passes no priority). Every bd
+    call is guarded so a tracker hiccup never crashes the reap (the gate already
+    held the merges; the bead is the alert, not the safety property).
+    """
+    try:
+        listed = run(["bd", "list", "--status", "open", "--json"])
+        if listed.returncode == 0:
+            for b in _loads(listed.stdout or "[]"):
+                if isinstance(b, dict) and _MAIN_RED_STEM in str(b.get("title", "")):
+                    return  # an open P0 already covers this red main
+    except Exception:
+        return  # a list failure: skip filing rather than risk a duplicate
+    checks = ", ".join(failing_checks) if failing_checks else "unknown check"
+    title = f"{_MAIN_RED_STEM}: {sha or 'unknown-sha'} {checks}"
+    with contextlib.suppress(Exception):
+        # best-effort; the held_main_red report still names the held PRs
+        run(["bd", "create", "-p", "P0", "--title", title])
+
+
 def reap(
     workspace_root: Path, *, runner: Runner | None = None, include_proposals: bool = False
 ) -> dict:
@@ -354,6 +413,13 @@ def reap(
                 lease.classify(run_dir, now, current_boot=current_boot, hostname=host).get("state")
             )
         )
+    # pass the param (None in production) so the probe builds its own token-aware
+    # _gh_runner; reap always resolves `run`, which would route the probe into the
+    # injected-runner lane and skip the GH_TOKEN export (headless gh 401 flake).
+    health = main_ci_health.probe(repo, runner=runner)
+    main_ci_status = str(health.get("status"))
+    if main_ci_status == "failed":
+        _file_main_red_p0(run, health.get("sha"), health.get("failing_checks") or [])
     return classify(
         prs,
         index,
@@ -361,6 +427,7 @@ def reap(
         main_version=main_version,
         branch_versions=branch_versions,
         liveness=liveness,
+        main_ci_status=main_ci_status,
     )
 
 

@@ -48,14 +48,21 @@ fi
 
 Candidate = this run's own scripts tree (the self-edit branch); baseline + corpus = `harness_eval`'s defaults (the installed skill checkout it runs from). That means the eval does NOT see candidate-side edits to `harness_corpus.json` or `harness_eval.py` — it replays the installed copy against the baseline corpus; `tests/test_harness_corpus.py` (CI) is the real gate on corpus edits. An INTENTIONAL decider behavior change reads as `regressed` by design (the corpus is baseline-side); the human is the override. Non-scripts PRs skip the eval entirely (`EVAL_STATUS` stays empty → the gate sees no `--eval-status`).
 
+**Probe main's own CI health (the per-drain-turn main-CI gate).** Before asking the gate, probe whether MAIN's CI is genuinely red — two concurrently-green PRs that semantically conflict land on main untested, and this run must not stack a self-merge onto an already-red main. The verdict is asymmetric: only `failed` pauses; `green`, `pending`, and a transient probe `error` (a gh 401 / network flake) all resume (the gate treats any non-`failed` value as a no-op).
+
+```bash
+MAIN_CI=$(python3 ${CLAUDE_SKILL_DIR}/scripts/main_ci_health.py probe --workspace-root . \
+  | python3 -c 'import sys,json;print(json.load(sys.stdin)["status"])')
+```
+
 Ask the pure gate whether this run may self-merge:
 
 ```bash
 python3 ${CLAUDE_SKILL_DIR}/scripts/evolve_self_merge.py \
-  --workspace-root . --key "$KEY" --ci-status "$CI" ${EVAL_STATUS:+--eval-status "$EVAL_STATUS"}
+  --workspace-root . --key "$KEY" --ci-status "$CI" --main-ci-status "$MAIN_CI" ${EVAL_STATUS:+--eval-status "$EVAL_STATUS"}
 ```
 
-Returns `{"action": "merge"|"skip", "is_hot": bool, "reason": "..."}`. The gate skips when this is not the maintainer self-target, not an `evolve` bead, CI is not green, the harness eval did not pass (`regressed` = the no-degradation rule; `error` = no non-regression evidence, blocked conservatively), or a `hot` bead while `[evolve] auto_merge_hot` is off.
+Returns `{"action": "merge"|"skip", "is_hot": bool, "reason": "..."}`. The gate skips when this is not the maintainer self-target, not an `evolve` bead, CI is not green, **main's own CI is red** (`main CI red` — auto-merge paused this turn; a probe `error` resumes, it does not skip), the harness eval did not pass (`regressed` = the no-degradation rule; `error` = no non-regression evidence, blocked conservatively), or a `hot` bead while `[evolve] auto_merge_hot` is off.
 
 - **`action: "skip"`** → leave the PR as-is for the human (this is the normal outcome on a user project and for held hot beads), `STATUS=completed`. Done. On an eval-driven skip (`regressed`/`error` reason), first post a PR comment naming the regressed case ids from `$TICKET_DIR/stages/harness_eval.json` (mirrors §2's `held_guard` pattern) so the maintainer sees WHICH frozen cases moved.
 - **`action: "merge"`** → continue. If `is_hot` is true, run §2 FIRST; otherwise skip to §3.
