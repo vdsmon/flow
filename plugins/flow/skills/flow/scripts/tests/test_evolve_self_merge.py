@@ -163,6 +163,76 @@ def test_eval_gate_sits_before_hot_gate():
     assert d["is_hot"] is True
 
 
+# ─── decide() — the main-CI health gate (flow-a1ti.3) ────────────────────────
+
+
+def test_main_ci_failed_skips_even_when_otherwise_eligible():
+    # maintainer + evolve + green + auto_merge_hot, otherwise a clean merge: a red
+    # main pauses it for the turn.
+    d = esm.decide(
+        ["evolve", "hot"],
+        is_maintainer=True,
+        auto_merge_hot=True,
+        ci_status="green",
+        main_ci_status="failed",
+    )
+    assert d["action"] == "skip"
+    assert d["reason"] == "main CI red — auto-merge paused this turn"
+    assert d["is_hot"] is True
+
+
+def test_main_ci_green_is_noop():
+    d = esm.decide(
+        ["evolve"],
+        is_maintainer=True,
+        auto_merge_hot=False,
+        ci_status="green",
+        main_ci_status="green",
+    )
+    assert d == {"action": "merge", "is_hot": False, "reason": "eligible"}
+
+
+def test_main_ci_pending_is_noop():
+    d = esm.decide(
+        ["evolve"],
+        is_maintainer=True,
+        auto_merge_hot=False,
+        ci_status="green",
+        main_ci_status="pending",
+    )
+    assert d["action"] == "merge"
+
+
+def test_main_ci_error_is_noop_resumes():
+    # a transient probe error must RESUME (never pause): non-"failed" is a no-op.
+    d = esm.decide(
+        ["evolve"],
+        is_maintainer=True,
+        auto_merge_hot=False,
+        ci_status="green",
+        main_ci_status="error",
+    )
+    assert d["action"] == "merge"
+
+
+def test_main_ci_none_is_byte_for_byte_legacy():
+    d = esm.decide(["evolve"], is_maintainer=True, auto_merge_hot=False, ci_status="green")
+    assert d == {"action": "merge", "is_hot": False, "reason": "eligible"}
+
+
+def test_main_ci_gate_sits_after_ci_gate():
+    # CI-not-green still wins the reason (the main gate sits after the PR-CI gate).
+    d = esm.decide(
+        ["evolve"],
+        is_maintainer=True,
+        auto_merge_hot=False,
+        ci_status="pending",
+        main_ci_status="failed",
+    )
+    assert d["action"] == "skip"
+    assert "green" in d["reason"]
+
+
 # ─── CLI (injected runner + tmp workspace) ───────────────────────────────────
 
 
