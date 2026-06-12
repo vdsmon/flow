@@ -259,8 +259,10 @@ def test_state_unwraps_single_element_list_response() -> None:
 def test_is_shipped_unwraps_single_element_list_response() -> None:
     adapter, _ = _build_adapter(
         [
-            _cp(stdout=json.dumps([_issue_json(status="closed", closure_reason="fixed")])),
-            _cp(stdout="abc123def\n"),  # git log result
+            _cp(stdout=json.dumps([_issue_json(status="closed", close_reason="fixed")])),
+            _cp(stdout="origin/main\n"),  # git symbolic-ref
+            _cp(),  # git fetch
+            _cp(stdout="abc123def\x00ticket: bd-a1b2\x1e"),  # git log result
         ]
     )
     result = adapter.is_shipped("bd-a1b2")
@@ -606,6 +608,21 @@ def test_project_requires_pr_always_false() -> None:
 
 
 # ─── is_shipped ──────────────────────────────────────────────────────────────
+#
+# is_shipped gates `not_yet_observed` on the bead key appearing in a commit on
+# the DEFAULT branch (the squash-merge), not anywhere reachable from HEAD. The
+# closed-path runner sequence is: bd show, symbolic-ref (default ref), fetch,
+# git log. Helpers below stand in for the two git calls between show and log.
+
+
+def _symref_ok(ref: str = "origin/main") -> subprocess.CompletedProcess[str]:
+    """`git symbolic-ref --short refs/remotes/origin/HEAD` → e.g. origin/main."""
+    return _cp(stdout=f"{ref}\n")
+
+
+def _git_log_record(sha: str, message: str) -> subprocess.CompletedProcess[str]:
+    """One record of `git log --format=%H%x00%B%x1e` output."""
+    return _cp(stdout=f"{sha}\x00{message}\x1e")
 
 
 def test_is_shipped_not_shipped_when_not_closed() -> None:
@@ -624,11 +641,13 @@ def test_is_shipped_not_yet_observed_when_closed_with_commit() -> None:
                     _issue_json(
                         status="closed",
                         closed_at="2026-05-15T00:00:00Z",
-                        closure_reason="fixed",
+                        close_reason="fixed",
                     )
                 )
             ),
-            _cp(stdout="abc123def\n"),  # git log result
+            _symref_ok(),
+            _cp(),  # git fetch
+            _git_log_record("abc123def", "feat: a thing (#9)\n\nticket: bd-a1b2"),
         ]
     )
     result = adapter.is_shipped("bd-a1b2")
@@ -643,13 +662,122 @@ def test_is_shipped_indeterminate_when_closed_without_commit() -> None:
     adapter, _ = _build_adapter(
         [
             _cp(stdout=json.dumps(_issue_json(status="closed"))),
-            _cp(stdout=""),  # no commit found
+            _symref_ok(),
+            _cp(),  # git fetch
+            _cp(stdout=""),  # no commit on the default branch
         ]
     )
     result = adapter.is_shipped("bd-a1b2")
     assert result["state"] == "indeterminate"
     assert result["evidence"] is not None
     assert result["evidence"]["commit_sha"] is None
+
+
+def test_is_shipped_indeterminate_when_closed_unmerged() -> None:
+    # flow-qmtd regression: a bead closed administratively-unmerged (its work
+    # commit sits only on a feature branch, absent from the default branch) must
+    # NOT read as shipped. The git-log probe of the default ref finds nothing.
+    adapter, _ = _build_adapter(
+        [
+            _cp(
+                stdout=json.dumps(
+                    _issue_json(
+                        status="closed",
+                        closed_at="2026-06-11T00:00:00Z",
+                        close_reason="wave-2: lost tiebreak. PR #259 closed unmerged.",
+                    )
+                )
+            ),
+            _symref_ok(),
+            _cp(),  # git fetch
+            _cp(stdout=""),  # key not present on the default branch
+        ]
+    )
+    result = adapter.is_shipped("bd-a1b2")
+    assert result["state"] == "indeterminate"
+    assert result["source"] == "none"
+    assert result["evidence"] is not None
+    assert result["evidence"]["commit_sha"] is None
+    assert result["evidence"]["closure_reason"] == "wave-2: lost tiebreak. PR #259 closed unmerged."
+
+
+def test_is_shipped_grep_targets_default_ref() -> None:
+    adapter, runner = _build_adapter(
+        [
+            _cp(stdout=json.dumps(_issue_json(status="closed", close_reason="fixed"))),
+            _symref_ok("origin/main"),
+            _cp(),  # git fetch
+            _git_log_record("abc123def", "ticket: bd-a1b2"),
+        ]
+    )
+    adapter.is_shipped("bd-a1b2")
+    log_calls = [args for args, _ in runner.calls if args[:2] == ["git", "log"]]
+    assert len(log_calls) == 1
+    # `git log <ref> --grep=...`: the ref is the default branch, not HEAD.
+    assert log_calls[0][2] == "origin/main"
+
+
+def test_is_shipped_reads_close_reason_field() -> None:
+    # bd's JSON carries `close_reason`; the old `closure_reason` read was a
+    # wrong-key bug that always yielded null.
+    adapter, _ = _build_adapter(
+        [
+            _cp(stdout=json.dumps(_issue_json(status="closed", close_reason="real"))),
+            _symref_ok(),
+            _cp(),
+            _git_log_record("abc123def", "ticket: bd-a1b2"),
+        ]
+    )
+    result = adapter.is_shipped("bd-a1b2")
+    assert result["evidence"] is not None
+    assert result["evidence"]["closure_reason"] == "real"
+
+
+def test_is_shipped_close_reason_falls_back_to_legacy_key() -> None:
+    adapter, _ = _build_adapter(
+        [
+            _cp(stdout=json.dumps(_issue_json(status="closed", closure_reason="legacy"))),
+            _symref_ok(),
+            _cp(),
+            _git_log_record("abc123def", "ticket: bd-a1b2"),
+        ]
+    )
+    result = adapter.is_shipped("bd-a1b2")
+    assert result["evidence"] is not None
+    assert result["evidence"]["closure_reason"] == "legacy"
+
+
+def test_is_shipped_parent_key_not_matched_by_child_commit() -> None:
+    # `git log --grep=flow-a1ti` loosely matches a child's commit (flow-a1ti.2);
+    # the word-boundary re-check rejects it, so the parent reads indeterminate.
+    adapter, _ = _build_adapter(
+        [
+            _cp(stdout=json.dumps(_issue_json(status="closed"))),
+            _symref_ok(),
+            _cp(),
+            _git_log_record("deadbeef", "feat: child work\n\nticket: flow-a1ti.2"),
+        ]
+    )
+    result = adapter.is_shipped("flow-a1ti")
+    assert result["state"] == "indeterminate"
+    assert result["evidence"] is not None
+    assert result["evidence"]["commit_sha"] is None
+
+
+def test_is_shipped_default_ref_falls_back_when_symref_fails() -> None:
+    adapter, runner = _build_adapter(
+        [
+            _cp(stdout=json.dumps(_issue_json(status="closed", close_reason="fixed"))),
+            _cp(returncode=1, stderr="fatal: ref refs/remotes/origin/HEAD is not a symbolic ref"),
+            _cp(stdout="0123456789abcdef\n"),  # rev-parse --verify origin/main
+            _cp(),  # git fetch
+            _git_log_record("abc123def", "ticket: bd-a1b2"),
+        ]
+    )
+    result = adapter.is_shipped("bd-a1b2")
+    assert result["state"] == "not_yet_observed"
+    log_calls = [args for args, _ in runner.calls if args[:2] == ["git", "log"]]
+    assert log_calls[0][2] == "origin/main"
 
 
 def test_is_shipped_handles_bd_show_failure() -> None:
