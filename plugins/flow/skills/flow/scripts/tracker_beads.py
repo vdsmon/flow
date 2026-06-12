@@ -553,8 +553,17 @@ class BeadsAdapter:
 
         Returns:
             not_shipped         — status != closed
-            not_yet_observed    — status == closed + git commit referencing key
-            indeterminate       — status == closed but no commit evidence found
+            not_yet_observed    — status == closed + a commit ON THE DEFAULT
+                                  BRANCH (origin/<HEAD>) referencing key
+            indeterminate       — status == closed but no default-branch commit
+                                  references key (e.g. closed-unmerged)
+
+        The default-branch gate is what keeps a closed-but-unmerged bead (its
+        work commit sits only on a feature branch, never squash-merged) from
+        reading as shipped and stamping a false ship event. Squash-merge makes
+        the feature-branch tip a non-ancestor of main, so the join is by key in
+        the commit message over the default ref, not by sha (mirrors metric.py's
+        revert-watcher join).
 
         Workspace's `observe_ship_event` is responsible for freezing
         `not_yet_observed` into a stored ship-event record.
@@ -584,25 +593,28 @@ class BeadsAdapter:
                 "source": "none",
             }
 
-        commit_sha = self._git_log_first_commit(key)
-        if commit_sha is None:
-            return {
-                "state": "indeterminate",
-                "shipped_at": None,
-                "evidence": {
-                    "tracker": "beads",
-                    "tracker_status": status,
-                    "commit_sha": None,
-                },
-                "source": "none",
-            }
+        ref = self._default_ref()
+        self._fetch_ref(ref)
+        commit_sha = self._git_log_first_commit(key, ref)
+        # bd's JSON field is `close_reason`; the older `closure_reason` read
+        # always returned null. Keep the evidence key name `closure_reason`.
+        close_reason = raw.get("close_reason")
+        if close_reason is None:
+            close_reason = raw.get("closure_reason")
         evidence: dict[str, Any] = {
             "tracker": "beads",
             "tracker_status": status,
             "commit_sha": commit_sha,
-            "closure_reason": raw.get("closure_reason"),
+            "closure_reason": close_reason,
             "closed_at": raw.get("closed_at"),
         }
+        if commit_sha is None:
+            return {
+                "state": "indeterminate",
+                "shipped_at": None,
+                "evidence": evidence,
+                "source": "none",
+            }
         return {
             "state": "not_yet_observed",
             "shipped_at": None,
@@ -710,16 +722,70 @@ class BeadsAdapter:
                 f"expected={expected!r} actual={actual!r}"
             )
 
-    def _git_log_first_commit(self, key: str) -> str | None:
+    def _default_ref(self) -> str:
+        """The default-branch remote-tracking ref to gate ships against.
+
+        A ship is confirmed by the bead key appearing in a commit on THIS ref
+        (the squash-merge), never on a feature branch.
+        """
         cp = self._runner(
-            ["git", "log", f"--grep={key}", "--pretty=format:%H", "-n", "1"],
+            ["git", "symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+            cwd=self._workspace_root,
+            check=False,
+        )
+        if cp.returncode == 0 and cp.stdout.strip():
+            return cp.stdout.strip()
+        for ref in ("origin/main", "origin/master"):
+            probe = self._runner(
+                ["git", "rev-parse", "--verify", "--quiet", ref],
+                cwd=self._workspace_root,
+                check=False,
+            )
+            if probe.returncode == 0 and probe.stdout.strip():
+                return ref
+        return "origin/main"
+
+    def _fetch_ref(self, ref: str) -> None:
+        """Best-effort refresh so the gate sees a just-merged squash.
+
+        A stale local ref would read a real ship as `indeterminate` (only
+        stage-reflect calls is_shipped; nothing re-checks later). Writes only
+        under `.git`, so the `.flow` pure-read contract holds. Failure (offline
+        or sandboxed) is swallowed: the grep then runs against the existing ref.
+        """
+        remote, _, branch = ref.partition("/")
+        if not branch:
+            return
+        self._runner(
+            ["git", "fetch", "--quiet", remote, branch],
+            cwd=self._workspace_root,
+            check=False,
+        )
+
+    def _git_log_first_commit(self, key: str, ref: str = "HEAD") -> str | None:
+        """First commit reachable from `ref` whose message names `key` as a
+        whole word.
+
+        git --grep is a loose regex match, so a parent key (flow-a1ti) matches a
+        child's commit (flow-a1ti.2, via the `ticket:` trailer). A word-boundary
+        re-check rejects that, mirroring metric.py's revert-watcher join.
+        """
+        cp = self._runner(
+            ["git", "log", ref, f"--grep={key}", "--format=%H%x00%B%x1e", "-n", "50"],
             cwd=self._workspace_root,
             check=False,
         )
         if cp.returncode != 0:
             return None
-        sha = cp.stdout.strip()
-        return sha or None
+        pat = re.compile(rf"(?<![\w.-]){re.escape(key)}(?![\w.-])")
+        for record in cp.stdout.split("\x1e"):
+            record = record.strip("\n")
+            if not record:
+                continue
+            sha, _, message = record.partition("\x00")
+            if pat.search(message):
+                return sha.strip() or None
+        return None
 
 
 __all__ = ["BeadsAdapter", "Runner"]

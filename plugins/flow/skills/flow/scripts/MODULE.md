@@ -58,7 +58,7 @@ Pluggable PR-host seam, structural twin of the tracker seam. The `create_pr` and
 
 | Script | Role | Surface / touches |
 |--------|------|-------------------|
-| `_memory_paths.py` (lib) | Namespace resolution + `.flow/<ns>/` path conventions. `resolve_memory_base` reads the gitignored `.flow/memory-root` sibling first, then `workspace.toml [memory].root`, then local `.flow`; every redirected worktree resolves the same store AND the same lock. | imported widely |
+| `_memory_paths.py` (lib) | Namespace resolution + `.flow/<ns>/` path conventions. `resolve_memory_base` reads the gitignored `.flow/memory-root` sibling first, then `workspace.toml [memory].root`, then local `.flow`; every redirected worktree resolves the same store AND the same lock. | imported by memory_append, recall, flow_friction, metric, observe_ship_event, reflect_inputs, sweep_knowledge |
 | `memory_append.py` | Single-writer `knowledge.jsonl` append with sha-keyed idempotency. | `--type --text --branch --ticket [--id --supersedes]` |
 | `recall.py` | BM25 ranker over `knowledge.jsonl`; `--metric` forwards to `metric.py`. | `<query> [--branch --tickets --top-n --include-superseded]` ; `--metric ...` |
 | `sweep_knowledge.py` | Maintainer one-shot retro-curation sweep over `knowledge.jsonl`; propose-only (never auto-decides supersession). `propose` emits a read-only worklist of non-superseded DECISION/FACT entries; `apply` writes one append-only tombstone per confirmed manifest record through the `memory_append --supersedes` seam (idempotent, refuses unknown ids). | `propose [--type] ; apply --manifest` |
@@ -103,7 +103,7 @@ Pluggable PR-host seam, structural twin of the tracker seam. The `create_pr` and
 
 ## Shared helpers (lib)
 
-`_atomicio.py` (atomic temp-write + fsync), `_timeutil.py` (UTC ISO8601 parse + format; `require_z` for the strict contract, `utcnow_iso`/`iso_z` emitters), `_workspace.py` (workspace.toml load), `_registry.py` (stage-registry parse), `_locking.py` (flock retry), `_jsonl.py` (JSONL sidecar parse), `_runner.py` (subprocess-runner factories: positional-cwd `Runner`/`default_runner` for diff_extract/branch_ticket/recall_pending/flow_worktree/flow_beads_create, keyword-only `KwRunner`/`kw_default_runner` for init/tracker_beads, cwd-bound `CwdRunner`/`cwd_default_runner` for forge_github/forge_bitbucket/evolve_reap/evolve_select/queue_select/queue_status/queue_drain/create_pr/version_remerge), `maintainer.py` (maintainer-mode detection via the `[maintainer]` marker; gates the self-evolution loop).
+`_atomicio.py` (atomic temp-write + fsync), `_timeutil.py` (UTC ISO8601 parse + format; `require_z` for the strict contract, `utcnow_iso`/`iso_z` emitters), `_workspace.py` (workspace.toml load), `_registry.py` (stage-registry parse), `_locking.py` (flock retry), `_jsonl.py` (JSONL sidecar parse), `_runner.py` (subprocess-runner factories: positional-cwd `Runner`/`default_runner` for diff_extract/branch_ticket/recall_pending/flow_worktree/flow_beads_create, keyword-only `KwRunner`/`kw_default_runner` for init/tracker_beads, cwd-bound `CwdRunner`/`cwd_default_runner` for forge_github/forge_bitbucket/evolve_reap/evolve_select/_evolve_common/queue_select/queue_status/queue_drain/create_pr/version/version_remerge), `maintainer.py` (maintainer-mode detection via the `[maintainer]` marker; gates the self-evolution loop).
 
 ## Dev tooling
 
