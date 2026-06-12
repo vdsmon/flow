@@ -571,6 +571,38 @@ def test_main_red_does_not_promote_hot():
     ]
 
 
+def test_main_red_holds_dirty_recovery_candidate():
+    # the recover recipe ends in its own merge within the turn, so a red main must
+    # hold DIRTY candidates too, not let them bypass via version_recoverable.
+    prs = [_pr(1, "flow-a", state="DIRTY")]
+    out = er.classify(prs, _idx(**{"flow-a": ["evolve"]}), main_ci_status="failed")
+    assert out["version_recoverable"] == []
+    assert out["held_main_red"] == [
+        {
+            "pr": 1,
+            "key": "flow-a",
+            "branch": "feature/flow-a-some-desc",
+            "is_draft": False,
+            "is_hot": False,
+        }
+    ]
+
+
+def test_main_red_holds_duplicate_stamp_recovery_candidate():
+    # same hold for the duplicate-stamp restamp path.
+    prs = [_pr(1, "flow-a")]
+    out = er.classify(
+        prs,
+        _idx(**{"flow-a": ["evolve"]}),
+        main_version="1.2.3",
+        branch_versions={"feature/flow-a-some-desc": "1.2.3"},
+        main_ci_status="failed",
+    )
+    assert out["version_recoverable"] == []
+    assert out["merge"] == []
+    assert {e["key"] for e in out["held_main_red"]} == {"flow-a"}
+
+
 def test_held_main_red_key_always_present():
     # the bucket is present (empty) even when main is not red.
     prs = [_pr(1, "flow-a")]

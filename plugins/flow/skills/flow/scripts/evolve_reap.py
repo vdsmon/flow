@@ -237,12 +237,24 @@ def classify(
         if state == "DIRTY":
             # green non-hot DIRTY: candidate for merge-time version-conflict recovery.
             # version_remerge.py authoritatively gates whether it is truly version-only.
-            version_recoverable.append(entry)
+            # recovery ends in its own merge this turn, so a red main holds it too.
+            if main_ci_status == "failed":
+                held_main_red.append(
+                    {**entry, "is_draft": bool(pr.get("isDraft")), "is_hot": False}
+                )
+            else:
+                version_recoverable.append(entry)
             continue
         if state in _MERGEABLE_STATES and _duplicate_stamp(ref):
             # duplicate stamp: merging as-is would mint two releases sharing one
-            # version number; the recover recipe restamps it instead.
-            version_recoverable.append(entry)
+            # version number; the recover recipe restamps it instead. same red-main
+            # hold as DIRTY: the restamp path also merges within the turn.
+            if main_ci_status == "failed":
+                held_main_red.append(
+                    {**entry, "is_draft": bool(pr.get("isDraft")), "is_hot": False}
+                )
+            else:
+                version_recoverable.append(entry)
             continue
         if state not in _MERGEABLE_STATES:
             blocked.append({**entry, "reason": state or "UNKNOWN"})
