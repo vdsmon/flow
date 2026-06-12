@@ -318,7 +318,9 @@ Adapter wraps a subprocess runner; tests inject a fake.
 | `bd priority <key> <n>` | —                                                  | ✗      | ✓       | `set_priority`                              |
 | `bd comment <key>`      | `--stdin`                                          | ✗      | ✓       | `comment` (markdown via stdin)              |
 | `bd dep add <a> <b>`    | `--type`                                           | ✗      | ✓       | `link`                                      |
-| `git log`               | `--grep=<key>`, `--pretty=format:%H`, `-n 1`       | ✗      | ✗       | `is_shipped` evidence probe (read-only)     |
+| `git symbolic-ref`      | `--short refs/remotes/origin/HEAD`                 | ✗      | ✗       | `is_shipped` default-ref resolution         |
+| `git fetch`             | `--quiet origin <branch>`                          | ✗      | (.git)  | `is_shipped` best-effort ref refresh        |
+| `git log`               | `<origin/default> --grep=<key> --format=%H%x00%B%x1e -n 50` | ✗      | ✗       | `is_shipped` default-branch ship probe (word-boundary re-checked) |
 | `bd history <key>`      | `--json`, `--limit 0`                              | ✓      | ✗       | `metric.revert-rate` status-timeline read (not via adapter) |
 
 ### State normalization
@@ -372,12 +374,19 @@ Every other capability is false → `set_sprint`, `add_watcher`, `set_fix_versio
 
 1. `bd show <key> --json`.
 2. If `status != closed` → `not_shipped` (evidence None, source none).
-3. If closed:
-   - `git log --grep=<key> --pretty=format:%H -n 1`.
-   - Commit found → `not_yet_observed` (evidence has tracker, status,
-     commit_sha, closure_reason, closed_at; source `live_backend_query`).
-   - No commit → `indeterminate` (evidence has tracker, status, commit_sha=null;
-     source none).
+3. If closed: resolve the default ref (`git symbolic-ref --short
+   refs/remotes/origin/HEAD`, else `origin/main`), best-effort `git fetch` it,
+   then grep it for a commit naming the key as a WHOLE WORD (`git log
+   <ref> --grep=<key> --format=%H%x00%B%x1e`, word-boundary re-checked so a
+   parent key does not match a child's commit). The default-branch gate is what
+   keeps a closed-but-unmerged bead (work commit only on a feature branch) from
+   reading as shipped; the join is by key-in-message, not sha, because
+   squash-merge makes the feature-branch tip a non-ancestor of main.
+   - Commit on the default branch → `not_yet_observed` (evidence has tracker,
+     status, commit_sha, closure_reason [bd's `close_reason`], closed_at; source
+     `live_backend_query`).
+   - No default-branch commit → `indeterminate` (evidence has tracker, status,
+     commit_sha=null, closure_reason, closed_at; source none).
 4. Workspace's `observe-ship-event.py` (phase ≥7) is the writer that promotes
    `not_yet_observed` into a frozen `<key>.json` ship-event record. Adapter
    never returns `state="shipped"` — that's the frozen-file reader's domain.
