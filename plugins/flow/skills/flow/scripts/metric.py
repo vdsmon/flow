@@ -1141,6 +1141,10 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         "arm-compare", help="Compare flow-arm vs control-arm ship-events in a window."
     )
     _add_common_args(p_arm)
+
+    p_trend = sub.add_parser("trend", help="Roll up all four window measures.")
+    _add_common_args(p_trend)
+    p_trend.add_argument("--json", action="store_true")
     return parser.parse_args(argv)
 
 
@@ -1242,6 +1246,100 @@ def _run_revert_rate(args: argparse.Namespace, since_iso: str, until_iso: str) -
     return 0
 
 
+def _fmt_num(value: Any) -> str:
+    """Render a measure number for the table; None -> 'n/a'."""
+    if value is None:
+        return "n/a"
+    return str(value)
+
+
+def _render_trend_table(rollup: dict[str, Any]) -> str:
+    tpw = rollup["tickets-per-week"]
+    ttp = rollup["time-to-pr"]
+    fpr = rollup["friction-per-run"]
+    rev = rollup["revert-rate"]
+    by_source = rev["reverts_by_source"]
+    lines = [
+        f"metric trend  window [{rollup['since']}, {rollup['until']})",
+        f"  workspace: {rollup['resolved_workspace_root']}",
+        "",
+        f"  tickets-per-week  : shipped={_fmt_num(tpw['shipped'])} "
+        f"via_flow={_fmt_num(tpw[ATTR_VIA_FLOW])} "
+        f"not_attributed={_fmt_num(tpw[ATTR_NOT_ATTRIBUTED])}",
+        f"  time-to-pr        : n_measured={_fmt_num(ttp['n_measured'])} "
+        f"median_hours={_fmt_num(ttp['median_hours'])} "
+        f"p90_hours={_fmt_num(ttp['p90_hours'])}",
+        f"  friction-per-run  : total_events={_fmt_num(fpr['total_events'])} "
+        f"runs={_fmt_num(fpr['runs'])} "
+        f"events_per_run={_fmt_num(fpr['events_per_run'])}",
+        f"  revert-rate       : shipped={_fmt_num(rev['shipped'])} "
+        f"n_reverts={_fmt_num(rev['n_reverts'])} "
+        f"revert_rate={_fmt_num(rev['revert_rate'])} "
+        f"by_source(tracker={_fmt_num(by_source['tracker'])} "
+        f"git={_fmt_num(by_source['git'])})",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def _run_trend(args: argparse.Namespace, since_iso: str, until_iso: str, now_iso: str) -> int:
+    if not args.namespace:
+        sys.stderr.write("metric: --namespace is required\n")
+        return 1
+    workspace_root = Path(args.workspace_root).resolve()
+    err = _check_flow_dir(workspace_root)
+    if err:
+        sys.stderr.write(err)
+        return 1
+    try:
+        tpw = compute(
+            workspace_root,
+            args.namespace,
+            since_iso=since_iso,
+            until_iso=until_iso,
+            now_iso=now_iso,
+        )
+        ttp = compute_time_to_pr(
+            workspace_root,
+            args.namespace,
+            since_iso=since_iso,
+            until_iso=until_iso,
+            now_iso=now_iso,
+        )
+        fpr = compute_friction_per_run(
+            workspace_root,
+            args.namespace,
+            since_iso=since_iso,
+            until_iso=until_iso,
+        )
+        rev = compute_revert_rate(
+            workspace_root,
+            args.namespace,
+            since_iso=since_iso,
+            until_iso=until_iso,
+        )
+    except RevertScanError as exc:
+        sys.stderr.write(f"metric: revert-rate git scan failed: {exc}\n")
+        return 1
+    except ValueError as exc:
+        sys.stderr.write(f"metric: {exc}\n")
+        return 1
+
+    rollup = {
+        "since": since_iso,
+        "until": until_iso,
+        "resolved_workspace_root": str(workspace_root),
+        "tickets-per-week": tpw,
+        "time-to-pr": ttp,
+        "friction-per-run": fpr,
+        "revert-rate": rev,
+    }
+    if args.json:
+        sys.stdout.write(json.dumps(rollup, indent=2, sort_keys=True) + "\n")
+    else:
+        sys.stdout.write(_render_trend_table(rollup))
+    return 0
+
+
 def cli_main(argv: list[str]) -> int:
     args = _parse_args(argv)
     now_iso = utcnow_iso()
@@ -1262,6 +1360,9 @@ def cli_main(argv: list[str]) -> int:
 
     if args.command == "arm-compare":
         return _run_arm_compare(args, since_iso, until_iso)
+
+    if args.command == "trend":
+        return _run_trend(args, since_iso, until_iso, now_iso)
 
     if getattr(args, "checkpoint", False):
         if args.mode is None:
