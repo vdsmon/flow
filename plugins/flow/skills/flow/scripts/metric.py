@@ -43,7 +43,9 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
+import re
 import subprocess
 import sys
 import time
@@ -53,6 +55,7 @@ from typing import Any
 
 import _memory_paths
 import _workspace
+import observe_ship_event
 from _jsonl import append_quarantine, iter_jsonl
 from _timeutil import iso_z, parse_iso, utcnow_iso
 from baseline_collect import percentile
@@ -618,6 +621,138 @@ def _classify_revert(
     return False, None, None, False
 
 
+class RevertScanError(Exception):
+    """Signals workspace_root is not a git repo so the git revert scan cannot run.
+
+    Loud-fail (h8s7 cwd-silent guard) for the new git-source path. cli_main maps it
+    to a non-zero exit naming the resolved root, mirroring ArmCompareEmpty.
+    """
+
+
+_REVERTS_COMMIT_RE = re.compile(r"This reverts commit ([0-9a-f]{7,40})")
+
+_MAIN_REF_CANDIDATES: tuple[str, ...] = (
+    "origin/main",
+    "origin/master",
+    "main",
+    "master",
+    "HEAD",
+)
+
+
+def _git_out(workspace_root: Path, args: list[str]) -> str | None:
+    """Run `git -C <root> <args>`; return stripped stdout, or None on any failure."""
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(workspace_root), *args],
+            capture_output=True,
+            text=True,
+        )
+    except (FileNotFoundError, OSError):
+        return None
+    if proc.returncode != 0:
+        return None
+    return proc.stdout.strip()
+
+
+def _resolve_main_ref(workspace_root: Path) -> str:
+    """Pick the default-branch ref to scan: origin/HEAD target first, then fallbacks."""
+    sym = _git_out(workspace_root, ["symbolic-ref", "refs/remotes/origin/HEAD"])
+    if sym:
+        # e.g. refs/remotes/origin/main -> origin/main
+        ref = sym.replace("refs/remotes/", "", 1)
+        if _git_out(workspace_root, ["rev-parse", "--verify", "--quiet", ref]) is not None:
+            return ref
+    for ref in _MAIN_REF_CANDIDATES:
+        if _git_out(workspace_root, ["rev-parse", "--verify", "--quiet", ref]) is not None:
+            return ref
+    return "HEAD"
+
+
+def _scan_main_reverts(workspace_root: Path) -> list[dict[str, Any]]:
+    """Scan the default branch git log for revert commits.
+
+    Returns one dict per candidate that names a reverted commit (parsed from the
+    `This reverts commit <sha>` body line). Each dict carries the reverting commit
+    metadata plus the reverted commit's full message (resolved separately, "" if
+    unknown). NOT bounded by date; window semantics live in compute_revert_rate.
+
+    Raises RevertScanError iff workspace_root is not a git repo (the h8s7 guard).
+    An empty repo or a repo with zero reverts returns [] without raising.
+    """
+    if _git_out(workspace_root, ["rev-parse", "--git-dir"]) is None:
+        raise RevertScanError(f"not a git repo: {workspace_root}")
+
+    ref = _resolve_main_ref(workspace_root)
+    shas_out = _git_out(workspace_root, ["log", ref, "--grep=revert", "-i", "--format=%H"])
+    if not shas_out:
+        return []
+
+    out: list[dict[str, Any]] = []
+    for sha in shas_out.splitlines():
+        sha = sha.strip()
+        if not sha:
+            continue
+        body = _git_out(workspace_root, ["log", "-1", "--format=%B", sha])
+        if not body:
+            continue
+        m = _REVERTS_COMMIT_RE.search(body)
+        if m is None:
+            continue
+        reverted_sha = m.group(1)
+        reverted_msg = _git_out(workspace_root, ["log", "-1", "--format=%B", reverted_sha]) or ""
+        subject = body.splitlines()[0] if body else ""
+        committed = _git_out(workspace_root, ["log", "-1", "--format=%cI", sha]) or ""
+        out.append(
+            {
+                "reverting_commit_sha": sha,
+                "reverting_subject": subject,
+                "reverting_committed_at": _normalize_iso_z(committed),
+                "reverted_commit_sha": reverted_sha,
+                "reverted_message": reverted_msg,
+            }
+        )
+    return out
+
+
+def _normalize_iso_z(committed: str) -> str:
+    """Normalize a git %cI timestamp to a `...Z` UTC string; passthrough on failure."""
+    dt = parse_iso(committed)
+    return iso_z(dt) if dt is not None else committed
+
+
+def _keys_in_message(message: str, candidate_keys: set[str]) -> list[str]:
+    """Return candidate keys appearing as whole words in message.
+
+    Word-boundary match guards against a parent key (flow-a1ti) false-matching
+    inside a child (flow-a1ti.2): the trailing lookahead forbids a following dot.
+    Keys themselves may contain a dot (e.g. flow-a1ti.2), so re.escape the key.
+    """
+    found: list[str] = []
+    for key in candidate_keys:
+        pat = rf"(?<![\w.-]){re.escape(key)}(?![\w.-])"
+        if re.search(pat, message):
+            found.append(key)
+    return found
+
+
+def _emit_git_revert_event(
+    workspace_root: Path, namespace: str, ticket: str, rev: dict[str, Any]
+) -> None:
+    """Best-effort durable revert event. Never raises (readout is the point)."""
+    record = {
+        "kind": "revert",
+        "ticket": ticket,
+        "reverted_commit_sha": rev.get("reverted_commit_sha"),
+        "reverting_commit_sha": rev.get("reverting_commit_sha"),
+        "reverting_subject": rev.get("reverting_subject"),
+        "reverting_committed_at": rev.get("reverting_committed_at"),
+        "source": "git",
+    }
+    with contextlib.suppress(OSError, ValueError, _memory_paths._MemoryConfigError):
+        observe_ship_event.observe_revert(workspace_root, namespace, record)
+
+
 def compute_revert_rate(
     workspace_root: Path,
     namespace: str,
@@ -647,18 +782,25 @@ def compute_revert_rate(
 
     backend = _tracker_backend(workspace_root)
 
+    # scan first so the not-a-git-repo guard fires deterministically, regardless
+    # of ship-event presence or tracker backend (git reverts count for jira too).
+    git_reverts_scanned = _scan_main_reverts(workspace_root)
+
     shipped = 0
     n_reverts = 0
     reverts_via_flow = 0
     reverts_not_attributed = 0
     tickets: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
+    in_window_keys: set[str] = set()
 
     for event in load_ship_events(workspace_root, namespace):
         shipped_at_dt = parse_iso(str(event.get("shipped_at")))
         if shipped_at_dt is None or not (since <= shipped_at_dt < until):
             continue
         ticket = event.get("ticket")
+        if isinstance(ticket, str) and ticket:
+            in_window_keys.add(ticket)
 
         if backend != "beads":
             skipped.append({"ticket": ticket, "reason": "tracker_unsupported"})
@@ -695,6 +837,28 @@ def compute_revert_rate(
 
     tickets.sort(key=lambda t: (str(t["shipped_at"]), str(t["ticket"])))
     revert_rate = round(n_reverts / shipped, 6) if shipped > 0 else 0
+
+    # git layer: join scanned main reverts to in-window shipped ticket keys. NOT
+    # window-bounded on the revert side; a ticket shipped in-window but reverted
+    # later still counts. A durable revert event is emitted per matched revert
+    # (idempotent on reverting_commit_sha); the emit is best-effort.
+    git_reverts: list[dict[str, Any]] = []
+    git_reverted_keys: set[str] = set()
+    for rev in git_reverts_scanned:
+        msg = str(rev.get("reverted_message") or "")
+        for key in _keys_in_message(msg, in_window_keys):
+            git_reverted_keys.add(key)
+            git_reverts.append(
+                {
+                    "ticket": key,
+                    "reverting_commit_sha": rev.get("reverting_commit_sha"),
+                    "reverting_subject": rev.get("reverting_subject"),
+                    "reverted_commit_sha": rev.get("reverted_commit_sha"),
+                }
+            )
+            _emit_git_revert_event(workspace_root, namespace, key, rev)
+    git_reverts.sort(key=lambda r: (str(r["ticket"]), str(r["reverting_commit_sha"])))
+
     return {
         "since": since_iso,
         "until": until_iso,
@@ -706,6 +870,8 @@ def compute_revert_rate(
         "tickets": tickets,
         "skipped": skipped,
         "n_skipped": len(skipped),
+        "reverts_by_source": {"tracker": n_reverts, "git": len(git_reverted_keys)},
+        "git_reverts": git_reverts,
     }
 
 
@@ -1060,12 +1226,16 @@ def _run_revert_rate(args: argparse.Namespace, since_iso: str, until_iso: str) -
     if err:
         sys.stderr.write(err)
         return 1
-    result = compute_revert_rate(
-        workspace_root,
-        args.namespace,
-        since_iso=since_iso,
-        until_iso=until_iso,
-    )
+    try:
+        result = compute_revert_rate(
+            workspace_root,
+            args.namespace,
+            since_iso=since_iso,
+            until_iso=until_iso,
+        )
+    except RevertScanError as exc:
+        sys.stderr.write(f"metric: revert-rate git scan failed: {exc}\n")
+        return 1
     out = dict(result)
     out["resolved_workspace_root"] = str(workspace_root)
     sys.stdout.write(json.dumps(out, indent=2, sort_keys=True) + "\n")
@@ -1150,6 +1320,7 @@ __all__ = [
     "ATTR_NOT_ATTRIBUTED",
     "ATTR_VIA_FLOW",
     "ArmCompareEmpty",
+    "RevertScanError",
     "classify_attribution",
     "cli_main",
     "compute",
