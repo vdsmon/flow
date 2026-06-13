@@ -63,6 +63,11 @@ wait_for_session() {
 
 {
   echo "=== flow nightly evolve: $(date) ==="
+  # _RUN_OUTCOME defaults to fail; the EXIT trap records `end` on ANY exit
+  # (crash, set -uo pipefail abort, bad cd), so a dead fire is captured at once
+  # rather than waiting out the 36h staleness bar. Set ok only on a clean launch.
+  _RUN_OUTCOME=fail
+  trap 'record end "$_RUN_OUTCOME"' EXIT
   record start
   cd "$REPO" || { echo "repo not found: $REPO"; exit 1; }
 
@@ -91,7 +96,7 @@ wait_for_session() {
 
   echo "--- consumer: claude --bg /flow evolve drain ---"
   claude --bg "/flow evolve drain"
+  if [ -n "$PSID" ]; then _RUN_OUTCOME=ok; fi
 
-  record end ok
   echo "=== done (drain detached; janitor + launch run in background): $(date) ==="
 } 2>&1 | tee "$LOG"

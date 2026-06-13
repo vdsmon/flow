@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -84,3 +85,40 @@ def test_render_table_contains_ids(tmp_path: Path) -> None:
 
 def test_render_table_empty() -> None:
     assert status.render_table([]) == "(no runs)"
+
+
+def test_cli_main_table_success(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    _ws(tmp_path)
+    _seed_run(tmp_path, "FT-5", ["ticket", "plan", "commit"], finished=["ticket"])
+    rc = status.cli_main(["--workspace-root", str(tmp_path)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "FT-5" in out
+    assert "1/3" in out
+    assert "TICKET" in out
+
+
+def test_cli_main_json_output(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    _ws(tmp_path)
+    _seed_run(tmp_path, "FT-5", ["ticket", "plan", "commit"], finished=["ticket"])
+    rc = status.cli_main(["--workspace-root", str(tmp_path), "--json"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    data = json.loads(out)
+    assert data[0]["ticket"] == "FT-5"
+    assert data[0]["completed"] == 1
+    assert data[0]["total_stages"] == 3
+    assert data[0]["next_or_blocked"] == "plan:pending"
+    assert "lease" in data[0]
+    assert isinstance(data[0]["lease"], str)
+
+
+def test_cli_main_ticket_filter(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    _ws(tmp_path)
+    _seed_run(tmp_path, "FT-1", ["ticket", "plan", "commit"])
+    _seed_run(tmp_path, "FT-2", ["ticket", "plan", "commit"])
+    rc = status.cli_main(["--workspace-root", str(tmp_path), "--ticket", "FT-2"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "FT-2" in out
+    assert "FT-1" not in out
