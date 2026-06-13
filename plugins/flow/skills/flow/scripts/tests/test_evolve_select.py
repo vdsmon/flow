@@ -604,3 +604,73 @@ def test_select_launched_hot_blocks_second_hot(tmp_path):
     assert out["held_hot"] == ["flow-4lb"]
     assert "flow-hso" in out["skipped_in_flight"]
     assert set(out["launched_pending"]) == {"flow-jud", "flow-hso"}
+
+
+# ---- budget shrinks by in-flight active-session count ----
+
+
+def test_budget_subtracts_inflight_count():
+    # active-session count (launched_pending UNION live_runs) shrinks the concurrency budget.
+    cands = [_cand(f"flow-{i}") for i in range(10)]
+    full = es.partition(cands, set(), False, 0, cap=10, concurrency=8, inflight_count=8)
+    assert full["launch"] == []  # concurrency - inflight floored to 0
+    partial = es.partition(cands, set(), False, 0, cap=10, concurrency=8, inflight_count=6)
+    assert len(partial["launch"]) == 2  # min(10-0, 8-6)
+
+
+def test_budget_open_prs_dont_consume_concurrency():
+    # the discriminator: open PRs bound only the cap term, NOT the concurrency term.
+    cands = [_cand(f"flow-{i}") for i in range(10)]
+    out = es.partition(
+        cands, set(), False, open_pr_count=4, cap=10, concurrency=8, inflight_count=0
+    )
+    assert len(out["launch"]) == 6  # min(10-4, 8-0), NOT 8-4
+
+
+def test_select_budget_shrinks_with_launched_pending(tmp_path):
+    # six launched_pending keys consume the budget; only concurrency-6 slots remain.
+    ws = _marked_ws(tmp_path)
+    repo = es.resolve_maintainer_repo(ws)
+    assert repo is not None
+    pending = [f"flow-p{i}" for i in range(1, 7)]
+    for key in pending:
+        _ledger_add(repo, key)
+    # ready candidates are DISJOINT from the launched set, so they only feel the budget.
+    run, _ = _dispatch(ready=[_cand(f"flow-r{i}") for i in range(5)])
+    out = es.select(ws, cap=10, concurrency=8, runner=run)
+    assert len(out["launch"]) == 2  # 8 - 6 launched_pending
+    assert sorted(out["launched_pending"]) == sorted(pending)
+
+
+def test_select_launched_pending_open_hot_serializes_next_hot(tmp_path):
+    # a hot key sits in launched_pending with status `open` (just launched, pre-transition),
+    # no lease and no ref/PR. It must consume the single hot slot, holding the next hot.
+    ws = _marked_ws(tmp_path)
+    repo = es.resolve_maintainer_repo(ws)
+    assert repo is not None
+    _ledger_add(repo, "flow-hot1")
+    calls: Recorder = []
+
+    def run(args):
+        calls.append(args)
+        if args[:2] == ["bd", "ready"]:
+            return subprocess.CompletedProcess(
+                args,
+                0,
+                json.dumps([_cand("flow-hot2", labels=["evolve", "hot"], blast="z.py")]),
+                "",
+            )
+        if args[:2] == ["bd", "list"]:
+            wanted = set(args[args.index("--status") + 1].split(","))
+            beads = [{"id": "flow-hot1", "labels": ["evolve", "hot"], "status": "open"}]
+            filtered = [b for b in beads if b.get("status") in wanted]
+            return subprocess.CompletedProcess(args, 0, json.dumps(filtered), "")
+        if args[:3] == ["gh", "pr", "list"]:
+            return subprocess.CompletedProcess(args, 0, "[]", "")
+        if args[:2] == ["git", "for-each-ref"]:
+            return subprocess.CompletedProcess(args, 0, "", "")
+        return subprocess.CompletedProcess(args, 1, "", f"unexpected: {args}")
+
+    out = es.select(ws, cap=10, concurrency=8, runner=run)
+    assert out["launch"] == []
+    assert out["held_hot"] == ["flow-hot2"]
