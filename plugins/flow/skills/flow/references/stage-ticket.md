@@ -76,7 +76,13 @@ Subsequent stages depend on `<ticket-dir>/ticket.json` being present.
    ```
    This claim is **best-effort: it never fails the stage.** No git work has happened yet, so the only thing at stake is the double-pick window; aborting the whole run because the backend would not move is worse than proceeding on the local stamp plus a logged warning. Read the printed JSON for `failure_kind` + `failure_detail`. Exit-code handling:
    - Exit 0 → claimed; continue.
-   - Exit 3 → no transition to `in_progress` available — the ticket is already `in_progress` (a resumed run), or the tracker has no such state (a review-less / stateless backend). This is the desired end state (or a no-op tracker); continue silently.
+   - Exit 3 → no transition to `in_progress` available. This is **ambiguous**: the ticket is already `in_progress` (a resumed run) or the tracker has no such state (benign), OR the bead is **terminal** (closed/done/cancelled) and the only transition left is `to open`. The benign case continues silently; a terminal bead must NOT — that is the flow-d6gq leak (an `--auto` run bootstrapped a CLOSED bead, the close having landed between spec-fetch and here, and this exit-3 swallowed it). Disambiguate by reading the authoritative status:
+     ```bash
+     ${CLAUDE_SKILL_DIR}/scripts/tracker_cli.py \
+       --workspace-root . \
+       state --key <KEY>
+     ```
+     Read the printed `normalized`. If it is `done` or `cancelled` → the bead is terminal; **abort the stage with status=failed** (the bead is closed — there is nothing to implement; it likely closed mid-run, e.g. a parent epic merged). Surface it + the `/flow recover <KEY>` hint. Otherwise (`in_progress` / `open` / no-such-state, or the `state` read itself errors) → the desired end state or a no-op tracker; continue silently.
    - Exit 1 / 2 / 4 / 5 → log a one-line warning naming `failure_kind` + `failure_detail` (from the printed JSON, else the stderr message), append one friction entry, and continue. Do **NOT** mark the stage failed.
      ```bash
      ${CLAUDE_SKILL_DIR}/scripts/flow_friction.py \
@@ -101,7 +107,7 @@ Subsequent stages depend on `<ticket-dir>/ticket.json` being present.
   cause is fixed, `/flow recover <KEY>` → `retry --stage ticket`.
 - Exit 2/3 from `ticket_frontmatter.py` → abort status=failed; once the
   frontmatter input is fixed, `/flow recover <KEY>` → `retry --stage ticket`.
-- `tracker_cli.py transition` exit 3 in step 3b → already `in_progress` or no such state; continue silently (not an error).
+- `tracker_cli.py transition` exit 3 in step 3b → ambiguous: read `tracker_cli.py state --key <KEY>` and check `normalized`. `done`/`cancelled` → terminal bead, abort status=failed (`/flow recover <KEY>`). Otherwise (`in_progress` / no such state) → continue silently (not an error).
 - `tracker_cli.py transition` exit 1 / 2 / 4 / 5 in step 3b → best-effort claim; warn + append a `RECONCILE` friction entry + continue. Never fails the stage.
 
 ## Skip conditions

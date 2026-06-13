@@ -34,6 +34,7 @@ Exit codes:
   2 = bad args / missing main workspace config
   3 = I/O error
   4 = duplicate claim (a live sibling run already holds this ticket)
+  6 = bead is terminal (closed/done/cancelled) — nothing to bootstrap
 """
 
 from __future__ import annotations
@@ -78,6 +79,10 @@ class _ConfigError(Exception):
 
 class _DuplicateClaim(Exception):
     """a live sibling run already holds this ticket. Exit code 4."""
+
+
+class _TerminalBead(Exception):
+    """the bead is already closed/done/cancelled. Exit code 6."""
 
 
 def _git(args: list[str], cwd: Path, runner: Runner) -> str:
@@ -460,6 +465,56 @@ def _enforce_hot_floor(
         )
 
 
+_TERMINAL_STATES = frozenset({"done", "cancelled"})
+
+
+def _refuse_terminal_bead(*, ticket: str, main_root: Path) -> None:
+    """Refuse (exit 6) to bootstrap a bead whose authoritative status is terminal.
+
+    Witnessed (flow-d6gq): a `/flow <key> --auto` run bootstrapped a CLOSED bead and
+    ran it to implement. The spec `get` ran pre-worktree from the main checkout and
+    reflected the bead as open at that instant; the close (its parent epic's merge)
+    landed during the run. This re-reads the bead's authoritative status at the
+    bootstrap chokepoint — seconds-to-minutes after the spec fetch, so it catches a
+    bead that closed during planning — and refuses before `git worktree add` (a
+    refusal leaves no orphan). Tracker-agnostic and unconditional (interactive +
+    `--auto`): bootstrapping a done/cancelled bead is wrong either way.
+
+    Fail-open is narrow: a genuine read *exception* (tracker construction / subprocess
+    failure) proceeds, so a flaky tracker read never strands a legitimate run. A read
+    that SUCCEEDS but yields no usable status is NOT fail-open — it refuses, since an
+    affirmatively-incoherent tracker answer is suspicious, not transient. The do-loop
+    ticket stage re-checks downstream (stage-ticket.md step 3b) and is the backstop for
+    a close that lands after this gate.
+    """
+    import triage
+    from tracker import make_tracker
+
+    config, _code = triage._resolve_config(main_root)
+    if config is None:
+        return
+    try:
+        st = make_tracker(config).state(ticket)
+    except Exception:
+        # Read mechanism failed (network / subprocess / construction). Fail-open:
+        # do not block a legitimate run on a transient tracker read failure.
+        return
+    normalized = st.get("normalized") if isinstance(st, dict) else None
+    if normalized in _TERMINAL_STATES:
+        raise _TerminalBead(
+            f"refusing to bootstrap {ticket}: the bead's authoritative status is "
+            f"terminal (normalized={normalized!r}). It is already closed/done — there "
+            "is nothing to implement. If this is wrong, reopen the bead (status->open) "
+            "and re-run."
+        )
+    if not normalized:
+        raise _TerminalBead(
+            f"refusing to bootstrap {ticket}: could not confirm the bead is live "
+            f"(empty/indeterminate status read: {st!r}). Refusing rather than "
+            "bootstrapping on an unconfirmed status. Re-run once the tracker is healthy."
+        )
+
+
 def bootstrap(
     *,
     ticket: str,
@@ -488,6 +543,9 @@ def bootstrap(
             "e2e handler is enabled in workspace.toml; pass --e2e-recipe "
             "(the approved plan must declare the e2e recipe/fixture, or 'skip: <reason>')"
         )
+
+    # Refuse a bead that is already closed/done before any git mutation (flow-d6gq).
+    _refuse_terminal_bead(ticket=ticket, main_root=main_root)
 
     _enforce_hot_floor(
         ticket=ticket,
@@ -693,6 +751,9 @@ def cli_main(argv: list[str]) -> int:
     except _DuplicateClaim as exc:
         sys.stderr.write(f"flow-worktree: {exc}\n")
         return 4
+    except _TerminalBead as exc:
+        sys.stderr.write(f"flow-worktree: {exc}\n")
+        return 6
     except OSError as exc:
         sys.stderr.write(f"flow-worktree: I/O error: {exc}\n")
         return 3
