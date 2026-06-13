@@ -58,8 +58,9 @@ MAIN_CI=$(python3 ${CLAUDE_SKILL_DIR}/scripts/main_ci_health.py probe --workspac
 Ask the pure gate whether this run may self-merge:
 
 ```bash
-python3 ${CLAUDE_SKILL_DIR}/scripts/evolve_self_merge.py \
-  --workspace-root . --key "$KEY" --ci-status "$CI" --main-ci-status "$MAIN_CI" ${EVAL_STATUS:+--eval-status "$EVAL_STATUS"}
+_merge_args=(--workspace-root . --key "$KEY" --ci-status "$CI" --main-ci-status "$MAIN_CI")
+[ -n "$EVAL_STATUS" ] && _merge_args+=(--eval-status "$EVAL_STATUS")
+python3 ${CLAUDE_SKILL_DIR}/scripts/evolve_self_merge.py "${_merge_args[@]}"
 ```
 
 Returns `{"action": "merge"|"skip", "is_hot": bool, "reason": "..."}`. The gate skips when this is not the maintainer self-target, not an `evolve` bead, CI is not green, **main's own CI is red** (`main CI red` — auto-merge paused this turn; a probe `error` resumes, it does not skip), the harness eval did not pass (`regressed` = the no-degradation rule; `error` = no non-regression evidence, blocked conservatively), or a `hot` bead while `[evolve] auto_merge_hot` is off.
