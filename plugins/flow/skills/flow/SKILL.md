@@ -187,9 +187,4 @@ The verbose detail — full exit-code matrices, the PR-ready notification protoc
 
    When the loop exited cleanly: surface "ticket <KEY> pipeline complete. State: `cat .flow/runs/<KEY>/state.json | jq`."
 
-   **Then end the turn with the PR link as a distinct, highlighted block — the LAST thing in your message, visually separated from the rest of the summary.** The PR URL is the one thing the user clicks first, so it must not be buried in a paragraph or a bullet list. Read it from `.flow/runs/<KEY>/stages/create_pr.out` (the `PR_URL=` line ship-it printed) and render it on its own, after a `---` rule, e.g.:
-   ```
-   ---
-   🚀 **PR ready for review →** <PR_URL>
-   ```
-   Put any one-line caveats (residual risks) ABOVE the rule; nothing goes below the PR link. Draft state is the normal end state, not a caveat: never flag it. If `create_pr` was skipped (handler `none`, or the run blocked before it), omit the block rather than printing an empty rule.
+   **Then end the turn with the PR link as a distinct, highlighted block — the LAST thing in your message, after a `---` rule, nothing below it.** Full rendering rules (the `---` example, caveat-above-the-rule placement, the skipped-`create_pr` omit case): `references/verb-do.md`.

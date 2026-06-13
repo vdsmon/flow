@@ -11,6 +11,15 @@ A blocker needs no special ping: an `AskUserQuestion` surfaces natively as "need
 
 **Firing point (do-loop step e):** fire only when `$STAGE` is `review_loop` with `$STATUS` completed (CI green and every actionable reviewer thread resolved), reading the PR URL from the captured `create_pr.out`. Only when `review_loop`'s handler is `none` (no CI/review loop wired) do you fall back to firing at `create_pr` completed.
 
+## PR-link presentation (do-loop step 5, run completion)
+
+After the loop exits cleanly and the lease is released, end the turn with the PR link as a distinct, highlighted block — the LAST thing in your message, visually separated from the rest of the summary. The PR URL is the one thing the user clicks first, so it must not be buried in a paragraph or a bullet list. Read it from `.flow/runs/<KEY>/stages/create_pr.out` (the `PR_URL=` line ship-it printed) and render it on its own, after a `---` rule, e.g.:
+```
+---
+🚀 **PR ready for review →** <PR_URL>
+```
+Put any one-line caveats (residual risks) ABOVE the rule; nothing goes below the PR link. Draft state is the normal end state, not a caveat: never flag it. If `create_pr` was skipped (handler `none`, or the run blocked before it), omit the block rather than printing an empty rule.
+
 ## Self-teardown at run completion (--auto only)
 
 **Why.** A finished `claude --bg "/flow <key> --auto"` session lingers in the `claude agents` panel until a drain turn's A2 cleanup collects it — often a long time (drain turns are event-driven, and A2 waits on a 300s transcript-idle bar). Self-teardown clears the panel at completion. The evolve drain's A2 cleanup (`references/verb-evolve.md`) stays as the safety net for runs that die before reaching this tail.
@@ -48,6 +57,7 @@ true
 
 **`dispatch_stage.py init` (do-loop step 3):**
 - Exit 0 → run initialized; proceed to the loop. The stdout JSON carries a `session_nonce` — the per-acquire lease component minted on this acquire (a fresh run) or carried forward (a same-session resume that presented it). Capture it and pass it back as `--session-nonce` on every later `next`/`advance`/`release`; it is what lets a refresh/release detect a force/takeover, and (on a re-init) what distinguishes the same session resuming from a second `/flow do`.
+- An init payload (exit 0) MAY also carry `state_recovered_from_backup: true` → the dispatcher found a corrupt `state.json` at init, quarantined it, and restored the newest `.bak` (rewriting it to disk, so the subsequent `next` reads clean state and never re-emits the marker). On this marker the do-loop MUST (1) append a `STATE_ROLLBACK` friction entry; (2) carry it forward and apply the same re-verify as the `next`/`advance` marker to the FIRST non-idempotent stage it dispatches this run — `create_pr`, `merge`, `commit` — since an init-recovered `.bak` can be one write behind, a stage that already landed its external effect may show pending; re-verify whether the effect landed (`gh pr view` for `create_pr`/`review_loop`, `git log` / `gh pr view` for `merge`/`commit`) and if it did, finish the stage `completed` WITHOUT re-running it.
 - Exit 1 **with a `holder` block in the stdout JSON** → the ticket is locked by a live run.
   This now also fires when a SECOND `/flow do` re-inits a live lease without the owner's `session_nonce` (the bug flow-8i6l closed: run_id alone, read from `state.json`, no longer re-acquires a live lease). A genuine same-session resume passes `--session-nonce`; a crash-resume waits for the lease to expire (then init resumes via the expired-owner path) or uses `/flow recover`.
   Surface the holder JSON and the hint `/flow recover <ticket>`, then abort.
