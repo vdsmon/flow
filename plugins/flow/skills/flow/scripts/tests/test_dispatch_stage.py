@@ -1557,3 +1557,46 @@ def test_next_clean_read_has_no_recovery_marker(
     rc, payload = ds.cmd_advance(tmp_path, "FT-1", "ticket", "completed")
     assert rc == 0
     assert "state_recovered_from_backup" not in payload
+
+
+# ─── fleet ledger shadow-write (epic flow-8by2.2) ──────────────────────────────
+
+
+def _make_maintainer(tmp_path: Path) -> None:
+    # mark the workspace as a maintainer self-target so register_run is armed.
+    wt = tmp_path / ".flow" / "workspace.toml"
+    wt.write_text(
+        wt.read_text(encoding="utf-8") + "\n[maintainer]\nself_target = true\n",
+        encoding="utf-8",
+    )
+
+
+def test_next_shadow_writes_fleet_entry_in_maintainer_mode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_workspace(tmp_path, stages=["ticket", "plan"], compounding=False)
+    _make_maintainer(tmp_path)
+    monkeypatch.setenv("HOME", str(tmp_path / "no-home"))
+    _stub_git_head(monkeypatch)
+    rc, first = ds.cmd_init(tmp_path, "FT-1")
+    assert rc == 0
+    ds.cmd_next(tmp_path, "FT-1", first["session_nonce"])
+    entry_path = tmp_path / ".flow" / "fleet" / "FT-1.json"
+    assert entry_path.exists()
+    entry = json.loads(entry_path.read_text(encoding="utf-8"))
+    assert entry["key"] == "FT-1"
+    assert entry["run_id"] == first["run_id"]
+
+
+def test_next_no_fleet_write_when_not_maintainer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # default workspace has no [maintainer] marker -> register_run is a no-op and
+    # cmd_next must still succeed (fail-open: a shadow ledger never breaks dispatch).
+    _write_workspace(tmp_path, stages=["ticket", "plan"], compounding=False)
+    monkeypatch.setenv("HOME", str(tmp_path / "no-home"))
+    _stub_git_head(monkeypatch)
+    ds.cmd_init(tmp_path, "FT-1")
+    rc, _ = ds.cmd_next(tmp_path, "FT-1")
+    assert rc == 0
+    assert not (tmp_path / ".flow" / "fleet").exists()

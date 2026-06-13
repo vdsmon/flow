@@ -34,6 +34,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any, cast
 
+import fleet
 import lease
 import recall_pending
 import state
@@ -443,6 +444,22 @@ def cmd_next(
                 "detail": str(exc),
                 "hint": "/flow recover",
             }
+
+    # Shadow-write the fleet liveness ledger (epic flow-8by2.2): an upsert that
+    # registers + heartbeats this run under the shared .flow/fleet/. Maintainer-
+    # gated and fail-open: nothing reads it authoritatively yet (child-3 cuts the
+    # readers over), so a shadow-ledger fault must never break dispatch. Per-key
+    # flock contention is minimal (one writer per key; only a launch-register vs
+    # the first next briefly serialize).
+    with contextlib.suppress(Exception):
+        fleet.register_run(
+            workspace_root,
+            ticket,
+            ts.run_id,
+            now=utcnow_iso(),
+            hostname=host,
+            boot_id=boot,
+        )
 
     state.begin_stage(td, next_stage, head_sha)
     return 0, payload
