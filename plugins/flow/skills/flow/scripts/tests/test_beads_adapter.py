@@ -155,7 +155,7 @@ def _issue_json(**overrides: Any) -> dict[str, Any]:
         "title": "Add cooldown to skill X",
         "description": "long body...",
         "status": "open",
-        "type": "task",
+        "issue_type": "task",
         "priority": 2,
         "assignee": "alice",
         "labels": ["pri:high"],
@@ -182,6 +182,7 @@ def test_get_returns_full_ticket_shape() -> None:
     assert ticket["key"] == "bd-a1b2"
     assert ticket["summary"] == "Add cooldown to skill X"
     assert ticket["status"] == "open"
+    assert ticket["type"] == "task"
     assert ticket["priority"] == "P2"
     assert ticket["assignee"] == "alice"
     assert len(ticket["comments"]) == 1
@@ -191,6 +192,16 @@ def test_get_returns_full_ticket_shape() -> None:
     assert len(ticket["links"]) == 1
     assert ticket["links"][0]["kind"] == "blocks"
     assert ticket["links"][0]["to_key"] == "bd-9999"
+
+
+def test_get_maps_epic_issue_type() -> None:
+    # bd emits the issue type under `issue_type`, not `type` (which carries the dep
+    # kind); the epic bootstrap guard (flow-jvxj) reads Ticket["type"], so the
+    # adapter must surface `issue_type`. Regression: it previously read `raw["type"]`
+    # and reported every bead as "task".
+    issue = _issue_json(issue_type="epic")
+    adapter, _ = _build_adapter([_cp(stdout=json.dumps(issue))])
+    assert adapter.get("bd-a1b2")["type"] == "epic"
 
 
 def test_get_passes_include_comments_flag() -> None:

@@ -85,6 +85,10 @@ class _TerminalBead(Exception):
     """the bead is already closed/done/cancelled. Exit code 6."""
 
 
+class _EpicBead(Exception):
+    """the bead is an epic (a container, not a single-PR unit). Exit code 7."""
+
+
 def _git(args: list[str], cwd: Path, runner: Runner) -> str:
     result = runner(["git", *args], cwd)
     if result.returncode != 0:
@@ -515,6 +519,44 @@ def _refuse_terminal_bead(*, ticket: str, main_root: Path) -> None:
         )
 
 
+def _refuse_epic_bead(*, ticket: str, main_root: Path) -> None:
+    """Refuse (exit 7) to bootstrap an epic — a container, not a single-PR unit.
+
+    Witnessed (flow-jvxj, parent flow-8by2): `/flow <epic> --auto` reached this
+    chokepoint on an epic bead. `evolve_select.py` filters `issue_type != "epic"`
+    unconditionally so drain never launches one, but a manual or misrouted
+    `/flow <epic> --auto` had no structural floor — and bootstrapping an epic
+    cram-ships fragments of an unaccepted empire as a single PR (the ouroboros
+    verb-evolve.md §epic names). This mirrors the select-side filter at the
+    bootstrap chokepoint. Tracker-agnostic ("epic"/"Epic") and unconditional
+    (interactive + `--auto`): an epic is decomposed via the §E expand recipe, not
+    implemented directly, either way.
+
+    Fail-open matches `_refuse_terminal_bead`: a read *exception* proceeds so a
+    flaky tracker never strands a real run; a successful read of a non-epic type
+    proceeds normally.
+    """
+    import triage
+    from tracker import make_tracker
+
+    config, _code = triage._resolve_config(main_root)
+    if config is None:
+        return
+    try:
+        ticket_type = make_tracker(config).get(ticket).get("type", "")
+    except Exception:
+        # Read mechanism failed (network / subprocess / construction). Fail-open.
+        return
+    if str(ticket_type).strip().lower() == "epic":
+        raise _EpicBead(
+            f"refusing to bootstrap {ticket}: it is an EPIC (a container, not a "
+            "single-PR unit). An epic is decomposed into child beads via the expand "
+            "recipe (verb-evolve.md §E), then each child runs at its own spec gate — "
+            "bootstrapping the epic directly would cram-ship fragments of an "
+            "unaccepted epic as one PR. Expand it, or run a child key instead."
+        )
+
+
 def bootstrap(
     *,
     ticket: str,
@@ -546,6 +588,10 @@ def bootstrap(
 
     # Refuse a bead that is already closed/done before any git mutation (flow-d6gq).
     _refuse_terminal_bead(ticket=ticket, main_root=main_root)
+
+    # Refuse an epic before any git mutation (flow-jvxj): mirrors the select-side
+    # `issue_type != "epic"` filter at the bootstrap chokepoint.
+    _refuse_epic_bead(ticket=ticket, main_root=main_root)
 
     _enforce_hot_floor(
         ticket=ticket,
@@ -754,6 +800,9 @@ def cli_main(argv: list[str]) -> int:
     except _TerminalBead as exc:
         sys.stderr.write(f"flow-worktree: {exc}\n")
         return 6
+    except _EpicBead as exc:
+        sys.stderr.write(f"flow-worktree: {exc}\n")
+        return 7
     except OSError as exc:
         sys.stderr.write(f"flow-worktree: I/O error: {exc}\n")
         return 3
