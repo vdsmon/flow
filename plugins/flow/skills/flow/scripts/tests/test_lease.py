@@ -748,6 +748,75 @@ def test_takeover_clear_race_corrupt_replaced_by_live(
     assert list(tmp_path.glob("run.lock.quarantine.*")) == []
 
 
+def test_takeover_clear_force_clears_live(tmp_path: Path) -> None:
+    # the abort --force escape hatch: force unlinks a lease that still looks live.
+    _acquire(tmp_path, "run-1")
+    result = lease.takeover_clear(
+        tmp_path, NOW, current_boot="boot-A", hostname="host-1", force=True
+    )
+    assert result["cleared"] is True
+    assert result["state"] == "live"
+    assert not lease.run_lock_path(tmp_path).exists()
+
+
+def test_takeover_clear_runs_on_cleared_when_expired(tmp_path: Path) -> None:
+    _acquire(tmp_path, "run-1", now="2020-01-01T00:00:00Z")  # expired by NOW
+    calls: list[str] = []
+    result = lease.takeover_clear(
+        tmp_path,
+        NOW,
+        current_boot="boot-A",
+        hostname="host-1",
+        on_cleared=lambda: calls.append("ran"),
+    )
+    assert result["cleared"] is True
+    assert calls == ["ran"]
+
+
+def test_takeover_clear_skips_on_cleared_when_live(tmp_path: Path) -> None:
+    # a refused-live takeover must NOT run on_cleared (no stage resets under a
+    # live lease we did not clear).
+    _acquire(tmp_path, "run-1")
+    calls: list[str] = []
+    result = lease.takeover_clear(
+        tmp_path,
+        NOW,
+        current_boot="boot-A",
+        hostname="host-1",
+        on_cleared=lambda: calls.append("ran"),
+    )
+    assert result["cleared"] is False
+    assert calls == []
+
+
+def test_takeover_clear_on_cleared_runs_under_flock(tmp_path: Path) -> None:
+    # the secondary de-mutex fix: on_cleared (recover takeover's stage resets)
+    # must run WHILE the lease flock is still held, so a concurrent acquire
+    # cannot land between the clear and the resets. Prove the flock is held by
+    # failing a non-blocking re-lock from a fresh fd inside the callback.
+    import fcntl
+    import os
+
+    _acquire(tmp_path, "run-1", now="2020-01-01T00:00:00Z")  # expired by NOW
+    flock_held: list[bool] = []
+
+    def on_cleared() -> None:
+        fd = os.open(str(lease._flock_path(tmp_path)), os.O_RDWR | os.O_CREAT)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            flock_held.append(False)  # acquired -> flock was NOT held
+        except BlockingIOError:
+            flock_held.append(True)  # blocked -> flock IS held by takeover_clear
+        finally:
+            os.close(fd)
+
+    result = lease.takeover_clear(
+        tmp_path, NOW, current_boot="boot-A", hostname="host-1", on_cleared=on_cleared
+    )
+    assert result["cleared"] is True
+    assert flock_held == [True]
+
+
 # ─── classify_then ───────────────────────────────────────────────────────────
 
 

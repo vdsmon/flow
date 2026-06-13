@@ -22,6 +22,7 @@ import metric
 def _seed_workspace(root: Path, namespace: str = "demo", backend: str = "beads") -> None:
     flow = root / ".flow"
     (flow / namespace).mkdir(parents=True, exist_ok=True)
+    (flow / ".initialized").write_text("", encoding="utf-8")
     (flow / "workspace.toml").write_text(
         f'[tracker]\nbackend = "{backend}"\n\n[memory]\nnamespace = "{namespace}"\n',
         encoding="utf-8",

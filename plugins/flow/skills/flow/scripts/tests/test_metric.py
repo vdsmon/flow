@@ -17,6 +17,7 @@ import metric
 def _seed_workspace(root: Path, namespace: str = "demo") -> None:
     flow = root / ".flow"
     (flow / namespace / "ship-events").mkdir(parents=True, exist_ok=True)
+    (flow / ".initialized").write_text("", encoding="utf-8")
     (flow / "workspace.toml").write_text(
         f'[tracker]\nbackend = "jira"\n\n[memory]\nnamespace = "{namespace}"\n',
         encoding="utf-8",
@@ -458,6 +459,17 @@ def test_cli_no_flow_dir_time_to_pr(tmp_path: Path, capsys) -> None:
     rc = metric.cli_main(["time-to-pr", "--namespace", "demo", "--workspace-root", str(tmp_path)])
     assert rc == 1
     assert "no .flow" in capsys.readouterr().err
+
+
+def test_cli_flow_dir_without_initialized_marker(tmp_path: Path, capsys) -> None:
+    (tmp_path / ".flow").mkdir()  # bare .flow, no .initialized
+    rc = metric.cli_main(
+        ["tickets-per-week", "--namespace", "demo", "--workspace-root", str(tmp_path)]
+    )
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "not a flow workspace" in err
+    assert str(tmp_path.resolve()) in err
 
 
 def test_cli_tpw_output_includes_resolved_workspace_root(tmp_path: Path, capsys) -> None:

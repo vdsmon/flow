@@ -73,21 +73,31 @@ def takeover(
 ) -> tuple[int, dict[str, Any]]:
     now_iso = now_iso or utcnow_iso()
     td = _ticket_dir(workspace_root, ticket)
+    reset: list[str] = []
+
+    def _reset_and_snapshot() -> None:
+        # runs while takeover_clear STILL holds the lease flock, so a concurrent
+        # acquire cannot land between the clear and these resets and have its
+        # just-begun stage forced back to pending under it.
+        ts, _ = state.read(td)
+        if ts is not None:
+            for name, rec in ts.stages.items():
+                if rec.status == "in_progress":
+                    state.force_stage_status(td, name, "pending")
+                    reset.append(name)
+        with contextlib.suppress(Exception):
+            write_snapshot(workspace_root, ticket, skill_root=_skill_root())
+
     result = lease.takeover_clear(
-        td, now_iso, current_boot=lease.boot_id(), hostname=lease.hostname()
+        td,
+        now_iso,
+        current_boot=lease.boot_id(),
+        hostname=lease.hostname(),
+        on_cleared=_reset_and_snapshot,
     )
     if not result["cleared"]:
         return 1, {"error": "lease is live; cannot take over", "holder": result["holder"]}
     quarantined = result["quarantined"]
-    reset: list[str] = []
-    ts, _ = state.read(td)
-    if ts is not None:
-        for name, rec in ts.stages.items():
-            if rec.status == "in_progress":
-                state.force_stage_status(td, name, "pending")
-                reset.append(name)
-    with contextlib.suppress(Exception):
-        write_snapshot(workspace_root, ticket, skill_root=_skill_root())
     payload: dict[str, Any] = {"ticket": ticket, "took_over": True, "reset_stages": reset}
     if quarantined is not None:
         payload["quarantined"] = str(quarantined)
@@ -108,12 +118,30 @@ def _force(
     return 0, {"ticket": ticket, "stage": stage, "status": status}
 
 
-def abort(workspace_root: Path, ticket: str) -> tuple[int, dict[str, Any]]:
+def abort(workspace_root: Path, ticket: str, *, force: bool = False) -> tuple[int, dict[str, Any]]:
     td = _ticket_dir(workspace_root, ticket)
-    lock = lease.run_lock_path(td)
-    removed = lock.exists()
-    lock.unlink(missing_ok=True)
-    return 0, {"ticket": ticket, "aborted": True, "lease_removed": removed}
+    result = lease.takeover_clear(
+        td,
+        utcnow_iso(),
+        current_boot=lease.boot_id(),
+        hostname=lease.hostname(),
+        force=force,
+    )
+    if not result["cleared"]:
+        return 1, {
+            "ticket": ticket,
+            "aborted": False,
+            "error": "lease is live; refusing to abort. Re-run with --force to release it.",
+            "holder": result["holder"],
+        }
+    payload: dict[str, Any] = {
+        "ticket": ticket,
+        "aborted": True,
+        "lease_removed": result["state"] != "free",
+    }
+    if result["quarantined"] is not None:
+        payload["quarantined"] = str(result["quarantined"])
+    return 0, payload
 
 
 def reload_snapshot(workspace_root: Path, ticket: str) -> tuple[int, dict[str, Any]]:
@@ -138,7 +166,10 @@ def cli_main(argv: list[str]) -> int:
     sub.add_parser(
         "takeover", parents=[common], help="Clear a stale lock + reset in_progress stages."
     )
-    sub.add_parser("abort", parents=[common], help="Release the run lock; leave state.")
+    p_abort = sub.add_parser("abort", parents=[common], help="Release the run lock; leave state.")
+    p_abort.add_argument(
+        "--force", action="store_true", help="Release even a LIVE lease (de-mutex; operator-only)."
+    )
     sub.add_parser("reload-snapshot", parents=[common], help="Accept current config (clear drift).")
     p_retry = sub.add_parser("retry", parents=[common], help="Reset a stage to pending.")
     p_retry.add_argument("--stage", required=True)
@@ -156,7 +187,7 @@ def cli_main(argv: list[str]) -> int:
     elif args.cmd == "skip":
         rc, payload = _force(workspace_root, args.ticket, args.stage, "completed")
     elif args.cmd == "abort":
-        rc, payload = abort(workspace_root, args.ticket)
+        rc, payload = abort(workspace_root, args.ticket, force=args.force)
     elif args.cmd == "reload-snapshot":
         rc, payload = reload_snapshot(workspace_root, args.ticket)
     else:
