@@ -1101,9 +1101,9 @@ def _resolve_window(args: argparse.Namespace, now_iso: str) -> tuple[str, str]:
 
 
 def _check_flow_dir(workspace_root: Path) -> str | None:
-    """Return an error string if workspace_root has no .flow directory, else None."""
-    if not (workspace_root / ".flow").is_dir():
-        return f"metric: no .flow directory at resolved workspace root: {workspace_root}\n"
+    """Return an error string if workspace_root is not an initialized flow workspace, else None."""
+    if not (workspace_root / ".flow" / ".initialized").exists():
+        return f"metric: not a flow workspace (no .flow/.initialized): {workspace_root}\n"
     return None
 
 
