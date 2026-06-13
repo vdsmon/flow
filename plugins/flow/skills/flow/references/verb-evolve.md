@@ -244,6 +244,8 @@ For each key in `launch` (under `--dry-run`, print the command instead of runnin
 # record the launch FIRST so the very next turn's select sees this key as in-flight
 # even before it registers a branch/lease (closes the re-launch + 2nd-hot-isolation window).
 python3 ${CLAUDE_SKILL_DIR}/scripts/launch_ledger.py add --key <key> --workspace-root .
+# shadow-register the launch in the fleet liveness ledger (epic flow-8by2; child-3 reads it).
+python3 ${CLAUDE_SKILL_DIR}/scripts/fleet.py register --key <key> --workspace-root .
 claude --bg [--model sonnet] "/flow <key> --auto"
 ```
 
