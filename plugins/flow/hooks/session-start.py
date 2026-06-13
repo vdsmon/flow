@@ -245,6 +245,11 @@ def _hung_line(sched: str, age_s: float, grace_s: int) -> str:
     )
 
 
+def _disarmed_line(sched: str) -> str:
+    label = _SCHEDULE_LABEL.get(sched, sched)
+    return f"- {label} loop disarmed (re-arm with: loopctl.sh arm {sched})"
+
+
 def _parse_run_records(
     text: str,
 ) -> tuple[dict[str, datetime], dict[str, datetime], dict[str, str]]:
@@ -302,6 +307,10 @@ def staleness_block(record_path: Path, now: datetime) -> str:
     last_start, last_end, last_outcome = _parse_run_records(text)
     warnings: list[str] = []
     for sched, threshold in _STALE_THRESHOLDS_S.items():
+        marker = record_path.parent / f"disarmed-{sched}"
+        if marker.exists():
+            warnings.append(_disarmed_line(sched))
+            continue
         start = last_start.get(sched)
         end = last_end.get(sched)
         if start is not None and (end is None or start > end):

@@ -356,6 +356,67 @@ def test_staleness_weekly_hung_within_grace_is_silent(tmp_path: Path) -> None:
     assert hook.staleness_block(rec, now) == ""
 
 
+def test_staleness_disarmed_suppresses_stale(tmp_path: Path) -> None:
+    now = _now()
+    rec = tmp_path / "run-record.jsonl"
+    _write_record(
+        rec, {"schedule": "nightly", "phase": "end", "ts": _ts(now, hours=40), "outcome": "ok"}
+    )
+    (tmp_path / "disarmed-nightly").touch()
+    block = hook.staleness_block(rec, now)
+    assert "nightly evolve loop disarmed" in block
+    assert "⚠️" not in block
+
+
+def test_staleness_disarmed_suppresses_hung(tmp_path: Path) -> None:
+    now = _now()
+    rec = tmp_path / "run-record.jsonl"
+    _write_record(
+        rec,
+        {"schedule": "nightly", "phase": "start", "ts": _ts(now, hours=5), "outcome": ""},
+    )
+    (tmp_path / "disarmed-nightly").touch()
+    block = hook.staleness_block(rec, now)
+    assert "nightly evolve loop disarmed" in block
+    assert "⚠️" not in block
+
+
+def test_staleness_disarmed_suppresses_fail(tmp_path: Path) -> None:
+    now = _now()
+    rec = tmp_path / "run-record.jsonl"
+    _write_record(
+        rec, {"schedule": "nightly", "phase": "end", "ts": _ts(now, hours=5), "outcome": "fail"}
+    )
+    (tmp_path / "disarmed-nightly").touch()
+    block = hook.staleness_block(rec, now)
+    assert "nightly evolve loop disarmed" in block
+    assert "⚠️" not in block
+
+
+def test_staleness_disarmed_per_schedule_independent(tmp_path: Path) -> None:
+    now = _now()
+    rec = tmp_path / "run-record.jsonl"
+    _write_record(
+        rec,
+        {"schedule": "nightly", "phase": "end", "ts": _ts(now, hours=40), "outcome": "ok"},
+        {"schedule": "weekly", "phase": "end", "ts": _ts(now, days=9), "outcome": "ok"},
+    )
+    (tmp_path / "disarmed-nightly").touch()
+    block = hook.staleness_block(rec, now)
+    assert "nightly evolve loop disarmed" in block
+    assert "weekly epic loop stale" in block
+    assert "nightly evolve loop stale" not in block
+
+
+def test_staleness_disarmed_no_record_silent(tmp_path: Path) -> None:
+    now = _now()
+    rec = tmp_path / "run-record.jsonl"
+    rec.write_text("", encoding="utf-8")
+    (tmp_path / "disarmed-nightly").touch()
+    block = hook.staleness_block(rec, now)
+    assert "nightly evolve loop disarmed" in block
+
+
 # ─── non-flow dir returns empty ────────────────────────────────────────────────
 
 
