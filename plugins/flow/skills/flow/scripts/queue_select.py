@@ -79,6 +79,7 @@ def partition(
     open_pr_count: int,
     cap: int = DEFAULT_CAP,
     concurrency: int = DEFAULT_CONCURRENCY,
+    inflight_count: int = 0,
 ) -> dict:
     """Pure core: decide the launch batch from already-extracted inputs.
 
@@ -102,7 +103,9 @@ def partition(
             "held_anchor": [],
         }
 
-    budget = min(cap - open_pr_count, concurrency)
+    # inflight_count = active sessions (launched_pending UNION live_runs), subtracted
+    # from the concurrency simultaneity bound (open PRs are bounded separately by cap)
+    budget = min(cap - open_pr_count, max(0, concurrency - inflight_count))
     launch: list[str] = []
     held_anchor: list[str] = []
     used_anchors: set[str] = set()
@@ -174,6 +177,7 @@ def select(
         len(open_pr_keys),
         cap=cap,
         concurrency=concurrency,
+        inflight_count=len(live_keys | launched_keys),
     )
     result["cap"] = cap
     result["concurrency"] = concurrency

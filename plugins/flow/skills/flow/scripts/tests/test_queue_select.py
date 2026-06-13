@@ -439,3 +439,39 @@ def test_config_defaults_invalid_values(tmp_path):
 
 def test_config_defaults_no_workspace(tmp_path):
     assert qs._config_defaults(tmp_path / "nope") == (qs.DEFAULT_CAP, qs.DEFAULT_CONCURRENCY)
+
+
+# ---- budget shrinks by in-flight active-session count (mirrors evolve_select, flow-01ys) ----
+
+
+def test_budget_subtracts_inflight_count():
+    # active-session count (launched_pending UNION live_runs) shrinks the concurrency budget
+    cands = [_cand(f"flow-{i}") for i in range(10)]
+    full = qs.partition(cands, set(), 0, cap=10, concurrency=8, inflight_count=8)
+    assert full["launch"] == []  # concurrency - inflight floored to 0
+    partial = qs.partition(cands, set(), 0, cap=10, concurrency=8, inflight_count=6)
+    assert len(partial["launch"]) == 2  # min(10-0, 8-6)
+
+
+def test_budget_open_prs_dont_consume_concurrency():
+    # the discriminator: open PRs bound only the cap term, NOT the concurrency term
+    cands = [_cand(f"flow-{i}") for i in range(10)]
+    out = qs.partition(cands, set(), open_pr_count=4, cap=10, concurrency=8, inflight_count=0)
+    assert len(out["launch"]) == 6  # min(10-4, 8-0), NOT 8-4
+
+
+def test_select_budget_shrinks_with_launched_pending(tmp_path):
+    # launched_pending keys consume the concurrency budget; only concurrency - N slots remain
+    ws = _marked_ws(tmp_path)
+    repo = qs.resolve_maintainer_repo(ws)
+    assert repo is not None
+    import launch_ledger
+
+    pending = [f"flow-p{i}" for i in range(1, 7)]  # 6 launched, pre-init
+    for key in pending:
+        launch_ledger.add(repo, key)
+    # ready candidates DISJOINT from the launched set, so they only feel the budget
+    run, _ = _dispatch(ready=[_cand(f"flow-r{i}") for i in range(5)])
+    out = qs.select(ws, cap=10, concurrency=8, runner=run)
+    assert len(out["launch"]) == 2  # 8 - 6 launched_pending
+    assert sorted(out["launched_pending"]) == sorted(pending)
