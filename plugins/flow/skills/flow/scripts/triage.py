@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -38,6 +39,12 @@ _DEFER_STEM = "flow --auto could not self-approve"
 # reopens write `TRIAGE-DECISION:`; the already-reopened beads carry the legacy
 # `DECISION:` stem, so detection accepts both (zero backfill).
 _DECISION_STEMS = ("TRIAGE-DECISION:", "DECISION:")
+
+# Anchored, case-sensitive match for a recorded decision stem. Tolerates an
+# optional `MAINTAINER ` prefix and a date/text run before the colon, so a
+# freeform `MAINTAINER DECISION <date>:` maintainer comment reads as decided
+# (flow-rvc); case-sensitive so lowercase prose "decision:" never matches.
+_DECISION_RE = re.compile(r"^(?:MAINTAINER\s+)?(?:TRIAGE-)?DECISION\b[^:\n]*:")
 
 # Guard set for hot-change classification (self-contained; not shared with
 # verb-evolve.md prose). A change touching any of these basenames is hot: it
@@ -117,12 +124,16 @@ def adjudicate_hot(workspace_root: Path) -> bool:
 
 
 def _recorded_decision(comments: list[Any]) -> str | None:
-    """Newest-by-created_at comment whose text starts with a decision stem.
+    """Newest-by-created_at comment whose text matches `_DECISION_RE`.
 
-    Start-anchored on the left-stripped text to avoid mid-text false positives
-    (a defer comment that merely mentions "the decision"). bd keys comment
-    bodies under `text` (not `body`). Returns the decision text with the matched
-    stem stripped + leading whitespace trimmed, else None.
+    Start-anchored on the left-stripped text (via the `^` anchor) to avoid
+    mid-text false positives (a defer comment that merely mentions "the
+    decision"). The regex is case-sensitive and tolerates an optional
+    `MAINTAINER ` prefix plus a date/text run before the colon, so a freeform
+    `MAINTAINER DECISION <date>:` comment reads as decided; lowercase prose
+    "decision:" never matches. bd keys comment bodies under `text` (not `body`).
+    Returns the decision text with the matched stem stripped + leading
+    whitespace trimmed, else None.
     """
     if not comments:
         return None
@@ -131,10 +142,9 @@ def _recorded_decision(comments: list[Any]) -> str | None:
     for c in ordered:
         text = str(c.get("text", ""))
         stripped = text.lstrip()
-        for stem in _DECISION_STEMS:
-            if stripped.startswith(stem):
-                chosen = stripped[len(stem) :].lstrip()
-                break
+        m = _DECISION_RE.match(stripped)
+        if m:
+            chosen = stripped[m.end() :].lstrip()
     return chosen
 
 

@@ -276,6 +276,86 @@ def test_staleness_tolerates_garbage_lines(tmp_path: Path) -> None:
     assert "nightly evolve loop stale" in block
 
 
+def test_staleness_fail_outcome_warns(tmp_path: Path) -> None:
+    """A latest `end` with outcome=fail (trap-EXIT crash-capture) fires a warning."""
+    now = _now()
+    rec = tmp_path / "run-record.jsonl"
+    _write_record(
+        rec,
+        {"schedule": "nightly", "phase": "start", "ts": _ts(now, hours=2), "outcome": ""},
+        {"schedule": "nightly", "phase": "end", "ts": _ts(now, hours=1), "outcome": "fail"},
+    )
+    block = hook.staleness_block(rec, now)
+    assert block.startswith("## /flow ops")
+    assert "nightly evolve" in block
+    assert "fail" in block
+
+
+def test_staleness_hung_start_no_end_warns(tmp_path: Path) -> None:
+    """A start with no end past the nightly 3h grace reads as hung."""
+    now = _now()
+    rec = tmp_path / "run-record.jsonl"
+    _write_record(
+        rec, {"schedule": "nightly", "phase": "start", "ts": _ts(now, hours=4), "outcome": ""}
+    )
+    block = hook.staleness_block(rec, now)
+    assert block.startswith("## /flow ops")
+    assert "nightly evolve" in block
+    assert "hung" in block
+
+
+def test_staleness_hung_within_grace_is_silent(tmp_path: Path) -> None:
+    """A start within the nightly 3h grace is an in-flight run, not a warning."""
+    now = _now()
+    rec = tmp_path / "run-record.jsonl"
+    _write_record(
+        rec, {"schedule": "nightly", "phase": "start", "ts": _ts(now, hours=1), "outcome": ""}
+    )
+    assert hook.staleness_block(rec, now) == ""
+
+
+def test_staleness_hung_discriminates_from_pr266_dead_branch(tmp_path: Path) -> None:
+    """A new pending start AFTER a prior completed run reads hung, not stale.
+
+    This is the harvest's improvement over the closed PR #266: its hung branch
+    keyed on `last_end is None`, so an accumulating record with any prior `end`
+    never fired hung and would mis-report the old `end` as stale. The fix keys on
+    `last_start > last_end`, so a fresh hung start is caught even with old ends present.
+    """
+    now = _now()
+    rec = tmp_path / "run-record.jsonl"
+    _write_record(
+        rec,
+        {"schedule": "nightly", "phase": "start", "ts": _ts(now, hours=50), "outcome": ""},
+        {"schedule": "nightly", "phase": "end", "ts": _ts(now, hours=49), "outcome": "ok"},
+        {"schedule": "nightly", "phase": "start", "ts": _ts(now, hours=4), "outcome": ""},
+    )
+    block = hook.staleness_block(rec, now)
+    assert "hung" in block
+    assert "stale" not in block
+
+
+def test_staleness_weekly_hung_grace_is_separate(tmp_path: Path) -> None:
+    """Weekly uses a 6h zombie grace, distinct from nightly's 3h."""
+    now = _now()
+    rec = tmp_path / "run-record.jsonl"
+    _write_record(
+        rec, {"schedule": "weekly", "phase": "start", "ts": _ts(now, hours=7), "outcome": ""}
+    )
+    block = hook.staleness_block(rec, now)
+    assert "weekly epic" in block
+    assert "hung" in block
+
+
+def test_staleness_weekly_hung_within_grace_is_silent(tmp_path: Path) -> None:
+    now = _now()
+    rec = tmp_path / "run-record.jsonl"
+    _write_record(
+        rec, {"schedule": "weekly", "phase": "start", "ts": _ts(now, hours=5), "outcome": ""}
+    )
+    assert hook.staleness_block(rec, now) == ""
+
+
 # ─── non-flow dir returns empty ────────────────────────────────────────────────
 
 

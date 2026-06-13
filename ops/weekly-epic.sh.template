@@ -48,6 +48,11 @@ wait_for_session() {
 
 {
   echo "=== flow weekly epic: $(date) ==="
+  # _RUN_OUTCOME defaults to fail; the EXIT trap records `end` on ANY exit, so a
+  # crashed or aborted fire is captured immediately instead of waiting out the 8d
+  # staleness bar. Set ok only after the producer launched and the wait completed.
+  _RUN_OUTCOME=fail
+  trap 'record end "$_RUN_OUTCOME"' EXIT
   record start
   cd "$REPO" || { echo "repo not found: $REPO"; exit 1; }
 
@@ -70,11 +75,13 @@ wait_for_session() {
   if [ -n "$PSID" ]; then
     echo "--- waiting for producer $PSID to finish filing epics ---"
     wait_for_session "$PSID"
+    _RUN_OUTCOME=ok
+  else
+    echo "(could not capture producer session id — skipping wait)"
   fi
 
   echo "--- filed epics (maintainer reviews + expands by hand) ---"
   bd list --type epic --status open 2>&1 || true
 
-  record end ok
   echo "=== done: $(date) ==="
 } 2>&1 | tee "$LOG"
