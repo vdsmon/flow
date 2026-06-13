@@ -205,6 +205,19 @@ rm -rf <job_dir>                                          # Ctrl+X-equivalent: d
 
 `<job_id>`, `<session_id>`, and `<job_dir>` come from the `stoppable` entry. **`claude stop` takes the `<job_id>` (the 8-hex dir basename), NOT the session UUID** — passing the UUID returns "No job matching" fast (the bug that left a whole drain's runs un-stopped; the follow-up `rm` was then silently re-materialized by the daemon, because the session was never actually stopped). Before the `claude stop`, validate `<job_id>` is 8-hex (`^[0-9a-f]{8}$`). Before the `rm -rf`, validate `<job_dir>` is under `~/.claude/jobs/` with an 8-hex basename (`^.*/\.claude/jobs/[0-9a-f]{8}$`) — the single destructive line, so guard the path it deletes. Use the entry's literal `<job_dir>`. **Order matters: the stop must land BEFORE the `rm`** — a still-registered job dir that is `rm`-ed gets re-created by the daemon, so only a stopped (or genuinely done) job stays removed. This is NON-DESTRUCTIVE to history: the transcript at `~/.claude/projects/<slug>/<session_id>.jsonl` is untouched, so the session stays resumable (`claude attach <session_id>`) after either stop or dir-removal. A daemon-sanctioned dismiss is the cleaner long-term path if a future CLI offers one (none in 2.1.169).
 
+**A3. Escalate deferred no-question sonnet beads — reopen so the ladder retries at opus.** The §C launch-time ladder escalates only OPEN-bead DNFs (they re-appear in `bd ready`); a run that **defers WITHOUT a substantive open question** sets `status=deferred` and drops OUT of `bd ready`, so that ladder structurally cannot see it (the flow-recv CQ1 gap, flow-4hug). This step closes it: scan deferred beads and, for the no-question ones whose sonnet attempt is spent, REOPEN them (`status → open`) so the SAME §C ladder picks them up THIS same turn (steps B→C) and escalates to opus. It runs BEFORE **B** because B's `evolve_select` reads `bd ready` — a reopened bead must be visible to this turn's select. Read-only classification + reviewable prose side effects (mirrors A reap / A2 cleanup); skip the reopen under `--dry-run` (print the would-reopen set only).
+
+For each `status=deferred` bead (`bd list --status deferred --json`, maintainer/beads-only) that is **sonnet-tiered** — carries a `tier:trivial` OR `tier:light` label AND is non-`hot` (HOT-FIRST precedence: a `hot` bead with a tier label is NOT sonnet-tiered and is never escalated here; this replicates the §C `model_per_key[key] == "sonnet"` resolution from labels directly, because `model_per_key` is not computed until B):
+
+1. `bd show <key> --include-comments`. Find the NEWEST `flow --auto could not self-approve` comment and extract its `[defer-reason: X]` tag (verb-spec.md stamps it at defer-and-exit time).
+2. **`open-question`, OR no `[defer-reason: ...]` tag at all** (a pre-marker defer, or a defer carrying a substantive question) → LEAVE deferred — the normal `/flow triage` path where a human answers. Skip; do NOT reopen.
+3. **`no-question`** → branch on the NEWEST `SONNET-LADDER:` marker (the SAME shared attempt counter §C uses — a sonnet attempt's two failure exits, open-bead DNF and defer-no-question, share one counter):
+   - **`SONNET-LADDER: sonnet-attempt-1`** (the sonnet attempt is spent, no opus attempt yet) → **REOPEN**: `bd update <key> --status open`. The bead re-enters `bd ready`; this turn's **B** select sees it and **C**'s ladder, reading the same `sonnet-attempt-1` marker, escalates it to opus (writes `opus-attempt-2`). **A3 writes NO marker** — it only flips status; §C owns the opus-escalation marker write, so the shared counter stays single-owner (no double-count).
+   - **`SONNET-LADDER: opus-attempt-2`** (already escalated, and the opus attempt deferred-no-question too) → LEAVE deferred (parked for the human; surfaces in `/flow triage`). Do NOT reopen — re-running opus on a no-question give-up just re-loops.
+   - **no `SONNET-LADDER:` marker** → LEAVE deferred (can't confirm a laddered sonnet attempt; conservative — a human handles it at triage). The fail-safe default is toward NOT escalating, matching the §C CQ2 accepted-false-negatives posture.
+
+Once reopened, the bead is a normal open bead and the existing §C machinery owns the escalation — A3's only job is the status flip.
+
 **B. Decide the next action.**
 
 ```bash
@@ -254,7 +267,7 @@ Each spawns a detached run that auto-plans and either drives its PR to green-and
 
 ### --dry-run
 
-`/flow evolve drain --dry-run`: run ONE turn's **A** reap classification (`evolve_reap.py`, print the `merge`/`not_green`/`skipped_hot`/`version_recoverable`/`blocked`/`held_main_red` sets, do NOT merge) + **A2** session-cleanup classification (`evolve_session_cleanup.py`, print the `stoppable` set, do NOT `claude stop` or `rm`) + **B** (`evolve_drain.py`, print the action + would-launch keys + parked), then STOP. No merges, no stops, no launches, no loop.
+`/flow evolve drain --dry-run`: run ONE turn's **A** reap classification (`evolve_reap.py`, print the `merge`/`not_green`/`skipped_hot`/`version_recoverable`/`blocked`/`held_main_red` sets, do NOT merge) + **A2** session-cleanup classification (`evolve_session_cleanup.py`, print the `stoppable` set, do NOT `claude stop` or `rm`) + **A3** deferred-escalation classification (scan deferred sonnet beads, print the would-reopen set, do NOT `bd update --status open`) + **B** (`evolve_drain.py`, print the action + would-launch keys + parked), then STOP. No merges, no stops, no reopens, no launches, no loop.
 
 ### --include-proposals (dangerous)
 
