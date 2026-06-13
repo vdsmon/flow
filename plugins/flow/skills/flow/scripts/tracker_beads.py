@@ -312,7 +312,7 @@ class BeadsAdapter:
             "status": str(raw.get("status", "")),
             "priority": _priority_bd_int_to_str(raw.get("priority", "")),
             "description": str(raw.get("description", "")),
-            "type": str(raw.get("type", "task")),
+            "type": str(raw.get("issue_type") or raw.get("type") or "task"),
             "assignee": raw.get("assignee") or None,
             "comments": [self._comment_from_json(c) for c in comments_raw if isinstance(c, dict)],
             "parent": raw.get("parent") or None,

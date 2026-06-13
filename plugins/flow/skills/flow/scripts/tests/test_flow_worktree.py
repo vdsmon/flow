@@ -302,12 +302,16 @@ def test_e2e_none_does_not_require_recipe(tmp_path: Path) -> None:
 
 
 class _FakeTracker:
-    """Stand-in for a Tracker adapter; controls what `state()` returns/raises."""
+    """Stand-in for a Tracker adapter; controls what `state()`/`get()` returns/raises."""
 
-    def __init__(self, *, normalized=None, raises=False, empty=False):
+    def __init__(
+        self, *, normalized=None, raises=False, empty=False, issue_type="task", get_raises=False
+    ):
         self._normalized = normalized
         self._raises = raises
         self._empty = empty
+        self._issue_type = issue_type
+        self._get_raises = get_raises
 
     def state(self, key):
         if self._raises:
@@ -315,6 +319,11 @@ class _FakeTracker:
         if self._empty:
             return {}
         return {"normalized": self._normalized}
+
+    def get(self, key):
+        if self._get_raises:
+            raise RuntimeError("tracker get boom")
+        return {"type": self._issue_type}
 
 
 def _patch_tracker(monkeypatch, fake) -> None:
@@ -388,6 +397,66 @@ def test_cli_terminal_bead_exits_6(tmp_path: Path, monkeypatch) -> None:
         ]
     )
     assert rc == 6
+
+
+# ─── epic refusal gate (flow-jvxj) ────────────────────────────────────────────
+
+
+def test_bootstrap_refuses_epic_bead(tmp_path: Path, monkeypatch) -> None:
+    main = _main_checkout(tmp_path)
+    _patch_tracker(monkeypatch, _FakeTracker(normalized="open", issue_type="epic"))
+    with pytest.raises(fw._EpicBead):
+        _run(tmp_path, main, runner=_fake_runner(main=main))
+    # refusal fires before `git worktree add`: no worktree dir left behind
+    assert not (tmp_path / "wt").exists()
+
+
+def test_bootstrap_refuses_epic_case_insensitive(tmp_path: Path, monkeypatch) -> None:
+    # Jira's issue-type name is "Epic"; the refusal is type-name case-insensitive.
+    main = _main_checkout(tmp_path)
+    _patch_tracker(monkeypatch, _FakeTracker(normalized="open", issue_type="Epic"))
+    with pytest.raises(fw._EpicBead):
+        _run(tmp_path, main, runner=_fake_runner(main=main))
+
+
+def test_bootstrap_proceeds_on_task_bead(tmp_path: Path, monkeypatch) -> None:
+    main = _main_checkout(tmp_path)
+    _patch_tracker(monkeypatch, _FakeTracker(normalized="open", issue_type="task"))
+    res = _run(tmp_path, main, runner=_fake_runner(main=main))
+    assert res["ticket"] == "FT-1"
+
+
+def test_bootstrap_epic_check_fails_open_on_get_exception(tmp_path: Path, monkeypatch) -> None:
+    # a genuine type-read failure must NOT strand a legitimate run (fail-open)
+    main = _main_checkout(tmp_path)
+    _patch_tracker(monkeypatch, _FakeTracker(normalized="open", get_raises=True))
+    res = _run(tmp_path, main, runner=_fake_runner(main=main))
+    assert res["ticket"] == "FT-1"
+
+
+def test_cli_epic_bead_exits_7(tmp_path: Path, monkeypatch) -> None:
+    main = _main_checkout(tmp_path)
+    monkeypatch.setattr(fw, "_default_runner", lambda: _fake_runner(main=main))
+    _patch_tracker(monkeypatch, _FakeTracker(normalized="open", issue_type="epic"))
+    plan = _plan_file(tmp_path)
+    rc = fw.cli_main(
+        [
+            "create",
+            "--ticket",
+            "FT-1",
+            "--plan-from",
+            str(plan),
+            "--base",
+            "main",
+            "--branch",
+            "feature/FT-1-x",
+            "--main-root",
+            str(main),
+            "--worktree-path",
+            str(tmp_path / "wt"),
+        ]
+    )
+    assert rc == 7
 
 
 # ─── planned_files gitignore gate ─────────────────────────────────────────────
