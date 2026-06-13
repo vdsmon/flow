@@ -26,7 +26,7 @@ That bias is acceptable for personal-mode flow; work-mode users opt in to `skill
    ```
    - Exit 0 → JSON with `files_touched / insertions / deletions / binary`.
    - Exit 1 → no started_at_sha (implement didn't run).
-     Abort with status=failed; rerun `/flow do --stage implement` first.
+     Abort with status=failed; `/flow recover <KEY>` → `retry --stage implement`.
    - Exit 2 → git error. Surface stderr.
 
    **Empty `files_touched` is expected, not "nothing to review".** `since-stage` diffs the committed range `started_at_sha..HEAD`, but implement leaves its work UNCOMMITTED (the commit stage runs later), so `started_at_sha == HEAD` and the committed range is empty. The real change is in the working tree. When `files_touched` is empty, get the actual file list from the working tree instead: `git diff HEAD --name-only` (or `git status --porcelain`). Only treat the stage as a genuine no-op if the working tree is also clean.
