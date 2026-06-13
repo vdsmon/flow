@@ -956,3 +956,69 @@ def test_reap_green_main_files_no_p0_and_merges(tmp_path):
     assert {e["key"] for e in out["merge"]} == {"flow-a"}
     assert out["held_main_red"] == []
     assert [a for a in calls if a[:2] == ["bd", "create"]] == []
+
+
+# ---- _labels_index: no silent truncation to bd's default --limit 50 (flow-8zdy) ----
+
+
+def _truncating_label_runner(
+    *, prs: list[dict], evolve_beads: list[dict], default_limit: int = 50
+) -> tuple[Callable[..., subprocess.CompletedProcess[str]], Recorder]:
+    """A runner whose `bd list -l evolve` HONORS --limit, mirroring bd's real default-50.
+
+    Returns every evolve bead only when `--limit 0` is present; otherwise the first
+    `default_limit` rows (bd sorts by priority, so a low-priority in_progress orphan
+    sorts past the window once enough higher-priority closed beads accumulate). Models
+    the flow-8zdy incident: without `--limit 0` the orphan's key never reaches the index.
+    """
+    calls: Recorder = []
+
+    def run(args: list[str]) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        if args[:3] == ["gh", "pr", "list"]:
+            return subprocess.CompletedProcess(args, 0, json.dumps(prs), "")
+        if args[:2] == ["bd", "list"]:
+            rows = evolve_beads if ("-l" in args and args[args.index("-l") + 1] == "evolve") else []
+            if "--limit" in args:
+                lim = int(args[args.index("--limit") + 1])
+                rows = rows if lim == 0 else rows[:lim]
+            else:
+                rows = rows[:default_limit]
+            return subprocess.CompletedProcess(args, 0, json.dumps(rows), "")
+        return subprocess.CompletedProcess(args, 1, "", f"unexpected: {args}")
+
+    return run, calls
+
+
+def test_labels_index_query_is_unlimited():
+    # the fix's direct guard: the label-index query must carry `--limit 0` so it is
+    # never capped at bd's default 50.
+    run, calls = _label_aware_list_runner(
+        prs=[], by_label={"evolve": [{"id": "flow-a", "labels": ["evolve"]}]}
+    )
+    er._labels_index(run)
+    bd_calls = [a for a in calls if a[:2] == ["bd", "list"]]
+    assert bd_calls
+    for a in bd_calls:
+        assert "--limit" in a, f"label-index query must be limited explicitly: {a}"
+        assert a[a.index("--limit") + 1] == "0", f"label-index query must be unlimited: {a}"
+
+
+def test_reap_does_not_truncate_label_index_orphan(tmp_path):
+    # flow-8zdy regression: a green + conflicting in_progress orphan whose evolve bead
+    # sorts past bd's default-50 window must still be classified. If _labels_index omits
+    # `--limit 0` the orphan's key is absent from the index and classify drops its PR
+    # into NO bucket (the reap safety-net goes blind, every bucket empty).
+    ws = _marked_ws(tmp_path)
+    filler = [{"id": f"flow-old{i}", "labels": ["evolve"]} for i in range(50)]
+    orphan = {"id": "flow-orph", "labels": ["evolve"]}
+    evolve_beads = [*filler, orphan]  # the orphan sits past row 50
+    prs = [_pr(1, "flow-orph", state="DIRTY")]  # green + conflicting (CONFLICTING/DIRTY)
+
+    run, _ = _truncating_label_runner(prs=prs, evolve_beads=evolve_beads)
+    out = er.reap(ws, runner=run)
+
+    # green non-hot DIRTY -> version_recoverable (the exact bucket the manual
+    # version_remerge.py recover used); and it must not vanish from every bucket.
+    assert {e["key"] for e in out["version_recoverable"]} == {"flow-orph"}
+    assert "flow-orph" in {e["key"] for bucket in out.values() for e in bucket}
