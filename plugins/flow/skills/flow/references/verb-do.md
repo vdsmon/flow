@@ -117,7 +117,7 @@ Do not silently overwrite or `--force`.
 
 ## Backgrounded `--auto` run (cwd pinned at repo root)
 
-A `claude --bg /flow <key> --auto` run has its session cwd pinned at the repository root, so `EnterWorktree(path=<worktree>)` refuses and the bg-isolation guard blocks `Edit`/`Write` inside the linked worktree (for this session and any spawned subagent). Before the loop runs, `cd` the persistent Bash cwd into the seeded worktree once; then `--workspace-root .` resolves against the worktree for every dispatch call, and spawned subagents fall back to Bash/Python string-replace edits against absolute worktree paths. See `references/verb-spec.md` step 7 for the canonical explanation.
+A `claude --bg /flow <key> --auto` run has its session cwd pinned at the repository root, so `EnterWorktree(path=<worktree>)` refuses. Before the loop runs, `cd` the persistent Bash cwd into the seeded worktree once; then `--workspace-root .` resolves against the worktree for every dispatch call. The bg-isolation guard keys on cwd: spawned subagents keep their cwd pinned at the repo root, so the guard blocks their `Edit`/`Write` inside the linked worktree and they fall back to Bash/Python string-replace edits against absolute worktree paths. The orchestrator's own `Edit`/`Write` has been observed to work on absolute worktree paths once the `cd` moves its Bash cwd inside (flow-kykn/PR#296) — a single observation, possibly harness-version-specific; Bash/heredoc remains the documented safe-superset fallback. See `references/verb-spec.md` step 7 for the canonical explanation.
 
 ### Orchestrator `.out` capture when Write is blocked
 
