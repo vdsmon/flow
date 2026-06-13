@@ -284,7 +284,9 @@ def _labels_index(runner: Runner, *, include_proposals: bool = False) -> dict[st
     index: dict[str, list[str]] = {}
     for label in labels:
         raw = _ok(
-            runner(["bd", "list", "-l", label, "--status", _EVOLVE_STATUSES, "--json"]),
+            runner(
+                ["bd", "list", "-l", label, "--status", _EVOLVE_STATUSES, "--limit", "0", "--json"]
+            ),
             "bd list",
         )
         for b in _loads(raw):
