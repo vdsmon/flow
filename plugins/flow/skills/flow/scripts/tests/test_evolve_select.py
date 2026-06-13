@@ -352,6 +352,18 @@ def test_hot_inflight_queries_active_statuses():
     assert args[args.index("--status") + 1] == "open,in_progress,blocked"
 
 
+def test_hot_inflight_queries_unlimited():
+    # --limit 0 so a large active backlog never truncates a launched hot key out
+    # of the hot-keys set (bd's default 50-row + priority sort), which would let a
+    # second hot launch and break >=1-hot-at-a-time (flow-qmp5, PR#299 class).
+    run, calls = _status_aware_runner([])
+    es._hot_inflight(run, {"feature/flow-x-wip"})
+    list_calls = [a for a in calls if a[:2] == ["bd", "list"]]
+    assert len(list_calls) == 1
+    args = list_calls[0]
+    assert args[args.index("--limit") + 1] == "0"
+
+
 def test_select_not_maintainer_raises(tmp_path, monkeypatch):
     monkeypatch.setattr("maintainer._global_config_path", lambda: tmp_path / "absent.toml")
     plain = tmp_path / "proj"
