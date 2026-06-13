@@ -401,7 +401,7 @@ Plan line 990 calls for transient `bd` failures (network blips, lock contention)
 The dispatcher is a state-machine driver — NOT an orchestrator.
 It reads / writes `.flow/runs/<ticket>/state.json` and emits a handler-descriptor JSON for the SKILL.md prose layer to act on (call Agent, read reference doc, invoke a skill, or skip).
 
-### Stage lifecycle (mvp; phase 7-full adds dispatched/timed_out/hung)
+### Stage lifecycle
 
 ```
 pending → in_progress → (completed | failed)
@@ -487,7 +487,8 @@ Phase 7-full adds per-field structural validation.
   "timeout_min": 10,
   "head_sha": "<current git HEAD>",
   "ticket_dir": ".flow/runs/FT-1234",
-  "output_path": ".flow/runs/FT-1234/stages/plan.out"
+  "output_path": ".flow/runs/FT-1234/stages/plan.out",
+  "roles": []
 }
 ```
 
@@ -496,12 +497,12 @@ Terminal shapes:
 - `{"done": false, "blocked_by": "<stage>", "reason": "<detail>"}` — a
   prior stage is failed.
 
-### TOCTOU invariant (mvp)
+### TOCTOU invariant
 
 `validate_workspace.validate()` runs on every `dispatch_stage` invocation (`init` and `next`).
 Cheap (parses 2-3 small TOML files).
 Catches mid-run workspace.toml edits.
-Phase 7-full replaces this with the canonical-snapshot pattern from the literal plan (hash captured once at init, compared on each subsequent next).
+The canonical-snapshot pattern is live: a content hash is captured once at `init` and compared on each `next` call via `snapshot.py`.
 
 ### Deferred to phase 7-full / 8
 
@@ -676,7 +677,7 @@ Sidecar quarantine: malformed lines appended to `knowledge.jsonl.quarantine.<ts>
 ### `recall.py`
 
 Hand-rolled BM25 ranker.
-`--metric` mode deferred to 8d.
+`--metric` mode is live; `--metric <subcommand>` forwards to `metric.cli_main`.
 
 | Flag | Description |
 |------|-------------|
@@ -708,7 +709,7 @@ Bundles the reflect-stage's inputs into a single JSON payload for the reflect LL
 | `--ticket-frontmatter` | Optional path to ticket .md frontmatter file. |
 | `--cwd` | Git repo working dir (for `diff_since_stage` call). Default `.`. |
 
-Payload shape: `{ticket, run_id, state, ticket_frontmatter, final_diff, subagent_reports[]}`.
+Payload shape: `{ticket, run_id, state, ticket_frontmatter, final_diff, subagent_reports[], friction[], recalled_entries[], reflect_config, harness_eval}`.
 `final_diff` is null when ticket stage never started.
 Missing report files → `body: null` + warning to stderr (not fatal).
 
@@ -751,19 +752,17 @@ Exit codes: 0=primary success, 1=evidence JSON invalid, 2=dupe (informational),
 
 ## Known phase 8b-mvp holes (deferred to 8c/8d)
 
-1. **`recall.py --metric` deferred** — throughput / shipped-count aggregator;
-   8d work-mode quality gate needs it.
-2. **No cross-namespace IDF** — recall.py IDF is per-namespace.
-3. **BM25 hand-rolled, not rank-bm25** — stdlib-only convention. Swap in if
+1. **No cross-namespace IDF** — recall.py IDF is per-namespace.
+2. **BM25 hand-rolled, not rank-bm25** — stdlib-only convention. Swap in if
    corpus > 10K entries per namespace.
-4. **No recover.py dupe reconciliation** — `.dupe.<n>.json` files sit until 8c.
-5. **No SessionStart hook script** — observe/recall/reflect are
+3. **No recover.py dupe reconciliation** — `.dupe.<n>.json` files sit until 8c.
+4. **No SessionStart hook script** — observe/recall/reflect are
    write/read primitives only. SessionStart prose = phase 5.
-6. **No retry knob for memory-append flock** — hardcoded 3×1s.
-7. **observe-ship-event intent log write-only** — phase 8c recover reads it.
-8. **Idempotency formula collapses near-duplicates** — `"Foo."` and `"foo"`
+5. **No retry knob for memory-append flock** — hardcoded 3×1s.
+6. **observe-ship-event intent log write-only** — phase 8c recover reads it.
+7. **Idempotency formula collapses near-duplicates** — `"Foo."` and `"foo"`
    dedup. First-write wins; second gets exit 1 no-op.
-9. **Dedup scan is O(N) per append** — fine for mvp corpus sizes. Swap in
+8. **Dedup scan is O(N) per append** — fine for mvp corpus sizes. Swap in
    `.idx` sidecar if corpus grows.
 
 ---
