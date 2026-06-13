@@ -169,7 +169,9 @@ def _hot_inflight(
     hot_keys: set[str] = set()
     for label in labels:
         raw = _ok(
-            runner(["bd", "list", "-l", label, "--status", _ACTIVE_STATUSES, "--json"]),
+            runner(
+                ["bd", "list", "-l", label, "--status", _ACTIVE_STATUSES, "--limit", "0", "--json"]
+            ),
             "bd list",
         )
         hot_keys |= {
