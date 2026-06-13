@@ -146,3 +146,64 @@ def test_forge_error_returns_1(ws, capsys):
     )
     assert rc == 1
     assert "forge error" in capsys.readouterr().err
+
+
+def test_post_reply_dispatches_args(ws, capsys):
+    rc, fake = _run(["post-reply", "--pr", "7", "--thread", "42", "--text", "lgtm"], ws)
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out) == {"ok": True}
+    assert ("post_reply", "7", "42") in fake.calls
+
+
+def test_mark_ready_dispatches(ws, capsys):
+    rc, fake = _run(["mark-ready", "--pr", "7"], ws)
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out) == {"ok": True}
+    assert ("mark_ready", "7") in fake.calls
+
+
+def test_delete_branch_dispatches(ws, capsys):
+    rc, fake = _run(["delete-branch", "--branch", "feature/flow-x"], ws)
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out) == {"ok": True}
+    assert ("delete_branch", "feature/flow-x") in fake.calls
+
+
+def test_factory_error_returns_2(ws, capsys):
+    def bad_factory(_cfg):
+        raise RuntimeError("boom")
+
+    rc = forge_cli.cli_main(
+        ["--workspace-root", str(ws), "detect-pr", "--branch", "x"],
+        forge_factory=bad_factory,
+    )
+    assert rc == 2
+    assert "factory error" in capsys.readouterr().err
+
+
+class _KeyErrorForge(_FakeForge):
+    def mark_ready(self, pr_id):
+        raise KeyError("bad-pr")
+
+
+def test_invalid_argument_returns_3(ws, capsys):
+    rc = forge_cli.cli_main(
+        ["--workspace-root", str(ws), "mark-ready", "--pr", "7"],
+        forge_factory=lambda _cfg: _KeyErrorForge(),
+    )
+    assert rc == 3
+    assert "invalid argument" in capsys.readouterr().err
+
+
+class _PostReplyNotSupportedForge(_FakeForge):
+    def post_reply(self, pr_id, thread_id, body):
+        raise NotSupported("no replies")
+
+
+def test_post_reply_degrades_on_not_supported(ws, capsys):
+    rc = forge_cli.cli_main(
+        ["--workspace-root", str(ws), "post-reply", "--pr", "7", "--thread", "1", "--text", "x"],
+        forge_factory=lambda _cfg: _PostReplyNotSupportedForge(),
+    )
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out) == {"supported": False}

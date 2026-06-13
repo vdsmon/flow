@@ -164,13 +164,60 @@ def test_skip_marks_completed(tmp_path: Path) -> None:
     assert ts.stages["plan"].status == "completed"
 
 
-def test_abort_removes_lock(tmp_path: Path) -> None:
+def test_abort_refused_on_live_lease(tmp_path: Path) -> None:
+    # the de-mutex this ticket closes: a bare unlink would delete a fresh LIVE
+    # lease (a sibling run B that acquired in the gap). abort must refuse it.
     td = _ws(tmp_path)
     boot, host = _identity()
-    lease.acquire(td, "r", 600, _now(), current_boot=boot, hostname=host, cwd=str(td))
+    lease.acquire(td, "live-run", 600, _now(), current_boot=boot, hostname=host, cwd=str(td))
+    rc, payload = recover.abort(tmp_path, "T-1")
+    assert rc == 1
+    assert payload["aborted"] is False
+    assert "live" in payload["error"]
+    # the live lease survives untouched.
+    on_disk = lease.read_lease(td)
+    assert on_disk is not None
+    assert on_disk.run_id == "live-run"
+
+
+def test_abort_force_releases_live_lease(tmp_path: Path) -> None:
+    # the operator-explicit escape hatch: --force kills a lease that looks live.
+    td = _ws(tmp_path)
+    boot, host = _identity()
+    lease.acquire(td, "live-run", 600, _now(), current_boot=boot, hostname=host, cwd=str(td))
+    rc, payload = recover.abort(tmp_path, "T-1", force=True)
+    assert rc == 0
+    assert payload["aborted"] is True
+    assert payload["lease_removed"] is True
+    assert not lease.run_lock_path(td).exists()
+
+
+def test_abort_clears_expired_lease(tmp_path: Path) -> None:
+    # the normal abort case: a dead run's expired lease released without --force.
+    td = _ws(tmp_path)
+    boot, host = _identity()
+    lease.acquire(
+        td, "old-run", 1, "2020-01-01T00:00:00Z", current_boot=boot, hostname=host, cwd=str(td)
+    )
     rc, payload = recover.abort(tmp_path, "T-1")
     assert rc == 0
+    assert payload["aborted"] is True
     assert payload["lease_removed"] is True
+    assert not lease.run_lock_path(td).exists()
+
+
+def test_abort_force_via_cli(tmp_path: Path) -> None:
+    td = _ws(tmp_path)
+    boot, host = _identity()
+    lease.acquire(td, "live-run", 600, _now(), current_boot=boot, hostname=host, cwd=str(td))
+    # without --force the CLI refuses (exit 1); with it, the lock is released.
+    rc = recover.cli_main(["abort", "--ticket", "T-1", "--workspace-root", str(tmp_path)])
+    assert rc == 1
+    assert lease.run_lock_path(td).exists()
+    rc = recover.cli_main(
+        ["abort", "--ticket", "T-1", "--workspace-root", str(tmp_path), "--force"]
+    )
+    assert rc == 0
     assert not lease.run_lock_path(td).exists()
 
 
@@ -216,3 +263,19 @@ def test_skip_exit1_unknown_stage(tmp_path: Path) -> None:
         ["skip", "--ticket", "T-1", "--workspace-root", str(tmp_path), "--stage", "nope"]
     )
     assert rc == 1
+
+
+def test_reload_snapshot_fails_loud_on_write_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    td = _ws(tmp_path)
+
+    def _boom(*args: object, **kwargs: object) -> None:
+        raise OSError("disk gone")
+
+    monkeypatch.setattr(recover, "write_snapshot", _boom)
+    rc, payload = recover.reload_snapshot(tmp_path, "T-1")
+    assert rc == 1
+    assert payload["snapshot_reloaded"] is False
+    assert "error" in payload
+    assert not (td / "snapshot.sha").exists()
