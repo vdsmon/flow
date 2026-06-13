@@ -42,6 +42,7 @@ VALID_TYPES: tuple[str, ...] = (
     "LEASE_LOSS",
     "RECONCILE",
     "STAGE_FAILED",
+    "STATE_ROLLBACK",
 )
 
 VALID_SEVERITIES: tuple[str, ...] = ("major", "minor")
