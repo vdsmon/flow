@@ -61,10 +61,9 @@ Verified end-to-end by `scripts/tests/test_cross_queue_memory.py`.
 
 ## PR delivery
 
-`create_pr` / `review_loop` default to `none`.
-With `ship-it` installed, `/flow init --bundle recommended` auto-wires `create_pr → skill:ship-it:create` and `review_loop → skill:ship-it:feedback`, so the tail pushes + opens a draft PR + runs the CI/CodeRabbit loop.
-ship-it's stack is Bitbucket + bkt + CodeRabbit; a GitHub-stack project supplies a different `create_pr` bundle.
-A bare workspace ends at `commit` (committed branch, no PR).
+`create_pr` / `review_loop` default to `none` — a bare workspace ends at `commit` (committed branch, no PR).
+The primary path is the inline forge seam: a workspace wires `create_pr = "inline"` + `review_loop = "inline"` and supplies a `[forge]` block, and the same handlers drive either GitHub (`gh`) or Bitbucket (`bkt`) per `[forge] backend` — flow's own dogfood uses `[forge] backend = "github"`. The tail then pushes + opens a draft PR (`create_pr.py` via the forge seam) and waits on the CI / review-bot loop (`forge_cli.py`).
+As a legacy alternative, `ship-it` (a Bitbucket + bkt + CodeRabbit bundle) wires the PR stages as skills instead: with it installed, `/flow init --bundle recommended` auto-wires `create_pr → skill:ship-it:create` and `review_loop → skill:ship-it:feedback`.
 
 When the PR is genuinely review-ready (after `review_loop` goes green — CI passed and every actionable reviewer thread resolved, not when the draft first opens at `create_pr`), the pipeline fires an unconditional best-effort `PushNotification` carrying the PR URL.
 PushNotification is harness-local (terminal + phone via Remote Control): it renders in-terminal when you are attached and reaches your phone when you have backgrounded the session, and it does not ride MCP/claude.ai auth — so it fires even if the tail's tracker calls 401, which is how you learn an unattended run stalled on auth.
@@ -84,6 +83,6 @@ Backgrounding via `/bg` starts a fresh process that resumes the conversation, so
 
 - **cwd survives the resume.** After `/bg` post-`EnterWorktree`, confirm the resumed process is still in the seeded worktree (`pwd`), that implement edits land there (not the main checkout), and that no second auto-worktree was created (`git worktree list`).
 - **auth survives the resume.** Confirm tracker / MCP / claude.ai calls (ticket fetch, transition, create_pr push) succeed in the backgrounded run — a refresh can require a browser and 401 silently. Fallback: an attached session has live auth.
-- **git push permission.** The tail pushes at `create_pr` (ship-it). If `git push` is gated by an `ask` rule or a global "never push without permission" instruction, an unattended session stalls there with no way to grant it. Pre-authorize a feature-branch push (a `Bash(git push:*)` allow-rule, force-push still denied) and make any global push instruction recognize that an explicitly-invoked pipeline push is fine.
+- **git push permission.** The tail pushes at `create_pr` (the inline forge handler, or ship-it on a legacy bundle). If `git push` is gated by an `ask` rule or a global "never push without permission" instruction, an unattended session stalls there with no way to grant it. Pre-authorize a feature-branch push (a `Bash(git push:*)` allow-rule, force-push still denied) and make any global push instruction recognize that an explicitly-invoked pipeline push is fine.
 - **mise/toolchain.** The bootstrap only `mise trust`s; the first `mise run` in the tail installs the toolchain. If your repo's setup races a lock, validate the first run.
 - **PushNotification delivery.** The desktop path needs a surface to render to; the phone push needs Remote Control connected. Confirm a ping actually reaches you from one backgrounded run.
