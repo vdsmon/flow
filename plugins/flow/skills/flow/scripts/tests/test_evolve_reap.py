@@ -1022,3 +1022,40 @@ def test_reap_does_not_truncate_label_index_orphan(tmp_path):
     # version_remerge.py recover used); and it must not vanish from every bucket.
     assert {e["key"] for e in out["version_recoverable"]} == {"flow-orph"}
     assert "flow-orph" in {e["key"] for bucket in out.values() for e in bucket}
+
+
+def test_file_main_red_p0_dedup_scan_is_unlimited():
+    # flow-b0gl regression: the at-most-one-open dedup scan must pass `--limit 0`.
+    # Without it bd's default-50 window can drop an already-open main-ci-red P0, so the
+    # dedup misses and a DUPLICATE P0 gets filed (same footgun as flow-8zdy/PR#299).
+    calls: Recorder = []
+
+    def run(args: list[str]) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        if args[:2] == ["bd", "list"]:
+            return subprocess.CompletedProcess(args, 0, "[]", "")
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    er._file_main_red_p0(run, "deadbeef", ["test"])
+
+    list_calls = [a for a in calls if a[:2] == ["bd", "list"]]
+    assert list_calls
+    for a in list_calls:
+        assert "--limit" in a, f"dedup-scan query must be limited explicitly: {a}"
+        assert a[a.index("--limit") + 1] == "0", f"dedup-scan query must be unlimited: {a}"
+
+
+def test_file_main_red_p0_dedup_fires_on_open_bead():
+    # an open bead whose title carries the main-ci-red stem short-circuits filing.
+    calls: Recorder = []
+
+    def run(args: list[str]) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        if args[:2] == ["bd", "list"]:
+            body = json.dumps([{"id": "flow-x", "title": "main-ci-red: cafe test"}])
+            return subprocess.CompletedProcess(args, 0, body, "")
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    er._file_main_red_p0(run, "deadbeef", ["test"])
+
+    assert not [a for a in calls if a[:2] == ["bd", "create"]]

@@ -348,7 +348,7 @@ _MAIN_RED_STEM = "main-ci-red"
 def _file_main_red_p0(run: Runner, sha: str | None, failing_checks: list[str]) -> None:
     """Best-effort: file ONE deduped P0 naming the failing main sha + check(s).
 
-    At-most-one-open: scan `bd list --status open --json` titles for the
+    At-most-one-open: scan `bd list --status open --limit 0 --json` titles for the
     `main-ci-red` stem and file via `bd create -p P0` only when none is open. Filing
     directly (not flow_beads_create.py: its dedup is closed-inclusive, so it would
     never refile after a human closes the P0, and it passes no priority). Every bd
@@ -356,7 +356,7 @@ def _file_main_red_p0(run: Runner, sha: str | None, failing_checks: list[str]) -
     held the merges; the bead is the alert, not the safety property).
     """
     try:
-        listed = run(["bd", "list", "--status", "open", "--json"])
+        listed = run(["bd", "list", "--status", "open", "--limit", "0", "--json"])
         if listed.returncode == 0:
             for b in _loads(listed.stdout or "[]"):
                 if isinstance(b, dict) and _MAIN_RED_STEM in str(b.get("title", "")):
