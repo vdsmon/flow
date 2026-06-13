@@ -298,6 +298,98 @@ def test_e2e_none_does_not_require_recipe(tmp_path: Path) -> None:
     assert res["ticket"] == "FT-1"
 
 
+# ─── terminal-bead refusal gate (flow-d6gq) ───────────────────────────────────
+
+
+class _FakeTracker:
+    """Stand-in for a Tracker adapter; controls what `state()` returns/raises."""
+
+    def __init__(self, *, normalized=None, raises=False, empty=False):
+        self._normalized = normalized
+        self._raises = raises
+        self._empty = empty
+
+    def state(self, key):
+        if self._raises:
+            raise RuntimeError("tracker read boom")
+        if self._empty:
+            return {}
+        return {"normalized": self._normalized}
+
+
+def _patch_tracker(monkeypatch, fake) -> None:
+    # _refuse_terminal_bead does `from tracker import make_tracker` at call time,
+    # so patching the source module binds the fake.
+    import tracker
+
+    monkeypatch.setattr(tracker, "make_tracker", lambda config: fake)
+
+
+def test_bootstrap_refuses_terminal_bead(tmp_path: Path, monkeypatch) -> None:
+    main = _main_checkout(tmp_path)
+    _patch_tracker(monkeypatch, _FakeTracker(normalized="done"))
+    with pytest.raises(fw._TerminalBead):
+        _run(tmp_path, main, runner=_fake_runner(main=main))
+    # refusal fires before `git worktree add`: no worktree dir left behind
+    assert not (tmp_path / "wt").exists()
+
+
+def test_bootstrap_refuses_cancelled_bead(tmp_path: Path, monkeypatch) -> None:
+    main = _main_checkout(tmp_path)
+    _patch_tracker(monkeypatch, _FakeTracker(normalized="cancelled"))
+    with pytest.raises(fw._TerminalBead):
+        _run(tmp_path, main, runner=_fake_runner(main=main))
+
+
+def test_bootstrap_proceeds_on_open_bead(tmp_path: Path, monkeypatch) -> None:
+    main = _main_checkout(tmp_path)
+    _patch_tracker(monkeypatch, _FakeTracker(normalized="open"))
+    res = _run(tmp_path, main, runner=_fake_runner(main=main))
+    assert res["ticket"] == "FT-1"
+
+
+def test_bootstrap_fails_open_on_read_exception(tmp_path: Path, monkeypatch) -> None:
+    # a genuine read failure must NOT strand a legitimate run (fail-open)
+    main = _main_checkout(tmp_path)
+    _patch_tracker(monkeypatch, _FakeTracker(raises=True))
+    res = _run(tmp_path, main, runner=_fake_runner(main=main))
+    assert res["ticket"] == "FT-1"
+
+
+def test_bootstrap_refuses_on_empty_status_read(tmp_path: Path, monkeypatch) -> None:
+    # a successful-but-incoherent read is NOT fail-open: refuse rather than proceed
+    # on an unconfirmed status (fail-open stays exception-only)
+    main = _main_checkout(tmp_path)
+    _patch_tracker(monkeypatch, _FakeTracker(empty=True))
+    with pytest.raises(fw._TerminalBead):
+        _run(tmp_path, main, runner=_fake_runner(main=main))
+
+
+def test_cli_terminal_bead_exits_6(tmp_path: Path, monkeypatch) -> None:
+    main = _main_checkout(tmp_path)
+    monkeypatch.setattr(fw, "_default_runner", lambda: _fake_runner(main=main))
+    _patch_tracker(monkeypatch, _FakeTracker(normalized="done"))
+    plan = _plan_file(tmp_path)
+    rc = fw.cli_main(
+        [
+            "create",
+            "--ticket",
+            "FT-1",
+            "--plan-from",
+            str(plan),
+            "--base",
+            "main",
+            "--branch",
+            "feature/FT-1-x",
+            "--main-root",
+            str(main),
+            "--worktree-path",
+            str(tmp_path / "wt"),
+        ]
+    )
+    assert rc == 6
+
+
 # ─── planned_files gitignore gate ─────────────────────────────────────────────
 
 
