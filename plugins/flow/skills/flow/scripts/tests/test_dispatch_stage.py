@@ -311,6 +311,7 @@ def test_next_surfaces_roles_for_stage_with_roles(
     _stub_git_head(monkeypatch, "abc123")
     ds.cmd_init(tmp_path, "FT-1")
     # advance past ticket stage
+    ds.cmd_next(tmp_path, "FT-1")
     ds.cmd_finish(tmp_path, "FT-1", "ticket", "completed")
     rc, payload = ds.cmd_next(tmp_path, "FT-1")
     assert rc == 0

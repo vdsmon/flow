@@ -137,6 +137,28 @@ def test_finish_stage_rejects_non_terminal_status(tmp_path: Path) -> None:
         state.finish_stage(tmp_path, "ticket", "in_progress", "h")
 
 
+def test_finish_stage_rejects_pending_stage(tmp_path: Path) -> None:
+    _seed(tmp_path)
+    with pytest.raises(ValueError, match=r"current status is 'pending'"):
+        state.finish_stage(tmp_path, "ticket", "completed", "h")
+
+
+def test_finish_stage_rejects_completed_stage(tmp_path: Path) -> None:
+    _seed(tmp_path)
+    state.begin_stage(tmp_path, "ticket", "h1")
+    state.finish_stage(tmp_path, "ticket", "completed", "h2")
+    with pytest.raises(ValueError, match=r"current status is 'completed'"):
+        state.finish_stage(tmp_path, "ticket", "completed", "h3")
+
+
+def test_finish_stage_rejects_failed_stage(tmp_path: Path) -> None:
+    _seed(tmp_path)
+    state.begin_stage(tmp_path, "ticket", "h1")
+    state.finish_stage(tmp_path, "ticket", "failed", "h2")
+    with pytest.raises(ValueError, match=r"current status is 'failed'"):
+        state.finish_stage(tmp_path, "ticket", "failed", "h3")
+
+
 def test_finish_stage_persists_skill_output(tmp_path: Path) -> None:
     _seed(tmp_path)
     state.begin_stage(tmp_path, "ticket", "h")
