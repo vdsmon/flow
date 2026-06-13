@@ -43,9 +43,21 @@ The cold audit goes silent for minutes mid-scoring. `claude -p` trips a stream-i
 
 ## Deadman (staleness surface)
 
-A dead loop used to be discovered only by noticing PRs stopped appearing. Each runner now appends a one-line run-record per fire to `~/.flow-evolve/run-record.jsonl` (`{schedule, phase, ts, outcome}`, at start and end). The SessionStart hook (`plugins/flow/hooks/session-start.py`) reads it and, inside any `.flow` workspace, prints a `## /flow ops` warning when the latest **nightly** record is >36h stale or the latest **weekly** record is >8d stale. Absence of the file means no schedule is armed on this machine, so the check self-gates to nowhere.
+A dead loop used to be discovered only by noticing PRs stopped appearing. Each runner appends one JSON line per event to `~/.flow-evolve/run-record.jsonl` — `{schedule, phase, ts, outcome}`, where `phase` is `start` or `end`, `ts` is UTC ISO-8601, and `outcome` is `ok`/`fail` on an `end` (empty on a `start`).
 
-**Redeploy is manual.** The runners are copy-deployed (`~/.flow-evolve/*.sh`), so the run-record lines are inert on the live machine until you re-copy the templates over the deployed scripts (Install steps 2 and 5). The hook half ships with the plugin and activates on the next marketplace update; it stays silent until the file appears.
+The `end` line is written by an **EXIT trap**, so it fires on ANY exit — clean finish, `set -uo pipefail` abort, a bad `cd`, a crash. `_RUN_OUTCOME` defaults to `fail` and is set to `ok` only after a clean producer launch (nightly: producer session captured + drain launched; weekly: producer captured + wait completed). A run that dies partway records `end … fail` immediately rather than going silent until the staleness bar trips.
+
+The SessionStart hook (`plugins/flow/hooks/session-start.py`) reads the file inside any `.flow` workspace and prints a `## /flow ops` warning under any of three per-schedule conditions:
+
+- **hung** — a `start` with no later `end`, past a grace of 3h (nightly) / 6h (weekly). A run still in flight within grace stays silent.
+- **fail** — the latest `end` recorded `outcome=fail`.
+- **stale** — the latest `end` is older than 36h (nightly) / 8d (weekly).
+
+What this catches: a never-firing timer (stale), a crashed/aborted fire (fail, immediately), and a wrapper stuck or killed before it can write `end` (hung — e.g. SIGKILL, reboot). What it does NOT catch: a wrapper that runs to completion while the `claude` job it launched is a zombie — that still records `end … ok` and looks healthy. Outcome-on-a-completed-run alerting is a separate, out-of-scope surface.
+
+Absence of the file means no schedule is armed on this machine, so the check self-gates to nowhere.
+
+**Redeploy is manual.** The runners are copy-deployed (`~/.flow-evolve/*.sh`), so the run-record changes are inert on the live machine until you re-copy the templates over the deployed scripts (Install steps 2 and 5). The hook half ships with the plugin and activates on the next marketplace update; it stays silent until the file appears.
 
 ## Gotchas
 
