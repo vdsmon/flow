@@ -890,12 +890,14 @@ def test_init_snapshot_write_failure_fail_open(
     assert "recover --reload-snapshot" in err
 
 
-def test_init_snapshot_write_failure_fail_closed(
+def test_init_resume_skips_snapshot_write_preserving_guard(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    # first init writes a valid sha; a later init whose write fails keeps the
-    # surviving sha so the drift guard stays active (fail-closed). The resume
-    # init carries the first init's session_nonce (same session re-entering).
+    # flow-qwf3: a resume with an existing snapshot does NOT re-baseline. The write
+    # is skipped entirely (not merely retried-on-failure), so the original sha
+    # survives and the drift guard stays armed. A spy proves write_snapshot is not
+    # called on the resume path. (Replaces the old fail-closed test: a write
+    # failure on resume is now unreachable because the write itself is skipped.)
     _write_workspace(tmp_path)
     _stub_git_head(monkeypatch)
     rc, first = ds.cmd_init(tmp_path, "FT-1")
@@ -905,13 +907,51 @@ def test_init_snapshot_write_failure_fail_closed(
     sha_before = sha_path.read_bytes()
     capsys.readouterr()
 
-    monkeypatch.setattr(ds, "write_snapshot", _boom_write)
+    calls = {"n": 0}
+    real_write = ds.write_snapshot
+
+    def counting_write(*args: Any, **kwargs: Any) -> Any:
+        calls["n"] += 1
+        return real_write(*args, **kwargs)
+
+    monkeypatch.setattr(ds, "write_snapshot", counting_write)
     rc, payload = ds.cmd_init(tmp_path, "FT-1", session_nonce=first["session_nonce"])
     assert rc == 0
-    assert payload["snapshot_write_failed"] is True
-    assert payload["snapshot_guard_active"] is True
+    assert payload["resumed"] is True
+    assert calls["n"] == 0  # resume preserved S0 without recomputing it
+    assert "snapshot_write_failed" not in payload
     assert sha_path.read_bytes() == sha_before
-    assert "fail-closed" in capsys.readouterr().err
+    assert capsys.readouterr().err == ""
+
+
+def test_init_resume_preserves_snapshot_does_not_launder_drift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # flow-qwf3: a resume must NOT re-baseline the canonical snapshot. The original
+    # S0 is the run's TOCTOU baseline; recomputing it on resume would launder
+    # unowned drift that landed while the run was suspended (a swapped engine, a
+    # rewritten workspace.toml), silently defeating the next-stage drift guard.
+    _write_workspace(tmp_path)
+    _stub_git_head(monkeypatch)
+    rc, first = ds.cmd_init(tmp_path, "FT-1")
+    assert rc == 0
+    sha_path = tmp_path / ".flow" / "runs" / "FT-1" / "snapshot.sha"
+    sha_before = sha_path.read_bytes()
+
+    # unowned drift lands while suspended: no baseline.json -> empty planned set,
+    # so the owned-reconcile path cannot absorb it.
+    wt = tmp_path / ".flow" / "workspace.toml"
+    wt.write_text(wt.read_text(encoding="utf-8") + "\n# drift\n", encoding="utf-8")
+
+    rc, second = ds.cmd_init(tmp_path, "FT-1", session_nonce=first["session_nonce"])
+    assert rc == 0
+    assert second["resumed"] is True
+    # snapshot preserved: not re-baselined to the drifted content.
+    assert sha_path.read_bytes() == sha_before
+    # so the next call still catches the unowned drift and aborts.
+    rc, payload = ds.cmd_next(tmp_path, "FT-1", second["session_nonce"])
+    assert rc == 1
+    assert "drift" in payload["error"]
 
 
 def test_init_exits_zero_on_snapshot_write_failure(
