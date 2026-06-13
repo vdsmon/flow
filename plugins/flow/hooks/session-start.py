@@ -387,20 +387,16 @@ def build_context(workspace_root: Path, cwd: Path, runner: Runner | None = None)
     return _render(deduped[:top_n])
 
 
-def cli_main(argv: list[str]) -> int:
+def cli_main(argv: list[str], run_record_path: Path | None = None) -> int:
     cwd = Path(argv[0]).resolve() if argv else Path.cwd()
     try:
+        record = run_record_path if run_record_path is not None else _run_record_path()
+        # The evolve deadman is machine-level (~/.flow-evolve/), so it must render
+        # in every session, not only ones started inside a flow workspace.
+        staleness = staleness_block(record, _now())
         workspace_root = find_workspace_root(cwd)
-        if workspace_root is None:
-            return 0
-        blocks = [
-            b
-            for b in (
-                build_context(workspace_root, cwd),
-                staleness_block(_run_record_path(), _now()),
-            )
-            if b
-        ]
+        recall = build_context(workspace_root, cwd) if workspace_root is not None else ""
+        blocks = [b for b in (staleness, recall) if b]
         if blocks:
             sys.stdout.write("\n\n".join(blocks) + "\n")
     except Exception:

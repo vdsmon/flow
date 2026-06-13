@@ -428,8 +428,36 @@ def test_non_flow_dir_returns_empty(tmp_path: Path) -> None:
 
 
 def test_cli_main_silent_outside_workspace(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
-    assert hook.cli_main([str(tmp_path)]) == 0
+    # Inject a nonexistent run-record so the assertion is deterministic on an
+    # armed maintainer machine (without injection cli_main reads the real
+    # ~/.flow-evolve/run-record.jsonl and would flake).
+    missing = tmp_path / "missing.jsonl"
+    assert hook.cli_main([str(tmp_path)], run_record_path=missing) == 0
     assert capsys.readouterr().out == ""
+
+
+def test_cli_main_renders_staleness_outside_workspace(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """The machine-level evolve deadman renders even from a non-flow cwd.
+
+    cli_main calls the real _now(), so the record's ts is a fixed far-past date
+    that exceeds the nightly staleness threshold against actual wall-clock time.
+    """
+    non_workspace_dir = tmp_path / "elsewhere"
+    non_workspace_dir.mkdir()
+    assert hook.find_workspace_root(non_workspace_dir) is None
+
+    stale_record = tmp_path / "run-record.jsonl"
+    _write_record(
+        stale_record,
+        {"schedule": "nightly", "phase": "end", "ts": "2020-01-01T00:00:00Z", "outcome": "ok"},
+    )
+
+    assert hook.cli_main([str(non_workspace_dir)], run_record_path=stale_record) == 0
+    out = capsys.readouterr().out
+    assert "## /flow ops" in out
+    assert "nightly evolve loop stale" in out
 
 
 # ─── git / recall failure returns empty (no exception) ─────────────────────────
