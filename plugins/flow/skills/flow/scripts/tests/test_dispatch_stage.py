@@ -122,6 +122,48 @@ def test_init_is_idempotent_preserves_progress(
     assert state_data["stages"]["ticket"]["status"] == "completed"
 
 
+def test_init_resumes_bak_recovered_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # flow-k6l6: a completed run releases its lease, its state.json later
+    # corrupts on disk, and an operator runs `/flow do T` (the "none present"
+    # re-init path: no nonce, no force). state.read quarantines the corrupt file
+    # and restores the newest .bak (exit 1). cmd_init MUST resume that recovered
+    # run, NOT mint a fresh run_id + state.init wipe it to all-pending (which
+    # would replay a shipped ticket = duplicate branch/PR).
+    _write_workspace(tmp_path, stages=["ticket", "plan"], compounding=False)
+    _stub_git_head(monkeypatch)
+    rc, first = ds.cmd_init(tmp_path, "FT-1")
+    assert rc == 0
+    nonce = first["session_nonce"]
+    ds.cmd_next(tmp_path, "FT-1", nonce)
+    ds.cmd_finish(tmp_path, "FT-1", "ticket", "completed", session_nonce=nonce)
+
+    td = tmp_path / ".flow" / "runs" / "FT-1"
+    state_path = td / "state.json"
+    # Snapshot the good state into a GUARANTEED-NEWEST .bak (the bak glob sorts
+    # by name reverse; real tokens are like 20260612T...Z, so a far-future token
+    # is deterministically picked first).
+    good = state_path.read_text(encoding="utf-8")
+    (td / "state.json.99999999T999999Z.bak").write_text(good, encoding="utf-8")
+
+    # Release the lease, then corrupt state.json (the "completed run, lease
+    # released" path the ticket describes).
+    ds.cmd_release(tmp_path, "FT-1", nonce)
+    state_path.write_text("{ this is not valid json ]", encoding="utf-8")
+
+    # Re-init with NO nonce and no force (a fresh `/flow do`).
+    rc2, payload = ds.cmd_init(tmp_path, "FT-1")
+    assert rc2 == 0
+    assert payload["resumed"] is True
+    assert payload["run_id"] == first["run_id"]
+    assert payload.get("state_recovered_from_backup") is True
+
+    # The on-disk state was healed and the resumed run kept its progress: NOT
+    # wiped to a fresh all-pending run.
+    healed = json.loads(state_path.read_text(encoding="utf-8"))
+    assert healed["stages"]["ticket"]["status"] == "completed"
+    assert healed["run_id"] == first["run_id"]
+
+
 def test_init_second_run_on_live_lease_is_blocked(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

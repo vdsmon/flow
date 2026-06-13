@@ -141,9 +141,14 @@ def cmd_init(
     # valid state is present (resume AND --force reset stay the same logical run),
     # so the lease sees us as the owner rather than a foreign run.
     existing, exit_code = state.read(td)
-    have_valid = existing is not None and exit_code == 0
+    # exit_code 1 = state.read quarantined a corrupt state.json and restored a
+    # valid run from .bak (rewriting it to disk); treat it as valid-for-resume,
+    # else a fresh run_id + state.init below would clobber the recovered history
+    # to all-pending and replay a shipped ticket (flow-k6l6).
+    have_valid = existing is not None and exit_code in (0, 1)
     resuming = have_valid and not force
-    run_id = existing.run_id if (existing is not None and exit_code == 0) else secrets.token_hex(8)
+    run_id = existing.run_id if have_valid else secrets.token_hex(8)
+    recovery = {"state_recovered_from_backup": True} if exit_code == 1 else {}
 
     # session_nonce is the per-session lease component run_id cannot supply: a
     # caller presenting the live owner's nonce re-acquires; one without it (a
@@ -218,6 +223,7 @@ def cmd_init(
             "ticket_dir": str(td),
             "resumed": True,
             **marker,
+            **recovery,
         }
 
     state.init(td, ticket, ws.backend, ws.stages, run_id=run_id)
@@ -230,6 +236,7 @@ def cmd_init(
         "ticket_dir": str(td),
         "resumed": False,
         **marker,
+        **recovery,
     }
 
 
