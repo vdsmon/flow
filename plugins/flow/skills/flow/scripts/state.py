@@ -260,6 +260,8 @@ def finish_stage(
         if stage not in state.stages:
             raise ValueError(f"stage {stage!r} not in state.stages")
         record = state.stages[stage]
+        if record.status != "in_progress":
+            raise ValueError(f"cannot finish stage {stage!r}: current status is {record.status!r}")
         new_record = replace(
             record,
             status=status,
