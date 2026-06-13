@@ -59,6 +59,7 @@ true
 
 **`dispatch_stage.py next` / `advance` (do-loop steps a + e — same codes):**
 - Exit 0 → continue.
+  A `next`/`advance` payload MAY also carry `state_recovered_from_backup: true` → the dispatcher found a corrupt `state.json`, quarantined it, and rolled back to the newest `.bak`; the stage about to be dispatched may have already completed before the corruption (the rollback is by design, the silence on it was the gap). On this marker the do-loop MUST (1) append a `STATE_ROLLBACK` friction entry; (2) before executing a NON-IDEMPOTENT stage — `create_pr`, `merge`, `commit` — re-verify whether the stage's external effect already landed (`gh pr view` for `create_pr`/`review_loop`, `git log` / `gh pr view` for `merge`/`commit`) and if it did, finish the stage `completed` WITHOUT re-running it; an idempotent stage just proceeds normally.
 - Exit 1 → distinguish by the stdout JSON payload, then break the loop:
   - `detail` present → config/version drift (the workspace.toml, the stage-registry, or a handler plugin changed mid-run).
     Surface the drift detail + the hint `/flow recover <ticket>`.
@@ -74,7 +75,7 @@ A `--status failed` advance returns `{blocked_by}`, which the skeleton's descrip
 
 ## Friction logging (in-flight)
 
-Whenever a step hits a snag the run has to work around, append one friction entry before you act on it. This is the high-fidelity evidence the `reflect` stage synthesizes into machinery findings (a backgrounded reflect agent cannot reconstruct it from `state.json` alone). See `references/self-evolution.md` for how this feeds the self-modification loop. Trigger → `--type`: `next`/`advance` drift exit 1 → `DRIFT`; lost-lease exit 7 → `LEASE_LOSS`; the records_diff_baseline post-implement reconcile OR a dispatch owned-drift reconcile (`next`/`advance` returns a `reconciled_drift` marker) → `RECONCILE`; a skill handler not installed → `MISSING_TOOL`; an `AskUserQuestion` blocker → `BLOCKER`; a stage finished `failed` → `STAGE_FAILED`; a retried stage → `RETRY`. The call (best-effort — never let a logging failure abort the run):
+Whenever a step hits a snag the run has to work around, append one friction entry before you act on it. This is the high-fidelity evidence the `reflect` stage synthesizes into machinery findings (a backgrounded reflect agent cannot reconstruct it from `state.json` alone). See `references/self-evolution.md` for how this feeds the self-modification loop. Trigger → `--type`: `next`/`advance` drift exit 1 → `DRIFT`; lost-lease exit 7 → `LEASE_LOSS`; the records_diff_baseline post-implement reconcile OR a dispatch owned-drift reconcile (`next`/`advance` returns a `reconciled_drift` marker) → `RECONCILE`; a skill handler not installed → `MISSING_TOOL`; an `AskUserQuestion` blocker → `BLOCKER`; a stage finished `failed` → `STAGE_FAILED`; a retried stage → `RETRY`; a `next`/`advance` payload carrying a `state_recovered_from_backup` marker → `STATE_ROLLBACK`. The call (best-effort — never let a logging failure abort the run):
 ```bash
 python3 ${CLAUDE_SKILL_DIR}/scripts/flow_friction.py \
   --ticket "$KEY" --run-id "$RUN_ID" --stage "$STAGE" \

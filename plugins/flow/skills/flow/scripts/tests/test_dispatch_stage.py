@@ -1408,3 +1408,69 @@ def test_cli_advance_corrupt_lock_exits_7(
     state_path = tmp_path / ".flow" / "runs" / "FT-1" / "state.json"
     data = json.loads(state_path.read_text(encoding="utf-8"))
     assert data["stages"]["ticket"]["status"] == "in_progress"
+
+
+# ─── state rollback marker (flow-6hn2) ───────────────────────────────────────
+
+
+def _corrupt_state(td: Path) -> None:
+    """Overwrite state.json with unparseable bytes, leaving any .bak intact."""
+    state._state_path(td).write_text("{ not json", encoding="utf-8")
+
+
+def test_next_surfaces_recovery_marker_after_rollback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_workspace(tmp_path, stages=["ticket", "plan"], compounding=False)
+    _stub_git_head(monkeypatch)
+    ds.cmd_init(tmp_path, "FT-1")
+    ds.cmd_next(tmp_path, "FT-1")
+    ds.cmd_finish(tmp_path, "FT-1", "ticket", "completed")
+    td = tmp_path / ".flow" / "runs" / "FT-1"
+    assert list(td.glob("state.json.*.bak"))  # a recoverable .bak exists
+    _corrupt_state(td)
+    rc, payload = ds.cmd_next(tmp_path, "FT-1")
+    assert rc == 0
+    assert payload["state_recovered_from_backup"] is True
+
+
+def test_advance_surfaces_recovery_marker_after_rollback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_workspace(tmp_path, stages=["ticket", "plan"], compounding=False)
+    _stub_git_head(monkeypatch)
+    ds.cmd_init(tmp_path, "FT-1")
+    ds.cmd_next(tmp_path, "FT-1")
+    ds.cmd_finish(tmp_path, "FT-1", "ticket", "completed")
+    td = tmp_path / ".flow" / "runs" / "FT-1"
+    assert list(td.glob("state.json.*.bak"))
+    _corrupt_state(td)
+    _, payload = ds.cmd_advance(tmp_path, "FT-1", "plan", "completed")
+    assert payload["state_recovered_from_backup"] is True
+
+
+def test_finish_surfaces_recovery_marker_after_rollback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_workspace(tmp_path, stages=["ticket", "plan"], compounding=False)
+    _stub_git_head(monkeypatch)
+    ds.cmd_init(tmp_path, "FT-1")
+    ds.cmd_next(tmp_path, "FT-1")
+    ds.cmd_finish(tmp_path, "FT-1", "ticket", "completed")
+    td = tmp_path / ".flow" / "runs" / "FT-1"
+    assert list(td.glob("state.json.*.bak"))
+    _corrupt_state(td)
+    _, payload = ds.cmd_finish(tmp_path, "FT-1", "plan", "completed")
+    assert payload["state_recovered_from_backup"] is True
+
+
+def test_next_clean_read_has_no_recovery_marker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_workspace(tmp_path, stages=["ticket", "plan"], compounding=False)
+    _stub_git_head(monkeypatch)
+    ds.cmd_init(tmp_path, "FT-1")
+    ds.cmd_next(tmp_path, "FT-1")
+    rc, payload = ds.cmd_advance(tmp_path, "FT-1", "ticket", "completed")
+    assert rc == 0
+    assert "state_recovered_from_backup" not in payload
