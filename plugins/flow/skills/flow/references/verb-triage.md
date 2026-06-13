@@ -48,7 +48,8 @@ the answer + transition to open, same as a deferred one.
 Then print the hint: re-run the ticket WITHOUT `--auto` to plan interactively.
 (An `--auto` retry now ingests the `TRIAGE-DECISION:` answer as authoritative
 rather than re-deferring; a hot change still blocks on a residual
-implementation wall, a clean one proceeds — see verb-spec.md's decided-mode
+implementation wall UNLESS `[evolve] adjudicate_hot` is on (then it proceeds,
+merge-time-guard-gated), a clean one proceeds — see verb-spec.md's decided-mode
 branch.)
 
 Note: the already-reopened beads carry legacy `DECISION:` comments; detection
@@ -91,7 +92,10 @@ showing the last comment overall.
 
 `[evolve] adjudicate_hot` (default off, maintainer self-target) lifts the hot
 hard-floor so hot changes auto-adjudicate like non-hot ones: an advisor `proceed`
-on a hot change ships instead of being downgraded to a block (and the
-flow_worktree bootstrap stops refusing a hot change with no recorded decision).
+on a hot change ships instead of being downgraded to a block, the
+flow_worktree bootstrap stops refusing a hot change with no recorded decision,
+and the decided short-circuit stops blocking — a hot, already-decided bead
+proceeds (merge-time-guard-gated) on relaunch instead of re-blocking on the
+residual implementation wall.
 The merge-time guard-property review + CI are the retained gate. Read the flag via
 `python3 ${CLAUDE_SKILL_DIR}/scripts/triage.py adjudicate-hot-enabled --workspace-root .`.
