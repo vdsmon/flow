@@ -330,6 +330,7 @@ def cmd_next(
         if exit_code == 2:
             return 1, {"error": f"unrecoverable state.json at {td}"}
         return 2, {"error": f"no state.json at {td}; run `dispatch init` first"}
+    recovery = {"state_recovered_from_backup": True} if exit_code == 1 else {}
 
     # TOCTOU: refuse if workspace.toml / registry / a handler plugin drifted
     # since the run started. EXCEPTION: an owned drift whose changed component(s)
@@ -368,11 +369,12 @@ def cmd_next(
             "done": False,
             "blocked_by": failed,
             "reason": record.failure_detail or "stage failed",
+            **recovery,
         }
 
     next_stage = state.pick_next_pending(ts, snapshot.stages)
     if next_stage is None:
-        return 0, {"done": True}
+        return 0, {"done": True, **recovery}
 
     head_sha = _git_head_sha(workspace_root)
 
@@ -399,6 +401,8 @@ def cmd_next(
         payload["reference_doc"] = stage_meta.reference_doc
     if owned_reconcile:
         payload["reconciled_drift"] = owned_reconcile
+    if exit_code == 1:
+        payload["state_recovered_from_backup"] = True
 
     # Refresh the lease to cover this stage's timeout window before marking it
     # in_progress, so a multi-minute stage does not self-expire the lease.
@@ -446,6 +450,7 @@ def cmd_finish(
         if exit_code == 2:
             return 1, {"error": f"unrecoverable state.json at {td}"}
         return 2, {"error": f"no state.json at {td}; run `dispatch init` first"}
+    recovery = {"state_recovered_from_backup": True} if exit_code == 1 else {}
 
     guard = _guard_lease_ownership(td, ts.run_id, session_nonce)
     if guard is not None:
@@ -473,7 +478,7 @@ def cmd_finish(
             failure_detail=failure_detail,
         )
     except (ValueError, state.StateUnrecoverable) as exc:
-        return 1, {"error": str(exc)}
+        return 1, {"error": str(exc), **recovery}
 
     # Compute next_pending for caller convenience.
     _, snapshot = vw.validate(workspace_root)
@@ -496,6 +501,7 @@ def cmd_finish(
         "stage": stage_name,
         "status": status_value,
         "next_pending": next_pending,
+        **recovery,
     }
 
 
@@ -530,7 +536,10 @@ def cmd_advance(
     if finish_rc != 0:
         return finish_rc, finish_payload
     next_rc, next_payload = cmd_next(workspace_root, ticket, session_nonce)
-    return next_rc, {"finished": {"stage": stage_name, "status": status_value}, **next_payload}
+    merged = {"finished": {"stage": stage_name, "status": status_value}, **next_payload}
+    if finish_payload.get("state_recovered_from_backup"):
+        merged["state_recovered_from_backup"] = True
+    return next_rc, merged
 
 
 def cmd_status(workspace_root: Path, ticket: str) -> tuple[int, dict[str, Any]]:

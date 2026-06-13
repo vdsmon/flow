@@ -715,3 +715,36 @@ def test_recorded_decision_accepts_advisor_stem() -> None:
     assert (
         triage._recorded_decision(comments) == "(advisor) ship option A; blast radius is contained"
     )
+
+
+def test_recorded_decision_accepts_freeform_maintainer_stem() -> None:
+    # flow-rvc: a freeform `MAINTAINER DECISION <date>:` comment now reads as a
+    # recorded decision (was a false negative under the old startswith stems).
+    comments = [
+        {
+            "text": "MAINTAINER DECISION 2026-06-10: ship the regex, gate the hot branch.",
+            "created_at": "2026-06-10T10:00:00Z",
+        }
+    ]
+    assert triage._recorded_decision(comments) == "ship the regex, gate the hot branch."
+
+
+def test_recorded_decision_case_sensitive_lowercase_no_match() -> None:
+    # case-sensitive: lowercase prose `decision:` must not match.
+    comments = [
+        {
+            "text": "decision: this is prose, not a recorded decision",
+            "created_at": "2026-06-10T10:00:00Z",
+        }
+    ]
+    assert triage._recorded_decision(comments) is None
+
+
+def test_decided_freeform_maintainer_stem(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path, backend="beads")
+    comments = [_tc("MAINTAINER DECISION 2026-06-10: build it.", "2026-06-10T10:00:00Z")]
+    runner = _FakeRunner([_version_ok(), _decided_show(comments=comments)])
+    code, result = _run_decided(tmp_path, ["--key", "flow-x"], runner)
+    assert code == 0
+    assert result["decided"] is True
+    assert result["answer"] == "build it."
