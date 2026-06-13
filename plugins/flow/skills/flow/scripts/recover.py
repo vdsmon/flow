@@ -117,8 +117,14 @@ def abort(workspace_root: Path, ticket: str) -> tuple[int, dict[str, Any]]:
 
 
 def reload_snapshot(workspace_root: Path, ticket: str) -> tuple[int, dict[str, Any]]:
-    with contextlib.suppress(Exception):
+    try:
         write_snapshot(workspace_root, ticket, skill_root=_skill_root())
+    except Exception as exc:
+        return 1, {
+            "ticket": ticket,
+            "snapshot_reloaded": False,
+            "error": f"snapshot write failed: {exc}",
+        }
     return 0, {"ticket": ticket, "snapshot_reloaded": True}
 
 

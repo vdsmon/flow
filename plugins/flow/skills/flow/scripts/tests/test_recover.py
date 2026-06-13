@@ -216,3 +216,19 @@ def test_skip_exit1_unknown_stage(tmp_path: Path) -> None:
         ["skip", "--ticket", "T-1", "--workspace-root", str(tmp_path), "--stage", "nope"]
     )
     assert rc == 1
+
+
+def test_reload_snapshot_fails_loud_on_write_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    td = _ws(tmp_path)
+
+    def _boom(*args: object, **kwargs: object) -> None:
+        raise OSError("disk gone")
+
+    monkeypatch.setattr(recover, "write_snapshot", _boom)
+    rc, payload = recover.reload_snapshot(tmp_path, "T-1")
+    assert rc == 1
+    assert payload["snapshot_reloaded"] is False
+    assert "error" in payload
+    assert not (td / "snapshot.sha").exists()
