@@ -505,8 +505,10 @@ def takeover_clear(
     *,
     current_boot: str | None = None,
     hostname: str | None = None,
+    force: bool = False,
+    on_cleared: Callable[[], object] | None = None,
 ) -> dict[str, object]:
-    """Classify and remediate the lease for recover takeover under ONE flock.
+    """Classify and remediate the lease for recover takeover/abort under ONE flock.
 
     Closes the classify-then-mutate TOCTOU: the decision and the remediation
     (quarantine-rename or unlink) happen inside a single flock span, so a
@@ -514,13 +516,25 @@ def takeover_clear(
     internally, so calling it with the flock held is safe.
 
     Returns {"cleared", "state", "holder", "quarantined"}: live -> cleared
-    False with the holder; corrupt -> rename to quarantine; free / expired_*
-    -> unlink.
+    False with the holder (unless `force`); corrupt -> rename to quarantine;
+    free / expired_* (and live when `force`) -> unlink.
+
+    `force` overrides the live-refusal so an operator-explicit abort can release
+    a lease that still looks live (the recover abort --force escape hatch).
+    takeover never passes it, so its refuse-on-live guarantee is unchanged.
+
+    `on_cleared`, when given, runs WHILE the flock is STILL held, on the cleared
+    paths only (never on a refused-live). It lets recover takeover do its stage
+    resets + snapshot atomically with the clear, so a concurrent acquire cannot
+    land between the unlink and the resets and have its just-begun stage
+    clobbered. Same teardown-under-flock contract as classify_then: on_cleared
+    must NOT call any lease function that re-takes this flock (it would
+    self-deadlock). Its return value is discarded.
     """
     with flock_blocking(_flock_path(ticket_dir)):
         info = classify(ticket_dir, now_iso, current_boot=current_boot, hostname=hostname)
         lock_state = info["state"]
-        if lock_state == "live":
+        if lock_state == "live" and not force:
             return {
                 "cleared": False,
                 "state": lock_state,
@@ -529,8 +543,12 @@ def takeover_clear(
             }
         if lock_state == "corrupt":
             dst = _quarantine_locked(ticket_dir)
+            if on_cleared is not None:
+                on_cleared()
             return {"cleared": True, "state": lock_state, "holder": None, "quarantined": dst}
         run_lock_path(ticket_dir).unlink(missing_ok=True)
+        if on_cleared is not None:
+            on_cleared()
         return {
             "cleared": True,
             "state": lock_state,

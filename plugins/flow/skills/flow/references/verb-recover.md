@@ -36,6 +36,7 @@ It does not run stages; after a successful fix it hands back to `/flow do`.
      - retry: `recover.py retry --stage <S> --ticket "$KEY" --workspace-root .`
      - skip: `recover.py skip --stage <S> --ticket "$KEY" --workspace-root .`
      - abort: `recover.py abort --ticket "$KEY" --workspace-root .`
+       abort classifies the lease under the run flock and refuses (exit 1) when it is `live` — releasing a live lease would de-mutex a sibling run that re-acquired the ticket. To release a lease that still looks live anyway (the run is genuinely wedged), add `--force`; this is operator-explicit, so confirm first.
 
    - **Config / version drift** — `snapshot.ok` is false (workspace.toml,
      stage-registry, or a handler plugin changed since the run started).
