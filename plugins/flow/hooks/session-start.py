@@ -38,6 +38,9 @@ _SNIPPET_LEN = 160
 # ~/.flow-evolve/run-record.jsonl. Absence of the file means no schedule is armed on
 # this machine, so the warning self-gates. Thresholds give one missed fire of slack.
 _STALE_THRESHOLDS_S = {"nightly": 36 * 3600, "weekly": 8 * 86400}
+# A start with no end past this grace = a hung run (the witnessed zombie class).
+# Tighter than the staleness bar: a genuinely-stuck run surfaces in hours, not days.
+_ZOMBIE_GRACE_S = {"nightly": 3 * 3600, "weekly": 6 * 3600}
 _SCHEDULE_LABEL = {"nightly": "nightly evolve", "weekly": "weekly epic"}
 
 
@@ -229,17 +232,26 @@ def _stale_line(sched: str, age_s: float, threshold_s: int) -> str:
     )
 
 
-def staleness_block(record_path: Path, now: datetime) -> str:
-    """Warn when an armed evolve schedule's last run-record is stale.
+def _fail_line(sched: str) -> str:
+    label = _SCHEDULE_LABEL.get(sched, sched)
+    return f"- ⚠️ {label} last run recorded `fail`; check ~/.flow-evolve/logs for the failed fire."
 
-    Returns "" when the record file is absent (no schedule armed here) or when
-    every armed schedule is fresh. Any io/parse error is swallowed -> "".
-    """
-    try:
-        text = record_path.read_text(encoding="utf-8")
-    except OSError:
-        return ""
-    latest: dict[str, datetime] = {}
+
+def _hung_line(sched: str, age_s: float, grace_s: int) -> str:
+    label = _SCHEDULE_LABEL.get(sched, sched)
+    return (
+        f"- ⚠️ {label} run started {age_s / 3600:.0f}h ago with no completion "
+        f"(>{grace_s // 3600}h grace — hung?); check ~/.flow-evolve/logs."
+    )
+
+
+def _parse_run_records(
+    text: str,
+) -> tuple[dict[str, datetime], dict[str, datetime], dict[str, str]]:
+    """Reduce a run-record.jsonl body to the latest start/end/outcome per schedule."""
+    last_start: dict[str, datetime] = {}
+    last_end: dict[str, datetime] = {}
+    last_outcome: dict[str, str] = {}
     for raw in text.splitlines():
         line = raw.strip()
         if not line:
@@ -251,6 +263,7 @@ def staleness_block(record_path: Path, now: datetime) -> str:
         if not isinstance(rec, dict):
             continue
         sched = str(rec.get("schedule") or "")
+        phase = str(rec.get("phase") or "")
         ts_raw = str(rec.get("ts") or "")
         if sched not in _STALE_THRESHOLDS_S or not ts_raw:
             continue
@@ -260,13 +273,51 @@ def staleness_block(record_path: Path, now: datetime) -> str:
             continue
         if ts.tzinfo is None:
             ts = ts.replace(tzinfo=UTC)
-        if sched not in latest or ts > latest[sched]:
-            latest[sched] = ts
+        if phase == "start" and (sched not in last_start or ts > last_start[sched]):
+            last_start[sched] = ts
+        elif phase == "end" and (sched not in last_end or ts > last_end[sched]):
+            last_end[sched] = ts
+            last_outcome[sched] = str(rec.get("outcome") or "")
+    return last_start, last_end, last_outcome
+
+
+def staleness_block(record_path: Path, now: datetime) -> str:
+    """Warn when an armed evolve schedule's run-record signals trouble.
+
+    Three conditions, per schedule, in priority order:
+      1. hung  — a `start` with no `end` after it, past the zombie grace (3h
+                 nightly / 6h weekly). A run in flight within grace stays silent.
+      2. fail  — the latest `end` recorded outcome `fail` (trap-EXIT crash-capture).
+      3. stale — the latest `end` is older than the staleness threshold (36h / 8d).
+
+    Hung keys on `last_start > last_end` (not `last_end is None`), so a fresh
+    hung start is caught even with prior completed runs in the accumulating file.
+    Returns "" when the record file is absent (no schedule armed here) or every
+    armed schedule is healthy. Any io/parse error is swallowed -> "".
+    """
+    try:
+        text = record_path.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    last_start, last_end, last_outcome = _parse_run_records(text)
     warnings: list[str] = []
     for sched, threshold in _STALE_THRESHOLDS_S.items():
-        last = latest.get(sched)
-        if last is not None and (now - last).total_seconds() > threshold:
-            warnings.append(_stale_line(sched, (now - last).total_seconds(), threshold))
+        start = last_start.get(sched)
+        end = last_end.get(sched)
+        if start is not None and (end is None or start > end):
+            grace = _ZOMBIE_GRACE_S[sched]
+            age = (now - start).total_seconds()
+            if age > grace:
+                warnings.append(_hung_line(sched, age, grace))
+            continue
+        if end is None:
+            continue
+        if last_outcome.get(sched) == "fail":
+            warnings.append(_fail_line(sched))
+            continue
+        age = (now - end).total_seconds()
+        if age > threshold:
+            warnings.append(_stale_line(sched, age, threshold))
     if not warnings:
         return ""
     return "\n".join(["## /flow ops", "", *warnings])
