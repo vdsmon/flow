@@ -190,28 +190,38 @@ def cmd_init(
             "hint": f"/flow recover --takeover {ticket}",
         }
 
-    # Canonical snapshot for later `next` TOCTOU checks. Best-effort: a snapshot
+    # Canonical snapshot for later `next` TOCTOU checks. On a FRESH run (or a
+    # --force reset, or a resume whose snapshot was lost) establish S0. On RESUME
+    # with an existing snapshot, do NOT re-baseline: that snapshot is the run's
+    # TOCTOU baseline, and recomputing it from current content would launder any
+    # unowned drift that landed while the run was suspended (a swapped engine, a
+    # rewritten workspace.toml), silently defeating the next-stage drift guard
+    # (flow-qwf3). The preserved S0 already reflects owned reconciles the original
+    # session accepted (cmd_next rewrites it on owned drift), so the very next
+    # `next` aborts on genuine unowned drift and reconciles owned drift, with the
+    # lease guard in the correct order. Best-effort on the write paths: a snapshot
     # write failure must not block the run (verify treats absence as no-op). But
     # an absent sha makes classify_drift fail OPEN (drift guard silently off), so
     # surface the failure rather than swallow it. cmd_init still returns exit 0.
     marker: dict[str, Any] = {}
-    try:
-        write_snapshot(workspace_root, ticket, skill_root=_skill_root_from_script())
-    except Exception as exc:
-        sha_present = snapshot_sha_path(workspace_root, ticket).exists()
-        if sha_present:
-            sys.stderr.write(
-                f"dispatch init: snapshot write failed for {ticket} ({exc}) but a "
-                "snapshot.sha is present; drift guard remains active (fail-closed)\n"
-            )
-        else:
-            sys.stderr.write(
-                f"dispatch init: snapshot write failed for {ticket} ({exc}) and no "
-                "snapshot.sha exists; the config/version drift guard is OFF for this "
-                "run (fail-open) and drift will NOT be detected. Run "
-                "`/flow recover --reload-snapshot` to restore it.\n"
-            )
-        marker = {"snapshot_write_failed": True, "snapshot_guard_active": sha_present}
+    if not (resuming and snapshot_sha_path(workspace_root, ticket).exists()):
+        try:
+            write_snapshot(workspace_root, ticket, skill_root=_skill_root_from_script())
+        except Exception as exc:
+            sha_present = snapshot_sha_path(workspace_root, ticket).exists()
+            if sha_present:
+                sys.stderr.write(
+                    f"dispatch init: snapshot write failed for {ticket} ({exc}) but a "
+                    "snapshot.sha is present; drift guard remains active (fail-closed)\n"
+                )
+            else:
+                sys.stderr.write(
+                    f"dispatch init: snapshot write failed for {ticket} ({exc}) and no "
+                    "snapshot.sha exists; the config/version drift guard is OFF for this "
+                    "run (fail-open) and drift will NOT be detected. Run "
+                    "`/flow recover --reload-snapshot` to restore it.\n"
+                )
+            marker = {"snapshot_write_failed": True, "snapshot_guard_active": sha_present}
 
     if resuming:
         _promote_recall_log(workspace_root, ticket)
