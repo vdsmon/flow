@@ -40,6 +40,7 @@ The cold audit goes silent for minutes mid-scoring. `claude -p` trips a stream-i
    launchctl load ~/Library/LaunchAgents/com.<you>.flow-evolve.plist
    ```
 5. **Weekly epic producer** (optional): same steps with `weekly-epic.sh.template` → `~/.flow-evolve/weekly-epic.sh` and `com.vdsmon.flow-epic.plist.template` → `~/Library/LaunchAgents/com.<you>.flow-epic.plist`. Test-fire by hand first, then `launchctl load`.
+6. **loopctl helper** (optional but recommended): same copy-and-replace pattern for `loopctl.sh.template` → `~/.flow-evolve/loopctl.sh`; replace only `{{USER}}` (your macOS username). Then `chmod +x ~/.flow-evolve/loopctl.sh`. Usage: `loopctl.sh arm|disarm|status [nightly|weekly]`.
 
 ## Deadman (staleness surface)
 
@@ -56,6 +57,8 @@ The SessionStart hook (`plugins/flow/hooks/session-start.py`) reads the file ins
 What this catches: a never-firing timer (stale), a crashed/aborted fire (fail, immediately), and a wrapper stuck or killed before it can write `end` (hung — e.g. SIGKILL, reboot). What it does NOT catch: a wrapper that runs to completion while the `claude` job it launched is a zombie — that still records `end … ok` and looks healthy. Outcome-on-a-completed-run alerting is a separate, out-of-scope surface.
 
 Absence of the file means no schedule is armed on this machine, so the check self-gates to nowhere.
+
+When a loop is deliberately disarmed via `loopctl.sh disarm`, it writes a marker file (`~/.flow-evolve/disarmed-{nightly,weekly}`). The SessionStart hook reads this marker and emits an informational (non-warning) line instead of stale/hung/fail warnings. Running `loopctl.sh arm` removes the marker. **Migration note:** if you disarmed the loops before deploying the new loopctl template, run `loopctl.sh disarm [nightly|weekly]` once after redeploying to materialize the marker files.
 
 **Redeploy is manual.** The runners are copy-deployed (`~/.flow-evolve/*.sh`), so the run-record changes are inert on the live machine until you re-copy the templates over the deployed scripts (Install steps 2 and 5). The hook half ships with the plugin and activates on the next marketplace update; it stays silent until the file appears.
 

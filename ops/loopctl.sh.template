@@ -1,0 +1,43 @@
+#!/bin/bash
+# loopctl.sh — arm/disarm the scheduled flow evolve loops (launchd).
+#
+# TEMPLATE. Copy to ~/.flow-evolve/loopctl.sh and replace the {{...}}
+# placeholders (see ops/README.md):
+#   {{USER}}   your macOS username (the launchd plist label owner prefix)
+set -euo pipefail
+UID_N=$(id -u)
+PLIST_DIR="$HOME/Library/LaunchAgents"
+MARKER_DIR="$HOME/.flow-evolve"
+label_for() {
+  case "$1" in
+    nightly) echo "com.{{USER}}.flow-evolve" ;;
+    weekly)  echo "com.{{USER}}.flow-epic" ;;
+    *) echo "unknown target: $1 (nightly|weekly)" >&2; exit 2 ;;
+  esac
+}
+cmd="${1:-status}"
+sel="${2:-}"
+if [ -n "$sel" ]; then targets="$sel"; else targets="nightly weekly"; fi
+for t in $targets; do
+  label=$(label_for "$t")
+  plist="$PLIST_DIR/$label.plist"
+  case "$cmd" in
+    disarm)
+      launchctl bootout "gui/$UID_N/$label" 2>/dev/null || true
+      launchctl disable "gui/$UID_N/$label"
+      touch "$MARKER_DIR/disarmed-$t"
+      echo "$t ($label): DISARMED (persists across reboots)";;
+    arm)
+      [ -f "$plist" ] || { echo "$t: plist missing at $plist" >&2; exit 1; }
+      launchctl enable "gui/$UID_N/$label"
+      launchctl bootstrap "gui/$UID_N" "$plist" 2>/dev/null || true
+      rm -f "$MARKER_DIR/disarmed-$t"
+      echo "$t ($label): ARMED";;
+    status)
+      if launchctl print "gui/$UID_N/$label" >/dev/null 2>&1; then state="ARMED (loaded)"
+      elif launchctl print-disabled "gui/$UID_N" 2>/dev/null | grep -q "\"$label\" => disabled"; then state="DISARMED"
+      else state="not loaded (enabled — will load at next login)"; fi
+      echo "$t ($label): $state";;
+    *) echo "usage: loopctl.sh arm|disarm|status [nightly|weekly]" >&2; exit 2;;
+  esac
+done
