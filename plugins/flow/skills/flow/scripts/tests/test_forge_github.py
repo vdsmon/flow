@@ -5,16 +5,30 @@ import subprocess
 
 import pytest
 
-from forge import NotSupported
 from forge_github import GitHubAdapter
 
 Recorder = list[list[str]]
 
 
+def _is_graphql(args: list[str]) -> bool:
+    return args[:3] == ["gh", "api", "graphql"]
+
+
+def _graphql_mutation(args: list[str]) -> str:
+    """'resolve' / 'reply' / 'read' — keyed on the query text in the argv."""
+    blob = " ".join(args)
+    if "resolveReviewThread" in blob:
+        return "resolve"
+    if "addPullRequestReviewThreadReply" in blob:
+        return "reply"
+    return "read"
+
+
 def _adapter(responses: dict | None = None) -> tuple[GitHubAdapter, Recorder]:
     """GitHubAdapter with a fake runner that pattern-matches argv prefixes.
 
-    `responses` keys: 'list' (json str), 'create' (stdout), 'view' (json str).
+    `responses` keys: 'list' (json str), 'create' (stdout), 'view' (json str),
+    'repo_view' (json str), 'threads'/'resolve'/'reply' (graphql json strs).
     """
     responses = responses or {}
     calls: Recorder = []
@@ -27,6 +41,14 @@ def _adapter(responses: dict | None = None) -> tuple[GitHubAdapter, Recorder]:
             return subprocess.CompletedProcess(args, 0, responses.get("create", ""), "")
         if args[:3] == ["gh", "pr", "view"]:
             return subprocess.CompletedProcess(args, 0, responses.get("view", "{}"), "")
+        if args[:3] == ["gh", "repo", "view"]:
+            return subprocess.CompletedProcess(
+                args, 0, responses.get("repo_view", '{"nameWithOwner":"o/r"}'), ""
+            )
+        if _is_graphql(args):
+            kind = _graphql_mutation(args)
+            key = {"read": "threads", "resolve": "resolve", "reply": "reply"}[kind]
+            return subprocess.CompletedProcess(args, 0, responses.get(key, "{}"), "")
         if args[:3] in (["gh", "pr", "ready"], ["gh", "pr", "merge"]):
             return subprocess.CompletedProcess(args, 0, "", "")
         if args[:3] == ["git", "push", "origin"]:
@@ -38,6 +60,38 @@ def _adapter(responses: dict | None = None) -> tuple[GitHubAdapter, Recorder]:
 
 def _ran(calls: Recorder, prefix: list[str]) -> bool:
     return any(c[: len(prefix)] == prefix for c in calls)
+
+
+def _thread_node(
+    *,
+    tid: str = "T1",
+    resolved: bool = False,
+    path: str = "src/a.py",
+    line: int | None = 10,
+    body: str = "**Issue title**\nfix this",
+    author: str | None = "coderabbitai",
+    state: str | None = "CHANGES_REQUESTED",
+) -> dict:
+    comment: dict = {"body": body}
+    comment["author"] = {"login": author} if author is not None else None
+    comment["pullRequestReview"] = {"state": state} if state is not None else None
+    return {
+        "id": tid,
+        "isResolved": resolved,
+        "path": path,
+        "line": line,
+        "comments": {"nodes": [comment]},
+    }
+
+
+def _threads_response(nodes: list[dict]) -> str:
+    return json.dumps(
+        {"data": {"repository": {"pullRequest": {"reviewThreads": {"nodes": nodes}}}}}
+    )
+
+
+def _resolve_response(is_resolved: bool) -> str:
+    return json.dumps({"data": {"resolveReviewThread": {"thread": {"isResolved": is_resolved}}}})
 
 
 def test_detect_pr_parses_first_item():
@@ -196,22 +250,87 @@ def test_mark_ready_merge_delete_argv():
     assert _ran(calls, ["git", "push", "origin", "--delete", "feature/flow-x"])
 
 
-def test_review_threads_not_supported():
-    fg, _ = _adapter()
-    with pytest.raises(NotSupported):
-        fg.review_threads("7")
-    with pytest.raises(NotSupported):
-        fg.post_reply("7", "t1", "body")
-    with pytest.raises(NotSupported):
-        fg.resolve_thread("7", "t1")
-
-
-def test_capabilities_review_threads_off():
+def test_capabilities_review_threads_on():
     fg, _ = _adapter()
     caps = {c["name"]: c["supported"] for c in fg.capabilities}
-    assert caps["review_threads"] is False
+    assert caps["review_threads"] is True
     assert caps["ci_rollup"] is True
     assert caps["squash_merge"] is True
+
+
+def test_review_threads_normalizes_changes_requested_as_major():
+    node = _thread_node(
+        tid="T9",
+        path="src/x.py",
+        line=42,
+        body="**Potential issue**\nguard the null",
+        author="coderabbitai",
+        state="CHANGES_REQUESTED",
+    )
+    fg, _ = _adapter({"threads": _threads_response([node])})
+    threads = fg.review_threads("7")
+    assert len(threads) == 1
+    t = threads[0]
+    assert t["id"] == "T9"
+    assert t["file"] == "src/x.py"
+    assert t["line"] == 42
+    assert t["severity"] == "major"
+    assert t["title"] == "**Potential issue**"
+    assert t["body"].startswith("**Potential issue**")
+    assert t["author"] == "coderabbitai"
+    assert t["resolved"] is False
+    assert t["parent_id"] is None
+
+
+def test_review_threads_commented_is_minor():
+    node = _thread_node(state="COMMENTED")
+    fg, _ = _adapter({"threads": _threads_response([node])})
+    assert fg.review_threads("7")[0]["severity"] == "minor"
+
+
+def test_review_threads_drops_resolved():
+    nodes = [
+        _thread_node(tid="open1", resolved=False),
+        _thread_node(tid="done1", resolved=True),
+    ]
+    fg, _ = _adapter({"threads": _threads_response(nodes)})
+    threads = fg.review_threads("7")
+    assert [t["id"] for t in threads] == ["open1"]
+
+
+def test_review_threads_null_author_and_review_does_not_crash():
+    node = _thread_node(author=None, state=None)
+    fg, _ = _adapter({"threads": _threads_response([node])})
+    t = fg.review_threads("7")[0]
+    assert t["author"] == ""
+    assert t["severity"] == "minor"
+
+
+def test_review_threads_passes_typed_number_and_owner_repo():
+    node = _thread_node()
+    fg, calls = _adapter({"threads": _threads_response([node])})
+    fg.review_threads("7")
+    gql = next(c for c in calls if _is_graphql(c) and _graphql_mutation(c) == "read")
+    assert "-F" in gql and "number=7" in gql
+    assert "owner=o" in gql and "repo=r" in gql
+
+
+def test_resolve_thread_true_when_isresolved():
+    fg, _ = _adapter({"resolve": _resolve_response(True)})
+    assert fg.resolve_thread("7", "T1") is True
+
+
+def test_resolve_thread_false_when_not_resolved():
+    fg, _ = _adapter({"resolve": _resolve_response(False)})
+    assert fg.resolve_thread("7", "T1") is False
+
+
+def test_post_reply_issues_reply_mutation():
+    fg, calls = _adapter()
+    fg.post_reply("7", "T1", "thanks, fixed")
+    reply = next(c for c in calls if _is_graphql(c) and _graphql_mutation(c) == "reply")
+    assert "pullRequestReviewThreadId=T1" in reply
+    assert "body=thanks, fixed" in reply
 
 
 def _retry_adapter(
@@ -250,6 +369,70 @@ def _retry_adapter(
 
 def _cp(returncode: int, stdout: str = "", stderr: str = "") -> subprocess.CompletedProcess[str]:
     return subprocess.CompletedProcess([], returncode, stdout, stderr)
+
+
+def _graphql_retry_adapter(
+    graphql_returns: list[subprocess.CompletedProcess[str]],
+    repo_view: str = '{"nameWithOwner":"o/r"}',
+) -> tuple[GitHubAdapter, Recorder, list[float]]:
+    """Counter-driven runner for the graphql ops. `gh repo view` always succeeds
+    first try (single success), so a graphql fail-then-succeed records exactly one
+    sleep regardless of the resolver call review_threads makes first.
+    """
+    calls: Recorder = []
+    sleeps: list[float] = []
+    gi = [0]
+
+    def run(args: list[str]) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        if args[:3] == ["gh", "repo", "view"]:
+            return subprocess.CompletedProcess(args, 0, repo_view, "")
+        if _is_graphql(args):
+            cp = graphql_returns[min(gi[0], len(graphql_returns) - 1)]
+            gi[0] += 1
+            return subprocess.CompletedProcess(args, cp.returncode, cp.stdout, cp.stderr)
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    def sleep(delay: float) -> None:
+        sleeps.append(delay)
+
+    return GitHubAdapter({"workspace_root": "."}, runner=run, sleep=sleep), calls, sleeps
+
+
+def test_review_threads_retries_then_succeeds():
+    ok = _threads_response([_thread_node(tid="T1")])
+    fg, calls, sleeps = _graphql_retry_adapter(
+        graphql_returns=[_cp(1, "", "GraphQL: HTTP 401 (transient)"), _cp(0, ok, "")]
+    )
+    threads = fg.review_threads("7")
+    assert [t["id"] for t in threads] == ["T1"]
+    gql = [c for c in calls if _is_graphql(c)]
+    assert len(gql) == 2
+    assert len(sleeps) == 1
+
+
+def test_resolve_thread_retries_then_succeeds():
+    fg, calls, sleeps = _graphql_retry_adapter(
+        graphql_returns=[
+            _cp(1, "", "GraphQL: HTTP 401 (transient)"),
+            _cp(0, _resolve_response(True), ""),
+        ]
+    )
+    assert fg.resolve_thread("7", "T1") is True
+    gql = [c for c in calls if _is_graphql(c)]
+    assert len(gql) == 2
+    assert len(sleeps) == 1
+
+
+def test_post_reply_not_retried_on_failure():
+    from forge import ForgeError
+
+    fg, calls, sleeps = _graphql_retry_adapter(graphql_returns=[_cp(1, "", "reply blew up")])
+    with pytest.raises(ForgeError):
+        fg.post_reply("7", "T1", "body")
+    gql = [c for c in calls if _is_graphql(c)]
+    assert len(gql) == 1
+    assert sleeps == []
 
 
 def test_detect_pr_retries_then_succeeds():
