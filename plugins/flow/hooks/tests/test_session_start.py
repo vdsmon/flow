@@ -120,6 +120,53 @@ def test_records_recall_pending(flow_workspace: Path) -> None:
     assert any(rec.get("branch") == "main" for rec in lines)
 
 
+def test_evicts_stale_pending_on_session_start(flow_workspace: Path) -> None:
+    """build_context compacts the recall-pending file: a >24h entry is evicted to
+    .stale, fresh + newly-appended entries stay. Closes the main-checkout
+    unbounded-growth gap (the dispatcher only compacts inside worktrees).
+    """
+    pending = flow_workspace / ".flow" / "recall-pending.jsonl"
+    seed = [
+        {
+            "pending_id": "stale00000000000",
+            "hook_observed_at": "2020-01-01T00:00:00Z",
+            "branch": "main",
+            "head_sha": "deadbeef",
+            "cwd": str(flow_workspace),
+            "hook_time_resolved_ticket": "",
+            "query": "ancient",
+            "returned_ids": [],
+            "rank_scores": [],
+        },
+        {
+            "pending_id": "fresh00000000000",
+            "hook_observed_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "branch": "other-branch",
+            "head_sha": "cafef00d",
+            "cwd": "/elsewhere",
+            "hook_time_resolved_ticket": "",
+            "query": "recent",
+            "returned_ids": [],
+            "rank_scores": [],
+        },
+    ]
+    pending.parent.mkdir(parents=True, exist_ok=True)
+    pending.write_text("".join(json.dumps(e) + "\n" for e in seed), encoding="utf-8")
+
+    hook.build_context(flow_workspace, flow_workspace)
+
+    remaining = [json.loads(line) for line in pending.read_text().splitlines() if line.strip()]
+    ids = {rec.get("pending_id") for rec in remaining}
+    assert "stale00000000000" not in ids
+    assert "fresh00000000000" in ids
+
+    stale_file = flow_workspace / ".flow" / "recall-pending.jsonl.stale"
+    assert stale_file.exists()
+    stale_lines = [json.loads(line) for line in stale_file.read_text().splitlines() if line.strip()]
+    assert any(rec.get("pending_id") == "stale00000000000" for rec in stale_lines)
+    assert not list(pending.parent.glob("*.tmp"))
+
+
 def test_find_workspace_root_walks_up(flow_workspace: Path) -> None:
     nested = flow_workspace / "src" / "deep"
     nested.mkdir(parents=True)
