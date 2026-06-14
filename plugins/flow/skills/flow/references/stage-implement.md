@@ -42,7 +42,7 @@ Leave your work as uncommitted changes in the working tree.
 
    **Definition of done is the whole change, not just code + tests.** Whatever this class of change conventionally ships alongside the code lands in THIS commit: the committed fixture, a short provenance / synthetic-data note for a NEW test fixture, a doc stub the repo expects per existing siblings. Check what comparable existing code carries (e.g. a sibling fixture dir's `provenance/` or `README`) and match it. This is the only point in the pipeline where completeness is free: reflect runs after the PR is open, so any artifact discovered missing later costs a new commit that re-triggers the entire CI + review loop. Completeness caught after the PR opens is completeness caught too late.
 
-   **Do NOT bump the plugin version here.** The plugin version is no longer bumped per-PR; it is stamped at merge time by the merge stage (`references/stage-merge.md` §3, via `version.py stamp`). The implement stage does NOT touch `plugins/flow/.claude-plugin/plugin.json` or `.claude-plugin/marketplace.json`.
+   **Do NOT bump the plugin version here.** The plugin version is no longer bumped per-PR; it is stamped post-merge on `main` by the server-side `version-stamp.yml` GitHub Action (which runs `version.py stamp`). The implement stage does NOT touch `plugins/flow/.claude-plugin/plugin.json` or `.claude-plugin/marketplace.json`.
 
 3. Write the failing test(s) first.
    Add or update unit tests that encode the new behavior.

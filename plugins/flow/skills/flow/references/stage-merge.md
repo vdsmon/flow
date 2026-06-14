@@ -90,88 +90,6 @@ if [ -n "$(git status --porcelain --untracked-files=no)" ] || [ "$(git rev-parse
   echo "branch has uncommitted (tracked) or unpushed changes CI never validated — skipping self-merge"
   # STATUS=completed; the deferred drain reap (or the human) merges once state settles.
 else
-  # version stamp (epic flow-6gx): the plugin version is NOT bumped per-PR anymore;
-  # it is stamped here, at the actual merge point, computed from the current
-  # origin/main. FETCH FIRST so origin/main is current — a stale ref makes every
-  # concurrent drain run stamp the SAME number, forcing the DIRTY/version_remerge
-  # serial recovery this design exists to reduce. version.py stamp then writes the
-  # next version into both version files — MINOR on a feat commit type, PATCH
-  # otherwise (the frontmatter commit_type feeds --commit-type; empty falls back
-  # to the HEAD subject's conventional prefix, then patch) — and the new files
-  # are committed + pushed as a NEW branch SHA.
-  # Then RE-WAIT CI on that SHA — the stamp pushed a commit CI never saw, and the
-  # "merge ONLY the CI-validated SHA" invariant the push-state guard upholds
-  # requires CI to re-validate it (the same mandatory re-wait version_remerge does).
-  git fetch --quiet origin
-  COMMIT_TYPE=$(sed -n 's/^commit_type = "\(.*\)"$/\1/p' ".flow/tickets/$KEY.md" | head -1)
-  python3 ${CLAUDE_SKILL_DIR}/scripts/version.py stamp --ref origin/main --cwd . \
-    --commit-type "$COMMIT_TYPE"
-  git commit -m "chore: stamp plugin version" -- \
-    plugins/flow/.claude-plugin/plugin.json .claude-plugin/marketplace.json
-  git push origin "$BRANCH"
-  # ↓ run the **Hardened CI re-wait probe** (defined at the end of §3) on $PR_ID / $BRANCH;
-  # proceed ONLY on a green break — every other terminal (failed / PR-merged-or-closed /
-  # probe-error-budget / cap) leaves the PR for the drain reap / human (STATUS=completed),
-  # do NOT hang. On EACH poll iteration, also heartbeat the run lease (below) so
-  # this long re-wait does not let it go stale.
-  # heartbeat: refresh the run lease each poll so a long CI re-wait does not let it
-  # go stale (a stale lease lets a parallel drain reap merge this live PR + reap the
-  # worktree -- flow-ztfv). $TICKET_DIR holds state.json (run_id) and run.lock.
-  RUN_ID=$(python3 -c "import json;print(json.load(open('$TICKET_DIR/state.json'))['run_id'])")
-  python3 ${CLAUDE_SKILL_DIR}/scripts/lease.py refresh \
-    --ticket-dir "$TICKET_DIR" --run-id "$RUN_ID" --ttl-seconds 1800
-  RC=$?
-  # check the heartbeat exit: 7 = LeaseLost (lost / taken-over / nonce-rotated; a human
-  # `recover takeover --force`, flow-5lg3, or a nonce rotation flipped ownership), 3 =
-  # LeaseError. On either, the lease is no longer ours — a parallel drain reap may
-  # already own this ticket — so STOP the ENTIRE §3 self-merge: do NOT run the
-  # duplicate-stamp guard / MERGE_STATE read / merge / bd close / delete-branch below.
-  # Leave the live PR for the drain reap / human. Do NOT release the lease (not ours to
-  # release). This STRENGTHENS lease exclusivity (only the lease-holder merges/reaps) —
-  # it removes no guard. Mirrors the version_remerge STOP further below (flow-tnfp).
-  if [ "$RC" -ne 0 ]; then
-    echo "run lease lost (exit $RC) — leaving PR #$PR_ID for the drain reap / human"   # STATUS=completed; STOP all of §3, no self-merge
-  fi
-  # duplicate-stamp guard (flow-5fp): a sibling drain run can walk main to the SAME
-  # version this branch stamped while we re-waited CI. Identical content on both
-  # sides of the version line merges CLEAN, so the DIRTY branch below never fires
-  # and the PR would land with NO version walk. RE-FETCH FIRST — the stamp's fetch
-  # above is stale after the CI re-wait. Equal => re-stamp from fresh origin/main,
-  # commit, push, re-wait CI on the new SHA (the same mandatory re-wait as the
-  # stamp), then re-run THIS guard. Bounded to ~a stage timeout like the re-waits;
-  # on the cap, leave the PR for the drain reap / human (STATUS=completed). The
-  # guard also fires on a branch that never stamped but whose tree sits at main's
-  # version — intended; the restamp is idempotent-correct (it writes the next
-  # version either way).
-  git fetch --quiet origin
-  BRANCH_VER=$(python3 -c 'import json;print(json.load(open("plugins/flow/.claude-plugin/plugin.json"))["version"])')
-  MAIN_VER=$(git show origin/main:plugins/flow/.claude-plugin/plugin.json \
-    | python3 -c 'import sys,json;print(json.load(sys.stdin)["version"])')
-  if [ "$BRANCH_VER" = "$MAIN_VER" ]; then
-    python3 ${CLAUDE_SKILL_DIR}/scripts/version.py stamp --ref origin/main --cwd . \
-      --commit-type "$COMMIT_TYPE"
-    git commit -m "chore: stamp plugin version" -- \
-      plugins/flow/.claude-plugin/plugin.json .claude-plugin/marketplace.json
-    git push origin "$BRANCH"
-    # ... bounded CI re-wait on the new SHA (same Monitor-bounded pattern as above);
-    # heartbeat the run lease on each poll too (same refresh as the first re-wait,
-    # flow-ztfv) so the restamp's re-wait does not let the lease go stale, then
-    # REPEAT this guard from the `git fetch` ...
-    RUN_ID=$(python3 -c "import json;print(json.load(open('$TICKET_DIR/state.json'))['run_id'])")
-    python3 ${CLAUDE_SKILL_DIR}/scripts/lease.py refresh \
-      --ticket-dir "$TICKET_DIR" --run-id "$RUN_ID" --ttl-seconds 1800
-    RC=$?
-    # same heartbeat check as the first re-wait, but this locus is nested inside the
-    # restamp `if` (itself inside the duplicate-stamp guard's "REPEAT from git fetch"
-    # loop): exit 7 (LeaseLost) / 3 (LeaseError) means the lease is no longer ours, so
-    # STOP the ENTIRE §3 self-merge — not merely this inner `if`/loop. Do NOT fall
-    # through to the MERGE_STATE read / merge / bd close / delete-branch below; leave
-    # the live PR for the drain reap / human; do NOT release the lease (not ours).
-    # Strengthens lease exclusivity, removes no guard (flow-tnfp).
-    if [ "$RC" -ne 0 ]; then
-      echo "run lease lost (exit $RC) — leaving PR #$PR_ID for the drain reap / human"   # STATUS=completed; STOP all of §3, no self-merge
-    fi
-  fi
   MERGE_STATE=$(gh pr view "$PR_ID" --json mergeStateStatus -q .mergeStateStatus)
   if [ "$MERGE_STATE" = "DIRTY" ]; then
     # version-conflict recovery (Option B). A multi-bead drain walks main's version
@@ -179,7 +97,7 @@ else
     # line ONLY. version_remerge re-merges main + auto-resolves IFF the conflict is
     # exactly the two version files; any other conflict → it aborts and exits 3.
     REMERGE=$(python3 ${CLAUDE_SKILL_DIR}/scripts/version_remerge.py recover \
-      --branch "$BRANCH" --workspace-root . --commit-type "$COMMIT_TYPE")
+      --branch "$BRANCH" --workspace-root .)
     RC=$?
     if [ "$RC" -eq 3 ]; then
       echo "non-version conflict — leaving PR #$PR_ID for the human"   # STATUS=completed; STOP, no self-merge
@@ -209,7 +127,7 @@ else
 fi
 ```
 
-**Hardened CI re-wait probe.** Both re-wait sites above run this as a single `Monitor` (foreground `sleep` is blocked). It reads the `forge_cli ci-rollup` PROCESS EXIT CODE (not a piped status string), so an intermittently-erroring `gh` trips a consecutive-error budget and breaks instead of spinning; it short-circuits when the PR leaves the OPEN state (`detect-pr` returns `null` → merged/closed); and the iteration cap is the guaranteed terminal exit. §3 already binds `BRANCH` and `PR_ID`. Proceed past the re-wait ONLY on a `green` break — every other terminal (`failed` / PR-merged-or-closed / probe-error-budget / cap) leaves the PR for the drain reap / human, do NOT hang. Heartbeat the run lease on each poll (the `lease.py refresh` shown at each call site) so the long re-wait does not let the lease go stale.
+**Hardened CI re-wait probe.** The version_remerge exit-0 re-wait site above runs this as a single `Monitor` (foreground `sleep` is blocked). It reads the `forge_cli ci-rollup` PROCESS EXIT CODE (not a piped status string), so an intermittently-erroring `gh` trips a consecutive-error budget and breaks instead of spinning; it short-circuits when the PR leaves the OPEN state (`detect-pr` returns `null` → merged/closed); and the iteration cap is the guaranteed terminal exit. §3 already binds `BRANCH` and `PR_ID`. Proceed past the re-wait ONLY on a `green` break — every other terminal (`failed` / PR-merged-or-closed / probe-error-budget / cap) leaves the PR for the drain reap / human, do NOT hang. Heartbeat the run lease on each poll via `lease.py refresh` so the long re-wait does not let the lease go stale.
 
 ```
 Monitor(
@@ -232,7 +150,7 @@ Monitor(
 
 The terminal `CI_STATUS` enum is `green` / `failed` (NOT `success` / `failure`, NOT `red`); `ci_rollup` folds the superseded `CANCELLED`/`STALE`/`NEUTRAL`/`SKIPPED` entries into `pending`, so those re-poll rather than trip a false `failed`. **Anti-pattern:** never `ci-rollup ... 2>/dev/null | python -c '...get("status","pending")'` — piping past the exit code makes an errored `gh` read as `pending` forever (a silent infinite spin); the probe reads `$?` first, which is the fix.
 
-The version stamp runs ONCE, at the top of the merge branch (after the push-state guard, before the merge-state read), because the merge point is the only place the version is well-timed: it is computed from the current `origin/main`, so the stamped number is correct relative to whatever siblings already merged. The bump is semantic, not always-patch: a `feat` commit type bumps MINOR (`X.(Y+1).0`), anything else bumps PATCH — the type comes from the ticket frontmatter's `commit_type` via `--commit-type`, with a HEAD-subject conventional-prefix fallback when that is empty. Only which field increments varies; the next-from-fresh-`origin/main` concurrency design is unchanged. The stamp pushes a new SHA, hence the bounded CI re-wait before reading `MERGE_STATE` — same invariant, same Monitor-bounded pattern as the `version_remerge` re-wait below; on the cap, leave the PR (`STATUS=completed`) rather than hang. `version_remerge` is RETAINED, not replaced: the stamp puts a version line back on the branch, so if main moves again during the re-wait the PR can still go DIRTY on the version line and the DIRTY branch's `version_remerge` recovery resolves it. The duplicate-stamp guard covers the OTHER way main can move during the re-wait: a sibling walking main to the SAME version this branch stamped merges CLEAN — identical content on both sides of the version line — so it is invisible to the `MERGE_STATE`-DIRTY recovery and would land a PR with no version walk (the live flow-5ba/PR#213 incident). The guard re-fetches and compares the branch's stamped version against fresh `origin/main` BEFORE `MERGE_STATE` is read; equal → re-stamp + push + the same mandatory CI re-wait, then the guard repeats. `version_remerge recover` carries the mirror-image check on its clean-merge path: after a clean re-merge it compares the working tree's version against main's and restamps on equality (`restamped` instead of `remerged_clean`); the mandatory exit-0 CI re-wait below covers `restamped` exactly like `remerged`.
+The self-merge does NOT stamp the version. It merges like a human merge — touching no version files — and the server-side `version-stamp.yml` GitHub Action stamps `main` after the squash lands. The Action is skip-guarded (it skips when the merged push already changed the two version files), so a flow self-merge, which never touches them, triggers the Action's stamp path. `version_remerge` is RETAINED (its retirement is tracked as flow-mmh3) as defensive recovery shared with the drain reap, which applies it across a broader PR population. A flow self-merge touches no version files, so a version-line conflict is not expected for it; the DIRTY branch stays as a safety net. IF a DIRTY version conflict does arise, `version_remerge recover` re-merges main and auto-resolves IFF the conflict is exactly the two version files (else it aborts and exits 3); on a clean re-merge it compares the working tree's version against main's and restamps on equality (`restamped` instead of `remerged_clean`). The mandatory exit-0 CI re-wait below covers the re-merged SHA (`restamped` exactly like `remerged`).
 
 The push-state check binds the merge to the CI'd SHA: `git rev-parse origin/$BRANCH` (after `git fetch origin $BRANCH`) is the last-pushed commit, so `HEAD == origin/$BRANCH` proves every local commit was pushed and therefore CI'd. A flow worktree never records upstream tracking — the shared `.git/config` write is sandbox-blocked, the same root cause flow-wjfs fixed for the push commands — so `@{u}` is empty there and the remote-tracking ref is the reliable pushed-SHA source. The merge-state branch then splits CLEAN/DRAFT (merge as today) from DIRTY (run version-conflict recovery). **The CI re-wait after a successful remerge is mandatory and non-negotiable:** `version_remerge` pushed a brand-new merge commit that CI never validated, so merging it without re-waiting would break the "merge ONLY the CI-validated SHA" invariant the push-state guard upholds. The conflict detector is structural (it checks the conflicting *paths*); only a green CI proves the auto-resolved merge is also semantically correct. On exit 3 (a non-version conflict) the helper already ran `git merge --abort`, so the working tree is clean and the PR stays ready for the human. The hot §2 guard-property review still runs FIRST for a hot bead (a hot bead reaches §3 only after a clean §2 review); recovery sits entirely within §3 and does not reorder that. The §2 review cleared the branch diff D; `version_remerge` then pushes D′ = D + main's content for the two version files, and D′ is merged WITHOUT a re-review. This is safe and needs no second §2 pass: the strict detector proves ONLY the two version files conflicted (any other conflicting path → abort), so D′ adds nothing to the guard surface beyond main's already-reviewed version bump — the guard-relevant diff is unchanged from what §2 saw. The CI re-wait does NOT substitute for this argument (guard properties have no CI test); the structural detector is what makes the skip sound. Close the bead and delete the **remote** branch only AFTER `merge` succeeds — a `bd close` on a PR that never merged would mint the exact PR↔bead inconsistency this guards against. The **local** worktree + branch are NOT torn down here: a run cannot remove the worktree it is standing in. Teardown is deferred to the drain reap step (`flow_worktree.py reap`, lease-gated), which reaps the worktree once this session exits.
 

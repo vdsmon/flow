@@ -2,14 +2,14 @@
 
 Derivation basis (maintainer-decided): read the current plugin version on a ref
 (default `origin/main`), bump MINOR on a `feat` commit type (X.(Y+1).0) and PATCH
-otherwise. The type comes from an explicit `--commit-type` flag (the merge prose
-feeds it from the ticket frontmatter), falling back to the HEAD commit subject's
-conventional-commit prefix, falling back to patch. Single source so the epic can
+otherwise. The type comes from an explicit `--commit-type` flag, falling back to the HEAD
+commit subject's conventional-commit prefix, falling back to patch. Single source so the epic can
 lift the same number to merge time instead of hand-bumping it per PR.
 
 Keystone seam of epic flow-6gx: the per-PR version bump is gone, and `stamp` writes
-the derived version into both version files at merge time (`references/stage-merge.md`
-§3). `write_version` does the surgical line-replace that preserves JSON formatting.
+the derived version into both version files server-side post-merge on `main` (the
+`.github/workflows/version-stamp.yml` Action). `write_version` does the surgical
+line-replace that preserves JSON formatting.
 
 CLI:
   version.py next [--ref origin/main] [--cwd .] [--commit-type <type>]
