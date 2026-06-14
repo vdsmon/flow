@@ -121,8 +121,9 @@ Returns JSON `{merge:[{pr,key,is_draft,is_hot}], not_green, skipped_hot, skipped
 gh pr ready <pr>        # only when is_draft is true
 # fleet re-check (flow-8by2.3): classify ran lock-free turns ago; a run that acquired
 # a lease in the classify->merge gap must NOT have its PR merged + bead closed out
-# from under it (the worst TOCTOU, flow-72d9). is-live reconciles lease|fleet and is
-# fail-safe (exit 0 = live = SKIP). On skip, leave it: next pass re-classifies.
+# from under it (the worst TOCTOU, flow-72d9). is-live is lease-only (a dead orphan's
+# fleet entry outlives its lease, so an OR would skip a reapable orphan) and fail-safe
+# (exit 0 = live = SKIP). On skip, leave it: next pass re-classifies.
 if python3 ${CLAUDE_SKILL_DIR}/scripts/fleet.py is-live --key <key> --workspace-root .; then
   echo "fleet: <key> went live after classify — not merging this turn"
 else
@@ -213,7 +214,7 @@ For each `stoppable` entry (skip ALL of this under `--dry-run` — print the sto
 # fleet re-check (flow-8by2.3): classify ran turns ago; a session that re-acquired a
 # lease in the classify->stop gap must NOT be stopped + tombstoned mid-work (the
 # central lock-free classify->mutate gap, the one destructive path with no under-flock
-# re-check today). is-live reconciles lease|fleet, fail-safe (exit 0 = live = SKIP).
+# re-check today). is-live is lease-only, fail-safe (exit 0 = live = SKIP).
 if python3 ${CLAUDE_SKILL_DIR}/scripts/fleet.py is-live --key <key> --workspace-root .; then
   echo "fleet: <key> went live after classify — not stopping this session"
 else
