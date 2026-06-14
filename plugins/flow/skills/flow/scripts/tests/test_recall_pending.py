@@ -301,6 +301,58 @@ def test_real_git_ancestor_promotes_descendant_keeps(tmp_path: Path) -> None:
     assert len(recall_pending.list_pending(root_b)) == 1
 
 
+# ─── evict_stale: hook-side compaction (no ticket/ancestor matching) ────────────
+
+
+def test_evict_drops_stale_keeps_fresh(tmp_path: Path) -> None:
+    _append(tmp_path, head_sha="fresh", hook_observed_at=_iso(_NOW - timedelta(hours=1)))
+    _append(tmp_path, head_sha="old", hook_observed_at=_iso(_NOW - timedelta(hours=25)))
+    evicted = recall_pending.evict_stale(tmp_path, now_iso=_NOW_ISO)
+    assert len(evicted) == 1
+    assert evicted[0]["head_sha"] == "old"
+    remaining = recall_pending.list_pending(tmp_path)
+    assert len(remaining) == 1
+    assert remaining[0]["head_sha"] == "fresh"
+    assert len(_stale_lines(tmp_path)) == 1
+
+
+def test_evict_keeps_fresh_promotable_entry(tmp_path: Path) -> None:
+    """evict has no ticket/ancestor concept: a fresh entry is kept, not promoted."""
+    _append(tmp_path)
+    evicted = recall_pending.evict_stale(tmp_path, now_iso=_NOW_ISO)
+    assert evicted == []
+    assert len(recall_pending.list_pending(tmp_path)) == 1
+    log_path = tmp_path / ".flow" / "runs" / "FT-1" / "recall-log.jsonl"
+    assert not log_path.exists()
+
+
+def test_evict_no_stale_does_not_rewrite(tmp_path: Path) -> None:
+    """No stale entries -> no .stale file, no .tmp residue, file untouched."""
+    _append(tmp_path)
+    path = recall_pending.recall_pending_path(tmp_path)
+    before = path.read_bytes()
+    evicted = recall_pending.evict_stale(tmp_path, now_iso=_NOW_ISO)
+    assert evicted == []
+    assert path.read_bytes() == before
+    stale_path = path.with_name("recall-pending.jsonl.stale")
+    assert not stale_path.exists()
+    assert not list(path.parent.glob("*.tmp"))
+
+
+def test_evict_leaves_no_temp_residue(tmp_path: Path) -> None:
+    _append(tmp_path, hook_observed_at=_iso(_NOW - timedelta(hours=30)))
+    recall_pending.evict_stale(tmp_path, now_iso=_NOW_ISO)
+    flow_dir = recall_pending.recall_pending_path(tmp_path).parent
+    assert not list(flow_dir.glob(".*.tmp"))
+    assert not list(flow_dir.glob("*.tmp"))
+
+
+def test_evict_missing_file_is_noop(tmp_path: Path) -> None:
+    evicted = recall_pending.evict_stale(tmp_path, now_iso=_NOW_ISO)
+    assert evicted == []
+    assert not recall_pending.recall_pending_path(tmp_path).exists()
+
+
 # ─── missing/malformed hook_observed_at -> stale, not kept forever ──────────────
 
 
