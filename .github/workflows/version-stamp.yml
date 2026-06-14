@@ -1,0 +1,60 @@
+# version-stamp.yml: stamp the plugin version on every merge to main.
+#
+# Part of epic flow-3w71: move the version bump off the self-merge path onto a
+# server-side Action. Reuses version.py's stamp math: read the current version
+# from HEAD, bump MINOR on a feat squash subject else PATCH, write BOTH version
+# files, commit, push back to main.
+#
+# Push auth: the default GITHUB_TOKEN with `permissions: contents: write`. This
+# works because main is NOT protected on this repo (branch protection is a
+# Pro/public feature, unavailable here). GITHUB_TOKEN pushes also do not trigger
+# workflows, the primary guard against a stamp -> CI -> stamp loop. If the repo
+# ever gains branch protection, revisit: add a GitHub App token to the bypass
+# list, or open a stamp PR.
+name: version-stamp
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: version-stamp-main
+  cancel-in-progress: false
+
+jobs:
+  stamp:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Skip if this push already changed the version files
+        id: guard
+        run: |
+          if ! git rev-parse HEAD~1 >/dev/null 2>&1; then
+            echo "no parent commit, proceeding"
+          elif ! git diff --quiet HEAD~1 HEAD -- \
+            plugins/flow/.claude-plugin/plugin.json .claude-plugin/marketplace.json; then
+            echo "version files already changed in this push, skipping stamp"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Stamp and push
+        if: steps.guard.outputs.skip != 'true'
+        run: |
+          python3 plugins/flow/skills/flow/scripts/version.py stamp --ref HEAD --cwd .
+          if git diff --quiet -- \
+            plugins/flow/.claude-plugin/plugin.json .claude-plugin/marketplace.json; then
+            echo "version already at target, nothing to stamp"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "chore: stamp plugin version [skip ci]" -- \
+            plugins/flow/.claude-plugin/plugin.json .claude-plugin/marketplace.json
+          git push origin HEAD:main
