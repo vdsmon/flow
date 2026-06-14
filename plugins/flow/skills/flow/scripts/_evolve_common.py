@@ -9,12 +9,14 @@ sets, the worktree-pool run-dir resolution, and the selector primitives
 
 from __future__ import annotations
 
+import contextlib
 import glob
 import json
 import re
 import subprocess
 from pathlib import Path
 
+import fleet
 import lease
 from _runner import CwdRunner as Runner
 from _timeutil import utcnow_iso
@@ -121,6 +123,26 @@ def live_run_keys(repo: Path) -> set[str]:
         if lease.classify(Path(run_dir), now).get("state") == "live":
             live.add(key)
     return live
+
+
+def fleet_live_keys(repo: Path) -> set[str]:
+    """The reconciled liveness authority (epic flow-8by2.3): a key is live if its
+    pre-PR lease is live (live_run_keys) OR the fleet ledger has a fresh heartbeat.
+
+    The lease covers an active run's long stages via its per-stage TTL refresh —
+    the fleet heartbeat fires only at stage transitions, so fleet alone would age a
+    live long-stage run out (the merge-stage CI re-wait, flow-72d9); reconciling
+    against the lease closes that. The fleet adds the launch->init blind window and
+    a cross-process snapshot, collapsing the per-site L/M unions to one definition.
+
+    Fail-open: a ledger read error degrades to the lease-only set (the pre-cutover
+    behavior), so a fleet fault never breaks the drain. fleet stays additive here —
+    launch_ledger still backstops the launch window until child-5 retires it.
+    """
+    keys = live_run_keys(repo)
+    with contextlib.suppress(Exception):
+        keys = keys | fleet.live_keys(fleet.resolve_fleet_dir(repo), now=utcnow_iso())
+    return keys
 
 
 def run_dir_for(repo: Path, key: str) -> Path | None:

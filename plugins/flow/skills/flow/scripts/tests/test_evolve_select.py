@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 import evolve_select as es
+import fleet
 import lease
 from _timeutil import utcnow_iso
 
@@ -392,24 +393,26 @@ def _pool_run_dir(repo: Path, key: str, slug: str = "wip") -> Path:
     return repo / ".flow" / "worktrees" / f"feature-{key}-{slug}" / ".flow" / "runs" / key
 
 
-def test_live_run_keys_finds_live_lease(tmp_path):
+def test_fleet_live_keys_finds_live_lease(tmp_path):
+    # evolve_select now reads the reconciled lease | fleet helper; with no fleet
+    # dir it equals the live-lease set (flow-8by2.3).
     repo = tmp_path / "flow"
     repo.mkdir()
     _write_lease(_pool_run_dir(repo, "flow-x"))
-    assert es._live_run_keys(repo) == {"flow-x"}
+    assert es._fleet_live_keys(repo) == {"flow-x"}
 
 
-def test_live_run_keys_skips_expired(tmp_path):
+def test_fleet_live_keys_skips_expired(tmp_path):
     repo = tmp_path / "flow"
     repo.mkdir()
     _write_lease(_pool_run_dir(repo, "flow-x"), expired=True)
-    assert es._live_run_keys(repo) == set()
+    assert es._fleet_live_keys(repo) == set()
 
 
-def test_live_run_keys_empty_when_no_worktrees(tmp_path):
+def test_fleet_live_keys_empty_when_no_worktrees(tmp_path):
     repo = tmp_path / "flow"
     repo.mkdir()
-    assert es._live_run_keys(repo) == set()
+    assert es._fleet_live_keys(repo) == set()
 
 
 def test_hot_inflight_extra_keys_no_refs():
@@ -441,6 +444,23 @@ def test_select_pre_pr_live_run_is_inflight(tmp_path):
     assert out["launch"] == ["flow-y"]
     assert out["skipped_in_flight"] == ["flow-x"]
     assert out["live_runs"] == ["flow-x"]
+
+
+def test_select_fleet_only_key_inflight_but_absent_from_live_runs(tmp_path):
+    # flow-8by2.3 regression: a key registered in the fleet ledger at launch (no
+    # lease yet) must suppress relaunch (in-flight) but must NOT appear in live_runs
+    # — else the drain's marker-remove (registered = live_runs | open_pr_keys) would
+    # evict it from launched_pending a turn early and re-open the blind window
+    # launch_ledger closes (flow-d4s).
+    ws = _marked_ws(tmp_path)
+    repo = es.resolve_maintainer_repo(ws)
+    assert repo is not None
+    fleet.register(fleet.resolve_fleet_dir(repo), "flow-fleet", "", now=utcnow_iso())
+    run, _ = _dispatch(ready=[_cand("flow-fleet"), _cand("flow-y")])
+    out = es.select(ws, cap=5, concurrency=3, runner=run)
+    assert out["launch"] == ["flow-y"]  # fleet-live key suppressed, not relaunched
+    assert out["skipped_in_flight"] == ["flow-fleet"]  # in-flight via fleet
+    assert out["live_runs"] == []  # NOT in live_runs (lease-only) — the bug guard
 
 
 def test_select_trivial_non_hot_downshifts_to_sonnet(tmp_path):

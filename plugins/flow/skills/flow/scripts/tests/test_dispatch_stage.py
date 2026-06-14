@@ -1600,3 +1600,23 @@ def test_next_no_fleet_write_when_not_maintainer(
     rc, _ = ds.cmd_next(tmp_path, "FT-1")
     assert rc == 0
     assert not (tmp_path / ".flow" / "fleet").exists()
+
+
+def test_finish_clean_deregisters_fleet_entry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # epic flow-8by2.3: a cleanly-finished run positively deregisters from the fleet
+    # ledger (no 30-min staleness lingering in the reconciled liveness read).
+    _write_workspace(tmp_path, stages=["ticket"], compounding=False)
+    _make_maintainer(tmp_path)
+    monkeypatch.setenv("HOME", str(tmp_path / "no-home"))
+    _stub_git_head(monkeypatch)
+    rc, first = ds.cmd_init(tmp_path, "FT-1")
+    assert rc == 0
+    nonce = first["session_nonce"]
+    ds.cmd_next(tmp_path, "FT-1", nonce)  # heartbeat registers the fleet entry
+    entry = tmp_path / ".flow" / "fleet" / "FT-1.json"
+    assert entry.exists()
+    # finishing the only stage = clean completion -> lease release + fleet dereg
+    ds.cmd_finish(tmp_path, "FT-1", "ticket", "completed", session_nonce=nonce)
+    assert not entry.exists()

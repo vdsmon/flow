@@ -28,10 +28,12 @@ no-op forever after a launch register set run_id="" (false-dead).
 
 `live_keys` is the heartbeat-staleness fallback (a spike non-negotiable): a crashed
 run stops refreshing, ages past STALE_AFTER_S, and drops from "live" — the drain
-never blocks forever on a dead run. `deregister` (positive removal) ships + is
-tested but is NOT wired on the run-exit path in child-2; staleness covers
-completed/crashed runs in shadow mode, and child-3 wires the clean-exit dereg when
-it makes the ledger authoritative.
+never blocks forever on a dead run. `deregister`/`deregister_run` is the positive
+removal leg: child-3 wires `deregister_run` into dispatch_stage.cmd_finish so a
+cleanly-finished run drops out of the reconciled liveness read at once instead of
+lingering until the staleness window; DNF/crashed runs (which keep their lease but
+stop heartbeating) are still covered by `live_keys`' staleness fallback. The
+reconciled read itself lives in `_evolve_common.fleet_live_keys` (lease | fleet).
 
 CLI:
   fleet.py register   --key <K> [--run-id <R> --hostname <H> --boot-id <B>] --workspace-root <dir>
@@ -297,6 +299,19 @@ def register_run(
     return True
 
 
+def deregister_run(workspace_root: Path, key: str, *, run_id: str | None = None) -> bool:
+    """Clean-exit positive dereg (dispatch_stage cmd_finish + CLI): maintainer-gated.
+
+    Returns True if a removal was attempted, False when not in maintainer mode.
+    `run_id`-gated like the low-level deregister: a stale run never drops a
+    successor's entry. The dispatch caller wraps this in a fail-open guard.
+    """
+    if resolve_maintainer_repo(workspace_root) is None:
+        return False
+    deregister(resolve_fleet_dir(workspace_root), key, run_id=run_id)
+    return True
+
+
 # ─── CLI ─────────────────────────────────────────────────────────────────────
 
 
@@ -372,6 +387,7 @@ __all__ = [
     "STALE_AFTER_S",
     "NotMaintainer",
     "deregister",
+    "deregister_run",
     "entries",
     "live_keys",
     "prune",

@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+import fleet
 import lease
 import queue_select as qs
 from _timeutil import utcnow_iso
@@ -189,6 +190,21 @@ def test_select_launches_day_job_beads(tmp_path):
     assert ["bd", "ready", "--json"] in calls  # unlabelled query, no -l
     assert out["cap"] == 5
     assert out["concurrency"] == 3
+
+
+def test_select_fleet_only_key_inflight_but_absent_from_live_runs(tmp_path):
+    # flow-8by2.3 regression (queue sibling of the evolve_select guard): a fleet-only
+    # key (registered at launch, no lease) suppresses relaunch but stays OUT of
+    # live_runs so the queue-drain marker-remove can't evict it a turn early (flow-d4s).
+    ws = _marked_ws(tmp_path)
+    repo = qs.resolve_maintainer_repo(ws)
+    assert repo is not None
+    fleet.register(fleet.resolve_fleet_dir(repo), "flow-fleet", "", now=utcnow_iso())
+    run, _ = _dispatch(ready=[_cand("flow-fleet"), _cand("flow-y")])
+    out = qs.select(ws, cap=5, concurrency=3, runner=run)
+    assert out["launch"] == ["flow-y"]
+    assert out["skipped_in_flight"] == ["flow-fleet"]
+    assert out["live_runs"] == []
 
 
 def test_select_tolerates_null_labels(tmp_path):
