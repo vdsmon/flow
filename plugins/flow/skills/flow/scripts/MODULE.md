@@ -53,6 +53,7 @@ Pluggable PR-host seam, structural twin of the tracker seam. The `create_pr` and
 | `lint_ticket.py` | HARD GATE: required frontmatter fields per stage. | `--stage --ticket-path --workspace-root` |
 | `diff_extract.py` | Git diff capture for implement/commit/reflect; baseline + ownership. | `since` / `since-stage` / `record-baseline` / `capture-implement-diff` / `check-ownership` |
 | `compose_commit.py` | Deterministic conventional-commit header skeleton (LLM fills body). | `--ticket --type --summary [--scope --files]` |
+| `scrub_ci_skip.py` | Neutralize bracketed GitHub CI-skip tokens (`[skip ci]` etc.) in a commit-message file, in place; strips the brackets, keeps the words. Exit 0 always. | `<message-path>` |
 
 ## Memory / reflect / self-evolution
 

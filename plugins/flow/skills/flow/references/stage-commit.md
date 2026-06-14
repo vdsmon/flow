@@ -77,7 +77,14 @@ The applied patch comes from the recorded `implement.diff` — NOT from `git add
    Step 3 created the commit skeleton via a shell redirect, so the file lives OUTSIDE the harness Read/Write tool tracking. The Write tool refuses to overwrite a path it has not Read in-session ("File has not been read yet"), which otherwise leaves the literal `# body - fill in below this line` skeleton in the commit.
    Use the **Read tool** on the resolved skeleton path FIRST to register the path with the harness.
    Then append a body section describing *why* (not what — the diff shows what), referencing any failing-tests-now-green progress from implement stage.
+   When the body needs to MENTION a CI-skip marker, spell it out WITHOUT brackets (write `skip ci`, never the bracketed form): GitHub honors a bracketed CI-skip token anywhere in the commit message and would suppress all CI for the push.
    Then use the **Write tool** to write the completed message back to that same path.
+
+4b. Neutralize any stray bracketed CI-skip token in the message file (belt-and-suspenders for the step-4 caution):
+   ```bash
+   ${CLAUDE_SKILL_DIR}/scripts/scrub_ci_skip.py "${TMPDIR:-/tmp}/flow-commit-<KEY>.txt"
+   ```
+   Run via Bash so the rewrite lands on disk regardless of the harness Read/Write tracking. It exits 0 always, scrubbing in place: it strips the brackets from `[skip ci]` / `[ci skip]` / `[no ci]` / `[skip actions]` / `[actions skip]` (any case), keeping the words. If its stderr reports neutralized tokens, that is the step-4 caution being caught after the fact; continue.
 
 5. Reset the index to HEAD, then apply the recorded patch:
    ```bash
