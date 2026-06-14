@@ -35,6 +35,7 @@ Exit codes:
   3 = I/O error
   4 = duplicate claim (a live sibling run already holds this ticket)
   6 = bead is terminal (closed/done/cancelled) — nothing to bootstrap
+  7 = bead is an epic (a container, not a single-PR unit) — refuse to bootstrap
 """
 
 from __future__ import annotations
