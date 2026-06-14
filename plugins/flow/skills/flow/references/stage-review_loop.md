@@ -70,7 +70,7 @@ Do NOT invent inline edit logic. Delegate the fix to a subagent (the same way th
 python3 ${CLAUDE_SKILL_DIR}/scripts/forge_cli.py --workspace-root . review-threads --pr "$PR_ID"
 ```
 
-- Output `{"supported": false}` (e.g. GitHub today — no review-bot wired): **skip thread handling**, report "review threads not wired for this host", and proceed to the terminal check on CI-green alone.
+- Output `{"supported": false}` (a host with no review-bot/forge wired): **skip thread handling**, report "review threads not wired for this host", and proceed to the terminal check on CI-green alone.
 - Otherwise: a JSON array of normalized threads, each with `severity` (`critical`/`major`/`minor`/`nit`/`unknown`), `file`, `line`, `title`, `id`.
 
 ## 4. Address + resolve (Major+ only)

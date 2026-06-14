@@ -4,11 +4,10 @@ Implements the `Forge` Protocol for GitHub workspaces. PR mechanics lift the log
 that lived gh-direct in `create_pr.py` (detect/open) plus the CI rollup semantics
 from `evolve_reap.rollup_is_green`.
 
-Review-thread ops are capability-gated OFF for now: the maintainer's repo carries no
-live CodeRabbit-on-GitHub review threads yet, so there is nothing to drive and
-nothing to test against. The GraphQL `reviewThreads` / `resolveReviewThread` path is
-valid and can be wired when a real review-bot-on-GitHub PR exists. `merge` /
-`mark_ready` / `delete_branch` are implemented regardless (Layer 2 calls them).
+Review-thread ops normalize GitHub PR review threads via the GraphQL API
+(`reviewThreads` read, `addPullRequestReviewThreadReply` / `resolveReviewThread`
+mutations). `merge` / `mark_ready` / `delete_branch` are implemented too (Layer 2
+calls them).
 """
 
 from __future__ import annotations
@@ -23,14 +22,56 @@ from _runner import CwdRunner as Runner
 from _runner import cwd_default_runner as _default_runner
 from forge import (
     CI_STATUS,
+    THREAD_SEVERITY,
     Capability,
     CICheck,
     CIStatus,
     ForgeError,
-    NotSupported,
     PullRequest,
     ReviewThread,
 )
+
+_THREADS_QUERY = """
+query($owner: String!, $repo: String!, $number: Int!) {
+  repository(owner: $owner, name: $repo) {
+    pullRequest(number: $number) {
+      reviewThreads(first: 100) {
+        nodes {
+          id
+          isResolved
+          path
+          line
+          comments(first: 1) {
+            nodes {
+              author { login }
+              body
+              pullRequestReview { state }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+"""
+
+_REPLY_MUTATION = """
+mutation($pullRequestReviewThreadId: ID!, $body: String!) {
+  addPullRequestReviewThreadReply(
+    input: {pullRequestReviewThreadId: $pullRequestReviewThreadId, body: $body}
+  ) {
+    comment { id }
+  }
+}
+"""
+
+_RESOLVE_MUTATION = """
+mutation($threadId: ID!) {
+  resolveReviewThread(input: {threadId: $threadId}) {
+    thread { isResolved }
+  }
+}
+"""
 
 
 class GitHubAdapter:
@@ -46,13 +87,14 @@ class GitHubAdapter:
         root = config.get("workspace_root", ".")
         self._run: Runner = runner or _default_runner(Path(root))
         self._sleep = sleep
+        self._owner_repo: tuple[str, str] | None = None
 
     @property
     def capabilities(self) -> list[Capability]:
         return [
             {"name": "draft_prs", "supported": True},
             {"name": "ready_toggle", "supported": True},
-            {"name": "review_threads", "supported": False},
+            {"name": "review_threads", "supported": True},
             {"name": "squash_merge", "supported": True},
             {"name": "delete_branch", "supported": True},
             {"name": "ci_rollup", "supported": True},
@@ -187,16 +229,131 @@ class GitHubAdapter:
     def delete_branch(self, branch: str) -> None:
         self._ok(["git", "push", "origin", "--delete", branch], "git push --delete")
 
-    # ─── review threads (capability off for now) ──────────────────────────
+    # ─── review threads (GraphQL) ─────────────────────────────────────────
+
+    # GraphQL needs explicit owner/repo (the {owner}/{repo} REST placeholder
+    # expansion does not apply to `gh api graphql`). Resolve once, cache.
+    def _resolve_owner_repo(self) -> tuple[str, str]:
+        if self._owner_repo is None:
+            raw = self._ok_read(["gh", "repo", "view", "--json", "nameWithOwner"], "gh repo view")
+            try:
+                owner, repo = str((json.loads(raw or "{}") or {}).get("nameWithOwner") or "").split(
+                    "/", 1
+                )
+            except ValueError:
+                raise ForgeError(f"cannot parse owner/repo from {raw!r}") from None
+            self._owner_repo = (owner, repo)
+        return self._owner_repo
 
     def review_threads(self, pr_id: str) -> list[ReviewThread]:
-        raise NotSupported("github adapter does not yet drive review-bot threads")
+        """Unresolved review threads on the PR, normalized.
+
+        Resolved threads (`isResolved == true`) are dropped so a fixed thread does
+        not re-surface on the post-fix re-fetch (mirrors the bitbucket adapter)."""
+        owner, repo = self._resolve_owner_repo()
+        # single page; >100 unresolved threads on one PR is out of scope.
+        raw = self._ok_read(
+            [
+                "gh",
+                "api",
+                "graphql",
+                "-f",
+                f"query={_THREADS_QUERY}",
+                "-f",
+                f"owner={owner}",
+                "-f",
+                f"repo={repo}",
+                "-F",
+                f"number={pr_id}",
+            ],
+            "gh api graphql reviewThreads",
+        )
+        try:
+            data = json.loads(raw or "{}") or {}
+        except json.JSONDecodeError as exc:
+            raise ForgeError(f"gh api graphql reviewThreads: bad JSON: {exc}") from exc
+        nodes = (
+            (((data.get("data") or {}).get("repository") or {}).get("pullRequest") or {}).get(
+                "reviewThreads"
+            )
+            or {}
+        ).get("nodes") or []
+        threads: list[ReviewThread] = []
+        for node in nodes:
+            if not isinstance(node, dict) or node.get("isResolved"):
+                continue
+            comment = next(iter((node.get("comments") or {}).get("nodes") or []), {}) or {}
+            body = str(comment.get("body") or "")
+            author = str(((comment.get("author") or {}) or {}).get("login") or "")
+            state = ((comment.get("pullRequestReview") or {}) or {}).get("state")
+            threads.append(
+                {
+                    "id": str(node.get("id") or ""),
+                    "file": node.get("path"),
+                    "line": node.get("line"),
+                    "severity": _severity_from_state(state),
+                    "title": _title_from_body(body),
+                    "body": body,
+                    "resolved": False,
+                    "author": author,
+                    "parent_id": None,
+                }
+            )
+        return threads
 
     def post_reply(self, pr_id: str, thread_id: str, body: str) -> None:
-        raise NotSupported("github adapter does not yet drive review-bot threads")
+        # plain _ok (NOT retried): a reply is not idempotent, a double-apply would
+        # double-comment.
+        self._ok(
+            [
+                "gh",
+                "api",
+                "graphql",
+                "-f",
+                f"query={_REPLY_MUTATION}",
+                "-F",
+                f"pullRequestReviewThreadId={thread_id}",
+                "-f",
+                f"body={body}",
+            ],
+            "gh api graphql addPullRequestReviewThreadReply",
+        )
 
     def resolve_thread(self, pr_id: str, thread_id: str) -> bool:
-        raise NotSupported("github adapter does not yet drive review-bot threads")
+        """Resolve a thread; return the host's post-mutation `isResolved` as truth.
+
+        Via `_ok_read` (retry is safe: resolving an already-resolved thread is an
+        idempotent no-op success, so a transient 401 survives the bounded retry)."""
+        raw = self._ok_read(
+            [
+                "gh",
+                "api",
+                "graphql",
+                "-f",
+                f"query={_RESOLVE_MUTATION}",
+                "-F",
+                f"threadId={thread_id}",
+            ],
+            "gh api graphql resolveReviewThread",
+        )
+        try:
+            data = json.loads(raw or "{}") or {}
+        except json.JSONDecodeError as exc:
+            raise ForgeError(f"gh api graphql resolveReviewThread: bad JSON: {exc}") from exc
+        thread = ((data.get("data") or {}).get("resolveReviewThread") or {}).get("thread") or {}
+        return bool(thread.get("isResolved"))
+
+
+def _severity_from_state(state: str | None) -> THREAD_SEVERITY:
+    # host-fact mapping (the kx17.1/kx17.4 seam): a CHANGES_REQUESTED review is the
+    # blocking signal -> major; COMMENTED / missing / null review -> minor.
+    return "major" if state == "CHANGES_REQUESTED" else "minor"
+
+
+def _title_from_body(body: str) -> str:
+    # GitHub threads have no title field; use the first non-empty line, truncated.
+    line = next((ln.strip() for ln in body.splitlines() if ln.strip()), "")
+    return line[:80]
 
 
 # Non-terminal verdicts a legacy StatusContext (no `status` field) can carry; these
