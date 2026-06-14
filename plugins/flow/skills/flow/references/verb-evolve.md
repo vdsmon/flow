@@ -119,13 +119,21 @@ Returns JSON `{merge:[{pr,key,is_draft,is_hot}], not_green, skipped_hot, skipped
 ```bash
 # mark ready only if it was a draft, then squash-merge
 gh pr ready <pr>        # only when is_draft is true
-# squash-merge WITHOUT --delete-branch, then close the bead and delete the
-# remote branch — both gated on the merge succeeding, neither on the other.
-if gh pr merge <pr> --squash; then
-  bd close <key> --reason "merged via PR #<pr>"
-  git push origin --delete <branch> || true
+# fleet re-check (flow-8by2.3): classify ran lock-free turns ago; a run that acquired
+# a lease in the classify->merge gap must NOT have its PR merged + bead closed out
+# from under it (the worst TOCTOU, flow-72d9). is-live reconciles lease|fleet and is
+# fail-safe (exit 0 = live = SKIP). On skip, leave it: next pass re-classifies.
+if python3 ${CLAUDE_SKILL_DIR}/scripts/fleet.py is-live --key <key> --workspace-root .; then
+  echo "fleet: <key> went live after classify — not merging this turn"
+else
+  # squash-merge WITHOUT --delete-branch, then close the bead and delete the
+  # remote branch — both gated on the merge succeeding, neither on the other.
+  if gh pr merge <pr> --squash; then
+    bd close <key> --reason "merged via PR #<pr>"
+    git push origin --delete <branch> || true
+  fi
 fi
-# reap owns the LOCAL worktree + local branch (lease-gated)
+# reap owns the LOCAL worktree + local branch (lease-gated; also re-checks the lease)
 python3 ${CLAUDE_SKILL_DIR}/scripts/flow_worktree.py reap --ticket <key> --branch <branch> --main-root .
 ```
 
@@ -154,7 +162,10 @@ elif [ "$RC" -eq 0 ]; then
   # Proceed to ready+merge ONLY on a `green` break; every other terminal (failed /
   # merged-or-closed / probe-error-budget / cap) leaves the PR for the next drain pass.
   gh pr ready "$PR"        # only if it was a draft
-  if gh pr merge "$PR" --squash; then
+  # fleet re-check (flow-8by2.3): same classify->merge gap as the merge bucket above.
+  if python3 ${CLAUDE_SKILL_DIR}/scripts/fleet.py is-live --key "$KEY" --workspace-root .; then
+    echo "fleet: $KEY went live after classify — not merging this turn"
+  elif gh pr merge "$PR" --squash; then
     bd close "$KEY" --reason "merged via PR #$PR (version-remerged)"
     git push origin --delete "$BRANCH" || true
   fi
@@ -199,8 +210,16 @@ For each `stoppable` entry (skip ALL of this under `--dry-run` — print the sto
 
 ```bash
 # validate tokens before interpolating (defensive on the destructive path)
-timeout 90 claude stop <job_id> </dev/null || true       # the 8-hex JOB id is the stop handle; `claude stop <session_uuid>` fails "No job matching". stdin detached + bounded
-rm -rf <job_dir>                                          # Ctrl+X-equivalent: drop the panel tombstone (the absolute path from the entry)
+# fleet re-check (flow-8by2.3): classify ran turns ago; a session that re-acquired a
+# lease in the classify->stop gap must NOT be stopped + tombstoned mid-work (the
+# central lock-free classify->mutate gap, the one destructive path with no under-flock
+# re-check today). is-live reconciles lease|fleet, fail-safe (exit 0 = live = SKIP).
+if python3 ${CLAUDE_SKILL_DIR}/scripts/fleet.py is-live --key <key> --workspace-root .; then
+  echo "fleet: <key> went live after classify — not stopping this session"
+else
+  timeout 90 claude stop <job_id> </dev/null || true     # the 8-hex JOB id is the stop handle; `claude stop <session_uuid>` fails "No job matching". stdin detached + bounded
+  rm -rf <job_dir>                                        # Ctrl+X-equivalent: drop the panel tombstone (the absolute path from the entry)
+fi
 ```
 
 `<job_id>`, `<session_id>`, and `<job_dir>` come from the `stoppable` entry. **`claude stop` takes the `<job_id>` (the 8-hex dir basename), NOT the session UUID** — passing the UUID returns "No job matching" fast (the bug that left a whole drain's runs un-stopped; the follow-up `rm` was then silently re-materialized by the daemon, because the session was never actually stopped). Before the `claude stop`, validate `<job_id>` is 8-hex (`^[0-9a-f]{8}$`). Before the `rm -rf`, validate `<job_dir>` is under `~/.claude/jobs/` with an 8-hex basename (`^.*/\.claude/jobs/[0-9a-f]{8}$`) — the single destructive line, so guard the path it deletes. Use the entry's literal `<job_dir>`. **Order matters: the stop must land BEFORE the `rm`** — a still-registered job dir that is `rm`-ed gets re-created by the daemon, so only a stopped (or genuinely done) job stays removed. This is NON-DESTRUCTIVE to history: the transcript at `~/.claude/projects/<slug>/<session_id>.jsonl` is untouched, so the session stays resumable (`claude attach <session_id>`) after either stop or dir-removal. A daemon-sanctioned dismiss is the cleaner long-term path if a future CLI offers one (none in 2.1.169).
