@@ -120,6 +120,18 @@ else
   RUN_ID=$(python3 -c "import json;print(json.load(open('$TICKET_DIR/state.json'))['run_id'])")
   python3 ${CLAUDE_SKILL_DIR}/scripts/lease.py refresh \
     --ticket-dir "$TICKET_DIR" --run-id "$RUN_ID" --ttl-seconds 1800
+  RC=$?
+  # check the heartbeat exit: 7 = LeaseLost (lost / taken-over / nonce-rotated; a human
+  # `recover takeover --force`, flow-5lg3, or a nonce rotation flipped ownership), 3 =
+  # LeaseError. On either, the lease is no longer ours — a parallel drain reap may
+  # already own this ticket — so STOP the ENTIRE §3 self-merge: do NOT run the
+  # duplicate-stamp guard / MERGE_STATE read / merge / bd close / delete-branch below.
+  # Leave the live PR for the drain reap / human. Do NOT release the lease (not ours to
+  # release). This STRENGTHENS lease exclusivity (only the lease-holder merges/reaps) —
+  # it removes no guard. Mirrors the version_remerge STOP further below (flow-tnfp).
+  if [ "$RC" -ne 0 ]; then
+    echo "run lease lost (exit $RC) — leaving PR #$PR_ID for the drain reap / human"   # STATUS=completed; STOP all of §3, no self-merge
+  fi
   # duplicate-stamp guard (flow-5fp): a sibling drain run can walk main to the SAME
   # version this branch stamped while we re-waited CI. Identical content on both
   # sides of the version line merges CLEAN, so the DIRTY branch below never fires
@@ -148,6 +160,17 @@ else
     RUN_ID=$(python3 -c "import json;print(json.load(open('$TICKET_DIR/state.json'))['run_id'])")
     python3 ${CLAUDE_SKILL_DIR}/scripts/lease.py refresh \
       --ticket-dir "$TICKET_DIR" --run-id "$RUN_ID" --ttl-seconds 1800
+    RC=$?
+    # same heartbeat check as the first re-wait, but this locus is nested inside the
+    # restamp `if` (itself inside the duplicate-stamp guard's "REPEAT from git fetch"
+    # loop): exit 7 (LeaseLost) / 3 (LeaseError) means the lease is no longer ours, so
+    # STOP the ENTIRE §3 self-merge — not merely this inner `if`/loop. Do NOT fall
+    # through to the MERGE_STATE read / merge / bd close / delete-branch below; leave
+    # the live PR for the drain reap / human; do NOT release the lease (not ours).
+    # Strengthens lease exclusivity, removes no guard (flow-tnfp).
+    if [ "$RC" -ne 0 ]; then
+      echo "run lease lost (exit $RC) — leaving PR #$PR_ID for the drain reap / human"   # STATUS=completed; STOP all of §3, no self-merge
+    fi
   fi
   MERGE_STATE=$(gh pr view "$PR_ID" --json mergeStateStatus -q .mergeStateStatus)
   if [ "$MERGE_STATE" = "DIRTY" ]; then
