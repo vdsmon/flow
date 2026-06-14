@@ -112,6 +112,17 @@ def _gitignored(files: list[str], cwd: Path, runner: Runner) -> list[str]:
     return [line.strip() for line in result.stdout.splitlines() if line.strip()]
 
 
+def _typo_planned(files: list[str], cwd: Path) -> list[str]:
+    """Planned paths whose parent dir is also missing (a likely path typo).
+
+    A new file in an existing dir is normal (TDD writes test files that do not
+    exist yet). A planned path whose PARENT dir is also absent is the flow-kx17.1
+    case: a stamped `.../scripts/references/...` where `references/` is a sibling
+    of `scripts/`, so the whole parent chain is wrong.
+    """
+    return [f for f in files if not (cwd / f).exists() and not (cwd / f).parent.exists()]
+
+
 def _copy_config(main_root: Path, worktree: Path, extra: list[str]) -> list[str]:
     """Copy gitignored dev config main->worktree. Returns the list copied."""
     copied: list[str] = []
@@ -651,6 +662,15 @@ def bootstrap(
                         + ", ".join(ignored)
                         + " (add a .gitignore negation to the plan's files, or fix the planned paths)"
                     )
+
+        if planned_files:
+            typo = _typo_planned(planned_files, worktree)
+            if typo:
+                warnings.append(
+                    "planned files in a non-existent directory (likely a path typo): "
+                    + ", ".join(typo)
+                    + " (a new file in an existing dir is fine; check the parent path)"
+                )
 
         copied = _copy_config(main_root, worktree, extra_copy or [])
         _ensure_flow_config(main_root, worktree, main_root / ".flow")
