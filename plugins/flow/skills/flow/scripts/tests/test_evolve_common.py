@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 import _evolve_common as ec
+import fleet
 import lease
 from _timeutil import utcnow_iso
 
@@ -138,3 +139,44 @@ def test_live_run_keys_empty_when_no_worktrees(tmp_path):
     repo = tmp_path / "flow"
     repo.mkdir()
     assert ec.live_run_keys(repo) == set()
+
+
+# ─── fleet_live_keys: the reconciled lease | fleet authority (flow-8by2.3) ──────
+
+
+def test_fleet_live_keys_unions_lease_and_fleet(tmp_path):
+    repo = tmp_path / "flow"
+    repo.mkdir()
+    # A: a live lease in the worktree pool (no fleet entry)
+    _write_lease(_pool_run_dir(repo, "flow-lease"))
+    # B: a fresh fleet heartbeat (no lease) — resolve_fleet_dir(repo) == repo/.flow/fleet
+    fleet.register(fleet.resolve_fleet_dir(repo), "flow-fleet", "rid", now=utcnow_iso())
+    assert ec.fleet_live_keys(repo) == {"flow-lease", "flow-fleet"}
+
+
+def test_fleet_live_keys_lease_only_when_no_fleet(tmp_path):
+    repo = tmp_path / "flow"
+    repo.mkdir()
+    _write_lease(_pool_run_dir(repo, "flow-x"))
+    assert ec.fleet_live_keys(repo) == {"flow-x"}  # no fleet dir -> lease set
+
+
+def test_fleet_live_keys_excludes_stale_fleet_entry(tmp_path):
+    repo = tmp_path / "flow"
+    repo.mkdir()
+    # an un-heartbeated (ancient) fleet entry ages out -> not live
+    fleet.register(fleet.resolve_fleet_dir(repo), "flow-stale", "rid", now="2020-01-01T00:00:00Z")
+    assert ec.fleet_live_keys(repo) == set()
+
+
+def test_fleet_live_keys_fail_open_on_fleet_error(tmp_path, monkeypatch):
+    repo = tmp_path / "flow"
+    repo.mkdir()
+    _write_lease(_pool_run_dir(repo, "flow-x"))
+
+    def boom(*a, **k):
+        raise RuntimeError("fleet read blew up")
+
+    monkeypatch.setattr(fleet, "live_keys", boom)
+    # degrades to the lease-only set (pre-cutover behavior), never raises
+    assert ec.fleet_live_keys(repo) == {"flow-x"}

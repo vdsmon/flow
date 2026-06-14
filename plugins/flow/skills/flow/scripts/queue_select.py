@@ -45,6 +45,7 @@ from _evolve_common import (
     ACTIVE_STATUSES,
     NotMaintainer,
     ToolError,
+    fleet_live_keys,
     gather_refs,
     is_inflight,
     key_from_ref,
@@ -163,11 +164,16 @@ def select(
     candidates = loads(ok(run(["bd", "ready", "--json"]), "bd ready"))
     refs, pr_refs = gather_refs(run)
     open_pr_keys = _day_job_open_prs(run, pr_refs)
-    live_keys = live_run_keys(repo)
+    # live_keys is LEASE-ONLY (-> result["live_runs"], which the queue-drain uses for
+    # the launch-marker registered-check); fleet must NOT leak into it or a still-
+    # booting pre-lease run gets evicted from launched_pending a turn early (flow-d4s).
+    # The reconciled lease|fleet read is for the in-flight suppression set only.
+    live_keys = live_run_keys(repo)  # lease-only -> result["live_runs"]
+    fleet_keys = fleet_live_keys(repo)  # lease | fleet (reconciled in-flight authority)
     launched_keys = launch_ledger.live_keys(repo)  # pre-init launch->init window
     inflight_keys = (
         {c["id"] for c in candidates if c.get("id") and is_inflight(c["id"], refs)}
-        | live_keys
+        | fleet_keys
         | launched_keys
     )
 
@@ -177,7 +183,7 @@ def select(
         len(open_pr_keys),
         cap=cap,
         concurrency=concurrency,
-        inflight_count=len(live_keys | launched_keys),
+        inflight_count=len(fleet_keys | launched_keys),
     )
     result["cap"] = cap
     result["concurrency"] = concurrency

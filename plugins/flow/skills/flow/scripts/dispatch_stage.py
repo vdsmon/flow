@@ -530,6 +530,12 @@ def cmd_finish(
     ):
         with contextlib.suppress(Exception):
             lease.release(td, new_state.run_id, session_nonce)
+        # Positive-deregister from the fleet ledger so a completed run drops out of
+        # the reconciled liveness read at once, rather than lingering until the
+        # heartbeat-staleness window (epic flow-8by2.3). Maintainer-gated + fail-open:
+        # a shadow-ledger fault must never break a clean finish.
+        with contextlib.suppress(Exception):
+            fleet.deregister_run(workspace_root, ticket, run_id=new_state.run_id)
 
     return 0, {
         "stage": stage_name,

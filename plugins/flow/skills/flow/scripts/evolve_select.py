@@ -39,6 +39,7 @@ import launch_ledger
 from _evolve_common import ACTIVE_STATUSES as _ACTIVE_STATUSES
 from _evolve_common import BRANCH_PREFIX as _BRANCH_PREFIX
 from _evolve_common import NotMaintainer, ToolError, bead_labels, primary_anchor
+from _evolve_common import fleet_live_keys as _fleet_live_keys
 from _evolve_common import gather_refs as _gather_refs_common
 from _evolve_common import is_inflight as _is_inflight
 from _evolve_common import key_from_ref as _key_from_ref
@@ -211,9 +212,17 @@ def select(
 
     candidates = _ready_candidates(run, include_proposals)
     refs, pr_refs, open_pr_count = _gather_refs(run)
-    live_keys = _live_run_keys(repo)
+    # live_keys is LEASE-ONLY: it surfaces as result["live_runs"], which the drain
+    # uses to decide a launch marker has "registered" (evolve_drain.cli_main). Fleet
+    # registers at launch (before claude --bg), so letting fleet leak into live_runs
+    # would mark a still-booting pre-lease run "registered" and evict it from
+    # launched_pending a turn early, re-opening the blind window launch_ledger closes
+    # (flow-d4s). The reconciled lease|fleet read is for the IN-FLIGHT suppression set
+    # only (don't re-launch / don't over-budget a fleet-live run) — flow-8by2.3.
+    live_keys = _live_run_keys(repo)  # lease-only -> result["live_runs"]
+    fleet_keys = _fleet_live_keys(repo)  # lease | fleet (reconciled in-flight authority)
     launched_keys = launch_ledger.live_keys(repo)  # pre-init launch->init window
-    inflight_pre = live_keys | launched_keys
+    inflight_pre = fleet_keys | launched_keys
     inflight_keys = {
         c["id"] for c in candidates if c.get("id") and _is_inflight(c["id"], refs)
     } | inflight_pre
@@ -228,7 +237,7 @@ def select(
         open_pr_count,
         cap=cap,
         concurrency=concurrency,
-        inflight_count=len(live_keys | launched_keys),
+        inflight_count=len(inflight_pre),
         include_proposals=include_proposals,
     )
     result["cap"] = cap

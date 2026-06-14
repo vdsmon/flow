@@ -218,6 +218,31 @@ def test_register_run_noop_when_not_maintainer(tmp_path, monkeypatch):
     assert not (plain / ".flow" / "fleet").exists()
 
 
+def test_deregister_run_roundtrip(tmp_path):
+    main = _marked(tmp_path, "flow")
+    fleet.register_run(main, "flow-x", "rid-1", now=T0)
+    assert (main / ".flow" / "fleet" / "flow-x.json").exists()
+    assert fleet.deregister_run(main, "flow-x", run_id="rid-1") is True
+    assert not (main / ".flow" / "fleet" / "flow-x.json").exists()
+
+
+def test_deregister_run_runid_gated(tmp_path):
+    main = _marked(tmp_path, "flow")
+    fleet.register_run(main, "flow-x", "rid-1", now=T0)
+    fleet.deregister_run(main, "flow-x", run_id="other")  # a successor must not be dropped
+    assert (main / ".flow" / "fleet" / "flow-x.json").exists()
+
+
+def test_deregister_run_noop_when_not_maintainer(tmp_path, monkeypatch):
+    plain = tmp_path / "proj"
+    (plain / ".flow").mkdir(parents=True)
+    (plain / ".flow" / "workspace.toml").write_text(
+        '[tracker]\nbackend = "beads"\n', encoding="utf-8"
+    )
+    monkeypatch.setenv("HOME", str(tmp_path / "no-home"))
+    assert fleet.deregister_run(plain, "flow-x") is False
+
+
 # ─── CLI ──────────────────────────────────────────────────────────────────────
 
 
