@@ -738,15 +738,24 @@ _PLUGIN_JSON = "plugins/flow/.claude-plugin/plugin.json"
 
 
 def _git_version_runner(
-    *, versions: dict[str, str], default_ref: str = "origin/main", fetch_rc: int = 0
+    *,
+    versions: dict[str, str],
+    default_ref: str = "origin/main",
+    fetch_rc: int = 0,
+    symbolic_ref_rc: int = 0,
 ) -> tuple[Callable[..., subprocess.CompletedProcess[str]], Recorder]:
     """git-only fake: symbolic-ref → default_ref, fetch → fetch_rc, show → plugin.json
-    fixture for refs present in `versions` (keyed by the ref before the colon)."""
+    fixture for refs present in `versions` (keyed by the ref before the colon).
+
+    symbolic_ref_rc != 0 mimics a detached/missing origin/HEAD: rc != 0 with empty
+    stdout, matching real `git symbolic-ref --quiet` on failure."""
     calls: Recorder = []
 
     def run(args: list[str]) -> subprocess.CompletedProcess[str]:
         calls.append(args)
         if args[:2] == ["git", "symbolic-ref"]:
+            if symbolic_ref_rc != 0:
+                return subprocess.CompletedProcess(args, symbolic_ref_rc, "", "fatal: no HEAD")
             return subprocess.CompletedProcess(args, 0, default_ref + "\n", "")
         if args[:2] == ["git", "fetch"]:
             return subprocess.CompletedProcess(args, fetch_rc, "", "boom" if fetch_rc else "")
@@ -791,6 +800,22 @@ def test_gather_versions_no_candidates_no_git_calls(tmp_path):
     run, calls = _git_version_runner(versions={})
     assert er._gather_versions(run, tmp_path, []) == (None, {})
     assert calls == []
+
+
+def test_gather_versions_symbolic_ref_failure_falls_back_to_origin_main(tmp_path):
+    # symbolic-ref rc != 0 (detached/missing origin/HEAD) → default_ref empty →
+    # fallback "origin/main". The version fixture lives ONLY at origin/main, so a
+    # successful main read proves the fallback fired (drop the fallback line and
+    # read_version hits an empty ref → (None, {}) → this assertion fails).
+    branch = "feature/flow-a-some-desc"
+    run, calls = _git_version_runner(
+        versions={"origin/main": "1.2.3", f"origin/{branch}": "1.2.3"}, symbolic_ref_rc=1
+    )
+    main_version, branch_versions = er._gather_versions(run, tmp_path, [branch])
+    assert main_version == "1.2.3"
+    assert branch_versions == {branch: "1.2.3"}
+    shows = [a for a in calls if a[:2] == ["git", "show"]]
+    assert ["git", "show", f"origin/main:{_PLUGIN_JSON}"] in shows
 
 
 # ---- reap integration: duplicate version stamp ----

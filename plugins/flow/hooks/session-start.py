@@ -188,6 +188,22 @@ def _record_pending(
         runner(args, cwd)
 
 
+def _evict_pending(workspace_root: Path, cwd: Path, runner: Runner) -> None:
+    """Compact the recall-pending file before appending. The dispatcher promotes
+    (and rewrites) only inside worktrees, so a main-checkout file is never
+    compacted there; this session-start evict bounds its growth. Any failure is
+    swallowed so the context block still renders.
+    """
+    args = [
+        *_script("recall_pending.py"),
+        "evict",
+        "--workspace-root",
+        str(workspace_root),
+    ]
+    with contextlib.suppress(OSError):
+        runner(args, cwd)
+
+
 # ─── Render ──────────────────────────────────────────────────────────────────
 
 
@@ -344,6 +360,8 @@ def build_context(workspace_root: Path, cwd: Path, runner: Runner | None = None)
     runner = runner or _default_runner()
     if not (workspace_root / ".flow" / "workspace.toml").exists():
         return ""
+
+    _evict_pending(workspace_root, cwd, runner)
 
     branch = _git_value(["branch", "--show-current"], cwd, runner)
     head_sha = _git_value(["rev-parse", "HEAD"], cwd, runner)
