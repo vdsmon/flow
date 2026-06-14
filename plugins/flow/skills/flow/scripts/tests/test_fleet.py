@@ -8,6 +8,7 @@ from pathlib import Path
 
 import fleet
 import lease
+from _timeutil import utcnow_iso
 
 T0 = "2020-01-01T00:00:00Z"
 
@@ -283,3 +284,57 @@ def test_cli_not_maintainer_exit_4(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path / "no-home"))
     out = _run_cli(["live-keys", "--workspace-root", str(plain)])
     assert out.returncode == 4, out.stdout + out.stderr
+
+
+# ─── is-live: the drain destructive-act re-check (flow-8by2.3) ─────────────────
+
+
+def _pool_lease(main: Path, key: str, *, expired: bool = False) -> None:
+    run_dir = main / ".flow" / "worktrees" / f"feature-{key}-wip" / ".flow" / "runs" / key
+    now = T0 if expired else utcnow_iso()
+    lease.acquire(
+        run_dir,
+        "rid",
+        1 if expired else 3600,
+        now,
+        stage="implement",
+        current_boot="boot-A",
+        hostname="host-1",
+        cwd=str(run_dir),
+    )
+
+
+def test_is_live_false_on_fresh_fleet_entry_no_lease(tmp_path):
+    # is_live is LEASE-ONLY: a fresh fleet entry with no live lease is NOT live.
+    # This is the dead-orphan-reap case — fleet staleness (1800s) outlives the lease
+    # (~900s), so an OR-with-fleet would skip reaping a reapable dead orphan.
+    main = _marked(tmp_path, "flow")
+    fleet.register(fleet.resolve_fleet_dir(main), "flow-x", "rid", now=utcnow_iso())
+    assert fleet.is_live(main, "flow-x") is False
+
+
+def test_is_live_true_on_live_lease_no_fleet(tmp_path):
+    main = _marked(tmp_path, "flow")
+    _pool_lease(main, "flow-x")  # live lease in the worktree pool, no fleet entry
+    assert fleet.is_live(main, "flow-x") is True
+
+
+def test_is_live_false_when_no_lease_no_fleet(tmp_path):
+    main = _marked(tmp_path, "flow")
+    assert fleet.is_live(main, "flow-absent") is False
+
+
+def test_is_live_false_on_expired_lease_no_fleet(tmp_path):
+    main = _marked(tmp_path, "flow")
+    _pool_lease(main, "flow-x", expired=True)  # expired lease = reapable, not live
+    assert fleet.is_live(main, "flow-x") is False
+
+
+def test_is_live_cli_exit_codes(tmp_path):
+    main = _marked(tmp_path, "flow")
+    _pool_lease(main, "flow-x")  # live lease => is_live True => exit 0
+    # exit 0 = live (caller SKIPs the destructive act); exit 1 = provably not live
+    assert _run_cli(["is-live", "--key", "flow-x", "--workspace-root", str(main)]).returncode == 0
+    assert (
+        _run_cli(["is-live", "--key", "flow-absent", "--workspace-root", str(main)]).returncode == 1
+    )

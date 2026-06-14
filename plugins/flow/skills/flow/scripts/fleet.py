@@ -50,6 +50,7 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import glob
 import json
 import os
 import sys
@@ -57,6 +58,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
+import lease
 from _atomicio import atomic_write_text
 from _locking import flock_blocking
 from _memory_paths import resolve_memory_base
@@ -312,6 +314,40 @@ def deregister_run(workspace_root: Path, key: str, *, run_id: str | None = None)
     return True
 
 
+def is_live(workspace_root: Path, key: str) -> bool:
+    """Fresh act-time liveness re-check for the drain's irreversible acts (flow-8by2.3):
+    True if the key's lease classifies live/corrupt. Fail-safe: ANY read error returns
+    True, so a re-check before reap merge+close / session-cleanup stop+rm never green-
+    lights destroying a run that acquired a lease in the classify->act gap.
+
+    LEASE-ONLY by design (NOT lease|fleet). The reap (merge a dead orphan) and cleanup
+    (stop a done session) sites are always POST-lease, so the only liveness fleet adds
+    over the lease is the launch->init window — which neither site is ever in. What an
+    OR with the fleet term WOULD add here is harm: fleet's flat staleness (1800s) lingers
+    long after a dead orphan's lease expired (~stage_timeout+buffer, ~900s), so it would
+    read a reapable dead orphan as live and skip the very reap that exists to merge it.
+    The lease's per-stage TTL is the accurate signal: a run that went live in the gap has
+    a fresh lease and is caught here. (True atomic read+act under one flock is impossible
+    for a prose `gh pr merge`; that is child-4's merge-token. This re-check NARROWS the
+    worst TOCTOU from select-time to act-time, it does not close it.)
+
+    Imports `lease` directly + inlines the worktree-pool glob (mirrors
+    _evolve_common.run_dir_for) to avoid a fleet<->_evolve_common import cycle.
+    """
+    repo = resolve_maintainer_repo(workspace_root)
+    base = (repo if repo is not None else workspace_root) / ".flow" / "worktrees"
+    try:
+        for wt in sorted(glob.glob(str(base / f"feature-{key}*"))):
+            run_dir = Path(wt) / ".flow" / "runs" / key
+            if run_dir.exists():
+                if lease.classify(run_dir, utcnow_iso()).get("state") in ("live", "corrupt"):
+                    return True
+                break
+    except Exception:
+        return True  # uncertain -> fail-safe toward "live"
+    return False
+
+
 # ─── CLI ─────────────────────────────────────────────────────────────────────
 
 
@@ -344,7 +380,19 @@ def cli_main(argv: list[str]) -> int:
     p_list.add_argument("--workspace-root", default=".")
     p_list.add_argument("--json", action="store_true")
 
+    p_islive = sub.add_parser(
+        "is-live", help="exit 0 if key's lease is live (fail-safe), 1 if provably not"
+    )
+    p_islive.add_argument("--key", required=True)
+    p_islive.add_argument("--workspace-root", default=".")
+
     args = parser.parse_args(argv)
+
+    # is-live is the drain re-check: it works regardless of maintainer mode (the lease
+    # side always applies) and returns 0=live / 1=not-live, so it bypasses the exit-4
+    # maintainer gate below.
+    if args.cmd == "is-live":
+        return 0 if is_live(Path(args.workspace_root), args.key) else 1
 
     try:
         fleet_dir = _resolve(Path(args.workspace_root))
@@ -389,6 +437,7 @@ __all__ = [
     "deregister",
     "deregister_run",
     "entries",
+    "is_live",
     "live_keys",
     "prune",
     "read",
