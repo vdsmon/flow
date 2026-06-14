@@ -506,6 +506,58 @@ def test_bootstrap_accepts_non_ignored_planned_files(tmp_path: Path) -> None:
     assert not any("gitignored" in w for w in res["warnings"])
 
 
+def test_bootstrap_warns_on_planned_file_in_missing_dir(tmp_path: Path) -> None:
+    # A planned path whose PARENT dir is also absent is a likely path typo
+    # (the flow-kx17.1 case): warn, never refuse.
+    main = _main_checkout(tmp_path)
+    res = _run(
+        tmp_path,
+        main,
+        planned_files=["nonexistent_dir/typo.py"],
+        runner=_fake_runner(ignored=set(), main=main),
+    )
+    assert res["ticket"] == "FT-1"
+    assert any("nonexistent_dir/typo.py" in w and "non-existent" in w for w in res["warnings"])
+
+
+def test_bootstrap_no_typo_warn_for_new_file_in_existing_dir(tmp_path: Path) -> None:
+    # A NEW (non-existent) file in an EXISTING dir is normal (TDD writes test
+    # files that do not exist yet): no typo warning. The dir must really exist
+    # under the resolved worktree, since _typo_planned uses Path.exists() and the
+    # fake `git worktree add` does not populate the tree.
+    main = _main_checkout(tmp_path)
+    wt = tmp_path / "wt"
+    (wt / "src").mkdir(parents=True, exist_ok=True)
+    res = _run(
+        tmp_path,
+        main,
+        worktree=wt,
+        planned_files=["src/new_thing.py"],
+        runner=_fake_runner(ignored=set(), main=main),
+    )
+    assert res["ticket"] == "FT-1"
+    assert not any("non-existent" in w for w in res["warnings"])
+
+
+def test_bootstrap_no_typo_warn_for_existing_file(tmp_path: Path) -> None:
+    # An already-existing planned file never trips the typo guard. The file must
+    # really exist under the resolved worktree (fake worktree add does not
+    # populate the tree).
+    main = _main_checkout(tmp_path)
+    wt = tmp_path / "wt"
+    (wt / "src").mkdir(parents=True, exist_ok=True)
+    (wt / "src" / "existing.py").write_text("x = 1\n", encoding="utf-8")
+    res = _run(
+        tmp_path,
+        main,
+        worktree=wt,
+        planned_files=["src/existing.py"],
+        runner=_fake_runner(ignored=set(), main=main),
+    )
+    assert res["ticket"] == "FT-1"
+    assert not any("non-existent" in w for w in res["warnings"])
+
+
 def _base_runner(symref_outputs):
     """Runner answering `git symbolic-ref` from a queue; everything else ok."""
     calls: list[list[str]] = []
