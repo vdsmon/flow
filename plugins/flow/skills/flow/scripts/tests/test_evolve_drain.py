@@ -354,3 +354,34 @@ def test_cli_removes_launch_marker_once_registered(monkeypatch, tmp_path, capsys
     # removal-on-registration: the key no longer holds launched_pending, so once its
     # run has finished the loop can terminate (the merged-teardown window is closed).
     assert json.loads(capsys.readouterr().out)["action"] == "done"
+
+
+def test_cli_removes_launch_marker_via_open_pr_alone(monkeypatch, tmp_path, capsys):
+    # registration proven by an OPEN PR, not a live lease: the run opened its PR then
+    # its session ended (lease expired/absent), so live_runs lacks the key but
+    # open_pr_keys has it. The marker MUST still drop — registered is the union, and
+    # the open-PR half carries this case (kills the `| open_pr_keys` mutation).
+    sel = {
+        "launch": [],
+        "skipped_in_flight": [],
+        "live_runs": [],
+        "open_pr_keys": ["flow-k"],
+        "launched_pending": ["flow-k"],
+    }
+    repo = tmp_path / "flow"
+    repo.mkdir()
+    monkeypatch.setattr(ed, "resolve_maintainer_repo", lambda ws: repo)
+    monkeypatch.setattr(ed, "_config_defaults", lambda ws: (5, 3))
+    monkeypatch.setattr(ed, "liveness_map", lambda repo, keys: {})
+    monkeypatch.setattr(ed, "select", lambda ws, **kw: sel)
+
+    launch_ledger.add(repo, "flow-k")
+    marker = repo / ".flow" / "launch-ledger" / "flow-k"
+    assert marker.exists()
+
+    rc = ed.cli_main(["--workspace-root", str(tmp_path)])
+    assert rc == 0
+    assert not marker.exists()
+    out = json.loads(capsys.readouterr().out)
+    assert out["action"] == "done"
+    assert out["select"]["launched_pending"] == []
