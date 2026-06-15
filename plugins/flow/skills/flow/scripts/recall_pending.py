@@ -56,6 +56,7 @@ from _runner import default_runner as _default_runner
 from _timeutil import parse_iso, utcnow_iso
 
 _WINDOW = timedelta(hours=24)
+_STALE_CAP = 500  # ring-buffer bound on the write-only .stale forensic sidecar
 
 
 # ─── Paths ───────────────────────────────────────────────────────────────────
@@ -77,6 +78,11 @@ def _quarantine_path(workspace_root: Path) -> Path:
 def _stale_path(workspace_root: Path) -> Path:
     path = recall_pending_path(workspace_root)
     return path.with_name(path.name + ".stale")
+
+
+def _stale_quarantine_path(workspace_root: Path) -> Path:
+    p = _stale_path(workspace_root)
+    return p.with_name(p.name + ".quarantine")
 
 
 def _recall_log_path(workspace_root: Path, ticket: str) -> Path:
@@ -123,6 +129,21 @@ def _atomic_rewrite(path: Path, entries: list[dict[str, Any]]) -> None:
             os.fsync(dir_fd)
         finally:
             os.close(dir_fd)
+
+
+def _append_stale_capped(workspace_root: Path, entries: list[dict[str, Any]]) -> None:
+    """Append evicted entries to the write-only .stale sidecar, then cap it to
+    the most-recent _STALE_CAP entries. Nothing reads .stale back (promotion is
+    the only metric path), so it is a bounded forensic trail, not unbounded
+    growth. Caller holds the recall-pending flock."""
+    if not entries:
+        return
+    stale_path = _stale_path(workspace_root)
+    for entry in entries:
+        _append_line(stale_path, entry)
+    existing = list(iter_jsonl(stale_path, _stale_quarantine_path(workspace_root)))
+    if len(existing) > _STALE_CAP:
+        _atomic_rewrite(stale_path, existing[-_STALE_CAP:])
 
 
 # ─── Public API ──────────────────────────────────────────────────────────────
@@ -252,8 +273,7 @@ def promote_matching(
             log_path = _recall_log_path(workspace_root, ticket)
             for stamped in promoted:
                 _append_line(log_path, stamped)
-        for entry in stale:
-            _append_line(_stale_path(workspace_root), entry)
+        _append_stale_capped(workspace_root, stale)
         _atomic_rewrite(path, kept)
 
     return promoted
@@ -294,8 +314,7 @@ def evict_stale(
             (stale if _is_stale(entry, cutoff) else kept).append(entry)
         if not stale:
             return []
-        for entry in stale:
-            _append_line(_stale_path(workspace_root), entry)
+        _append_stale_capped(workspace_root, stale)
         _atomic_rewrite(path, kept)
 
     return stale
