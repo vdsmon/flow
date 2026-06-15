@@ -63,6 +63,48 @@ def test_detect_pr_none_when_no_match():
     assert fg.detect_pr("feature/flow-x") is None
 
 
+def _pr_view(state: str = "OPEN") -> dict:
+    return {
+        "id": 9,
+        "source": {"branch": {"name": "feature/flow-x"}},
+        "destination": {"branch": {"name": "main"}},
+        "links": {"html": {"href": "https://bitbucket.org/ws/rs/pull-requests/9"}},
+        "draft": False,
+        "state": state,
+    }
+
+
+def test_pr_info_reads_pr_by_id():
+    fg, _ = _adapter(
+        lambda a: json.dumps(_pr_view()) if _api_path(a).endswith("/pullrequests/9") else "null"
+    )
+    pr = fg.pr_info("9")
+    assert pr is not None
+    assert pr["id"] == "9"
+    assert pr["head"] == "feature/flow-x"
+    assert pr["base"] == "main"
+    assert pr["state"] == "OPEN"
+
+
+def test_pr_info_reads_merged_state():
+    # pr_info reads ANY state (revise detects MERGED), unlike open-only detect_pr.
+    fg, _ = _adapter(
+        lambda a: (
+            json.dumps(_pr_view(state="MERGED"))
+            if _api_path(a).endswith("/pullrequests/9")
+            else "null"
+        )
+    )
+    pr = fg.pr_info("9")
+    assert pr is not None
+    assert pr["state"] == "MERGED"
+
+
+def test_pr_info_none_when_absent():
+    fg, _ = _adapter(lambda a: "null")
+    assert fg.pr_info("9") is None
+
+
 def test_open_pr_posts_payload():
     created = {
         "id": 42,

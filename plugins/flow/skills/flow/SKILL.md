@@ -24,6 +24,7 @@ See `references/background-pipeline.md`.
 
 `/flow do` is the **executor primitive** — the full pipeline, resuming at the next pending stage.
 `spec` enters the seeded worktree and flows into it in the same session; `do` also runs standalone to resume a run.
+`/flow revise <ticket|pr> ["instruction"]` turns a delivered run's OPEN PR into a revision sub-run that ingests review feedback (or a free-text change-request) and updates the SAME PR (`references/verb-revise.md`).
 Everything else (`recall`, `status`, `triage`, `recover`, `sync`, `baseline`) is a work-state verb around the same pipeline.
 
 Built on a multi-tracker engine: the tracker is pluggable (Jira | beads); stages, handlers, and the memory namespace come from `.flow/workspace.toml` + `stage-registry.toml`.
@@ -48,6 +49,7 @@ Spec is the default because fire-and-forget is the primary path.
 | `new` | new | `references/verb-new.md` |
 | `spec` (optionally `<ticket>`, `--auto`, `--e2e-recipe "..."`) | spec (gate below) | `references/verb-spec.md` |
 | `do` (optionally `<ticket>`) | do (skeleton below) | `references/verb-do.md` |
+| `revise <ticket\|pr> [<instruction>]` | revise | `references/verb-revise.md` |
 | `recall <query> [--branch X --top-n N]` | recall | `references/verb-recall.md` |
 | `recall --metric tickets-per-week [...]` | metric (recall passthrough) | `references/verb-recall.md` |
 | `status` (optionally `<ticket>`) | status | `references/verb-status.md` |

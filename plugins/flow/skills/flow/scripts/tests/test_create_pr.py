@@ -53,6 +53,9 @@ class _FakeForge:
     def detect_pr(self, branch: str) -> PullRequest | None:
         return _pr(self._existing, branch) if self._existing else None
 
+    def pr_info(self, pr_id: str) -> PullRequest | None:
+        return None
+
     def open_pr(self, base: str, head: str, title: str, body: str, draft: bool) -> PullRequest:
         if self.raise_on_open:
             raise self.raise_on_open

@@ -31,6 +31,18 @@ class _FakeForge:
             "state": "OPEN",
         }
 
+    def pr_info(self, pr_id):
+        self.calls.append(("pr_info", pr_id))
+        return {
+            "id": pr_id,
+            "url": "u",
+            "number": int(pr_id),
+            "draft": False,
+            "base": "main",
+            "head": "feature/flow-x",
+            "state": "OPEN",
+        }
+
     def open_pr(self, base, head, title, body, draft):
         self.calls.append(("open_pr", base, head, draft))
         return {
@@ -96,6 +108,15 @@ def test_detect_pr(ws, capsys):
     out = json.loads(capsys.readouterr().out)
     assert out["number"] == 7
     assert ("detect_pr", "feature/flow-x") in fake.calls
+
+
+def test_pr_info(ws, capsys):
+    rc, fake = _run(["pr-info", "--pr", "7"], ws)
+    assert rc == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["number"] == 7
+    assert out["head"] == "feature/flow-x"
+    assert ("pr_info", "7") in fake.calls
 
 
 def test_open_pr_draft_flag(ws, capsys):

@@ -121,6 +121,59 @@ def test_detect_pr_none_when_empty():
     assert fg.detect_pr("feature/flow-x") is None
 
 
+def test_pr_info_parses_object():
+    view = json.dumps(
+        {
+            "number": 7,
+            "url": "https://github.com/o/r/pull/7",
+            "isDraft": False,
+            "baseRefName": "main",
+            "headRefName": "feature/flow-x",
+            "state": "OPEN",
+        }
+    )
+    fg, _ = _adapter({"view": view})
+    pr = fg.pr_info("7")
+    assert pr is not None
+    assert pr["number"] == 7
+    assert pr["id"] == "7"
+    assert pr["head"] == "feature/flow-x"
+    assert pr["state"] == "OPEN"
+
+
+def test_pr_info_reads_merged_state():
+    # Unlike detect_pr (open-only), pr_info reads ANY state so revise can detect MERGED.
+    view = json.dumps(
+        {
+            "number": 7,
+            "url": "https://github.com/o/r/pull/7",
+            "isDraft": False,
+            "baseRefName": "main",
+            "headRefName": "feature/flow-x",
+            "state": "MERGED",
+        }
+    )
+    fg, _ = _adapter({"view": view})
+    pr = fg.pr_info("7")
+    assert pr is not None
+    assert pr["state"] == "MERGED"
+
+
+def test_pr_info_none_when_empty():
+    fg, _ = _adapter({"view": "{}"})
+    assert fg.pr_info("7") is None
+
+
+def test_pr_info_none_when_null():
+    fg, _ = _adapter({"view": "null"})
+    assert fg.pr_info("7") is None
+
+
+def test_pr_info_none_on_garbage():
+    fg, _ = _adapter({"view": "not json"})
+    assert fg.pr_info("7") is None
+
+
 def test_open_pr_omits_draft_flag_when_ready():
     fg, calls = _adapter({"create": "https://github.com/o/r/pull/42\n"})
     pr = fg.open_pr("main", "feature/flow-x", "feat: x", "body", draft=False)

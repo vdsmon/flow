@@ -116,6 +116,16 @@ class BitbucketAdapter:
                 return self._pr_from_api(item)
         return None
 
+    def pr_info(self, pr_id: str) -> PullRequest | None:
+        # PR-id -> PR reverse lookup. Reads ANY state (no state filter), so `revise`
+        # can detect a MERGED PR. `_api` returns None on an empty ("null") body and
+        # raises on a non-zero `bkt` exit (an absent PR), so None means empty, not
+        # error (matches the github adapter's shape).
+        data = self._api(f"{self._base()}/pullrequests/{pr_id}", "bkt pr view")
+        if not isinstance(data, dict) or not data:
+            return None
+        return self._pr_from_api(data)
+
     def open_pr(self, base: str, head: str, title: str, body: str, draft: bool) -> PullRequest:
         payload = {
             "title": title,

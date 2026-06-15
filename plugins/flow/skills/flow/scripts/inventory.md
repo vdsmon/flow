@@ -185,6 +185,7 @@ Pluggable PR-host seam (`forge.py` Protocol + `forge_cli.py` + `forge_github.py`
 | Op (Protocol / `forge_cli`) | GitHub (`gh`) | Bitbucket (`bkt`) |
 |------|------|------|
 | `detect_pr` / `detect-pr` | `gh pr list --head B --state open --json number,url,isDraft,baseRefName,headRefName,state` | `bkt api 2.0/repositories/WS/RS/pullrequests?state=OPEN` + filter `source.branch.name` |
+| `pr_info` / `pr-info` | `gh pr view PR --json number,url,isDraft,baseRefName,headRefName,state` (PR-number reverse lookup, ANY state — revise reads `head`+`state`/detects MERGED; None on empty/garbage JSON, ForgeError on absent PR) | `bkt api .../pullrequests/PR` → `_pr_from_api` (None on empty body) |
 | `open_pr` / `open-pr` | `gh pr create --base --head --title --body [--draft]` | `bkt api .../pullrequests -X POST -d {title,source,destination,draft,description}` |
 | `ci_rollup` / `ci-rollup` | `gh pr view PR --json statusCheckRollup` (green = non-empty + every check COMPLETED-SUCCESS) | `bkt pr checks PR` → Pipeline line state (SUCCESSFUL→green, INPROGRESS→pending, FAILED/STOPPED/ERROR→failed) |
 | `review_threads` / `review-threads` | **NotSupported** (no live review-bot-on-GitHub yet) | CodeRabbit actionable inline findings via paginated `.../comments`, unresolved only |
@@ -572,7 +573,7 @@ Resolves ticket key from current git branch.
 
 | Subcommand | Flags | Exits | Notes |
 |------------|-------|-------|-------|
-| (default)  | `--workspace-root <dir>` `--cwd <dir>` | 0=match, 1=env-error, 3=no-match | Backend-aware: jira regex `<PROJECT_KEY>-\d+`; beads regex `<prefix>-[0-9a-z]{4,}` (mirrors `_BD_ID_RE`). |
+| (default)  | `--workspace-root <dir>` `--cwd <dir>` `[--branch <name>]` | 0=match, 1=env-error, 3=no-match | Backend-aware: jira regex `<PROJECT_KEY>-\d+`; beads regex `<prefix>-[0-9a-z]{4,}` (mirrors `_BD_ID_RE`). `--branch` resolves from an explicit branch (no git call), the PR->ticket enabler for `/flow revise <pr#>`; absent = current branch (unchanged). |
 
 ### `ticket_frontmatter.py`
 

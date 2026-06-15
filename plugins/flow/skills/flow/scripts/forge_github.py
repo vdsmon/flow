@@ -172,6 +172,30 @@ class GitHubAdapter:
             return self._pr_from_json(items[0])
         return None
 
+    def pr_info(self, pr_id: str) -> PullRequest | None:
+        # PR-number -> PR reverse lookup. Reads ANY state (no --state filter), so
+        # `revise` can detect a MERGED PR. Returns None on empty/unparseable JSON;
+        # an absent PR makes `gh pr view` exit non-zero, which `_ok_read` surfaces
+        # as a ForgeError (the verb's "no PR" path), NOT a silent None.
+        raw = self._ok_read(
+            [
+                "gh",
+                "pr",
+                "view",
+                pr_id,
+                "--json",
+                "number,url,isDraft,baseRefName,headRefName,state",
+            ],
+            "gh pr view",
+        )
+        try:
+            item = json.loads(raw or "{}")
+        except json.JSONDecodeError:
+            return None
+        if isinstance(item, dict) and item:
+            return self._pr_from_json(item)
+        return None
+
     def open_pr(self, base: str, head: str, title: str, body: str, draft: bool) -> PullRequest:
         args = [
             "gh",
