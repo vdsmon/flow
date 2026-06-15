@@ -187,13 +187,35 @@ Once reopened, the bead is a normal open bead and the existing §C machinery own
 python3 ${CLAUDE_SKILL_DIR}/scripts/evolve_drain.py --workspace-root .
 ```
 
-This runs `evolve_select` (which is DAG-aware via `bd ready`, drops in-flight beads, enforces backpressure ≥ `cap` open PRs, partitions ≤1 hot per batch / no shared primary-file anchor) and annotates each in-flight bead with its run's lease liveness. It returns JSON `{action: "launch"|"wait"|"done", launch:[keys], parked:[keys], liveness:{}, select:{...}}`. Inside `select`, `launched_pending` lists the keys held by the launch ledger — runs fanned out on a prior turn that have not yet registered a branch/lease (the launch→init window); the selector already counts them as in-flight, so they are neither re-launched nor allowed to break hot isolation.
+This runs `evolve_select` (which is DAG-aware via `bd ready`, drops in-flight beads, enforces backpressure ≥ `cap` open PRs, partitions ≤1 hot per batch / no shared primary-file anchor) and annotates each in-flight bead with its run's lease liveness. It returns JSON `{action: "launch"|"recover"|"wait"|"done", launch:[keys], stranded:[keys], stranded_pre_pr:[{key,branch,worktree}], parked:[keys], liveness:{}, select:{...}}` (the top-level `stranded` key rides only the `recover` action; `stranded_pre_pr` is always present, empty when nothing is stranded). Inside `select`, `launched_pending` lists the keys held by the launch ledger — runs fanned out on a prior turn that have not yet registered a branch/lease (the launch→init window); the selector already counts them as in-flight, so they are neither re-launched nor allowed to break hot isolation.
 
 - **`launch`** (launch non-empty) → go to **C**.
+- **`recover`** (launch empty, `stranded_pre_pr` non-empty) → run the **§Recover stranded pre-PR runs** recipe below, then loop immediately back to **A** (no Monitor-wait — the recovery is local, the next turn's select sees the reopened beads). A stranded entry is a `/flow <key> --auto` run that died PRE-PR: its bead sits in_progress with a dirty orphan worktree but no lease and no PR, so every other channel (reap is PR-only, A2 needs a terminal bead, the §C ladder needs an OPEN bead) reads it as gone and the loop would false-positive to `done`. `recover` outranks `wait`: it only touches the stranded bead's own dead worktree (fleet-rechecked first), so a live run blocking elsewhere does not defer it.
 - **`wait`** (launch empty, but a **blocking** in-flight run remains) → go to **D-wait**. A run blocks when its lease reads `live` OR `corrupt`: a live run will self-merge and free serialization/backpressure; a corrupt lease (run.lock unparseable, ownership unconfirmable) does NOT self-free — it blocks until a human runs `recover takeover`. A non-empty `launched_pending` is a third blocking reason: a launched-but-pre-lease run (in the ledger, no branch/lease/PR registered yet) has no run dir to read, so it would otherwise look non-blocking — it blocks until it registers (then the lease/PR channels take over) or its marker TTL-expires. It is NOT parked. All route to **D-wait**.
-- **`done`** (launch empty AND `launched_pending` empty AND no in-flight run is blocking — none reads `live` or `corrupt` — backlog drained, or only parked-for-human work remains) → exit the loop, go to **Report**.
+- **`done`** (launch empty AND `launched_pending` empty AND `stranded_pre_pr` empty AND no in-flight run is blocking — none reads `live` or `corrupt` — backlog drained, or only parked-for-human work remains) → exit the loop, go to **Report**. The stranded gate is load-bearing: the loop NEVER reads `done` while a true stranded pre-PR bead exists, so the false-positive termination (a pre-PR-dead run leaving its bead silently in_progress, witnessed flow-mmh3) cannot recur.
 
 The termination is blocking-gated on purpose: a **withheld** hot bead (its in-run reviewer raised `held_guard`) leaves a ready PR + branch but its session has ended, so its lease is expired/absent (non-blocking) — it reads as `parked`, never `wait`, so the loop cannot spin on it. The other blocking states are `corrupt` (treated live-equivalent because an in-flight run that cannot be confirmed dead must never let the loop drain to `done`; a corrupt lease blocks until a human runs `recover takeover`) and a `launched_pending` key (a just-launched run still in its pre-lease bootstrap window, which must not be abandoned with a hot bead held behind it). It terminates and hands the withheld bead (plus any hot beads stuck behind it in `held_hot`) to the human.
+
+**§Recover stranded pre-PR runs.** On a `recover` action, act on each entry in the step-**B** JSON's `stranded_pre_pr` (`{key, branch, worktree}`), then loop back to **A**. Each entry is a bead `evolve_drain.py` classified STRANDED: in_progress (evolve-label-scoped, so a day-job run's worktree in the shared pool is never touched), lease non-live, not in `launched_pending`, and with NO PR open or merged. Recovery tears down the dirty worktree and reopens the bead so the NEXT turn's select relaunches it FRESH off `origin/main` — it NEVER do-resumes the dirty worktree (the do-resume re-dies at implement entry: `records_diff_baseline --capture-blobs` runs against planned files already deleted-in-worktree-but-present-in-HEAD, witnessed flow-mmh3 attempt 2). Skip ALL side effects under `--dry-run` (print the `stranded_pre_pr` set, run nothing). For each entry:
+
+```bash
+# fleet re-check FIRST (flow-8by2.3, as A-reap / A2-cleanup): classify ran lock-free
+# turns ago; a bead that re-acquired a lease in the classify->recover gap must NOT have
+# its worktree reaped + bead reopened from under a now-live run. is-live is lease-only,
+# fail-safe (exit 0 = live = SKIP both destructive acts).
+if python3 ${CLAUDE_SKILL_DIR}/scripts/fleet.py is-live --key <key> --workspace-root .; then
+  echo "fleet: <key> went live after classify — not recovering this turn"
+else
+  # REAP BEFORE REOPEN (order load-bearing). Reap clears the dirty non-terminal
+  # state.json that would make the next turn's `flow_worktree.py create` exit 4
+  # (dup-claim). reap derives the branch from --ticket (no --branch needed); it is
+  # idempotent (an already-gone worktree is a no-op) and lease-gated internally.
+  python3 ${CLAUDE_SKILL_DIR}/scripts/flow_worktree.py reap --ticket <key> --main-root .
+  bd update <key> --status open
+fi
+```
+
+`<key>` comes from the entry. **Reap-then-reopen is the load-bearing order:** if the reap partially fails, the bead stays in_progress → re-qualifies as stranded next turn → idempotent self-heal. Reopen-first then a reap failure would make the bead `open` + a dirty worktree still present → invisible to its own detector (it only matches in_progress), and the next-turn launch hits dup-claim exit 4 forever. After a clean recovery the bead is `open` (back in `bd ready`) with its worktree gone, so this turn's loop-back to **A** → **B** select sees it and **C** launches it fresh. The recover branch loops straight back to **A** with no Monitor-wait (the recovery is local), so it relies on the loop-level iteration cap (the same guaranteed terminal exit D-wait names) as its bound — a persistently-failing `bd update --status open` cannot spin forever. (Accepted residual: a bead that deterministically crashes the same way every relaunch re-strands every turn; sonnet-tiered beads are already bounded by the SONNET-LADDER marker, so this is non-sonnet beads only — follow-up flow-y8zs tracks an attempt-N bound + queue_drain parity.)
 
 **C. Launch.**
 

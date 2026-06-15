@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 
 import evolve_drain as ed
 import launch_ledger
@@ -204,6 +205,7 @@ def _stub_cli(monkeypatch, tmp_path, captured):
     monkeypatch.setattr(ed, "resolve_maintainer_repo", lambda ws: repo)
     monkeypatch.setattr(ed, "_config_defaults", lambda ws: (5, 3))
     monkeypatch.setattr(ed, "liveness_map", lambda repo, keys: {})
+    monkeypatch.setattr(ed, "_default_runner", lambda repo_: _StrandRunner())
 
     def fake_select(ws, *, cap, concurrency, include_proposals=False):
         captured["include_proposals"] = include_proposals
@@ -289,6 +291,7 @@ def _stub_cli_live(monkeypatch, tmp_path, sel):
     monkeypatch.setattr(ed, "resolve_maintainer_repo", lambda ws: repo)
     monkeypatch.setattr(ed, "_config_defaults", lambda ws: (5, 3))
     monkeypatch.setattr(ed, "select", lambda ws, **kw: sel)
+    monkeypatch.setattr(ed, "_default_runner", lambda repo_: _StrandRunner())
     return repo
 
 
@@ -343,6 +346,7 @@ def test_cli_removes_launch_marker_once_registered(monkeypatch, tmp_path, capsys
     monkeypatch.setattr(ed, "_config_defaults", lambda ws: (5, 3))
     monkeypatch.setattr(ed, "liveness_map", lambda repo, keys: {})
     monkeypatch.setattr(ed, "select", lambda ws, **kw: sel)
+    monkeypatch.setattr(ed, "_default_runner", lambda repo_: _StrandRunner())
 
     launch_ledger.add(repo, "flow-k")
     marker = repo / ".flow" / "launch-ledger" / "flow-k"
@@ -374,6 +378,7 @@ def test_cli_removes_launch_marker_via_open_pr_alone(monkeypatch, tmp_path, caps
     monkeypatch.setattr(ed, "_config_defaults", lambda ws: (5, 3))
     monkeypatch.setattr(ed, "liveness_map", lambda repo, keys: {})
     monkeypatch.setattr(ed, "select", lambda ws, **kw: sel)
+    monkeypatch.setattr(ed, "_default_runner", lambda repo_: _StrandRunner())
 
     launch_ledger.add(repo, "flow-k")
     marker = repo / ".flow" / "launch-ledger" / "flow-k"
@@ -385,3 +390,185 @@ def test_cli_removes_launch_marker_via_open_pr_alone(monkeypatch, tmp_path, caps
     out = json.loads(capsys.readouterr().out)
     assert out["action"] == "done"
     assert out["select"]["launched_pending"] == []
+
+
+# ─── decide() — the STRANDED recover gate (flow-9ljv) ────────────────────────
+
+
+def test_stranded_nonempty_recovers():
+    # a stranded pre-PR bead → action `recover` (NOT done), key carried sorted
+    d = ed.decide(_sel(), {}, stranded=["flow-z", "flow-a"])
+    assert d["action"] == "recover"
+    assert d["stranded"] == ["flow-a", "flow-z"]
+    assert d["launch"] == []
+
+
+def test_stranded_excluded_from_parked():
+    # a stranded key that ALSO shows in liveness as non-live must not double-count
+    # into parked — it is reaped, not handed to the human.
+    d = ed.decide(_sel(), {"flow-a": "absent", "flow-b": "absent"}, stranded=["flow-a"])
+    assert d["action"] == "recover"
+    assert d["stranded"] == ["flow-a"]
+    assert d["parked"] == ["flow-b"]
+
+
+def test_stranded_with_live_run_not_done():
+    # stranded beats wait: even with a live run blocking, a true stranded bead must
+    # be recovered (it touches only its own dead worktree, fleet-rechecked in prose).
+    d = ed.decide(_sel(), {"flow-live": "live"}, stranded=["flow-s"])
+    assert d["action"] == "recover"
+    assert d["stranded"] == ["flow-s"]
+
+
+def test_empty_stranded_byte_identical_done():
+    # the regression guard: empty stranded + nothing blocking → done with the exact
+    # pre-stranded shape (no `stranded` key leaks onto the done return).
+    d = ed.decide(_sel(), {}, stranded=[])
+    assert d == {"action": "done", "launch": [], "parked": []}
+    # and the default-arg call (queue_drain's positional shape) is identical
+    assert ed.decide(_sel(), {}) == {"action": "done", "launch": [], "parked": []}
+
+
+def test_launch_beats_stranded():
+    # launch precedence is highest: a non-empty launch wins over a stranded set.
+    d = ed.decide(_sel(launch=["flow-a"]), {}, stranded=["flow-s"])
+    assert d["action"] == "launch"
+    assert d["launch"] == ["flow-a"]
+    assert "stranded" not in d
+
+
+# ─── cli_main — STRANDED detection (stub bd/gh reads + on-disk lease) ─────────
+
+
+def _cp(stdout="", returncode=0):
+    return subprocess.CompletedProcess(args=[], returncode=returncode, stdout=stdout, stderr="")
+
+
+class _StrandRunner:
+    """Stubs the bd-list (in_progress evolve) + gh-pr-list (merged) reads detection makes."""
+
+    def __init__(self, *, in_progress=(), merged_prs=()):
+        self.in_progress = list(in_progress)
+        self.merged_prs = list(merged_prs)
+        self.bd_list_calls: list[list[str]] = []
+
+    def __call__(self, args):
+        if args[:2] == ["bd", "list"]:
+            self.bd_list_calls.append(list(args))
+            return _cp(json.dumps([{"id": k} for k in self.in_progress]))
+        if args[:3] == ["gh", "pr", "list"]:
+            return _cp(json.dumps(self.merged_prs))
+        raise AssertionError(f"unexpected tool call: {args}")
+
+
+def _stub_cli_strand(monkeypatch, tmp_path, sel, runner):
+    """Stubbed select/maintainer/config + injected runner; liveness_map stays REAL."""
+    repo = tmp_path / "flow"
+    repo.mkdir()
+    monkeypatch.setattr(ed, "resolve_maintainer_repo", lambda ws: repo)
+    monkeypatch.setattr(ed, "_config_defaults", lambda ws: (5, 3))
+    monkeypatch.setattr(ed, "select", lambda ws, **kw: sel)
+    monkeypatch.setattr(ed, "_default_runner", lambda repo_: runner)
+    return repo
+
+
+def test_cli_stranded_true_positive_recovers(monkeypatch, tmp_path, capsys):
+    # in_progress + non-live (no worktree → absent) + no-PR + not launched_pending → STRANDED
+    sel = {"launch": [], "skipped_in_flight": [], "live_runs": [], "open_pr_keys": []}
+    runner = _StrandRunner(in_progress=["flow-strand"])
+    _stub_cli_strand(monkeypatch, tmp_path, sel, runner)
+    rc = ed.cli_main(["--workspace-root", str(tmp_path)])
+    assert rc == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["action"] == "recover"
+    assert [e["key"] for e in out["stranded_pre_pr"]] == ["flow-strand"]
+    assert out["stranded"] == ["flow-strand"]
+
+
+def test_cli_stranded_skips_launched_pending(monkeypatch, tmp_path, capsys):
+    # launched_pending + in_progress + non-live + no-PR → NOT stranded (still booting)
+    sel = {
+        "launch": [],
+        "skipped_in_flight": [],
+        "live_runs": [],
+        "open_pr_keys": [],
+        "launched_pending": ["flow-boot"],
+    }
+    runner = _StrandRunner(in_progress=["flow-boot"])
+    _stub_cli_strand(monkeypatch, tmp_path, sel, runner)
+    rc = ed.cli_main(["--workspace-root", str(tmp_path)])
+    assert rc == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["stranded_pre_pr"] == []
+    assert out["action"] == "wait"  # launched_pending still blocks
+
+
+def test_cli_stranded_skips_live_lease(monkeypatch, tmp_path, capsys):
+    # in_progress + LIVE lease → NOT stranded (the run is still working)
+    sel = {"launch": [], "skipped_in_flight": [], "live_runs": [], "open_pr_keys": []}
+    runner = _StrandRunner(in_progress=["flow-live"])
+    repo = _stub_cli_strand(monkeypatch, tmp_path, sel, runner)
+    _write_lease(_pool_run_dir(repo, "flow-live"))
+    rc = ed.cli_main(["--workspace-root", str(tmp_path)])
+    assert rc == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["stranded_pre_pr"] == []
+
+
+def test_cli_stranded_skips_open_pr(monkeypatch, tmp_path, capsys):
+    # in_progress + open PR (in select's open_pr_keys) → NOT stranded
+    sel = {
+        "launch": [],
+        "skipped_in_flight": [],
+        "live_runs": [],
+        "open_pr_keys": ["flow-pr"],
+    }
+    runner = _StrandRunner(in_progress=["flow-pr"])
+    _stub_cli_strand(monkeypatch, tmp_path, sel, runner)
+    rc = ed.cli_main(["--workspace-root", str(tmp_path)])
+    assert rc == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["stranded_pre_pr"] == []
+
+
+def test_cli_stranded_skips_merged_pr(monkeypatch, tmp_path, capsys):
+    # in_progress + MERGED PR → NOT stranded (a different inconsistency: close, not relaunch)
+    sel = {"launch": [], "skipped_in_flight": [], "live_runs": [], "open_pr_keys": []}
+    runner = _StrandRunner(
+        in_progress=["flow-merged"],
+        merged_prs=[{"number": 7, "headRefName": "feature/flow-merged-slug"}],
+    )
+    _stub_cli_strand(monkeypatch, tmp_path, sel, runner)
+    rc = ed.cli_main(["--workspace-root", str(tmp_path)])
+    assert rc == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["stranded_pre_pr"] == []
+
+
+def test_cli_stranded_query_is_evolve_label_scoped(monkeypatch, tmp_path, capsys):
+    # the cross-domain-stomp guard: detection must query `bd list -l evolve --status
+    # in_progress`, NEVER a bare unscoped `--status in_progress` (which would let the
+    # evolve drain reap a day-job run's worktree in the shared pool). Assert the argv,
+    # not just empty-in→empty-out — a regression dropping `-l evolve` stays caught.
+    sel = {"launch": [], "skipped_in_flight": [], "live_runs": [], "open_pr_keys": []}
+    runner = _StrandRunner(in_progress=[])
+    _stub_cli_strand(monkeypatch, tmp_path, sel, runner)
+    rc = ed.cli_main(["--workspace-root", str(tmp_path)])
+    assert rc == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["stranded_pre_pr"] == []
+    assert out["action"] == "done"
+    # the real guard: every in_progress query is label-scoped to evolve, never a bare
+    # `--status in_progress` (a regression dropping `-l evolve` stays caught here).
+    assert runner.bd_list_calls, "detection must run a bd list query"
+    assert all("-l" in c for c in runner.bd_list_calls), "every query must be label-scoped"
+    assert any("evolve" in c for c in runner.bd_list_calls), "must query the evolve label"
+    assert not any("--status" in c and "-l" not in c for c in runner.bd_list_calls), (
+        "no bare unscoped in_progress query"
+    )
+    # every in_progress query carried `-l evolve`; none was an unscoped bare list
+    assert runner.bd_list_calls, "detection never queried bd list"
+    for call in runner.bd_list_calls:
+        assert "in_progress" in call
+        i = call.index("-l")
+        assert call[i + 1] == "evolve"
