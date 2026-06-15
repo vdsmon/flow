@@ -43,6 +43,9 @@ def plain_comment_severity(workspace_root: Path) -> str:
         block = _workspace.load_workspace_toml(workspace_root).get("revise", {})
     except _workspace.WorkspaceConfigError:
         return _DEFAULT_SEVERITY
+    if not isinstance(block, dict):
+        # a non-table `revise = "..."` at top level; treat as unconfigured
+        return _DEFAULT_SEVERITY
     value = block.get("plain_comment_severity", _DEFAULT_SEVERITY)
     if value not in _VALID_SEVERITIES:
         sys.stderr.write(
@@ -77,6 +80,11 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     sub = parser.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("severity", help="print the configured plain_comment_severity floor")
     p.add_argument("--workspace-root", default=".")
+    pa = sub.add_parser(
+        "apply-floor",
+        help="read a threads JSON array on stdin, bump unresolved minor to the floor, print",
+    )
+    pa.add_argument("--workspace-root", default=".")
     return parser.parse_args(argv)
 
 
@@ -85,6 +93,18 @@ def cli_main(argv: list[str]) -> int:
     if args.cmd == "severity":
         value = plain_comment_severity(Path(args.workspace_root).resolve())
         sys.stdout.write(json.dumps({"plain_comment_severity": value}) + "\n")
+        return 0
+    if args.cmd == "apply-floor":
+        try:
+            threads = json.loads(sys.stdin.read() or "[]")
+        except json.JSONDecodeError:
+            sys.stderr.write("revise-config apply-floor: invalid threads JSON on stdin\n")
+            return 1
+        if not isinstance(threads, list):
+            sys.stderr.write("revise-config apply-floor: expected a JSON array of threads\n")
+            return 1
+        floor = plain_comment_severity(Path(args.workspace_root).resolve())
+        sys.stdout.write(json.dumps(apply_floor(threads, floor)) + "\n")
         return 0
     return 0
 

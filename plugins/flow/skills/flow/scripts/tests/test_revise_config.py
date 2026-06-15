@@ -96,3 +96,46 @@ def test_cli_severity_prints_override(tmp_path):
     res = _run_cli(["severity", "--workspace-root", str(root)])
     assert res.returncode == 0
     assert json.loads(res.stdout) == {"plain_comment_severity": "major"}
+
+
+def test_non_table_revise_block_falls_back(tmp_path):
+    # a non-table `revise = "x"` must not crash; falls back to the default, exit 0
+    root = _workspace(tmp_path, "revise = 'oops'\n")
+    res = _run_cli(["severity", "--workspace-root", str(root)])
+    assert res.returncode == 0
+    assert json.loads(res.stdout) == {"plain_comment_severity": "minor"}
+
+
+def _run_apply_floor(root: Path, threads: list[dict]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [
+            sys.executable,
+            str(Path(__file__).resolve().parents[1] / "revise_config.py"),
+            "apply-floor",
+            "--workspace-root",
+            str(root),
+        ],
+        input=json.dumps(threads),
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_cli_apply_floor_bumps_unresolved_minor(tmp_path):
+    root = _workspace(tmp_path, "[revise]\nplain_comment_severity = 'major'\n")
+    threads = [
+        {"id": "a", "severity": "minor", "resolved": False},
+        {"id": "b", "severity": "minor", "resolved": True},
+        {"id": "c", "severity": "critical", "resolved": False},
+    ]
+    res = _run_apply_floor(root, threads)
+    assert res.returncode == 0
+    assert [t["severity"] for t in json.loads(res.stdout)] == ["major", "minor", "critical"]
+
+
+def test_cli_apply_floor_default_is_noop(tmp_path):
+    root = _workspace(tmp_path, "[forge]\nbackend = 'github'\n")
+    threads = [{"id": "a", "severity": "minor", "resolved": False}]
+    res = _run_apply_floor(root, threads)
+    assert res.returncode == 0
+    assert json.loads(res.stdout) == threads
