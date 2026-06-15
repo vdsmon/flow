@@ -35,6 +35,8 @@ from typing import Any
 import forge
 from _evolve_common import key_from_ref
 
+# minor/nit are intentionally excluded: a leftover unresolved bot minor must never
+# produce a false human-review flag (the plain-comment floor is a revise-time knob).
 _MAJOR_PLUS = {"major", "critical"}
 
 
