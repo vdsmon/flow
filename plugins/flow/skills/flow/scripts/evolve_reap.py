@@ -27,23 +27,18 @@ which just needs `gh pr ready`). A hot PR additionally needs `auto_merge_hot`
 plus isolation (it is the only hot-eligible PR this pass). Hotness is the `hot`
 label OR a diff touching a `triage._GUARD_FILES` guard file — a substantively-hot
 PR counts as hot even with no label, so it can't slip into the non-hot lane. A
-green non-hot PR that is DIRTY (conflicted) lands in `version_recoverable`: in a
-multi-bead drain every PR bumps the two version files, so main walks forward and
-later PRs conflict on the version line ONLY — the caller runs `version_remerge.py`
-to recover them. A green non-hot CLEAN/DRAFT PR whose branch plugin version equals
-main's CURRENT version (duplicate stamp: a sibling merged first stamping the same
-next version, both sides changed the version line identically so git reports CLEAN)
-also lands in `version_recoverable` — merging it would mint two releases sharing one
-version number. A duplicate-stamp hot is never promoted (and never counts toward
-one-hot isolation); it stays in skipped_hot. A green PR whose run lease still
-reads live/corrupt lands in skipped_live (held, not merged) — the run
+green PR that is DIRTY (conflicted) lands in `blocked` with reason `"DIRTY"`:
+branches no longer carry a version line (server-side `version-stamp.yml` stamps
+main post-merge), so a DIRTY here is a genuine code conflict that belongs to a
+human, never an auto-recoverable version-line conflict. A green PR whose run lease
+still reads live/corrupt lands in skipped_live (held, not merged) — the run
 self-merges in its own merge stage, so the reap stays an orphan-only safety-net.
 Before any promotion, reap() probes main's OWN CI health for the turn
 (main_ci_health.py): when main is genuinely red (failed), every would-be-merge (the
 promoted hot AND the non-hot leaves) routes into held_main_red instead, no hot promotes,
 and reap() files ONE deduped P0 naming the failing sha + check(s). Green / pending / a
 transient probe error all resume normally. Anything else lands in
-not_green / skipped_hot / skipped_live / version_recoverable / blocked / held_main_red / ignored.
+not_green / skipped_hot / skipped_live / blocked / held_main_red / ignored.
 
 CLI:
   evolve_reap.py --workspace-root <dir>
@@ -64,7 +59,6 @@ from pathlib import Path
 
 import lease
 import main_ci_health
-import version
 from _evolve_common import NotMaintainer, ToolError, bead_labels
 from _evolve_common import key_from_ref as _key_from_ref
 from _evolve_common import loads as _loads
@@ -134,27 +128,16 @@ def classify(
     labels_index: dict[str, list[str]],
     *,
     auto_merge_hot: bool = False,
-    main_version: str | None = None,
-    branch_versions: dict[str, str] | None = None,
     liveness: dict[str, str] | None = None,
     main_ci_status: str | None = None,
 ) -> dict:
     """Pure core: bucket open PRs into merge / not_green / skipped_hot /
-    skipped_live / version_recoverable / blocked.
+    skipped_live / blocked / held_main_red.
 
-    version_recoverable: a green NON-hot PR whose mergeStateStatus is DIRTY, or a
-    green non-hot CLEAN/DRAFT PR with a DUPLICATE version stamp (branch plugin
-    version == main's current; a sibling merged first stamping the same next
-    version, so the version-line changes are identical and git reports CLEAN). In a
-    multi-bead drain every PR bumps the two version files, so main walks forward and
-    later PRs go DIRTY on the version line ONLY. This bucket is a CANDIDATE set; the
-    caller runs version_remerge.py, which authoritatively gates whether the conflict
-    is truly version-only (it aborts on any other conflict) and restamps a
-    duplicate. A hot DIRTY PR is NOT routed here (hot never auto-recovers) — it
-    stays blocked; a duplicate-stamp hot is never promoted and never counts toward
-    one-hot isolation (it stays skipped_hot). Hotness is the `hot` label OR a
-    guard-file diff (`_effective_hot`), so a guard-file PR with no label is held
-    back here too, not auto-recovered.
+    blocked: a PR whose mergeStateStatus is not CLEAN/DRAFT, with `reason` carrying
+    the raw state. A green DIRTY (conflicted) PR routes here with reason `"DIRTY"`:
+    branches no longer carry a version line (server-side `version-stamp.yml` stamps
+    main post-merge), so a DIRTY is a genuine code conflict that belongs to a human.
 
     prs: parsed `gh pr list` items (number, headRefName, isDraft, mergeStateStatus,
     statusCheckRollup, files). labels_index: key -> labels, for every evolve bead.
@@ -162,10 +145,6 @@ def classify(
     auto_merge_hot: when True AND exactly one hot PR is auto-merge-eligible this
     pass, that one hot PR is promoted into `merge`; all other hot PRs stay in
     skipped_hot (serialize). When False (the default), every hot PR is skipped.
-
-    main_version / branch_versions (keyed by headRefName): fresh plugin versions
-    for the duplicate-stamp check; unknown on either side (None / missing branch)
-    means not-a-duplicate, so a failed gather degrades to legacy routing.
 
     liveness (key -> lease state): when provided, a green PR whose run lease reads
     "live" or "corrupt" is held in skipped_live (the live run owns its own merge),
@@ -184,14 +163,8 @@ def classify(
     not_green: list[dict] = []
     skipped_hot: list[dict] = []
     skipped_live: list[dict] = []
-    version_recoverable: list[dict] = []
     blocked: list[dict] = []
     held_main_red: list[dict] = []
-
-    def _duplicate_stamp(ref: str) -> bool:
-        # explicit None guards: unknown-vs-unknown must never read as a duplicate.
-        bv = (branch_versions or {}).get(ref)
-        return main_version is not None and bv is not None and bv == main_version
 
     hot_eligible = [
         pr
@@ -199,7 +172,6 @@ def classify(
         if (key := _key_from_ref(str(pr.get("headRefName", "")))) is not None
         and key in labels_index
         and _hot_eligible(pr, labels_index[key])
-        and not _duplicate_stamp(str(pr.get("headRefName", "")))
     ]
     promote = hot_eligible[0]["number"] if (auto_merge_hot and len(hot_eligible) == 1) else None
 
@@ -224,8 +196,7 @@ def classify(
             continue
         state = str(pr.get("mergeStateStatus", "")).upper()
         if _effective_hot(pr, labels):
-            # hot never auto-recovers (conservative): a hot DIRTY PR stays blocked,
-            # not version_recoverable. Only the isolation-eligible hot promotes.
+            # a hot DIRTY PR stays blocked; only the isolation-eligible hot promotes.
             if promote is not None and number == promote:
                 target = held_main_red if main_ci_status == "failed" else merge
                 target.append({**entry, "is_draft": bool(pr.get("isDraft")), "is_hot": True})
@@ -233,28 +204,6 @@ def classify(
                 skipped_hot.append(entry)
             else:
                 blocked.append({**entry, "reason": state or "UNKNOWN"})
-            continue
-        if state == "DIRTY":
-            # green non-hot DIRTY: candidate for merge-time version-conflict recovery.
-            # version_remerge.py authoritatively gates whether it is truly version-only.
-            # recovery ends in its own merge this turn, so a red main holds it too.
-            if main_ci_status == "failed":
-                held_main_red.append(
-                    {**entry, "is_draft": bool(pr.get("isDraft")), "is_hot": False}
-                )
-            else:
-                version_recoverable.append(entry)
-            continue
-        if state in _MERGEABLE_STATES and _duplicate_stamp(ref):
-            # duplicate stamp: merging as-is would mint two releases sharing one
-            # version number; the recover recipe restamps it instead. same red-main
-            # hold as DIRTY: the restamp path also merges within the turn.
-            if main_ci_status == "failed":
-                held_main_red.append(
-                    {**entry, "is_draft": bool(pr.get("isDraft")), "is_hot": False}
-                )
-            else:
-                version_recoverable.append(entry)
             continue
         if state not in _MERGEABLE_STATES:
             blocked.append({**entry, "reason": state or "UNKNOWN"})
@@ -267,7 +216,6 @@ def classify(
         "not_green": not_green,
         "skipped_hot": skipped_hot,
         "skipped_live": skipped_live,
-        "version_recoverable": version_recoverable,
         "blocked": blocked,
         "held_main_red": held_main_red,
     }
@@ -293,41 +241,6 @@ def _labels_index(runner: Runner, *, include_proposals: bool = False) -> dict[st
             if isinstance(b, dict) and b.get("id"):
                 index[str(b["id"])] = list(b.get("labels") or [])
     return index
-
-
-def _gather_versions(
-    run: Runner, repo: Path, branches: list[str]
-) -> tuple[str | None, dict[str, str]]:
-    """Fresh plugin versions for the duplicate-stamp check: (main's, {branch: its}).
-
-    STRICTLY FAIL-OPEN: any git/parse failure degrades to version-unknown (None
-    main / omitted branch), which keeps classify on its legacy routing — a
-    transient git hiccup must never freeze orphan reaping. No candidates means
-    zero git calls. Branch versions are read at the post-fetch remote-tracking
-    ref `origin/<branch>`, never the bare branch name (a stale local branch
-    would silently make the guard inert).
-    """
-    if not branches:
-        return None, {}
-    head = run(["git", "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"])
-    default_ref = (head.stdout or "").strip() if head.returncode == 0 else ""
-    if not default_ref:
-        default_ref = "origin/main"
-    if run(["git", "fetch", "origin", "--prune"]).returncode != 0:
-        return None, {}
-    try:
-        main_version = version.read_version(cwd=repo, ref=default_ref, runner=run)
-    except (version.ToolError, ValueError):
-        return None, {}
-    branch_versions: dict[str, str] = {}
-    for branch in branches:
-        try:
-            branch_versions[branch] = version.read_version(
-                cwd=repo, ref=f"origin/{branch}", runner=run
-            )
-        except (version.ToolError, ValueError):
-            continue
-    return main_version, branch_versions
 
 
 def _auto_merge_hot(workspace_root: Path) -> bool:
@@ -396,12 +309,6 @@ def reap(
     )
     prs = _loads(pr_raw)
     index = _labels_index(run, include_proposals=include_proposals)
-    branches = [
-        ref
-        for pr in prs
-        if isinstance(pr, dict) and _key_from_ref(ref := str(pr.get("headRefName", ""))) in index
-    ]
-    main_version, branch_versions = _gather_versions(run, repo, branches)
     now = utcnow_iso()
     current_boot = lease.boot_id()
     host = lease.hostname()
@@ -426,8 +333,6 @@ def reap(
         prs,
         index,
         auto_merge_hot=auto_merge_hot,
-        main_version=main_version,
-        branch_versions=branch_versions,
         liveness=liveness,
         main_ci_status=main_ci_status,
     )
