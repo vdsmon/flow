@@ -206,16 +206,26 @@ def stranded_pre_pr(
     launched_pending: set[str],
     open_pr_keys: set[str],
     include_proposals: bool = False,
+    in_progress_keys: set[str] | None = None,
 ) -> list[dict]:
-    """In_progress evolve beads whose run died PRE-PR, invisible to every channel.
+    """In_progress beads whose run died PRE-PR, invisible to every channel.
 
-    STRANDED iff ALL hold: the bead is in_progress (evolve-scoped), its lease is
-    non-live (not `live`/`corrupt`), it is NOT in the post-reconciliation
-    `launched_pending` (still-booting guard + TTL debounce), and it has NO PR in any
-    state (neither an open PR nor a merged PR). `branch` is best-effort; the prose
-    reaps by `--ticket`.
+    STRANDED iff ALL hold: the bead is in_progress, its lease is non-live (not
+    `live`/`corrupt`), it is NOT in the post-reconciliation `launched_pending`
+    (still-booting guard + TTL debounce), and it has NO PR in any state (neither an
+    open PR nor a merged PR). `branch` is best-effort; the prose reaps by `--ticket`.
+
+    The in_progress source is injectable: `in_progress_keys=None` (the evolve
+    default) computes the evolve-label-scoped set via `_inprogress_evolve_keys`,
+    while `queue_drain` injects its own day-job-scoped set (the inverse filter).
+    Everything downstream — the merged/open-PR/launched_pending exclusions and the
+    lease-liveness probe — is scope-agnostic.
     """
-    in_progress = _inprogress_evolve_keys(runner, include_proposals=include_proposals)
+    in_progress = (
+        _inprogress_evolve_keys(runner, include_proposals=include_proposals)
+        if in_progress_keys is None
+        else set(in_progress_keys)
+    )
     if not in_progress:
         return []
     merged = _merged_pr_keys(runner)

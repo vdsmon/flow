@@ -206,16 +206,37 @@ The termination is blocking-gated on purpose: a **withheld** hot bead (its in-ru
 if python3 ${CLAUDE_SKILL_DIR}/scripts/fleet.py is-live --key <key> --workspace-root .; then
   echo "fleet: <key> went live after classify — not recovering this turn"
 else
-  # REAP BEFORE REOPEN (order load-bearing). Reap clears the dirty non-terminal
-  # state.json that would make the next turn's `flow_worktree.py create` exit 4
-  # (dup-claim). reap derives the branch from --ticket (no --branch needed); it is
-  # idempotent (an already-gone worktree is a no-op) and lease-gated internally.
-  python3 ${CLAUDE_SKILL_DIR}/scripts/flow_worktree.py reap --ticket <key> --main-root .
-  bd update <key> --status open
+  # ATTEMPT-N BOUND: read the newest `STRANDED-RECOVERY:` marker (a bd comment, so
+  # it persists across reopen->relaunch->re-strand) and branch. Distinct stem — must
+  # NOT collide with SONNET-LADDER / DECISION / TRIAGE-DECISION / "flow --auto could
+  # not self-approve". The 3-state ladder mirrors the §C SONNET-LADDER one-for-one.
+  MARK=$(bd show <key> --include-comments --json \
+    | python3 -c 'import sys,json,re;cs=json.load(sys.stdin);cs=cs[0] if isinstance(cs,list) else cs;t=[ (c.get("text") or "") for c in (cs.get("comments") or []) ];nums=[int(x) for s in t for x in re.findall(r"STRANDED-RECOVERY: attempt-(\d+)", s)];print(f"attempt-{max(nums)}" if nums else "")')
+  if [ "$MARK" = "attempt-2" ]; then
+    # second recovery relaunch ALSO re-stranded -> give up to the human. Reap the
+    # dirty worktree (cleanup), do NOT reopen; block + a triage stem so it surfaces
+    # in /flow triage. REAP BEFORE BLOCK (order load-bearing, see below).
+    python3 ${CLAUDE_SKILL_DIR}/scripts/flow_worktree.py reap --ticket <key> --main-root . \
+      && { bd update <key> --status blocked
+           python3 ${CLAUDE_SKILL_DIR}/scripts/tracker_cli.py --workspace-root . comment --key <key> \
+             --text "flow --auto could not self-approve: STRANDED-RECOVERY exhausted — <key> re-stranded pre-PR after two fresh relaunches (deterministic mid-pipeline crash). Needs a human: reopen (status->open) and run WITHOUT --auto, or fix the crash cause first."; }
+  else
+    # no marker (first strand) or attempt-1 (first recovery re-stranded) -> reap +
+    # reopen so the next turn relaunches FRESH, and stamp the next rung.
+    # REAP BEFORE REOPEN (order load-bearing). Reap clears the dirty non-terminal
+    # state.json that would make the next turn's `flow_worktree.py create` exit 4
+    # (dup-claim). reap derives the branch from --ticket (no --branch needed); it is
+    # idempotent (an already-gone worktree is a no-op) and lease-gated internally.
+    python3 ${CLAUDE_SKILL_DIR}/scripts/flow_worktree.py reap --ticket <key> --main-root . \
+      && { bd update <key> --status open
+           NEXT=$([ "$MARK" = "attempt-1" ] && echo attempt-2 || echo attempt-1)
+           python3 ${CLAUDE_SKILL_DIR}/scripts/tracker_cli.py --workspace-root . comment --key <key> \
+             --text "STRANDED-RECOVERY: $NEXT"; }
+  fi
 fi
 ```
 
-`<key>` comes from the entry. **Reap-then-reopen is the load-bearing order:** if the reap partially fails, the bead stays in_progress → re-qualifies as stranded next turn → idempotent self-heal. Reopen-first then a reap failure would make the bead `open` + a dirty worktree still present → invisible to its own detector (it only matches in_progress), and the next-turn launch hits dup-claim exit 4 forever. After a clean recovery the bead is `open` (back in `bd ready`) with its worktree gone, so this turn's loop-back to **A** → **B** select sees it and **C** launches it fresh. The recover branch loops straight back to **A** with no Monitor-wait (the recovery is local), so it relies on the loop-level iteration cap (the same guaranteed terminal exit D-wait names) as its bound — a persistently-failing `bd update --status open` cannot spin forever. (Accepted residual: a bead that deterministically crashes the same way every relaunch re-strands every turn; sonnet-tiered beads are already bounded by the SONNET-LADDER marker, so this is non-sonnet beads only — follow-up flow-y8zs tracks an attempt-N bound + queue_drain parity.)
+`<key>` comes from the entry. **Reap-then-reopen / reap-then-block is the load-bearing order in EVERY branch:** if the reap partially fails the bead stays in_progress → re-qualifies as stranded next turn → idempotent self-heal (the marker doesn't advance because the marker write is `&&`-gated on a clean reap). Reopen/block-first then a reap failure would make the bead `open`/`blocked` + a dirty worktree still present → invisible to the in_progress detector, and the next-turn launch hits dup-claim exit 4 forever. After a clean reopen the bead is `open` (back in `bd ready`) with its worktree gone, so this turn's loop-back to **A** → **B** select sees it and **C** launches it fresh. **The `STRANDED-RECOVERY:` marker bounds the cycle at TWO recovery relaunches** (no marker → relaunch + `attempt-1`; `attempt-1` → relaunch + `attempt-2`; `attempt-2` → block + triage stem, terminal — a `blocked` bead leaves in_progress so it drops out of the detector and never re-strands). This is the tier-uniform inner bound that closes the deterministic-crasher loop (the marker is distinct from SONNET-LADDER, so a sonnet bead carrying both counters is bounded by whichever trips first). The loop-level iteration cap (the guaranteed terminal exit D-wait names) remains the outer bound for a flapping `bd update`.
 
 **C. Launch.**
 

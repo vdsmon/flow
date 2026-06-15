@@ -3,10 +3,20 @@
 Day-job sibling of `evolve_drain.py`. The loop itself — reap merged-and-exited
 runs, fan out `claude --bg "/flow <key> --auto"`, Monitor-wait — is prose in
 `references/verb-queue.md` (§drain); this module supplies the decision it
-consumes. The `launch | wait | done` core and the lease-liveness annotation are
-`evolve_drain.decide` / `evolve_drain.liveness_map`, imported (both pure), not
-duplicated; the selection is `queue_select.select`. New here is `classify_reap`,
-the merged-PR reap classification.
+consumes. The `launch | recover | wait | done` core and the lease-liveness
+annotation are `evolve_drain.decide` / `evolve_drain.liveness_map`, imported (both
+pure), not duplicated; the selection is `queue_select.select`. New here is
+`classify_reap`, the merged-PR reap classification.
+
+STRANDED pre-PR parity: a day-job `/flow <key> --auto` run that dies pre-PR
+strands its bead in_progress with no lease and no PR, invisible to every channel
+(the loop would false-positive to `done`). `cli_main` detects it with the SAME
+`evolve_drain.stranded_pre_pr` core, fed a DAY-JOB-scoped in_progress set (all
+in_progress beads minus epics minus the `{evolve, proposal, hot}` labels — the
+inverse of evolve's per-label union), and threads the keys into `decide` as
+`stranded` so it returns `recover` instead of `done`. The recover recipe (reap
+the dirty worktree + reopen, bounded by the prose `STRANDED-RECOVERY:` ladder)
+lives in `references/verb-queue.md` §Recover.
 
 Unlike the evolve drain this loop NEVER merges PRs: a day-job run's merge stage
 skips on a non-evolve bead, so every green PR parks for the maintainer's review
@@ -47,9 +57,9 @@ from _evolve_common import (
 )
 from _runner import CwdRunner as Runner
 from _runner import cwd_default_runner as _default_runner
-from evolve_drain import decide, liveness_map
+from evolve_drain import decide, liveness_map, stranded_pre_pr
 from maintainer import resolve_maintainer_repo
-from queue_select import _config_defaults, select
+from queue_select import _EXCLUDED_LABELS, _config_defaults, select
 
 _ACTIVE = frozenset(ACTIVE_STATUSES.split(","))
 
@@ -109,6 +119,32 @@ def _active_evolve_keys(runner: Runner) -> set[str]:
         "bd list",
     )
     return {str(b["id"]) for b in loads(raw) if isinstance(b, dict) and b.get("id")}
+
+
+def _inprogress_dayjob_keys(runner: Runner) -> set[str]:
+    """Keys of IN_PROGRESS day-job beads (the inverse of the evolve scope).
+
+    Day-job = all in_progress beads minus epics minus the `{evolve, proposal,
+    hot}` labels — the same filter `queue_select._day_job` applies to `bd ready`,
+    re-run over `--status in_progress` (stranded beads have left `bd ready`).
+    Unscoped on purpose (NO `-l`): the day-job queue is everything NOT evolve's,
+    so it cannot be expressed as a label union. `--limit 0` because bd list
+    defaults to 50 and would silently truncate.
+    """
+    raw = ok(
+        runner(["bd", "list", "--status", "in_progress", "--json", "--limit", "0"]),
+        "bd list",
+    )
+    out: set[str] = set()
+    for b in loads(raw):
+        if not isinstance(b, dict) or not b.get("id"):
+            continue
+        if b.get("issue_type") == "epic":
+            continue
+        if _EXCLUDED_LABELS & set(b.get("labels") or []):
+            continue
+        out.add(str(b["id"]))
+    return out
 
 
 def _bead_status(runner: Runner, key: str) -> str | None:
@@ -193,6 +229,17 @@ def cli_main(argv: list[str]) -> int:
         reap_keys = {entry["key"] for entry in reap}
         if reap_keys & launch_keys:
             sel["launch"] = [k for k in sel.get("launch") or [] if k not in reap_keys]
+        # STRANDED pre-PR detection (parity with evolve_drain): a day-job run that
+        # died before opening a PR strands its bead in_progress, invisible to every
+        # other channel. Gate done-termination on it + emit a recover list. Runs
+        # AFTER the launched_pending reconciliation (it consumes the final set).
+        stranded = stranded_pre_pr(
+            repo,
+            run,
+            launched_pending=set(sel["launched_pending"]),
+            open_pr_keys=open_pr_keys,
+            in_progress_keys=_inprogress_dayjob_keys(run),
+        )
     except NotMaintainer as exc:
         print(str(exc), file=sys.stderr)
         return 4
@@ -200,7 +247,8 @@ def cli_main(argv: list[str]) -> int:
         print(str(exc), file=sys.stderr)
         return 2
 
-    result = decide(sel, live)
+    result = decide(sel, live, stranded=[e["key"] for e in stranded])
+    result["stranded_pre_pr"] = stranded
     result["reap"] = reap
     result["liveness"] = live
     result["select"] = sel
