@@ -62,12 +62,17 @@ def stage_registry_path(skill_root: Path) -> Path:
     return skill_root / _STAGE_REGISTRY_NAME
 
 
-def snapshot_json_path(workspace_root: Path, ticket: str) -> Path:
-    return workspace_root / ".flow" / "runs" / ticket / "snapshot.json"
+def _run_dir(workspace_root: Path, ticket: str, revision: str | None) -> Path:
+    base = workspace_root / ".flow" / "runs" / ticket
+    return base if revision is None else base / "revisions" / revision
 
 
-def snapshot_sha_path(workspace_root: Path, ticket: str) -> Path:
-    return workspace_root / ".flow" / "runs" / ticket / "snapshot.sha"
+def snapshot_json_path(workspace_root: Path, ticket: str, revision: str | None = None) -> Path:
+    return _run_dir(workspace_root, ticket, revision) / "snapshot.json"
+
+
+def snapshot_sha_path(workspace_root: Path, ticket: str, revision: str | None = None) -> Path:
+    return _run_dir(workspace_root, ticket, revision) / "snapshot.sha"
 
 
 def _read_text(path: Path) -> str:
@@ -282,22 +287,25 @@ def write_snapshot(
     skill_root: Path,
     search_roots: list[Path] | None = None,
     snapshot: dict[str, Any] | None = None,
+    revision: str | None = None,
 ) -> Path:
     """Write snapshot.json (full dict) and snapshot.sha (master_hash); returns the json path.
 
     `snapshot` lets a caller reuse a dict it already computed (e.g. via
-    classify_drift) instead of paying a second compute_snapshot.
+    classify_drift) instead of paying a second compute_snapshot. `revision`
+    nests the paths under runs/<ticket>/revisions/<revision>/ for a revision
+    sub-run's own baseline (default None = the ticket-level path).
     """
     if snapshot is None:
         snapshot = compute_snapshot(
             workspace_root, skill_root=skill_root, search_roots=search_roots
         )
-    json_path = snapshot_json_path(workspace_root, ticket)
+    json_path = snapshot_json_path(workspace_root, ticket, revision)
     # sha before json: a partial-write survivor is then sha-present/json-absent, which
     # classify_drift fails CLOSED on, instead of the json-present/sha-absent state it
     # reads as "no snapshot to verify" (drift guard silently off).
     atomic_write_text(
-        snapshot_sha_path(workspace_root, ticket), str(snapshot["master_hash"]) + "\n"
+        snapshot_sha_path(workspace_root, ticket, revision), str(snapshot["master_hash"]) + "\n"
     )
     atomic_write_text(json_path, json.dumps(snapshot, indent=2, sort_keys=True) + "\n")
     return json_path
@@ -375,6 +383,7 @@ def classify_drift(
     *,
     skill_root: Path,
     search_roots: list[Path] | None = None,
+    revision: str | None = None,
 ) -> tuple[bool, str, list[str], dict[str, Any] | None]:
     """Recompute and compare against the stored snapshot, naming drifted components.
 
@@ -384,9 +393,10 @@ def classify_drift(
     drifted_components (empty when the diff is inconclusive or snapshot.json is
     missing/unreadable). The last element is the freshly computed snapshot
     (None when compute itself failed), so a caller that reconciles can pass it
-    straight to write_snapshot instead of recomputing.
+    straight to write_snapshot instead of recomputing. `revision` reads the
+    revision sub-run's own snapshot baseline (default None = ticket-level).
     """
-    sha_path = snapshot_sha_path(workspace_root, ticket)
+    sha_path = snapshot_sha_path(workspace_root, ticket, revision)
     if not sha_path.exists():
         return True, "no snapshot to verify", [], None
 
@@ -398,7 +408,7 @@ def classify_drift(
     if current["master_hash"] == stored_hash:
         return True, "match", [], current
 
-    json_path = snapshot_json_path(workspace_root, ticket)
+    json_path = snapshot_json_path(workspace_root, ticket, revision)
     if json_path.exists():
         try:
             stored = json.loads(_read_text(json_path))
@@ -416,16 +426,18 @@ def verify_snapshot(
     *,
     skill_root: Path,
     search_roots: list[Path] | None = None,
+    revision: str | None = None,
 ) -> tuple[bool, str]:
     """Recompute and compare against the stored snapshot.
 
     (True, "no snapshot to verify") when no snapshot.sha exists. Otherwise
     recompute master_hash via compute_snapshot; (True, "match") on equality,
     else (False, "drift: <what changed>") naming the changed component(s) by
-    diffing against snapshot.json when present.
+    diffing against snapshot.json when present. `revision` reads the revision
+    sub-run's own baseline (default None = ticket-level).
     """
     ok, detail, _, _ = classify_drift(
-        workspace_root, ticket, skill_root=skill_root, search_roots=search_roots
+        workspace_root, ticket, skill_root=skill_root, search_roots=search_roots, revision=revision
     )
     return ok, detail
 

@@ -34,6 +34,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any, cast
 
+import _locking
 import fleet
 import lease
 import recall_pending
@@ -49,6 +50,12 @@ _STAGE_REGISTRY_RELATIVE = Path("stage-registry.toml")
 _INIT_TTL_S = 600
 # Slack added to a stage's timeout so the lease outlives the stage it covers.
 _LEASE_BUFFER_S = 300
+
+# A revision sub-run's default stage subset (flow-kx17.2): the PR is already open
+# (human-merge keystone holds), so plan/ticket/create_pr/merge are skipped; reflect
+# stays in (a human-review catch is prime compounding signal). Intersected with the
+# workspace's configured stages, preserving ws.stages order.
+_REVISION_DEFAULT_STAGES = ("implement", "code_review", "e2e", "commit", "reflect", "review_loop")
 
 
 # ─── Handler-string parsing ──────────────────────────────────────────────────
@@ -120,8 +127,20 @@ def _skill_root_from_script() -> Path:
     return Path(__file__).resolve().parent.parent
 
 
+def run_dir(workspace_root: Path, ticket: str, revision: str | None = None) -> Path:
+    """The run's state/lease container.
+
+    `revision is None` returns the canonical per-ticket dir; a revision sub-run
+    (flow-kx17.2) nests one level deeper at `.../revisions/<revision>/`, so it
+    gets its own state.json + run.lock + snapshot while the original terminal run
+    stays byte-untouched.
+    """
+    base = workspace_root / ".flow" / "runs" / ticket
+    return base if revision is None else base / "revisions" / revision
+
+
 def _ticket_dir(workspace_root: Path, ticket: str) -> Path:
-    return workspace_root / ".flow" / "runs" / ticket
+    return run_dir(workspace_root, ticket, None)
 
 
 def cmd_init(
@@ -251,6 +270,116 @@ def cmd_init(
     }
 
 
+def _revise_claim_path(td: Path) -> Path:
+    return td / "revise.claim"
+
+
+def _allocate_rev_id(td: Path) -> str:
+    """Next monotonic rev-id (r1, r2, …) by scanning existing revisions/r* dirs.
+
+    Caller MUST hold the revise.claim flock (closes the two-concurrent-opens
+    pick-the-same-id TOCTOU).
+    """
+    revisions = td / "revisions"
+    max_n = 0
+    if revisions.is_dir():
+        for child in revisions.iterdir():
+            if child.is_dir() and child.name.startswith("r"):
+                with contextlib.suppress(ValueError):
+                    max_n = max(max_n, int(child.name[1:]))
+    return f"r{max_n + 1}"
+
+
+def _has_live_revision(td: Path) -> bool:
+    """True if any existing revision sub-run holds a live or corrupt lease.
+
+    Caller MUST hold the revise.claim flock. A live/corrupt lease means a
+    revision is in flight (one revision at a time per ticket).
+    """
+    revisions = td / "revisions"
+    if not revisions.is_dir():
+        return False
+    now, boot, host = utcnow_iso(), lease.boot_id(), lease.hostname()
+    for child in sorted(revisions.iterdir()):
+        if not (child.is_dir() and lease.run_lock_path(child).exists()):
+            continue
+        info = lease.classify(child, now, current_boot=boot, hostname=host)
+        if info.get("state") in ("live", "corrupt"):
+            return True
+    return False
+
+
+def cmd_revise_open(
+    workspace_root: Path,
+    ticket: str,
+    stages: list[str] | None = None,
+) -> tuple[int, dict[str, Any]]:
+    """Open a revision sub-run under a terminal ticket run (flow-kx17.2 keystone).
+
+    A revision is a SUB-RUN at `.flow/runs/<ticket>/revisions/<rev-id>/` with its
+    OWN lease/state/snapshot; the original terminal run is NEVER mutated. Guards:
+    the original must be terminal (exit 3), and only one revision may be live at a
+    time (exit 4). rev-id allocation + the live scan + state seed + lease acquire
+    run under a single per-ticket revise.claim flock, closing the rev-id TOCTOU.
+    """
+    result, ws = vw.validate(workspace_root)
+    if ws is None:
+        return 1, {"error": "validate-workspace failed", "violations": result.violations}
+
+    orig_td = _ticket_dir(workspace_root, ticket)
+    orig, _code = state.read(orig_td)
+    if orig is None:
+        return 2, {"error": f"no original run state.json at {orig_td}; nothing to revise"}
+    if not (state.pick_next_pending(orig, ws.stages) is None and state.find_failed(orig) is None):
+        return 3, {"error": "original run not terminal", "hint": "/flow do or /flow recover"}
+
+    if stages is not None:
+        subset = stages
+    else:
+        default = set(_REVISION_DEFAULT_STAGES)
+        subset = [s for s in ws.stages if s in default]
+
+    boot, host, cwd, now = lease.boot_id(), socket.gethostname(), str(workspace_root), utcnow_iso()
+    with _locking.flock_blocking(_revise_claim_path(orig_td)):
+        if _has_live_revision(orig_td):
+            return 4, {"error": "a revision is already live"}
+        rev_id = _allocate_rev_id(orig_td)
+        rev_dir = run_dir(workspace_root, ticket, rev_id)
+        run_id = secrets.token_hex(8)
+        state.init(rev_dir, ticket, ws.backend, subset, run_id=run_id)
+        acquired = lease.acquire(
+            rev_dir,
+            run_id,
+            _INIT_TTL_S,
+            now,
+            stage="revise-init",
+            current_boot=boot,
+            hostname=host,
+            cwd=cwd,
+            session_nonce=None,
+            force=False,
+        )
+
+    try:
+        write_snapshot(
+            workspace_root, ticket, skill_root=_skill_root_from_script(), revision=rev_id
+        )
+    except Exception as exc:
+        sys.stderr.write(
+            f"dispatch revise-open: snapshot write failed for {ticket}/{rev_id} ({exc}); the "
+            "config/version drift guard is OFF for this revision (fail-open).\n"
+        )
+
+    return 0, {
+        "ticket": ticket,
+        "rev_id": rev_id,
+        "run_id": run_id,
+        "session_nonce": acquired.session_nonce,
+        "revision_dir": str(rev_dir),
+        "stages": subset,
+    }
+
+
 _DRIFT_ABORT = {
     "error": "config/version drift mid-run",
     "hint": "/flow recover --reload-snapshot or --abort",
@@ -269,7 +398,7 @@ def _planned_files(td: Path) -> set[str]:
 
 
 def _gate_drift(
-    workspace_root: Path, ticket: str, td: Path
+    workspace_root: Path, ticket: str, td: Path, revision: str | None = None
 ) -> tuple[dict[str, Any] | None, str | None, dict[str, Any] | None]:
     """Classify the canonical-snapshot drift gate.
 
@@ -283,7 +412,7 @@ def _gate_drift(
     so write_snapshot skips a second compute.
     """
     drift_ok, detail, components, current_snapshot = classify_drift(
-        workspace_root, ticket, skill_root=_skill_root_from_script()
+        workspace_root, ticket, skill_root=_skill_root_from_script(), revision=revision
     )
     reconciled_label: str | None = None
     if (not drift_ok) and components:
@@ -334,7 +463,10 @@ def _guard_lease_ownership(
 
 
 def cmd_next(
-    workspace_root: Path, ticket: str, session_nonce: str | None = None
+    workspace_root: Path,
+    ticket: str,
+    session_nonce: str | None = None,
+    revision: str | None = None,
 ) -> tuple[int, dict[str, Any]]:
     result, snapshot = vw.validate(workspace_root)
     if snapshot is None:
@@ -342,7 +474,7 @@ def cmd_next(
             "error": "validate-workspace failed",
             "violations": result.violations,
         }
-    td = _ticket_dir(workspace_root, ticket)
+    td = run_dir(workspace_root, ticket, revision)
     ts, exit_code = state.read(td)
     if ts is None:
         if exit_code == 2:
@@ -354,7 +486,9 @@ def cmd_next(
     # since the run started. EXCEPTION: an owned drift whose changed component(s)
     # all map to planned files auto-reconciles (snapshot reload) AFTER the lease
     # guard confirms us.
-    abort_payload, owned_reconcile, drift_snapshot = _gate_drift(workspace_root, ticket, td)
+    abort_payload, owned_reconcile, drift_snapshot = _gate_drift(
+        workspace_root, ticket, td, revision
+    )
     if abort_payload is not None:
         return 1, abort_payload
     # Lease: if one exists it must still be ours (detects a takeover). A run with
@@ -373,6 +507,7 @@ def cmd_next(
                 ticket,
                 skill_root=_skill_root_from_script(),
                 snapshot=drift_snapshot,
+                revision=revision,
             )
         except Exception:
             return 1, {**_DRIFT_ABORT, "detail": f"drift: {owned_reconcile}"}
@@ -474,11 +609,12 @@ def cmd_finish(
     skill_output: dict[str, Any] | None = None,
     failure_detail: str | None = None,
     session_nonce: str | None = None,
+    revision: str | None = None,
 ) -> tuple[int, dict[str, Any]]:
     if status_value not in ("completed", "failed"):
         return 1, {"error": f"--status must be completed|failed, got {status_value!r}"}
     status = cast(state.StageStatus, status_value)
-    td = _ticket_dir(workspace_root, ticket)
+    td = run_dir(workspace_root, ticket, revision)
     ts, exit_code = state.read(td)
     if ts is None:
         if exit_code == 2:
@@ -554,6 +690,7 @@ def cmd_advance(
     skill_output: dict[str, Any] | None = None,
     failure_detail: str | None = None,
     session_nonce: str | None = None,
+    revision: str | None = None,
 ) -> tuple[int, dict[str, Any]]:
     """Finish the current stage and return the next descriptor in one call.
 
@@ -572,18 +709,21 @@ def cmd_advance(
         skill_output=skill_output,
         failure_detail=failure_detail,
         session_nonce=session_nonce,
+        revision=revision,
     )
     if finish_rc != 0:
         return finish_rc, finish_payload
-    next_rc, next_payload = cmd_next(workspace_root, ticket, session_nonce)
+    next_rc, next_payload = cmd_next(workspace_root, ticket, session_nonce, revision)
     merged = {"finished": {"stage": stage_name, "status": status_value}, **next_payload}
     if finish_payload.get("state_recovered_from_backup"):
         merged["state_recovered_from_backup"] = True
     return next_rc, merged
 
 
-def cmd_status(workspace_root: Path, ticket: str) -> tuple[int, dict[str, Any]]:
-    td = _ticket_dir(workspace_root, ticket)
+def cmd_status(
+    workspace_root: Path, ticket: str, revision: str | None = None
+) -> tuple[int, dict[str, Any]]:
+    td = run_dir(workspace_root, ticket, revision)
     ts, exit_code = state.read(td)
     if ts is None:
         if exit_code == 2:
@@ -593,9 +733,12 @@ def cmd_status(workspace_root: Path, ticket: str) -> tuple[int, dict[str, Any]]:
 
 
 def cmd_release(
-    workspace_root: Path, ticket: str, session_nonce: str | None = None
+    workspace_root: Path,
+    ticket: str,
+    session_nonce: str | None = None,
+    revision: str | None = None,
 ) -> tuple[int, dict[str, Any]]:
-    td = _ticket_dir(workspace_root, ticket)
+    td = run_dir(workspace_root, ticket, revision)
     ts, _ = state.read(td)
     released = False
     if ts is not None:
@@ -619,15 +762,37 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         help="Per-session lease nonce carried from init; omit it if lost (run_id fallback).",
     )
 
+    # A revision sub-run redirect (flow-kx17.2): drives the sub-run at
+    # runs/<ticket>/revisions/<id>/ instead of the ticket-level run. init proper
+    # is NOT a revision target (revise-open seeds the revision), so it omits this.
+    revision_help = (
+        "drive the revision sub-run at runs/<ticket>/revisions/<id>/ (flow-kx17.2); "
+        "default = the ticket-level run"
+    )
+
     p_init = sub.add_parser("init", parents=[common], help="Initialize per-ticket state.json.")
     p_init.add_argument(
         "--force",
         action="store_true",
         help="Overwrite existing state with a fresh all-pending run.",
     )
-    sub.add_parser("next", parents=[common], help="Pick next pending stage.")
-    sub.add_parser("status", parents=[common], help="Emit full state.json.")
-    sub.add_parser("release", parents=[common], help="Release the run lease.")
+
+    p_revise = sub.add_parser(
+        "revise-open", parents=[common], help="Open a revision sub-run under a terminal run."
+    )
+    p_revise.add_argument(
+        "--stages",
+        default=None,
+        help="comma-separated stage subset for the revision (default: the built-in "
+        "subset intersected with the workspace's stages)",
+    )
+
+    p_next = sub.add_parser("next", parents=[common], help="Pick next pending stage.")
+    p_next.add_argument("--revision", default=None, help=revision_help)
+    p_status = sub.add_parser("status", parents=[common], help="Emit full state.json.")
+    p_status.add_argument("--revision", default=None, help=revision_help)
+    p_release = sub.add_parser("release", parents=[common], help="Release the run lease.")
+    p_release.add_argument("--revision", default=None, help=revision_help)
 
     p_finish = sub.add_parser("finish", parents=[common], help="Mark stage terminal.")
     p_finish.add_argument("--stage", required=True)
@@ -637,6 +802,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     p_finish.add_argument("--output-path", default=None)
     p_finish.add_argument("--skill-output", default=None)
     p_finish.add_argument("--failure-detail", default=None)
+    p_finish.add_argument("--revision", default=None, help=revision_help)
 
     p_advance = sub.add_parser(
         "advance", parents=[common], help="Finish current stage AND return next descriptor."
@@ -648,6 +814,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     p_advance.add_argument("--output-path", default=None)
     p_advance.add_argument("--skill-output", default=None)
     p_advance.add_argument("--failure-detail", default=None)
+    p_advance.add_argument("--revision", default=None, help=revision_help)
 
     return parser.parse_args(argv)
 
@@ -673,8 +840,13 @@ def cli_main(argv: list[str]) -> int:
         rc, payload = cmd_init(
             workspace_root, args.ticket, force=args.force, session_nonce=args.session_nonce
         )
+    elif args.cmd == "revise-open":
+        rev_stages = (
+            [s.strip() for s in args.stages.split(",") if s.strip()] if args.stages else None
+        )
+        rc, payload = cmd_revise_open(workspace_root, args.ticket, stages=rev_stages)
     elif args.cmd == "next":
-        rc, payload = cmd_next(workspace_root, args.ticket, args.session_nonce)
+        rc, payload = cmd_next(workspace_root, args.ticket, args.session_nonce, args.revision)
     elif args.cmd == "finish":
         skill_output, err = _parse_skill_output_arg(args.skill_output)
         if err:
@@ -689,6 +861,7 @@ def cli_main(argv: list[str]) -> int:
             skill_output=skill_output,
             failure_detail=args.failure_detail,
             session_nonce=args.session_nonce,
+            revision=args.revision,
         )
     elif args.cmd == "advance":
         skill_output, err = _parse_skill_output_arg(args.skill_output)
@@ -704,11 +877,12 @@ def cli_main(argv: list[str]) -> int:
             skill_output=skill_output,
             failure_detail=args.failure_detail,
             session_nonce=args.session_nonce,
+            revision=args.revision,
         )
     elif args.cmd == "status":
-        rc, payload = cmd_status(workspace_root, args.ticket)
+        rc, payload = cmd_status(workspace_root, args.ticket, args.revision)
     elif args.cmd == "release":
-        rc, payload = cmd_release(workspace_root, args.ticket, args.session_nonce)
+        rc, payload = cmd_release(workspace_root, args.ticket, args.session_nonce, args.revision)
     else:
         sys.stderr.write(f"unknown subcommand {args.cmd!r}\n")
         return 1
@@ -734,5 +908,7 @@ __all__ = [
     "cmd_init",
     "cmd_next",
     "cmd_release",
+    "cmd_revise_open",
     "cmd_status",
+    "run_dir",
 ]
