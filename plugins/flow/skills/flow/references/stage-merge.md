@@ -92,33 +92,13 @@ if [ -n "$(git status --porcelain --untracked-files=no)" ] || [ "$(git rev-parse
 else
   MERGE_STATE=$(gh pr view "$PR_ID" --json mergeStateStatus -q .mergeStateStatus)
   if [ "$MERGE_STATE" = "DIRTY" ]; then
-    # version-conflict recovery (Option B). A multi-bead drain walks main's version
-    # forward, so a sibling that merged first leaves this PR DIRTY on the version
-    # line ONLY. version_remerge re-merges main + auto-resolves IFF the conflict is
-    # exactly the two version files; any other conflict → it aborts and exits 3.
-    REMERGE=$(python3 ${CLAUDE_SKILL_DIR}/scripts/version_remerge.py recover \
-      --branch "$BRANCH" --workspace-root .)
-    RC=$?
-    if [ "$RC" -eq 3 ]; then
-      echo "non-version conflict — leaving PR #$PR_ID for the human"   # STATUS=completed; STOP, no self-merge
-    elif [ "$RC" -eq 0 ]; then
-      # the helper PUSHED a NEW SHA CI has NOT validated. RE-WAIT CI on it before
-      # merging — this is MANDATORY and non-negotiable: it preserves the "merge ONLY
-      # the CI-validated SHA" invariant. A textually-clean but semantically-wrong
-      # auto-resolve the conflict detector structurally cannot see is caught here.
-      # ↓ run the **Hardened CI re-wait probe** (defined at the end of §3) on $PR_ID /
-      # $BRANCH; proceed to mark-ready+merge ONLY on a green break — every other terminal
-      # (failed / PR-merged-or-closed / probe-error-budget / cap) leaves the PR for the
-      # drain reap / human, do NOT hang.
-      python3 ${CLAUDE_SKILL_DIR}/scripts/forge_cli.py --workspace-root . mark-ready --pr "$PR_ID"   # if it was a draft
-      python3 ${CLAUDE_SKILL_DIR}/scripts/forge_cli.py --workspace-root . merge --pr "$PR_ID" --squash
-      bd close "$KEY" --reason "self-merged via PR #$PR_ID (version-remerged)"
-      python3 ${CLAUDE_SKILL_DIR}/scripts/forge_cli.py --workspace-root . delete-branch --branch "$BRANCH"
-    else
-      echo "version_remerge tool error (exit $RC) — leaving PR #$PR_ID for the human"   # STATUS=completed
-    fi
+    echo "PR #$PR_ID is DIRTY (merge conflict) — leaving for the human"
+    # STATUS=completed; STOP. No self-merge: gh pr merge refuses a DIRTY PR.
+    # Branches no longer carry a version line (server-side version-stamp.yml stamps
+    # main post-merge), so a DIRTY here is a genuine code conflict. The drain reap
+    # routes it to `blocked`.
   else
-    # CLEAN / DRAFT: merge as today, no recovery needed.
+    # CLEAN / DRAFT: merge.
     python3 ${CLAUDE_SKILL_DIR}/scripts/forge_cli.py --workspace-root . mark-ready --pr "$PR_ID"   # if it was a draft
     python3 ${CLAUDE_SKILL_DIR}/scripts/forge_cli.py --workspace-root . merge --pr "$PR_ID" --squash
     bd close "$KEY" --reason "self-merged via PR #$PR_ID"
@@ -127,32 +107,9 @@ else
 fi
 ```
 
-**Hardened CI re-wait probe.** The version_remerge exit-0 re-wait site above runs this as a single `Monitor` (foreground `sleep` is blocked). It reads the `forge_cli ci-rollup` PROCESS EXIT CODE (not a piped status string), so an intermittently-erroring `gh` trips a consecutive-error budget and breaks instead of spinning; it short-circuits when the PR leaves the OPEN state (`detect-pr` returns `null` → merged/closed); and the iteration cap is the guaranteed terminal exit. §3 already binds `BRANCH` and `PR_ID`. Proceed past the re-wait ONLY on a `green` break — every other terminal (`failed` / PR-merged-or-closed / probe-error-budget / cap) leaves the PR for the drain reap / human, do NOT hang. Heartbeat the run lease on each poll via `lease.py refresh` so the long re-wait does not let the lease go stale.
+The self-merge does NOT stamp the version. It merges like a human merge — touching no version files — and the server-side `version-stamp.yml` GitHub Action stamps `main` after the squash lands. The Action is skip-guarded (it skips when the merged push already changed the two version files), so a flow self-merge, which never touches them, triggers the Action's stamp path. Branches carry no version line, so they never conflict on one: a DIRTY here is a genuine code conflict left for the human.
 
-```
-Monitor(
-  description="merge CI re-wait on PR #$PR_ID",
-  command='budget=3; errs=0; n=0; cap=25; prev=""; while :; do
-      n=$((n+1)); [ "$n" -gt "$cap" ] && { echo "[$(date +%T)] cap $cap hit — leave for next pass"; break; }
-      pr=$(python3 ${CLAUDE_SKILL_DIR}/scripts/forge_cli.py --workspace-root . detect-pr --branch "$BRANCH"); drc=$?
-      if [ "$drc" -eq 0 ] && [ "$(printf %s "$pr" | tr -d " \t\n")" = "null" ]; then echo "[$(date +%T)] PR #$PR_ID no longer open (merged/closed)"; break; fi
-      out=$(python3 ${CLAUDE_SKILL_DIR}/scripts/forge_cli.py --workspace-root . ci-rollup --pr "$PR_ID"); crc=$?
-      s=""; [ "$crc" -eq 0 ] && s=$(printf %s "$out" | python3 -c "import sys,json;print(json.load(sys.stdin).get(\"status\",\"\"))" 2>/dev/null)
-      if [ "$crc" -ne 0 ] || [ -z "$s" ]; then errs=$((errs+1)); echo "[$(date +%T)] ci-rollup probe error ($errs/$budget)"; [ "$errs" -ge "$budget" ] && { echo "error budget exhausted — leave for next pass"; break; }; sleep 60; continue; fi
-      errs=0; [ "$s" != "$prev" ] && { echo "[$(date +%T)] CI: $s"; prev=$s; }
-      case "$s" in green|failed) break;; esac
-      sleep 60
-    done',
-  timeout_ms=1620000,
-  persistent=false
-)
-```
-
-The terminal `CI_STATUS` enum is `green` / `failed` (NOT `success` / `failure`, NOT `red`); `ci_rollup` folds the superseded `CANCELLED`/`STALE`/`NEUTRAL`/`SKIPPED` entries into `pending`, so those re-poll rather than trip a false `failed`. **Anti-pattern:** never `ci-rollup ... 2>/dev/null | python -c '...get("status","pending")'` — piping past the exit code makes an errored `gh` read as `pending` forever (a silent infinite spin); the probe reads `$?` first, which is the fix.
-
-The self-merge does NOT stamp the version. It merges like a human merge — touching no version files — and the server-side `version-stamp.yml` GitHub Action stamps `main` after the squash lands. The Action is skip-guarded (it skips when the merged push already changed the two version files), so a flow self-merge, which never touches them, triggers the Action's stamp path. `version_remerge` is RETAINED (its retirement is tracked as flow-mmh3) as defensive recovery shared with the drain reap, which applies it across a broader PR population. A flow self-merge touches no version files, so a version-line conflict is not expected for it; the DIRTY branch stays as a safety net. IF a DIRTY version conflict does arise, `version_remerge recover` re-merges main and auto-resolves IFF the conflict is exactly the two version files (else it aborts and exits 3); on a clean re-merge it compares the working tree's version against main's and restamps on equality (`restamped` instead of `remerged_clean`). The mandatory exit-0 CI re-wait below covers the re-merged SHA (`restamped` exactly like `remerged`).
-
-The push-state check binds the merge to the CI'd SHA: `git rev-parse origin/$BRANCH` (after `git fetch origin $BRANCH`) is the last-pushed commit, so `HEAD == origin/$BRANCH` proves every local commit was pushed and therefore CI'd. A flow worktree never records upstream tracking — the shared `.git/config` write is sandbox-blocked, the same root cause flow-wjfs fixed for the push commands — so `@{u}` is empty there and the remote-tracking ref is the reliable pushed-SHA source. The merge-state branch then splits CLEAN/DRAFT (merge as today) from DIRTY (run version-conflict recovery). **The CI re-wait after a successful remerge is mandatory and non-negotiable:** `version_remerge` pushed a brand-new merge commit that CI never validated, so merging it without re-waiting would break the "merge ONLY the CI-validated SHA" invariant the push-state guard upholds. The conflict detector is structural (it checks the conflicting *paths*); only a green CI proves the auto-resolved merge is also semantically correct. On exit 3 (a non-version conflict) the helper already ran `git merge --abort`, so the working tree is clean and the PR stays ready for the human. The hot §2 guard-property review still runs FIRST for a hot bead (a hot bead reaches §3 only after a clean §2 review); recovery sits entirely within §3 and does not reorder that. The §2 review cleared the branch diff D; `version_remerge` then pushes D′ = D + main's content for the two version files, and D′ is merged WITHOUT a re-review. This is safe and needs no second §2 pass: the strict detector proves ONLY the two version files conflicted (any other conflicting path → abort), so D′ adds nothing to the guard surface beyond main's already-reviewed version bump — the guard-relevant diff is unchanged from what §2 saw. The CI re-wait does NOT substitute for this argument (guard properties have no CI test); the structural detector is what makes the skip sound. Close the bead and delete the **remote** branch only AFTER `merge` succeeds — a `bd close` on a PR that never merged would mint the exact PR↔bead inconsistency this guards against. The **local** worktree + branch are NOT torn down here: a run cannot remove the worktree it is standing in. Teardown is deferred to the drain reap step (`flow_worktree.py reap`, lease-gated), which reaps the worktree once this session exits.
+The push-state check binds the merge to the CI'd SHA: `git rev-parse origin/$BRANCH` (after `git fetch origin $BRANCH`) is the last-pushed commit, so `HEAD == origin/$BRANCH` proves every local commit was pushed and therefore CI'd. A flow worktree never records upstream tracking — the shared `.git/config` write is sandbox-blocked, the same root cause flow-wjfs fixed for the push commands — so `@{u}` is empty there and the remote-tracking ref is the reliable pushed-SHA source. The merge-state branch then splits CLEAN/DRAFT (merge) from DIRTY (leave for the human). Close the bead and delete the **remote** branch only AFTER `merge` succeeds — a `bd close` on a PR that never merged would mint the exact PR↔bead inconsistency this guards against. The **local** worktree + branch are NOT torn down here: a run cannot remove the worktree it is standing in. Teardown is deferred to the drain reap step (`flow_worktree.py reap`, lease-gated), which reaps the worktree once this session exits.
 
 `STATUS=completed` once the merge lands (or on a clean `skip`/`held_guard`). Only a tool failure on `merge` itself → `STATUS=failed`.
 

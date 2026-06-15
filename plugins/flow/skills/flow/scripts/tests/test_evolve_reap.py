@@ -98,49 +98,38 @@ def test_pending_is_not_green():
     assert out["merge"] == []
 
 
-def test_green_nonhot_dirty_is_version_recoverable():
+def test_green_nonhot_dirty_is_blocked():
+    # branches carry no version line, so a green non-hot DIRTY is a genuine code
+    # conflict for a human: it routes to `blocked` with reason "DIRTY".
     prs = [_pr(1, "flow-a", state="DIRTY")]
     out = er.classify(prs, _idx(**{"flow-a": ["evolve"]}))
-    assert out["version_recoverable"] == [
-        {"pr": 1, "key": "flow-a", "branch": "feature/flow-a-some-desc"}
+    assert out["blocked"] == [
+        {"pr": 1, "key": "flow-a", "branch": "feature/flow-a-some-desc", "reason": "DIRTY"}
     ]
-    assert out["blocked"] == []
 
 
-def test_hot_dirty_is_blocked_not_recoverable():
-    # hot never auto-recovers: a green hot DIRTY PR is blocked, NOT version_recoverable
-    # and NOT skipped_hot (skipped_hot means green+mergeable awaiting isolation).
+def test_hot_dirty_is_blocked():
+    # a green hot DIRTY PR is blocked, NOT skipped_hot (skipped_hot means
+    # green+mergeable awaiting isolation).
     prs = [_pr(1, "flow-h", state="DIRTY")]
     out = er.classify(prs, _idx(**{"flow-h": ["evolve", "hot"]}))
     assert out["blocked"] == [
         {"pr": 1, "key": "flow-h", "branch": "feature/flow-h-some-desc", "reason": "DIRTY"}
     ]
-    assert out["version_recoverable"] == []
     assert out["skipped_hot"] == []
 
 
 # ---- classify: guard-file hotness (no `hot` label) ----
 
 
-def test_guard_file_dirty_no_label_is_blocked_not_recoverable():
-    # the flow-1fy bug: a guard-file PR (snapshot.py) DIRTY with no `hot` label must
-    # be treated as hot (blocked, never auto-recovered), not version_recoverable.
+def test_guard_file_dirty_no_label_is_blocked():
+    # the flow-1fy bug: a guard-file PR (snapshot.py) DIRTY with no `hot` label is
+    # still treated as hot. A DIRTY PR routes to `blocked` regardless of hotness.
     prs = [_pr(1, "flow-a", state="DIRTY", files=["snapshot.py"])]
     out = er.classify(prs, _idx(**{"flow-a": ["evolve"]}))
     assert out["blocked"] == [
         {"pr": 1, "key": "flow-a", "branch": "feature/flow-a-some-desc", "reason": "DIRTY"}
     ]
-    assert out["version_recoverable"] == []
-
-
-def test_non_guard_dirty_no_label_still_version_recoverable():
-    # no over-broadening: a non-guard DIRTY PR with no label stays version_recoverable.
-    prs = [_pr(1, "flow-a", state="DIRTY", files=["evolve_reap.py"])]
-    out = er.classify(prs, _idx(**{"flow-a": ["evolve"]}))
-    assert out["version_recoverable"] == [
-        {"pr": 1, "key": "flow-a", "branch": "feature/flow-a-some-desc"}
-    ]
-    assert out["blocked"] == []
 
 
 def test_guard_file_green_clean_skipped_hot_when_off():
@@ -183,7 +172,6 @@ def test_green_clean_still_merges():
     prs = [_pr(1, "flow-a", state="CLEAN")]
     out = er.classify(prs, _idx(**{"flow-a": ["evolve"]}))
     assert out["merge"][0]["key"] == "flow-a"
-    assert out["version_recoverable"] == []
 
 
 def test_behind_is_blocked():
@@ -231,133 +219,7 @@ def test_non_flow_branch_ignored():
 def test_unknown_key_ignored():
     prs = [_pr(1, "flow-ghost")]
     out = er.classify(prs, _idx(**{"flow-a": ["evolve"]}))
-    assert all(
-        out[b] == []
-        for b in ("merge", "not_green", "skipped_hot", "version_recoverable", "blocked")
-    )
-
-
-# ---- classify: duplicate version stamp ----
-
-
-def test_dup_stamp_clean_nonhot_routes_version_recoverable():
-    # branch version == main's current version: a sibling merged first and stamped
-    # the same next version, git sees identical version-line changes → CLEAN. Must
-    # never auto-merge; version_remerge's recover path restamps it.
-    prs = [_pr(1, "flow-a")]
-    out = er.classify(
-        prs,
-        _idx(**{"flow-a": ["evolve"]}),
-        main_version="1.2.3",
-        branch_versions={"feature/flow-a-some-desc": "1.2.3"},
-    )
-    assert out["merge"] == []
-    assert out["version_recoverable"] == [
-        {"pr": 1, "key": "flow-a", "branch": "feature/flow-a-some-desc"}
-    ]
-
-
-def test_dup_stamp_draft_nonhot_routes_version_recoverable():
-    prs = [_pr(1, "flow-a", state="DRAFT", draft=True)]
-    out = er.classify(
-        prs,
-        _idx(**{"flow-a": ["evolve"]}),
-        main_version="1.2.3",
-        branch_versions={"feature/flow-a-some-desc": "1.2.3"},
-    )
-    assert out["merge"] == []
-    assert out["version_recoverable"] == [
-        {"pr": 1, "key": "flow-a", "branch": "feature/flow-a-some-desc"}
-    ]
-
-
-def test_distinct_version_clean_still_merges():
-    prs = [_pr(1, "flow-a")]
-    out = er.classify(
-        prs,
-        _idx(**{"flow-a": ["evolve"]}),
-        main_version="1.2.3",
-        branch_versions={"feature/flow-a-some-desc": "1.2.4"},
-    )
-    assert [e["key"] for e in out["merge"]] == ["flow-a"]
-    assert out["version_recoverable"] == []
-
-
-def test_unknown_branch_version_fails_open_to_merge():
-    prs = [_pr(1, "flow-a")]
-    out = er.classify(prs, _idx(**{"flow-a": ["evolve"]}), main_version="1.2.3", branch_versions={})
-    assert [e["key"] for e in out["merge"]] == ["flow-a"]
-    assert out["version_recoverable"] == []
-
-
-def test_unknown_main_version_fails_open():
-    # unknown main with a known branch version, AND the None == None trap (both
-    # unknown): neither may read as a duplicate.
-    prs = [_pr(1, "flow-a")]
-    out = er.classify(
-        prs,
-        _idx(**{"flow-a": ["evolve"]}),
-        main_version=None,
-        branch_versions={"feature/flow-a-some-desc": "1.2.3"},
-    )
-    assert [e["key"] for e in out["merge"]] == ["flow-a"]
-
-    out = er.classify(prs, _idx(**{"flow-a": ["evolve"]}), main_version=None, branch_versions={})
-    assert [e["key"] for e in out["merge"]] == ["flow-a"]
-    assert out["version_recoverable"] == []
-
-
-def test_no_version_kwargs_keeps_legacy_routing():
-    prs = [_pr(1, "flow-a")]
-    out = er.classify(prs, _idx(**{"flow-a": ["evolve"]}))
-    assert [e["key"] for e in out["merge"]] == ["flow-a"]
-    assert out["version_recoverable"] == []
-
-
-def test_dup_stamp_dirty_still_version_recoverable():
-    prs = [_pr(1, "flow-a", state="DIRTY")]
-    out = er.classify(
-        prs,
-        _idx(**{"flow-a": ["evolve"]}),
-        main_version="1.2.3",
-        branch_versions={"feature/flow-a-some-desc": "1.2.3"},
-    )
-    assert out["version_recoverable"] == [
-        {"pr": 1, "key": "flow-a", "branch": "feature/flow-a-some-desc"}
-    ]
-    assert out["blocked"] == []
-
-
-def test_dup_stamp_hot_not_promoted_lands_skipped_hot():
-    # a duplicate-stamp hot never promotes, even alone under auto_merge_hot.
-    prs = [_pr(1, "flow-h")]
-    out = er.classify(
-        prs,
-        _idx(**{"flow-h": ["evolve", "hot"]}),
-        auto_merge_hot=True,
-        main_version="1.2.3",
-        branch_versions={"feature/flow-h-some-desc": "1.2.3"},
-    )
-    assert out["merge"] == []
-    assert out["skipped_hot"] == [{"pr": 1, "key": "flow-h", "branch": "feature/flow-h-some-desc"}]
-
-
-def test_dup_stamp_hot_excluded_from_isolation_count():
-    # the dup-stamp hot does not count toward one-hot isolation: the sibling
-    # distinct-version hot is the single eligible one and still promotes.
-    prs = [_pr(1, "flow-h"), _pr(2, "flow-g")]
-    out = er.classify(
-        prs,
-        _idx(**{"flow-h": ["evolve", "hot"], "flow-g": ["evolve", "hot"]}),
-        auto_merge_hot=True,
-        main_version="1.2.3",
-        branch_versions={
-            "feature/flow-h-some-desc": "1.2.3",
-            "feature/flow-g-some-desc": "1.2.4",
-        },
-    )
-    assert [e["key"] for e in out["merge"]] == ["flow-g"]
-    assert out["skipped_hot"] == [{"pr": 1, "key": "flow-h", "branch": "feature/flow-h-some-desc"}]
+    assert all(out[b] == [] for b in ("merge", "not_green", "skipped_hot", "blocked"))
 
 
 # ---- classify: lease-liveness gate (flow-ztfv) ----
@@ -377,11 +239,11 @@ def test_corrupt_lease_holds_green_clean_nonhot():
     assert out["merge"] == []
 
 
-def test_live_lease_holds_green_dirty_over_version_recoverable():
+def test_live_lease_holds_green_dirty_over_blocked():
     prs = [_pr(1, "flow-a", state="DIRTY")]
     out = er.classify(prs, _idx(**{"flow-a": ["evolve"]}), liveness={"flow-a": "live"})
     assert out["skipped_live"] == [{"pr": 1, "key": "flow-a", "branch": "feature/flow-a-some-desc"}]
-    assert out["version_recoverable"] == []
+    assert out["blocked"] == []
 
 
 def test_live_lease_holds_green_hot_over_skipped_hot():
@@ -571,38 +433,6 @@ def test_main_red_does_not_promote_hot():
     ]
 
 
-def test_main_red_holds_dirty_recovery_candidate():
-    # the recover recipe ends in its own merge within the turn, so a red main must
-    # hold DIRTY candidates too, not let them bypass via version_recoverable.
-    prs = [_pr(1, "flow-a", state="DIRTY")]
-    out = er.classify(prs, _idx(**{"flow-a": ["evolve"]}), main_ci_status="failed")
-    assert out["version_recoverable"] == []
-    assert out["held_main_red"] == [
-        {
-            "pr": 1,
-            "key": "flow-a",
-            "branch": "feature/flow-a-some-desc",
-            "is_draft": False,
-            "is_hot": False,
-        }
-    ]
-
-
-def test_main_red_holds_duplicate_stamp_recovery_candidate():
-    # same hold for the duplicate-stamp restamp path.
-    prs = [_pr(1, "flow-a")]
-    out = er.classify(
-        prs,
-        _idx(**{"flow-a": ["evolve"]}),
-        main_version="1.2.3",
-        branch_versions={"feature/flow-a-some-desc": "1.2.3"},
-        main_ci_status="failed",
-    )
-    assert out["version_recoverable"] == []
-    assert out["merge"] == []
-    assert {e["key"] for e in out["held_main_red"]} == {"flow-a"}
-
-
 def test_held_main_red_key_always_present():
     # the bucket is present (empty) even when main is not red.
     prs = [_pr(1, "flow-a")]
@@ -730,123 +560,6 @@ def test_reap_not_maintainer(tmp_path, monkeypatch):
     )
     with pytest.raises(er.NotMaintainer):
         er.reap(plain)
-
-
-# ---- _gather_versions ----
-
-_PLUGIN_JSON = "plugins/flow/.claude-plugin/plugin.json"
-
-
-def _git_version_runner(
-    *,
-    versions: dict[str, str],
-    default_ref: str = "origin/main",
-    fetch_rc: int = 0,
-    symbolic_ref_rc: int = 0,
-) -> tuple[Callable[..., subprocess.CompletedProcess[str]], Recorder]:
-    """git-only fake: symbolic-ref → default_ref, fetch → fetch_rc, show → plugin.json
-    fixture for refs present in `versions` (keyed by the ref before the colon).
-
-    symbolic_ref_rc != 0 mimics a detached/missing origin/HEAD: rc != 0 with empty
-    stdout, matching real `git symbolic-ref --quiet` on failure."""
-    calls: Recorder = []
-
-    def run(args: list[str]) -> subprocess.CompletedProcess[str]:
-        calls.append(args)
-        if args[:2] == ["git", "symbolic-ref"]:
-            if symbolic_ref_rc != 0:
-                return subprocess.CompletedProcess(args, symbolic_ref_rc, "", "fatal: no HEAD")
-            return subprocess.CompletedProcess(args, 0, default_ref + "\n", "")
-        if args[:2] == ["git", "fetch"]:
-            return subprocess.CompletedProcess(args, fetch_rc, "", "boom" if fetch_rc else "")
-        if args[:2] == ["git", "show"]:
-            ref = args[2].split(":", 1)[0]
-            if ref in versions:
-                body = json.dumps({"name": "flow", "version": versions[ref]})
-                return subprocess.CompletedProcess(args, 0, body, "")
-            return subprocess.CompletedProcess(args, 1, "", f"fatal: bad ref {args[2]}")
-        return subprocess.CompletedProcess(args, 1, "", f"unexpected: {args}")
-
-    return run, calls
-
-
-def test_gather_versions_reads_main_and_branches(tmp_path):
-    branch = "feature/flow-a-some-desc"
-    run, calls = _git_version_runner(versions={"origin/main": "1.2.3", f"origin/{branch}": "1.2.3"})
-    main_version, branch_versions = er._gather_versions(run, tmp_path, [branch])
-    assert main_version == "1.2.3"
-    assert branch_versions == {branch: "1.2.3"}
-    # exact refs matter: the branch read MUST hit the post-fetch remote-tracking
-    # ref origin/<branch>, never the bare local branch name (stale-local trap).
-    shows = [a for a in calls if a[:2] == ["git", "show"]]
-    assert ["git", "show", f"origin/main:{_PLUGIN_JSON}"] in shows
-    assert ["git", "show", f"origin/{branch}:{_PLUGIN_JSON}"] in shows
-    assert all(a[2].split(":", 1)[0].startswith("origin/") for a in shows)
-
-
-def test_gather_versions_fetch_failure_fails_open(tmp_path):
-    run, _ = _git_version_runner(versions={"origin/main": "1.2.3"}, fetch_rc=1)
-    assert er._gather_versions(run, tmp_path, ["feature/flow-a-some-desc"]) == (None, {})
-
-
-def test_gather_versions_branch_show_failure_omits_branch(tmp_path):
-    run, _ = _git_version_runner(versions={"origin/main": "1.2.3"})
-    main_version, branch_versions = er._gather_versions(run, tmp_path, ["feature/flow-a-some-desc"])
-    assert main_version == "1.2.3"
-    assert branch_versions == {}
-
-
-def test_gather_versions_no_candidates_no_git_calls(tmp_path):
-    run, calls = _git_version_runner(versions={})
-    assert er._gather_versions(run, tmp_path, []) == (None, {})
-    assert calls == []
-
-
-def test_gather_versions_symbolic_ref_failure_falls_back_to_origin_main(tmp_path):
-    # symbolic-ref rc != 0 (detached/missing origin/HEAD) → default_ref empty →
-    # fallback "origin/main". The version fixture lives ONLY at origin/main, so a
-    # successful main read proves the fallback fired (drop the fallback line and
-    # read_version hits an empty ref → (None, {}) → this assertion fails).
-    branch = "feature/flow-a-some-desc"
-    run, calls = _git_version_runner(
-        versions={"origin/main": "1.2.3", f"origin/{branch}": "1.2.3"}, symbolic_ref_rc=1
-    )
-    main_version, branch_versions = er._gather_versions(run, tmp_path, [branch])
-    assert main_version == "1.2.3"
-    assert branch_versions == {branch: "1.2.3"}
-    shows = [a for a in calls if a[:2] == ["git", "show"]]
-    assert ["git", "show", f"origin/main:{_PLUGIN_JSON}"] in shows
-
-
-# ---- reap integration: duplicate version stamp ----
-
-
-def test_reap_git_failure_keeps_legacy_classification(tmp_path):
-    # _dispatch exits 1 on every git command: version gather degrades to unknown
-    # and the green CLEAN PR keeps merging (strictly fail-open).
-    ws = _marked_ws(tmp_path)
-    run, _ = _dispatch(prs=[_pr(1, "flow-a")], evolve_list=[{"id": "flow-a", "labels": ["evolve"]}])
-    out = er.reap(ws, runner=run)
-    assert [e["key"] for e in out["merge"]] == ["flow-a"]
-    assert out["version_recoverable"] == []
-
-
-def test_reap_dup_stamp_routed_end_to_end(tmp_path):
-    ws = _marked_ws(tmp_path)
-    branch = "feature/flow-a-some-desc"
-    git_run, _ = _git_version_runner(versions={"origin/main": "1.2.3", f"origin/{branch}": "1.2.3"})
-
-    def run(args: list[str]) -> subprocess.CompletedProcess[str]:
-        if args[:3] == ["gh", "pr", "list"]:
-            return subprocess.CompletedProcess(args, 0, json.dumps([_pr(1, "flow-a")]), "")
-        if args[:2] == ["bd", "list"]:
-            body = json.dumps([{"id": "flow-a", "labels": ["evolve"]}])
-            return subprocess.CompletedProcess(args, 0, body, "")
-        return git_run(args)
-
-    out = er.reap(ws, runner=run)
-    assert out["merge"] == []
-    assert out["version_recoverable"] == [{"pr": 1, "key": "flow-a", "branch": branch}]
 
 
 # ---- _labels_index / reap: include_proposals ----
@@ -1043,9 +756,9 @@ def test_reap_does_not_truncate_label_index_orphan(tmp_path):
     run, _ = _truncating_label_runner(prs=prs, evolve_beads=evolve_beads)
     out = er.reap(ws, runner=run)
 
-    # green non-hot DIRTY -> version_recoverable (the exact bucket the manual
-    # version_remerge.py recover used); and it must not vanish from every bucket.
-    assert {e["key"] for e in out["version_recoverable"]} == {"flow-orph"}
+    # green non-hot DIRTY -> blocked (reason "DIRTY"); the orphan must not vanish
+    # from every bucket (the reap safety-net must still classify it).
+    assert {e["key"] for e in out["blocked"]} == {"flow-orph"}
     assert "flow-orph" in {e["key"] for bucket in out.values() for e in bucket}
 
 
