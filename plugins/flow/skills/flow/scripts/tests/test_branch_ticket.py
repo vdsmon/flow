@@ -114,6 +114,43 @@ def test_beads_no_match_other_prefix(tmp_path: Path) -> None:
     assert branch_ticket.resolve(tmp_path, tmp_path, runner) is None
 
 
+# ─── Explicit --branch (PR→ticket enabler) ───────────────────────────────────
+
+
+def test_explicit_branch_resolves_without_git(tmp_path: Path) -> None:
+    _jira_workspace(tmp_path)
+
+    def _boom(args: list[str], cwd: Path):  # must not be called when branch is given
+        raise AssertionError("git runner must not run when --branch is explicit")
+
+    assert branch_ticket.resolve(tmp_path, tmp_path, _boom, branch="feature/FT-1-x") == "FT-1"
+
+
+def test_explicit_branch_no_match_returns_none(tmp_path: Path) -> None:
+    _jira_workspace(tmp_path)
+    assert branch_ticket.resolve(tmp_path, tmp_path, branch="feature/no-key") is None
+
+
+def test_explicit_branch_beads(tmp_path: Path) -> None:
+    _beads_workspace(tmp_path, prefix="bd")
+    assert branch_ticket.resolve(tmp_path, tmp_path, branch="feature/bd-a4f7-x") == "bd-a4f7"
+
+
+def test_cli_explicit_branch_returns_key(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _jira_workspace(tmp_path)
+    # the current-branch runner would resolve a DIFFERENT key; --branch must win.
+    monkeypatch.setattr(branch_ticket, "_default_runner", lambda: _fake_runner("FT-99"))
+    rc = branch_ticket.cli_main(
+        ["--workspace-root", str(tmp_path), "--cwd", str(tmp_path), "--branch", "feature/FT-1-x"]
+    )
+    assert rc == 0
+    assert capsys.readouterr().out.strip() == "FT-1"
+
+
 # ─── Environment errors ──────────────────────────────────────────────────────
 
 

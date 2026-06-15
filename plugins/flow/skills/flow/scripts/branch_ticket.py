@@ -84,21 +84,37 @@ def _match_key(branch: str, cfg: _TrackerConfig) -> str | None:
     return m.group(1) if m else None
 
 
-def resolve(workspace_root: Path, cwd: Path, runner: Runner | None = None) -> str | None:
+def resolve(
+    workspace_root: Path,
+    cwd: Path,
+    runner: Runner | None = None,
+    branch: str | None = None,
+) -> str | None:
     """Returns ticket key on match, None on no-match.
+
+    When `branch` is given, resolve the key from THAT branch name (no git call) —
+    the PR->ticket enabler for `/flow revise <pr#>`, which is not checked out on
+    the PR branch. When `branch` is None, behavior is byte-identical to before:
+    resolve from the current git branch.
 
     Raises `_BranchTicketError` on environment failure (caller surfaces as
     exit 1).
     """
     cfg = _read_tracker_config(workspace_root)
-    branch = _current_branch(cwd, runner or _default_runner())
-    return _match_key(branch, cfg)
+    name = branch if branch is not None else _current_branch(cwd, runner or _default_runner())
+    return _match_key(name, cfg)
 
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Resolve ticket key from current git branch.")
     parser.add_argument("--workspace-root", default=".")
     parser.add_argument("--cwd", default=".")
+    parser.add_argument(
+        "--branch",
+        default=None,
+        help="resolve from this branch name instead of the current git branch "
+        "(the PR->ticket enabler for /flow revise <pr#>)",
+    )
     return parser.parse_args(argv)
 
 
@@ -107,7 +123,7 @@ def cli_main(argv: list[str]) -> int:
     workspace_root = Path(args.workspace_root).resolve()
     cwd = Path(args.cwd).resolve()
     try:
-        key = resolve(workspace_root, cwd)
+        key = resolve(workspace_root, cwd, branch=args.branch)
     except _BranchTicketError as exc:
         sys.stderr.write(f"branch-ticket: {exc}\n")
         return 1

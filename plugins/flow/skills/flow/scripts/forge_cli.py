@@ -9,6 +9,7 @@ surface the prose calls, mirroring `tracker_cli.py`.
 
 Subcommands:
   detect-pr      --branch B                         forge.detect_pr(branch) -> PR|null
+  pr-info        --pr ID                            forge.pr_info(id) -> PR|null (ANY state)
   open-pr        --base --head --title --body [--draft]  forge.open_pr(...) -> PR
   ci-rollup      --pr ID                            forge.ci_rollup(id) -> CIStatus (one-shot)
   review-threads --pr ID                            forge.review_threads(id) -> [thread]
@@ -55,6 +56,10 @@ def _emit(obj: Any) -> int:
 
 def _cmd_detect_pr(forge: Any, args: argparse.Namespace) -> int:
     return _emit(forge.detect_pr(args.branch))
+
+
+def _cmd_pr_info(forge: Any, args: argparse.Namespace) -> int:
+    return _emit(forge.pr_info(args.pr))
 
 
 def _cmd_open_pr(forge: Any, args: argparse.Namespace) -> int:
@@ -104,6 +109,9 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     p = sub.add_parser("detect-pr", help="forge.detect_pr(branch)")
     p.add_argument("--branch", required=True)
 
+    p = sub.add_parser("pr-info", help="forge.pr_info(pr) — reverse lookup, ANY state")
+    p.add_argument("--pr", required=True)
+
     p = sub.add_parser("open-pr", help="forge.open_pr(base, head, title, body, draft)")
     p.add_argument("--base", default="main")
     p.add_argument("--head", required=True)
@@ -141,6 +149,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
 
 _DISPATCH: dict[str, Any] = {
     "detect-pr": _cmd_detect_pr,
+    "pr-info": _cmd_pr_info,
     "open-pr": _cmd_open_pr,
     "ci-rollup": _cmd_ci_rollup,
     "review-threads": _cmd_review_threads,

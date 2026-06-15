@@ -127,7 +127,7 @@ class ForgeConfigError(ForgeError):
 class Forge(Protocol):
     """Cross-host PR interface. Implemented by per-host adapters.
 
-    `detect_pr` / `open_pr` / `ci_rollup` / `merge` are MANDATORY. The review-thread
+    `detect_pr` / `pr_info` / `open_pr` / `ci_rollup` / `merge` are MANDATORY. The review-thread
     trio (`review_threads`, `post_reply`, `resolve_thread`) plus `mark_ready` and
     `delete_branch` are CAPABILITY-GATED: each MUST raise `NotSupported` when its
     capability advertises `supported=false`.
@@ -137,6 +137,7 @@ class Forge(Protocol):
     capabilities: list[Capability]
 
     def detect_pr(self, branch: str) -> PullRequest | None: ...
+    def pr_info(self, pr_id: str) -> PullRequest | None: ...  # PR-number reverse lookup, ANY state
     def open_pr(self, base: str, head: str, title: str, body: str, draft: bool) -> PullRequest: ...
     def ci_rollup(self, pr_id: str) -> CIStatus: ...
     def review_threads(self, pr_id: str) -> list[ReviewThread]: ...  # cap-gated
