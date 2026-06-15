@@ -400,6 +400,39 @@ def reap_worktree(
     return receipt
 
 
+def locate_or_reseed(
+    *,
+    ticket: str,
+    branch: str,
+    main_root: Path,
+    runner: Runner | None = None,
+) -> dict:
+    """Locate the ticket's worktree, or re-materialize it from the PR branch (flow-kx17.2).
+
+    A revision (/flow revise) needs the worktree the original run left behind. The
+    norm (PR-open ⇒ worktree-present) is a LOCATE: a registered worktree on a
+    `feature/<ticket>*` branch is returned as-is (reseeded:false). When the worktree
+    was externally reaped, RESEED: fetch the existing remote branch and `git worktree
+    add <path> <branch>` (checkout, NOT -b), then re-copy gitignored config + redirect
+    memory + mise trust via the same helpers bootstrap uses (reseeded:true).
+    """
+    run = runner or _default_runner()
+    main_root = main_root.expanduser().resolve()
+
+    siblings = _ticket_siblings(ticket, main_root, run)
+    if siblings:
+        return {"worktree": str(siblings[0][0]), "reseeded": False}
+
+    worktree = _worktree_path(main_root, branch, None)
+    _git(["fetch", "origin", branch], main_root, run)
+    _git(["worktree", "add", str(worktree), branch], main_root, run)
+    _copy_config(main_root, worktree, [])
+    _ensure_flow_config(main_root, worktree, main_root / ".flow")
+    if (worktree / "mise.toml").exists() or (worktree / ".mise.toml").exists():
+        run(["mise", "trust"], worktree)
+    return {"worktree": str(worktree), "reseeded": True}
+
+
 _DEFAULT_BASE = "@default"
 
 
@@ -762,6 +795,16 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     r.add_argument("--branch", default=None, help="branch to reap (else derived from --ticket)")
     r.add_argument("--main-root", default=".", help="path to the main checkout (default cwd)")
 
+    lr = sub.add_parser(
+        "locate-or-reseed",
+        help="Locate the ticket's worktree, or re-materialize it from the PR branch (revise).",
+    )
+    lr.add_argument("--ticket", required=True)
+    lr.add_argument(
+        "--branch", required=True, help="the PR's feature branch to check out on reseed"
+    )
+    lr.add_argument("--main-root", default=".", help="path to the main checkout (default cwd)")
+
     return parser.parse_args(argv)
 
 
@@ -781,12 +824,36 @@ def _run_reap(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_locate_or_reseed(args: argparse.Namespace) -> int:
+    import json
+
+    try:
+        result = locate_or_reseed(
+            ticket=args.ticket,
+            branch=args.branch,
+            main_root=Path(args.main_root),
+        )
+    except _ConfigError as exc:
+        sys.stderr.write(f"flow-worktree: {exc}\n")
+        return 2
+    except _GitError as exc:
+        sys.stderr.write(f"flow-worktree: {exc}\n")
+        return 1
+    except OSError as exc:
+        sys.stderr.write(f"flow-worktree: I/O error: {exc}\n")
+        return 3
+    sys.stdout.write(json.dumps(result, indent=2, sort_keys=True) + "\n")
+    return 0
+
+
 def cli_main(argv: list[str]) -> int:
     import json
 
     args = _parse_args(argv)
     if args.cmd == "reap":
         return _run_reap(args)
+    if args.cmd == "locate-or-reseed":
+        return _run_locate_or_reseed(args)
     extra = [s.strip() for s in args.copy.split(",")] if args.copy else []
     planned = (
         [s.strip() for s in args.planned_files.split(",") if s.strip()]

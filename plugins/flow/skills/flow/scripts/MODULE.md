@@ -8,7 +8,7 @@ The live "which script does what" map. One line per script: purpose + CLI surfac
 
 | Script | Role | Surface / touches |
 |--------|------|-------------------|
-| `dispatch_stage.py` | State-machine driver for `/flow do`. Does NOT run handlers; emits a handler-descriptor JSON for the prose layer. | `init` / `next` / `advance` / `finish` / `release` / `status`; reads+writes `state.json` |
+| `dispatch_stage.py` | State-machine driver for `/flow do`. Does NOT run handlers; emits a handler-descriptor JSON for the prose layer. `revise-open` opens a revision sub-run under a terminal run (own lease/state/snapshot at `runs/<ticket>/revisions/<id>/`, original untouched); `--revision <id>` redirects `next`/`advance`/`finish`/`status`/`release` to drive that sub-run. | `init` / `revise-open` / `next` / `advance` / `finish` / `release` / `status`; reads+writes `state.json` |
 | `state.py` (lib) | Atomic `state.json` read/write under flock, backup rotation, quarantine recovery. | imported by dispatch_stage, flow_worktree, diff_extract, recover, status, reflect_inputs |
 | `snapshot.py` (lib) | Canonical workspace snapshot at init; verify on each `next` (TOCTOU drift guard). | imported by dispatch_stage, validate_workspace, recover |
 | `lease.py` (lib) | Per-ticket run lease: acquire / refresh / release / expiry + takeover detection. | imported by dispatch_stage, recover, status, flow_worktree, evolve_drain, evolve_reap, _evolve_common, evolve_session_cleanup, launch_ledger, fleet |
@@ -19,7 +19,7 @@ The live "which script does what" map. One line per script: purpose + CLI surfac
 | Script | Role | Surface / touches |
 |--------|------|-------------------|
 | `init.py` | Transactional workspace bootstrap. Collects backend/bundle answers, writes `workspace.toml`, postcondition checks, atomic `.flow/.initialized`. | `--config <json>` (`--reconfigure` / `--resume`) |
-| `flow_worktree.py` | Post-approval worktree seeding: create worktree, seed `state.json` (plan completed), stamp frontmatter, redirect memory to main `.flow` via the gitignored `.flow/memory-root` sibling (tracked workspace.toml left byte-identical), `mise trust`. Autonomous bootstrap (`--auto`/`@default` base, beads) code-enforces the hot floor: refuses a hot `--planned-files` set with no recorded decision. | `create --ticket --plan-from --base --branch --main-root --planned-files --commit-type --commit-summary --e2e-recipe --worktree-path --copy --no-mise-trust --auto` / `reap --ticket --branch --main-root` |
+| `flow_worktree.py` | Post-approval worktree seeding: create worktree, seed `state.json` (plan completed), stamp frontmatter, redirect memory to main `.flow` via the gitignored `.flow/memory-root` sibling (tracked workspace.toml left byte-identical), `mise trust`. Autonomous bootstrap (`--auto`/`@default` base, beads) code-enforces the hot floor: refuses a hot `--planned-files` set with no recorded decision. | `create --ticket --plan-from --base --branch --main-root --planned-files --commit-type --commit-summary --e2e-recipe --worktree-path --copy --no-mise-trust --auto` / `reap --ticket --branch --main-root` / `locate-or-reseed --ticket --branch --main-root` (revise: locate the ticket's worktree or re-materialize it from the PR branch) |
 | `branch_ticket.py` | Resolve ticket key from current git branch (backend-aware regex). | `--workspace-root`; exit 0 match / 1 env / 3 no-match |
 | `bundle_discover.py` (lib) | Walk `~/.claude/plugins/*/` + `<repo>/.claude/plugins/*/` for `.flow-bundle.toml` manifests. | imported by init, resolve_handler |
 

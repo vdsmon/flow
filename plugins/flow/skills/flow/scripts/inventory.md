@@ -470,6 +470,8 @@ Phase 7-full adds per-field structural validation.
 | dispatch_stage      | 0    | ok                                              |
 | dispatch_stage      | 1    | validate failed / state malformed / generic     |
 | dispatch_stage      | 2    | no ticket dir / not yet initialized             |
+| dispatch_stage      | 3    | revise-open: original run not terminal          |
+| dispatch_stage      | 4    | revise-open: a revision is already live         |
 | dispatch_stage      | 5    | stale foreign lease (needs /flow recover --takeover) |
 | dispatch_stage      | 7    | lost lease (another run took over)               |
 
@@ -496,6 +498,28 @@ Terminal shapes:
 - `{"done": true}` — every stage completed.
 - `{"done": false, "blocked_by": "<stage>", "reason": "<detail>"}` — a
   prior stage is failed.
+
+### Revision sub-run (`revise-open`, flow-kx17.2)
+
+`dispatch_stage.py revise-open --ticket T --workspace-root R [--stages a,b,c]` opens a
+revision SUB-RUN under a terminal ticket run. A revision lives at
+`runs/<ticket>/revisions/<rev-id>/` with its OWN lease/state/snapshot; the original
+terminal run is NEVER mutated. Guards: the original must be terminal (exit 3), and only
+one revision may be live per ticket at a time (exit 4); rev-id allocation + the live scan
++ state seed + lease acquire run under a single per-ticket `revise.claim` flock. Default
+stage subset = `implement, code_review, e2e, commit, reflect, review_loop` intersected with
+the workspace stages (ws order preserved); `--stages` overrides. Emits
+`{ticket, rev_id, run_id, session_nonce, revision_dir, stages}`. The
+`next`/`advance`/`finish`/`status`/`release` subcommands take `--revision <id>` to drive
+the sub-run (default = the ticket-level run, byte-identical to today).
+
+`flow_worktree.py locate-or-reseed --ticket T --branch B --main-root R` is the revision's
+worktree handle: it returns the ticket's registered `feature/<ticket>*` worktree
+(`{worktree, reseeded:false}`, the norm — PR-open ⇒ worktree-present), or, when that
+worktree was externally reaped, re-materializes it by checking out the EXISTING remote
+branch (`git worktree add <path> <branch>`, no `-b`) and re-copying gitignored config via
+the same helpers `bootstrap` uses (`{worktree, reseeded:true}`). Exit 1 on a git/worktree
+error.
 
 ### TOCTOU invariant
 

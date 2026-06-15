@@ -1325,3 +1325,111 @@ def test_concurrent_bootstraps_exactly_one_wins(tmp_path: Path) -> None:
     pool = main.resolve() / ".flow" / "worktrees"
     made = [d for d in (pool / "feature-FT-1-a", pool / "feature-FT-1-b") if d.exists()]
     assert len(made) == 1
+
+
+# ─── locate-or-reseed (flow-kx17.2) ─────────────────────────────────────────
+
+
+def _locate_runner(
+    *,
+    worktree_list: str,
+    calls: list,
+    main: Path | None = None,
+):
+    """Runner for locate-or-reseed: answers `git worktree list --porcelain` from
+    `worktree_list`; handles the reseed `git worktree add <path> <branch>` (NO -b,
+    path at index 3, unlike bootstrap's `-b <branch> <path> <base>`)."""
+
+    def run(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        if args[:4] == ["git", "worktree", "list", "--porcelain"]:
+            return subprocess.CompletedProcess(args, 0, worktree_list, "")
+        if args[:3] == ["git", "worktree", "add"]:
+            # reseed form: git worktree add <path> <branch>  (no -b flag)
+            wt = Path(args[3])
+            wt.mkdir(parents=True, exist_ok=True)
+            return subprocess.CompletedProcess(args, 0, "", "")
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    return run
+
+
+def test_locate_existing_worktree(tmp_path: Path) -> None:
+    main = _main_checkout(tmp_path)
+    wt = main / ".flow" / "worktrees" / "feature-FT-1-thing"
+    wt.mkdir(parents=True)
+    calls: list = []
+    runner = _locate_runner(
+        worktree_list=_porcelain([(str(main), "main"), (str(wt), "feature/FT-1-thing")]),
+        calls=calls,
+    )
+    result = fw.locate_or_reseed(
+        ticket="FT-1", branch="feature/FT-1-thing", main_root=main, runner=runner
+    )
+    assert result == {"worktree": str(wt), "reseeded": False}
+    # LOCATE never adds a worktree
+    assert not any(c[:3] == ["git", "worktree", "add"] for c in calls)
+
+
+def test_reseed_when_externally_removed(tmp_path: Path) -> None:
+    # the worktree was reaped; locate-or-reseed checks out the EXISTING remote
+    # branch (no -b) and re-copies config (reseeded:true).
+    main = _main_checkout(tmp_path)
+    calls: list = []
+    # worktree list shows only main (the ticket's worktree is gone)
+    runner = _locate_runner(
+        worktree_list=_porcelain([(str(main), "main")]),
+        calls=calls,
+        main=main,
+    )
+    result = fw.locate_or_reseed(
+        ticket="FT-1", branch="feature/FT-1-thing", main_root=main, runner=runner
+    )
+    assert result["reseeded"] is True
+    wt = Path(result["worktree"])
+    assert wt == main.resolve() / ".flow" / "worktrees" / "feature-FT-1-thing"
+    assert wt.exists()
+    # fetched the existing remote branch, then checked it out WITHOUT -b
+    assert ["git", "fetch", "origin", "feature/FT-1-thing"] in calls
+    add = next(c for c in calls if c[:3] == ["git", "worktree", "add"])
+    assert "-b" not in add
+    assert add == ["git", "worktree", "add", str(wt), "feature/FT-1-thing"]
+    # config re-copied (the gitignored dev config from main)
+    assert (wt / ".env").read_text(encoding="utf-8") == "SECRET=1\n"
+    assert (wt / ".claude" / "settings.json").exists()
+    # flow config ensured + memory redirect written
+    assert (wt / ".flow" / "workspace.toml").exists()
+    assert (wt / ".flow" / "memory-root").read_text(encoding="utf-8").strip() == str(
+        main.resolve() / ".flow"
+    )
+
+
+def test_locate_or_reseed_cli_locate(tmp_path: Path, monkeypatch, capsys) -> None:
+    import json
+
+    main = _main_checkout(tmp_path)
+    wt = main / ".flow" / "worktrees" / "feature-FT-1-thing"
+    wt.mkdir(parents=True)
+    monkeypatch.setattr(
+        fw,
+        "_default_runner",
+        lambda: _locate_runner(
+            worktree_list=_porcelain([(str(main), "main"), (str(wt), "feature/FT-1-thing")]),
+            calls=[],
+        ),
+    )
+    rc = fw.cli_main(
+        [
+            "locate-or-reseed",
+            "--ticket",
+            "FT-1",
+            "--branch",
+            "feature/FT-1-thing",
+            "--main-root",
+            str(main),
+        ]
+    )
+    assert rc == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["reseeded"] is False
+    assert out["worktree"] == str(wt)

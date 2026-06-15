@@ -701,3 +701,40 @@ def test_engine_ignores_untracked_files(tmp_path: Path) -> None:
     _write(skill / "scripts" / "engine.py", "X = 9\n")  # tracked file still trips
     swapped = snapshot.compute_snapshot(workspace_root, skill_root=skill)
     assert swapped["engine"] != before["engine"]
+
+
+def test_snapshot_revision_isolation(tmp_path: Path) -> None:
+    # write_snapshot(.., revision="r1") nests under the revision dir; the
+    # ticket-level sha is untouched, and no-revision behavior is unchanged.
+    skill_root = _make_skill_root(tmp_path)
+    workspace_root = _make_workspace(tmp_path, _bare_workspace_text())
+
+    snapshot.write_snapshot(workspace_root, "FT-1", skill_root=skill_root)
+    ticket_sha = snapshot.snapshot_sha_path(workspace_root, "FT-1")
+    ticket_sha_before = ticket_sha.read_text(encoding="utf-8")
+
+    rev_json = snapshot.write_snapshot(workspace_root, "FT-1", skill_root=skill_root, revision="r1")
+    rev_sha = snapshot.snapshot_sha_path(workspace_root, "FT-1", revision="r1")
+    assert rev_json == snapshot.snapshot_json_path(workspace_root, "FT-1", revision="r1")
+    assert (
+        rev_sha == workspace_root / ".flow" / "runs" / "FT-1" / "revisions" / "r1" / "snapshot.sha"
+    )
+    assert rev_sha.exists()
+    # the ticket-level sha is byte-untouched by the revision write
+    assert ticket_sha.read_text(encoding="utf-8") == ticket_sha_before
+
+    # classify_drift against the revision baseline sees match; drifting workspace.toml
+    # trips the revision baseline (proves the revision sha is the one being read).
+    ok, detail = snapshot.verify_snapshot(
+        workspace_root, "FT-1", skill_root=skill_root, revision="r1"
+    )
+    assert ok is True and detail == "match"
+
+    _write(
+        workspace_root / ".flow" / "workspace.toml",
+        _bare_workspace_text() + "\n# user edit\n",
+    )
+    ok, detail = snapshot.verify_snapshot(
+        workspace_root, "FT-1", skill_root=skill_root, revision="r1"
+    )
+    assert ok is False and "workspace_toml" in detail
