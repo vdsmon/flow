@@ -34,8 +34,8 @@ plugins/flow/**/.venv/
 # does not reach the subdir)
 **/.flow/tickets/*.claim
 **/.flow/memory-root
-**/.flow/recall-pending.jsonl
-**/.flow/recall-pending.jsonl.lock
+# live queue + .lock flock + .stale eviction sidecar + .tmp atomic-write residue
+**/.flow/recall-pending.jsonl*
 **/.flow/launch-ledger/
 **/.flow/fleet/
 # per-namespace memory + friction + ship-events (local, per-machine)
