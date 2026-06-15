@@ -211,7 +211,7 @@ else
   # NOT collide with SONNET-LADDER / DECISION / TRIAGE-DECISION / "flow --auto could
   # not self-approve". The 3-state ladder mirrors the §C SONNET-LADDER one-for-one.
   MARK=$(bd show <key> --include-comments --json \
-    | python3 -c 'import sys,json,re;cs=json.load(sys.stdin);cs=cs[0] if isinstance(cs,list) else cs;t=[ (c.get("text") or "") for c in (cs.get("comments") or []) ];m=[x for s in t for x in re.findall(r"STRANDED-RECOVERY: (attempt-\d+)", s)];print(m[-1] if m else "")')
+    | python3 -c 'import sys,json,re;cs=json.load(sys.stdin);cs=cs[0] if isinstance(cs,list) else cs;t=[ (c.get("text") or "") for c in (cs.get("comments") or []) ];nums=[int(x) for s in t for x in re.findall(r"STRANDED-RECOVERY: attempt-(\d+)", s)];print(f"attempt-{max(nums)}" if nums else "")')
   if [ "$MARK" = "attempt-2" ]; then
     # second recovery relaunch ALSO re-stranded -> give up to the human. Reap the
     # dirty worktree (cleanup), do NOT reopen; block + a triage stem so it surfaces

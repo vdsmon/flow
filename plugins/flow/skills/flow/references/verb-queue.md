@@ -136,7 +136,7 @@ else
   # ATTEMPT-N BOUND (bd-comment marker, distinct STRANDED-RECOVERY: stem; persists across
   # reopen->relaunch->re-strand). 3-state ladder, identical to verb-evolve.md §Recover.
   MARK=$(bd show <key> --include-comments --json \
-    | python3 -c 'import sys,json,re;cs=json.load(sys.stdin);cs=cs[0] if isinstance(cs,list) else cs;t=[ (c.get("text") or "") for c in (cs.get("comments") or []) ];m=[x for s in t for x in re.findall(r"STRANDED-RECOVERY: (attempt-\d+)", s)];print(m[-1] if m else "")')
+    | python3 -c 'import sys,json,re;cs=json.load(sys.stdin);cs=cs[0] if isinstance(cs,list) else cs;t=[ (c.get("text") or "") for c in (cs.get("comments") or []) ];nums=[int(x) for s in t for x in re.findall(r"STRANDED-RECOVERY: attempt-(\d+)", s)];print(f"attempt-{max(nums)}" if nums else "")')
   if [ "$MARK" = "attempt-2" ]; then
     # two recovery relaunches both re-stranded -> give up to the human. Reap (cleanup),
     # do NOT reopen; block + triage stem (surfaces in /flow triage). REAP BEFORE BLOCK.
