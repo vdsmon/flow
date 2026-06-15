@@ -743,6 +743,20 @@ Exit codes: 0=ok, 1=state missing/corrupt, 2=diff-extract git error, 3=I/O.
 Reuses: `state.read()`, `ticket_frontmatter.read()`,
 `diff_extract.diff_since_stage()`.
 
+### `revise_config.py`
+
+Reader for the `[revise]` block of workspace.toml (revision sub-runs, epic flow-kx17).
+
+| Subcommand | Description |
+|------------|-------------|
+| `severity --workspace-root .` | Print `{"plain_comment_severity": <value>}`. Default `"minor"`; validated against `forge.THREAD_SEVERITY`. |
+
+`plain_comment_severity(root) -> str` — the configured floor; missing/unparseable workspace.toml or an invalid value → `"minor"` + stderr warning (always exit 0, so the review_loop bash capture stays valid).
+
+`apply_floor(threads, severity) -> list[dict]` — pure helper: bump every UNRESOLVED `minor` thread up to `severity`. Returns new dicts (input never mutated); no-op when `severity == "minor"`. Resolved/major/critical/nit threads pass through unchanged. The review_loop applies this loop-side so `forge_github._severity_from_state` stays pure of `[revise]` config.
+
+Reuses: `_workspace.load_workspace_toml()`, `forge.THREAD_SEVERITY`.
+
 ### `observe_ship_event.py`
 
 Sole writer of `<namespace>/ship-events/<ticket>.json`.
