@@ -781,6 +781,61 @@
       }
     },
     {
+      "case_id": "edrn-recover-stranded",
+      "split": "held_in",
+      "decider": "evolve_drain.decide",
+      "args": {
+        "select_result": {
+          "launch": [],
+          "launched_pending": []
+        },
+        "liveness": {},
+        "stranded": [
+          "flow-9ljv"
+        ]
+      },
+      "expected": {
+        "action": "recover",
+        "launch": [],
+        "stranded": [
+          "flow-9ljv"
+        ],
+        "parked": []
+      },
+      "source": "flow-9ljv"
+    },
+    {
+      "case_id": "edrn-ho-recover-beats-wait",
+      "split": "held_out",
+      "decider": "evolve_drain.decide",
+      "args": {
+        "select_result": {
+          "launch": [],
+          "launched_pending": []
+        },
+        "liveness": {
+          "flow-live": "live",
+          "flow-gone": "absent"
+        },
+        "stranded": [
+          "flow-s",
+          "flow-a"
+        ]
+      },
+      "expected": {
+        "action": "recover",
+        "launch": [],
+        "stranded": [
+          "flow-a",
+          "flow-s"
+        ],
+        "parked": [
+          "flow-gone"
+        ]
+      },
+      "source": "flow-9ljv"
+    },
+    {
       "case_id": "esm-not-maintainer",
       "split": "held_in",
       "decider": "evolve_self_merge.decide",

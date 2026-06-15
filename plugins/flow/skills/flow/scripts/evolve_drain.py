@@ -30,19 +30,37 @@ for the human. A still-running run reads "live" → the loop waits → it self-m
 → the next turn's reap clears the cap / `hot_inflight` → the next batch launches.
 A corrupt lease blocks until a human runs `recover takeover`.
 
+A fourth termination guard is the STRANDED gate: a `/flow <key> --auto` run that
+died PRE-PR (crash/zombie/OOM in plan or implement) strands its bead in_progress
+with a dirty orphan worktree but no lease and no PR, so every other channel reads
+it as gone and the loop would false-positive to "done". cli_main detects it (an
+in_progress evolve-scoped bead whose lease is non-live, that is not in
+`launched_pending`, and has NO PR open or merged) and feeds the key list to
+decide() as `stranded`; a non-empty `stranded` returns action "recover" (never
+"done"), and the loop reaps the dirty worktree + reopens the bead so the next turn
+relaunches it FRESH. See references/verb-evolve.md §drain (the recover branch).
+
 Exit codes: 0 ok; 2 = a `bd`/`git`/`gh` call failed; 4 = not a maintainer setup.
 """
 
 from __future__ import annotations
 
 import argparse
+import glob
 import json
 import sys
+from collections.abc import Sequence
 from pathlib import Path
 
 import launch_ledger
 import lease
+from _evolve_common import bead_labels
+from _evolve_common import key_from_ref as _key_from_ref
+from _evolve_common import loads as _loads
+from _evolve_common import ok as _ok
 from _evolve_common import run_dir_for as _run_dir_for
+from _runner import CwdRunner as Runner
+from _runner import cwd_default_runner as _default_runner
 from _timeutil import utcnow_iso
 from evolve_select import (
     NotMaintainer,
@@ -53,10 +71,21 @@ from evolve_select import (
 from maintainer import resolve_maintainer_repo
 
 
-def decide(select_result: dict, liveness: dict[str, str]) -> dict:
+def decide(
+    select_result: dict,
+    liveness: dict[str, str],
+    stranded: Sequence[str] = (),
+) -> dict:
     """Pure: map a select result + in-flight liveness to the loop's next action.
 
     launch non-empty            -> launch that batch.
+    launch empty, stranded non-empty -> recover (a pre-PR dead run left its bead
+                                   IN_PROGRESS + a dirty orphan worktree, invisible
+                                   to every other channel; the loop reaps the
+                                   worktree + reopens the bead so the next turn
+                                   relaunches it fresh). A non-empty `stranded` MUST
+                                   never let the loop read `done` — that was the
+                                   false-positive termination this gate closes.
     launch empty, a blocking run -> wait (live OR corrupt: corrupt cannot be
                                    confirmed dead, so it blocks a self-merge).
     launch empty, launched_pending non-empty -> wait (a launched-but-pre-lease run
@@ -66,19 +95,28 @@ def decide(select_result: dict, liveness: dict[str, str]) -> dict:
 
     `liveness` is the complete in-flight picture (open PRs + in-flight ready beads);
     `launched_pending` (from the select result) is the still-pre-lease launched keys;
+    `stranded` is the pre-PR-dead in_progress keys the CLI detected (empty for the
+    day-job `queue_drain` caller, which passes only the first two positionally);
     `parked` is the keys whose run is not live and not still bootstrapping — what the
     loop hands the human (withheld hot PRs, non-green drafts, orphaned branches).
+
+    The EMPTY-`stranded` path returns the byte-identical pre-stranded shape (no
+    `stranded` key), so the frozen `evolve_drain.decide` corpus stays green; only the
+    non-empty `recover` return carries the `stranded` list.
     """
     launch = list(select_result.get("launch") or [])
     if launch:
         return {"action": "launch", "launch": launch, "parked": []}
+    stranded_keys = sorted(set(stranded))
     launched_pending = set(select_result.get("launched_pending") or [])
     blocking = sorted(k for k, state in liveness.items() if state in ("live", "corrupt"))
     parked = sorted(
         k
         for k, state in liveness.items()
-        if state not in ("live", "corrupt") and k not in launched_pending
+        if state not in ("live", "corrupt") and k not in launched_pending and k not in stranded_keys
     )
+    if stranded_keys:
+        return {"action": "recover", "launch": [], "stranded": stranded_keys, "parked": parked}
     if blocking or launched_pending:
         return {"action": "wait", "launch": [], "parked": parked}
     return {"action": "done", "launch": [], "parked": parked}
@@ -99,6 +137,95 @@ def liveness_map(repo: Path, keys: list[str]) -> dict[str, str]:
                 lease.classify(run_dir, now, current_boot=current_boot, hostname=host).get("state")
             )
         )
+    return out
+
+
+def _merged_pr_keys(runner: Runner) -> set[str]:
+    """Flow keys with a MERGED PR (the join queue_drain.cli_main uses).
+
+    An in_progress bead with a merged PR is a different inconsistency (close, not
+    relaunch), so it is excluded from the stranded set.
+    """
+    merged = _loads(
+        _ok(
+            runner(
+                [
+                    "gh",
+                    "pr",
+                    "list",
+                    "--state",
+                    "merged",
+                    "--json",
+                    "number,headRefName",
+                    "--limit",
+                    "200",
+                ]
+            ),
+            "gh pr list",
+        )
+    )
+    return {
+        k
+        for p in merged
+        if isinstance(p, dict) and (k := _key_from_ref(str(p.get("headRefName") or "")))
+    }
+
+
+def _inprogress_evolve_keys(runner: Runner, *, include_proposals: bool) -> set[str]:
+    """Keys of IN_PROGRESS evolve beads (scoped to the evolve label set).
+
+    Scoped, not a bare `bd list --status in_progress`, so the evolve drain never
+    reaps a day-job run's worktree in the shared pool. `--limit 0` because bd list
+    defaults to 50 and would silently truncate.
+    """
+    keys: set[str] = set()
+    for label in bead_labels(include_proposals):
+        raw = _ok(
+            runner(
+                ["bd", "list", "-l", label, "--status", "in_progress", "--json", "--limit", "0"]
+            ),
+            "bd list",
+        )
+        keys |= {str(b["id"]) for b in _loads(raw) if isinstance(b, dict) and b.get("id")}
+    return keys
+
+
+def _worktree_for(repo: Path, key: str) -> str | None:
+    """The `.flow/worktrees/feature-<key>-*` worktree dir for `key`, if present."""
+    base = repo / ".flow" / "worktrees"
+    for wt in sorted(glob.glob(str(base / f"feature-{key}*"))):
+        if (Path(wt) / ".flow" / "runs" / key).exists():
+            return wt
+    return None
+
+
+def stranded_pre_pr(
+    repo: Path,
+    runner: Runner,
+    *,
+    launched_pending: set[str],
+    open_pr_keys: set[str],
+    include_proposals: bool = False,
+) -> list[dict]:
+    """In_progress evolve beads whose run died PRE-PR, invisible to every channel.
+
+    STRANDED iff ALL hold: the bead is in_progress (evolve-scoped), its lease is
+    non-live (not `live`/`corrupt`), it is NOT in the post-reconciliation
+    `launched_pending` (still-booting guard + TTL debounce), and it has NO PR in any
+    state (neither an open PR nor a merged PR). `branch` is best-effort; the prose
+    reaps by `--ticket`.
+    """
+    in_progress = _inprogress_evolve_keys(runner, include_proposals=include_proposals)
+    if not in_progress:
+        return []
+    merged = _merged_pr_keys(runner)
+    out: list[dict] = []
+    for key in sorted(in_progress):
+        if key in launched_pending or key in open_pr_keys or key in merged:
+            continue
+        if liveness_map(repo, [key]).get(key) in ("live", "corrupt"):
+            continue
+        out.append({"key": key, "branch": f"feature/{key}", "worktree": _worktree_for(repo, key)})
     return out
 
 
@@ -147,6 +274,16 @@ def cli_main(argv: list[str]) -> int:
         for key in sorted(pending & registered):
             launch_ledger.remove(repo, key)
         sel["launched_pending"] = sorted(pending - registered)
+        # STRANDED pre-PR detection: an in_progress evolve bead whose run died before
+        # opening a PR is invisible to every other channel (the loop reads `done`).
+        # Gate the done-termination on it + emit a recover list for the prose loop.
+        stranded = stranded_pre_pr(
+            repo,
+            _default_runner(repo),
+            launched_pending=set(sel["launched_pending"]),
+            open_pr_keys=open_pr_keys,
+            include_proposals=args.include_proposals,
+        )
     except NotMaintainer as exc:
         print(str(exc), file=sys.stderr)
         return 4
@@ -154,7 +291,8 @@ def cli_main(argv: list[str]) -> int:
         print(str(exc), file=sys.stderr)
         return 2
 
-    result = decide(sel, live)
+    result = decide(sel, live, stranded=[e["key"] for e in stranded])
+    result["stranded_pre_pr"] = stranded
     result["liveness"] = live
     result["select"] = sel
     result["include_proposals"] = args.include_proposals
