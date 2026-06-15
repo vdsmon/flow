@@ -178,3 +178,34 @@ def test_cli_manifest_invalid_exit_2(tmp_path: Path) -> None:
 def test_cli_unknown_handler_exit_3() -> None:
     rc = rh.cli_main(["--handler", "garbage"])
     assert rc == 3
+
+
+# ─── Cross-name skill fallback (_provides_skill) ───────────────────────────────
+
+
+def test_skill_cross_name_provides_fallback(tmp_path: Path) -> None:
+    # Bundle dir is "tools" (bundle.name = "tools") but the handler string is
+    # "skill:my-action", so select_bundle(result, "my-action") returns None.
+    # The fallback loop in _resolve_skill must find it via _provides_skill.
+    content = """\
+schema_version = 1
+
+[bundle]
+name = "tools"
+description = "A tools bundle providing my-action"
+
+[skills.create_pr]
+handler_string = "skill:my-action"
+required_capabilities = []
+required_outputs = []
+side_effects = []
+stage_compatibility = []
+"""
+    _write_manifest(tmp_path / "tools", content)
+    res = rh.resolve("skill:my-action", search_roots=[tmp_path])
+    assert res.handler_type == "skill"
+    assert res.installed is True
+    assert res.manifest_valid is True
+    assert res.skill_name == "my-action"
+    assert res.plugin_root == str(tmp_path / "tools")
+    assert rh._exit_code(res) == 0
