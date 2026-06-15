@@ -37,6 +37,7 @@ def compose(
     summary: str,
     scope: str | None = None,
     files: list[str] | None = None,
+    covers: list[str] | None = None,
 ) -> str:
     if type_ not in VALID_TYPES:
         raise ValueError(f"invalid commit type {type_!r}; valid: {VALID_TYPES}")
@@ -46,6 +47,11 @@ def compose(
         raise ValueError("ticket must be non-empty")
     header = f"{type_}({scope}): {summary}" if scope else f"{type_}: {summary}"
     lines: list[str] = [header, "", f"ticket: {ticket}"]
+    # covers: sibling tickets co-delivered by this one run. One `Closes <KEY>`
+    # footer per cover so the PR body lists every ticket the run satisfies.
+    for cover in covers or []:
+        if cover.strip():
+            lines.append(f"Closes {cover.strip()}")
     if files:
         lines.append("files:")
         for f in files:
@@ -65,6 +71,11 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         default=None,
         help="comma-separated list of files.",
     )
+    parser.add_argument(
+        "--covers",
+        default=None,
+        help="comma-separated sibling ticket keys co-delivered by this run (one Closes line each).",
+    )
     return parser.parse_args(argv)
 
 
@@ -74,6 +85,7 @@ def cli_main(argv: list[str]) -> int:
     except SystemExit as exc:
         return int(exc.code) if isinstance(exc.code, int) else 1
     files = [f.strip() for f in args.files.split(",")] if args.files else None
+    covers = [c.strip() for c in args.covers.split(",")] if args.covers else None
     try:
         out = compose(
             ticket=args.ticket,
@@ -81,6 +93,7 @@ def cli_main(argv: list[str]) -> int:
             summary=args.summary,
             scope=args.scope,
             files=files,
+            covers=covers,
         )
     except ValueError as exc:
         sys.stderr.write(f"compose-commit: {exc}\n")

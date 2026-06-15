@@ -459,6 +459,57 @@ def test_cli_epic_bead_exits_7(tmp_path: Path, monkeypatch) -> None:
     assert rc == 7
 
 
+# ─── covers (run-level ticket grouping) ───────────────────────────────────────
+
+
+class _PerKeyTracker:
+    """Tracker stand-in returning per-key issue types; every key reads open."""
+
+    def __init__(self, types: dict[str, str]):
+        self._types = types
+
+    def state(self, key):
+        return {"normalized": "open"}
+
+    def get(self, key):
+        return {"type": self._types.get(key, "task")}
+
+
+def test_covers_stamped_as_list(tmp_path: Path, monkeypatch) -> None:
+    import ticket_frontmatter
+
+    main = _main_checkout(tmp_path)
+    _patch_tracker(monkeypatch, _PerKeyTracker({"FT-1": "task", "FT-2": "task", "FT-3": "task"}))
+    res = _run(tmp_path, main, covers=["FT-2", "FT-3"], runner=_fake_runner(main=main))
+    fm = ticket_frontmatter.read(Path(res["worktree"]) / ".flow" / "tickets" / "FT-1.md")
+    assert fm["covers"] == ["FT-2", "FT-3"]
+
+
+def test_covers_self_reference_refused(tmp_path: Path, monkeypatch) -> None:
+    main = _main_checkout(tmp_path)
+    _patch_tracker(monkeypatch, _PerKeyTracker({"FT-1": "task"}))
+    with pytest.raises(fw._ConfigError, match="lead ticket itself"):
+        _run(tmp_path, main, covers=["FT-1"], runner=_fake_runner(main=main))
+
+
+def test_covers_epic_refused(tmp_path: Path, monkeypatch) -> None:
+    # lead is a task, a cover is an epic -> refuse (covers get the lead's floors)
+    main = _main_checkout(tmp_path)
+    _patch_tracker(monkeypatch, _PerKeyTracker({"FT-1": "task", "FT-9": "epic"}))
+    with pytest.raises(fw._EpicBead):
+        _run(tmp_path, main, covers=["FT-9"], runner=_fake_runner(main=main))
+
+
+def test_no_covers_omits_frontmatter_key(tmp_path: Path, monkeypatch) -> None:
+    import ticket_frontmatter
+
+    main = _main_checkout(tmp_path)
+    _patch_tracker(monkeypatch, _PerKeyTracker({"FT-1": "task"}))
+    res = _run(tmp_path, main, runner=_fake_runner(main=main))
+    fm = ticket_frontmatter.read(Path(res["worktree"]) / ".flow" / "tickets" / "FT-1.md")
+    assert "covers" not in fm
+
+
 # ─── planned_files gitignore gate ─────────────────────────────────────────────
 
 

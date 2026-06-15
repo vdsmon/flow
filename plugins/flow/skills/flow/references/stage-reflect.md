@@ -151,6 +151,8 @@ The taxonomy is closed:
    - Exit 4 → I/O error, or the workspace memory config is missing/invalid.
      Log and skip.
 
+   **Grouped runs (`covers` in frontmatter):** append the entry ONCE, attributed to the lead `--ticket <KEY>` (the run's identity), and name the covered keys in the entry body (e.g. "co-delivered FT-1207/1208"). Do NOT loop `memory_append` over the covers — the dedup id is `sha256(namespace + ticket + type + body)`, so per-cover appends create near-duplicate entries that recall later surfaces as dupes. One attributed entry that cites the covers keeps `knowledge.jsonl` clean and traceable.
+
 3b. **Supersede recalled entries this run disproved (lens A — always on).** For each `recalled_entries` item from the bundle, judge whether THIS run's `final_diff` disproves the behavior the entry asserts. The recalled entry was live context for this run; if your own change made it false, the dead entry must be retired so the next recall does not surface stale truth.
 
    - **AUTO-supersede ONLY when the disproof is ground truth** — the contradicting change is PRESENT in `final_diff` (this run itself changed the behavior the entry describes, not merely a guess that it looks stale). Append a NEW entry that cites this run / PR and states what is now true, supersedes-targeting the dead entry by its exact id:

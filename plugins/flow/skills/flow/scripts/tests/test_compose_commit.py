@@ -57,6 +57,39 @@ def test_empty_ticket_raises() -> None:
         compose_commit.compose(ticket="", type_="feat", summary="x")
 
 
+# ─── covers ──────────────────────────────────────────────────────────────────
+
+
+def test_covers_emit_closes_lines() -> None:
+    out = compose_commit.compose(
+        ticket="FT-1184", type_="fix", summary="x", covers=["FT-1207", "FT-1208"]
+    )
+    assert "ticket: FT-1184" in out
+    assert "Closes FT-1207" in out
+    assert "Closes FT-1208" in out
+
+
+def test_no_closes_when_no_covers() -> None:
+    out = compose_commit.compose(ticket="FT-1", type_="feat", summary="x")
+    assert "Closes " not in out
+
+
+def test_covers_blank_entries_skipped() -> None:
+    out = compose_commit.compose(ticket="FT-1", type_="fix", summary="x", covers=["FT-2", "  ", ""])
+    assert "Closes FT-2" in out
+    assert out.count("Closes ") == 1
+
+
+def test_cli_covers_comma_split(capsys: pytest.CaptureFixture[str]) -> None:
+    rc = compose_commit.cli_main(
+        ["--ticket", "FT-1184", "--type", "fix", "--summary", "wp", "--covers", "FT-1207,FT-1208"]
+    )
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "Closes FT-1207" in out
+    assert "Closes FT-1208" in out
+
+
 # ─── CLI ─────────────────────────────────────────────────────────────────────
 
 

@@ -11,6 +11,15 @@ A blocker needs no special ping: an `AskUserQuestion` surfaces natively as "need
 
 **Firing point (do-loop step e):** fire only when `$STAGE` is `review_loop` with `$STATUS` completed (CI green and every actionable reviewer thread resolved), reading the PR URL from the captured `create_pr.out`. Only when `review_loop`'s handler is `none` (no CI/review loop wired) do you fall back to firing at `create_pr` completed.
 
+## Covers PR-link fan-out (grouped runs only)
+
+When `create_pr` completes, read `covers` from `.flow/tickets/<KEY>.md` frontmatter. For each cover key, post the PR URL as a comment so every co-delivered ticket links to the PR that closes it:
+```bash
+${CLAUDE_SKILL_DIR}/scripts/tracker_cli.py --workspace-root . \
+  comment --key <COVER> --text "Covered by <KEY> — PR: <PR_URL>"
+```
+Best-effort (a failed cover comment never blocks the run); agent-followed, not dispatcher-enforced (v1 non-goal). The lead's own PR-link presentation is unchanged.
+
 ## PR-link presentation (do-loop step 5, run completion)
 
 After the loop exits cleanly and the lease is released, end the turn with the PR link as a distinct, highlighted block — the LAST thing in your message, visually separated from the rest of the summary. The PR URL is the one thing the user clicks first, so it must not be buried in a paragraph or a bullet list. Read it from `.flow/runs/<KEY>/stages/create_pr.out` (the `PR_URL=` line `create_pr` printed — the inline handler `create_pr.py` prints it; ship-it is only one legacy backend) and render it on its own, after a `---` rule, e.g.:
