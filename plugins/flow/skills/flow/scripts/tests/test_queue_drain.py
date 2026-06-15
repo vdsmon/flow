@@ -33,17 +33,29 @@ def _cp(stdout: str = "", returncode: int = 0) -> subprocess.CompletedProcess[st
 
 
 class _StubRunner:
-    """Answers the three tool calls cli_main makes outside select()."""
+    """Answers the tool calls cli_main makes outside select().
 
-    def __init__(self, *, evolve_keys=(), merged_prs=(), bead_status=None):
+    The two `bd list` queries are dispatched by `-l`: the label-scoped active
+    query (`_active_evolve_keys`, carries `-l evolve`) returns `evolve_keys`; the
+    unscoped day-job in_progress query (`_inprogress_dayjob_keys`, no `-l`)
+    returns `in_progress` bead dicts. `in_progress` defaults to `[]` so every
+    pre-flow-y8zs CLI test (which never expects stranded detection) stays green.
+    """
+
+    def __init__(self, *, evolve_keys=(), in_progress=(), merged_prs=(), bead_status=None):
         self.evolve_keys = list(evolve_keys)
+        self.in_progress = list(in_progress)
         self.merged_prs = list(merged_prs)
         self.bead_status = dict(bead_status or {})
         self.bd_show_calls: list[str] = []
+        self.bd_list_calls: list[list[str]] = []
 
     def __call__(self, args):
         if args[:2] == ["bd", "list"]:
-            return _cp(json.dumps([{"id": k} for k in self.evolve_keys]))
+            self.bd_list_calls.append(list(args))
+            if "-l" in args:
+                return _cp(json.dumps([{"id": k} for k in self.evolve_keys]))
+            return _cp(json.dumps(list(self.in_progress)))
         if args[:3] == ["gh", "pr", "list"]:
             return _cp(json.dumps(self.merged_prs))
         if args[:2] == ["bd", "show"]:
@@ -415,3 +427,92 @@ def test_cli_bead_status_gather_is_bounded(monkeypatch, tmp_path, capsys):
     assert rc == 0
     assert runner.bd_show_calls == ["flow-k"]
     assert _out(capsys)["reap"][0]["key"] == "flow-k"
+
+
+# ─── cli_main — STRANDED day-job detection (flow-y8zs queue parity) ───────────
+
+
+def test_cli_stranded_dayjob_true_positive_recovers(monkeypatch, tmp_path, capsys):
+    # an in_progress day-job bead, non-live (no worktree → absent), no PR, not
+    # launched_pending → STRANDED; decide() returns recover (never false-done).
+    runner = _StubRunner(in_progress=[{"id": "flow-strand"}])
+    _stub_cli(monkeypatch, tmp_path, _sel(), runner=runner)
+    rc = qd.cli_main(["--workspace-root", str(tmp_path)])
+    assert rc == 0
+    out = _out(capsys)
+    assert out["action"] == "recover"
+    assert [e["key"] for e in out["stranded_pre_pr"]] == ["flow-strand"]
+    assert out["stranded"] == ["flow-strand"]
+
+
+def test_cli_stranded_excludes_evolve_proposal_hot_labels(monkeypatch, tmp_path, capsys):
+    # the day-job scope is the inverse of evolve's: an in_progress bead carrying
+    # any of {evolve, proposal, hot} is NOT this queue's to recover (the evolve
+    # drain owns evolve/proposal; a hot bead never auto-launches on this queue).
+    runner = _StubRunner(
+        in_progress=[
+            {"id": "flow-evo", "labels": ["evolve"]},
+            {"id": "flow-prop", "labels": ["proposal"]},
+            {"id": "flow-hot", "labels": ["hot"]},
+        ]
+    )
+    _stub_cli(monkeypatch, tmp_path, _sel(), runner=runner)
+    rc = qd.cli_main(["--workspace-root", str(tmp_path)])
+    assert rc == 0
+    out = _out(capsys)
+    assert out["stranded_pre_pr"] == []
+    assert out["action"] == "done"
+
+
+def test_cli_stranded_excludes_epics(monkeypatch, tmp_path, capsys):
+    # a type-epic in_progress bead is a container, never a single-PR unit to relaunch.
+    runner = _StubRunner(in_progress=[{"id": "flow-epic", "issue_type": "epic"}])
+    _stub_cli(monkeypatch, tmp_path, _sel(), runner=runner)
+    rc = qd.cli_main(["--workspace-root", str(tmp_path)])
+    assert rc == 0
+    assert _out(capsys)["stranded_pre_pr"] == []
+
+
+def test_cli_stranded_skips_launched_pending(monkeypatch, tmp_path, capsys):
+    # in_progress + still in the launch→init window → NOT stranded (still booting).
+    runner = _StubRunner(in_progress=[{"id": "flow-boot"}])
+    _stub_cli(monkeypatch, tmp_path, _sel(launched_pending=["flow-boot"]), runner=runner)
+    rc = qd.cli_main(["--workspace-root", str(tmp_path)])
+    assert rc == 0
+    out = _out(capsys)
+    assert out["stranded_pre_pr"] == []
+    assert out["action"] == "wait"  # launched_pending still blocks
+
+
+def test_cli_stranded_skips_live_lease(monkeypatch, tmp_path, capsys):
+    # in_progress + LIVE lease → NOT stranded (the run is still working).
+    runner = _StubRunner(in_progress=[{"id": "flow-live"}])
+    repo = _stub_cli(monkeypatch, tmp_path, _sel(), runner=runner)
+    _write_lease(_pool_run_dir(repo, "flow-live"))
+    rc = qd.cli_main(["--workspace-root", str(tmp_path)])
+    assert rc == 0
+    assert _out(capsys)["stranded_pre_pr"] == []
+
+
+def test_cli_stranded_skips_open_and_merged_pr(monkeypatch, tmp_path, capsys):
+    # in_progress + an open PR (select's open_pr_keys) OR a merged PR → NOT stranded.
+    runner = _StubRunner(
+        in_progress=[{"id": "flow-openpr"}, {"id": "flow-mergedpr"}],
+        merged_prs=[{"number": 9, "headRefName": "feature/flow-mergedpr-slug"}],
+    )
+    _stub_cli(monkeypatch, tmp_path, _sel(open_pr_keys=["flow-openpr"]), runner=runner)
+    rc = qd.cli_main(["--workspace-root", str(tmp_path)])
+    assert rc == 0
+    assert _out(capsys)["stranded_pre_pr"] == []
+
+
+def test_cli_stranded_query_is_unscoped_not_evolve_labelled(monkeypatch, tmp_path, capsys):
+    # the day-job detection must query a BARE `bd list --status in_progress` (NO
+    # `-l evolve`) — the inverse of the evolve drain's label-scoped query. A
+    # regression that reused `-l evolve` would query the wrong queue.
+    runner = _StubRunner(in_progress=[{"id": "flow-x"}])
+    _stub_cli(monkeypatch, tmp_path, _sel(), runner=runner)
+    rc = qd.cli_main(["--workspace-root", str(tmp_path)])
+    assert rc == 0
+    inprog_queries = [c for c in runner.bd_list_calls if "in_progress" in c and "-l" not in c]
+    assert inprog_queries, "day-job detection must run a bare unscoped in_progress query"

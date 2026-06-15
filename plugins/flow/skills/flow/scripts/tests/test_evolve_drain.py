@@ -572,3 +572,47 @@ def test_cli_stranded_query_is_evolve_label_scoped(monkeypatch, tmp_path, capsys
         assert "in_progress" in call
         i = call.index("-l")
         assert call[i + 1] == "evolve"
+
+
+# ─── stranded_pre_pr — injectable in_progress scope (flow-y8zs, queue parity) ──
+
+
+def test_stranded_pre_pr_injected_keys_bypass_evolve_query(tmp_path):
+    # queue_drain's day-job path injects its own in_progress set; stranded_pre_pr
+    # then uses THAT set verbatim and never runs the evolve-label bd list query.
+    repo = tmp_path / "flow"
+    repo.mkdir()
+    runner = _StrandRunner(in_progress=["flow-evolve-unused"])
+    out = ed.stranded_pre_pr(
+        repo,
+        runner,
+        launched_pending=set(),
+        open_pr_keys=set(),
+        in_progress_keys={"flow-dayjob"},
+    )
+    assert [e["key"] for e in out] == ["flow-dayjob"]
+    # the injected set bypasses _inprogress_evolve_keys → no bd list query ran
+    assert runner.bd_list_calls == []
+
+
+def test_stranded_pre_pr_default_uses_evolve_query(tmp_path):
+    # the evolve path (in_progress_keys=None) still computes the set via the
+    # evolve-label bd list query — back-compat with evolve_drain.cli_main.
+    repo = tmp_path / "flow"
+    repo.mkdir()
+    runner = _StrandRunner(in_progress=["flow-evo"])
+    out = ed.stranded_pre_pr(repo, runner, launched_pending=set(), open_pr_keys=set())
+    assert [e["key"] for e in out] == ["flow-evo"]
+    assert runner.bd_list_calls, "the default path must run the evolve-scoped query"
+
+
+def test_stranded_pre_pr_injected_empty_returns_empty(tmp_path):
+    # an injected empty set short-circuits (no merged/gh probe needed).
+    repo = tmp_path / "flow"
+    repo.mkdir()
+    runner = _StrandRunner(in_progress=["flow-evolve-unused"])
+    out = ed.stranded_pre_pr(
+        repo, runner, launched_pending=set(), open_pr_keys=set(), in_progress_keys=set()
+    )
+    assert out == []
+    assert runner.bd_list_calls == []

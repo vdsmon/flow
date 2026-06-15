@@ -88,7 +88,7 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/launch_ledger.py prune --workspace-root .  #
 python3 ${CLAUDE_SKILL_DIR}/scripts/queue_drain.py --workspace-root .
 ```
 
-`queue_drain.py` runs `queue_select` (day-job ready beads: unlabelled `bd ready` minus epics and minus `evolve`/`proposal`/`hot`, in-flight dropped, backpressure ≥ `[queue] cap` open day-job PRs), annotates each in-flight day-job run with its lease liveness, and classifies merged PRs for reaping. It returns JSON `{action: "launch"|"wait"|"done", launch:[keys], parked:[keys], reap:[entries], liveness:{}, select:{...}}`. The wait gate is queue-scoped: the worktree pool and the launch ledger are shared with the evolve drain, so active-evolve keys are subtracted before liveness — this loop never blocks on (and never unmarks) a live evolve run. `select.launched_pending` lists the day-job keys still in the launch→init blind window; after `select` returns, the CLI physically removes a registered key's marker, an unregistered one blocks termination until it registers or its marker TTL-expires.
+`queue_drain.py` runs `queue_select` (day-job ready beads: unlabelled `bd ready` minus epics and minus `evolve`/`proposal`/`hot`, in-flight dropped, backpressure ≥ `[queue] cap` open day-job PRs), annotates each in-flight day-job run with its lease liveness, and classifies merged PRs for reaping. It returns JSON `{action: "launch"|"recover"|"wait"|"done", launch:[keys], parked:[keys], reap:[entries], stranded:[keys], stranded_pre_pr:[{key,branch,worktree}], liveness:{}, select:{...}}` (the top-level `stranded` key rides only the `recover` action; `stranded_pre_pr` is always present, empty when nothing is stranded). The wait gate is queue-scoped: the worktree pool and the launch ledger are shared with the evolve drain, so active-evolve keys are subtracted before liveness — this loop never blocks on (and never unmarks) a live evolve run. `select.launched_pending` lists the day-job keys still in the launch→init blind window; after `select` returns, the CLI physically removes a registered key's marker, an unregistered one blocks termination until it registers or its marker TTL-expires.
 
 **B. Reap — tear down merged-and-exited runs, every turn.** Each `reap` entry `{key, branch, pr, bead_active, has_worktree}` is a merged flow PR whose key still has a registered worktree or sits in this turn's launch batch — `queue_drain.py` has already dropped any such key from `launch`, so a merged-but-unclosed bead diverts here and never relaunches. For each entry:
 
@@ -117,9 +117,46 @@ When `bead_active` is true and the `bd close` FAILS, skip the branch delete + wo
 
   Each spawns a detached run that auto-plans and drives its PR to green — then **parks it** (ready for the maintainer's review; no self-merge) — or, when it cannot self-approve at ≥90% confidence, **defers** its bead in place (status → `deferred`, open questions commented) and exits. A deferred bead drops out of `bd ready`, so the loop stops relaunching it; defer-and-exit is the intended unattended outcome, not a failure. After launching, briefly wait (the `Monitor` tool, short cap; foreground `sleep` is blocked) until the new keys register a branch/PR, then loop back to **A**.
 
+- **`recover`** (launch empty, `stranded_pre_pr` non-empty) → run the **§Recover stranded pre-PR runs** recipe below, then loop immediately back to **A** (no Monitor-wait — the recovery is local, the next turn's select sees the reopened beads). A stranded entry is a day-job `/flow <key> --auto` run that died PRE-PR: its bead sits in_progress with a dirty orphan worktree but no lease and no PR, so every other channel (reap is merged-PR-only, the deferred path needs a terminal bead) reads it as gone and the loop would false-positive to `done`. `recover` outranks `wait`: it only touches the stranded bead's own dead worktree (fleet-rechecked first), so a live run blocking elsewhere does not defer it.
+
 - **`wait`** → a blocking run is in flight: a `live`/`corrupt` lease, or a `launched_pending` key still pre-lease. Wait with the `Monitor` tool until a run settles — a lease ceases to block, or a launched_pending run registers — capped at roughly a stage timeout; on the cap, loop back to **A** anyway (the next turn's reap + ledger TTL mop up a dead run). Then loop back to **A**.
 
-- **`done`** → nothing startable, nothing blocking. Exit the loop, go to **Report**.
+- **`done`** → nothing startable, nothing blocking, nothing stranded. Exit the loop, go to **Report**.
+
+**§Recover stranded pre-PR runs.** On a `recover` action, act on each entry in the step-**A** JSON's `stranded_pre_pr` (`{key, branch, worktree}`), then loop back to **A**. This is the day-job parity of the evolve drain's recovery (`references/verb-evolve.md` §Recover), identical in mechanism — only the detection scope differs: `queue_drain.py` classifies STRANDED over the DAY-JOB in_progress set (all in_progress beads minus epics minus `evolve`/`proposal`/`hot`, the inverse of evolve's per-label union), so the evolve drain's own in-flight runs are never touched. Each entry is in_progress, lease non-live, not in `launched_pending`, with NO PR open or merged. Recovery tears down the dirty worktree and reopens the bead so the NEXT turn's select relaunches it FRESH off `origin/main` — it NEVER do-resumes the dirty worktree (the do-resume re-dies at implement entry, witnessed flow-mmh3 attempt 2). The day-job loop never auto-merges, but stranded recovery is orthogonal to merging — a pre-PR death has no PR to merge. Skip ALL side effects under `--dry-run` (print the `stranded_pre_pr` set, run nothing). For each entry, run the SAME fleet-rechecked, reap-before-reopen/block, `STRANDED-RECOVERY:`-bounded recipe the evolve drain uses:
+
+```bash
+# fleet re-check FIRST (flow-8by2.3): classify ran lock-free; a bead that re-acquired a
+# lease in the classify->recover gap must NOT have its worktree reaped from under a now-live
+# run. is-live is lease-only, fail-safe (exit 0 = live = SKIP). fleet.py is tracker-agnostic
+# (keys, not evolve labels), so it works for a day-job key.
+if python3 ${CLAUDE_SKILL_DIR}/scripts/fleet.py is-live --key <key> --workspace-root .; then
+  echo "fleet: <key> went live after classify — not recovering this turn"
+else
+  # ATTEMPT-N BOUND (bd-comment marker, distinct STRANDED-RECOVERY: stem; persists across
+  # reopen->relaunch->re-strand). 3-state ladder, identical to verb-evolve.md §Recover.
+  MARK=$(bd show <key> --include-comments --json \
+    | python3 -c 'import sys,json,re;cs=json.load(sys.stdin);cs=cs[0] if isinstance(cs,list) else cs;t=[ (c.get("text") or "") for c in (cs.get("comments") or []) ];m=[x for s in t for x in re.findall(r"STRANDED-RECOVERY: (attempt-\d+)", s)];print(m[-1] if m else "")')
+  if [ "$MARK" = "attempt-2" ]; then
+    # two recovery relaunches both re-stranded -> give up to the human. Reap (cleanup),
+    # do NOT reopen; block + triage stem (surfaces in /flow triage). REAP BEFORE BLOCK.
+    python3 ${CLAUDE_SKILL_DIR}/scripts/flow_worktree.py reap --ticket <key> --main-root . \
+      && { bd update <key> --status blocked
+           python3 ${CLAUDE_SKILL_DIR}/scripts/tracker_cli.py --workspace-root . comment --key <key> \
+             --text "flow --auto could not self-approve: STRANDED-RECOVERY exhausted — <key> re-stranded pre-PR after two fresh relaunches (deterministic mid-pipeline crash). Needs a human: reopen (status->open) and run WITHOUT --auto, or fix the crash cause first."; }
+  else
+    # no marker (first strand) or attempt-1 (first recovery re-stranded) -> reap + reopen
+    # so the next turn relaunches FRESH, and stamp the next rung. REAP BEFORE REOPEN.
+    python3 ${CLAUDE_SKILL_DIR}/scripts/flow_worktree.py reap --ticket <key> --main-root . \
+      && { bd update <key> --status open
+           NEXT=$([ "$MARK" = "attempt-1" ] && echo attempt-2 || echo attempt-1)
+           python3 ${CLAUDE_SKILL_DIR}/scripts/tracker_cli.py --workspace-root . comment --key <key> \
+             --text "STRANDED-RECOVERY: $NEXT"; }
+  fi
+fi
+```
+
+`<key>` comes from the entry. **Reap-then-reopen / reap-then-block order is load-bearing in EVERY branch** (a failed reap leaves the bead in_progress → re-qualifies next turn → idempotent self-heal; the marker write is `&&`-gated on a clean reap so it doesn't advance on a partial failure). **The `STRANDED-RECOVERY:` marker bounds the cycle at TWO recovery relaunches** (no marker → relaunch + `attempt-1`; `attempt-1` → relaunch + `attempt-2`; `attempt-2` → block + triage stem, terminal — a `blocked` bead leaves in_progress so it drops out of the detector). The recover branch loops straight back to **A** with no Monitor-wait; the loop-level iteration cap is its outer bound.
 
 Optional session hygiene before reporting (same classification the evolve drain uses; it is key/intent-based, not evolve-label-gated, so finished day-job sessions classify too — follow `references/verb-evolve.md` step A2 for the stop + tombstone handling of each `stoppable` entry):
 
