@@ -4,6 +4,27 @@ The post-PR wait loop: after `create_pr` opens the PR, this stage waits on CI an
 
 The bare plugin default handler is `none` (a no-op skip) so a workspace with no `[forge]` / no CI degrades cleanly; flow's dogfood wires `review_loop = "inline"`. The predecessor is `create_pr`. This stage reaches `completed` when **CI is green AND there are no unresolved Major+ review threads**.
 
+## Revision mode
+
+When `<ticket-dir>` contains `/revisions/` this is a revision sub-run (see `references/verb-revise.md`): there is no `create_pr` predecessor — the SAME PR is updated in place, and the unresolved threads `review-threads` returns are the MAINTAINER's (the original run resolved the bot threads before delivery, so what remains unresolved is human).
+
+**No `create_pr.out`** — skip the `## Inputs` read below; resolve the (OPEN, guaranteed by verb-revise's step-2 guard) PR from the branch instead, and use this `$PR_ID` for §1 / §3 / §4:
+```bash
+PR_ID=$(python3 ${CLAUDE_SKILL_DIR}/scripts/forge_cli.py --workspace-root . detect-pr --branch "$(git rev-parse --abbrev-ref HEAD)" | python3 -c 'import sys,json;d=json.load(sys.stdin);print(d.get("id","") if d else "")')
+```
+
+Two deltas from the normal loop:
+
+- **Plain-comment floor.** Before the §4 address+resolve, pipe the fetched threads through the floor so an unresolved `minor` (a plain human comment) is bumped to the configured severity:
+  ```bash
+  THREADS=$(python3 ${CLAUDE_SKILL_DIR}/scripts/forge_cli.py --workspace-root . review-threads --pr "$PR_ID" \
+    | python3 ${CLAUDE_SKILL_DIR}/scripts/revise_config.py apply-floor --workspace-root .)
+  ```
+  `apply-floor` reads the threads array on stdin and returns it with every unresolved `minor` bumped to `[revise] plain_comment_severity`. When that floor is `major`, an unresolved minor thread enters the Major+ fix set; the default `minor` leaves the set unchanged (today's behavior). The bump is loop-side only — the forge adapter stays pure of `[revise]` config. Use `$THREADS` (not the raw `review-threads` output) for the §4 Major+ selection.
+- **Reply + resolve a human thread.** After a fix commit is pushed for a human thread, `post-reply` then `resolve-thread` exactly as §4 (the .1 capabilities); a reasoned-skip thread gets a reply and stays open, documented.
+
+The 3-fix-cycle cap is PER-REVISION (the revision seeded its own `state.json`, fresh counter) — no change. An instruction-sourced revision (no threads) just re-greens CI.
+
 ## Inputs
 
 Read the PR from the predecessor's captured output:

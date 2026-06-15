@@ -9,6 +9,25 @@ This stage absorbs the old separate test stage: you write the production code AN
 TDD discipline is MANDATORY.
 Write or update the tests that pin the new behavior, watch them fail, make them pass with the smallest sufficient change, then confirm the whole relevant suite is green before you return.
 
+## Revision mode (a revision sub-run)
+
+When `<ticket-dir>` contains `/revisions/`, this is a **revision** (see `references/verb-revise.md`): there is no `plan.out` (a revision has no plan stage). The fix SOURCE is, in order:
+
+1. `<ticket-dir>/instruction.md` if it exists — a free-text change-request the maintainer gave to `/flow revise`. Its text IS the work to do; treat it as the plan.
+2. else the PR's unresolved human review threads as the Major+ fix set. Resolve the PR from the branch and fetch its threads through the forge seam:
+   ```bash
+   PR_ID=$(python3 ${CLAUDE_SKILL_DIR}/scripts/forge_cli.py --workspace-root . detect-pr --branch "$(git rev-parse --abbrev-ref HEAD)" | python3 -c 'import sys,json;d=json.load(sys.stdin);print(d.get("id","") if d else "")')
+   python3 ${CLAUDE_SKILL_DIR}/scripts/forge_cli.py --workspace-root . review-threads --pr "$PR_ID"
+   ```
+   The unresolved Major+ threads (each carries `file` / `line` / `title` / `body`) are the work list.
+3. if BOTH are absent (no instruction, no unresolved Major+ thread) → there is nothing to revise. Finish this stage `completed` with a one-line "no actionable revision input" note; the review_loop terminal then passes on the already-green PR.
+
+Apply the fix with the same TDD discipline where a behavior change is involved (add or adjust the test that pins it). The implement subagent's "plan" is the instruction text / the thread list.
+
+`planned_files` / baseline: the do-loop's `records_diff_baseline` pre-hook reads `planned_files` from the shared frontmatter `.flow/tickets/<KEY>.md` — for a revision that is the ORIGINAL run's planned set, i.e. the PR's own files, which is the right starting baseline (a review comment mostly touches the PR's files). WIDEN via the existing post-implement reconcile (Steps below) for any new file the fix needs. No new baseline mechanism.
+
+The normal-run Steps below apply once the fix source is in hand.
+
 You do NOT commit.
 The commit stage owns staging, the commit message, and the tracker transition.
 Leave your work as uncommitted changes in the working tree.
