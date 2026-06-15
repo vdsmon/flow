@@ -369,6 +369,47 @@ def test_malformed_observed_at_goes_stale(tmp_path: Path) -> None:
     assert len(_stale_lines(tmp_path)) == 1
 
 
+# ─── .stale sidecar is ring-buffer capped ───────────────────────────────────────
+
+
+def test_stale_sidecar_capped_to_most_recent(tmp_path: Path, monkeypatch) -> None:
+    """Feeding more stale entries than _STALE_CAP keeps only the last-fed cap."""
+    monkeypatch.setattr(recall_pending, "_STALE_CAP", 3)
+    observed = [_iso(_NOW - timedelta(hours=25 + i)) for i in range(5)]
+    for obs in observed:
+        _append(tmp_path, hook_observed_at=obs)
+    evicted = recall_pending.evict_stale(tmp_path, now_iso=_NOW_ISO)
+    assert len(evicted) == 5
+    survivors = {json.loads(line)["hook_observed_at"] for line in _stale_lines(tmp_path)}
+    assert len(_stale_lines(tmp_path)) == 3
+    assert survivors == set(observed[-3:])
+    assert observed[0] not in survivors
+    assert observed[1] not in survivors
+
+
+def test_stale_sidecar_under_cap_retains_all(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(recall_pending, "_STALE_CAP", 10)
+    observed = [_iso(_NOW - timedelta(hours=25 + i)) for i in range(4)]
+    for obs in observed:
+        _append(tmp_path, hook_observed_at=obs)
+    recall_pending.evict_stale(tmp_path, now_iso=_NOW_ISO)
+    survivors = {json.loads(line)["hook_observed_at"] for line in _stale_lines(tmp_path)}
+    assert survivors == set(observed)
+
+
+def test_promote_path_also_caps_stale(tmp_path: Path, monkeypatch) -> None:
+    """The shared capped-append helper bounds the promote_matching path too."""
+    monkeypatch.setattr(recall_pending, "_STALE_CAP", 3)
+    observed = [_iso(_NOW - timedelta(hours=25 + i)) for i in range(5)]
+    for obs in observed:
+        _append(tmp_path, hook_observed_at=obs)
+    promoted = _promote(tmp_path, _fake_runner(0))
+    assert promoted == []
+    survivors = {json.loads(line)["hook_observed_at"] for line in _stale_lines(tmp_path)}
+    assert len(_stale_lines(tmp_path)) == 3
+    assert survivors == set(observed[-3:])
+
+
 def test_missing_observed_at_goes_stale(tmp_path: Path) -> None:
     entry = {
         "pending_id": "deadbeefdeadbeef",
