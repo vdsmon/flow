@@ -757,6 +757,20 @@ Reader for the `[revise]` block of workspace.toml (revision sub-runs, epic flow-
 
 Reuses: `_workspace.load_workspace_toml()`, `forge.THREAD_SEVERITY`.
 
+### `queue_reviews.py`
+
+Queue-status enrichment (epic flow-kx17.5): flags which parked PRs carry a NEW unresolved human review (a Major+ thread) so the `/flow queue` render can point the maintainer at `/flow revise <pr#>`. Consumed by `references/verb-queue.md`'s status render after the Parked section.
+
+| Flag | Description |
+|------|-------------|
+| `--workspace-root` | Workspace root (reads the `[forge]` block via `forge.read_forge_config`). Required. |
+| `--keys` | Comma-separated parked keys (the `parked` list from `queue_status`). |
+| `--pr-refs` | Comma-separated EVERY open-PR head ref (the slugged branch names from `gh pr list`); the script joins each key to its exact ref via `key_from_ref`. |
+
+`flag_parked_reviews(keys, pr_refs, adapter) -> list[dict]` — pure core. Resolves each parked key to its EXACT slugged head ref, `adapter.detect_pr(<ref>)` (a reconstructed bare `feature/<key>` would NOT match the real `feature/<key>-<slug>` branch), then `review_threads(pr["id"])` → counts native `severity in {major, critical}` and not `resolved`. Emits `{key, pr_id, pr_url, unresolved_major, threads:[{id, severity, title}]}` only for keys with `unresolved_major > 0`. Surfaces NATIVE Major+ only — no `revise_config` / `apply_floor` import (the plain-comment floor is a revise-time knob; applying it here would false-flag leftover bot minors). Best-effort: a per-key `forge.ForgeError` (incl. `NotSupported`) or a `detect_pr` → None is swallowed (that key skipped, the rest continue). Always exit 0 with a valid JSON array; no `[forge]` block / no keys → `[]`.
+
+Reuses: `_evolve_common.key_from_ref`, `forge.read_forge_config()` / `forge.make_forge()`.
+
 ### `observe_ship_event.py`
 
 Sole writer of `<namespace>/ship-events/<ticket>.json`.
