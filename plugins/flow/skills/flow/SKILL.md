@@ -25,6 +25,7 @@ See `references/background-pipeline.md`.
 `/flow do` is the **executor primitive** — the full pipeline, resuming at the next pending stage.
 `spec` enters the seeded worktree and flows into it in the same session; `do` also runs standalone to resume a run.
 `/flow revise <ticket|pr> ["instruction"]` turns a delivered run's OPEN PR into a revision sub-run that ingests review feedback (or a free-text change-request) and updates the SAME PR (`references/verb-revise.md`).
+`group` proposes run-level groupings (lead + covers) for the multi-ticket fold — the read-only front half that feeds `spec --covers` (`references/verb-group.md`).
 Everything else (`recall`, `status`, `triage`, `recover`, `sync`, `baseline`) is a work-state verb around the same pipeline.
 
 Built on a multi-tracker engine: the tracker is pluggable (Jira | beads); stages, handlers, and the memory namespace come from `.flow/workspace.toml` + `stage-registry.toml`.
@@ -39,9 +40,9 @@ If it equals a verb, route there.
 If `$ARGUMENTS` is empty, print the verb listing.
 Otherwise — a first token that is not any verb (a bare ticket key like `FT-123`, or a beads key like `sync-42`) — route to **spec**, taking that positional token as the ticket key (same key-resolution as spec step 2).
 Spec is the default because fire-and-forget is the primary path.
-**Multiple positional ticket keys** (e.g. `/flow FT-1 FT-2 FT-3`) — spec handles ONE ticket per run. Do not silently consume only the first: surface all the keys you were given and ask (via `AskUserQuestion`) whether to spec them sequentially (one plan + tail each) or fold related ones into a single piece of work, then proceed on that answer.
+**Multiple positional ticket keys** (e.g. `/flow FT-1 FT-2 FT-3`) — spec handles ONE ticket per run. Do not silently consume only the first: surface all the keys you were given and ask (via `AskUserQuestion`) whether to spec them sequentially (one plan + tail each) or **fold related ones into a single piece of work**, then proceed on that answer. **Fold = run-level grouping (`covers`):** pick a LEAD key that owns the run (lease / state / branch / memory stay lead-keyed) and pass the rest as `--covers FT-2,FT-3`. The lead's spec gate covers all of them, the PR carries one `Closes <KEY>` per cover, and the commit/PR/reflect steps fan out to close each (`references/verb-spec.md`). Group only tickets that are one coherent change (same files / shared deps); independent tickets stay sequential. A cover must be a distinct, live, non-epic ticket — the bootstrap refuses otherwise.
 (Exact-token match is what keeps this unambiguous: `sync-42` ≠ the verb `sync`, so a ticket key never collides with a verb.)
-`spec` also accepts the optional flags `--auto` (aliases `--aa`, `--yolo`) and `--e2e-recipe "<recipe>"` anywhere after the verb; they are ignored when reading the positional ticket key. A bare ticket key carries these flags through to spec too: `/flow --auto FT-123` routes to spec with `--auto` set.
+`spec` also accepts the optional flags `--auto` (aliases `--aa`, `--yolo`), `--e2e-recipe "<recipe>"`, and `--covers FT-2,FT-3` (sibling keys this run co-delivers) anywhere after the verb; they are ignored when reading the positional ticket key. A bare ticket key carries these flags through to spec too: `/flow --auto FT-123` routes to spec with `--auto` set.
 
 | First token | Verb | Reference |
 |------|------|------|
@@ -53,6 +54,7 @@ Spec is the default because fire-and-forget is the primary path.
 | `recall <query> [--branch X --top-n N]` | recall | `references/verb-recall.md` |
 | `recall --metric tickets-per-week [...]` | metric (recall passthrough) | `references/verb-recall.md` |
 | `status` (optionally `<ticket>`) | status | `references/verb-status.md` |
+| `group` (optionally `<key> ...`, `--mine`, `--filter open`) | group | `references/verb-group.md` |
 | `triage` (optionally `<key> "<answer>"`) | triage | `references/verb-triage.md` |
 | `recover` (optionally `<ticket>`) | recover | `references/verb-recover.md` |
 | `sync` | sync | `references/verb-sync-baseline.md` |

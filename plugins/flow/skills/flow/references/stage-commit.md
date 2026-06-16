@@ -132,6 +132,15 @@ The applied patch comes from the recorded `implement.diff` — NOT from `git add
      Do NOT swallow.
      Surface `failure_kind` + `failure_detail` and mark the stage status=failed.
 
+8. **Covers fan-out (grouped runs only).** Read `covers` from `.flow/tickets/<KEY>.md` frontmatter. If absent/empty, skip this step. Otherwise, for EACH cover key, transition it to `in_review` the same way as the lead (MCP-first, REST fallback), then leave a back-reference comment:
+   ```bash
+   ${CLAUDE_SKILL_DIR}/scripts/tracker_cli.py --workspace-root . \
+     transition --key <COVER> --to-state in_review --enqueue-on-transient
+   ${CLAUDE_SKILL_DIR}/scripts/tracker_cli.py --workspace-root . \
+     comment --key <COVER> --text "Co-delivered by <KEY> (same PR)."
+   ```
+   Covers are co-delivered, not independent runs: a cover transition that hits exit 1/3 is **best-effort** (warn + continue, same as the lead's transient/no-transition handling) and must **NOT** fail the lead's commit stage — the diff is already in git and the lead is the source of truth. Treat exit 2/4/5 on a cover as a loud warning, not a stage failure, for the same reason. This fan-out is agent-followed prose, not dispatcher-enforced (a v1 non-goal); under `--auto`/background it is best-effort.
+
 ## Outputs
 
 - A git commit on the current branch.

@@ -27,7 +27,7 @@ The live "which script does what" map. One line per script: purpose + CLI surfac
 
 | Script | Role | Surface / touches |
 |--------|------|-------------------|
-| `tracker.py` (lib) | Tracker Protocol base + `make_tracker()` factory + `CAPABILITY_ENUM`. | imported by `tracker_jira`, `tracker_beads`, `tracker_cli`, `sync`, `flow_worktree` (lazy in `_refuse_terminal_bead`) |
+| `tracker.py` (lib) | Tracker Protocol base + `make_tracker()` factory + `CAPABILITY_ENUM`. | imported by `tracker_jira`, `tracker_beads`, `tracker_cli`, `sync`, `group_candidates`, `group_persist`, `flow_worktree` (lazy in `_refuse_terminal_bead`) |
 | `tracker_cli.py` | CLI wrapper around the Protocol (the only tracker surface the prose calls). | `get` / `state` / `transition` / `comment` / `create` / `is-shipped` / `list-assigned` / `download-attachments` |
 | `tracker_jira.py` (lib) | Jira Cloud REST v3 + Agile/1.0 adapter (Basic auth via `ATLASSIAN_EMAIL`/`ATLASSIAN_API_TOKEN`). | imported by tracker.py (lazy in make_tracker) |
 | `tracker_beads.py` (lib) | Beads `bd` CLI adapter (local-only tracker). | imported by triage, tracker (make_tracker factory) |
@@ -100,6 +100,8 @@ Pluggable PR-host seam, structural twin of the tracker seam. The `create_pr` and
 | Script | Role | Surface / touches |
 |--------|------|-------------------|
 | `status.py` | Read-only run/stage/lease table (no network). | `[--ticket] --workspace-root [--json]` |
+| `group_candidates.py` | `/flow group` core: fetch + normalize grouping candidates (explicit keys, or the `--mine` assigned selector) through the tracker seam, then surface empty-body title-twin duplicate hints. Read-only; the lead+covers clustering judgment lives in `references/verb-group.md`. Imports `tracker`, `tracker_cli`. | `[<key> ...] --mine --filter --workspace-root`; exit 1 tracker / 2 config / 3 no input. Consumed by `references/verb-group.md` |
+| `group_persist.py` | `/flow group` defer-path persistence: record a cover set as a `flow-group covers:` marker comment on the lead (`persist`, idempotent), and read it back (`derive`) so a grouping survives propose→act across sessions. Cross-backend (only `comment`/`get`); `spec` auto-derives `--covers` from it. Imports `tracker`, `tracker_cli`. | `persist --lead --covers --workspace-root` / `derive --lead --workspace-root`; exit 1 tracker / 2 config / 3 args. Consumed by `references/verb-group.md` + `references/verb-spec.md` |
 | `triage.py` | `list`: read-only `deferred` + decided-mode `blocked` queue with each one's defer comment (beads only), every row tagged `queue=evolve\|day-job` (evolve label); `--ready` opt-in adds the ready queues. `decided`: probe a bead's recorded triage decision; returns `{decided,answer,is_hot}` JSON. Houses `_GUARD_FILES` + `is_hot_change`. | `list [--workspace-root --json --ready]` / `decided --key [--workspace-root --files]` / `adjudicate-enabled [--workspace-root]` / `adjudicate-hot-enabled [--workspace-root]` |
 | `recover.py` | Inspect + remediate a broken run. | `detect` / `takeover` / `retry` / `skip` / `abort` / `reload-snapshot` |
 | `flow_friction.py` | Append-only `friction.jsonl` log (the reflect/self-evolution feedstock). | `--ticket --run-id --stage --type --body [--detail --severity]` |

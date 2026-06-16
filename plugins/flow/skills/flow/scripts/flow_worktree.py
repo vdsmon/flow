@@ -602,6 +602,21 @@ def _refuse_epic_bead(*, ticket: str, main_root: Path) -> None:
         )
 
 
+def _refuse_invalid_covers(*, ticket: str, covers: list[str], main_root: Path) -> None:
+    """Each cover must be a distinct, live, non-epic ticket — the lead's floors, looped.
+
+    The epic/terminal reads fail-open (a flaky tracker never strands the run); the
+    self-check (a cover that is the lead itself) is deterministic and always refuses.
+    """
+    for cover in covers:
+        if cover == ticket:
+            raise _ConfigError(
+                f"cover {cover!r} is the lead ticket itself; covers must be distinct siblings"
+            )
+        _refuse_terminal_bead(ticket=cover, main_root=main_root)
+        _refuse_epic_bead(ticket=cover, main_root=main_root)
+
+
 def bootstrap(
     *,
     ticket: str,
@@ -612,6 +627,7 @@ def bootstrap(
     worktree_override: str | None = None,
     extra_copy: list[str] | None = None,
     planned_files: list[str] | None = None,
+    covers: list[str] | None = None,
     commit_type: str | None = None,
     commit_summary: str | None = None,
     e2e_recipe: str | None = None,
@@ -637,6 +653,12 @@ def bootstrap(
     # Refuse an epic before any git mutation (flow-jvxj): mirrors the select-side
     # `issue_type != "epic"` filter at the bootstrap chokepoint.
     _refuse_epic_bead(ticket=ticket, main_root=main_root)
+
+    # covers: sibling tickets this one run co-delivers. They ride the lead's
+    # identity (lease / state / branch / memory stay lead-keyed); only the
+    # delivery steps fan out over them.
+    covers = [c for c in (covers or []) if c.strip()]
+    _refuse_invalid_covers(ticket=ticket, covers=covers, main_root=main_root)
 
     _enforce_hot_floor(
         ticket=ticket,
@@ -726,6 +748,11 @@ def bootstrap(
             # `planned_files`; seeding it here keeps the tail from pausing to ask.
             # Pass a TOML-array literal so ticket_frontmatter coerces it to a list.
             fm_updates["planned_files"] = "[" + ", ".join(f'"{f}"' for f in planned_files) + "]"
+        if covers:
+            # the delivery fan-out (transition / PR comment / reflect) reads frontmatter
+            # `covers`; seeding it here is what lets those steps close every co-delivered
+            # ticket without re-asking. TOML-array literal so ticket_frontmatter coerces it.
+            fm_updates["covers"] = "[" + ", ".join(f'"{c}"' for c in covers) + "]"
         if commit_type:
             fm_updates["commit_type"] = commit_type
         if commit_summary:
@@ -771,6 +798,13 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         default=None,
         help="comma-separated files the plan will touch; seeds frontmatter planned_files "
         "so the implement pre-hook + commit stage don't pause to ask",
+    )
+    p.add_argument(
+        "--covers",
+        default=None,
+        help="comma-separated sibling ticket keys this one run co-delivers; seeds frontmatter "
+        "covers so the delivery fan-out (transition / PR comment / reflect) closes each one. "
+        "Lead owns identity (lease/state/branch); covers must be distinct, live, non-epic",
     )
     p.add_argument("--commit-type", default=None)
     p.add_argument("--commit-summary", default=None)
@@ -860,6 +894,7 @@ def cli_main(argv: list[str]) -> int:
         if args.planned_files
         else []
     )
+    covers = [s.strip() for s in args.covers.split(",") if s.strip()] if args.covers else []
     try:
         result = bootstrap(
             ticket=args.ticket,
@@ -870,6 +905,7 @@ def cli_main(argv: list[str]) -> int:
             worktree_override=args.worktree_path,
             extra_copy=extra,
             planned_files=planned,
+            covers=covers,
             commit_type=args.commit_type,
             commit_summary=args.commit_summary,
             e2e_recipe=args.e2e_recipe,
