@@ -56,7 +56,9 @@ consumes it. It is the front half of the arc:
 6. **Emit the proposal** (read-only; the human runs it):
    - one table per cluster: lead, covers, dependency order, the coupling evidence.
    - the residual SOLO tickets (run individually).
-   - the dup-close list.
+   - the dup-close list (link `<dup> duplicates <keeper>` + transition the dup to
+     the tracker's done state — a one-time terminal action the human runs in the
+     tracker; not auto-executed).
    - a ready-to-run line per cluster:
      ```
      /flow <lead> --covers <c1>,<c2>,...
@@ -64,3 +66,19 @@ consumes it. It is the front half of the arc:
    Never invoke `spec` / `do` yourself. `group` proposes; the human approves and
    runs. The proposal is advice grounded in tracker structure + a file-overlap
    check, not an automatic launch.
+
+7. **Persist the decision when you are NOT acting on it now (defer path).** A
+   proposal you do not run immediately would otherwise live only in this output —
+   and the costly part (which lead, which dups confirmed, file-overlap verified) is
+   lost by next session. Record the cover set durably on the lead so `spec` picks
+   it up later:
+   ```bash
+   python3 ${CLAUDE_SKILL_DIR}/scripts/group_persist.py persist \
+     --lead <LEAD> --covers <c1>,<c2>,... --workspace-root .
+   ```
+   This writes a `flow-group covers:` marker comment on the lead (idempotent —
+   re-persisting the same set is a no-op). It survives sessions / machines and is
+   team-visible. Later, `/flow spec <LEAD>` with NO `--covers` auto-derives the set
+   from that marker (verb-spec.md). On the inline path (you run `spec --covers` in
+   this same session) persistence is unnecessary — the frontmatter `covers` the
+   bootstrap stamps is the durable record from that point on.
