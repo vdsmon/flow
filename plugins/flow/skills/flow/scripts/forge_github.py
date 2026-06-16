@@ -27,6 +27,7 @@ from forge import (
     CICheck,
     CIStatus,
     ForgeError,
+    NotSupported,
     PullRequest,
     ReviewThread,
 )
@@ -98,6 +99,7 @@ class GitHubAdapter:
             {"name": "squash_merge", "supported": True},
             {"name": "delete_branch", "supported": True},
             {"name": "ci_rollup", "supported": True},
+            {"name": "default_reviewers", "supported": False},
         ]
 
     # ─── helpers ──────────────────────────────────────────────────────────
@@ -252,6 +254,12 @@ class GitHubAdapter:
 
     def delete_branch(self, branch: str) -> None:
         self._ok(["git", "push", "origin", "--delete", branch], "git push --delete")
+
+    def set_default_reviewers(self, pr_id: str) -> None:
+        # GitHub has no default-reviewers REST surface for a solo repo; CODEOWNERS
+        # covers review assignment. The first supported=false capability in a live
+        # adapter, so create_pr degrades cleanly.
+        raise NotSupported("github adapter does not set default reviewers")
 
     # ─── review threads (GraphQL) ─────────────────────────────────────────
 

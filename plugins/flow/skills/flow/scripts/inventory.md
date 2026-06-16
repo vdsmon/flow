@@ -180,6 +180,8 @@ This handles both project styles without forcing users to know which they're on.
 
 Pluggable PR-host seam (`forge.py` Protocol + `forge_cli.py` + `forge_github.py` + `forge_bitbucket.py`), structural twin of the tracker seam. Selected by `[forge] backend` in `workspace.toml`; the block is OPTIONAL (absent = no forge, `create_pr`/`review_loop` stay `none`).
 
+`create_pr` builds the PR body from the HEAD commit body (`pr_body.build_body` strips the `ticket:`/`files:` trailer, keeps `Closes <KEY>` as a footer, unwraps prose hard-wraps) then runs a deterministic de-AI scrub (`pr_body.scrub`: em-dash → punctuation, sentence-case `# Heading`, flatten `- **Term:**` bullets) before `open_pr`, and calls `set_default_reviewers` on first open (swallowing `NotSupported` + any `ForgeError` so a reviewer hiccup never fails an open PR). The `default_reviewers` capability is `True` on Bitbucket, `False` on GitHub (the first `supported=false` capability in a live adapter).
+
 ### Operation surface (forge_cli subcommand → gh / bkt)
 
 | Op (Protocol / `forge_cli`) | GitHub (`gh`) | Bitbucket (`bkt`) |
@@ -194,6 +196,7 @@ Pluggable PR-host seam (`forge.py` Protocol + `forge_cli.py` + `forge_github.py`
 | `mark_ready` / `mark-ready` | `gh pr ready PR` | `bkt api .../pullrequests/PR -X PUT -d {draft:false}` |
 | `merge` / `merge` | `gh pr merge PR --squash` | `bkt api .../pullrequests/PR/merge -X POST -d {merge_strategy:squash}` |
 | `delete_branch` / `delete-branch` | `git push origin --delete B` | `git push origin --delete B` |
+| `set_default_reviewers` (no `forge_cli` subcommand; `create_pr` calls the adapter directly) | **NotSupported** (solo repo, CODEOWNERS covers reviewers) | `GET 2.0/user` (resolve author) + `GET .../default-reviewers`, drop author by `account_id`, `PUT .../pullrequests/PR -d {reviewers:[{uuid}...]}` |
 
 Cap-gated ops (`review-threads`/`post-reply`/`resolve-thread`/`mark-ready`/`delete-branch`) degrade on `NotSupported` to `{"supported": false}` exit 0. Exit codes: 0 ok / 1 transient forge error / 2 config invalid (incl. no `[forge]`) / 3 bad args.
 

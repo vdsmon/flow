@@ -5,6 +5,7 @@ import subprocess
 
 import pytest
 
+from forge import NotSupported
 from forge_github import GitHubAdapter
 
 Recorder = list[list[str]]
@@ -309,6 +310,14 @@ def test_capabilities_review_threads_on():
     assert caps["review_threads"] is True
     assert caps["ci_rollup"] is True
     assert caps["squash_merge"] is True
+    assert caps["default_reviewers"] is False
+
+
+def test_set_default_reviewers_raises_not_supported():
+    fg, calls = _adapter()
+    with pytest.raises(NotSupported):
+        fg.set_default_reviewers("7")
+    assert calls == []  # no host call made
 
 
 def test_review_threads_normalizes_changes_requested_as_major():

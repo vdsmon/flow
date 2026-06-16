@@ -279,3 +279,53 @@ def test_merge_no_squash_emits_empty_payload():
 def test_capabilities_all_supported():
     fg, _ = _adapter(lambda a: "null")
     assert all(c["supported"] for c in fg.capabilities)
+
+
+def test_set_default_reviewers_filters_author_and_puts():
+    base = "2.0/repositories/ws/rs"
+    me = {"account_id": "AUTHOR", "uuid": "{author-uuid}"}
+    default_reviewers = {
+        "values": [
+            {"account_id": "AUTHOR", "uuid": "{author-uuid}"},  # dropped (author)
+            {"account_id": "R1", "uuid": "{r1-uuid}"},
+            {"account_id": "R2", "uuid": "{r2-uuid}"},
+        ]
+    }
+
+    def handler(a):
+        path = _api_path(a)
+        if path == "2.0/user":
+            return json.dumps(me)
+        if path == f"{base}/default-reviewers":
+            return json.dumps(default_reviewers)
+        if path == f"{base}/pullrequests/9":
+            return json.dumps({"id": 9})  # PUT echo
+        return "null"
+
+    fg, calls = _adapter(handler)
+    fg.set_default_reviewers("9")
+
+    # GET /user then GET default-reviewers then PUT the PR, author filtered out.
+    assert _api_path(calls[0]) == "2.0/user"
+    assert _api_path(calls[1]) == f"{base}/default-reviewers"
+    put = next(c for c in calls if _api_path(c) == f"{base}/pullrequests/9")
+    assert put[put.index("-X") + 1] == "PUT"
+    payload = json.loads(put[put.index("-d") + 1])
+    assert payload == {"reviewers": [{"uuid": "{r1-uuid}"}, {"uuid": "{r2-uuid}"}]}
+
+
+def test_set_default_reviewers_empty_when_only_author():
+    base = "2.0/repositories/ws/rs"
+
+    def handler(a):
+        path = _api_path(a)
+        if path == "2.0/user":
+            return json.dumps({"account_id": "AUTHOR", "uuid": "{a}"})
+        if path == f"{base}/default-reviewers":
+            return json.dumps({"values": [{"account_id": "AUTHOR", "uuid": "{a}"}]})
+        return json.dumps({"id": 9})
+
+    fg, calls = _adapter(handler)
+    fg.set_default_reviewers("9")
+    payload = _payload_for_path(calls, f"{base}/pullrequests/9")
+    assert payload == {"reviewers": []}

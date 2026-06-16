@@ -37,10 +37,11 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pr_body
 from _runner import CwdRunner as Runner
 from _runner import cwd_default_runner as _default_runner
 from _workspace import WorkspaceConfigError, load_workspace_toml
-from forge import Forge, ForgeError, make_forge, read_forge_config
+from forge import Forge, ForgeError, NotSupported, make_forge, read_forge_config
 
 _PROTECTED = {"main", "master", "dev", "develop"}
 
@@ -118,11 +119,28 @@ def open_or_get_pr(
         # commit_summary. Not `gh --fill`: a branch cut off a non-main base carries
         # already-merged commits, and --fill then mistitles from the branch name.
         subject = _ok(run(["git", "log", "-1", "--format=%s"]), "git log").strip()
-        body = _ok(run(["git", "log", "-1", "--format=%b"]), "git log").strip()
-        pr = fg.open_pr(base, branch, subject, body or subject, draft)
+        raw = _ok(run(["git", "log", "-1", "--format=%b"]), "git log")
+        body = pr_body.scrub(pr_body.build_body(raw)).strip() or subject
+        pr = fg.open_pr(base, branch, subject, body, draft)
     except ForgeError as exc:
         raise ToolError(str(exc)) from exc
+    # Set-on-open only: open_or_get_pr early-returns on an existing PR, so reviewers
+    # apply on the first open. A reviewer-API failure must NEVER fail an open PR.
+    _set_reviewers(fg, pr["id"])
     return str(pr["url"])
+
+
+def _set_reviewers(fg: Forge, pr_id: str) -> None:
+    """Attach default reviewers; swallow NotSupported (host degrade) AND any other
+    ForgeError (a reviewer-API hiccup never fails an otherwise-open PR)."""
+    try:
+        fg.set_default_reviewers(pr_id)
+    except NotSupported:
+        print(
+            f"create_pr: forge does not set default reviewers; skipping ({pr_id})", file=sys.stderr
+        )
+    except ForgeError as exc:
+        print(f"create_pr: set default reviewers failed for {pr_id}: {exc}", file=sys.stderr)
 
 
 def _resolve_forge(workspace_root: Path) -> Forge:

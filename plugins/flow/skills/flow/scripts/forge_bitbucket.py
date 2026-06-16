@@ -60,6 +60,7 @@ class BitbucketAdapter:
             {"name": "squash_merge", "supported": True},
             {"name": "delete_branch", "supported": True},
             {"name": "ci_rollup", "supported": True},
+            {"name": "default_reviewers", "supported": True},
         ]
 
     # ─── helpers ──────────────────────────────────────────────────────────
@@ -176,6 +177,28 @@ class BitbucketAdapter:
 
     def delete_branch(self, branch: str) -> None:
         self._run_text(["git", "push", "origin", "--delete", branch], "git push --delete")
+
+    def set_default_reviewers(self, pr_id: str) -> None:
+        """Attach the repo's default reviewers (minus the author) to the PR.
+
+        Self-resolves the author (`GET 2.0/user`; the adapter stores only
+        workspace+repo), reads the repo `default-reviewers`, drops the author by
+        `account_id`, then PUTs `{"reviewers": [{"uuid": ...}, ...]}` onto the PR
+        (the Bitbucket reviewer shape ported from ship-it)."""
+        me = self._api("2.0/user", "bkt whoami")
+        my_account_id = (me or {}).get("account_id")
+        data = self._api(f"{self._base()}/default-reviewers", "bkt default-reviewers")
+        reviewers = [
+            {"uuid": v["uuid"]}
+            for v in ((data or {}).get("values") or [])
+            if v.get("uuid") and v.get("account_id") != my_account_id
+        ]
+        self._api(
+            f"{self._base()}/pullrequests/{pr_id}",
+            "bkt set reviewers",
+            method="PUT",
+            payload={"reviewers": reviewers},
+        )
 
     # ─── review threads (CodeRabbit) ──────────────────────────────────────
 
