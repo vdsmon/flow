@@ -36,7 +36,13 @@ consumes it. It is the front half of the arc:
 3. **Pick the LEAD** per cluster: prefer `In Progress` > has a WIP branch > the
    most substantive body. The lead owns the run identity (lease / state / branch /
    memory); the rest become its `covers`. Order the covers by the dependency edges
-   from step 2.
+   from step 2 — but note `covers` is a SET, not a sequence: the mechanism does not
+   enforce per-cover order. A grouped run is ONE plan → ONE diff → ONE commit, so
+   the edit ORDER within the run lives in the PLAN (settled at the gate), not in the
+   covers list. If a cluster has a strict, load-bearing intra-order (edit A must land
+   before B, each independently verifiable), that is the signal to NOT group it —
+   stack sequential PRs instead. Grouping is for co-equal coupled changes that ship
+   as one reviewable PR; strict ordering wants a stack.
 
 4. **Resolve `dup_hints`.** Each hint is `{key, duplicate_of, title_overlap}` — an
    empty-body ticket whose title strongly overlaps a sibling. Confirm by reading
