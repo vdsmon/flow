@@ -18,7 +18,8 @@ Key invariants:
 - `FORGE_CAPABILITY_ENUM` is a CLOSED enum. Adapters advertise capabilities only
   from this set.
 - Capability-gated methods (`review_threads`, `post_reply`, `resolve_thread`,
-  `mark_ready`, `delete_branch`) MUST raise `NotSupported` when the matching
+  `mark_ready`, `delete_branch`, `set_default_reviewers`) MUST raise `NotSupported`
+  when the matching
   capability advertises `supported=false`, so callers can tell "this host cannot
   do X" from "this code path is unfinished".
 - `resolve_thread` returns True ONLY when the thread is VERIFIED resolved. The
@@ -42,6 +43,7 @@ FORGE_CAPABILITY_ENUM = Literal[
     "squash_merge",  # merge(squash=True)
     "delete_branch",  # delete_branch()
     "ci_rollup",  # ci_rollup() implemented
+    "default_reviewers",  # set_default_reviewers() attaches repo default reviewers on open
 ]
 
 CI_STATUS = Literal["green", "pending", "failed"]
@@ -128,9 +130,9 @@ class Forge(Protocol):
     """Cross-host PR interface. Implemented by per-host adapters.
 
     `detect_pr` / `pr_info` / `open_pr` / `ci_rollup` / `merge` are MANDATORY. The review-thread
-    trio (`review_threads`, `post_reply`, `resolve_thread`) plus `mark_ready` and
-    `delete_branch` are CAPABILITY-GATED: each MUST raise `NotSupported` when its
-    capability advertises `supported=false`.
+    trio (`review_threads`, `post_reply`, `resolve_thread`) plus `mark_ready`,
+    `delete_branch`, and `set_default_reviewers` are CAPABILITY-GATED: each MUST
+    raise `NotSupported` when its capability advertises `supported=false`.
     """
 
     backend: str  # "github" | "bitbucket"
@@ -146,6 +148,7 @@ class Forge(Protocol):
     def mark_ready(self, pr_id: str) -> None: ...  # cap-gated ready_toggle
     def merge(self, pr_id: str, squash: bool = True) -> None: ...
     def delete_branch(self, branch: str) -> None: ...  # cap-gated delete_branch
+    def set_default_reviewers(self, pr_id: str) -> None: ...  # cap-gated default_reviewers
 
 
 # ─── Factory + config ────────────────────────────────────────────────────────

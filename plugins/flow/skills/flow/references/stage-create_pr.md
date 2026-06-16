@@ -4,6 +4,8 @@ Opens a PR for the run's feature branch — a draft by default, or ready for rev
 
 **No `pr_title` gate.** Unlike the commit stage, do NOT call `lint_ticket` for a field. Nothing populates `pr_title`; the PR title comes from the HEAD (work) commit subject, which the commit stage built from `commit_summary`.
 
+**PR body + reviewers (automatic).** The script builds the PR body from the HEAD commit body: it strips the `ticket:`/`files:` trailer, keeps `Closes <KEY>` lines as a footer, unwraps prose hard-wraps, then runs a deterministic de-AI scrub (em-dash → punctuation, sentence-case `# Heading`, flatten `- **Term:**` bullets) before opening the PR (falling back to the subject when the prose is empty). On first open it also attaches the repo's default reviewers via the forge seam (Bitbucket supports it; GitHub degrades cleanly) — a reviewer-API failure never fails an otherwise-open PR. No prose action needed; this is internal to `create_pr.py`.
+
 1. Open or resolve the PR:
    ```bash
    python3 ${CLAUDE_SKILL_DIR}/scripts/create_pr.py \

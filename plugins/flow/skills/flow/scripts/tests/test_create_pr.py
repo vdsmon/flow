@@ -6,9 +6,22 @@ from typing import ClassVar
 import pytest
 
 import create_pr as cp
-from forge import ForgeError, PullRequest
+from forge import ForgeError, NotSupported, PullRequest
 
 Recorder = list[list[str]]
+
+# a realistic `git log -1 --format=%b`: the compose_commit skeleton body (trailer +
+# surviving marker) plus appended hard-wrapped prose, distinct from the %s subject.
+_RAW_BODY = (
+    "ticket: flow-x1yq\n"
+    "Closes flow-nr8c\n"
+    "files:\n"
+    "  - create_pr.py\n"
+    "\n"
+    "# body — fill in below this line\n"
+    "This change builds a real PR\n"
+    "body from the commit — cleanly.\n"
+)
 
 
 def _pr(url: str, head: str, *, base: str = "main", draft: bool = False) -> PullRequest:
@@ -34,7 +47,10 @@ def _git_runner(*, branch: str = "feature/flow-aut.7-x", push_rc: int = 0):
         if args[:2] == ["git", "push"]:
             return subprocess.CompletedProcess(args, push_rc, "", "remote rejected")
         if args[:2] == ["git", "log"]:
-            return subprocess.CompletedProcess(args, 0, "test: add coverage\n", "")
+            fmt = next((a for a in args if a.startswith("--format=")), "")
+            if fmt == "--format=%b":
+                return subprocess.CompletedProcess(args, 0, _RAW_BODY, "")
+            return subprocess.CompletedProcess(args, 0, "chore: add coverage\n", "")
         return subprocess.CompletedProcess(args, 1, "", f"unexpected {args}")
 
     return run, calls
@@ -49,6 +65,8 @@ class _FakeForge:
         self._created = created
         self.opened: list[dict] = []
         self.raise_on_open: Exception | None = None
+        self.reviewers_set: list[str] = []
+        self.raise_on_reviewers: Exception | None = None
 
     def detect_pr(self, branch: str) -> PullRequest | None:
         return _pr(self._existing, branch) if self._existing else None
@@ -59,7 +77,9 @@ class _FakeForge:
     def open_pr(self, base: str, head: str, title: str, body: str, draft: bool) -> PullRequest:
         if self.raise_on_open:
             raise self.raise_on_open
-        self.opened.append({"base": base, "head": head, "draft": draft, "title": title})
+        self.opened.append(
+            {"base": base, "head": head, "draft": draft, "title": title, "body": body}
+        )
         return _pr(self._created, head, base=base, draft=draft)
 
     def ci_rollup(self, pr_id: str):
@@ -75,6 +95,11 @@ class _FakeForge:
     def mark_ready(self, pr_id: str) -> None: ...
     def merge(self, pr_id: str, squash: bool = True) -> None: ...
     def delete_branch(self, branch: str) -> None: ...
+
+    def set_default_reviewers(self, pr_id: str) -> None:
+        if self.raise_on_reviewers:
+            raise self.raise_on_reviewers
+        self.reviewers_set.append(pr_id)
 
 
 def _ran(calls: Recorder, prefix: list[str]) -> bool:
@@ -240,3 +265,69 @@ def test_cli_base_defaults_to_main(tmp_path, monkeypatch):
     rc = cp.cli_main(["--workspace-root", str(tmp_path)])
     assert rc == 0
     assert fg.opened[0]["base"] == "main"
+
+
+def test_built_scrubbed_body_reaches_open_pr(tmp_path):
+    # the raw %b (trailer + marker + wrapped prose) is built into a clean body:
+    # trailer dropped, marker gone, prose unwrapped, Closes footer kept.
+    run, _ = _git_runner()
+    fg = _FakeForge(existing=None)
+    cp.open_or_get_pr(tmp_path, base="main", runner=run, forge=fg)
+    opened = fg.opened[0]
+    body = opened["body"]
+    assert "ticket:" not in body
+    assert "fill in below" not in body
+    assert "This change builds a real PR body from the commit, cleanly." in body
+    assert "—" not in body  # scrub ran in the chain (em-dash gone)
+    assert body.rstrip().endswith("Closes flow-nr8c")
+    # title stays the raw commit subject, untouched by the body transform
+    assert opened["title"] == "chore: add coverage"
+
+
+def test_reviewers_set_on_open(tmp_path):
+    run, _ = _git_runner()
+    fg = _FakeForge(existing=None)
+    cp.open_or_get_pr(tmp_path, base="main", runner=run, forge=fg)
+    assert fg.reviewers_set == ["1"]  # pr id from _pr()
+
+
+def test_reviewers_not_set_on_existing_pr(tmp_path):
+    run, _ = _git_runner()
+    fg = _FakeForge(existing="https://github.com/o/r/pull/7")
+    cp.open_or_get_pr(tmp_path, base="main", runner=run, forge=fg)
+    assert fg.reviewers_set == []  # early-return on existing PR; set-on-open only
+
+
+def test_not_supported_reviewers_degrades(tmp_path):
+    run, _ = _git_runner()
+    fg = _FakeForge(existing=None)
+    fg.raise_on_reviewers = NotSupported("github has no default reviewers")
+    url = cp.open_or_get_pr(tmp_path, base="main", runner=run, forge=fg)
+    assert url == "https://github.com/o/r/pull/42"  # PR still returned
+    assert len(fg.opened) == 1
+
+
+def test_generic_forge_error_reviewers_degrades(tmp_path):
+    run, _ = _git_runner()
+    fg = _FakeForge(existing=None)
+    fg.raise_on_reviewers = ForgeError("reviewer API hiccup")
+    url = cp.open_or_get_pr(tmp_path, base="main", runner=run, forge=fg)
+    assert url == "https://github.com/o/r/pull/42"  # hiccup never fails an open PR
+    assert len(fg.opened) == 1
+
+
+def test_empty_prose_body_falls_back_to_subject(tmp_path):
+    # a %b that is trailer-only (no prose) -> built body is empty -> subject used.
+    calls_runner, _ = _git_runner()
+
+    def run(args):
+        if args[:2] == ["git", "log"]:
+            fmt = next((a for a in args if a.startswith("--format=")), "")
+            if fmt == "--format=%b":
+                return subprocess.CompletedProcess(args, 0, "ticket: flow-x\n", "")
+            return subprocess.CompletedProcess(args, 0, "chore: subj only\n", "")
+        return calls_runner(args)
+
+    fg = _FakeForge(existing=None)
+    cp.open_or_get_pr(tmp_path, base="main", runner=run, forge=fg)
+    assert fg.opened[0]["body"] == "chore: subj only"
