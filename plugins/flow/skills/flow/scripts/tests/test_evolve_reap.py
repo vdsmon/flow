@@ -26,10 +26,13 @@ def _pr(
     state: str = "CLEAN",
     draft: bool = False,
     files: list[str] | None = None,
+    commits: list[str] | None = None,
 ) -> dict:
     # files default [] keeps every existing PR non-hot (the regression baseline);
     # gh `pr list --json files` shape is [{"path": ...}].
-    return {
+    # commits default None omits the key (mirrors gh when no commits requested);
+    # gh `pr list --json commits` shape is [{"messageHeadline", "messageBody", ...}].
+    pr: dict = {
         "number": num,
         "headRefName": f"feature/{key}-some-desc",
         "isDraft": draft,
@@ -37,6 +40,15 @@ def _pr(
         "statusCheckRollup": rollup,
         "files": [{"path": p} for p in (files or [])],
     }
+    if commits is not None:
+        pr["commits"] = [
+            {
+                "messageHeadline": m.split("\n", 1)[0],
+                "messageBody": m.split("\n", 1)[1] if "\n" in m else "",
+            }
+            for m in commits
+        ]
+    return pr
 
 
 def _idx(**keys: list[str]) -> dict[str, list[str]]:
@@ -80,6 +92,7 @@ def test_green_clean_leaf_merges():
             "branch": "feature/flow-a-some-desc",
             "is_draft": False,
             "is_hot": False,
+            "covers": [],
         }
     ]
 
@@ -149,6 +162,7 @@ def test_guard_file_promotes_with_is_hot_true():
             "branch": "feature/flow-a-some-desc",
             "is_draft": False,
             "is_hot": True,
+            "covers": [],
         }
     ]
     assert out["skipped_hot"] == []
@@ -192,6 +206,7 @@ def test_draft_but_green_is_mergeable():
             "branch": "feature/flow-a-some-desc",
             "is_draft": True,
             "is_hot": False,
+            "covers": [],
         }
     ]
 
@@ -299,6 +314,7 @@ def test_hot_auto_merge_single_clean():
             "branch": "feature/flow-h-some-desc",
             "is_draft": False,
             "is_hot": True,
+            "covers": [],
         }
     ]
     assert out["skipped_hot"] == []
@@ -314,6 +330,7 @@ def test_hot_auto_merge_single_draft_carries_is_draft():
             "branch": "feature/flow-h-some-desc",
             "is_draft": True,
             "is_hot": True,
+            "covers": [],
         }
     ]
     assert out["skipped_hot"] == []
@@ -346,6 +363,7 @@ def test_hot_auto_merge_clean_promotes_dirty_blocks():
             "branch": "feature/flow-h-some-desc",
             "is_draft": False,
             "is_hot": True,
+            "covers": [],
         }
     ]
     assert out["skipped_hot"] == []
@@ -366,6 +384,7 @@ def test_hot_auto_merge_does_not_gate_non_hot_leaf():
             "branch": "feature/flow-h-some-desc",
             "is_draft": False,
             "is_hot": True,
+            "covers": [],
         },
         {
             "pr": 2,
@@ -373,6 +392,7 @@ def test_hot_auto_merge_does_not_gate_non_hot_leaf():
             "branch": "feature/flow-a-some-desc",
             "is_draft": False,
             "is_hot": False,
+            "covers": [],
         },
     ]
     assert out["skipped_hot"] == []
@@ -410,6 +430,7 @@ def test_main_red_holds_merge_leaf():
             "branch": "feature/flow-a-some-desc",
             "is_draft": False,
             "is_hot": False,
+            "covers": [],
         }
     ]
 
@@ -429,6 +450,7 @@ def test_main_red_does_not_promote_hot():
             "branch": "feature/flow-h-some-desc",
             "is_draft": False,
             "is_hot": True,
+            "covers": [],
         }
     ]
 
@@ -459,6 +481,72 @@ def test_main_green_preserves_buckets_byte_for_byte():
     held = green.pop("held_main_red")
     assert green == legacy
     assert held == []
+
+
+# ---- classify: covers surfacing (flow-n7lz) ----
+
+
+def test_merge_entry_surfaces_covers_from_commit_trailers():
+    # a folded run's commits carry `Closes <cover>` trailers; the merge entry must
+    # surface them so the §A orphan-reap prose can close each cover.
+    prs = [
+        _pr(
+            1,
+            "flow-lead",
+            commits=["feat: lead\n\nticket: flow-lead\nCloses flow-c1\nCloses flow-c2"],
+        )
+    ]
+    out = er.classify(prs, _idx(**{"flow-lead": ["evolve"]}))
+    assert out["merge"][0]["covers"] == ["flow-c1", "flow-c2"]
+
+
+def test_merge_entry_covers_empty_when_no_trailers():
+    prs = [_pr(1, "flow-a", commits=["feat: solo\n\nticket: flow-a"])]
+    out = er.classify(prs, _idx(**{"flow-a": ["evolve"]}))
+    assert out["merge"][0]["covers"] == []
+
+
+def test_merge_entry_covers_empty_when_commits_absent():
+    # a _pr() with no commits key (the regression baseline) surfaces covers: [].
+    prs = [_pr(1, "flow-a")]
+    out = er.classify(prs, _idx(**{"flow-a": ["evolve"]}))
+    assert out["merge"][0]["covers"] == []
+
+
+def test_merge_entry_covers_excludes_lead_own_key():
+    # compose_commit emits `Closes <lead>` too; the lead's own key is not a cover.
+    prs = [
+        _pr(
+            1,
+            "flow-lead",
+            commits=["feat: lead\n\nticket: flow-lead\nCloses flow-lead\nCloses flow-c1"],
+        )
+    ]
+    out = er.classify(prs, _idx(**{"flow-lead": ["evolve"]}))
+    assert out["merge"][0]["covers"] == ["flow-c1"]
+
+
+def test_covers_surfaced_on_held_main_red_entry():
+    # held_main_red shares the merge append; covers must ride it too.
+    prs = [_pr(1, "flow-lead", commits=["feat: x\n\nticket: flow-lead\nCloses flow-c1"])]
+    out = er.classify(prs, _idx(**{"flow-lead": ["evolve"]}), main_ci_status="failed")
+    assert out["held_main_red"][0]["covers"] == ["flow-c1"]
+
+
+def test_covers_dedups_across_multiple_commits():
+    # a cover named in two commits surfaces once.
+    prs = [
+        _pr(
+            1,
+            "flow-lead",
+            commits=[
+                "feat: a\n\nticket: flow-lead\nCloses flow-c1",
+                "feat: b\n\nticket: flow-lead\nCloses flow-c1\nCloses flow-c2",
+            ],
+        )
+    ]
+    out = er.classify(prs, _idx(**{"flow-lead": ["evolve"]}))
+    assert out["merge"][0]["covers"] == ["flow-c1", "flow-c2"]
 
 
 # ---- reap integration ----
@@ -507,6 +595,7 @@ def test_reap_integration(tmp_path):
             "branch": "feature/flow-a-some-desc",
             "is_draft": False,
             "is_hot": False,
+            "covers": [],
         }
     ]
     assert out["skipped_hot"] == [{"pr": 2, "key": "flow-h", "branch": "feature/flow-h-some-desc"}]
@@ -521,6 +610,16 @@ def test_reap_requests_files_field(tmp_path):
     pr_list = next(a for a in calls if a[:3] == ["gh", "pr", "list"])
     json_fields = pr_list[pr_list.index("--json") + 1]
     assert "files" in json_fields.split(",")
+
+
+def test_reap_requests_commits_field(tmp_path):
+    # classify parses cover trailers off pr["commits"], so reap must request it.
+    ws = _marked_ws(tmp_path)
+    run, calls = _dispatch(prs=[], evolve_list=[])
+    er.reap(ws, runner=run)
+    pr_list = next(a for a in calls if a[:3] == ["gh", "pr", "list"])
+    json_fields = pr_list[pr_list.index("--json") + 1]
+    assert "commits" in json_fields.split(",")
 
 
 def _auto_merge_hot_ws(tmp_path: Path) -> Path:
@@ -546,6 +645,7 @@ def test_reap_auto_merge_hot_from_config(tmp_path):
             "branch": "feature/flow-h-some-desc",
             "is_draft": False,
             "is_hot": True,
+            "covers": [],
         }
     ]
     assert out["skipped_hot"] == []

@@ -54,6 +54,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -94,6 +95,30 @@ def rollup_is_green(rollup: list) -> bool:
         if verdict != "SUCCESS":
             return False
     return True
+
+
+def _covers_from_commits(pr: dict, lead_key: str) -> list[str]:
+    """Cover keys this PR co-delivers, parsed from its commits' `Closes <KEY>` trailers.
+
+    A folded `--covers` run emits one `Closes <cover>` footer per cover (plus one for
+    the lead itself) via compose_commit.py. The orphan-reap prose closes each cover, so
+    the merge entry surfaces them here — the live run uses its worktree frontmatter, the
+    reap has only the PR's commit messages. The lead's own key is filtered out (it closes
+    via the bead close, not as a cover). Total: a missing/malformed `commits` key → [].
+    """
+    commits = pr.get("commits")
+    if not isinstance(commits, list):
+        return []
+    covers: list[str] = []
+    for c in commits:
+        if not isinstance(c, dict):
+            continue
+        text = f"{c.get('messageHeadline') or ''}\n{c.get('messageBody') or ''}"
+        for line in text.splitlines():
+            m = re.match(r"Closes (\S+)$", line.strip())
+            if m and m.group(1) != lead_key and m.group(1) not in covers:
+                covers.append(m.group(1))
+    return covers
 
 
 def _effective_hot(pr: dict, labels: list[str]) -> bool:
@@ -199,7 +224,14 @@ def classify(
             # a hot DIRTY PR stays blocked; only the isolation-eligible hot promotes.
             if promote is not None and number == promote:
                 target = held_main_red if main_ci_status == "failed" else merge
-                target.append({**entry, "is_draft": bool(pr.get("isDraft")), "is_hot": True})
+                target.append(
+                    {
+                        **entry,
+                        "is_draft": bool(pr.get("isDraft")),
+                        "is_hot": True,
+                        "covers": _covers_from_commits(pr, key),
+                    }
+                )
             elif state in _MERGEABLE_STATES:
                 skipped_hot.append(entry)
             else:
@@ -209,7 +241,14 @@ def classify(
             blocked.append({**entry, "reason": state or "UNKNOWN"})
             continue
         target = held_main_red if main_ci_status == "failed" else merge
-        target.append({**entry, "is_draft": bool(pr.get("isDraft")), "is_hot": False})
+        target.append(
+            {
+                **entry,
+                "is_draft": bool(pr.get("isDraft")),
+                "is_hot": False,
+                "covers": _covers_from_commits(pr, key),
+            }
+        )
 
     return {
         "merge": merge,
@@ -300,7 +339,7 @@ def reap(
                 "--state",
                 "open",
                 "--json",
-                "number,headRefName,isDraft,mergeStateStatus,statusCheckRollup,files",
+                "number,headRefName,isDraft,mergeStateStatus,statusCheckRollup,files,commits",
                 "--limit",
                 "200",
             ]
