@@ -207,7 +207,7 @@ The taxonomy is closed:
      The value MUST match `^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$` (`observe_ship_event.py` rejects anything else).
      If `evidence.closed_at` is present but not in that exact form, normalize it to UTC `...Z` seconds precision before use.
    - Build the evidence JSON.
-     The shape MUST be exactly these three top-level keys (`observe_ship_event.py` rejects any extra key; it owns `observed_at`, `observed_by_run_id`, `flow_attribution`, `arm`, `tier`, and `plugin_version`):
+     The shape MUST be exactly these three top-level keys (`observe_ship_event.py` rejects any extra key; it owns `observed_at`, `observed_by_run_id`, `flow_attribution`, `arm`, `tier`, `acceptance_invariant`, and `plugin_version`):
      ```json
      {
        "ticket": "<KEY>",
@@ -217,6 +217,7 @@ The taxonomy is closed:
      ```
      `evidence` MUST be the object from is-shipped output (e.g. jira `{tracker, tracker_status, resolution}`; beads `{tracker, tracker_status, commit_sha, closure_reason, closed_at}`), passed through as-is.
    - Read the bead's `tier:*` label into `$TIER` so the tier captured at ship time is stamped onto the durable record (beads: `TIER=$(bd show <KEY> --json | jq -r '.[0].labels[]? | select(startswith("tier:"))' | head -1)`; jira has no such label, leave `$TIER` empty).
+   - Read the bead's `ACCEPTANCE-INVARIANT:` stem (filed by `/flow evolve` for a behavior-changing `tier:light` downshift, §audit step 3) into `$ACCEPTANCE_INVARIANT`, so the assertion the downshift was supposed to satisfy is stamped onto the durable ship event for correlation. It lives in the description as a single-line stem, so stop at the first match (beads: `ACCEPTANCE_INVARIANT=$(bd show <KEY> --json | jq -r '.[0].description // ""' | grep -m1 '^ACCEPTANCE-INVARIANT:' | sed 's/^ACCEPTANCE-INVARIANT:[[:space:]]*//')`; absent stem / jira → empty).
    - Observe the ship event:
      ```bash
      ${CLAUDE_SKILL_DIR}/scripts/observe_ship_event.py \
@@ -224,6 +225,7 @@ The taxonomy is closed:
        --evidence-json '<json>' \
        --run-id "$RUN_ID" \
        --tier "$TIER" \
+       --acceptance-invariant "$ACCEPTANCE_INVARIANT" \
        --workspace-root .
      ```
      - Exit 0 → primary ship-event file written. Continue.

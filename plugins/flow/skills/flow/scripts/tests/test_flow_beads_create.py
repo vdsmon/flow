@@ -220,6 +220,37 @@ def test_dedup_fuzzy_does_not_merge_distinct_same_file(tmp_path):
     assert any(c[0][1] == "create" for c in calls)  # not deduped, create ran
 
 
+def _create_args(calls: Recorder) -> list[str]:
+    return next(c[0] for c in calls if c[0][:2] == ["bd", "create"])
+
+
+def test_acceptance_invariant_embedded_in_description(tmp_path):
+    repo = _marked_ws(tmp_path)
+    run, calls = _runner()
+    fbc.create_bead(repo, "t", "body text", acceptance_invariant="all amounts positive", runner=run)
+    desc = _create_args(calls)[_create_args(calls).index("--description") + 1]
+    assert desc == "body text\n\nACCEPTANCE-INVARIANT: all amounts positive"
+
+
+def test_acceptance_invariant_absent_omitted(tmp_path):
+    repo = _marked_ws(tmp_path)
+    run, calls = _runner()
+    fbc.create_bead(repo, "t", "body text", runner=run)
+    desc = _create_args(calls)[_create_args(calls).index("--description") + 1]
+    assert desc == "body text"
+    assert "ACCEPTANCE-INVARIANT:" not in desc
+
+
+def test_acceptance_invariant_collapsed_to_single_line(tmp_path):
+    repo = _marked_ws(tmp_path)
+    run, calls = _runner()
+    fbc.create_bead(repo, "t", "body", acceptance_invariant="line one\nline two   tail", runner=run)
+    desc = _create_args(calls)[_create_args(calls).index("--description") + 1]
+    # stem stays a clean one-liner so the bd-show grep does not wrap
+    assert desc == "body\n\nACCEPTANCE-INVARIANT: line one line two tail"
+    assert desc.count("ACCEPTANCE-INVARIANT:") == 1
+
+
 def test_dedup_no_separator_skips_fuzzy(tmp_path):
     repo = _marked_ws(tmp_path)
     run, calls = _dispatch_runner()  # no "::" → exact only

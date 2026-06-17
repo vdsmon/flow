@@ -520,6 +520,94 @@ def test_cli_tier_defaults_to_empty(tmp_path: Path, capsys: pytest.CaptureFixtur
     assert data["tier"] == ""
 
 
+# ─── acceptance_invariant (free-form, caller-supplied) ───────────────────────
+
+
+def test_acceptance_invariant_defaults_to_empty(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path)
+    path, _ = observe_ship_event.observe(tmp_path, "FT-1", _payload(), "abcdef0123456789")
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert data["acceptance_invariant"] == ""
+
+
+def test_acceptance_invariant_stamps_record(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path)
+    path, _ = observe_ship_event.observe(
+        tmp_path,
+        "FT-1",
+        _payload(),
+        "abcdef0123456789",
+        acceptance_invariant="all amounts positive",
+    )
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert data["acceptance_invariant"] == "all amounts positive"
+
+
+def test_acceptance_invariant_present_in_dupe_write(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path)
+    observe_ship_event.observe(
+        tmp_path, "FT-1", _payload(), "abcdef0123456789", acceptance_invariant="sign stays +"
+    )
+    p_dupe, is_dupe = observe_ship_event.observe(
+        tmp_path, "FT-1", _payload(), "abcdef0123456789", acceptance_invariant="sign stays +"
+    )
+    assert is_dupe is True
+    data = json.loads(p_dupe.read_text(encoding="utf-8"))
+    assert data["acceptance_invariant"] == "sign stays +"
+
+
+def test_acceptance_invariant_in_input_evidence_rejected_as_extra_key(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path)
+    with pytest.raises(observe_ship_event._EvidenceInvalid, match="extra"):
+        observe_ship_event.validate_evidence(_payload(extras={"acceptance_invariant": "x"}), "FT-1")
+
+
+def test_cli_acceptance_invariant_round_trip(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _seed_workspace(tmp_path)
+    rc = observe_ship_event.cli_main(
+        [
+            "--ticket",
+            "FT-1",
+            "--evidence-json",
+            json.dumps(_payload()),
+            "--run-id",
+            "abcdef0123456789",
+            "--workspace-root",
+            str(tmp_path),
+            "--acceptance-invariant",
+            "all amounts positive",
+        ]
+    )
+    assert rc == 0
+    out = json.loads(capsys.readouterr().out)
+    data = json.loads(Path(out["path"]).read_text(encoding="utf-8"))
+    assert data["acceptance_invariant"] == "all amounts positive"
+
+
+def test_cli_acceptance_invariant_defaults_to_empty(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _seed_workspace(tmp_path)
+    rc = observe_ship_event.cli_main(
+        [
+            "--ticket",
+            "FT-1",
+            "--evidence-json",
+            json.dumps(_payload()),
+            "--run-id",
+            "abcdef0123456789",
+            "--workspace-root",
+            str(tmp_path),
+        ]
+    )
+    assert rc == 0
+    out = json.loads(capsys.readouterr().out)
+    data = json.loads(Path(out["path"]).read_text(encoding="utf-8"))
+    assert data["acceptance_invariant"] == ""
+
+
 # ─── plugin_version (self-read, fully guarded) ───────────────────────────────
 
 
