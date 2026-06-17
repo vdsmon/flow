@@ -76,6 +76,8 @@ In `--auto` mode the gate never parks: if the headless planner cannot self-appro
 
 **Full procedure — interactive steps 1-7, the `--auto` headless path (incl. the defer-and-exit recipe), and the exact `flow_worktree.py create` command: `references/verb-spec.md`.**
 
+flow is Claude-Code-first. Running it under another harness (Codex, Cursor) — how each Claude-Code primitive used here (`ExitPlanMode`, `EnterWorktree`, `advisor`, `Skill`/`Agent`, `PushNotification`, `AskUserQuestion`, `${CLAUDE_SKILL_DIR}`) degrades when absent — is in `references/harness.md`.
+
 ## do verb — the loop
 
 The **executor primitive**: the full ticket→PR pipeline, driven off the dispatcher state machine. `spec` flows into it in the same session (resuming at `implement`); it also runs standalone (`/flow do <ticket>`). The dispatcher (`dispatch_stage.py`) owns `state.json`, the lease, and the canonical snapshot; this prose acts on each descriptor it emits.
