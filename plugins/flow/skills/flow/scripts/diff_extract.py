@@ -260,6 +260,19 @@ def _ls_files_blobs(files: list[str], cwd: Path, runner: Runner) -> dict[str, di
     return blobs
 
 
+def _parse_files_arg(raw: str) -> list[str]:
+    stripped = raw.strip()
+    if stripped.startswith("["):
+        try:
+            parsed = json.loads(stripped)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"--files: malformed JSON array literal: {raw!r}") from exc
+        if not isinstance(parsed, list) or not all(isinstance(x, str) for x in parsed):
+            raise ValueError(f"--files: malformed JSON array literal: {raw!r}")
+        return [x.strip() for x in parsed if x.strip()]
+    return [f.strip() for f in stripped.split(",") if f.strip()]
+
+
 def _union_frontmatter_planned(files: list[str], ticket: str | None, cwd: Path) -> list[str]:
     """Union passed `--files` with the ticket frontmatter `planned_files`.
 
@@ -490,7 +503,7 @@ def cli_main(argv: list[str]) -> int:
             ticket_dir = Path(args.ticket_dir).resolve()
             files: list[str] = []
             if args.files:
-                files = [f.strip() for f in args.files.split(",") if f.strip()]
+                files = _parse_files_arg(args.files)
             payload = record_baseline(
                 args.stage,
                 ticket_dir,
@@ -514,6 +527,9 @@ def cli_main(argv: list[str]) -> int:
             sys.stdout.write(json.dumps(payload, indent=2, sort_keys=True) + "\n")
             return 0 if payload["ok"] else 3
 
+    except ValueError as exc:
+        sys.stderr.write(f"diff-extract: {exc}\n")
+        return 2
     except _BaselineMissing as exc:
         sys.stderr.write(f"diff-extract: {exc}\n")
         return 1
