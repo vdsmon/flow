@@ -13,7 +13,7 @@
       "name": "flow",
       "source": "./plugins/flow",
       "description": "Ticket pipeline: /flow <ticket> plans in plan mode (ExitPlanMode = the one gate), then enters a worktree and runs the autonomous implement→PR tail in the same session; background it (/bg) anytime to run unattended, managing several in flight via claude agents. Multi-tracker engine (Jira | beads) with pluggable per-stage handlers, immutable ship-event evidence, and a compounding memory layer (reflect-stage extraction + SessionStart recall). Claude-Code-only.",
-      "version": "0.56.0"
+      "version": "0.57.0"
     }
   ]
 }
