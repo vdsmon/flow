@@ -854,3 +854,88 @@ def test_cli_empty_files_list_normalized(
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["planned_files"] == []
+
+
+# ─── _parse_files_arg ────────────────────────────────────────────────────────
+
+
+def test_parse_files_arg_json_array() -> None:
+    assert diff_extract._parse_files_arg('["a.py","b.py"]') == ["a.py", "b.py"]
+
+
+def test_parse_files_arg_json_array_with_spaces() -> None:
+    assert diff_extract._parse_files_arg('["a.py", "b.py"]') == ["a.py", "b.py"]
+    assert diff_extract._parse_files_arg(' ["a.py"]') == ["a.py"]
+
+
+def test_parse_files_arg_comma_sep() -> None:
+    assert diff_extract._parse_files_arg("a.py,b.py") == ["a.py", "b.py"]
+    assert diff_extract._parse_files_arg("a.py, b.py") == ["a.py", "b.py"]
+
+
+def test_parse_files_arg_single_file() -> None:
+    assert diff_extract._parse_files_arg("a.py") == ["a.py"]
+
+
+def test_parse_files_arg_malformed_json_raises() -> None:
+    with pytest.raises(ValueError):
+        diff_extract._parse_files_arg('["a.py",')
+
+
+def test_parse_files_arg_non_string_elements_raises() -> None:
+    with pytest.raises(ValueError):
+        diff_extract._parse_files_arg("[1, 2]")
+
+
+def test_record_baseline_cli_json_array_literal_no_frontmatter(
+    tmp_repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Regression: the planned_files array LITERAL must parse cleanly. No
+    # frontmatter file exists, so _union_frontmatter_planned cannot re-add the
+    # real paths and mask broken parsing.
+    ticket_dir = tmp_path / "runs" / "FT-1"
+    rc = diff_extract.cli_main(
+        [
+            "record-baseline",
+            "--stage",
+            "implement",
+            "--ticket",
+            "FT-1",
+            "--ticket-dir",
+            str(ticket_dir),
+            "--files",
+            '["a.py","b.py"]',
+            "--cwd",
+            str(tmp_repo),
+        ]
+    )
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["planned_files"] == ["a.py", "b.py"]
+    for entry in payload["planned_files"]:
+        assert "[" not in entry
+        assert "]" not in entry
+        assert '"' not in entry
+
+
+def test_record_baseline_cli_malformed_array_exits_nonzero(
+    tmp_repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ticket_dir = tmp_path / "runs" / "FT-1"
+    rc = diff_extract.cli_main(
+        [
+            "record-baseline",
+            "--stage",
+            "implement",
+            "--ticket",
+            "FT-1",
+            "--ticket-dir",
+            str(ticket_dir),
+            "--files",
+            '["a.py",',
+            "--cwd",
+            str(tmp_repo),
+        ]
+    )
+    assert rc != 0
+    assert "malformed JSON array literal" in capsys.readouterr().err
