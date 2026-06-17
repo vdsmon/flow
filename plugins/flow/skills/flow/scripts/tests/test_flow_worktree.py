@@ -563,6 +563,47 @@ def test_bootstrap_accepts_non_ignored_planned_files(tmp_path: Path) -> None:
     assert not any(c[:3] == ["git", "branch", "-D"] for c in calls)
 
 
+def test_bootstrap_cleans_up_on_midbody_git_error(tmp_path: Path) -> None:
+    # A non-deliberate exception AFTER `git worktree add` (here a _GitError from a
+    # failing rev-parse) must still remove the worktree + delete the -b branch, so a
+    # crash mid-bootstrap leaves no orphan (flow-fh05, broadening flow-n2a6).
+    main = _main_checkout(tmp_path)
+    calls: list = []
+    base = _fake_runner(calls=calls, main=main)
+
+    def run(args: list[str], cwd: Path):
+        if args[:2] == ["git", "rev-parse"]:
+            calls.append(args)
+            return subprocess.CompletedProcess(args, 1, "", "fatal: bad object")
+        return base(args, cwd)
+
+    with pytest.raises(fw._GitError):
+        _run(tmp_path, main, runner=run)
+    assert any(c[:3] == ["git", "worktree", "add"] for c in calls)
+    assert any(c[:4] == ["git", "worktree", "remove", "--force"] for c in calls)
+    assert any(c == ["git", "branch", "-D", "feature/FT-1-thing"] for c in calls)
+
+
+def test_bootstrap_cleans_up_on_midbody_raise(tmp_path: Path) -> None:
+    # A raw exception from a body op (here `mise trust` raising, mirroring the
+    # ticket's _seed_state / mise-raising examples) also triggers worktree+branch
+    # cleanup before propagating — not only the deliberate gitignored refusal.
+    main = _main_checkout(tmp_path, with_mise=True)
+    calls: list = []
+    base = _fake_runner(calls=calls, main=main)
+
+    def run(args: list[str], cwd: Path):
+        if args[:2] == ["mise", "trust"]:
+            calls.append(args)
+            raise RuntimeError("boom")
+        return base(args, cwd)
+
+    with pytest.raises(RuntimeError):
+        _run(tmp_path, main, runner=run)
+    assert any(c[:4] == ["git", "worktree", "remove", "--force"] for c in calls)
+    assert any(c == ["git", "branch", "-D", "feature/FT-1-thing"] for c in calls)
+
+
 def test_bootstrap_warns_on_planned_file_in_missing_dir(tmp_path: Path) -> None:
     # A planned path whose PARENT dir is also absent is a likely path typo
     # (the flow-kx17.1 case): warn, never refuse.
