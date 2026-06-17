@@ -40,7 +40,7 @@ import lease
 import recall_pending
 import state
 import validate_workspace as vw
-from _registry import registry_by_name
+from _registry import StageEntry, registry_by_name
 from _timeutil import utcnow_iso
 from snapshot import classify_drift, component_files, snapshot_sha_path, write_snapshot
 
@@ -48,8 +48,19 @@ _STAGE_REGISTRY_RELATIVE = Path("stage-registry.toml")
 
 # Lease covering the init handshake before the first stage timeout is known.
 _INIT_TTL_S = 600
-# Slack added to a stage's timeout so the lease outlives the stage it covers.
-_LEASE_BUFFER_S = 300
+# Lease TTL = stage timeout * this multiplier. A flat additive buffer left
+# near-zero headroom for normal agent-stage variance (a 30min implement
+# legitimately ran 38min and self-evicted its own lease, flow-0xex); a
+# proportional multiplier gives every stage headroom for overrun. The cost
+# is a longer dead-run hold before auto-reclaim on the longest stage
+# (review_loop, 60min -> 120min), bounded and recoverable via /flow recover.
+_LEASE_TTL_MULTIPLIER = 2
+
+
+def _stage_ttl_seconds(stage_meta: StageEntry | None) -> int:
+    timeout_min = stage_meta.default_timeout_min if stage_meta else 10
+    return timeout_min * 60 * _LEASE_TTL_MULTIPLIER
+
 
 # A revision sub-run's default stage subset (flow-kx17.2): the PR is already open
 # (human-merge keystone holds), so plan/ticket/create_pr/merge are skipped; reflect
@@ -560,7 +571,7 @@ def cmd_next(
     # Refresh the lease to cover this stage's timeout window before marking it
     # in_progress, so a multi-minute stage does not self-expire the lease.
     if lease.read_lease(td) is not None:
-        ttl = (stage_meta.default_timeout_min if stage_meta else 10) * 60 + _LEASE_BUFFER_S
+        ttl = _stage_ttl_seconds(stage_meta)
         try:
             lease.refresh(
                 td,
