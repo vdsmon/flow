@@ -32,6 +32,7 @@ of churning.
 CLI:
   flow_beads_create.py --workspace-root <dir> --summary <s> --description <d>
       [--type task] [--labels a,b] [--parent KEY] [--dedup-key SLUG]
+      [--acceptance-invariant TEXT]
 
 Exit codes:
   0 = filed (prints the new bead key)
@@ -182,6 +183,7 @@ def create_bead(
     labels: list[str] | None = None,
     parent: str | None = None,
     dedup_key: str | None = None,
+    acceptance_invariant: str | None = None,
     runner: Runner | None = None,
 ) -> str:
     """File a bead into flow's beads and return the new key.
@@ -189,6 +191,13 @@ def create_bead(
     Raises NotMaintainer outside maintainer mode (caller decides whether that is
     fine — for the reflect dormant path it is). Raises DuplicateBead when
     dedup_key matches an existing bead. Raises BeadCreateError on bd failure.
+
+    `acceptance_invariant` (when set) is appended to the description as a single-line
+    `ACCEPTANCE-INVARIANT: <text>` stem — bd has no custom-field flag, so the
+    checkable spec invariant a behavior-changing tier:light downshift must satisfy
+    is recorded as a greppable marker (the established flow stem pattern, alongside
+    SONNET-LADDER: / DECISION:). The ship-event reader (stage-reflect) pulls it back
+    out for ship-event correlation, mirroring how the tier label already flows.
     """
     repo = resolve_maintainer_repo(workspace_root)
     if repo is None:
@@ -196,6 +205,10 @@ def create_bead(
             "not a flow maintainer setup (no [maintainer] marker); machinery bead not filed"
         )
     run = runner or _default_runner()
+    if acceptance_invariant:
+        # single-line so the bd-show stem-grep stays a clean one-liner
+        single_line = " ".join(acceptance_invariant.split())
+        description = f"{description}\n\nACCEPTANCE-INVARIANT: {single_line}"
     labels = list(labels or [])
     if dedup_key:
         evid_label = f"evid:{fingerprint(dedup_key)}"
@@ -241,6 +254,7 @@ def cli_main(argv: list[str]) -> int:
     parser.add_argument("--labels", default="")
     parser.add_argument("--parent", default=None)
     parser.add_argument("--dedup-key", default=None)
+    parser.add_argument("--acceptance-invariant", default=None)
     args = parser.parse_args(argv)
 
     labels = [s for s in (p.strip() for p in args.labels.split(",")) if s]
@@ -253,6 +267,7 @@ def cli_main(argv: list[str]) -> int:
             labels=labels,
             parent=args.parent,
             dedup_key=args.dedup_key,
+            acceptance_invariant=args.acceptance_invariant,
         )
     except NotMaintainer as exc:
         print(str(exc), file=sys.stderr)
