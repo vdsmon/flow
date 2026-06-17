@@ -55,6 +55,19 @@ def _idx(**keys: list[str]) -> dict[str, list[str]]:
     return dict(keys.items())
 
 
+def _stripped(prs: list[dict]) -> list[dict]:
+    # mirror production: the bulk `gh pr list` OMITS files/commits (the GraphQL
+    # node-cost rejection, flow-4dxr); a runner serves them only via `gh pr view`.
+    return [{k: v for k, v in p.items() if k not in ("files", "commits")} for p in prs]
+
+
+def _view_detail(args: list[str], prs: list[dict]) -> str:
+    # answer `gh pr view <n> --json files,commits` from the matching PR fixture.
+    number = int(args[3])
+    pr = next((p for p in prs if p.get("number") == number), {})
+    return json.dumps({"files": pr.get("files", []), "commits": pr.get("commits", [])})
+
+
 # ---- rollup_is_green ----
 
 
@@ -568,8 +581,10 @@ def _dispatch(
 
     def run(args: list[str]) -> subprocess.CompletedProcess[str]:
         calls.append(args)
+        if args[:3] == ["gh", "pr", "view"]:
+            return subprocess.CompletedProcess(args, 0, _view_detail(args, prs), "")
         if args[:3] == ["gh", "pr", "list"]:
-            return subprocess.CompletedProcess(args, 0, json.dumps(prs), "")
+            return subprocess.CompletedProcess(args, 0, json.dumps(_stripped(prs)), "")
         if args[:2] == ["bd", "list"]:
             return subprocess.CompletedProcess(args, 0, json.dumps(evolve_list), "")
         return subprocess.CompletedProcess(args, 1, "", f"unexpected: {args}")
@@ -602,24 +617,45 @@ def test_reap_integration(tmp_path):
     assert out["not_green"] == [{"pr": 3, "key": "flow-b", "branch": "feature/flow-b-some-desc"}]
 
 
-def test_reap_requests_files_field(tmp_path):
-    # classify reads guard-file hotness off pr["files"], so reap must request it.
+def test_reap_bulk_list_omits_files_field(tmp_path):
+    # the bulk `gh pr list` must OMIT files: the nested commits->authors connection
+    # blows gh's GraphQL node-cost estimator past its limit and the query is rejected
+    # pre-execution (flow-4dxr). files are grafted per-PR via `gh pr view` instead.
     ws = _marked_ws(tmp_path)
     run, calls = _dispatch(prs=[], evolve_list=[])
     er.reap(ws, runner=run)
     pr_list = next(a for a in calls if a[:3] == ["gh", "pr", "list"])
     json_fields = pr_list[pr_list.index("--json") + 1]
-    assert "files" in json_fields.split(",")
+    assert "files" not in json_fields.split(",")
 
 
-def test_reap_requests_commits_field(tmp_path):
-    # classify parses cover trailers off pr["commits"], so reap must request it.
+def test_reap_bulk_list_omits_commits_field(tmp_path):
+    # the bulk `gh pr list` must OMIT commits: the nested authors connection is what
+    # blows gh's GraphQL node-cost estimator (flow-4dxr). commits are grafted per-PR
+    # via `gh pr view` instead.
     ws = _marked_ws(tmp_path)
     run, calls = _dispatch(prs=[], evolve_list=[])
     er.reap(ws, runner=run)
     pr_list = next(a for a in calls if a[:3] == ["gh", "pr", "list"])
     json_fields = pr_list[pr_list.index("--json") + 1]
-    assert "commits" in json_fields.split(",")
+    assert "commits" not in json_fields.split(",")
+
+
+def test_reap_enriches_candidates_via_pr_view(tmp_path):
+    # the positive guard: every candidate PR (key in the evolve index) gets a
+    # `gh pr view <n> --json files,commits` so classify still sees files/commits.
+    ws = _marked_ws(tmp_path)
+    run, calls = _dispatch(
+        prs=[_pr(1, "flow-a", files=["state.py"], commits=["feat\n\nCloses flow-c1"])],
+        evolve_list=[{"id": "flow-a", "labels": ["evolve"]}],
+    )
+    er.reap(ws, runner=run)
+    views = [a for a in calls if a[:3] == ["gh", "pr", "view"]]
+    assert len(views) == 1
+    view = views[0]
+    assert view[3] == "1"
+    json_fields = view[view.index("--json") + 1].split(",")
+    assert "files" in json_fields and "commits" in json_fields
 
 
 def _auto_merge_hot_ws(tmp_path: Path) -> Path:
@@ -673,8 +709,10 @@ def _label_aware_list_runner(
 
     def run(args: list[str]) -> subprocess.CompletedProcess[str]:
         calls.append(args)
+        if args[:3] == ["gh", "pr", "view"]:
+            return subprocess.CompletedProcess(args, 0, _view_detail(args, prs), "")
         if args[:3] == ["gh", "pr", "list"]:
-            return subprocess.CompletedProcess(args, 0, json.dumps(prs), "")
+            return subprocess.CompletedProcess(args, 0, json.dumps(_stripped(prs)), "")
         if args[:2] == ["bd", "list"]:
             label = args[args.index("-l") + 1]
             return subprocess.CompletedProcess(args, 0, json.dumps(by_label.get(label, [])), "")
@@ -732,8 +770,10 @@ def _red_main_runner(*, prs, evolve_list, open_beads, check_runs_failed=True):
 
     def run(args):
         calls.append(args)
+        if args[:3] == ["gh", "pr", "view"]:
+            return subprocess.CompletedProcess(args, 0, _view_detail(args, prs), "")
         if args[:3] == ["gh", "pr", "list"]:
-            return subprocess.CompletedProcess(args, 0, json.dumps(prs), "")
+            return subprocess.CompletedProcess(args, 0, json.dumps(_stripped(prs)), "")
         if args[:2] == ["bd", "list"] and "-l" in args:
             return subprocess.CompletedProcess(args, 0, json.dumps(evolve_list), "")
         if args[:2] == ["bd", "list"] and "--status" in args and "open" in args:
@@ -813,8 +853,10 @@ def _truncating_label_runner(
 
     def run(args: list[str]) -> subprocess.CompletedProcess[str]:
         calls.append(args)
+        if args[:3] == ["gh", "pr", "view"]:
+            return subprocess.CompletedProcess(args, 0, _view_detail(args, prs), "")
         if args[:3] == ["gh", "pr", "list"]:
-            return subprocess.CompletedProcess(args, 0, json.dumps(prs), "")
+            return subprocess.CompletedProcess(args, 0, json.dumps(_stripped(prs)), "")
         if args[:2] == ["bd", "list"]:
             rows = evolve_beads if ("-l" in args and args[args.index("-l") + 1] == "evolve") else []
             if "--limit" in args:
