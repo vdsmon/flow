@@ -322,6 +322,32 @@ def _file_main_red_p0(run: Runner, sha: str | None, failing_checks: list[str]) -
         run(["bd", "create", "-p", "P0", "--title", title])
 
 
+def _enrich_pr_details(run: Runner, prs: list[dict], index: dict[str, list[str]]) -> None:
+    """Graft per-PR `files`/`commits` onto each candidate PR via `gh pr view`.
+
+    The bulk `gh pr list --json ...,commits` makes gh's GraphQL cost estimator price
+    the nested commits->authors connection across all 200 PRs and REJECT the query
+    pre-execution (estimate up to 1,000,000 nodes, limit 500,000), so the whole reap
+    fails even at zero open PRs (flow-4dxr). A per-PR `gh pr view <n> --json
+    files,commits` bounds the node cost to one PR. Only candidates (key in `index`)
+    reach `classify`, so only they are enriched: `_effective_hot` reads `files` for
+    every candidate, `_covers_from_commits` reads `commits` for the merge set. A view
+    failure raises ToolError (exit 2) via `_ok`, preserving the conservative posture
+    (can't determine hotness -> abort, don't misroute).
+    """
+    for pr in prs:
+        number = pr.get("number")
+        if number is None:
+            continue
+        key = _key_from_ref(str(pr.get("headRefName", "")))
+        if key is None or key not in index:
+            continue
+        raw = _ok(run(["gh", "pr", "view", str(number), "--json", "files,commits"]), "gh pr view")
+        detail = json.loads(raw)
+        pr["files"] = detail.get("files") or []
+        pr["commits"] = detail.get("commits") or []
+
+
 def reap(
     workspace_root: Path, *, runner: Runner | None = None, include_proposals: bool = False
 ) -> dict:
@@ -339,7 +365,7 @@ def reap(
                 "--state",
                 "open",
                 "--json",
-                "number,headRefName,isDraft,mergeStateStatus,statusCheckRollup,files,commits",
+                "number,headRefName,isDraft,mergeStateStatus,statusCheckRollup",
                 "--limit",
                 "200",
             ]
@@ -348,6 +374,7 @@ def reap(
     )
     prs = _loads(pr_raw)
     index = _labels_index(run, include_proposals=include_proposals)
+    _enrich_pr_details(run, prs, index)
     now = utcnow_iso()
     current_boot = lease.boot_id()
     host = lease.hostname()
