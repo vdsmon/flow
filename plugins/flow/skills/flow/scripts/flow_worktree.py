@@ -617,6 +617,38 @@ def _refuse_invalid_covers(*, ticket: str, covers: list[str], main_root: Path) -
         _refuse_epic_bead(ticket=cover, main_root=main_root)
 
 
+def _stamp_run_frontmatter(
+    worktree: Path,
+    ticket: str,
+    *,
+    planned_files: list[str] | None,
+    covers: list[str],
+    commit_type: str | None,
+    commit_summary: str | None,
+    e2e_recipe: str | None,
+) -> None:
+    """Seed the run frontmatter the unattended tail reads so it never pauses to ask.
+
+    planned_files -> records_diff_baseline pre-hook; covers -> the delivery fan-out
+    (transition / PR comment / reflect); commit_type/commit_summary -> the commit
+    stage; e2e_recipe -> the e2e lint gate + recipe executor. List fields go in as
+    TOML-array literals so ticket_frontmatter coerces them back to lists.
+    """
+    fm_updates: dict[str, str] = {}
+    if planned_files:
+        fm_updates["planned_files"] = "[" + ", ".join(f'"{f}"' for f in planned_files) + "]"
+    if covers:
+        fm_updates["covers"] = "[" + ", ".join(f'"{c}"' for c in covers) + "]"
+    if commit_type:
+        fm_updates["commit_type"] = commit_type
+    if commit_summary:
+        fm_updates["commit_summary"] = commit_summary
+    if e2e_recipe:
+        fm_updates["e2e_recipe"] = e2e_recipe
+    if fm_updates:
+        ticket_frontmatter.update(worktree / ".flow" / "tickets" / f"{ticket}.md", fm_updates)
+
+
 def bootstrap(
     *,
     ticket: str,
@@ -687,84 +719,83 @@ def bootstrap(
 
         _git(["worktree", "add", "-b", branch, str(worktree), base], main_root, run)
 
-        # A gitignored planned file is silently dropped from the commit and hard-fails
-        # capture-implement-diff's `git add --intent-to-add` four stages later in the
-        # unattended tail. Catch it here, at the spec gate, while the user is present.
-        # Checked in the WORKTREE, not main_root: the worktree is checked out from
-        # `base`, which may carry .gitignore negations (e.g. a stacked PR off a feature
-        # branch) that main_root's current branch lacks; checking main_root would
-        # false-refuse a file `base` legitimately un-ignores. On a real ignore we remove
-        # the just-created worktree AND delete the -b-created branch so refusing leaves no orphan.
-        if planned_files:
-            ignored = _gitignored(planned_files, worktree, run)
-            if ignored:
-                ignore_file_planned = any(
-                    f == ".gitignore" or f.endswith("/.gitignore") for f in planned_files
-                )
-                if ignore_file_planned:
-                    # The plan touches .gitignore, but that change is not committed yet,
-                    # so check-ignore still flags these. Warn, do not refuse: the planned
-                    # negation may legitimately un-ignore them.
+        # Past the worktree+branch creation, ANY exception (a deliberate refusal
+        # below, or a non-deliberate raise from _copy_config / mise / _seed_state /
+        # the frontmatter write) would otherwise strand the worktree dir AND the
+        # -b-created branch. Clean both before propagating so a crash or refusal
+        # leaves no orphan (flow-fh05, broadening flow-n2a6's single-site cleanup).
+        # Cleanup runs inside the flock so a sibling never sees a half-state; remove
+        # the worktree BEFORE the branch (a checked-out branch refuses -D); best-effort
+        # `run` (not `_git`) so a cleanup failure never masks the original exception.
+        try:
+            # A gitignored planned file is silently dropped from the commit and hard-fails
+            # capture-implement-diff's `git add --intent-to-add` four stages later in the
+            # unattended tail. Catch it here, at the spec gate, while the user is present.
+            # Checked in the WORKTREE, not main_root: the worktree is checked out from
+            # `base`, which may carry .gitignore negations (e.g. a stacked PR off a feature
+            # branch) that main_root's current branch lacks; checking main_root would
+            # false-refuse a file `base` legitimately un-ignores.
+            if planned_files:
+                ignored = _gitignored(planned_files, worktree, run)
+                if ignored:
+                    ignore_file_planned = any(
+                        f == ".gitignore" or f.endswith("/.gitignore") for f in planned_files
+                    )
+                    if ignore_file_planned:
+                        # The plan touches .gitignore, but that change is not committed yet,
+                        # so check-ignore still flags these. Warn, do not refuse: the planned
+                        # negation may legitimately un-ignore them.
+                        warnings.append(
+                            "planned files are currently gitignored: "
+                            + ", ".join(ignored)
+                            + " (plan also touches .gitignore; ensure your negation un-ignores them)"
+                        )
+                    else:
+                        raise _ConfigError(
+                            "planned files are gitignored and would be silently dropped from "
+                            "the commit: "
+                            + ", ".join(ignored)
+                            + " (add a .gitignore negation to the plan's files, or fix the planned paths)"
+                        )
+
+            if planned_files:
+                typo = _typo_planned(planned_files, worktree)
+                if typo:
                     warnings.append(
-                        "planned files are currently gitignored: "
-                        + ", ".join(ignored)
-                        + " (plan also touches .gitignore; ensure your negation un-ignores them)"
-                    )
-                else:
-                    run(["git", "worktree", "remove", "--force", str(worktree)], main_root)
-                    run(["git", "branch", "-D", branch], main_root)
-                    raise _ConfigError(
-                        "planned files are gitignored and would be silently dropped from "
-                        "the commit: "
-                        + ", ".join(ignored)
-                        + " (add a .gitignore negation to the plan's files, or fix the planned paths)"
+                        "planned files in a non-existent directory (likely a path typo): "
+                        + ", ".join(typo)
+                        + " (a new file in an existing dir is fine; check the parent path)"
                     )
 
-        if planned_files:
-            typo = _typo_planned(planned_files, worktree)
-            if typo:
-                warnings.append(
-                    "planned files in a non-existent directory (likely a path typo): "
-                    + ", ".join(typo)
-                    + " (a new file in an existing dir is fine; check the parent path)"
-                )
+            copied = _copy_config(main_root, worktree, extra_copy or [])
+            _ensure_flow_config(main_root, worktree, main_root / ".flow")
 
-        copied = _copy_config(main_root, worktree, extra_copy or [])
-        _ensure_flow_config(main_root, worktree, main_root / ".flow")
+            if mise_trust and (
+                (worktree / "mise.toml").exists() or (worktree / ".mise.toml").exists()
+            ):
+                result = run(["mise", "trust"], worktree)
+                if result.returncode != 0:
+                    warnings.append(
+                        f"mise trust failed: {result.stderr.strip()} "
+                        "(the tail may die on first `mise run`)"
+                    )
 
-        if mise_trust and ((worktree / "mise.toml").exists() or (worktree / ".mise.toml").exists()):
-            result = run(["mise", "trust"], worktree)
-            if result.returncode != 0:
-                warnings.append(
-                    f"mise trust failed: {result.stderr.strip()} "
-                    "(the tail may die on first `mise run`)"
-                )
+            head_sha = _git(["rev-parse", "HEAD"], worktree, run)
+            run_id = _seed_state(worktree, ticket, plan_text, head_sha)
 
-        head_sha = _git(["rev-parse", "HEAD"], worktree, run)
-        run_id = _seed_state(worktree, ticket, plan_text, head_sha)
-
-        fm_updates: dict[str, str] = {}
-        if planned_files:
-            # the implement pre-handler hook (records_diff_baseline) reads frontmatter
-            # `planned_files`; seeding it here keeps the tail from pausing to ask.
-            # Pass a TOML-array literal so ticket_frontmatter coerces it to a list.
-            fm_updates["planned_files"] = "[" + ", ".join(f'"{f}"' for f in planned_files) + "]"
-        if covers:
-            # the delivery fan-out (transition / PR comment / reflect) reads frontmatter
-            # `covers`; seeding it here is what lets those steps close every co-delivered
-            # ticket without re-asking. TOML-array literal so ticket_frontmatter coerces it.
-            fm_updates["covers"] = "[" + ", ".join(f'"{c}"' for c in covers) + "]"
-        if commit_type:
-            fm_updates["commit_type"] = commit_type
-        if commit_summary:
-            fm_updates["commit_summary"] = commit_summary
-        if e2e_recipe:
-            # the e2e stage reads frontmatter `e2e_recipe` (lint_ticket HARD GATE +
-            # the recipe-executor doc); seeding it here is what lets the opted-in
-            # e2e stage run unattended without pausing to ask.
-            fm_updates["e2e_recipe"] = e2e_recipe
-        if fm_updates:
-            ticket_frontmatter.update(worktree / ".flow" / "tickets" / f"{ticket}.md", fm_updates)
+            _stamp_run_frontmatter(
+                worktree,
+                ticket,
+                planned_files=planned_files,
+                covers=covers,
+                commit_type=commit_type,
+                commit_summary=commit_summary,
+                e2e_recipe=e2e_recipe,
+            )
+        except Exception:
+            run(["git", "worktree", "remove", "--force", str(worktree)], main_root)
+            run(["git", "branch", "-D", branch], main_root)
+            raise
 
     return {
         "ticket": ticket,
