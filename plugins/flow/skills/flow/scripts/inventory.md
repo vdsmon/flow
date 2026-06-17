@@ -75,8 +75,8 @@ Callers MUST send either:
 - `Content{fmt="adf"}` — body is a pre-built ADF JSON string. Adapter parses + sends as-is.
 - `Content{fmt="plain"}` — adapter wraps as single-paragraph ADF: `{"type":"doc","version":1,"content":[{"type":"paragraph","content":[{"type":"text","text":body}]}]}`.
 
-`Content{fmt="md"}` is REJECTED with `NotSupported("markdown not supported by Jira; use fmt=adf or fmt=plain")`.
-No heuristic md→ADF conversion; richer markdown silently breaks in Jira UI without errors, so we refuse rather than guess.
+`Content{fmt="md"}` is COERCED to plain text (lossy): the adapter wraps the raw markdown body as a single ADF paragraph, same as `fmt="plain"`.
+No heuristic md→ADF conversion; markdown syntax (headings, lists, code fences) renders verbatim in the Jira UI. Lossy rendering is accepted so autonomous flow comments (which wrap bodies as `fmt="md"`) don't hard-fail on Jira.
 
 ## Status normalization mapping
 
