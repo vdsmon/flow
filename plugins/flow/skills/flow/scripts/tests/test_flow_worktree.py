@@ -529,6 +529,9 @@ def test_bootstrap_rejects_gitignored_planned_file(tmp_path: Path) -> None:
         )
     assert any(c[:3] == ["git", "worktree", "add"] for c in calls)
     assert any(c[:4] == ["git", "worktree", "remove", "--force"] for c in calls)
+    # the -b-created branch is also deleted, so a retry does not hit
+    # "fatal: a branch named <branch> already exists"
+    assert any(c == ["git", "branch", "-D", "feature/FT-1-thing"] for c in calls)
 
 
 def test_bootstrap_warns_when_gitignore_also_planned(tmp_path: Path) -> None:
@@ -547,14 +550,17 @@ def test_bootstrap_warns_when_gitignore_also_planned(tmp_path: Path) -> None:
 
 def test_bootstrap_accepts_non_ignored_planned_files(tmp_path: Path) -> None:
     main = _main_checkout(tmp_path)
+    calls: list = []
     res = _run(
         tmp_path,
         main,
         planned_files=["a.py"],
-        runner=_fake_runner(ignored=set(), main=main),
+        runner=_fake_runner(ignored=set(), calls=calls, main=main),
     )
     assert res["ticket"] == "FT-1"
     assert not any("gitignored" in w for w in res["warnings"])
+    # happy path never deletes the branch
+    assert not any(c[:3] == ["git", "branch", "-D"] for c in calls)
 
 
 def test_bootstrap_warns_on_planned_file_in_missing_dir(tmp_path: Path) -> None:

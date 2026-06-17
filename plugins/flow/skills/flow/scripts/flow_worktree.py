@@ -694,7 +694,7 @@ def bootstrap(
         # `base`, which may carry .gitignore negations (e.g. a stacked PR off a feature
         # branch) that main_root's current branch lacks; checking main_root would
         # false-refuse a file `base` legitimately un-ignores. On a real ignore we remove
-        # the just-created worktree so refusing leaves no orphan.
+        # the just-created worktree AND delete the -b-created branch so refusing leaves no orphan.
         if planned_files:
             ignored = _gitignored(planned_files, worktree, run)
             if ignored:
@@ -712,6 +712,7 @@ def bootstrap(
                     )
                 else:
                     run(["git", "worktree", "remove", "--force", str(worktree)], main_root)
+                    run(["git", "branch", "-D", branch], main_root)
                     raise _ConfigError(
                         "planned files are gitignored and would be silently dropped from "
                         "the commit: "
