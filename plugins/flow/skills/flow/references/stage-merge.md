@@ -20,6 +20,7 @@ PR_STATE=$(gh pr view "$PR_ID" --json state -q .state)
 if [ "$PR_STATE" = "MERGED" ]; then
   echo "PR #$PR_ID already merged — nothing to do"
   bd close "$KEY" --reason "PR #$PR_ID already merged" || true   # may already be CLOSED by the auto-merge; must not fail the stage
+  # close any covered beads this folded run co-delivered (see §Cover-close below)
   # STATUS=completed; STOP — skip the CI re-read, the eligibility gate, §2, and §3.
   # No delete-branch: origin already removed the branch; worktree teardown stays with the drain reap (§3's division of labor).
 fi
@@ -102,6 +103,7 @@ else
     python3 ${CLAUDE_SKILL_DIR}/scripts/forge_cli.py --workspace-root . mark-ready --pr "$PR_ID"   # if it was a draft
     python3 ${CLAUDE_SKILL_DIR}/scripts/forge_cli.py --workspace-root . merge --pr "$PR_ID" --squash
     bd close "$KEY" --reason "self-merged via PR #$PR_ID"
+    # close any covered beads this folded run co-delivered (see §Cover-close below)
     python3 ${CLAUDE_SKILL_DIR}/scripts/forge_cli.py --workspace-root . delete-branch --branch "$BRANCH"
   fi
 fi
@@ -112,6 +114,24 @@ The self-merge does NOT stamp the version. It merges like a human merge — touc
 The push-state check binds the merge to the CI'd SHA: `git rev-parse origin/$BRANCH` (after `git fetch origin $BRANCH`) is the last-pushed commit, so `HEAD == origin/$BRANCH` proves every local commit was pushed and therefore CI'd. A flow worktree never records upstream tracking — the shared `.git/config` write is sandbox-blocked, the same root cause flow-wjfs fixed for the push commands — so `@{u}` is empty there and the remote-tracking ref is the reliable pushed-SHA source. The merge-state branch then splits CLEAN/DRAFT (merge) from DIRTY (leave for the human). Close the bead and delete the **remote** branch only AFTER `merge` succeeds — a `bd close` on a PR that never merged would mint the exact PR↔bead inconsistency this guards against. The **local** worktree + branch are NOT torn down here: a run cannot remove the worktree it is standing in. Teardown is deferred to the drain reap step (`flow_worktree.py reap`, lease-gated), which reaps the worktree once this session exits.
 
 `STATUS=completed` once the merge lands (or on a clean `skip`/`held_guard`). Only a tool failure on `merge` itself → `STATUS=failed`.
+
+## Cover-close (grouped runs only)
+
+When this run folded sibling beads (`/flow <KEY> --auto --covers <c1,c2>`, the §drain group-fold in `verb-evolve.md`), the lead's self-merge must close the covers too — symmetric to the lead close, so a folded cover does not re-surface in `bd ready` next drain turn. Run this AT BOTH lead-close points above: the already-merged short-circuit (after `bd close "$KEY" ...`, §1) and the main merge path (after `bd close "$KEY" --reason "self-merged ..."`, §3). The run is standing in its own worktree, so read the covers from frontmatter:
+
+```bash
+COVERS=$(python3 ${CLAUDE_SKILL_DIR}/scripts/ticket_frontmatter.py read .flow/tickets/"$KEY".md \
+  | python3 -c 'import sys,json;print("\n".join(json.load(sys.stdin).get("covers") or []))')
+for COVER in $COVERS; do
+  python3 ${CLAUDE_SKILL_DIR}/scripts/tracker_cli.py --workspace-root . \
+    comment --key "$COVER" --text "co-delivered by $KEY via PR #$PR_ID"
+  python3 ${CLAUDE_SKILL_DIR}/scripts/tracker_cli.py --workspace-root . \
+    transition --key "$COVER" --to-state closed
+  bd dep remove "$COVER" "$KEY" || true   # drop the §drain suppression dep (beads-only; harmless if absent)
+done
+```
+
+Best-effort, mirroring the lead close: a cover comment/transition that hiccups is a warning, never a stage failure (the lead is the source of truth, the diff is already merged). The close goes through the `tracker_cli.py` seam (not raw `bd close`) so it is tracker-agnostic — `*→closed` is a valid bead transition and the same call routes to jira's done state. `ticket_frontmatter.py read` takes the ticket-file path positionally (NOT `--ticket`), matching `stage-commit.md`'s covers fan-out. Absent/empty `covers` → the loop runs zero times (a normal single-ticket run closes nothing extra).
 
 ## Serialization note
 

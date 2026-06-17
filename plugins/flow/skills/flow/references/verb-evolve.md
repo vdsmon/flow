@@ -112,7 +112,7 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/launch_ledger.py prune --workspace-root .  #
 python3 ${CLAUDE_SKILL_DIR}/scripts/evolve_reap.py --workspace-root .
 ```
 
-Returns JSON `{merge:[{pr,key,is_draft,is_hot}], not_green, skipped_hot, skipped_live, blocked, held_main_red}`. The reap is lease-liveness-gated in code: a green PR whose run lease still reads live/corrupt is held in `skipped_live` (not merged) — the live run self-merges its own PR in its merge stage, so the reap only touches genuinely non-live (orphan) runs. The `launch_ledger.py prune` on the first line is hygiene only (drops expired launch markers); SKIP it under `--dry-run` like every other side effect, since it deletes files. For each `merge` entry (skip all of this under `--dry-run`):
+Returns JSON `{merge:[{pr,key,is_draft,is_hot,covers}], not_green, skipped_hot, skipped_live, blocked, held_main_red}`. Each `merge` (and `held_main_red`) entry carries `covers`: the cover keys this PR co-delivers, parsed from the lead's `Closes <COVER>` commit trailers (the lead's own key filtered out), empty `[]` for an un-folded PR. The reap closes each cover after the lead close (below), so an ORPHANED folded lead (its run died before self-merging, §B2) still closes its covers — the common path closes them in the lead's own merge stage (`references/stage-merge.md` §Cover-close). The reap is lease-liveness-gated in code: a green PR whose run lease still reads live/corrupt is held in `skipped_live` (not merged) — the live run self-merges its own PR in its merge stage, so the reap only touches genuinely non-live (orphan) runs. The `launch_ledger.py prune` on the first line is hygiene only (drops expired launch markers); SKIP it under `--dry-run` like every other side effect, since it deletes files. For each `merge` entry (skip all of this under `--dry-run`):
 
 **Guard property-check — run FIRST for any entry with `is_hot: true`.** A hot entry touches the harness, possibly the safety machinery itself. Before merging it, review the PR diff (`gh pr diff <pr>`) against the guard-property checklist: does this DELETE or weaken a safety property — lease exclusivity (one run per ticket), snapshot drift-detection, atomic-write + corrupt-file quarantine, content-ownership refusal, or self-edit flock serialization? Guard *code* may be refactored, sped up, or improved freely; a guard *property* may only be replaced by one that provably still holds, never simply dropped. Green does NOT prove the property holds — most of these have no direct test — so this review is the enforcer, not CI. If the diff removes a protection without a provably-equivalent replacement → do NOT merge: leave the PR as a draft for the human (skip its `gh pr ready` + `gh pr merge`), and report it under `held_guard`. Only a property-preserving hot entry proceeds to the steps below; a non-hot entry (`is_hot: false`) skips straight to them.
 
@@ -131,6 +131,16 @@ else
   # remote branch — both gated on the merge succeeding, neither on the other.
   if gh pr merge <pr> --squash; then
     bd close <key> --reason "merged via PR #<pr>"
+    # close any covered beads this folded lead co-delivered. <covers> is the merge
+    # entry's `covers` list (the lead's `Closes <COVER>` commit trailers, lead key
+    # filtered out). Best-effort, mirroring the lead close; never block the reap.
+    for COVER in <covers>; do
+      python3 ${CLAUDE_SKILL_DIR}/scripts/tracker_cli.py --workspace-root . \
+        comment --key "$COVER" --text "co-delivered by <key> via PR #<pr>" || true
+      python3 ${CLAUDE_SKILL_DIR}/scripts/tracker_cli.py --workspace-root . \
+        transition --key "$COVER" --to-state closed || true
+      bd dep remove "$COVER" <key> || true   # drop the §B2 suppression dep (beads-only; harmless if absent)
+    done
     git push origin --delete <branch> || true
   fi
 fi
@@ -238,7 +248,23 @@ fi
 
 `<key>` comes from the entry. **Reap-then-reopen / reap-then-block is the load-bearing order in EVERY branch:** if the reap partially fails the bead stays in_progress → re-qualifies as stranded next turn → idempotent self-heal (the marker doesn't advance because the marker write is `&&`-gated on a clean reap). Reopen/block-first then a reap failure would make the bead `open`/`blocked` + a dirty worktree still present → invisible to the in_progress detector, and the next-turn launch hits dup-claim exit 4 forever. After a clean reopen the bead is `open` (back in `bd ready`) with its worktree gone, so this turn's loop-back to **A** → **B** select sees it and **C** launches it fresh. **The `STRANDED-RECOVERY:` marker bounds the cycle at TWO recovery relaunches** (no marker → relaunch + `attempt-1`; `attempt-1` → relaunch + `attempt-2`; `attempt-2` → block + triage stem, terminal — a `blocked` bead leaves in_progress so it drops out of the detector and never re-strands). This is the tier-uniform inner bound that closes the deterministic-crasher loop (the marker is distinct from SONNET-LADDER, so a sonnet bead carrying both counters is bounded by whichever trips first). The loop-level iteration cap (the guaranteed terminal exit D-wait names) remains the outer bound for a flapping `bd update`.
 
-**C. Launch.**
+**B2. Group-fold the launch batch (≥2 keys).** When step **B** returns `launch` with **two or more** keys, cluster the ones that are *one coherent change* and rewrite the launch plan so each cluster becomes a single lead-`--covers` run — related beads do NOT launch as colliding parallel runs (the flow-n7lz collision: `flow-x1yq`/`flow-nr8c`/`flow-pms6` all rewriting `create_pr.py` launched in one batch). A singleton batch (one key) skips this step; the plan is unchanged. This is a deterministic, prose-orchestrated pass over the keys already in hand — NO agent spawn by default (it mirrors `/flow group`'s clustering, which is pure prose). **B2 does NOT launch** — it only clusters, wires the cover suppression, and produces the *effective launch plan* that **C** executes. This keeps ONE launch site (no double-launch) and gives each fold-lead all of C's machinery (the clean-boundary advance, the per-key `triage.py decided` / staleness check, the sonnet ladder).
+
+Cluster by the cheap signals available at select time, any one of which couples two launch keys:
+- an explicit `bd dep` edge between two of the launch keys (`bd dep tree <key> --json`, or read the candidate `links`),
+- a **shared parent epic** (same `parent` on both beads), OR
+- a **shared primary file matched by BASENAME STEM** — e.g. both bodies name `create_pr.py`. Match the stem, NOT the full path: `nr8c` phrases it as `create_pr.py::raw-commit-body`, so a full-path (`scripts/create_pr.py`) signal misses it and would half-fold the trio, re-opening the exact collision this fixes.
+
+A cluster = a set of ≥2 keys joined (transitively) by those signals. For each cluster:
+1. **Pick the lead** — reuse `verb-group.md`'s rule: prefer an in-progress / WIP-branch member, else the most substantive body. The lead owns the run identity; the rest become its covers.
+2. **Suppress the covers** so neither this turn's **C** nor the NEXT turn's select re-launches them: `bd dep <lead> --blocks <cover>` per cover (the bd form is `bd dep <blocker> --blocks <blocked>`). This drops each cover from `bd ready` and keeps it off the §Recover stranded detector (which requires `in_progress`, not `blocked`). Self-heals if the lead dies: a recovered solo lead eventually closes, the covers unblock and re-cluster.
+3. **Rewrite the launch plan:** DROP every cover key from the keys **C** will launch, and tag the lead with its cover set. So the effective plan = singletons (keys in no ≥2 cluster) + one lead per cluster, the lead carrying `covers=[c1,c2]`.
+
+The lead's run self-merges its own PR and closes every cover at merge (`references/stage-merge.md` §Cover-close); an orphaned lead's covers close at reap (§A above). Under `--dry-run`, print the fold plan (each cluster's lead + its covers, and the surviving singletons) and wire NOTHING — no `bd dep`, no launch. A synthetic 2-bead same-file batch must show ONE folded `--covers` launch, not two.
+
+Clustering stays prose (judgment, like `/flow group`): default to the deterministic signals above; only escalate to a clustering Agent when a large batch leaves an ambiguous grouping the cheap signals cannot resolve.
+
+**C. Launch.** Launch the **effective plan** from **B2** (singletons + one lead per fold-cluster; for a singleton batch the plan is just step **B**'s `launch`). A fold-lead carries a `covers` set — append `--covers <c1>,<c2>` to its `claude --bg` command (cover keys comma-joined); a singleton carries none and launches bare.
 
 **Pre-launch advance (clean-boundary, conditional).** Before fanning out this batch, advance the maintainer checkout when — and only when — nothing is mid-pipeline, so the about-to-launch runs pick up just-merged code (same-drain compounding instead of next-drain: a fix merged earlier this drain, e.g. a bare-`git push` fix or a lease-heartbeat, governs the very next batch rather than waiting for the next drain). The gate, read from the step-**B** JSON you already consumed: no `liveness` value is `live` or `corrupt` (equivalently `select.live_runs` is empty) AND `select.launched_pending` is empty. When it holds, run the **§Post-drain advance recipe** below (`git fetch` + `git checkout -- .beads/` + `git merge --ff-only origin/main` → `claude plugin marketplace update vdsmon-flow`, try-and-skip, **never force**), then proceed to the launch loop; it inherits §Post-drain's carve-outs (skip under `--dry-run`, skip when the orchestrator is not on `main`). When the gate does NOT hold — any `live`/`corrupt` lease, or a non-empty `launched_pending` — **skip** the advance and launch on the current checkout: a running session reads its stage reference docs on demand, so swapping the checkout underfoot mid-pipeline could change a stage's prose beneath an in-flight run. The advance lands BEFORE the `launch_ledger.py add` / `claude --bg` loop so the just-launched runs see the freshly-advanced plugin; the unconditional final advance still runs at §Post-drain when the loop exits.
 
@@ -252,7 +278,7 @@ If `decided=true` AND the bead is open: the maintainer has already adjudicated t
 
 Then, before launching each surviving non-decided key, sanity-check whether anything since the bead was filed has already invalidated it — a PR merged this drain (or earlier), a just-closed sibling bead, or a config/environment/operator action the orchestrator itself took this session (it may have diagnosed or fixed the very root cause the bead addresses). This is the gap the audit-freshness gate structurally cannot cover: that gate catches beads staled by CODE landing on `origin/main` because it diffs against base, but environment/config fixes, closed siblings, and operator actions never show up in a diff. When a key is stale, do NOT launch it — close it with the reason instead (`bd close <key> --reason "<why it is moot — e.g. root cause already config-fixed this drain: gh keyring contention, token moved to hosts.yml>"`) and drop it from the batch. This is a judgment call the orchestrator makes from context it already holds, not a script gate; fan out only the keys that survive it.
 
-For each key in `launch` (under `--dry-run`, print the command instead of running it). Read the per-key worker model from the step-**B** JSON (`result.select.model_per_key[key]`, present in the same JSON you already consumed) and append `--model <model>` when the key is present (resolved hot-first: a `hot` bead omits the flag and inherits the launcher default; a non-`hot` `tier:trivial` OR `tier:light` bead maps to `sonnet`; else `[evolve] worker_model` when set, otherwise omit and inherit the launcher default):
+For each key in the **effective plan** (the §B2 rewrite: singletons + one lead per fold-cluster — NOT step **B**'s raw `launch`, whose cover keys §B2 dropped) (under `--dry-run`, print the command instead of running it). Read the per-key worker model from the step-**B** JSON (`result.select.model_per_key[key]`, present in the same JSON you already consumed) and append `--model <model>` when the key is present (resolved hot-first: a `hot` bead omits the flag and inherits the launcher default; a non-`hot` `tier:trivial` OR `tier:light` bead maps to `sonnet`; else `[evolve] worker_model` when set, otherwise omit and inherit the launcher default). When the key is a §B2 fold-lead, append `--covers <c1>,<c2>` (its cover set, comma-joined):
 
 ```bash
 # record the launch FIRST so the very next turn's select sees this key as in-flight
@@ -260,7 +286,7 @@ For each key in `launch` (under `--dry-run`, print the command instead of runnin
 python3 ${CLAUDE_SKILL_DIR}/scripts/launch_ledger.py add --key <key> --workspace-root .
 # shadow-register the launch in the fleet liveness ledger (epic flow-8by2; child-3 reads it).
 python3 ${CLAUDE_SKILL_DIR}/scripts/fleet.py register --key <key> --workspace-root .
-claude --bg [--model sonnet] "/flow <key> --auto"
+claude --bg [--model sonnet] "/flow <key> --auto [--covers <c1>,<c2>]"
 ```
 
 A producer-stamped `tier:trivial` OR `tier:light` non-`hot` bead maps to `sonnet`, so its whole run (orchestrator + plan/implement subagents) runs at the cheaper worker tier; a non-tiered non-`hot` bead maps to `[evolve] worker_model` when configured (this repo: `opus`); a `hot` bead omits the flag and inherits the launcher default (the strongest model for the highest-stakes work). Under `--dry-run`, the printed would-launch command shows the chosen `--model` so a downshift is visible before anything launches.
@@ -283,7 +309,7 @@ Each spawns a detached run that auto-plans and either drives its PR to green-and
 
 ### --dry-run
 
-`/flow evolve drain --dry-run`: run ONE turn's **A** reap classification (`evolve_reap.py`, print the `merge`/`not_green`/`skipped_hot`/`blocked`/`held_main_red` sets, do NOT merge) + **A2** session-cleanup classification (`evolve_session_cleanup.py`, print the `stoppable` set, do NOT `claude stop` or `rm`) + **A3** deferred-escalation classification (scan deferred sonnet beads, print the would-reopen set, do NOT `bd update --status open`) + **B** (`evolve_drain.py`, print the action + would-launch keys + parked), then STOP. No merges, no stops, no reopens, no launches, no loop.
+`/flow evolve drain --dry-run`: run ONE turn's **A** reap classification (`evolve_reap.py`, print the `merge`/`not_green`/`skipped_hot`/`blocked`/`held_main_red` sets, do NOT merge) + **A2** session-cleanup classification (`evolve_session_cleanup.py`, print the `stoppable` set, do NOT `claude stop` or `rm`) + **A3** deferred-escalation classification (scan deferred sonnet beads, print the would-reopen set, do NOT `bd update --status open`) + **B** (`evolve_drain.py`, print the action + would-launch keys + parked) + **B2** group-fold (print the fold plan — each cluster's lead + covers — do NOT wire deps or launch), then STOP. No merges, no stops, no reopens, no dep-wiring, no launches, no loop.
 
 ### --include-proposals (dangerous)
 
@@ -310,7 +336,7 @@ Try-and-skip, **never force**: a diverged or dirty tree leaves the advance for t
 
 ### Report
 
-When the loop exits (`done`), summarise the whole run: merged (keys) + worktrees torn down across all turns, launched (keys), deferred (keys), and everything **parked for the human** — `parked` in-flight beads (expired/absent (non-blocking) lease, including any `held_guard` hot PR you withheld because its diff removed a safety property — name the property), plus `not_green` / conflicted draft PRs, plus any `held_main_red` PRs withheld because main's own CI was red this turn (name the filed `main-ci-red` P0 bead key). Tell the user how to follow along:
+When the loop exits (`done`), summarise the whole run: merged (keys) + worktrees torn down across all turns, launched (keys) — naming any **folded clusters** (lead `--covers` cover1,cover2) the §B2 group-fold pass collapsed, and the covers closed at merge — deferred (keys), and everything **parked for the human** — `parked` in-flight beads (expired/absent (non-blocking) lease, including any `held_guard` hot PR you withheld because its diff removed a safety property — name the property), plus `not_green` / conflicted draft PRs, plus any `held_main_red` PRs withheld because main's own CI was red this turn (name the filed `main-ci-red` P0 bead key). Tell the user how to follow along:
 
 - Monitor live runs with `claude agents --json` (the plain `claude agents` needs a TTY).
 - Review any **deferred** beads with `/flow triage` — it lists the whole deferred queue with each bead's open-question comment inline. `deferred` != done; to unstick one, `/flow triage <key> "<answer>"` posts the answer + reopens the bead (status → `open`), then re-run it interactively (WITHOUT `--auto`).
