@@ -267,7 +267,12 @@ def test_cli_merge_for_hot_in_self_target(tmp_path, capsys):
     assert out == {"action": "merge", "is_hot": True, "reason": "eligible"}
 
 
-def test_cli_skip_when_not_self_target(tmp_path, capsys):
+def test_cli_skip_when_not_self_target(tmp_path, capsys, monkeypatch):
+    import maintainer
+
+    monkeypatch.setattr(
+        maintainer, "_global_config_path", lambda: tmp_path / "no-global" / "config.toml"
+    )
     ws = _ws(tmp_path, self_target=False)
     rc = esm.cli_main(
         ["--workspace-root", str(ws), "--key", "flow-x", "--ci-status", "green"],
