@@ -96,6 +96,17 @@ def _ensure_gitignore(root: Path) -> dict[str, Any] | None:
     return None
 
 
+def _write_skill_dir(root: Path) -> None:
+    """Persist the absolute skill dir to `.flow/skill_dir` (a gitignored,
+    machine-local sibling, like `.flow/memory-root`). A harness that does not
+    inject `${CLAUDE_SKILL_DIR}` (anything other than Claude Code) reads this to
+    resolve the `python3 ${CLAUDE_SKILL_DIR}/scripts/*.py` prose call-sites; see
+    references/harness.md. Prefer the live env var (most accurate at init time),
+    fall back to the script's own location (scripts/init.py -> skill root)."""
+    skill_dir = os.environ.get("CLAUDE_SKILL_DIR") or str(Path(__file__).resolve().parent.parent)
+    atomic_write_text(root / ".flow" / "skill_dir", skill_dir + "\n")
+
+
 # Phases run in order. Phases skipped by backend (e.g. bd_init for jira) are
 # still recorded as "completed" so --resume bookkeeping stays simple.
 
@@ -841,6 +852,7 @@ def _run_init_phases(
         (flow_dir / "runs").mkdir(parents=True, exist_ok=True)
         (flow_dir / namespace).mkdir(parents=True, exist_ok=True)
         (flow_dir / namespace / "ship-events").mkdir(parents=True, exist_ok=True)
+        _write_skill_dir(root)
         return None
 
     _run_phase("mkdirs", _phase_mkdirs)

@@ -167,6 +167,22 @@ def test_bare_jira_init_writes_workspace_toml(tmp_path: Path) -> None:
     assert handlers["code_review"] == "inline"
 
 
+def test_init_writes_skill_dir_from_env(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("CLAUDE_SKILL_DIR", "/opt/flow/skills/flow")
+    initmod.run_init(_jira_config(tmp_path))
+    skill_dir = tmp_path / ".flow" / "skill_dir"
+    assert skill_dir.read_text(encoding="utf-8").strip() == "/opt/flow/skills/flow"
+
+
+def test_init_skill_dir_falls_back_to_script_location(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.delenv("CLAUDE_SKILL_DIR", raising=False)
+    initmod.run_init(_jira_config(tmp_path))
+    written = (tmp_path / ".flow" / "skill_dir").read_text(encoding="utf-8").strip()
+    expected = str(Path(initmod.__file__).resolve().parent.parent)
+    assert written == expected
+    assert Path(written).is_absolute()
+
+
 def test_bare_beads_init_runs_bd_and_writes_workspace_toml(tmp_path: Path) -> None:
     runner = _bd_ok_runner()
     result = initmod.run_init(_beads_config(tmp_path), runner=runner)
