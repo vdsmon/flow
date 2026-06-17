@@ -162,7 +162,7 @@ def _adf_paragraph(text: str) -> dict[str, Any]:
 
 
 def _content_to_adf(content: Content) -> dict[str, Any]:
-    """Convert a Content payload to ADF JSON. Rejects fmt='md'."""
+    """Convert a Content payload to ADF JSON. md coerces to plain (lossy)."""
     fmt = content["fmt"]
     body = content["body"]
     if fmt == "adf":
@@ -170,12 +170,8 @@ def _content_to_adf(content: Content) -> dict[str, Any]:
             return cast("dict[str, Any]", json.loads(body))
         except json.JSONDecodeError as e:
             raise TrackerError(f"Content.fmt='adf' but body is not valid JSON: {e}") from e
-    if fmt == "plain":
+    if fmt in ("plain", "md"):
         return _adf_paragraph(body)
-    if fmt == "md":
-        raise NotSupported(
-            "markdown not supported by Jira adapter; use Content.fmt='adf' or 'plain'"
-        )
     raise TrackerError(f"unknown Content.fmt={fmt!r}")
 
 

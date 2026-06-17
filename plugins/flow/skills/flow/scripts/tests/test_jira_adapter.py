@@ -162,9 +162,8 @@ def test_content_to_adf_wraps_plain_as_paragraph() -> None:
     assert result["content"][0]["content"][0]["text"] == "hi"
 
 
-def test_content_to_adf_rejects_markdown() -> None:
-    with pytest.raises(t.NotSupported, match="markdown"):
-        tj._content_to_adf({"body": "# heading", "fmt": "md"})
+def test_content_to_adf_coerces_markdown_to_plain() -> None:
+    assert tj._content_to_adf({"body": "# heading", "fmt": "md"}) == tj._adf_paragraph("# heading")
 
 
 def test_adf_to_plain_extracts_nested_text() -> None:
