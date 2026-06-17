@@ -115,6 +115,20 @@ def test_creates_when_no_existing_pr(tmp_path):
     assert _ran(calls, ["git", "push"])
 
 
+def test_push_uses_explicit_refspec(tmp_path):
+    run, calls = _git_runner()
+    fg = _FakeForge(existing=None)
+    cp.open_or_get_pr(tmp_path, base="main", runner=run, forge=fg)
+    assert [
+        "git",
+        "push",
+        "-u",
+        "origin",
+        "feature/flow-aut.7-x:refs/heads/feature/flow-aut.7-x",
+    ] in calls
+    assert ["git", "push", "-u", "origin", "feature/flow-aut.7-x"] not in calls
+
+
 def test_idempotent_reuses_existing_pr(tmp_path):
     run, _ = _git_runner()
     fg = _FakeForge(existing="https://github.com/o/r/pull/7")

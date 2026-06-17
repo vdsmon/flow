@@ -106,7 +106,7 @@ def open_or_get_pr(
     if not branch or branch in _PROTECTED:
         raise RefusedBranch(f"refusing to open a PR from protected branch {branch!r}")
 
-    _ok(run(["git", "push", "-u", "origin", branch]), "git push")
+    _ok(run(["git", "push", "-u", "origin", f"{branch}:refs/heads/{branch}"]), "git push")
 
     fg = forge if forge is not None else _resolve_forge(workspace_root)
 
