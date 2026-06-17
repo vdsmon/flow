@@ -1620,3 +1620,60 @@ def test_finish_clean_deregisters_fleet_entry(
     # finishing the only stage = clean completion -> lease release + fleet dereg
     ds.cmd_finish(tmp_path, "FT-1", "ticket", "completed", session_nonce=nonce)
     assert not entry.exists()
+
+
+# ─── lease TTL multiplier (flow-0xex) ──────────────────────────────────────────
+
+
+def test_stage_ttl_seconds_proportional_to_timeout() -> None:
+    # Pure helper, built from the REAL registry so it tracks future stage edits.
+    from _registry import registry_by_name
+
+    reg = registry_by_name(ds._skill_root_from_script() / ds._STAGE_REGISTRY_RELATIVE)
+
+    # implement (30min) regressed under the old +300 buffer: 2100 < 38*60.
+    assert ds._stage_ttl_seconds(reg["implement"]) == 3600
+    assert ds._stage_ttl_seconds(reg["implement"]) > 38 * 60
+    # review_loop (60min) pins the upper bound the K=2 choice trades against.
+    assert ds._stage_ttl_seconds(reg["review_loop"]) == 7200
+    # None meta falls back to the 10min default.
+    assert ds._stage_ttl_seconds(None) == 1200
+
+    # proportional-headroom invariant across every registered stage.
+    for meta in reg.values():
+        ttl = ds._stage_ttl_seconds(meta)
+        assert ttl == meta.default_timeout_min * 60 * 2
+        assert ttl > meta.default_timeout_min * 60
+
+
+def test_next_refreshes_lease_with_multiplied_ttl(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Wiring pin: cmd_next's refresh at the TTL site runs the multiplier path,
+    # not the old +300. implement is 30min: old 30*60+300=2100 < 3000, new 3600.
+    _write_workspace(
+        tmp_path,
+        stages=["ticket", "implement"],
+        handlers={"ticket": "inline", "implement": "inline"},
+        compounding=False,
+    )
+    _stub_git_head(monkeypatch)
+    td = tmp_path / ".flow" / "runs" / "FT-1"
+
+    rc, _ = ds.cmd_init(tmp_path, "FT-1")
+    assert rc == 0
+    # advance past ticket so the next landing is implement (the 30min stage).
+    rc, _ = ds.cmd_next(tmp_path, "FT-1")
+    assert rc == 0
+    rc, _ = ds.cmd_finish(tmp_path, "FT-1", "ticket", "completed")
+    assert rc == 0
+    rc, nxt = ds.cmd_next(tmp_path, "FT-1")
+    assert rc == 0, nxt
+    assert nxt["stage"] == "implement"
+
+    lse = lease.read_lease(td)
+    assert lse is not None
+    expires = lease.parse_iso(lse.lease_expires_at)
+    assert expires is not None
+    remaining = (expires - datetime.now(UTC)).total_seconds()
+    assert remaining > 50 * 60, remaining
