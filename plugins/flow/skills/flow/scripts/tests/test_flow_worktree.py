@@ -65,12 +65,15 @@ def _fake_runner(
     main: Path | None = None,
     ignored: set[str] | None = None,
     worktree_list: str | None = None,
+    porcelain: str | None = None,
 ) -> fw.Runner:
     def run(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
         if calls is not None:
             calls.append(args)
         if args[:4] == ["git", "worktree", "list", "--porcelain"]:
             return subprocess.CompletedProcess(args, 0, worktree_list or "", "")
+        if args[:3] == ["git", "status", "--porcelain"]:
+            return subprocess.CompletedProcess(args, 0, porcelain or "", "")
         if args[:3] == ["git", "worktree", "add"]:
             wt = Path(args[5])  # git worktree add -b <branch> <path> <base>
             wt.mkdir(parents=True, exist_ok=True)
@@ -189,6 +192,137 @@ def test_seeds_planned_files_as_list(tmp_path: Path) -> None:
     fm_path = Path(res["worktree"]) / ".flow" / "tickets" / "FT-1.md"
     parsed = ticket_frontmatter.read(fm_path)
     assert parsed["planned_files"] == ["src/a.py", "src/b.py"]
+
+
+# ─── L2: detect-and-recover edits spilled onto main before bootstrap ───────────
+
+
+def test_no_recovery_without_flag_even_with_dirty_planned_file(tmp_path: Path) -> None:
+    # The CC-first guarantee: WITHOUT --recover-spill (the CC path never passes it),
+    # a dirty planned file on main — the user's own pre-existing WIP — is NOT touched.
+    main = _main_checkout(tmp_path)
+    (main / "src").mkdir()
+    (main / "src" / "a.py").write_text("user wip\n", encoding="utf-8")
+    calls: list = []
+    res = _run(
+        tmp_path,
+        main,
+        planned_files=["src/a.py"],
+        runner=_fake_runner(calls=calls, main=main, porcelain="?? src/a.py\n"),
+    )
+    assert (main / "src" / "a.py").read_text() == "user wip\n"  # untouched
+    assert not any("carried uncommitted edits" in w for w in res["warnings"])
+    assert not any(c[:3] == ["git", "status", "--porcelain"] for c in calls)  # not even probed
+
+
+def test_clean_main_does_not_relocate(tmp_path: Path) -> None:
+    # Recovery on, but plan-mode-clean main → porcelain empty → no carry, no checkout.
+    main = _main_checkout(tmp_path)
+    calls: list = []
+    res = _run(
+        tmp_path,
+        main,
+        planned_files=["src/a.py"],
+        recover_spill=True,
+        runner=_fake_runner(calls=calls, main=main, porcelain=""),
+    )
+    assert not any("carried uncommitted edits" in w for w in res["warnings"])
+    assert not any(c[:3] == ["git", "checkout", "--"] for c in calls)
+
+
+def test_unrelated_main_wip_is_not_relocated(tmp_path: Path) -> None:
+    # Recovery on, but main's uncommitted work does NOT overlap planned_files → no-op.
+    main = _main_checkout(tmp_path)
+    (main / "unrelated.py").write_text("wip\n", encoding="utf-8")
+    res = _run(
+        tmp_path,
+        main,
+        planned_files=["src/a.py"],
+        recover_spill=True,
+        runner=_fake_runner(main=main, porcelain="?? unrelated.py\n"),
+    )
+    assert not any("carried uncommitted edits" in w for w in res["warnings"])
+    assert (main / "unrelated.py").read_text() == "wip\n"
+
+
+def test_spilled_untracked_planned_file_relocated(tmp_path: Path) -> None:
+    # A soft-gate harness created a NEW planned file on main before bootstrap.
+    main = _main_checkout(tmp_path)
+    (main / "src").mkdir()
+    (main / "src" / "a.py").write_text("agent work\n", encoding="utf-8")
+    res = _run(
+        tmp_path,
+        main,
+        planned_files=["src/a.py"],
+        recover_spill=True,
+        runner=_fake_runner(main=main, porcelain="?? src/a.py\n"),
+    )
+    wt = Path(res["worktree"])
+    assert (wt / "src" / "a.py").read_text() == "agent work\n"  # carried in
+    assert not (main / "src" / "a.py").exists()  # untracked file removed from main
+    assert any("carried uncommitted edits" in w for w in res["warnings"])
+
+
+def test_spilled_tracked_planned_file_relocated_and_main_checked_out(
+    tmp_path: Path,
+) -> None:
+    # A modified (tracked) planned file: carried into the worktree, main restored
+    # via `git checkout` rather than rm (the fake records the call).
+    main = _main_checkout(tmp_path)
+    (main / "src").mkdir()
+    (main / "src" / "b.py").write_text("modified\n", encoding="utf-8")
+    calls: list = []
+    res = _run(
+        tmp_path,
+        main,
+        planned_files=["src/b.py"],
+        recover_spill=True,
+        runner=_fake_runner(calls=calls, main=main, porcelain=" M src/b.py\n"),
+    )
+    wt = Path(res["worktree"])
+    assert (wt / "src" / "b.py").read_text() == "modified\n"
+    assert ["git", "checkout", "--", "src/b.py"] in calls
+
+
+def test_relocate_spilled_real_git_leaves_work_in_worktree_main_reverted(
+    tmp_path: Path,
+) -> None:
+    # The destructive path (real `git checkout` + real unlink) against a real repo:
+    # the one load-bearing safety claim is "work ends in the worktree, never in
+    # neither place" — fake-git can't prove it, so exercise real git + fs here.
+    main = tmp_path / "main"
+    main.mkdir()
+
+    def git(*a: str) -> None:
+        subprocess.run(["git", *a], cwd=main, check=True, capture_output=True)
+
+    git("init", "-q")
+    git("config", "user.email", "t@t")
+    git("config", "user.name", "t")
+    (main / "tracked.py").write_text("committed\n", encoding="utf-8")
+    git("add", "tracked.py")
+    git("commit", "-qm", "init")
+    # the spill: tracked file modified + a new untracked file, both planned
+    (main / "tracked.py").write_text("agent-modified\n", encoding="utf-8")
+    (main / "new.py").write_text("agent-new\n", encoding="utf-8")
+
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    warnings: list[str] = []
+    fw._relocate_spilled(
+        [("tracked.py", False), ("new.py", True)],
+        main,
+        worktree,
+        fw._default_runner(),
+        warnings,
+    )
+
+    # work landed in the worktree
+    assert (worktree / "tracked.py").read_text() == "agent-modified\n"
+    assert (worktree / "new.py").read_text() == "agent-new\n"
+    # main reverted: tracked back to HEAD, untracked removed
+    assert (main / "tracked.py").read_text() == "committed\n"
+    assert not (main / "new.py").exists()
 
 
 def test_mise_trust_invoked_when_mise_present(tmp_path: Path) -> None:
