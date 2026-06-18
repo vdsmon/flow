@@ -17,6 +17,7 @@ Coverage:
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import subprocess
 import tomllib
@@ -172,6 +173,47 @@ def test_init_writes_skill_dir_from_env(tmp_path: Path, monkeypatch) -> None:
     initmod.run_init(_jira_config(tmp_path))
     skill_dir = tmp_path / ".flow" / "skill_dir"
     assert skill_dir.read_text(encoding="utf-8").strip() == "/opt/flow/skills/flow"
+
+
+# ─── L1: AGENTS.md cross-harness entry point (opt-in, CC-neutral by default) ──
+
+
+def test_init_does_not_write_agents_md_by_default(tmp_path: Path) -> None:
+    # The CC-first guarantee: a pure init adds no tracked AGENTS.md.
+    initmod.run_init(_jira_config(tmp_path))
+    assert not (tmp_path / "AGENTS.md").exists()
+
+
+def test_agents_md_flag_writes_entry_point(tmp_path: Path) -> None:
+    cfg = dataclasses.replace(_jira_config(tmp_path), agents_md=True)
+    initmod.run_init(cfg)
+    agents = tmp_path / "AGENTS.md"
+    body = agents.read_text(encoding="utf-8")
+    assert initmod._AGENTS_MARKER in body
+    assert "CLAUDE_SKILL_DIR" in body
+    assert "Approval is not coding" in body
+
+
+def test_agents_md_appends_to_existing_without_clobber(tmp_path: Path) -> None:
+    (tmp_path / "AGENTS.md").write_text("# House rules\nUse tabs.\n", encoding="utf-8")
+    cfg = dataclasses.replace(_jira_config(tmp_path), agents_md=True)
+    initmod.run_init(cfg)
+    body = (tmp_path / "AGENTS.md").read_text(encoding="utf-8")
+    assert "# House rules" in body  # original preserved
+    assert body.count(initmod._AGENTS_MARKER) == 1  # stanza added once
+
+
+def test_ensure_agents_md_is_idempotent(tmp_path: Path) -> None:
+    assert initmod._ensure_agents_md(tmp_path, requested=True) is None  # first write
+    skipped = initmod._ensure_agents_md(tmp_path, requested=True)  # second is a no-op
+    assert skipped is not None and skipped.get("skipped") is True
+    assert (tmp_path / "AGENTS.md").read_text(encoding="utf-8").count(initmod._AGENTS_MARKER) == 1
+
+
+def test_ensure_agents_md_not_requested_is_noop(tmp_path: Path) -> None:
+    skipped = initmod._ensure_agents_md(tmp_path, requested=False)
+    assert skipped is not None and skipped.get("skipped") is True
+    assert not (tmp_path / "AGENTS.md").exists()
 
 
 def test_init_skill_dir_falls_back_to_script_location(tmp_path: Path, monkeypatch) -> None:

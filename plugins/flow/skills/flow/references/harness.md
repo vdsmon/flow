@@ -32,7 +32,9 @@ Caveat: `.flow/skill_dir` only exists after a `/flow init` (or `--reconfigure` o
 
 ## Entry point — loading the skill without a plugin manifest
 
-Claude Code discovers flow via `.claude-plugin/` and loads SKILL.md on the skill router. Off-CC there is no plugin manifest or `Skill` tool: load `SKILL.md` + the `references/*.md` it points to as plain markdown context — Codex via `AGENTS.md` (import or inline), Cursor via a project rule. Put the `CLAUDE_SKILL_DIR` export line above in that same bootstrap so the call-sites resolve.
+Claude Code discovers flow via `.claude-plugin/` and loads SKILL.md on the skill router. Off-CC there is no plugin manifest or `Skill` tool, so nothing loads the skill — that absence is the root cause of a non-CC run that freelances past the pipeline (it never read SKILL.md). The fix is **`AGENTS.md`**, the cross-harness convention Cursor, Windsurf, opencode and a bare loop all read from the repo root.
+
+`/flow init --agents-md` writes (or append-only-extends) a marker-guarded stanza into `<repo>/AGENTS.md` that (a) carries the `CLAUDE_SKILL_DIR` export above, (b) tells the harness to read `SKILL.md` + this file as context on `/flow`, and (c) restates the approval-is-not-coding soft gate below. The flag is **opt-in**: Claude Code loads via the plugin and never reads AGENTS.md, so a default `init` writes no tracked file (zero change to the CC path). One artifact covers every harness — no per-harness adapter (`.cursor/rules`, a Windsurf rule, …) to maintain. A harness that wants a hard write-block on top can still add its own pre-edit hook; that is opt-in hardening, not a flow requirement.
 
 ## The one gate — `ExitPlanMode` + plan mode
 
@@ -40,6 +42,7 @@ The gate does two things: it **presents** the plan for approval, and it **enforc
 
 - **Presenting** is universal: end the turn on the plan + the `## Confidence` rating, and treat the user's next affirmative as approval.
 - **Enforcing** is Claude-Code-only. Off-CC nothing stops the model from proceeding early, so the fallback is a **soft gate (model self-restraint), not an equivalent**: after presenting the plan, STOP and wait for explicit user approval before seeding the worktree or making any edit. Treat it as a discipline, and a degradation — a careless run can break it where Claude Code could not.
+  - **Engine backstop (no model discipline required).** Portable code cannot intercept a harness's own edit tool, so it cannot *prevent* a pre-bootstrap edit, but `flow_worktree.py create --recover-spill` *detects and recovers* one: an uncommitted planned file on the main checkout is carried into the seeded worktree (and reverted on main) at bootstrap. **The flag is the discriminator, not the symptom or the harness identity** — a dirty planned file on main is equally produced by a soft-gate spill *and* by a CC user's own pre-existing WIP, so flow cannot tell them apart from the file alone. Only the off-CC AGENTS.md entry point passes `--recover-spill`; SKILL.md's CC bootstrap omits it, so the CC path is byte-identical even when main is dirty (plan mode means any dirty planned file there is the user's WIP, which must not be moved). On the off-CC path this turns the soft-gate slip from "work lands on the wrong branch" into "work lands in the run, with a warning." Note `CLAUDE_SKILL_DIR`-set is no longer a CC signal once this stanza ships (it exports the var off-CC too), which is *why* the discriminator is an explicit flag, not env detection.
 
 `EnterPlanMode` (entering the gate) is the same family: on CC, call it; off-CC, simply do the read-only front half and present the plan at the end of the turn.
 

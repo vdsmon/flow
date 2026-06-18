@@ -124,6 +124,93 @@ def _typo_planned(files: list[str], cwd: Path) -> list[str]:
     return [f for f in files if not (cwd / f).exists() and not (cwd / f).parent.exists()]
 
 
+def _porcelain_paths(main_root: Path, runner: Runner) -> dict[str, bool]:
+    """Map each uncommitted path in `main_root` -> is_untracked.
+
+    `git status --porcelain` lines are `XY <path>` (or `XY <orig> -> <path>` for a
+    rename); `??` is untracked. Paths are repo-relative, matching planned_files'
+    convention (`_gitignored` uses `cwd / f`). Renames take the post-`->` name.
+    Quoted paths (core.quotePath on exotic filenames) are left as-is — a rare miss,
+    not a fault, for this backstop.
+    """
+    result = runner(["git", "status", "--porcelain"], main_root)
+    if result.returncode != 0:
+        raise _GitError(f"git status --porcelain failed: {result.stderr.strip()}")
+    out: dict[str, bool] = {}
+    for line in result.stdout.splitlines():
+        if not line.strip():
+            continue
+        code, rest = line[:2], line[3:]
+        path = rest.split(" -> ", 1)[1] if " -> " in rest else rest
+        out[path] = code == "??"
+    return out
+
+
+def _spilled_planned(
+    planned_files: list[str], main_root: Path, runner: Runner
+) -> list[tuple[str, bool]]:
+    """planned_files that are uncommitted in the main checkout (the spill symptom).
+
+    A harness without a plan-mode write-block (Cursor, Windsurf, a bare loop) can
+    let the agent edit the plan's files on `main` BEFORE `create` runs. We cannot
+    intercept that edit, but its fingerprint is exact: an uncommitted planned file
+    on main. On Claude Code plan-mode keeps those files clean, and unrelated main
+    WIP never overlaps planned_files, so both no-op here. Returns (path, untracked).
+    """
+    dirty = _porcelain_paths(main_root, runner)
+    return [(f, dirty[f]) for f in planned_files if f in dirty]
+
+
+def _relocate_spilled(
+    spilled: list[tuple[str, bool]],
+    main_root: Path,
+    worktree: Path,
+    runner: Runner,
+    warnings: list[str],
+) -> None:
+    """Carry main-checkout spilled planned edits into the seeded worktree.
+
+    Direct content copy, not `git stash`: copying the full working-tree content
+    leaves no diff to conflict (the worktree just takes the agent's version), and
+    main is cleaned ONLY after the copy verifiably landed — so the work is never in
+    neither place. Worst case it lives in both (harmless, recoverable). Best-effort:
+    a relocation fault degrades to a warning, never fails the bootstrap.
+    """
+    carried: list[str] = []
+    for rel, untracked in spilled:
+        src, dst = main_root / rel, worktree / rel
+        try:
+            if not src.exists():
+                continue
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dst)
+            if not dst.is_file():
+                continue
+            # Clean main only now that the worktree copy is confirmed present.
+            if untracked:
+                src.unlink()
+            else:
+                res = runner(["git", "checkout", "--", rel], main_root)
+                if res.returncode != 0:
+                    # Worktree has the work; main just wasn't reverted (e.g. a staged
+                    # edit). No loss, so warn rather than fail.
+                    warnings.append(
+                        f"relocated {rel} into the worktree but could not revert it on "
+                        f"main: {res.stderr.strip()}"
+                    )
+            carried.append(rel)
+        except OSError as exc:
+            warnings.append(f"could not relocate spilled edit {rel}: {exc}")
+    if carried:
+        warnings.append(
+            "carried uncommitted edits to planned files from the main checkout into the "
+            "worktree (and reverted them on main): "
+            + ", ".join(carried)
+            + " (a soft-gate harness let the agent edit before bootstrap; if some predate "
+            "this run, that pre-existing work now lives in the worktree — review it)"
+        )
+
+
 def _copy_config(main_root: Path, worktree: Path, extra: list[str]) -> list[str]:
     """Copy gitignored dev config main->worktree. Returns the list copied."""
     copied: list[str] = []
@@ -665,6 +752,7 @@ def bootstrap(
     e2e_recipe: str | None = None,
     mise_trust: bool = True,
     auto: bool = False,
+    recover_spill: bool = False,
     runner: Runner | None = None,
 ) -> dict:
     run = runner or _default_runner()
@@ -703,6 +791,17 @@ def bootstrap(
     plan_text = plan_from.read_text(encoding="utf-8")
     worktree = _worktree_path(main_root, branch, worktree_override)
     warnings: list[str] = []
+
+    # Detect (read-only) edits a weaker harness spilled onto the main checkout
+    # before bootstrap; relocated into the worktree at the end of the try, once the
+    # run is fully seeded (so a refusal/crash never deletes work from main first).
+    # Opt-in via recover_spill, which ONLY the non-CC AGENTS.md entry point passes:
+    # on Claude Code plan mode already blocks the pre-bootstrap edit, so the CC path
+    # never sets this and stays byte-identical (a dirty planned file there is the
+    # user's own pre-existing WIP, which must not be touched). See references/harness.md.
+    spilled = (
+        _spilled_planned(planned_files, main_root, run) if recover_spill and planned_files else []
+    )
 
     # The fetch inside _resolve_base stays OUTSIDE the claim, so a second launch
     # never blocks on the winner's network round-trip; the claim window below is
@@ -792,6 +891,11 @@ def bootstrap(
                 commit_summary=commit_summary,
                 e2e_recipe=e2e_recipe,
             )
+
+            # Last step: the run is fully seeded, so carrying spilled edits in (and
+            # cleaning them off main) can no longer be undone by the except-cleanup.
+            if spilled:
+                _relocate_spilled(spilled, main_root, worktree, run, warnings)
         except Exception:
             run(["git", "worktree", "remove", "--force", str(worktree)], main_root)
             run(["git", "branch", "-D", branch], main_root)
@@ -848,6 +952,14 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         "Seeds frontmatter e2e_recipe so the opted-in e2e stage runs unattended",
     )
     p.add_argument("--no-mise-trust", action="store_true")
+    p.add_argument(
+        "--recover-spill",
+        action="store_true",
+        help="recover edits a soft-gate harness (no plan-mode write-block) spilled onto "
+        "the main checkout before bootstrap: a planned file left uncommitted on main is "
+        "carried into the seeded worktree. The cross-harness AGENTS.md entry point passes "
+        "this; Claude Code omits it (plan mode keeps main clean), so the CC path is unchanged",
+    )
     p.add_argument(
         "--auto",
         action="store_true",
@@ -943,6 +1055,7 @@ def cli_main(argv: list[str]) -> int:
             e2e_recipe=args.e2e_recipe,
             mise_trust=not args.no_mise_trust,
             auto=args.auto,
+            recover_spill=args.recover_spill,
         )
     except _ConfigError as exc:
         sys.stderr.write(f"flow-worktree: {exc}\n")

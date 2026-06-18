@@ -31,6 +31,7 @@
    ```bash
    python3 ${CLAUDE_SKILL_DIR}/scripts/init.py --config "$ANSWERS"
    ```
+   Add `--agents-md` when the repo will be run through a non-Claude-Code harness (Cursor, Windsurf, opencode): it writes a marker-guarded `AGENTS.md` entry point so that harness loads the skill (see references/harness.md "Entry point"). Off by default — Claude Code loads via the plugin and needs no AGENTS.md, so a plain init writes no tracked file. Safe to add later via `--reconfigure --agents-md`.
    - Exit 0 → init.py emits result JSON to stdout.
      Surface to user: "Workspace initialized. Backend: <backend>. Namespace: <namespace>. Next step: `/flow do <ticket>`."
    - Non-zero → surface stderr.

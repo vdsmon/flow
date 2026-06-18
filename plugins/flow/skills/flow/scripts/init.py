@@ -96,6 +96,61 @@ def _ensure_gitignore(root: Path) -> dict[str, Any] | None:
     return None
 
 
+# AGENTS.md is the cross-harness entry point (Cursor, Windsurf, opencode, a bare
+# loop all read it; Claude Code does not — it loads flow via the plugin manifest,
+# so this file is invisible to CC). Opt-in via `--agents-md`: a tracked root file,
+# so default-off keeps a pure-CC init byte-identical. Marker-guarded + append-only
+# like the gitignore block, so re-init / a pre-existing AGENTS.md is never clobbered.
+_AGENTS_MARKER = "<!-- flow:begin -->"
+_AGENTS_STANZA = """<!-- flow:begin -->
+## /flow — ticket→PR pipeline (harness portability)
+
+This repo is wired for `flow`. Claude Code loads it automatically via the plugin;
+**other harnesses load it from here.** When the user invokes `/flow <ticket>` (or
+asks to spec or run a ticket through flow):
+
+1. Resolve the engine path once. Claude Code injects `CLAUDE_SKILL_DIR`; off-CC the
+   `init` that wrote this stanza also wrote it to the gitignored `.flow/skill_dir`
+   (so on a fresh clone, run `/flow init` first — without it this is empty and the
+   call-sites below cannot resolve):
+   ```bash
+   export CLAUDE_SKILL_DIR="${CLAUDE_SKILL_DIR:-$(cat .flow/skill_dir 2>/dev/null)}"
+   ```
+2. Read `$CLAUDE_SKILL_DIR/SKILL.md` (the router) and
+   `$CLAUDE_SKILL_DIR/references/harness.md` (maps every Claude-Code primitive to its
+   fallback on your harness) as context before acting.
+3. **Approval is not coding.** Do the read-only spec, present the plan and a
+   `## Confidence` rating, then STOP. Do not edit any file until the user approves.
+   After approval, seed the worktree with `flow_worktree.py create … --recover-spill`,
+   `cd` into it, then run the do-loop — never implement on the main checkout. Claude
+   Code enforces this with plan mode; your harness does not, so it is a discipline.
+   `--recover-spill` backstops a slip: a planned file edited on main before bootstrap
+   is carried into the worktree at `create` time (pass it only from this off-CC entry
+   point — Claude Code omits it so its clean-main behavior never changes).
+<!-- flow:end -->
+"""
+
+
+def _ensure_agents_md(root: Path, *, requested: bool) -> dict[str, Any] | None:
+    """Ensure `<root>/AGENTS.md` carries the flow stanza (opt-in, `--agents-md`).
+
+    `requested=False` is a no-op so the call site stays unconditional (the opt-in
+    gate lives here, not in the orchestrator). Append-only + marker-guarded: a
+    pre-existing AGENTS.md keeps its content and gains the stanza once; re-init is
+    idempotent."""
+    if not requested:
+        return {"skipped": True, "reason": "agents_md not requested"}
+    agents = root / "AGENTS.md"
+    existing = agents.read_text(encoding="utf-8") if agents.exists() else ""
+    if _AGENTS_MARKER in existing:
+        return {"skipped": True, "reason": "AGENTS.md already carries the flow stanza"}
+    if existing and not existing.endswith("\n"):
+        existing += "\n"
+    block = ("\n" if existing else "") + _AGENTS_STANZA
+    atomic_write_text(agents, existing + block)
+    return None
+
+
 def _write_skill_dir(root: Path) -> None:
     """Persist the absolute skill dir to `.flow/skill_dir` (a gitignored,
     machine-local sibling, like `.flow/memory-root`). A harness that does not
@@ -149,6 +204,9 @@ class InitConfig:
     checkpoint_mode: str | None = None
     # Override default search roots for bundle discovery (tests).
     bundle_search_roots: list[Path] | None = None
+    # Opt-in: write the cross-harness AGENTS.md entry point (off by default so a
+    # pure Claude-Code init adds no tracked file). See _ensure_agents_md.
+    agents_md: bool = False
 
 
 @dataclass
@@ -853,6 +911,9 @@ def _run_init_phases(
         (flow_dir / namespace).mkdir(parents=True, exist_ok=True)
         (flow_dir / namespace / "ship-events").mkdir(parents=True, exist_ok=True)
         _write_skill_dir(root)
+        # Opt-in cross-harness entry point; default-off keeps a pure-CC init
+        # byte-identical (no AGENTS.md written). Gate lives in the helper.
+        _ensure_agents_md(root, requested=config.agents_md)
         return None
 
     _run_phase("mkdirs", _phase_mkdirs)
@@ -1001,6 +1062,7 @@ def _build_config_from_args(args: argparse.Namespace) -> InitConfig:
         checkpoint_mode=args.checkpoint_mode or None,
         checkpoint_manifest_path=_coerce_checkpoint_path(args.checkpoint_manifest),
         bundle_search_roots=_coerce_search_roots(args.bundle_search_roots),
+        agents_md=args.agents_md,
     )
 
 
@@ -1053,6 +1115,12 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
 
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--reconfigure", action="store_true")
+    parser.add_argument(
+        "--agents-md",
+        action="store_true",
+        help="write the cross-harness AGENTS.md entry point (off by default; "
+        "for repos run through Cursor/Windsurf/opencode/etc. — Claude Code does not need it)",
+    )
     return parser.parse_args(argv)
 
 
