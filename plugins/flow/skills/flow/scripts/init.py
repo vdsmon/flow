@@ -388,6 +388,18 @@ def _render_workspace_toml(
     if config.memory_root is not None:
         lines.append(f"root = {_toml_escape(config.memory_root)}")
     lines.append("")
+    # Optional semantic-recall overlay (flow-vuff). Off by default: recall stays
+    # pure BM25 until opted in. Enabling on an existing workspace needs an explicit
+    # bulk backfill (`recall.py --reindex --workspace-root .`) before the index is
+    # populated; until then plan-phase recall is BM25-only. See inventory.md.
+    lines.append("# [memory.semantic]")
+    lines.append("# enabled = false")
+    lines.append('# model = "minishlab/potion-retrieval-32M"')
+    lines.append("# threshold = 0.30")
+    lines.append(
+        '# embedder = ""  # blank → default: uvx --with model2vec[inference] python embedder_model2vec.py'
+    )
+    lines.append("")
     return "\n".join(lines)
 
 

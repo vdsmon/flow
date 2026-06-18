@@ -163,6 +163,12 @@ The taxonomy is closed:
    - **Anything ambiguous, indirect, or inference-based** — the entry merely looks stale, or the contradiction is NOT in `final_diff` — do NOT auto-supersede. Surface a one-line proposal note in the human-facing reflect output instead (`Proposed supersede: <id> — <why it may be stale>`), a binding skeptic correction the maintainer adjudicates. The auto path is reserved for diff-grounded disproof.
    - Exit handling is the same table as step 3, plus: exit 5 → unknown supersedes target (the recalled id is no longer in `knowledge.jsonl` — a sibling already retired it). Skip + log; do NOT fail the stage.
 
+3c. **Refresh the semantic index (best-effort, non-blocking).** If any entry was appended (or superseded) this stage and the workspace opts into `[memory.semantic]`, refresh the derived embedding sidecar so plan-phase recall on the NEXT ticket sees this run's knowledge:
+   ```bash
+   python3 ${CLAUDE_SKILL_DIR}/scripts/recall.py --reindex --workspace-root .
+   ```
+   Incremental (embeds only the new entries). SWALLOW any error — the append already succeeded and the index is derived (it self-heals on the next reindex); this never gates the run. A no-op when semantic is off (the index just stays absent and recall stays BM25).
+
 4. **Zero novel signal path**: if you genuinely have nothing to append, emit exactly:
    ```
    no novel signal

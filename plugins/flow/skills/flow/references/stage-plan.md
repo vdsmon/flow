@@ -39,6 +39,14 @@ You cannot wait for or solicit that approval yourself — just return a plan goo
    Locate the files, modules, and functions the change touches.
    Do not skim; an approver should be able to trust your file list.
 
+   **Recall prior knowledge keyed on the ticket text (read-only).** This is where flow's memory layer pays off — full ticket text in hand. Write the ticket title+body to a temp file and query recall against it (a pure READ; the matching WRITE — `--record-pending` — is the orchestrator's post-gate step, NOT yours):
+   ```bash
+   QF="${TMPDIR:-/tmp}/flow-recall-$KEY.txt"   # ticket title + body
+   python3 ${CLAUDE_SKILL_DIR}/scripts/recall.py --query-file "$QF" \
+     --semantic --top-n 30 --threshold "$TAU" --branch "$B" --workspace-root .
+   ```
+   Use `--query-file` (not a shell positional — avoids the `"`/`\`/newline hazard). `--semantic` is inert when the workspace has not opted into `[memory.semantic]` (recall stays pure BM25). Weave any relevant returned entries into the plan's Approach/Risks.
+
    **Verify any content/drift finding against the default base, not the working checkout.** General orientation reads stay on the working checkout via the Read tool (that is the normal way to explore, and you do NOT need to `git show` every file you look at). But the moment you would CITE a content/drift finding in the plan, or STAMP a file into `planned_files` BECAUSE OF its current content, re-read that specific file at the freshly-fetched default base before committing the finding. The `--auto` tail branches its worktree off `@default` (`origin/<default>`, fetched fresh), while the launcher checkout this exploration runs in can lag `origin/main`, so a drift a file shows here may already be fixed upstream, and the planned fix would land as a no-op (flow-749). Resolve the base the same way `flow_worktree.py create --base @default` does and read the base version:
    ```bash
    git fetch --quiet origin

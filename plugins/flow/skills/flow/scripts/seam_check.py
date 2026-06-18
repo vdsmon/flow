@@ -53,7 +53,10 @@ _PLACEHOLDER_RE = re.compile(r"""^[<"'$.]|^-""")
 _FORWARDERS = {("recall.py", "--metric"): "metric.py"}
 
 # A bare script name as it appears in MODULE.md backticks/prose (no path prefix).
-_MODULE_NAME_RE = re.compile(r"[a-z_]+\.py")
+# Char class is [a-z0-9_]+ (NOT [a-z_]+): omitting the digit silently misses a
+# digit-bearing basename like embedder_model2vec.py (the model2vec `2`), same
+# lesson _STAGE_DOC_RE already carries for stage-e2e.md.
+_MODULE_NAME_RE = re.compile(r"[a-z0-9_]+\.py")
 
 # A script basename inside a stage-registry.toml [[stage]].description. Allows
 # hyphens and uppercase so a stale hyphenated reference (compose-commit.py for

@@ -22,6 +22,13 @@ Quarantine: malformed JSONL lines appended to sidecar
 `<file>.quarantine.<ts>` (per-invocation); main file untouched; scan
 continues with valid entries; never crash.
 
+Semantic fusion (optional, gated by `[memory.semantic]`): when enabled and a
+fresh sidecar index loads, the query is embedded once (via `memory_embed.embed`,
+which shells a uvx subprocess), cosine-scored in pure Python against each indexed
+live vector, threshold pre-filtered, then RRF-fused with the BM25 ranking. ANY
+failure falls through to the unchanged BM25 `rank()` and a backend-status line on
+stderr. Absent/off config → byte-identical pure BM25.
+
 Exit codes:
   0 = ok (empty result still 0 with `[]`).
   1 = workspace invalid / namespace unresolvable.
@@ -35,6 +42,7 @@ import math
 import re
 import sys
 import time
+import tomllib
 import unicodedata
 from pathlib import Path
 from typing import Any
@@ -44,6 +52,8 @@ from _jsonl import iter_jsonl
 
 K1 = 1.5
 B_PARAM = 0.75
+RRF_K = 60
+DEFAULT_THRESHOLD = 0.30
 FIELD_WEIGHTS: dict[str, float] = {
     "body": 1.0,
     "type": 0.5,
@@ -233,18 +243,237 @@ def _neg_ts_key(ts: str) -> tuple[int, ...]:
     return (0, *(-ord(c) for c in ts))
 
 
+# ─── Semantic config + fusion ──────────────────────────────────────────────────
+
+
+def _load_config(workspace_root: Path) -> dict[str, Any]:
+    """Read `[memory.semantic]` from workspace.toml. Absent block → {} (semantic off).
+
+    Keys: `enabled` (bool), `model` (str), `threshold` (float), `embedder` (str).
+    Any read/parse error returns {} so recall stays pure BM25.
+    """
+    path = workspace_root / ".flow" / "workspace.toml"
+    try:
+        data = tomllib.loads(path.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError):
+        return {}
+    memory = data.get("memory")
+    if not isinstance(memory, dict):
+        return {}
+    semantic = memory.get("semantic")
+    return semantic if isinstance(semantic, dict) else {}
+
+
+def _cosine(a: list[float], b: list[float]) -> float:
+    """Pure-Python cosine similarity. 0.0 on a zero vector or a length mismatch."""
+    if len(a) != len(b):
+        return 0.0
+    dot = na = nb = 0.0
+    for x, y in zip(a, b, strict=True):
+        dot += x * y
+        na += x * x
+        nb += y * y
+    if na == 0.0 or nb == 0.0:
+        return 0.0
+    return dot / (math.sqrt(na) * math.sqrt(nb))
+
+
+def rrf_fuse(
+    bm25_order: list[str],
+    cosine_order: list[str],
+    *,
+    k: int = RRF_K,
+) -> dict[str, float]:
+    """Reciprocal-rank fusion of two id rankings → {id: rrf_score}.
+
+    Each list contributes `1/(k + rank)` (rank 0-based). An id present in one list
+    only still scores from that list, so a cosine-missing (unindexed) entry still
+    ranks via BM25 — the graceful partial-index property.
+    """
+    scores: dict[str, float] = {}
+    for rank_i, eid in enumerate(bm25_order):
+        scores[eid] = scores.get(eid, 0.0) + 1.0 / (k + rank_i)
+    for rank_i, eid in enumerate(cosine_order):
+        scores[eid] = scores.get(eid, 0.0) + 1.0 / (k + rank_i)
+    return scores
+
+
+def _semantic_rank(
+    query: str,
+    entries: list[dict[str, Any]],
+    config: dict[str, Any],
+    workspace_root: Path,
+    namespace: str,
+    *,
+    branch_filter: str | None,
+    ticket_filters: list[str] | None,
+    threshold: float,
+    top_n: int,
+) -> tuple[list[dict[str, Any]], str]:
+    """Hybrid cosine+BM25 fusion over the live entry set.
+
+    Returns (results, status). Raises on any failure (caller falls back to BM25).
+    """
+    import memory_embed
+
+    model = str(config.get("model") or memory_embed._DEFAULT_MODEL)
+    embedder = config.get("embedder") or None
+
+    header, indexed = memory_embed.load_index(workspace_root, namespace)
+    if not indexed:
+        raise RuntimeError("empty or missing index")
+    if header.get("model") != model:
+        raise RuntimeError(f"index model {header.get('model')!r} != configured {model!r}")
+
+    query_vec = memory_embed.embed([query], model=model, embedder=embedder)[0]
+
+    # cosine over indexed live entries, τ pre-filter, descending.
+    cosine_scores: dict[str, float] = {}
+    for entry in entries:
+        eid = entry.get("id")
+        if not isinstance(eid, str):
+            continue
+        vec = indexed.get(eid)
+        if vec is None:
+            continue
+        sim = _cosine(query_vec, vec)
+        if sim >= threshold:
+            cosine_scores[eid] = sim
+    cosine_order = sorted(cosine_scores, key=lambda e: -cosine_scores[e])
+
+    # full BM25 ranking (all live entries), id order.
+    bm25_results = rank(
+        query=query,
+        entries=entries,
+        branch_filter=branch_filter,
+        ticket_filters=ticket_filters,
+        top_n=len(entries),
+    )
+    bm25_order = [str(r["id"]) for r in bm25_results if r.get("id") is not None]
+
+    fused = rrf_fuse(bm25_order, cosine_order)
+    by_id = {str(e.get("id")): e for e in entries}
+
+    ticket_set_lower = {t.lower() for t in (ticket_filters or [])}
+    branch_lower = branch_filter.lower() if branch_filter else None
+    for eid, entry in by_id.items():
+        if branch_lower is not None and _doc_field_text(entry, "branch").lower() == branch_lower:
+            fused[eid] = fused.get(eid, 0.0) + BRANCH_EXACT_BONUS
+        if ticket_set_lower and _doc_field_text(entry, "ticket").lower() in ticket_set_lower:
+            fused[eid] = fused.get(eid, 0.0) + TICKET_EXACT_BONUS
+
+    ranked_ids = sorted(
+        fused,
+        key=lambda eid: (-fused[eid], _neg_ts_key(str(by_id.get(eid, {}).get("ts", "")))),
+    )
+    results: list[dict[str, Any]] = []
+    for eid in ranked_ids[:top_n]:
+        entry = by_id.get(eid)
+        if entry is None:
+            continue
+        results.append(
+            {
+                "id": entry.get("id"),
+                "type": entry.get("type"),
+                "branch": entry.get("branch"),
+                "ticket": entry.get("ticket"),
+                "body": entry.get("body"),
+                "ts": entry.get("ts"),
+                "score": round(fused[eid], 6),
+            }
+        )
+    return results, f"semantic-active model={model} cosine_candidates={len(cosine_order)}"
+
+
 # ─── CLI ─────────────────────────────────────────────────────────────────────
+
+
+def _read_query(args: argparse.Namespace) -> str | None:
+    """Resolve the query from the positional, then --query-file, then stdin.
+
+    --query-file / stdin carry the ticket title+body so it is never a shell
+    positional (avoids the `"`/`\\`/newline hazard). The positional still wins so
+    existing `recall.py "<query>"` prose is byte-identical. None when none given.
+    """
+    if args.query is not None:
+        return args.query
+    if args.query_file:
+        return Path(args.query_file).read_text(encoding="utf-8")
+    try:
+        if not sys.stdin.isatty():
+            piped = sys.stdin.read()
+            if piped.strip():
+                return piped
+    except (OSError, ValueError):
+        return None
+    return None
 
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="BM25 ranker over knowledge.jsonl.")
-    parser.add_argument("query")
+    parser.add_argument("query", nargs="?", default=None)
     parser.add_argument("--branch", default=None)
     parser.add_argument("--tickets", default=None, help="comma-separated ticket keys.")
+    parser.add_argument("--ticket", default=None, help="ticket key for --record-pending.")
     parser.add_argument("--top-n", type=int, default=5)
     parser.add_argument("--include-superseded", action="store_true")
     parser.add_argument("--workspace-root", default=".")
+    parser.add_argument("--semantic", action="store_true", help="force the semantic path on.")
+    parser.add_argument("--threshold", type=float, default=None, help="cosine τ pre-filter.")
+    parser.add_argument("--query-file", default=None, help="read the query from a file.")
+    parser.add_argument(
+        "--record-pending",
+        action="store_true",
+        help="append the recalled ids to recall-pending (needs --branch + --ticket).",
+    )
+    parser.add_argument("--reindex", action="store_true", help="dispatch to memory_embed reindex.")
+    parser.add_argument("--full", action="store_true", help="with --reindex: force a full rebuild.")
     return parser.parse_args(argv)
+
+
+def _record_pending(
+    workspace_root: Path,
+    *,
+    branch: str,
+    ticket: str,
+    query: str,
+    results: list[dict[str, Any]],
+) -> None:
+    """Append the recalled ids to recall-pending (the producer dispatch_stage init
+    promotes into the run's recall-log). Best-effort: any failure is swallowed."""
+    import subprocess
+
+    import recall_pending
+
+    ids = [str(r.get("id", "")) for r in results]
+    scores = [str(r.get("score", "")) for r in results]
+    head_sha = ""
+    try:
+        proc = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=str(workspace_root),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if proc.returncode == 0:
+            head_sha = proc.stdout.strip()
+    except OSError:
+        head_sha = ""
+    try:
+        recall_pending.append_pending(
+            workspace_root,
+            hook_observed_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            branch=branch,
+            head_sha=head_sha,
+            cwd=str(workspace_root),
+            hook_time_resolved_ticket=ticket,
+            query=query,
+            returned_ids=ids,
+            rank_scores=[float(s) for s in scores if s],
+        )
+    except Exception as exc:  # recording is a side-effect; never fail the recall
+        sys.stderr.write(f"recall: record-pending skipped: {exc}\n")
 
 
 def cli_main(argv: list[str]) -> int:
@@ -256,6 +485,22 @@ def cli_main(argv: list[str]) -> int:
         return metric.cli_main([a for a in argv if a != "--metric"])
     args = _parse_args(argv)
     workspace_root = Path(args.workspace_root).resolve()
+
+    # `--reindex` dispatches to memory_embed (mirrors the --metric → metric pattern,
+    # but as a real argparse flag so the prose seam validates without a forwarder).
+    if args.reindex:
+        import memory_embed
+
+        sub = ["reindex", "--workspace-root", str(workspace_root)]
+        if args.full:
+            sub.append("--full")
+        return memory_embed.cli_main(sub)
+
+    if args.record_pending and (not args.branch or not args.ticket):
+        # validate before any embedding cost, not after
+        sys.stderr.write("recall: --record-pending needs --branch and --ticket\n")
+        return 1
+
     try:
         namespace = _memory_paths.resolve_namespace(workspace_root)
     except _memory_paths._MemoryConfigError as exc:
@@ -268,13 +513,57 @@ def cli_main(argv: list[str]) -> int:
     tickets: list[str] = []
     if args.tickets:
         tickets = [t.strip() for t in args.tickets.split(",") if t.strip()]
-    results = rank(
-        query=args.query,
-        entries=entries,
-        branch_filter=args.branch,
-        ticket_filters=tickets or None,
-        top_n=args.top_n,
+
+    query = _read_query(args)
+    if query is None:
+        sys.stderr.write("recall: no query (positional, --query-file, or stdin)\n")
+        return 1
+
+    config = _load_config(workspace_root)
+    semantic_on = args.semantic or bool(config.get("enabled"))
+    threshold = (
+        args.threshold
+        if args.threshold is not None
+        else float(config.get("threshold", DEFAULT_THRESHOLD))
     )
+
+    results: list[dict[str, Any]] | None = None
+    if semantic_on:
+        try:
+            results, status = _semantic_rank(
+                query,
+                entries,
+                config,
+                workspace_root,
+                namespace,
+                branch_filter=args.branch,
+                ticket_filters=tickets or None,
+                threshold=threshold,
+                top_n=args.top_n,
+            )
+            sys.stderr.write(f"recall: {status}\n")
+        except Exception as exc:
+            sys.stderr.write(f"recall: bm25-fallback reason={type(exc).__name__}: {exc}\n")
+            results = None
+
+    if results is None:
+        results = rank(
+            query=query,
+            entries=entries,
+            branch_filter=args.branch,
+            ticket_filters=tickets or None,
+            top_n=args.top_n,
+        )
+
+    if args.record_pending:
+        _record_pending(
+            workspace_root,
+            branch=args.branch,
+            ticket=args.ticket,
+            query=query,
+            results=results,
+        )
+
     sys.stdout.write(json.dumps(results, indent=2, sort_keys=True) + "\n")
     return 0
 
@@ -286,12 +575,15 @@ if __name__ == "__main__":
 __all__ = [
     "BRANCH_EXACT_BONUS",
     "B_PARAM",
+    "DEFAULT_THRESHOLD",
     "FIELD_WEIGHTS",
     "K1",
+    "RRF_K",
     "TICKET_EXACT_BONUS",
     "cli_main",
     "filter_superseded",
     "rank",
+    "rrf_fuse",
     "superseded_ids",
     "tokenize",
 ]
