@@ -2,7 +2,7 @@
 
 flow is **Claude-Code-first**. The Python engine (`scripts/*.py`) is harness-agnostic stdlib that shells out only to `git`/`bd`/`gh`/`bkt`/`mise`; it never invokes a Claude-Code tool. **Every** Claude-Code coupling lives in this prose layer plus a handful of environment variables. This file is the single source of truth for what each Claude-Code primitive does and how a harness that lacks it (Codex, Cursor, a bare SDK loop) degrades. Nothing here changes the Claude-Code path — each fallback is an additive branch taken only when the primitive is absent.
 
-The self-evolution / maintainer machinery (`evolve`, `queue`, the SessionStart recall hook) stays Claude-Code-only and is out of scope here.
+The self-evolution / maintainer machinery (`evolve`, `queue`) stays Claude-Code-only and is out of scope here. Recall, by contrast, now lives in the plan-phase skill prose (`verb-spec.md` / `stage-plan.md` run `recall.py --query-file ...`), NOT a SessionStart hook — so it ports cleanly to any agent that runs the skill (the hook was Claude-Code-only; the de-hooking removed that coupling). The SessionStart hook that remains is the evolve-loop deadman only.
 
 ## Detecting what the current harness offers
 

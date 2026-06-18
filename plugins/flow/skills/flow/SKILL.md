@@ -29,7 +29,7 @@ See `references/background-pipeline.md`.
 Everything else (`recall`, `status`, `triage`, `recover`, `sync`, `baseline`) is a work-state verb around the same pipeline.
 
 Built on a multi-tracker engine: the tracker is pluggable (Jira | beads); stages, handlers, and the memory namespace come from `.flow/workspace.toml` + `stage-registry.toml`.
-The memory layer compounds across tickets (reflect-stage extraction, SessionStart recall), and the harness fixes its own bugs from inside a run — see `references/self-evolution.md`.
+The memory layer compounds across tickets (reflect-stage extraction, plan-phase recall), and the harness fixes its own bugs from inside a run — see `references/self-evolution.md`.
 
 This file is the router plus the two things that stay on the hot path: the **spec gate** and the **do-loop skeleton**. Every verb's step-by-step detail lives in a `references/verb-*.md` the agent loads on demand (pointers in the table below).
 

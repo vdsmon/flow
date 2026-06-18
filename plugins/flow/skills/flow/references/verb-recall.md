@@ -14,7 +14,43 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/recall.py "<query>" \
 ```
 
 - Exit 0 → JSON array to stdout. Surface as a formatted list to the user.
-- Exit 1 → workspace unresolvable. Surface stderr + `/flow init` hint.
+- Exit 1 → workspace unresolvable, OR no query supplied. Surface stderr + `/flow init` hint.
+
+## Semantic recall (optional overlay)
+
+When the workspace opts into `[memory.semantic] enabled = true`, recall fuses BM25 with a cosine ranking over a derived embedding sidecar (`knowledge.embed`), so a query worded differently from the stored body still surfaces it. It is byte-identical pure BM25 when the block is absent/off, and falls back to BM25 (with a stderr backend-status line) on any embedder/index failure — the `python3` runtime invariant holds because the embedder runs in a `uvx` subprocess, not in-process.
+
+Extra flags (all optional; the plain `recall <query>` form above is unchanged):
+
+```bash
+python3 ${CLAUDE_SKILL_DIR}/scripts/recall.py \
+  --query-file <path> \
+  --semantic --threshold <τ> --top-n <n> \
+  [--branch <name>] [--tickets <csv>] \
+  --workspace-root .
+```
+
+- `--query-file <path>` (or stdin) — pass a multi-line query (the ticket title+body) WITHOUT a shell positional, avoiding the `"`/`\`/newline hazard. The positional still wins when given.
+- `--semantic` — force the semantic path on regardless of config. `--threshold <τ>` overrides the configured cosine cutoff.
+- **Per-context budgets.** The interactive `/flow recall` stays tight (modest `--top-n`, protects the live context budget). The plan-phase deep recall (verb-spec / stage-plan) runs looser (`--top-n 30`), latency-tolerant, where the semantic overlay pays off.
+
+**Refresh the index** (incremental; embeds only new entries):
+
+```bash
+python3 ${CLAUDE_SKILL_DIR}/scripts/recall.py --reindex --workspace-root .
+```
+
+Add `--full` to force a full rebuild. **First-enable requires one bulk reindex** — flipping `enabled = true` on an existing workspace starts with an empty index, so recall is BM25-only until this runs once.
+
+**Record-pending** (the post-gate producer that replaces the old SessionStart recall; a WRITE, so legal only after `ExitPlanMode`):
+
+```bash
+python3 ${CLAUDE_SKILL_DIR}/scripts/recall.py --query-file <path> \
+  --semantic --top-n 30 --record-pending --branch "$B" --ticket "$KEY" \
+  --workspace-root .
+```
+
+`--record-pending` appends the recalled ids to `recall-pending`; `dispatch_stage init` later promotes them into the run's `recall-log.jsonl` (so reflect's `recalled_entries` still works). It needs both `--branch` and `--ticket`.
 
 ## recall --metric (the 14-day checkpoint calculator)
 

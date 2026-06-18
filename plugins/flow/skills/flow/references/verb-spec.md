@@ -23,7 +23,13 @@ Everything from the bootstrap onward is shared by the self-approve branch; the d
    ```
    Read the stdout.
    Explore the codebase read-only (Read/Grep/Glob, or a subagent).
-   `recall` is auto-injected at SessionStart; weave relevant prior knowledge into the plan.
+   **Recall against the ticket text (plan-phase, read-only).** This is the SOLE recall now (SessionStart no longer recalls). Write the ticket title+body to a temp file and query recall keyed on it — a pure READ, legal in plan mode, NO `--record-pending` here:
+   ```bash
+   QF="${TMPDIR:-/tmp}/flow-recall-$KEY.txt"   # ticket title + body (Write tool)
+   python3 ${CLAUDE_SKILL_DIR}/scripts/recall.py --query-file "$QF" \
+     --semantic --top-n 30 --threshold "$TAU" --branch "$B" --workspace-root .
+   ```
+   Pass the query via `--query-file` (not a shell positional — avoids the `"`/`\`/newline hazard). `--semantic` is a no-op when the workspace has not opted in (recall stays pure BM25). Weave the returned entries into the plan. The matching WRITE (`--record-pending`) happens post-gate in step 6.
    **Verify any content/drift finding against the default base, not the working checkout.** General orientation reads stay on the working checkout via the Read tool (you do NOT need to `git show` every file). But the moment you would CITE a content/drift finding in the plan, or derive a `--planned-files` entry (step 6) BECAUSE OF a file's current content, re-read that specific file at the freshly-fetched default base first. The tail branches off `@default` (`origin/<default>`, fetched fresh) while this checkout can lag `origin/main`, so a drift seen here may already be fixed upstream and the planned fix would land as a no-op (flow-749). Resolve the base the way `flow_worktree.py create --base @default` does and read the base version:
    ```bash
    git fetch --quiet origin
@@ -85,6 +91,15 @@ Everything from the bootstrap onward is shared by the self-approve branch; the d
    - `--auto`: exit 7 → emit one terse `epic <KEY>: not a single-PR unit` line and STOP — exit silently-clean: NO `tracker_cli comment`, NO `bd update` (leave the epic OPEN — `--status deferred` would wrongly shelve a build-now epic and mutate maintainer accept/shelve state; defer's loop-prevention is moot since drain already filters epics), NO friction entry, no follow-up bead.
    Surface any `WARN` lines (e.g. mise trust failures — the tail would die on the first `mise run`).
 
+   **Record the recalled ids (post-gate WRITE).** Now that the gate is crossed (normal mode), record the plan-phase recall into `recall-pending` so the dispatcher promotes it into the run's `recall-log.jsonl` (and reflect surfaces it as `recalled_entries`). Same query text as step 3, but with `--record-pending` (the WRITE half, illegal in plan mode):
+   ```bash
+   python3 ${CLAUDE_SKILL_DIR}/scripts/recall.py --query-file "$QF" \
+     --semantic --top-n 30 --threshold "$TAU" --record-pending \
+     --branch "feature/$KEY-<slug>" --ticket "$KEY" \
+     --workspace-root "<the worktree path the bootstrap printed>"
+   ```
+   **Critical: target the WORKTREE, not the main checkout.** `--workspace-root` must be the bootstrap's `result.worktree` path and `--branch` must be the `flow_worktree.py create --branch` feature branch (NOT `$B`/the integration branch). The dispatcher's `init` promotes from inside the worktree (`recall_pending.promote_matching` with `cwd=worktree`, `branch=feature/$KEY-<slug>`, reading the worktree's `recall-pending.jsonl`), and its promotion rules are exact matches on branch + cwd + a head-sha-ancestor check. Recording against the main checkout (`--workspace-root .`, `--branch "$B"`) writes a DIFFERENT `recall-pending.jsonl` with mismatched branch/cwd, so nothing promotes and `recalled_entries` stays empty. The step-3 READ stays main-root (it is only a query, it matches nothing). `--auto` has no plan mode, so it runs this single `--record-pending` form once here (the step-3 READ and this WRITE collapse to one call, against the worktree). Best-effort: a failure here never blocks the bootstrap.
+
 7. **Enter the worktree and continue the pipeline in this same session.**
    The bootstrap printed the worktree path (`result.worktree` in its stdout JSON). Switch this session into it:
    ```
@@ -110,7 +125,7 @@ It replaces interactive steps 1-5. The self-approve branch then runs shared step
 
 2. Resolve the ticket key (positional `$ARGUMENTS` minus the flags, else `branch_ticket.py --workspace-root .`) — same as step 2.
 
-3. Fetch ticket context into the conversation via `tracker_cli.py --workspace-root . get --key "$KEY"` (read the stdout); explore the codebase read-only; weave in the SessionStart `recall` — same as step 3.
+3. Fetch ticket context into the conversation via `tracker_cli.py --workspace-root . get --key "$KEY"` (read the stdout); explore the codebase read-only; run the plan-phase READ recall keyed on the ticket text (the `recall.py --query-file ... --semantic --top-n 30` form from interactive step 3, NO `--record-pending`) and weave the entries in — same as step 3. The matching post-gate WRITE (`--record-pending`) runs once in shared step 6.
    The drift-vs-`@default` rule (verify any cited content/drift finding against the freshly-fetched default base) lives in the `stage-plan.md` embedded into the Plan subagent in step 4; it is that subagent's plan, not this orchestrator's own explore, that derives `planned_files`, so the rule is enforced there.
 
 4. **Decided-mode probe — then the headless plan.**

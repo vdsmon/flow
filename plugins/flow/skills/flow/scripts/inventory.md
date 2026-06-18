@@ -704,15 +704,23 @@ Sidecar quarantine: malformed lines appended to `knowledge.jsonl.quarantine.<ts>
 
 ### `recall.py`
 
-Hand-rolled BM25 ranker.
+Hand-rolled BM25 ranker with an OPTIONAL semantic-fusion overlay.
 `--metric` mode is live; `--metric <subcommand>` forwards to `metric.cli_main`.
+`--reindex` dispatches to `memory_embed.cli_main(["reindex", ...])` (a real argparse
+flag, NOT a `--metric`-style raw-argv intercept).
 
 | Flag | Description |
 |------|-------------|
-| `<query>` | Positional. Raw text; tokenized via `\b\w+\b` Unicode-NFKC-lowercase. |
+| `<query>` | Positional, now optional (`nargs="?"`). Raw text; tokenized via `\b\w+\b` Unicode-NFKC-lowercase. |
+| `--query-file` | Read the query from a file instead of the positional (the ticket title+body is passed this way, NOT as a shell positional — avoids the `"`/`\`/newline hazard). stdin is the third fallback. |
 | `--branch` | Optional. Exact-match boost × 2.0. Case-insensitive. |
 | `--tickets` | Optional CSV. Exact-match boost × 3.0 (any match in CSV). |
-| `--top-n` | Default 5. |
+| `--ticket` | Ticket key for `--record-pending`. |
+| `--top-n` | Default 5. Doubles as the cap K for the semantic path. |
+| `--semantic` | Force the semantic path on (default follows `[memory.semantic].enabled`). |
+| `--threshold` | Cosine τ pre-filter (default `[memory.semantic].threshold`, else 0.30). |
+| `--record-pending` | Append the recalled ids to `recall-pending` (needs `--branch` + `--ticket`). The post-gate producer that replaces the old SessionStart hook. Best-effort. |
+| `--reindex` | Dispatch to `memory_embed reindex` (refresh the sidecar). `--full` forces a full rebuild. |
 | `--workspace-root` | Default `.`. |
 
 BM25 params (pinned): k1=1.5, b=0.75.
@@ -720,10 +728,84 @@ Field weights: body=1.0, type=0.5, branch=1.5, ticket=2.0.
 Tiebreak: ts DESC (ms precision via negated-codepoint sort key over ISO8601 string).
 IDF scope: current namespace only.
 
+**Semantic fusion (gated by `[memory.semantic]`):** after `filter_superseded`, when
+enabled AND the sidecar index loads AND its header model matches the configured model:
+embed the query once (`memory_embed.embed`, a uvx subprocess), pure-Python cosine vs
+each indexed live vector, drop cosine candidates below τ, RRF-fuse the surviving cosine
+ranking with the FULL BM25 ranking (`1/(k+rank)`, k=60), apply the exact-match bonuses,
+cap at `--top-n`. Cosine-missing (unindexed) entries still rank via BM25 → graceful
+partial-index behavior. ANY failure (embedder unavailable, index missing/empty, model
+mismatch, exception) falls through to the unchanged BM25 `rank()` + a backend-status
+line on stderr (`semantic-active model=<id> cosine_candidates=N`, or
+`bm25-fallback reason=<...>`). `[memory.semantic]` absent/off → byte-identical pure BM25
+(`rank()` is kept intact as the fallback).
+
 Output: JSON array of top-N entries with `score` field appended.
 Empty corpus returns `[]` exit 0.
 
-Exit codes: 0=ok, 1=workspace invalid / namespace unresolvable.
+Exit codes: 0=ok, 1=workspace invalid / namespace unresolvable OR no query supplied.
+
+### `memory_embed.py`
+
+Embedder seam + derived sidecar index for the semantic overlay. Pure stdlib —
+never imports numpy/model2vec (those live ONLY inside the uvx subprocess).
+
+**Embedder seam** = a configured command, shelled (batch: newline texts on stdin → a
+JSON array of vectors on stdout). Resolution: `[memory.semantic].embedder` when set,
+else the shipped default `uvx --with model2vec[inference] python embedder_model2vec.py
+--model <id>` (runs in uvx's own cached env, independent of the runtime python3 which
+cannot import numpy). Missing command / `uvx` absent / nonzero exit / unparseable /
+wrong vector count → `_EmbedderUnavailable` (recall catches → BM25 fallback).
+
+**Sidecar index** `.flow/<namespace>/knowledge.embed` (derived; `knowledge.jsonl` stays
+the source of truth):
+- line 1 header: `{"_header": {"model": "<id>", "dim": <int>, "ts": "<iso>"}}`
+- body: `{"id": "<entry-id>", "v": [<float>, ...]}` per live entry.
+Read via the quarantine-tolerant `iter_jsonl`; written under `knowledge.embed.lock`
+(`flock_retry`) via an atomic temp-rename.
+
+`reindex(workspace_root, namespace, incremental=True)`: read `knowledge.jsonl`
+(supersede-filtered via `recall.filter_superseded`), diff live ids vs indexed ids, embed
+the missing set (incremental) or all (`--full`), rewrite the sidecar keeping only live
+ids (dead ids drop out). A header model-id ≠ the configured model forces a full rebuild.
+
+| Subcommand | Description |
+|------------|-------------|
+| `reindex --workspace-root [--full --model --embedder]` | Refresh the sidecar. Prints a summary JSON `{model, dim, live, embedded, kept, full}`. |
+| `embed [--workspace-root --model --embedder]` | stdin texts → JSON vectors (exercises the contract). |
+
+Exit codes: 0=ok, 1=workspace invalid / namespace unresolvable, 2=embedder unavailable.
+
+First-enable on an existing workspace starts with an EMPTY index, so plan-phase recall is
+BM25-only until a one-time bulk backfill: `recall.py --reindex --workspace-root .` (or
+`memory_embed.py reindex`). Document/run this when flipping `enabled = true`.
+
+### `embedder_model2vec.py`
+
+The reference embedder, run BY `uvx` — the ONLY file that imports model2vec/numpy. A
+standalone subprocess entrypoint (imported by nothing). Reads newline texts on stdin,
+`StaticModel.from_pretrained(<model>).encode(texts)`, prints `[[float, ...], ...]` JSON.
+`--model` (default `minishlab/potion-retrieval-32M`). Exit 0 ok, 1 load/encode failure.
+**CI does not install model2vec**, so the real embedder path is NOT CI-exercised (one
+test guarded by `pytest.importorskip("model2vec")`); "tests green" ≠ "real embedder
+validated". The runtime-availability check (does the shipped uvx command return vectors
+from the runtime python3 context) is manual + observable via recall's stderr status line.
+
+### `[memory.semantic]` config block
+
+Optional `workspace.toml` block (off by default; absent → semantic off → pure BM25):
+
+| Key | Default | Meaning |
+|-----|---------|---------|
+| `enabled` | `false` | turn the semantic overlay on. |
+| `model` | `minishlab/potion-retrieval-32M` | model id (must match the sidecar header or a full rebuild fires). |
+| `threshold` | `0.30` | cosine τ pre-filter. |
+| `embedder` | `""` | override the shipped uvx command; blank → default. |
+
+`init.py` writes a commented template of this block. `recall_by` / `recall_top_n` in
+`[memory]` are now UNREAD (the SessionStart recall path was removed; plan-phase recall
+has its own `--top-n`/`--threshold`) — they stay harmless, postcondition #5 still expects
+them so `init` keeps writing them.
 
 ### `reflect_inputs.py`
 

@@ -424,3 +424,373 @@ def test_cli_tickets_csv_parsed(tmp_path: Path, capsys: pytest.CaptureFixture[st
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload[0]["id"] == "b" * 16
+
+
+# ─── RRF fusion (pure) ─────────────────────────────────────────────────────────
+
+
+def test_rrf_fuse_id_in_both_lists_scores_higher() -> None:
+    fused = recall.rrf_fuse(["a", "b"], ["a", "c"])
+    # a is rank 0 in both → highest; b and c each appear once.
+    assert fused["a"] > fused["b"]
+    assert fused["a"] > fused["c"]
+
+
+def test_rrf_fuse_partial_id_still_ranks_via_one_list() -> None:
+    # b is only in the BM25 list (unindexed/cosine-missing). It still scores → the
+    # graceful partial-index property.
+    fused = recall.rrf_fuse(["a", "b"], ["a"])
+    assert "b" in fused
+    assert fused["b"] > 0
+
+
+def test_rrf_fuse_uses_reciprocal_rank() -> None:
+    fused = recall.rrf_fuse(["x"], [])
+    assert fused["x"] == pytest.approx(1.0 / (recall.RRF_K + 0))
+
+
+# ─── semantic config gating: disabled path is byte-identical to BM25 ───────────
+
+
+def _stub_embedder_cmd(tmp_path: Path) -> str:
+    """A deterministic 4-dim fake embedder, same contract as the real one."""
+    import sys as _sys
+
+    stub = tmp_path / "stub_embedder.py"
+    stub.write_text(
+        "import sys, json\n"
+        "texts=[l.rstrip(chr(10)) for l in sys.stdin.read().splitlines()]\n"
+        "def vec(t):\n"
+        "    v=[0.0,0.0,0.0,0.0]\n"
+        "    for w in t.split():\n"
+        "        v[sum(map(ord,w))%4]+=1.0\n"
+        "    return v\n"
+        "sys.stdout.write(json.dumps([vec(t) for t in texts]))\n",
+        encoding="utf-8",
+    )
+    return f"{_sys.executable} {stub}"
+
+
+def _seed_semantic_workspace(root: Path, *, embedder: str, threshold: float = 0.0) -> None:
+    flow = root / ".flow"
+    flow.mkdir(parents=True, exist_ok=True)
+    (flow / "workspace.toml").write_text(
+        '[tracker]\nbackend = "jira"\n[tracker.jira]\ncloud_id = "x"\nproject_key = "FT"\n\n'
+        '[memory]\nnamespace = "demo"\n\n'
+        "[memory.semantic]\n"
+        "enabled = true\n"
+        'model = "stub-model"\n'
+        f"threshold = {threshold}\n"
+        f'embedder = "{embedder}"\n',
+        encoding="utf-8",
+    )
+
+
+def test_disabled_path_byte_identical_to_bm25(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """With [memory.semantic] absent, recall.py output is byte-identical to BM25."""
+    _seed_workspace(tmp_path)
+    _write_entries(
+        tmp_path,
+        "demo",
+        [
+            _make_entry("a" * 16, "atomic write needs fsync"),
+            _make_entry("b" * 16, "lorem ipsum dolor"),
+        ],
+    )
+    rc = recall.cli_main(["fsync", "--workspace-root", str(tmp_path)])
+    assert rc == 0
+    via_cli = capsys.readouterr().out
+
+    entries = recall.filter_superseded(
+        recall._load_entries(_memory_paths.knowledge_path(tmp_path, "demo"))
+    )
+    bm25 = recall.rank("fsync", entries, top_n=5)
+    expected = json.dumps(bm25, indent=2, sort_keys=True) + "\n"
+    assert via_cli == expected
+
+
+def test_semantic_disabled_flag_off_no_embed_call(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A workspace with semantic enabled=false never touches the embedder."""
+    flow = tmp_path / ".flow"
+    flow.mkdir(parents=True)
+    (flow / "workspace.toml").write_text(
+        '[tracker]\nbackend = "jira"\n[tracker.jira]\ncloud_id = "x"\nproject_key = "FT"\n\n'
+        '[memory]\nnamespace = "demo"\n\n[memory.semantic]\nenabled = false\n',
+        encoding="utf-8",
+    )
+    _write_entries(tmp_path, "demo", [_make_entry("a" * 16, "fsync matters")])
+    rc = recall.cli_main(["fsync", "--workspace-root", str(tmp_path)])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload[0]["id"] == "a" * 16
+
+
+# ─── semantic fusion path ──────────────────────────────────────────────────────
+
+
+def test_semantic_path_active_with_index(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import memory_embed
+
+    embedder = _stub_embedder_cmd(tmp_path)
+    _seed_semantic_workspace(tmp_path, embedder=embedder, threshold=0.0)
+    _write_entries(
+        tmp_path,
+        "demo",
+        [
+            _make_entry("a" * 16, "local lake table writes"),
+            _make_entry("b" * 16, "unrelated prose here"),
+        ],
+    )
+    memory_embed.reindex(tmp_path, "demo", model="stub-model", embedder=embedder)
+    rc = recall.cli_main(["lake table", "--workspace-root", str(tmp_path)])
+    assert rc == 0
+    out = capsys.readouterr()
+    assert "semantic-active" in out.err
+    payload = json.loads(out.out)
+    assert {r["id"] for r in payload} <= {"a" * 16, "b" * 16}
+
+
+def test_semantic_threshold_drops_low_cosine(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import memory_embed
+
+    embedder = _stub_embedder_cmd(tmp_path)
+    # threshold 1.01 is unreachable by cosine (max 1.0) → cosine list empty →
+    # fusion falls to BM25-only ordering, but the path is still semantic-active.
+    _seed_semantic_workspace(tmp_path, embedder=embedder, threshold=1.01)
+    _write_entries(tmp_path, "demo", [_make_entry("a" * 16, "fsync matters")])
+    memory_embed.reindex(tmp_path, "demo", model="stub-model", embedder=embedder)
+    rc = recall.cli_main(["fsync", "--workspace-root", str(tmp_path)])
+    assert rc == 0
+    out = capsys.readouterr()
+    assert "cosine_candidates=0" in out.err
+    payload = json.loads(out.out)
+    assert payload[0]["id"] == "a" * 16
+
+
+def test_semantic_fusion_reorders_vs_bm25(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Fusion must MOVE results, not just run. BM25 ranks the lexical match (A)
+    first; the strong cosine match (B, no lexical overlap) is lifted above it.
+
+    Stub 4-dim bins by sum(ord(word)) % 4. Query "fsync" -> bin3 = [0,0,0,1].
+    A "fsync zzz" -> [0,0,1,1], cosine 0.707 (dropped by tau=0.8) but BM25 rank0.
+    B "be be"     -> [0,0,0,2], cosine 1.0 (kept) but BM25 last (no token match).
+    """
+    import memory_embed
+
+    embedder = _stub_embedder_cmd(tmp_path)
+    _seed_semantic_workspace(tmp_path, embedder=embedder, threshold=0.8)
+    _write_entries(
+        tmp_path,
+        "demo",
+        [
+            _make_entry("a" * 16, "fsync zzz"),
+            _make_entry("b" * 16, "be be"),
+        ],
+    )
+    memory_embed.reindex(tmp_path, "demo", model="stub-model", embedder=embedder)
+
+    # BM25 alone ranks the lexical match A first.
+    entries = recall.filter_superseded(
+        recall._load_entries(_memory_paths.knowledge_path(tmp_path, "demo"))
+    )
+    assert [r["id"] for r in recall.rank("fsync", entries, top_n=5)] == ["a" * 16, "b" * 16]
+
+    # Semantic fusion lifts B (cosine 1.0) above A (cosine dropped by tau).
+    rc = recall.cli_main(["fsync", "--workspace-root", str(tmp_path)])
+    assert rc == 0
+    out = capsys.readouterr()
+    assert "semantic-active" in out.err
+    assert [r["id"] for r in json.loads(out.out)] == ["b" * 16, "a" * 16]
+
+
+def test_semantic_falls_back_when_index_missing(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    embedder = _stub_embedder_cmd(tmp_path)
+    _seed_semantic_workspace(tmp_path, embedder=embedder, threshold=0.0)
+    _write_entries(tmp_path, "demo", [_make_entry("a" * 16, "fsync matters")])
+    # no reindex → no sidecar → fall back to BM25, status on stderr.
+    rc = recall.cli_main(["fsync", "--workspace-root", str(tmp_path)])
+    assert rc == 0
+    out = capsys.readouterr()
+    assert "bm25-fallback" in out.err
+    payload = json.loads(out.out)
+    assert payload[0]["id"] == "a" * 16
+
+
+def test_semantic_falls_back_on_model_mismatch(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import memory_embed
+
+    embedder = _stub_embedder_cmd(tmp_path)
+    _seed_semantic_workspace(tmp_path, embedder=embedder, threshold=0.0)
+    _write_entries(tmp_path, "demo", [_make_entry("a" * 16, "fsync matters")])
+    # index built under a DIFFERENT model than configured → mismatch → BM25 fallback.
+    memory_embed.reindex(tmp_path, "demo", model="other-model", embedder=embedder)
+    rc = recall.cli_main(["fsync", "--workspace-root", str(tmp_path)])
+    assert rc == 0
+    out = capsys.readouterr()
+    assert "bm25-fallback" in out.err
+    payload = json.loads(out.out)
+    assert payload[0]["id"] == "a" * 16
+
+
+def test_semantic_partial_index_graceful(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """An entry missing from the index still surfaces via BM25 in the fusion."""
+    import memory_embed
+
+    embedder = _stub_embedder_cmd(tmp_path)
+    _seed_semantic_workspace(tmp_path, embedder=embedder, threshold=0.0)
+    _write_entries(tmp_path, "demo", [_make_entry("a" * 16, "fsync durability")])
+    memory_embed.reindex(tmp_path, "demo", model="stub-model", embedder=embedder)
+    # add a second entry but do NOT reindex; it is unindexed.
+    _write_entries(
+        tmp_path,
+        "demo",
+        [
+            _make_entry("a" * 16, "fsync durability"),
+            _make_entry("b" * 16, "fsync matters too"),
+        ],
+    )
+    rc = recall.cli_main(["fsync", "--top-n", "5", "--workspace-root", str(tmp_path)])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    ids = {r["id"] for r in payload}
+    assert "b" * 16 in ids  # unindexed entry still ranks via BM25
+
+
+# ─── --record-pending + --reindex + --query-file ──────────────────────────────
+
+
+def test_record_pending_appends(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    import recall_pending
+
+    _seed_workspace(tmp_path)
+    _write_entries(tmp_path, "demo", [_make_entry("a" * 16, "fsync matters")])
+    rc = recall.cli_main(
+        [
+            "fsync",
+            "--record-pending",
+            "--branch",
+            "main",
+            "--ticket",
+            "FT-1",
+            "--workspace-root",
+            str(tmp_path),
+        ]
+    )
+    assert rc == 0
+    pending = recall_pending.list_pending(tmp_path)
+    assert pending
+    assert pending[0]["hook_time_resolved_ticket"] == "FT-1"
+    assert "a" * 16 in pending[0]["returned_ids"]
+
+
+def test_record_pending_requires_branch_and_ticket(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _seed_workspace(tmp_path)
+    _write_entries(tmp_path, "demo", [_make_entry("a" * 16, "fsync")])
+    rc = recall.cli_main(["fsync", "--record-pending", "--workspace-root", str(tmp_path)])
+    assert rc == 1
+    assert "needs --branch and --ticket" in capsys.readouterr().err
+
+
+def test_query_file_read(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    _seed_workspace(tmp_path)
+    _write_entries(tmp_path, "demo", [_make_entry("a" * 16, "fsync durability notes")])
+    qf = tmp_path / "q.txt"
+    qf.write_text("fsync durability", encoding="utf-8")
+    rc = recall.cli_main(["--query-file", str(qf), "--workspace-root", str(tmp_path)])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload[0]["id"] == "a" * 16
+
+
+def test_no_query_exit_1(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    _seed_workspace(tmp_path)
+    _write_entries(tmp_path, "demo", [_make_entry("a" * 16, "fsync")])
+    rc = recall.cli_main(["--workspace-root", str(tmp_path)])
+    assert rc == 1
+    assert "no query" in capsys.readouterr().err
+
+
+def test_reindex_dispatch(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    _seed_semantic_workspace(tmp_path, embedder=_stub_embedder_cmd(tmp_path), threshold=0.0)
+    _write_entries(tmp_path, "demo", [_make_entry("a" * 16, "one")])
+    rc = recall.cli_main(["--reindex", "--workspace-root", str(tmp_path)])
+    assert rc == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["live"] == 1
+
+
+def test_record_pending_promotes_into_recall_log(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """End-to-end: --record-pending writes recall-pending against the worktree, then
+    dispatch_stage's promoter (promote_matching) folds it into the run's recall-log.
+
+    The promotion rules are exact matches on branch + cwd + a head-sha-ancestor
+    check, so the record and the promote must agree on the workspace root. This is
+    the chain the plan's Verification demanded (recalled ids the plan saw appear in
+    the reflect bundle's recalled_entries).
+    """
+    import subprocess
+
+    import recall_pending
+
+    # git-init the tmp dir so promote_matching's `merge-base --is-ancestor` resolves.
+    def _git(*args: str) -> None:
+        subprocess.run(["git", *args], cwd=str(tmp_path), capture_output=True, check=True)
+
+    _git("init", "--initial-branch=feature/FT-1-x")
+    _git("config", "user.email", "t@example.com")
+    _git("config", "user.name", "t")
+    (tmp_path / "README.md").write_text("x\n", encoding="utf-8")
+    _git("add", "README.md")
+    _git("commit", "-m", "initial")
+
+    _seed_workspace(tmp_path)
+    _write_entries(tmp_path, "demo", [_make_entry("a" * 16, "fsync durability notes")])
+
+    branch = "feature/FT-1-x"
+    rc = recall.cli_main(
+        [
+            "fsync",
+            "--record-pending",
+            "--branch",
+            branch,
+            "--ticket",
+            "FT-1",
+            "--workspace-root",
+            str(tmp_path),
+        ]
+    )
+    assert rc == 0
+
+    promoted = recall_pending.promote_matching(
+        tmp_path,
+        ticket="FT-1",
+        branch=branch,
+        head_sha="",  # accepted for CLI symmetry; rule (e) compares entry.head_sha to HEAD
+        cwd=str(tmp_path),
+        now_iso="2026-06-18T00:00:00Z",
+    )
+    assert promoted, "the recorded entry should promote (branch+cwd+ancestor all match)"
+    log = tmp_path / ".flow" / "runs" / "FT-1" / "recall-log.jsonl"
+    assert log.exists()
+    lines = [json.loads(line) for line in log.read_text().splitlines() if line.strip()]
+    assert any("a" * 16 in rec.get("returned_ids", []) for rec in lines)
