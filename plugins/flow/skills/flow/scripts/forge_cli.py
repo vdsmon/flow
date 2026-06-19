@@ -13,14 +13,15 @@ Subcommands:
   open-pr        --base --head --title --body [--draft]  forge.open_pr(...) -> PR
   ci-rollup      --pr ID                            forge.ci_rollup(id) -> CIStatus (one-shot)
   review-threads --pr ID                            forge.review_threads(id) -> [thread]
+  review-status  --pr ID                            forge.bot_review_present(id) -> {reviewed}
   post-reply     --pr ID --thread CID --text "..."  forge.post_reply(...) -> {ok}
   resolve-thread --pr ID --thread CID               forge.resolve_thread(...) -> {resolved}
   mark-ready     --pr ID                            forge.mark_ready(id) -> {ok}
   merge          --pr ID [--squash]                 forge.merge(id, squash) -> {ok}
   delete-branch  --branch B                         forge.delete_branch(branch) -> {ok}
 
-Capability-gated subcommands (review-threads / post-reply / resolve-thread /
-mark-ready / delete-branch) degrade on `NotSupported` to `{"supported": false}` with
+Capability-gated subcommands (review-threads / review-status / post-reply /
+resolve-thread / mark-ready / delete-branch) degrade on `NotSupported` to `{"supported": false}` with
 exit 0, so a host that cannot do X is not an error (mirrors tracker_cli's
 download-attachments on beads).
 
@@ -74,6 +75,10 @@ def _cmd_review_threads(forge: Any, args: argparse.Namespace) -> int:
     return _emit(forge.review_threads(args.pr))
 
 
+def _cmd_review_status(forge: Any, args: argparse.Namespace) -> int:
+    return _emit({"reviewed": bool(forge.bot_review_present(args.pr))})
+
+
 def _cmd_post_reply(forge: Any, args: argparse.Namespace) -> int:
     forge.post_reply(args.pr, args.thread, args.text)
     return _emit({"ok": True})
@@ -125,6 +130,11 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     p = sub.add_parser("review-threads", help="forge.review_threads(pr)")
     p.add_argument("--pr", required=True)
 
+    p = sub.add_parser(
+        "review-status", help="forge.bot_review_present(pr) — has the review bot finished?"
+    )
+    p.add_argument("--pr", required=True)
+
     p = sub.add_parser("post-reply", help="forge.post_reply(pr, thread, body)")
     p.add_argument("--pr", required=True)
     p.add_argument("--thread", required=True)
@@ -153,6 +163,7 @@ _DISPATCH: dict[str, Any] = {
     "open-pr": _cmd_open_pr,
     "ci-rollup": _cmd_ci_rollup,
     "review-threads": _cmd_review_threads,
+    "review-status": _cmd_review_status,
     "post-reply": _cmd_post_reply,
     "resolve-thread": _cmd_resolve_thread,
     "mark-ready": _cmd_mark_ready,

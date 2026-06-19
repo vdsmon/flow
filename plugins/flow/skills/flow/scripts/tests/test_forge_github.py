@@ -320,6 +320,17 @@ def test_set_default_reviewers_raises_not_supported():
     assert calls == []  # no host call made
 
 
+def test_bot_review_present_unsupported():
+    # no review bot on the github self-target -> capability off + raises NotSupported
+    # (forge_cli degrades to {"supported": false}, review_loop skips the wait).
+    fg, calls = _adapter()
+    caps = {c["name"]: c["supported"] for c in fg.capabilities}
+    assert caps["bot_review_status"] is False
+    with pytest.raises(NotSupported):
+        fg.bot_review_present("7")
+    assert calls == []
+
+
 def test_review_threads_normalizes_changes_requested_as_major():
     node = _thread_node(
         tid="T9",

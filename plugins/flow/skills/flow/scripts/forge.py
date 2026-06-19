@@ -40,6 +40,7 @@ FORGE_CAPABILITY_ENUM = Literal[
     "draft_prs",  # open_pr honors draft=True
     "ready_toggle",  # mark_ready() flips draft -> ready
     "review_threads",  # review_threads()/post_reply()/resolve_thread() implemented
+    "bot_review_status",  # bot_review_present() — review-bot completion signal
     "squash_merge",  # merge(squash=True)
     "delete_branch",  # delete_branch()
     "ci_rollup",  # ci_rollup() implemented
@@ -143,6 +144,7 @@ class Forge(Protocol):
     def open_pr(self, base: str, head: str, title: str, body: str, draft: bool) -> PullRequest: ...
     def ci_rollup(self, pr_id: str) -> CIStatus: ...
     def review_threads(self, pr_id: str) -> list[ReviewThread]: ...  # cap-gated
+    def bot_review_present(self, pr_id: str) -> bool: ...  # cap-gated bot_review_status
     def post_reply(self, pr_id: str, thread_id: str, body: str) -> None: ...  # cap-gated
     def resolve_thread(self, pr_id: str, thread_id: str) -> bool: ...  # cap-gated
     def mark_ready(self, pr_id: str) -> None: ...  # cap-gated ready_toggle
