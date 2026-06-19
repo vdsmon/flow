@@ -84,6 +84,14 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/recall.py --metric friction-per-run \
 Reads `.flow/<namespace>/friction.jsonl`, counts entries in the time window, and reports `total_events`, `runs`, `events_per_run`, `by_type`, and `by_severity`. `--namespace` is required. No `--checkpoint` option (friction-per-run has no checkpoint aggregation path).
 
 ```bash
+python3 ${CLAUDE_SKILL_DIR}/scripts/recall.py --metric corpus-health \
+  --namespace <ns> --workspace-root . \
+  [--since YYYY-MM-DD] [--until YYYY-MM-DD]
+```
+
+Reads `.flow/<namespace>/knowledge.jsonl` and reports `total_entries`, `live_entries`, `superseded_entries` (entries whose `id` is named by another entry's `supersedes`), `supersession_rate`, `supersedes_in_window` (supersede records whose `ts` is in the window — the over-time axis), `decisions_total`, `decisions_live`, and `oldest_live_decision` (`{id, ts, age_days}` or null — the oldest LIVE, i.e. non-superseded, DECISION). `--namespace` is required. No `--checkpoint` option. An empty/missing knowledge.jsonl returns zeros (the h8s7 cwd guard only fires when there is no `.flow/.initialized`).
+
+```bash
 python3 ${CLAUDE_SKILL_DIR}/scripts/recall.py --metric revert-rate \
   --namespace <ns> --workspace-root . \
   [--since YYYY-MM-DD] [--until YYYY-MM-DD]
