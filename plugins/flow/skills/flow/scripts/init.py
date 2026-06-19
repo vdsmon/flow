@@ -452,10 +452,10 @@ def _render_workspace_toml(
     # populated; until then plan-phase recall is BM25-only. See inventory.md.
     lines.append("# [memory.semantic]")
     lines.append("# enabled = false")
-    lines.append('# model = "minishlab/potion-retrieval-32M"')
-    lines.append("# threshold = 0.30")
+    lines.append('# model = "BAAI/bge-small-en-v1.5"')
+    lines.append("# threshold = 0.0  # low floor; candidates are selected by rank (top-K), not τ")
     lines.append(
-        '# embedder = ""  # blank → default: uvx --with model2vec[inference] python embedder_model2vec.py'
+        '# embedder = ""  # blank → default: uvx --with fastembed python embedder_fastembed.py'
     )
     lines.append("")
     return "\n".join(lines)

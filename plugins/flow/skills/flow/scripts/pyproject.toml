@@ -8,10 +8,11 @@ description = "Lint + type-check config for plugins/flow/skills/flow/scripts/. N
 requires-python = ">=3.12"
 
 [project.optional-dependencies]
-# dev/test only: lets pytest.importorskip exercise the reference embedder locally.
-# NOT the runtime mechanism — at runtime model2vec resolves inside the uvx
-# subprocess (embedder_model2vec.py), never in this env.
-semantic = ["model2vec[inference]"]
+# dev/test only: lets pytest.importorskip exercise the reference embedders locally.
+# NOT the runtime mechanism — at runtime fastembed (default) / model2vec (alt)
+# resolve inside the uvx subprocess (embedder_fastembed.py / embedder_model2vec.py),
+# never in this env.
+semantic = ["fastembed", "model2vec[inference]"]
 
 [tool.ruff]
 line-length = 100
@@ -42,10 +43,10 @@ indent-style = "space"
 
 [tool.ty.analysis]
 # pytest is a dev dep ty's env can't resolve; allow it so the gate surfaces
-# real test-type errors instead of import noise. model2vec is the optional
-# `semantic` extra, imported ONLY inside the uvx-run reference embedder — never
-# installed in this env by design, so ty can't resolve it either.
-allowed-unresolved-imports = ["pytest", "model2vec"]
+# real test-type errors instead of import noise. fastembed/model2vec are the
+# optional `semantic` extra, imported ONLY inside the uvx-run reference embedders
+# — never installed in this env by design, so ty can't resolve them either.
+allowed-unresolved-imports = ["pytest", "fastembed", "model2vec"]
 
 [tool.ty.src]
 # Type-check the runtime engine and tests (scripts dir root). Default discovery

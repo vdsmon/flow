@@ -27,7 +27,7 @@ Everything from the bootstrap onward is shared by the self-approve branch; the d
    ```bash
    QF="${TMPDIR:-/tmp}/flow-recall-$KEY.txt"   # ticket title + body (Write tool)
    python3 ${CLAUDE_SKILL_DIR}/scripts/recall.py --query-file "$QF" \
-     --semantic --top-n 30 --threshold "$TAU" --branch "$B" --workspace-root .
+     --semantic --top-n 30 --branch "$B" --workspace-root .
    ```
    Pass the query via `--query-file` (not a shell positional — avoids the `"`/`\`/newline hazard). `--semantic` is a no-op when the workspace has not opted in (recall stays pure BM25). Weave the returned entries into the plan. The matching WRITE (`--record-pending`) happens post-gate in step 6.
    **Verify any content/drift finding against the default base, not the working checkout.** General orientation reads stay on the working checkout via the Read tool (you do NOT need to `git show` every file). But the moment you would CITE a content/drift finding in the plan, or derive a `--planned-files` entry (step 6) BECAUSE OF a file's current content, re-read that specific file at the freshly-fetched default base first. The tail branches off `@default` (`origin/<default>`, fetched fresh) while this checkout can lag `origin/main`, so a drift seen here may already be fixed upstream and the planned fix would land as a no-op (flow-749). Resolve the base the way `flow_worktree.py create --base @default` does and read the base version:
@@ -94,7 +94,7 @@ Everything from the bootstrap onward is shared by the self-approve branch; the d
    **Record the recalled ids (post-gate WRITE).** Now that the gate is crossed (normal mode), record the plan-phase recall into `recall-pending` so the dispatcher promotes it into the run's `recall-log.jsonl` (and reflect surfaces it as `recalled_entries`). Same query text as step 3, but with `--record-pending` (the WRITE half, illegal in plan mode):
    ```bash
    python3 ${CLAUDE_SKILL_DIR}/scripts/recall.py --query-file "$QF" \
-     --semantic --top-n 30 --threshold "$TAU" --record-pending \
+     --semantic --top-n 30 --record-pending \
      --branch "feature/$KEY-<slug>" --ticket "$KEY" \
      --workspace-root "<the worktree path the bootstrap printed>"
    ```

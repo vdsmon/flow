@@ -1,10 +1,11 @@
 """Embedder seam + derived sidecar index for semantic recall.
 
-Pure stdlib. Never imports numpy/model2vec — those live ONLY inside the uvx
-subprocess (`embedder_model2vec.py`). The runtime python3 cannot import them, so
-the embedder is a CONFIGURED COMMAND that is shelled: newline texts on stdin, a
-JSON array of vectors on stdout. recall.py catches `_EmbedderUnavailable` and
-falls through to pure BM25.
+Pure stdlib. Never imports the embedding model — that lives ONLY inside the uvx
+subprocess (`embedder_fastembed.py`, the default; `embedder_model2vec.py`, the
+lighter static alternative). The runtime python3 cannot import them, so the
+embedder is a CONFIGURED COMMAND that is shelled: newline texts on stdin, a JSON
+array of vectors on stdout. recall.py catches `_EmbedderUnavailable` and falls
+through to pure BM25.
 
 Sidecar index `.flow/<namespace>/knowledge.embed` (derived; never the
 source-of-truth, which stays `knowledge.jsonl`):
@@ -14,8 +15,8 @@ Read via the quarantine-tolerant `iter_jsonl`.
 
 Embedder command resolution:
   1. `[memory.semantic].embedder` (string) when set → shell it.
-  2. else the shipped default: `uvx --with model2vec[inference] python
-     <scripts-dir>/embedder_model2vec.py --model <id>`.
+  2. else the shipped default: `uvx --with fastembed python
+     <scripts-dir>/embedder_fastembed.py --model <id>`.
   A missing command / `uvx` absent / nonzero exit / unparseable stdout →
   `_EmbedderUnavailable`.
 
@@ -46,11 +47,17 @@ import recall
 from _jsonl import iter_jsonl
 from _locking import flock_retry
 
-_DEFAULT_MODEL = "minishlab/potion-retrieval-32M"
+_DEFAULT_MODEL = "BAAI/bge-small-en-v1.5"
 # bound the embedder subprocess: a wedged model download / hung uvx must not
 # stall the plan phase indefinitely -> a timeout maps to _EmbedderUnavailable
-# (BM25 fallback), same as any other embedder failure.
-_EMBED_TIMEOUT_S = 120
+# (BM25 fallback), same as any other embedder failure. The ceiling SCALES with
+# batch size: the base covers the fixed cold-start (model load + uvx env resolve),
+# the per-text term covers throughput. A single plan-phase query (1 text) stays a
+# fast-fail (~base); a full-corpus reindex needs real headroom — bge/ONNX is far
+# heavier than the old static model2vec, and the flat 120s ceiling killed a
+# 337-entry reindex mid-batch.
+_EMBED_TIMEOUT_BASE_S = 120
+_EMBED_TIMEOUT_PER_TEXT_S = 2.0
 
 
 class _EmbedderUnavailable(Exception):
@@ -79,9 +86,9 @@ def _default_command(model: str) -> list[str]:
     return [
         "uvx",
         "--with",
-        "model2vec[inference]",
+        "fastembed",
         "python",
-        str(_scripts_dir() / "embedder_model2vec.py"),
+        str(_scripts_dir() / "embedder_fastembed.py"),
         "--model",
         model,
     ]
@@ -118,7 +125,7 @@ def embed(
             capture_output=True,
             text=True,
             check=False,
-            timeout=_EMBED_TIMEOUT_S,
+            timeout=_EMBED_TIMEOUT_BASE_S + _EMBED_TIMEOUT_PER_TEXT_S * len(texts),
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise _EmbedderUnavailable(f"embedder command not runnable: {exc}") from exc

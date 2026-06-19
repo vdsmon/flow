@@ -449,6 +449,22 @@ def test_rrf_fuse_uses_reciprocal_rank() -> None:
     assert fused["x"] == pytest.approx(1.0 / (recall.RRF_K + 0))
 
 
+def test_rrf_fuse_weights_default_is_equal() -> None:
+    # The weight param is wired but dormant: the (1,1) default must equal the
+    # un-weighted equal-RRF fusion exactly.
+    assert recall.rrf_fuse(["a", "b"], ["c"]) == recall.rrf_fuse(
+        ["a", "b"], ["c"], weights=(1.0, 1.0)
+    )
+
+
+def test_rrf_fuse_weights_bias_bm25_vs_cosine() -> None:
+    # A higher bm25 weight lifts a bm25-only id above an equally-ranked cosine-only id.
+    fused = recall.rrf_fuse(["a"], ["b"], weights=(2.0, 1.0))
+    assert fused["a"] > fused["b"]
+    assert fused["a"] == pytest.approx(2.0 / (recall.RRF_K + 0))
+    assert fused["b"] == pytest.approx(1.0 / (recall.RRF_K + 0))
+
+
 # ─── semantic config gating: disabled path is byte-identical to BM25 ───────────
 
 
@@ -611,6 +627,31 @@ def test_semantic_fusion_reorders_vs_bm25(
     out = capsys.readouterr()
     assert "semantic-active" in out.err
     assert [r["id"] for r in json.loads(out.out)] == ["b" * 16, "a" * 16]
+
+
+def test_semantic_topk_caps_candidates_without_starving(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Regression for the absolute-threshold no-op (flow-nylh): cosine candidates
+    are selected by RANK (top-K = top_n*2, min 20), never by an embedder-coupled
+    absolute threshold. 25 entries all share the query token → all positive cosine;
+    the pool caps at 20 and is never starved to 0."""
+    import memory_embed
+
+    embedder = _stub_embedder_cmd(tmp_path)
+    _seed_semantic_workspace(tmp_path, embedder=embedder, threshold=0.0)
+    _write_entries(
+        tmp_path,
+        "demo",
+        [_make_entry(f"{i:02d}".ljust(16, "x"), f"fsync note {i}") for i in range(25)],
+    )
+    memory_embed.reindex(tmp_path, "demo", model="stub-model", embedder=embedder)
+    rc = recall.cli_main(["fsync", "--workspace-root", str(tmp_path)])
+    assert rc == 0
+    out = capsys.readouterr()
+    assert "semantic-active" in out.err
+    # top-K cap (top_n=5 → K=20): NOT 0 (no starvation) and NOT 25 (capped).
+    assert "cosine_candidates=20" in out.err
 
 
 def test_semantic_falls_back_when_index_missing(
