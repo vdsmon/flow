@@ -169,6 +169,25 @@ The taxonomy is closed:
    ```
    Incremental (embeds only the new entries). SWALLOW any error — the append already succeeded and the index is derived (it self-heals on the next reindex); this never gates the run. A no-op when semantic is off (the index just stays absent and recall stays BM25).
 
+3d. **Record recall usage (precision signal — best-effort).** SKIP when `recalled_entries` was empty (nothing was surfaced). Otherwise record which of the surfaced entries this run actually leaned on, so the `recall-hit-rate` metric (`metric.py recall-hit-rate`) can measure precision instead of guessing. `--used-ids` is the subset of `recalled_entries[].id` that informed a decision, a diagnosis, or the diff — INCLUDING any you superseded in 3b (acting on an entry is using it). The surfaced denominator is read from the recall-log, so you only name the used subset; an entry you ignored is simply omitted:
+   ```bash
+   ${CLAUDE_SKILL_DIR}/scripts/recall_usage.py record-usage \
+     --ticket <KEY> \
+     --ticket-dir <ticket-dir> \
+     --used-ids <comma-separated recalled ids you leaned on> \
+     --workspace-root .
+   ```
+   SWALLOW any error — this is observability, never a gate. Deduped on (run_id, recalled_id), so a `/flow recover` rerun does not double-count.
+
+3e. **Detect recall misses (false-negative signal — best-effort).** After the reindex, scan THIS run's newly-written entries for a near-duplicate of an existing live entry that was NOT recalled into the run — the run re-learned a fact the corpus already held but recall failed to surface. It embeds only the new entries (no hot-path cost) and writes a `RECALL_MISS` record the metric folds in:
+   ```bash
+   ${CLAUDE_SKILL_DIR}/scripts/recall_usage.py detect-misses \
+     --ticket <KEY> \
+     --ticket-dir <ticket-dir> \
+     --workspace-root .
+   ```
+   SWALLOW any error. A no-op (nothing shelled) when semantic is off, nothing was written this run, or the sidecar's model != the configured model (the post-swap reindex hazard — never compares mismatched-model vectors).
+
 4. **Zero novel signal path**: if you genuinely have nothing to append, emit exactly:
    ```
    no novel signal
@@ -247,6 +266,8 @@ The taxonomy is closed:
 ## Outputs
 
 - 0..N new lines in `.flow/<namespace>/knowledge.jsonl`.
+- 0..N usage + miss records in `.flow/<namespace>/recall-usage.jsonl` (precision +
+  false-negative signal for the `recall-hit-rate` metric; steps 3d + 3e).
 - 0..1 ship-event file at `.flow/<namespace>/ship-events/<KEY>.json` (or
   `.dupe.<n>.json` on EEXIST).
 

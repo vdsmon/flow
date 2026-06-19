@@ -56,6 +56,7 @@ from typing import Any
 import _memory_paths
 import _workspace
 import observe_ship_event
+import recall_usage
 from _jsonl import append_quarantine, iter_jsonl
 from _timeutil import iso_z, parse_iso, utcnow_iso
 from baseline_collect import percentile
@@ -630,6 +631,67 @@ def compute_corpus_health(
         "oldest_live_decision": oldest_live_decision,
         "since": since_iso,
         "until": until_iso,
+    }
+
+
+def compute_recall_hit_rate(
+    workspace_root: Path,
+    namespace: str,
+    *,
+    since_iso: str,
+    until_iso: str,
+) -> dict[str, Any]:
+    """Recall precision + miss count over the half-open window [since, until).
+
+    Reads `.flow/<namespace>/recall-usage.jsonl` (usage + miss records, written by
+    `recall_usage.py`) via the quarantine-on-malformed reader. A record counts iff
+    its `ts` parses and is in [since, until). Among `kind=="usage"` records,
+    hit_rate = used / surfaced (0.0 when surfaced == 0) — the precision of what
+    recall put in front of the run. `kind=="miss"` records (a known fact re-learned
+    without being recalled) are counted separately as the false-negative proxy.
+    runs is the distinct run_id count across both kinds. Neither half is
+    ground-truth recall, but both are valid for RELATIVE config comparison (e.g.
+    bge vs potion via `arm-compare`).
+    """
+    since = parse_iso(since_iso)
+    until = parse_iso(until_iso)
+    if since is None:
+        raise ValueError(f"since is not a UTC ISO8601 timestamp: {since_iso!r}")
+    if until is None:
+        raise ValueError(f"until is not a UTC ISO8601 timestamp: {until_iso!r}")
+
+    path = recall_usage.recall_usage_path(workspace_root, namespace)
+    surfaced = 0
+    used = 0
+    misses = 0
+    runs: set[str] = set()
+
+    if path.exists():
+        sidecar = path.with_name(f"{path.name}.quarantine.{_ts_token()}")
+        for rec in iter_jsonl(path, sidecar):
+            ts = parse_iso(rec.get("ts"))
+            if ts is None or not (since <= ts < until):
+                continue
+            run_id = rec.get("run_id")
+            if isinstance(run_id, str):
+                runs.add(run_id)
+            kind = rec.get("kind")
+            if kind == "usage":
+                surfaced += 1
+                if rec.get("used") is True:
+                    used += 1
+            elif kind == "miss":
+                misses += 1
+
+    hit_rate = round(used / surfaced, 4) if surfaced else 0.0
+    return {
+        "since": since_iso,
+        "until": until_iso,
+        "surfaced": surfaced,
+        "used": used,
+        "hit_rate": hit_rate,
+        "misses": misses,
+        "runs": len(runs),
     }
 
 
@@ -1234,12 +1296,17 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     )
     _add_common_args(p_arm)
 
-    p_trend = sub.add_parser("trend", help="Roll up all four window measures.")
+    p_trend = sub.add_parser("trend", help="Roll up all five window measures.")
     _add_common_args(p_trend)
     p_trend.add_argument("--json", action="store_true")
 
     p_ch = sub.add_parser("corpus-health", help="Report knowledge.jsonl live-vs-superseded health.")
     _add_common_args(p_ch)
+
+    p_rhr = sub.add_parser(
+        "recall-hit-rate", help="Recall precision (used/surfaced) + miss count in a window."
+    )
+    _add_common_args(p_rhr)
     return parser.parse_args(argv)
 
 
@@ -1344,6 +1411,31 @@ def _run_corpus_health(
     return 0
 
 
+def _run_recall_hit_rate(args: argparse.Namespace, since_iso: str, until_iso: str) -> int:
+    if not args.namespace:
+        sys.stderr.write("metric: --namespace is required\n")
+        return 1
+    workspace_root = Path(args.workspace_root).resolve()
+    err = _check_flow_dir(workspace_root)
+    if err:
+        sys.stderr.write(err)
+        return 1
+    try:
+        result = compute_recall_hit_rate(
+            workspace_root,
+            args.namespace,
+            since_iso=since_iso,
+            until_iso=until_iso,
+        )
+    except ValueError as exc:
+        sys.stderr.write(f"metric: {exc}\n")
+        return 1
+    out = dict(result)
+    out["resolved_workspace_root"] = str(workspace_root)
+    sys.stdout.write(json.dumps(out, indent=2, sort_keys=True) + "\n")
+    return 0
+
+
 def _run_revert_rate(args: argparse.Namespace, since_iso: str, until_iso: str) -> int:
     if not args.namespace:
         sys.stderr.write("metric: --namespace is required\n")
@@ -1381,6 +1473,7 @@ def _render_trend_table(rollup: dict[str, Any]) -> str:
     ttp = rollup["time-to-pr"]
     fpr = rollup["friction-per-run"]
     rev = rollup["revert-rate"]
+    rhr = rollup["recall-hit-rate"]
     by_source = rev["reverts_by_source"]
     lines = [
         f"metric trend  window [{rollup['since']}, {rollup['until']})",
@@ -1400,6 +1493,10 @@ def _render_trend_table(rollup: dict[str, Any]) -> str:
         f"revert_rate={_fmt_num(rev['revert_rate'])} "
         f"by_source(tracker={_fmt_num(by_source['tracker'])} "
         f"git={_fmt_num(by_source['git'])})",
+        f"  recall-hit-rate   : surfaced={_fmt_num(rhr['surfaced'])} "
+        f"used={_fmt_num(rhr['used'])} "
+        f"hit_rate={_fmt_num(rhr['hit_rate'])} "
+        f"misses={_fmt_num(rhr['misses'])}",
     ]
     return "\n".join(lines) + "\n"
 
@@ -1440,6 +1537,12 @@ def _run_trend(args: argparse.Namespace, since_iso: str, until_iso: str, now_iso
             since_iso=since_iso,
             until_iso=until_iso,
         )
+        rhr = compute_recall_hit_rate(
+            workspace_root,
+            args.namespace,
+            since_iso=since_iso,
+            until_iso=until_iso,
+        )
     except RevertScanError as exc:
         sys.stderr.write(f"metric: revert-rate git scan failed: {exc}\n")
         return 1
@@ -1455,6 +1558,7 @@ def _run_trend(args: argparse.Namespace, since_iso: str, until_iso: str, now_iso
         "time-to-pr": ttp,
         "friction-per-run": fpr,
         "revert-rate": rev,
+        "recall-hit-rate": rhr,
     }
     if args.json:
         sys.stdout.write(json.dumps(rollup, indent=2, sort_keys=True) + "\n")
@@ -1489,6 +1593,9 @@ def cli_main(argv: list[str]) -> int:
 
     if args.command == "corpus-health":
         return _run_corpus_health(args, since_iso, until_iso, now_iso)
+
+    if args.command == "recall-hit-rate":
+        return _run_recall_hit_rate(args, since_iso, until_iso)
 
     if getattr(args, "checkpoint", False):
         if args.mode is None:
@@ -1555,6 +1662,7 @@ __all__ = [
     "compute_checkpoint",
     "compute_corpus_health",
     "compute_friction_per_run",
+    "compute_recall_hit_rate",
     "compute_revert_rate",
     "compute_time_to_pr",
     "default_window",
