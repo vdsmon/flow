@@ -203,6 +203,39 @@ def test_review_threads_filters_and_normalizes_with_pagination():
     assert by_id["1"]["line"] == 12
 
 
+def _bot_checks(coderabbit_state: str | None):
+    # `bkt pr checks` output with the pipeline still in progress, so the test
+    # proves bot_review_present keys on the CodeRabbit line, not the pipeline.
+    cr = f"  CodeRabbit  {coderabbit_state}\n" if coderabbit_state else ""
+
+    def h(args):
+        if args[:3] == ["bkt", "pr", "checks"]:
+            return f"  Pipeline    INPROGRESS\n{cr}"
+        return "null"
+
+    return h
+
+
+def test_bot_review_present_true_when_check_terminal():
+    # Terminal CodeRabbit check = review done, regardless of finding count. On a
+    # CLEAN review CR posts no "Actionable comments posted" comment, so the gate
+    # must rely on the check-state, not a comment marker (flow-arva).
+    fg, _ = _adapter(_bot_checks("SUCCESSFUL"))
+    assert fg.bot_review_present("9") is True
+
+
+def test_bot_review_present_false_when_check_inprogress():
+    fg, _ = _adapter(_bot_checks("INPROGRESS"))
+    assert fg.bot_review_present("9") is False
+
+
+def test_bot_review_present_false_when_check_absent():
+    # CR not registered yet — must not read "no line" as done (the bug: an empty
+    # thread list at CI-green looked review-clean before CR ran).
+    fg, _ = _adapter(_bot_checks(None))
+    assert fg.bot_review_present("9") is False
+
+
 def test_post_reply_parent_id_is_int():
     fg, calls = _adapter(lambda a: "null")
     fg.post_reply("9", "1", "Fixed in abc123.")

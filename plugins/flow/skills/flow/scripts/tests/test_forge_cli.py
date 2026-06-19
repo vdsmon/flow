@@ -15,9 +15,10 @@ class _FakeForge:
     backend = "github"
     capabilities: ClassVar[list] = []
 
-    def __init__(self, *, threads_supported: bool = True):
+    def __init__(self, *, threads_supported: bool = True, bot_review_supported: bool = True):
         self.calls: list[tuple] = []
         self._threads_supported = threads_supported
+        self._bot_review_supported = bot_review_supported
 
     def detect_pr(self, branch):
         self.calls.append(("detect_pr", branch))
@@ -64,6 +65,12 @@ class _FakeForge:
         if not self._threads_supported:
             raise NotSupported("no review threads")
         return [{"id": "1", "severity": "major", "title": "x", "resolved": False}]
+
+    def bot_review_present(self, pr_id):
+        self.calls.append(("bot_review_present", pr_id))
+        if not self._bot_review_supported:
+            raise NotSupported("no bot review status")
+        return True
 
     def post_reply(self, pr_id, thread_id, body):
         self.calls.append(("post_reply", pr_id, thread_id))
@@ -147,6 +154,19 @@ def test_resolve_thread(ws, capsys):
 def test_review_threads_degrades_on_not_supported(ws, capsys):
     rc, _ = _run(["review-threads", "--pr", "7"], ws, threads_supported=False)
     assert rc == 0  # degrade, not error
+    assert json.loads(capsys.readouterr().out) == {"supported": False}
+
+
+def test_review_status_emits_reviewed(ws, capsys):
+    rc, fake = _run(["review-status", "--pr", "7"], ws)
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out) == {"reviewed": True}
+    assert ("bot_review_present", "7") in fake.calls
+
+
+def test_review_status_degrades_on_not_supported(ws, capsys):
+    rc, _ = _run(["review-status", "--pr", "7"], ws, bot_review_supported=False)
+    assert rc == 0  # degrade, not error — review_loop skips the wait
     assert json.loads(capsys.readouterr().out) == {"supported": False}
 
 

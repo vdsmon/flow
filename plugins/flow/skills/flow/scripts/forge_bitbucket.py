@@ -57,6 +57,7 @@ class BitbucketAdapter:
             {"name": "draft_prs", "supported": True},
             {"name": "ready_toggle", "supported": True},
             {"name": "review_threads", "supported": True},
+            {"name": "bot_review_status", "supported": True},
             {"name": "squash_merge", "supported": True},
             {"name": "delete_branch", "supported": True},
             {"name": "ci_rollup", "supported": True},
@@ -249,6 +250,28 @@ class BitbucketAdapter:
                 }
             )
         return threads
+
+    def bot_review_present(self, pr_id: str) -> bool:
+        """True once CodeRabbit's review CHECK has reached a terminal state.
+
+        CR registers a commit status (a `CodeRabbit` line in `bkt pr checks`,
+        the same source `ci_rollup` reads for the pipeline) that goes
+        INPROGRESS -> SUCCESSFUL independent of the finding count. That is the
+        reliable completion signal: on a CLEAN review CR posts only a Walkthrough
+        and NO `Actionable comments posted: N` comment, so a comment-marker gate
+        would never fire and would burn the full wait on every clean PR (verified
+        on brinta-data-platform: zero-finding PRs carry `CodeRabbit: SUCCESSFUL`
+        but no count comment). Comment markers are also unreliable as a START vs
+        DONE signal — the Walkthrough is posted at review start (flow-arva).
+
+        Absent line (CR not registered yet) or INPROGRESS -> not done; any
+        terminal state (incl. FAILED) means CR has stopped, so waiting longer
+        will not surface more threads."""
+        text = self._run_text(["bkt", "pr", "checks", pr_id], "bkt pr checks")
+        line = next((ln for ln in text.splitlines() if "coderabbit" in ln.lower()), "")
+        m = _CI_STATE_RE.search(line)
+        state = m.group(0).upper() if m else ""
+        return state in ("SUCCESSFUL", "FAILED", "STOPPED", "ERROR")
 
     def post_reply(self, pr_id: str, thread_id: str, body: str) -> None:
         self._api(

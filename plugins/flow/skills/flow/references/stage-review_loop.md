@@ -87,6 +87,30 @@ Do NOT invent inline edit logic. Delegate the fix to a subagent (the same way th
 
 ## 3. Poll review threads
 
+**First, wait for the review bot to finish (flow-arva).** CI green does NOT mean the bot has reviewed — CodeRabbit reviews asynchronously and routinely posts its findings *after* CI is green. Fetching threads once at CI-green races that review: an empty list reads as "clean" when the bot simply has not run yet, and a late Major+ finding would be merged past under a false "review-clean". Gate on the bot's completion signal before trusting the thread list:
+
+```bash
+python3 ${CLAUDE_SKILL_DIR}/scripts/forge_cli.py --workspace-root . review-status --pr "$PR_ID"
+```
+
+- `{"supported": false}` → this host exposes no review-bot completion signal (e.g. the GitHub self-target runs no bot). **Do not wait** — go straight to the thread poll below; an empty list is legitimately clean here.
+- `{"reviewed": true}` → the bot has finished; proceed to the thread poll.
+- `{"reviewed": false}` → the bot has not finished. Re-poll on a bounded wait until it is `true` OR the cap is hit (turn-safe in one Bash call; an attached session MAY use a §1-style Monitor instead):
+
+```bash
+i=0; while [ $i -lt 10 ]; do
+  r=$(python3 ${CLAUDE_SKILL_DIR}/scripts/forge_cli.py --workspace-root . review-status --pr "$PR_ID" \
+    | python3 -c 'import sys,json;print(json.load(sys.stdin).get("reviewed"))')
+  echo "[$(date +%T)] review bot finished: $r"
+  [ "$r" = "True" ] && break
+  sleep 45; i=$((i+1))
+done
+```
+
+10 × 45s = 450s (under the 600s Bash ceiling) covers the observed CR latency (it completed ~1min after CI-green on the witness PR). If still not finished at the cap, proceed but **record the timeout in the stage report** ("review bot did not complete within the wait window — threads may be incomplete") instead of silently asserting review-clean.
+
+Then poll the threads:
+
 ```bash
 python3 ${CLAUDE_SKILL_DIR}/scripts/forge_cli.py --workspace-root . review-threads --pr "$PR_ID"
 ```
@@ -112,6 +136,6 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/forge_cli.py --workspace-root . resolve-thre
 
 ## 5. Terminal
 
-`STATUS=completed` when **CI is green AND zero unresolved Major+ threads remain**. Remaining Minor/nit threads are reported open with one-line reasons, not chased. Respect the 3-cycle cap. **Stop every Monitor on exit** (a leaked Monitor keeps the shell alive). On `completed`, the PR-ready notification fires with the PR URL (see `references/verb-do.md`); only when the handler is `none` does that notification fall back to firing at `create_pr` instead.
+`STATUS=completed` when **CI is green AND the review bot has finished (§3) AND zero unresolved Major+ threads remain**. An empty thread list only means "clean" once §3's completion gate passed (or the host has no bot); never terminate review-clean on an empty list the bot has not yet produced. Remaining Minor/nit threads are reported open with one-line reasons, not chased. Respect the 3-cycle cap. **Stop every Monitor on exit** (a leaked Monitor keeps the shell alive). On `completed`, the PR-ready notification fires with the PR URL (see `references/verb-do.md`); only when the handler is `none` does that notification fall back to firing at `create_pr` instead.
 
 This stage MAY write a short report (cycles run, threads resolved/skipped, final CI state) to `$TICKET_DIR/stages/review_loop.out`; pass `--output-path` on `advance` if it does.

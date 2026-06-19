@@ -88,6 +88,9 @@ class _FakeForge:
     def review_threads(self, pr_id: str):
         raise NotImplementedError
 
+    def bot_review_present(self, pr_id: str) -> bool:
+        raise NotImplementedError
+
     def post_reply(self, pr_id: str, thread_id: str, body: str) -> None: ...
     def resolve_thread(self, pr_id: str, thread_id: str) -> bool:
         return True

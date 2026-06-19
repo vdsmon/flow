@@ -96,6 +96,7 @@ class GitHubAdapter:
             {"name": "draft_prs", "supported": True},
             {"name": "ready_toggle", "supported": True},
             {"name": "review_threads", "supported": True},
+            {"name": "bot_review_status", "supported": False},
             {"name": "squash_merge", "supported": True},
             {"name": "delete_branch", "supported": True},
             {"name": "ci_rollup", "supported": True},
@@ -332,6 +333,13 @@ class GitHubAdapter:
                 }
             )
         return threads
+
+    def bot_review_present(self, pr_id: str) -> bool:
+        # No review bot is wired on the GitHub self-target (flow's own PRs get no
+        # CodeRabbit review — hot beads gate on the stage-merge §2 subagent instead),
+        # so there is no async-review completion signal to wait for. Unsupported ->
+        # forge_cli degrades to {"supported": false} and review_loop skips the wait.
+        raise NotSupported("bot_review_status not implemented for github")
 
     def post_reply(self, pr_id: str, thread_id: str, body: str) -> None:
         # plain _ok (NOT retried): a reply is not idempotent, a double-apply would
