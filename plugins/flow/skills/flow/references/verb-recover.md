@@ -39,8 +39,11 @@ It does not run stages; after a successful fix it hands back to `/flow do`.
        abort classifies the lease under the run flock and refuses (exit 1) when it is `live` — releasing a live lease would de-mutex a sibling run that re-acquired the ticket. To release a lease that still looks live anyway (the run is genuinely wedged), add `--force`; this is operator-explicit, so confirm first.
 
    - **Config / version drift** — `snapshot.ok` is false (workspace.toml,
-     stage-registry, or a handler plugin changed since the run started).
-     Offer:
+     stage-registry, a handler plugin, or the `engine` tree changed since the
+     run started). An `engine` drift means a mid-run `git pull` /
+     `claude plugin marketplace update` on the main checkout swapped the engine
+     code; the run aborts fail-closed rather than silently executing swapped
+     machinery. Recovery is the same for every component:
      - accept the current config:
        `recover.py reload-snapshot --ticket "$KEY" --workspace-root .`
      - abort: `recover.py abort --ticket "$KEY" --workspace-root .`

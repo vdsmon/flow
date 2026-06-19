@@ -1259,6 +1259,35 @@ def test_next_refuses_unowned_workspace_drift_without_baseline(
     assert "drift" in payload["error"]
 
 
+def test_next_refuses_engine_drift_never_owned(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # flow-qt2s (option-3, fail-closed): an engine-component drift seen at
+    # cmd_next aborts (rc 1) and is NEVER owned-reconciled, even when an
+    # engine-mapped path sits in this run's planned_files. The structural
+    # guarantee is component_files(["engine"], ...) -> {"engine": None}: a
+    # tree_hash names no single file, so _gate_drift's `files[c] is not None`
+    # check rejects ownership regardless of planned_files. If engine were ever
+    # made ownable (component_files mapping it to a planned path), the abort
+    # would flip to a reconcile and both assertions below would fail.
+    _write_workspace(tmp_path, stages=["ticket", "plan"], compounding=False)
+    _stub_git_head(monkeypatch)
+    ds.cmd_init(tmp_path, "FT-1")
+    # seed an engine-mapped path as planned so "never owned even when planned"
+    # is non-vacuous: it is planned AND still refused.
+    _write_baseline(tmp_path, "FT-1", ["plugins/flow/skills/flow/scripts/dispatch_stage.py"])
+
+    def stub_classify(*args: Any, **kwargs: Any) -> Any:
+        del args, kwargs
+        return (False, "drift: engine", ["engine"], {"master_hash": "x"})
+
+    monkeypatch.setattr(ds, "classify_drift", stub_classify)
+    rc, payload = ds.cmd_next(tmp_path, "FT-1")
+    assert rc == 1
+    assert "reconciled_drift" not in payload
+    assert "engine" in payload["detail"]
+
+
 def test_next_owned_drift_reload_failure_returns_1(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
