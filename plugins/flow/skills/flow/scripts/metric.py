@@ -541,6 +541,98 @@ def compute_friction_per_run(
     }
 
 
+def compute_corpus_health(
+    workspace_root: Path,
+    namespace: str,
+    *,
+    since_iso: str,
+    until_iso: str,
+    now_iso: str,
+) -> dict[str, Any]:
+    """Report knowledge.jsonl corpus health: live-vs-superseded counts + DECISION age.
+
+    Reads `.flow/<namespace>/knowledge.jsonl` via the quarantine-on-malformed
+    reader. An entry is superseded iff its `id` is named by some other entry's
+    `supersedes` (the tombstone). supersession_rate is superseded/total.
+    supersedes_in_window counts tombstones (entries with a non-empty `supersedes`)
+    whose `ts` parses and falls in the half-open window [since, until) — the
+    over-time axis. The DECISION breakdown counts `type == "DECISION"` entries and,
+    among the live (non-superseded) ones with a parseable `ts`, surfaces the oldest
+    as {id, ts, age_days} measured against now_iso (None when there are none).
+    """
+    since = parse_iso(since_iso)
+    until = parse_iso(until_iso)
+    if since is None:
+        raise ValueError(f"since is not a UTC ISO8601 timestamp: {since_iso!r}")
+    if until is None:
+        raise ValueError(f"until is not a UTC ISO8601 timestamp: {until_iso!r}")
+    now = parse_iso(now_iso)
+    if now is None:
+        raise ValueError(f"now is not a UTC ISO8601 timestamp: {now_iso!r}")
+
+    kpath = _memory_paths.knowledge_path(workspace_root, namespace)
+    if not kpath.exists():
+        entries: list[Any] = []
+    else:
+        sidecar = kpath.with_name(f"{kpath.name}.quarantine.{_ts_token()}")
+        entries = list(iter_jsonl(kpath, sidecar))
+
+    dead = {e["supersedes"] for e in entries if isinstance(e, dict) and e.get("supersedes")}
+
+    total = len(entries)
+    superseded = sum(1 for e in entries if isinstance(e, dict) and e.get("id") in dead)
+    live = total - superseded
+    supersession_rate = round(superseded / total, 4) if total else 0.0
+
+    supersedes_in_window = 0
+    for e in entries:
+        if not isinstance(e, dict) or not e.get("supersedes"):
+            continue
+        ts = parse_iso(e.get("ts"))
+        if ts is not None and since <= ts < until:
+            supersedes_in_window += 1
+
+    decisions_total = 0
+    live_decisions: list[tuple[datetime, dict[str, Any]]] = []
+    for e in entries:
+        if not isinstance(e, dict) or e.get("type") != "DECISION":
+            continue
+        decisions_total += 1
+        if e.get("id") in dead:
+            continue
+        ts = parse_iso(e.get("ts"))
+        if ts is not None:
+            live_decisions.append((ts, e))
+
+    decisions_live = sum(
+        1
+        for e in entries
+        if isinstance(e, dict) and e.get("type") == "DECISION" and e.get("id") not in dead
+    )
+
+    oldest_live_decision: dict[str, Any] | None = None
+    if live_decisions:
+        ts, entry = min(live_decisions, key=lambda pair: pair[0])
+        oldest_live_decision = {
+            "id": entry.get("id"),
+            "ts": entry.get("ts"),
+            "age_days": round((now - ts).total_seconds() / 86400, 2),
+        }
+
+    return {
+        "total_entries": total,
+        "live_entries": live,
+        "superseded_entries": superseded,
+        "supersession_rate": supersession_rate,
+        "supersedes_in_window": supersedes_in_window,
+        "decisions_total": decisions_total,
+        "decisions_live": decisions_live,
+        "oldest_live_decision": oldest_live_decision,
+        "since": since_iso,
+        "until": until_iso,
+    }
+
+
 # ─── Revert rate ─────────────────────────────────────────────────────────────
 
 _REOPEN_STATES = frozenset({"open", "in_progress", "blocked"})
@@ -1145,6 +1237,9 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     p_trend = sub.add_parser("trend", help="Roll up all four window measures.")
     _add_common_args(p_trend)
     p_trend.add_argument("--json", action="store_true")
+
+    p_ch = sub.add_parser("corpus-health", help="Report knowledge.jsonl live-vs-superseded health.")
+    _add_common_args(p_ch)
     return parser.parse_args(argv)
 
 
@@ -1215,6 +1310,34 @@ def _run_friction_per_run(args: argparse.Namespace, since_iso: str, until_iso: s
         since_iso=since_iso,
         until_iso=until_iso,
     )
+    out = dict(result)
+    out["resolved_workspace_root"] = str(workspace_root)
+    sys.stdout.write(json.dumps(out, indent=2, sort_keys=True) + "\n")
+    return 0
+
+
+def _run_corpus_health(
+    args: argparse.Namespace, since_iso: str, until_iso: str, now_iso: str
+) -> int:
+    if not args.namespace:
+        sys.stderr.write("metric: --namespace is required\n")
+        return 1
+    workspace_root = Path(args.workspace_root).resolve()
+    err = _check_flow_dir(workspace_root)
+    if err:
+        sys.stderr.write(err)
+        return 1
+    try:
+        result = compute_corpus_health(
+            workspace_root,
+            args.namespace,
+            since_iso=since_iso,
+            until_iso=until_iso,
+            now_iso=now_iso,
+        )
+    except ValueError as exc:
+        sys.stderr.write(f"metric: {exc}\n")
+        return 1
     out = dict(result)
     out["resolved_workspace_root"] = str(workspace_root)
     sys.stdout.write(json.dumps(out, indent=2, sort_keys=True) + "\n")
@@ -1364,6 +1487,9 @@ def cli_main(argv: list[str]) -> int:
     if args.command == "trend":
         return _run_trend(args, since_iso, until_iso, now_iso)
 
+    if args.command == "corpus-health":
+        return _run_corpus_health(args, since_iso, until_iso, now_iso)
+
     if getattr(args, "checkpoint", False):
         if args.mode is None:
             sys.stderr.write("metric: --checkpoint requires --mode personal|work\n")
@@ -1427,6 +1553,7 @@ __all__ = [
     "compute",
     "compute_arm_compare",
     "compute_checkpoint",
+    "compute_corpus_health",
     "compute_friction_per_run",
     "compute_revert_rate",
     "compute_time_to_pr",
