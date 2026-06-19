@@ -30,6 +30,10 @@ It does not run stages; after a successful fix it hands back to `/flow do`.
      ```
      Confirm first: takeover clears the run lock and resets `in_progress` stages back to `pending`.
      It refuses (exit 1) when the lease is `live`; surface that and stop rather than forcing it.
+     To reclaim a lease that still looks live anyway (the holder is provably dead before its TTL
+     elapses), add `--force`; this is operator-explicit (a human asserts holder deadness), mirrors
+     `abort --force`, and still does the full reclaim + `in_progress`->`pending` reset + snapshot.
+     `lease.classify` is unchanged: no automatic pid-liveness, the force is the only bypass.
 
    - **Failed stage** — the report names a stage in `failed`.
      Offer the three choices via AskUserQuestion:

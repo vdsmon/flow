@@ -69,7 +69,7 @@ def detect(workspace_root: Path, ticket: str, *, now_iso: str | None = None) -> 
 
 
 def takeover(
-    workspace_root: Path, ticket: str, *, now_iso: str | None = None
+    workspace_root: Path, ticket: str, *, now_iso: str | None = None, force: bool = False
 ) -> tuple[int, dict[str, Any]]:
     now_iso = now_iso or utcnow_iso()
     td = _ticket_dir(workspace_root, ticket)
@@ -93,6 +93,7 @@ def takeover(
         now_iso,
         current_boot=lease.boot_id(),
         hostname=lease.hostname(),
+        force=force,
         on_cleared=_reset_and_snapshot,
     )
     if not result["cleared"]:
@@ -163,8 +164,13 @@ def cli_main(argv: list[str]) -> int:
     common.add_argument("--ticket", required=True)
     common.add_argument("--workspace-root", default=".")
     sub.add_parser("detect", parents=[common], help="Report what is broken (no mutation).")
-    sub.add_parser(
+    p_take = sub.add_parser(
         "takeover", parents=[common], help="Clear a stale lock + reset in_progress stages."
+    )
+    p_take.add_argument(
+        "--force",
+        action="store_true",
+        help="Reclaim even a LIVE-looking lease (operator asserts holder deadness).",
     )
     p_abort = sub.add_parser("abort", parents=[common], help="Release the run lock; leave state.")
     p_abort.add_argument(
@@ -181,7 +187,7 @@ def cli_main(argv: list[str]) -> int:
     if args.cmd == "detect":
         rc, payload = 0, detect(workspace_root, args.ticket)
     elif args.cmd == "takeover":
-        rc, payload = takeover(workspace_root, args.ticket)
+        rc, payload = takeover(workspace_root, args.ticket, force=args.force)
     elif args.cmd == "retry":
         rc, payload = _force(workspace_root, args.ticket, args.stage, "pending")
     elif args.cmd == "skip":
