@@ -814,6 +814,24 @@ Optional `workspace.toml` block (off by default; absent → semantic off → pur
 has its own `--top-n`/`--threshold`) — they stay harmless, postcondition #5 still expects
 them so `init` keeps writing them.
 
+### `recall_usage.py`
+
+Recall observability (flow-nylh.2). Append-only `.flow/<ns>/recall-usage.jsonl`, two
+record kinds, read by `metric.py recall-hit-rate`. Reflect drives both (stage-reflect
+3d/3e); both are best-effort and deduped per-run so a `/flow recover` rerun never
+double-counts.
+
+| Subcommand | Description |
+|------------|-------------|
+| `record-usage --ticket --ticket-dir [--used-ids]` | One `{kind:usage,used}` record per surfaced id (the run's recall-log `returned_ids` = the denominator); `--used-ids` is the subset the run leaned on. Precision = used/surfaced. |
+| `detect-misses --ticket --ticket-dir [--threshold]` | Flags `{kind:miss,type:RECALL_MISS}` near-dup re-learns: an entry written THIS run (`ticket==KEY` AND `ts >= state.started_at`) whose nearest live neighbor (cosine ≥ `--threshold`, default 0.90) was NOT in `returned_ids`. The new entries are embedded FRESH (not read from the sidecar — a stale reindex can't silently starve detection); the corpus vectors come from the sidecar. |
+
+`detect-misses` is a no-op (nothing shelled, `[]`) when `[memory.semantic]` is off,
+nothing was written this run, the sidecar is absent, or its header model != the configured
+model (the post-swap reindex hazard — never compares mismatched-model vectors). It never
+touches the hot `knowledge.jsonl` write path. Exit codes: 0 ok, 2 lock contention, 3 no
+state.json, 4 I/O / memory-config error.
+
 ### `reflect_inputs.py`
 
 Pure composition layer.
