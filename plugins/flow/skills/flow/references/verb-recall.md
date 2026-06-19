@@ -31,7 +31,7 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/recall.py \
 ```
 
 - `--query-file <path>` (or stdin) — pass a multi-line query (the ticket title+body) WITHOUT a shell positional, avoiding the `"`/`\`/newline hazard. The positional still wins when given.
-- `--semantic` — force the semantic path on regardless of config. `--threshold <τ>` overrides the configured cosine cutoff.
+- `--semantic` — force the semantic path on regardless of config. Cosine candidates are selected by RANK (top-K, driven by `--top-n`); `--threshold <τ>` is only a low floor that drops non-positive (anti-correlated) cosines, NOT the candidate gate (default 0.0).
 - **Per-context budgets.** The interactive `/flow recall` stays tight (modest `--top-n`, protects the live context budget). The plan-phase deep recall (verb-spec / stage-plan) runs looser (`--top-n 30`), latency-tolerant, where the semantic overlay pays off.
 
 **Refresh the index** (incremental; embeds only new entries):

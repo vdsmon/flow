@@ -68,3 +68,7 @@ auto_recall = true
 recall_by = ["branch", "current-ticket", "ready-tickets"]
 recall_top_n = 5
 compounding = true
+
+[memory.semantic]
+enabled = true
+model = "BAAI/bge-small-en-v1.5"

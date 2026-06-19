@@ -43,7 +43,7 @@ You cannot wait for or solicit that approval yourself — just return a plan goo
    ```bash
    QF="${TMPDIR:-/tmp}/flow-recall-$KEY.txt"   # ticket title + body
    python3 ${CLAUDE_SKILL_DIR}/scripts/recall.py --query-file "$QF" \
-     --semantic --top-n 30 --threshold "$TAU" --branch "$B" --workspace-root .
+     --semantic --top-n 30 --branch "$B" --workspace-root .
    ```
    Use `--query-file` (not a shell positional — avoids the `"`/`\`/newline hazard). `--semantic` is inert when the workspace has not opted into `[memory.semantic]` (recall stays pure BM25). Weave any relevant returned entries into the plan's Approach/Risks.
 

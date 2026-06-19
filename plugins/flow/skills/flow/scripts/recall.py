@@ -53,7 +53,15 @@ from _jsonl import iter_jsonl
 K1 = 1.5
 B_PARAM = 0.75
 RRF_K = 60
-DEFAULT_THRESHOLD = 0.30
+# Cosine candidates are selected by RANK (top-K), not an absolute threshold: the
+# right cutoff is embedder-scale-dependent, so an absolute gate silently starves
+# to 0 candidates on an embedder swap (the flow-nylh no-op — τ=0.30 tuned for
+# potion-retrieval-32M dropped everything once relevant cosines moved). K scales
+# with the requested top_n. DEFAULT_THRESHOLD survives only as a low floor that
+# drops anti-correlated (non-positive) cosines.
+DEFAULT_THRESHOLD = 0.0
+COSINE_TOP_K_MULT = 2
+COSINE_MIN_K = 20
 FIELD_WEIGHTS: dict[str, float] = {
     "body": 1.0,
     "type": 0.5,
@@ -283,18 +291,25 @@ def rrf_fuse(
     cosine_order: list[str],
     *,
     k: int = RRF_K,
+    weights: tuple[float, float] = (1.0, 1.0),
 ) -> dict[str, float]:
     """Reciprocal-rank fusion of two id rankings → {id: rrf_score}.
 
-    Each list contributes `1/(k + rank)` (rank 0-based). An id present in one list
-    only still scores from that list, so a cosine-missing (unindexed) entry still
-    ranks via BM25 — the graceful partial-index property.
+    Each list contributes `weight / (k + rank)` (rank 0-based). `weights` is
+    (bm25, cosine); the default (1, 1) is equal-weight RRF. An id present in one
+    list only still scores from that list, so a cosine-missing (unindexed) entry
+    still ranks via BM25 — the graceful partial-index property.
+
+    The weight is wired but DORMANT: config does not expose it yet. Tuning waits
+    on the recall hit-rate metric (flow-nylh.2) so the bm25/semantic balance is
+    never set blind.
     """
+    w_bm25, w_cos = weights
     scores: dict[str, float] = {}
     for rank_i, eid in enumerate(bm25_order):
-        scores[eid] = scores.get(eid, 0.0) + 1.0 / (k + rank_i)
+        scores[eid] = scores.get(eid, 0.0) + w_bm25 / (k + rank_i)
     for rank_i, eid in enumerate(cosine_order):
-        scores[eid] = scores.get(eid, 0.0) + 1.0 / (k + rank_i)
+        scores[eid] = scores.get(eid, 0.0) + w_cos / (k + rank_i)
     return scores
 
 
@@ -327,8 +342,10 @@ def _semantic_rank(
 
     query_vec = memory_embed.embed([query], model=model, embedder=embedder)[0]
 
-    # cosine over indexed live entries, τ pre-filter, descending.
-    cosine_scores: dict[str, float] = {}
+    # cosine over indexed live entries, then RANK-based top-K selection. `threshold`
+    # is only a low floor (drop non-positive cosines); the embedder-coupled absolute
+    # gate is retired (flow-nylh) so a model swap can never starve cosine to 0.
+    sims: list[tuple[str, float]] = []
     for entry in entries:
         eid = entry.get("id")
         if not isinstance(eid, str):
@@ -337,9 +354,11 @@ def _semantic_rank(
         if vec is None:
             continue
         sim = _cosine(query_vec, vec)
-        if sim >= threshold:
-            cosine_scores[eid] = sim
-    cosine_order = sorted(cosine_scores, key=lambda e: -cosine_scores[e])
+        if sim > threshold:
+            sims.append((eid, sim))
+    sims.sort(key=lambda kv: -kv[1])
+    top_k = max(top_n * COSINE_TOP_K_MULT, COSINE_MIN_K)
+    cosine_order = [eid for eid, _ in sims[:top_k]]
 
     # full BM25 ranking (all live entries), id order.
     bm25_results = rank(
