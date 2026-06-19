@@ -84,6 +84,44 @@ def test_takeover_refused_on_live_lease(tmp_path: Path) -> None:
     assert "live" in payload["error"]
 
 
+def test_takeover_force_reclaims_live_lease_and_resets(tmp_path: Path) -> None:
+    # the operator-explicit escape hatch: --force reclaims a still-live-looking
+    # lease (a human asserts holder deadness) AND does the normal takeover reset.
+    td = _ws(tmp_path)
+    boot, host = _identity()
+    lease.acquire(td, "live-run", 600, _now(), current_boot=boot, hostname=host, cwd=str(td))
+    state.begin_stage(td, "ticket", "sha")
+    rc, payload = recover.takeover(tmp_path, "T-1", now_iso=_now(), force=True)
+    assert rc == 0
+    assert payload["took_over"] is True
+    assert "ticket" in payload["reset_stages"]
+    assert not lease.run_lock_path(td).exists()
+    ts, _ = state.read(td)
+    assert ts is not None
+    assert ts.stages["ticket"].status == "pending"
+    # resume snapshot is rewritten under the same flock as the clear.
+    assert (td / "snapshot.sha").exists()
+
+
+def test_takeover_force_via_cli(tmp_path: Path) -> None:
+    td = _ws(tmp_path)
+    boot, host = _identity()
+    lease.acquire(td, "live-run", 600, _now(), current_boot=boot, hostname=host, cwd=str(td))
+    state.begin_stage(td, "ticket", "sha")
+    # without --force the CLI refuses (exit 1); with it, the lease is reclaimed.
+    rc = recover.cli_main(["takeover", "--ticket", "T-1", "--workspace-root", str(tmp_path)])
+    assert rc == 1
+    assert lease.run_lock_path(td).exists()
+    rc = recover.cli_main(
+        ["takeover", "--ticket", "T-1", "--workspace-root", str(tmp_path), "--force"]
+    )
+    assert rc == 0
+    assert not lease.run_lock_path(td).exists()
+    ts, _ = state.read(td)
+    assert ts is not None
+    assert ts.stages["ticket"].status == "pending"
+
+
 def test_takeover_quarantines_corrupt_lock(tmp_path: Path) -> None:
     td = _ws(tmp_path)
     lock = lease.run_lock_path(td)
