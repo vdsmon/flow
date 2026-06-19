@@ -23,13 +23,13 @@ Everything from the bootstrap onward is shared by the self-approve branch; the d
    ```
    Read the stdout.
    Explore the codebase read-only (Read/Grep/Glob, or a subagent).
-   **Recall against the ticket text (plan-phase, read-only).** This is the SOLE recall now (SessionStart no longer recalls). Write the ticket title+body to a temp file and query recall keyed on it — a pure READ, legal in plan mode, NO `--record-pending` here:
+   **Recall against the ticket text + your intent (plan-phase, read-only).** This is the SOLE recall now (SessionStart no longer recalls). Write the ticket title+body to a temp file, PREPENDED with a short (1–2 line) intent preamble naming the form / domain / component you are about to touch and the shape of the change (the risk), then query recall keyed on the whole file — a pure READ, legal in plan mode, NO `--record-pending` here:
    ```bash
-   QF="${TMPDIR:-/tmp}/flow-recall-$KEY.txt"   # ticket title + body (Write tool)
+   QF="${TMPDIR:-/tmp}/flow-recall-$KEY.txt"   # intent preamble + ticket title + body (Write tool)
    python3 ${CLAUDE_SKILL_DIR}/scripts/recall.py --query-file "$QF" \
      --semantic --top-n 30 --branch "$B" --workspace-root .
    ```
-   Pass the query via `--query-file` (not a shell positional — avoids the `"`/`\`/newline hazard). `--semantic` is a no-op when the workspace has not opted in (recall stays pure BM25). Weave the returned entries into the plan. The matching WRITE (`--record-pending`) happens post-gate in step 6.
+   Pass the query via `--query-file` (not a shell positional — avoids the `"`/`\`/newline hazard). The intent preamble AUGMENTS the raw ticket text, it never replaces it — the identifier-rich ticket body stays the BM25 signal, while the preamble names the domain so the semantic side clusters prior work on the same form / component (e.g. "Working on the IVA form's validation; risk: rounding in the F.20 line totals"). `--semantic` is a no-op when the workspace has not opted in (recall stays pure BM25). Weave the returned entries into the plan. The matching WRITE (`--record-pending`) happens post-gate in step 6.
    **Verify any content/drift finding against the default base, not the working checkout.** General orientation reads stay on the working checkout via the Read tool (you do NOT need to `git show` every file). But the moment you would CITE a content/drift finding in the plan, or derive a `--planned-files` entry (step 6) BECAUSE OF a file's current content, re-read that specific file at the freshly-fetched default base first. The tail branches off `@default` (`origin/<default>`, fetched fresh) while this checkout can lag `origin/main`, so a drift seen here may already be fixed upstream and the planned fix would land as a no-op (flow-749). Resolve the base the way `flow_worktree.py create --base @default` does and read the base version:
    ```bash
    git fetch --quiet origin
@@ -125,7 +125,7 @@ It replaces interactive steps 1-5. The self-approve branch then runs shared step
 
 2. Resolve the ticket key (positional `$ARGUMENTS` minus the flags, else `branch_ticket.py --workspace-root .`) — same as step 2.
 
-3. Fetch ticket context into the conversation via `tracker_cli.py --workspace-root . get --key "$KEY"` (read the stdout); explore the codebase read-only; run the plan-phase READ recall keyed on the ticket text (the `recall.py --query-file ... --semantic --top-n 30` form from interactive step 3, NO `--record-pending`) and weave the entries in — same as step 3. The matching post-gate WRITE (`--record-pending`) runs once in shared step 6.
+3. Fetch ticket context into the conversation via `tracker_cli.py --workspace-root . get --key "$KEY"` (read the stdout); explore the codebase read-only; run the plan-phase READ recall keyed on the ticket text + a short intent preamble (the augmented `recall.py --query-file ... --semantic --top-n 30` form from interactive step 3, NO `--record-pending`) and weave the entries in — same as step 3. The matching post-gate WRITE (`--record-pending`) runs once in shared step 6.
    The drift-vs-`@default` rule (verify any cited content/drift finding against the freshly-fetched default base) lives in the `stage-plan.md` embedded into the Plan subagent in step 4; it is that subagent's plan, not this orchestrator's own explore, that derives `planned_files`, so the rule is enforced there.
 
 4. **Decided-mode probe — then the headless plan.**
