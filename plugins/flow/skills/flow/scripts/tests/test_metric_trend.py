@@ -1,10 +1,10 @@
-"""Tests for metric.py `trend` — the four-measure window roll-up.
+"""Tests for metric.py `trend` — the five-measure window roll-up.
 
-`trend` calls compute(), compute_time_to_pr(), compute_friction_per_run(), and
-compute_revert_rate() over one [since, until) window and renders a table (default)
-or a JSON object (`--json`). The revert leg needs a real git repo (else
-_scan_main_reverts raises RevertScanError) and a monkeypatched _status_history;
-this harness mirrors test_metric_revert.py.
+`trend` calls compute(), compute_time_to_pr(), compute_friction_per_run(),
+compute_revert_rate(), and compute_recall_hit_rate() over one [since, until)
+window and renders a table (default) or a JSON object (`--json`). The revert leg
+needs a real git repo (else _scan_main_reverts raises RevertScanError) and a
+monkeypatched _status_history; this harness mirrors test_metric_revert.py.
 """
 
 from __future__ import annotations
@@ -107,10 +107,16 @@ UNTIL = "2026-06-08"
 SINCE_ISO = "2026-06-01T00:00:00Z"
 UNTIL_ISO = "2026-06-08T00:00:00Z"
 
-MEASURE_KEYS = ("tickets-per-week", "time-to-pr", "friction-per-run", "revert-rate")
+MEASURE_KEYS = (
+    "tickets-per-week",
+    "time-to-pr",
+    "friction-per-run",
+    "revert-rate",
+    "recall-hit-rate",
+)
 
 
-def test_json_has_all_four_measure_keys_with_headlines(tmp_path: Path, monkeypatch, capsys) -> None:
+def test_json_has_all_five_measure_keys_with_headlines(tmp_path: Path, monkeypatch, capsys) -> None:
     _seed_workspace(tmp_path)
     _write_ship_event(tmp_path, "FT-1", "2026-06-03T00:00:00Z", stamped=True)
     _patch_history(
@@ -149,6 +155,8 @@ def test_json_has_all_four_measure_keys_with_headlines(tmp_path: Path, monkeypat
         assert key in payload["friction-per-run"]
     for key in ("shipped", "n_reverts", "revert_rate", "reverts_by_source"):
         assert key in payload["revert-rate"]
+    for key in ("surfaced", "used", "hit_rate", "misses", "runs"):
+        assert key in payload["recall-hit-rate"]
 
 
 def test_json_top_level_window_and_resolved_root(tmp_path: Path, monkeypatch, capsys) -> None:
