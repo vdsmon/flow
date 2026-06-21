@@ -438,6 +438,7 @@ class JiraAdapter:
             "parent": parent.get("key") if parent else None,
             "attachments": [self._attachment_from_json(a) for a in attachments],
             "links": links if links is not None else [],
+            "labels": [str(x) for x in (f.get("labels") or [])],
         }
 
     def _ticket_ref_from_json(self, issue: dict[str, Any]) -> TicketRef:

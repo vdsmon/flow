@@ -318,6 +318,7 @@ class BeadsAdapter:
             "parent": raw.get("parent") or None,
             "attachments": [],  # bd has no attachments concept
             "links": [self._link_from_dep(key, d) for d in deps_raw if isinstance(d, dict)],
+            "labels": [str(x) for x in (raw.get("labels") or [])],
         }
 
     def _state_from_issue(self, raw: dict[str, Any]) -> TicketState:

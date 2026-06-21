@@ -326,6 +326,7 @@ def test_ticket_ref_subset_of_ticket() -> None:
         "parent": None,
         "attachments": [],
         "links": [],
+        "labels": [],
     }
     assert full["key"] == ref["key"]
     assert full["description"] == "body"

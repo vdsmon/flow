@@ -556,6 +556,25 @@ def test_acceptance_invariant_present_in_dupe_write(tmp_path: Path) -> None:
     assert data["acceptance_invariant"] == "sign stays +"
 
 
+# ─── lane (express|light|full the run took; the express-lane measurement join) ──
+
+
+def test_lane_defaults_to_empty(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path)
+    path, _ = observe_ship_event.observe(tmp_path, "FT-1", _payload(), "abcdef0123456789")
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert data["lane"] == ""
+
+
+def test_lane_stamps_record(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path)
+    path, _ = observe_ship_event.observe(
+        tmp_path, "FT-1", _payload(), "abcdef0123456789", lane="express"
+    )
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert data["lane"] == "express"
+
+
 def test_acceptance_invariant_in_input_evidence_rejected_as_extra_key(tmp_path: Path) -> None:
     _seed_workspace(tmp_path)
     with pytest.raises(observe_ship_event._EvidenceInvalid, match="extra"):

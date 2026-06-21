@@ -168,6 +168,7 @@ class Ticket(TicketRef):
     parent: str | None
     attachments: list[Attachment]
     links: list[Link]
+    labels: list[str]
 
 
 # ─── State + transitions ─────────────────────────────────────────────────────

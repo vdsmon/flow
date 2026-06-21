@@ -581,6 +581,63 @@ def test_is_hot_change_unit() -> None:
         assert triage.is_hot_change([f"some/path/{guard}"]) is True
 
 
+# ─── lane resolver (spec-time twin of flow_worktree._lane_for_bead) ───────────
+
+
+def _run_lane(tmp_path: Path, key: str, runner: _FakeRunner) -> tuple[int, str]:
+    code, out, _ = _run(["lane", "--workspace-root", str(tmp_path), "--key", key], runner)
+    return code, out.strip()
+
+
+def test_lane_trivial_resolves_express(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path, backend="beads")
+    runner = _FakeRunner([_version_ok(), _decided_show(labels=["evolve", "tier:trivial"])])
+    code, out = _run_lane(tmp_path, "flow-x", runner)
+    assert code == 0
+    assert out == "express"
+
+
+def test_lane_light_resolves_light(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path, backend="beads")
+    runner = _FakeRunner([_version_ok(), _decided_show(labels=["evolve", "tier:light"])])
+    code, out = _run_lane(tmp_path, "flow-x", runner)
+    assert code == 0
+    assert out == "light"
+
+
+def test_lane_untiered_resolves_full(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path, backend="beads")
+    runner = _FakeRunner([_version_ok(), _decided_show(labels=["evolve"])])
+    code, out = _run_lane(tmp_path, "flow-x", runner)
+    assert code == 0
+    assert out == "full"
+
+
+def test_lane_hot_overrides_tier(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path, backend="beads")
+    runner = _FakeRunner([_version_ok(), _decided_show(labels=["hot", "tier:trivial"])])
+    code, out = _run_lane(tmp_path, "flow-x", runner)
+    assert code == 0
+    assert out == "full"
+
+
+def test_lane_bd_read_fail_is_full(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path, backend="beads")
+    runner = _FakeRunner([_version_ok(), _cp(returncode=1, stderr="boom")])
+    code, out = _run_lane(tmp_path, "flow-x", runner)
+    assert code == 0
+    assert out == "full"  # fail-open: a flaky read never silently downshifts
+
+
+def test_lane_non_beads_is_full(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path, backend="jira")
+    runner = _FakeRunner([])  # never invoked: tiers are a beads concept
+    code, out = _run_lane(tmp_path, "FT-1", runner)
+    assert code == 0
+    assert out == "full"
+    assert runner.calls == []
+
+
 # --- advisor_adjudicates flag + adjudicate-enabled CLI ------------------------
 
 

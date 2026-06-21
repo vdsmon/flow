@@ -13,7 +13,7 @@ CLI:
   observe_ship_event.py --ticket <key> --evidence-json '<json>'
                         --run-id <16-hex> [--workspace-root <dir>]
                         [--arm {flow,control}] [--tier <str>]
-                        [--acceptance-invariant <str>]
+                        [--acceptance-invariant <str>] [--lane <str>]
 
 Evidence JSON validation rejects with exit 1 if:
 - not a JSON object at top level
@@ -21,7 +21,7 @@ Evidence JSON validation rejects with exit 1 if:
 - `shipped_at` missing / fails UTC ISO8601 Z regex
 - `evidence` missing / not dict
 - any extra top-level key present (script owns observed_at / observed_by_run_id /
-  flow_attribution / arm / tier / acceptance_invariant / plugin_version)
+  flow_attribution / arm / tier / acceptance_invariant / lane / plugin_version)
 
 The script-owned `arm` key (enum {flow, control}, default 'flow', set via --arm or the
 `arm` param on observe()) tags which experiment lane a ship-event belongs to. It rides
@@ -228,6 +228,7 @@ def observe(
     arm: str = "flow",
     tier: str = "",
     acceptance_invariant: str = "",
+    lane: str = "",
 ) -> tuple[Path, bool]:
     """Write a ship-event evidence file.
 
@@ -251,6 +252,7 @@ def observe(
     record["arm"] = arm
     record["tier"] = tier
     record["acceptance_invariant"] = acceptance_invariant
+    record["lane"] = lane
     record["plugin_version"] = _plugin_version()
     stamp = _attribution_stamp(workspace_root, ticket, run_id)
     if stamp is not None:
@@ -323,6 +325,9 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--arm", choices=["flow", "control"], default="flow")
     parser.add_argument("--tier", default="")
     parser.add_argument("--acceptance-invariant", default="")
+    parser.add_argument(
+        "--lane", default="", help="verification lane the run took (express|light|full)"
+    )
     return parser.parse_args(argv)
 
 
@@ -343,6 +348,7 @@ def cli_main(argv: list[str]) -> int:
             args.arm,
             args.tier,
             args.acceptance_invariant,
+            args.lane,
         )
     except _EvidenceInvalid as exc:
         sys.stderr.write(f"observe-ship-event: {exc}\n")

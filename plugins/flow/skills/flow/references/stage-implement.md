@@ -9,6 +9,8 @@ This stage absorbs the old separate test stage: you write the production code AN
 TDD discipline is MANDATORY.
 Write or update the tests that pin the new behavior, watch them fail, make them pass with the smallest sufficient change, then confirm the whole relevant suite is green before you return.
 
+**Express-lane relaxation (only when frontmatter `lane: express`).** An `express` run is a producer-stamped `tier:trivial` bead — vetted behavior-preserving (a doc-drift fix, a proven-dead-code deletion, a comment correction). For these a *new* test is NOT mandatory: there is no new behavior to pin, and authoring one is the redundant work the lane removes. You MUST still (a) run the whole relevant existing suite and confirm it stays green, and (b) write the test anyway if your change turns out to touch behavior after all — in which case treat the run as ordinary TDD, the relaxation does not apply. The net for an express run is existing-suite-green + the unchanged CI + review-bot review at the tail. `lane: light` (and the absent/`full` case) keep full mandatory TDD — a `tier:light` finding can be behavior-changing, so it needs the pinning test.
+
 ## Revision mode (a revision sub-run)
 
 When `<ticket-dir>` contains `/revisions/`, this is a **revision** (see `references/verb-revise.md`): there is no `plan.out` (a revision has no plan stage). The fix SOURCE is, in order:
