@@ -60,6 +60,11 @@ The taxonomy is closed:
    - Exit 2 → git ran but returned an error (bad ref). Abort.
    - Exit 3 → I/O error reading state. Abort.
 
+1b. **Lane collapse (the bundle's `ticket_frontmatter.lane`).** Reflect's expensive part is the LLM-judgment knowledge mining (lens A novelty extraction, lens C project memory, the 3b supersession sweep); its cheap part is driving the already-collected `friction[]` array to a terminal action and recording the ship event. For a producer-stamped tier bead that taught nothing, the mining is the redundant work the express lane removes — but the friction handling MUST stay (it is the self-correction tripwire that catches a misclassified-trivial that hurt).
+   - **`lane: express`** → **friction-log-only**. Run ONLY: step 2b's drive-every-`friction[]`-entry-to-terminal-action (when `reflect_config.machinery` is on; an empty `friction[]` is the common clean case and finishes immediately) and the ship-event record (steps 5-6, with `--lane`). SKIP lens A novelty mining (steps 2 + 3), lens C project memory (2c), and the 3b supersession sweep. If — against expectation for a behavior-preserving bead — you DID notice a genuinely novel durable fact while handling friction, you may still append it; the collapse removes the mandatory mining, it does not forbid a real insight.
+   - **`lane: light`** → **collapse only when `friction[]` is empty** (a clean small run rarely teaches durable knowledge). If `friction[]` is non-empty, run reflect in FULL — the friction is the signal that something is worth learning.
+   - **`lane: full` or absent** → full reflect, all steps below, unchanged.
+
 2. Read the bundle JSON carefully. Look for novel signal:
    - **What** did the ticket teach you that wasn't already documented?
    - **What** design choice did you make + why (DECISION)?
@@ -232,7 +237,7 @@ The taxonomy is closed:
      The value MUST match `^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$` (`observe_ship_event.py` rejects anything else).
      If `evidence.closed_at` is present but not in that exact form, normalize it to UTC `...Z` seconds precision before use.
    - Build the evidence JSON.
-     The shape MUST be exactly these three top-level keys (`observe_ship_event.py` rejects any extra key; it owns `observed_at`, `observed_by_run_id`, `flow_attribution`, `arm`, `tier`, `acceptance_invariant`, and `plugin_version`):
+     The shape MUST be exactly these three top-level keys (`observe_ship_event.py` rejects any extra key; it owns `observed_at`, `observed_by_run_id`, `flow_attribution`, `arm`, `tier`, `acceptance_invariant`, `lane`, and `plugin_version`):
      ```json
      {
        "ticket": "<KEY>",
@@ -243,6 +248,7 @@ The taxonomy is closed:
      `evidence` MUST be the object from is-shipped output (e.g. jira `{tracker, tracker_status, resolution}`; beads `{tracker, tracker_status, commit_sha, closure_reason, closed_at}`), passed through as-is.
    - Read the bead's `tier:*` label into `$TIER` so the tier captured at ship time is stamped onto the durable record (beads: `TIER=$(bd show <KEY> --json | jq -r '.[0].labels[]? | select(startswith("tier:"))' | head -1)`; jira has no such label, leave `$TIER` empty).
    - Read the bead's `ACCEPTANCE-INVARIANT:` stem (filed by `/flow evolve` for a behavior-changing `tier:light` downshift, §audit step 3) into `$ACCEPTANCE_INVARIANT`, so the assertion the downshift was supposed to satisfy is stamped onto the durable ship event for correlation. It lives in the description as a single-line stem, so stop at the first match (beads: `ACCEPTANCE_INVARIANT=$(bd show <KEY> --json | jq -r '.[0].description // ""' | grep -m1 '^ACCEPTANCE-INVARIANT:' | sed 's/^ACCEPTANCE-INVARIANT:[[:space:]]*//')`; absent stem / jira → empty).
+   - Read the verification `lane` this run took from the bundle's `ticket_frontmatter.lane` into `$LANE` (the value `flow_worktree` stamped at bootstrap: `express` / `light` / `full`; absent → empty). Stamping it on the ship event is what lets the express-lane defect/revert rate be measured against the full-lane `tier:trivial` baseline (the whole point of de-gating under a metric).
    - Observe the ship event:
      ```bash
      ${CLAUDE_SKILL_DIR}/scripts/observe_ship_event.py \
@@ -251,6 +257,7 @@ The taxonomy is closed:
        --run-id "$RUN_ID" \
        --tier "$TIER" \
        --acceptance-invariant "$ACCEPTANCE_INVARIANT" \
+       --lane "$LANE" \
        --workspace-root .
      ```
      - Exit 0 → primary ship-event file written. Continue.

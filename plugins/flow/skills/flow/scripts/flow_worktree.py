@@ -689,6 +689,36 @@ def _refuse_epic_bead(*, ticket: str, main_root: Path) -> None:
         )
 
 
+def _lane_for_bead(*, ticket: str, main_root: Path) -> str:
+    """Resolve the verification lane (express|light|full) from the bead's tier labels.
+
+    Same labels evolve_select reads for model selection (tier:trivial -> sonnet) now
+    also pick how much verification the run does (tier_policy.lane_for). Fail-open to
+    "full" matches the terminal/epic reads: a flaky tracker never silently downshifts a
+    run's gating. A non-beads tracker (no tier labels) resolves to "full" too.
+    """
+    import tier_policy
+    import triage
+    from tracker import make_tracker
+
+    config, _code = triage._resolve_config(main_root)
+    if config is None:
+        return "full"
+    try:
+        labels = make_tracker(config).get(ticket).get("labels", [])
+    except Exception:
+        return "full"
+    return tier_policy.lane_for(labels)
+
+
+def _stamp_lane(*, ticket: str, main_root: Path) -> str | None:
+    """Lane to stamp at bootstrap: express/light only. `full` is the default the
+    stages already assume for an absent field, so it is left unstamped (a normal
+    run's frontmatter is unchanged)."""
+    resolved = _lane_for_bead(ticket=ticket, main_root=main_root)
+    return resolved if resolved in ("express", "light") else None
+
+
 def _refuse_invalid_covers(*, ticket: str, covers: list[str], main_root: Path) -> None:
     """Each cover must be a distinct, live, non-epic ticket — the lead's floors, looped.
 
@@ -713,12 +743,14 @@ def _stamp_run_frontmatter(
     commit_type: str | None,
     commit_summary: str | None,
     e2e_recipe: str | None,
+    lane: str | None = None,
 ) -> None:
     """Seed the run frontmatter the unattended tail reads so it never pauses to ask.
 
     planned_files -> records_diff_baseline pre-hook; covers -> the delivery fan-out
     (transition / PR comment / reflect); commit_type/commit_summary -> the commit
-    stage; e2e_recipe -> the e2e lint gate + recipe executor. List fields go in as
+    stage; e2e_recipe -> the e2e lint gate + recipe executor; lane -> the verification
+    depth the spec/implement/reflect stages read (tier_policy). List fields go in as
     TOML-array literals so ticket_frontmatter coerces them back to lists.
     """
     fm_updates: dict[str, str] = {}
@@ -732,6 +764,8 @@ def _stamp_run_frontmatter(
         fm_updates["commit_summary"] = commit_summary
     if e2e_recipe:
         fm_updates["e2e_recipe"] = e2e_recipe
+    if lane:
+        fm_updates["lane"] = lane
     if fm_updates:
         ticket_frontmatter.update(worktree / ".flow" / "tickets" / f"{ticket}.md", fm_updates)
 
@@ -890,6 +924,7 @@ def bootstrap(
                 commit_type=commit_type,
                 commit_summary=commit_summary,
                 e2e_recipe=e2e_recipe,
+                lane=_stamp_lane(ticket=ticket, main_root=main_root),
             )
 
             # Last step: the run is fully seeded, so carrying spilled edits in (and

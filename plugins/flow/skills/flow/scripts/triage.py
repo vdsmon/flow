@@ -183,6 +183,28 @@ def decided(
     return {"decided": is_decided, "answer": answer, "is_hot": is_hot}
 
 
+def lane(config: dict[str, Any], key: str, *, runner: Any = None) -> str:
+    """Resolve a bead's verification lane (express|light|full) from its tier labels.
+
+    The spec-time twin of `flow_worktree._lane_for_bead` (which reads via the tracker
+    at bootstrap): the `--auto` planner calls this BEFORE bootstrap, so the express/light
+    skips (advisor probe, plan revision) can fire while planning. Same raw bd read as
+    `decided`; policy lives in `tier_policy.lane_for`. Fail-open to "full" so a flaky
+    read never silently downshifts a run's gating.
+    """
+    import tier_policy
+
+    try:
+        adapter = BeadsAdapter(config, runner=runner)
+        raw = adapter._run_json(["show", key, "--include-comments"])
+    except Exception:
+        return "full"
+    issue = raw[0] if isinstance(raw, list) and raw else raw
+    if not isinstance(issue, dict):
+        return "full"
+    return tier_policy.lane_for(issue.get("labels") or [])
+
+
 def _comment_text(c: Any) -> str:
     """Comment body across both shapes: raw `bd show --include-comments` keys it
     under `text`; the marshaled Ticket (adapter.get) nests it under `body`."""
@@ -370,6 +392,19 @@ def _cmd_decided(args: argparse.Namespace, runner: Any) -> int:
     return 0
 
 
+def _cmd_lane(args: argparse.Namespace, runner: Any) -> int:
+    workspace_root = Path(args.workspace_root).expanduser().resolve()
+    config, code = _resolve_config(workspace_root)
+    if config is None:
+        return code
+    if config["backend"] != "beads":
+        # tiers are a beads/evolve concept; no tier labels -> full lane.
+        sys.stdout.write("full\n")
+        return 0
+    sys.stdout.write(lane(config, args.key, runner=runner) + "\n")
+    return 0
+
+
 def _cmd_adjudicate_enabled(args: argparse.Namespace) -> int:
     workspace_root = Path(args.workspace_root).expanduser().resolve()
     sys.stdout.write("true\n" if advisor_adjudicates(workspace_root) else "false\n")
@@ -395,7 +430,7 @@ def _default_to_list(argv: list[str]) -> list[str]:
             return argv
         if tok.startswith("-"):
             continue
-        if tok in ("list", "decided", "adjudicate-enabled", "adjudicate-hot-enabled"):
+        if tok in ("list", "decided", "lane", "adjudicate-enabled", "adjudicate-hot-enabled"):
             return argv
         break
     return ["list", *argv]
@@ -419,6 +454,12 @@ def cli_main(argv: list[str], runner: Any = None) -> int:
     p_decided.add_argument("--key", required=True)
     p_decided.add_argument("--files", default=None)
 
+    p_lane = sub.add_parser(
+        "lane", help="resolve a bead's verification lane (express|light|full) from tier labels"
+    )
+    p_lane.add_argument("--workspace-root", default=".")
+    p_lane.add_argument("--key", required=True)
+
     p_adj = sub.add_parser(
         "adjudicate-enabled",
         help="print whether [evolve] advisor_adjudicates is on (true/false)",
@@ -435,6 +476,8 @@ def cli_main(argv: list[str], runner: Any = None) -> int:
 
     if args.command == "decided":
         return _cmd_decided(args, runner)
+    if args.command == "lane":
+        return _cmd_lane(args, runner)
     if args.command == "adjudicate-enabled":
         return _cmd_adjudicate_enabled(args)
     if args.command == "adjudicate-hot-enabled":
