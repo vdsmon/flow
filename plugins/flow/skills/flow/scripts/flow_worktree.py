@@ -16,8 +16,9 @@ concern.
   5. seed state.json: plan marked completed with its output_path; plan.out written
      from --plan-from; ticket left pending so the pipeline self-fetches ticket.json
      and stamps frontmatter (keeps the bootstrap offline; tracker auth stays live)
-  6. stamp commit_type/commit_summary (and e2e_recipe when e2e is opted in) into
-     the worktree frontmatter so the commit + e2e stages do not block on a prompt
+  6. stamp commit_type/commit_summary (and e2e_recipe when e2e is opted in, and the
+     verification lane when express/light) into the worktree frontmatter so the
+     commit + e2e + lane-gated stages do not block on a prompt
   7. print the worktree path (the spec session enters it via EnterWorktree)
 
 The bootstrap holds NO run lease; the pipeline's cmd_init acquires it under the
@@ -711,12 +712,32 @@ def _lane_for_bead(*, ticket: str, main_root: Path) -> str:
     return tier_policy.lane_for(labels)
 
 
-def _stamp_lane(*, ticket: str, main_root: Path) -> str | None:
+def _stamp_lane(
+    *,
+    ticket: str,
+    main_root: Path,
+    explicit_lane: str | None = None,
+    planned_files: list[str] | None = None,
+) -> str | None:
     """Lane to stamp at bootstrap: express/light only. `full` is the default the
     stages already assume for an absent field, so it is left unstamped (a normal
-    run's frontmatter is unchanged)."""
-    resolved = _lane_for_bead(ticket=ticket, main_root=main_root)
-    return resolved if resolved in ("express", "light") else None
+    run's frontmatter is unchanged).
+
+    An explicit `--lane` (the interactive phase-2 proposal the user approved at the
+    spec gate, or the `--lane` flag passed directly) takes precedence over the bead's
+    tier labels (the drain path's label derivation). Either way a HOT change (a guard
+    file in planned_files) is clamped to full: the hot floor overrides any requested
+    downshift, mirroring tier_policy's `hot` precedence on the drain side. The
+    interactive vetting is the user at the spec gate, the same role the Opus producer's
+    audit plays for a drain-stamped tier label."""
+    import triage
+
+    candidate = explicit_lane or _lane_for_bead(ticket=ticket, main_root=main_root)
+    if candidate not in ("express", "light"):
+        return None
+    if triage.is_hot_change(planned_files or []):
+        return None  # hot floor: a guard-file change is never expressed/lightened
+    return candidate
 
 
 def _refuse_invalid_covers(*, ticket: str, covers: list[str], main_root: Path) -> None:
@@ -784,6 +805,7 @@ def bootstrap(
     commit_type: str | None = None,
     commit_summary: str | None = None,
     e2e_recipe: str | None = None,
+    lane: str | None = None,
     mise_trust: bool = True,
     auto: bool = False,
     recover_spill: bool = False,
@@ -924,7 +946,12 @@ def bootstrap(
                 commit_type=commit_type,
                 commit_summary=commit_summary,
                 e2e_recipe=e2e_recipe,
-                lane=_stamp_lane(ticket=ticket, main_root=main_root),
+                lane=_stamp_lane(
+                    ticket=ticket,
+                    main_root=main_root,
+                    explicit_lane=lane,
+                    planned_files=planned_files,
+                ),
             )
 
             # Last step: the run is fully seeded, so carrying spilled edits in (and
@@ -979,6 +1006,15 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     )
     p.add_argument("--commit-type", default=None)
     p.add_argument("--commit-summary", default=None)
+    p.add_argument(
+        "--lane",
+        default=None,
+        choices=["express", "light", "full"],
+        help="verification lane the user approved at the spec gate (interactive phase 2) "
+        "or passed directly; takes precedence over the bead's tier labels. A hot change "
+        "(guard file in --planned-files) is clamped to full regardless. Omit to derive "
+        "from tier labels (the drain path)",
+    )
     p.add_argument(
         "--e2e-recipe",
         default=None,
@@ -1088,6 +1124,7 @@ def cli_main(argv: list[str]) -> int:
             commit_type=args.commit_type,
             commit_summary=args.commit_summary,
             e2e_recipe=args.e2e_recipe,
+            lane=args.lane,
             mise_trust=not args.no_mise_trust,
             auto=args.auto,
             recover_spill=args.recover_spill,

@@ -194,6 +194,52 @@ def test_seeds_planned_files_as_list(tmp_path: Path) -> None:
     assert parsed["planned_files"] == ["src/a.py", "src/b.py"]
 
 
+# ─── verification lane (phase 2: interactive --lane override) ──────────────────
+
+
+def _lane_in_frontmatter(res: dict) -> object:
+    import ticket_frontmatter
+
+    fm_path = Path(res["worktree"]) / ".flow" / "tickets" / "FT-1.md"
+    return ticket_frontmatter.read(fm_path).get("lane")
+
+
+def test_explicit_lane_express_stamped(tmp_path: Path) -> None:
+    main = _main_checkout(tmp_path)
+    res = _run(tmp_path, main, lane="express", planned_files=["a.py"])
+    assert _lane_in_frontmatter(res) == "express"
+
+
+def test_explicit_lane_full_not_stamped(tmp_path: Path) -> None:
+    # full is the default an absent field means -> leave frontmatter clean.
+    main = _main_checkout(tmp_path)
+    res = _run(tmp_path, main, lane="full", planned_files=["a.py"])
+    assert _lane_in_frontmatter(res) is None
+
+
+def test_hot_planned_file_clamps_lane_to_full(tmp_path: Path) -> None:
+    # the hot floor overrides an express request: a guard-file change is never lightened.
+    main = _main_checkout(tmp_path)
+    res = _run(tmp_path, main, lane="express", planned_files=["snapshot.py"])
+    assert _lane_in_frontmatter(res) is None
+
+
+def test_stamp_lane_explicit_precedence_and_hot_clamp() -> None:
+    # unit: explicit lane wins; hot planned_files clamps express/light to full (None).
+    assert fw._stamp_lane(ticket="X", main_root=Path("/x"), explicit_lane="express") == "express"
+    assert fw._stamp_lane(ticket="X", main_root=Path("/x"), explicit_lane="light") == "light"
+    assert fw._stamp_lane(ticket="X", main_root=Path("/x"), explicit_lane="full") is None
+    assert (
+        fw._stamp_lane(
+            ticket="X",
+            main_root=Path("/x"),
+            explicit_lane="express",
+            planned_files=["scripts/lease.py"],
+        )
+        is None
+    )
+
+
 # ─── L2: detect-and-recover edits spilled onto main before bootstrap ───────────
 
 
