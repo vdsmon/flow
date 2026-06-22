@@ -38,7 +38,8 @@ This file is the router plus the two things that stay on the hot path: the **spe
 
 Match the **first whitespace-delimited token** of `$ARGUMENTS` against the verb set below by exact string equality.
 If it equals a verb, route there.
-If `$ARGUMENTS` is empty, print the verb listing.
+An **alias** is matched by the same exact-equality rule and resolves to its canonical verb BEFORE routing: `resume`→`do`, `mem`/`memory`→`recall`. Aliases are additive — the canonical names always route, and matching stays exact (so `sync-42` still ≠ any verb or alias).
+If `$ARGUMENTS` is empty, print the verb listing, grouped by the sections in the table below.
 Otherwise — a first token that is not any verb (a bare ticket key like `FT-123`, or a beads key like `sync-42`) — route to **spec**, taking that positional token as the ticket key (same key-resolution as spec step 2).
 Spec is the default because fire-and-forget is the primary path.
 **Multiple positional ticket keys** (e.g. `/flow FT-1 FT-2 FT-3`) — spec handles ONE ticket per run. Do not silently consume only the first: surface all the keys you were given and ask (via `AskUserQuestion`) whether to spec them sequentially (one plan + tail each) or **fold related ones into a single piece of work**, then proceed on that answer. **Fold = run-level grouping (`covers`):** pick a LEAD key that owns the run (lease / state / branch / memory stay lead-keyed) and pass the rest as `--covers FT-2,FT-3`. The lead's spec gate covers all of them, the PR carries one `Closes <KEY>` per cover, and the commit/PR/reflect steps fan out to close each (`references/verb-spec.md`). Group only tickets that are one coherent change (same files / shared deps); independent tickets stay sequential. A cover must be a distinct, live, non-epic ticket — the bootstrap refuses otherwise.
@@ -47,22 +48,28 @@ Spec is the default because fire-and-forget is the primary path.
 
 | First token | Verb | Reference |
 |------|------|------|
-| `init` (optionally `--reconfigure`, `--resume`) | init | `references/verb-init.md` |
-| `new` | new | `references/verb-new.md` |
+| **— core pipeline —** | | |
 | `spec` (optionally `<ticket>`, `--auto`, `--e2e-recipe "..."`) | spec (gate below) | `references/verb-spec.md` |
-| `do` (optionally `<ticket>`) | do (skeleton below) | `references/verb-do.md` |
+| `do` (alias `resume`) (optionally `<ticket>`) | do (skeleton below) | `references/verb-do.md` |
 | `revise <ticket\|pr> [<instruction>]` | revise | `references/verb-revise.md` |
-| `recall <query> [--branch X --top-n N]` | recall | `references/verb-recall.md` |
-| `recall --metric tickets-per-week [...]` | metric (recall passthrough) | `references/verb-recall.md` |
-| `status` (optionally `<ticket>`) | status | `references/verb-status.md` |
+| **— multi-ticket —** | | |
 | `group` (optionally `<key> ...`, `--mine`, `--filter open`) | group | `references/verb-group.md` |
+| **— work state —** | | |
+| `status` (optionally `<ticket>`) | status | `references/verb-status.md` |
+| `recall` (aliases `mem`, `memory`) `<query> [--branch X --top-n N]` | recall | `references/verb-recall.md` |
+| `recall --metric tickets-per-week [...]` | metric (recall passthrough) | `references/verb-recall.md` |
 | `triage` (optionally `<key> "<answer>"`) | triage | `references/verb-triage.md` |
 | `recover` (optionally `<ticket>`) | recover | `references/verb-recover.md` |
 | `sync` | sync | `references/verb-sync-baseline.md` |
 | `baseline` | baseline | `references/verb-sync-baseline.md` |
+| **— setup —** | | |
+| `init` (optionally `--reconfigure`, `--resume`) | init | `references/verb-init.md` |
+| `new` | new | `references/verb-new.md` |
+| **— maintainer —** | | |
 | `evolve <audit\|propose\|epic\|drain>` (maintainer-only) | evolve namespace (dispatch in the ref) | `references/verb-evolve.md` |
 | `queue` (optionally `--dry-run`) (maintainer-only) | queue | `references/verb-queue.md` |
-| (empty) | print verb listing | — |
+| **— fallback —** | | |
+| (empty) | print verb listing (grouped by the sections above) | — |
 | anything else (e.g. `FT-123`) | spec; that positional token is the ticket key | `references/verb-spec.md` |
 
 ## spec verb — the one gate
