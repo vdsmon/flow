@@ -423,19 +423,22 @@ def check_ownership(
         if not line.strip():
             continue
         token = line[3:].strip()
-        if " -> " in token:  # rename: take the destination (each side quoted apart)
-            token = token.split(" -> ", 1)[1].strip()
-        path = _unquote_porcelain_path(token)
-        # flow's own run state lives under .flow/; its writes are never an
-        # unrelated user edit, so they never count against ownership. the
-        # bootstrap (flow_worktree._copy_config) likewise copies the whole
-        # .claude/ scaffolding (hooks/skills/settings) into each worktree; it is
-        # dev config, never the ticket's own edit, so it is excluded too.
-        if path == ".flow" or path.startswith(".flow/"):
-            continue
-        if path == ".claude" or path.startswith(".claude/"):
-            continue
-        changed.append(path)
+        # a rename reports both endpoints as `old -> new` (each side quoted
+        # apart); route BOTH through the same unquote + exclusion logic so an
+        # out-of-scope rename source can't slip past the ownership gate.
+        tokens = [side.strip() for side in token.split(" -> ", 1)] if " -> " in token else [token]
+        for tok in tokens:
+            path = _unquote_porcelain_path(tok)
+            # flow's own run state lives under .flow/; its writes are never an
+            # unrelated user edit, so they never count against ownership. the
+            # bootstrap (flow_worktree._copy_config) likewise copies the whole
+            # .claude/ scaffolding (hooks/skills/settings) into each worktree; it is
+            # dev config, never the ticket's own edit, so it is excluded too.
+            if path == ".flow" or path.startswith(".flow/"):
+                continue
+            if path == ".claude" or path.startswith(".claude/"):
+                continue
+            changed.append(path)
     unowned = sorted(p for p in changed if p not in owned)
     return {
         "ok": not unowned,
