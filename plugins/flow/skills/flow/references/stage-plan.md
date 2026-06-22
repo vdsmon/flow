@@ -78,6 +78,13 @@ You cannot wait for or solicit that approval yourself — just return a plan goo
      Fable model the agent directly, advisor is absent by design) before
      the human gate, because a plan's author is the worst judge of its own
      confidence.
+   - **Lane** *(interactive runs only)* — propose the verification lane (`express` |
+     `light` | `full`) the tail takes, conservatively: `express` only for
+     behavior-preserving, tightly-bounded work, `light` for a small
+     behavior-changing change, else `full` (the default). One line of
+     justification; the user approves or overrides it at the gate. **Omit this
+     section in `--auto` mode** — there the lane is derived from the bead's tier
+     labels (`triage.py lane`), not proposed, so a proposal would be discarded.
 
 4. Return the plan as your response.
    Keep it concrete and reviewable; an approver reading only your output should be able to say yes or no.
