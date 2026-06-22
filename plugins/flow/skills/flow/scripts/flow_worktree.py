@@ -711,12 +711,40 @@ def _lane_for_bead(*, ticket: str, main_root: Path) -> str:
     return tier_policy.lane_for(labels)
 
 
-def _stamp_lane(*, ticket: str, main_root: Path) -> str | None:
-    """Lane to stamp at bootstrap: express/light only. `full` is the default the
-    stages already assume for an absent field, so it is left unstamped (a normal
-    run's frontmatter is unchanged)."""
-    resolved = _lane_for_bead(ticket=ticket, main_root=main_root)
-    return resolved if resolved in ("express", "light") else None
+def _run_is_hot(*, ticket: str, planned_files: list[str] | None, main_root: Path) -> bool:
+    """A change is hot if a guard/safety file is in planned_files, or the bead carries
+    a `hot` label (mirrors triage.decided's is_hot). Fail-safe: a tracker read failure
+    reads as hot so the lane clamps to full, matching _lane_for_bead's fail-open."""
+    import triage
+    from tracker import make_tracker
+
+    if triage.is_hot_change(planned_files or []):
+        return True
+    config, _code = triage._resolve_config(main_root)
+    if config is None:
+        return False
+    try:
+        return "hot" in (make_tracker(config).get(ticket).get("labels") or [])
+    except Exception:
+        return True
+
+
+def _effective_lane(
+    *, explicit: str | None, ticket: str, planned_files: list[str] | None, main_root: Path
+) -> str | None:
+    """Lane to stamp at bootstrap; express/light only (`full` -> None, the stages'
+    absent-field default, so a normal run's frontmatter is unchanged).
+
+    An explicit `--lane` (interactive override) wins over the bead's tier labels, but a
+    hot change clamps to `full` either way: the label-derived path gets the hot-LABEL
+    clamp inside _lane_for_bead; this re-checks the guard-file planned set (both paths)
+    and the hot label (the explicit path bypasses _lane_for_bead)."""
+    base = explicit if explicit is not None else _lane_for_bead(ticket=ticket, main_root=main_root)
+    if base in ("express", "light") and _run_is_hot(
+        ticket=ticket, planned_files=planned_files, main_root=main_root
+    ):
+        base = "full"
+    return base if base in ("express", "light") else None
 
 
 def _refuse_invalid_covers(*, ticket: str, covers: list[str], main_root: Path) -> None:
@@ -784,6 +812,7 @@ def bootstrap(
     commit_type: str | None = None,
     commit_summary: str | None = None,
     e2e_recipe: str | None = None,
+    lane: str | None = None,
     mise_trust: bool = True,
     auto: bool = False,
     recover_spill: bool = False,
@@ -924,7 +953,12 @@ def bootstrap(
                 commit_type=commit_type,
                 commit_summary=commit_summary,
                 e2e_recipe=e2e_recipe,
-                lane=_stamp_lane(ticket=ticket, main_root=main_root),
+                lane=_effective_lane(
+                    explicit=lane,
+                    ticket=ticket,
+                    planned_files=planned_files,
+                    main_root=main_root,
+                ),
             )
 
             # Last step: the run is fully seeded, so carrying spilled edits in (and
@@ -979,6 +1013,14 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     )
     p.add_argument("--commit-type", default=None)
     p.add_argument("--commit-summary", default=None)
+    p.add_argument(
+        "--lane",
+        default=None,
+        choices=["express", "light", "full"],
+        help="explicit verification lane (interactive override): precedence over the "
+        "bead's tier labels; a hot change (guard file in planned_files, or a hot-labelled "
+        "bead) clamps to full regardless. Interactive-only; --auto derives from labels.",
+    )
     p.add_argument(
         "--e2e-recipe",
         default=None,
@@ -1088,6 +1130,7 @@ def cli_main(argv: list[str]) -> int:
             commit_type=args.commit_type,
             commit_summary=args.commit_summary,
             e2e_recipe=args.e2e_recipe,
+            lane=args.lane,
             mise_trust=not args.no_mise_trust,
             auto=args.auto,
             recover_spill=args.recover_spill,

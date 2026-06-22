@@ -644,6 +644,83 @@ def test_no_covers_omits_frontmatter_key(tmp_path: Path, monkeypatch) -> None:
     assert "covers" not in fm
 
 
+# ─── verification lane stamping (--lane override + hot clamp, flow-cjgy) ───────
+
+
+class _LabelTracker:
+    """Tracker stand-in returning a fixed label set; every key reads open/task."""
+
+    def __init__(self, labels: list[str]):
+        self._labels = labels
+
+    def state(self, key):
+        return {"normalized": "open"}
+
+    def get(self, key):
+        return {"type": "task", "labels": list(self._labels)}
+
+
+def _lane_fm(tmp_path: Path, main: Path, **kw):
+    import ticket_frontmatter
+
+    res = _run(tmp_path, main, runner=_fake_runner(main=main), **kw)
+    return ticket_frontmatter.read(Path(res["worktree"]) / ".flow" / "tickets" / "FT-1.md")
+
+
+def test_lane_explicit_express_stamps_express(tmp_path: Path, monkeypatch) -> None:
+    main = _main_checkout(tmp_path)
+    _patch_tracker(monkeypatch, _LabelTracker([]))
+    fm = _lane_fm(tmp_path, main, lane="express", planned_files=["src/a.py"])
+    assert fm["lane"] == "express"
+
+
+def test_lane_explicit_full_omits_frontmatter(tmp_path: Path, monkeypatch) -> None:
+    # full is the absent-field default; a normal run's frontmatter stays clean.
+    main = _main_checkout(tmp_path)
+    _patch_tracker(monkeypatch, _LabelTracker([]))
+    fm = _lane_fm(tmp_path, main, lane="full", planned_files=["src/a.py"])
+    assert "lane" not in fm
+
+
+def test_lane_explicit_express_clamped_to_full_by_guard_file(tmp_path: Path, monkeypatch) -> None:
+    # an explicit --lane express on a hot (guard-file) change clamps to full -> unstamped.
+    main = _main_checkout(tmp_path)
+    _patch_tracker(monkeypatch, _LabelTracker([]))
+    fm = _lane_fm(tmp_path, main, lane="express", planned_files=["flow_worktree.py"])
+    assert "lane" not in fm
+
+
+def test_lane_explicit_wins_over_tier_label(tmp_path: Path, monkeypatch) -> None:
+    # explicit --lane takes precedence over the bead's tier label.
+    main = _main_checkout(tmp_path)
+    _patch_tracker(monkeypatch, _LabelTracker(["tier:light"]))
+    fm = _lane_fm(tmp_path, main, lane="express", planned_files=["src/a.py"])
+    assert fm["lane"] == "express"
+
+
+def test_lane_label_derived_when_no_explicit(tmp_path: Path, monkeypatch) -> None:
+    main = _main_checkout(tmp_path)
+    _patch_tracker(monkeypatch, _LabelTracker(["tier:light"]))
+    fm = _lane_fm(tmp_path, main, planned_files=["src/a.py"])
+    assert fm["lane"] == "light"
+
+
+def test_lane_label_derived_clamped_by_guard_file(tmp_path: Path, monkeypatch) -> None:
+    # a tier:trivial bead touching a guard file is NOT express -> clamped to full.
+    main = _main_checkout(tmp_path)
+    _patch_tracker(monkeypatch, _LabelTracker(["tier:trivial"]))
+    fm = _lane_fm(tmp_path, main, planned_files=["flow_worktree.py"])
+    assert "lane" not in fm
+
+
+def test_lane_hot_label_clamps_explicit_express(tmp_path: Path, monkeypatch) -> None:
+    # a hot-labelled bead clamps an explicit --lane express to full even with no guard file.
+    main = _main_checkout(tmp_path)
+    _patch_tracker(monkeypatch, _LabelTracker(["hot"]))
+    fm = _lane_fm(tmp_path, main, lane="express", planned_files=["src/a.py"])
+    assert "lane" not in fm
+
+
 # ─── planned_files gitignore gate ─────────────────────────────────────────────
 
 
