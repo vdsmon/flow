@@ -1259,22 +1259,17 @@ def test_next_refuses_unowned_workspace_drift_without_baseline(
     assert "drift" in payload["error"]
 
 
-def test_next_refuses_engine_drift_never_owned(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    # flow-qt2s (option-3, fail-closed): an engine-component drift seen at
-    # cmd_next aborts (rc 1) and is NEVER owned-reconciled, even when an
-    # engine-mapped path sits in this run's planned_files. The structural
-    # guarantee is component_files(["engine"], ...) -> {"engine": None}: a
-    # tree_hash names no single file, so _gate_drift's `files[c] is not None`
-    # check rejects ownership regardless of planned_files. If engine were ever
-    # made ownable (component_files mapping it to a planned path), the abort
-    # would flip to a reconcile and both assertions below would fail.
+def test_next_engine_drift_dirty_aborts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # flow-p9sc GUARD (replaces test_next_refuses_engine_drift_never_owned): a
+    # persistent engine-only drift whose engine working tree is DIRTY
+    # (engine_tree_clean False) still fail-closes (rc 1) — the raw-Edit-on-
+    # machinery threat. An engine-mapped path seeded in planned_files must NOT
+    # flip it to a reconcile: component_files(["engine"], ...) -> {"engine":
+    # None}, so engine is never OWNED via planned_files (the re-anchor is a
+    # distinct cleanliness-gated path, not ownership).
     _write_workspace(tmp_path, stages=["ticket", "plan"], compounding=False)
     _stub_git_head(monkeypatch)
     ds.cmd_init(tmp_path, "FT-1")
-    # seed an engine-mapped path as planned so "never owned even when planned"
-    # is non-vacuous: it is planned AND still refused.
     _write_baseline(tmp_path, "FT-1", ["plugins/flow/skills/flow/scripts/dispatch_stage.py"])
 
     def stub_classify(*args: Any, **kwargs: Any) -> Any:
@@ -1282,8 +1277,141 @@ def test_next_refuses_engine_drift_never_owned(
         return (False, "drift: engine", ["engine"], {"master_hash": "x"})
 
     monkeypatch.setattr(ds, "classify_drift", stub_classify)
+    monkeypatch.setattr(ds, "engine_tree_clean", lambda *a, **k: False)
     rc, payload = ds.cmd_next(tmp_path, "FT-1")
     assert rc == 1
+    assert "reconciled_drift" not in payload
+    assert "engine_reanchored" not in payload
+    assert "engine" in payload["detail"]
+
+
+def test_next_engine_drift_transient_race_reverifies(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # flow-p9sc: a transient concurrent-read race shows engine drift on the
+    # first classify pass and clean on the re-verify (second pass). cmd_next
+    # proceeds (rc 0) with marker engine_drift_reverified and NO snapshot
+    # mutation (the sha file is byte-unchanged).
+    _write_workspace(tmp_path, stages=["ticket", "plan"], compounding=False)
+    _stub_git_head(monkeypatch)
+    ds.cmd_init(tmp_path, "FT-1")
+
+    calls = {"n": 0}
+
+    def stub_classify(*args: Any, **kwargs: Any) -> Any:
+        del args, kwargs
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return (False, "drift: engine", ["engine"], {"master_hash": "x"})
+        return (True, "match", [], {"master_hash": "y"})
+
+    monkeypatch.setattr(ds, "classify_drift", stub_classify)
+
+    sha_path = tmp_path / ".flow" / "runs" / "FT-1" / "snapshot.sha"
+    sha_before = sha_path.read_bytes()
+
+    rc, payload = ds.cmd_next(tmp_path, "FT-1")
+    assert rc == 0, payload
+    assert payload.get("stage") == "ticket"
+    assert payload.get("engine_drift_reverified") is True
+    assert "engine_reanchored" not in payload
+    assert sha_path.read_bytes() == sha_before
+
+
+def test_next_engine_drift_clean_advance_reanchors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # flow-p9sc: a committed lagging-main / marketplace advance leaves the
+    # engine working tree clean vs HEAD. Drift is persistent across both
+    # classify passes, engine_tree_clean True -> RE-ANCHOR: cmd_next proceeds
+    # (rc 0) with marker engine_reanchored and the snapshot.sha is rewritten to
+    # the recomputed master_hash.
+    _write_workspace(tmp_path, stages=["ticket", "plan"], compounding=False)
+    _stub_git_head(monkeypatch)
+    ds.cmd_init(tmp_path, "FT-1")
+
+    def stub_classify(*args: Any, **kwargs: Any) -> Any:
+        del args, kwargs
+        return (False, "drift: engine", ["engine"], {"master_hash": "reanchored-hash"})
+
+    monkeypatch.setattr(ds, "classify_drift", stub_classify)
+    monkeypatch.setattr(ds, "engine_tree_clean", lambda *a, **k: True)
+
+    sha_path = tmp_path / ".flow" / "runs" / "FT-1" / "snapshot.sha"
+    sha_before = sha_path.read_bytes()
+
+    rc, payload = ds.cmd_next(tmp_path, "FT-1")
+    assert rc == 0, payload
+    assert payload.get("stage") == "ticket"
+    assert payload.get("engine_reanchored") is True
+    assert "reconciled_drift" not in payload
+    after = sha_path.read_bytes()
+    assert after != sha_before
+    assert after == b"reanchored-hash\n"
+
+
+def test_next_engine_drift_lost_lease_returns_7_without_reanchor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # flow-p9sc lease-before-mutation invariant: an engine-only drift abort is
+    # DEFERRED past the lease guard, so a lost lease wins (rc 7) and the snapshot
+    # is never re-anchored. classify_drift would re-verify clean on the second
+    # call, but the lease guard returns first; engine_tree_clean must NOT be
+    # consulted and the sha must be byte-unchanged.
+    _write_workspace(tmp_path, stages=["ticket", "plan"], compounding=False)
+    _stub_git_head(monkeypatch)
+    ds.cmd_init(tmp_path, "FT-1")
+
+    def stub_classify(*args: Any, **kwargs: Any) -> Any:
+        del args, kwargs
+        return (False, "drift: engine", ["engine"], {"master_hash": "x"})
+
+    def boom_clean(*args: Any, **kwargs: Any) -> bool:
+        raise AssertionError("engine_tree_clean must not run before the lease guard")
+
+    monkeypatch.setattr(ds, "classify_drift", stub_classify)
+    monkeypatch.setattr(ds, "engine_tree_clean", boom_clean)
+
+    lock = tmp_path / ".flow" / "runs" / "FT-1" / "run.lock"
+    data = json.loads(lock.read_text(encoding="utf-8"))
+    data["run_id"] = "someone-else"
+    lock.write_text(json.dumps(data), encoding="utf-8")
+
+    sha_path = tmp_path / ".flow" / "runs" / "FT-1" / "snapshot.sha"
+    sha_before = sha_path.read_bytes()
+
+    rc, payload = ds.cmd_next(tmp_path, "FT-1")
+    assert rc == 7
+    assert payload["error"] == "lost lease"
+    assert "engine_reanchored" not in payload
+    assert sha_path.read_bytes() == sha_before
+
+
+def test_next_mixed_engine_drift_aborts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # flow-p9sc: a mixed drift (engine + a second component) is NOT engine-only,
+    # so the re-verify branch is never entered and engine_tree_clean must NOT be
+    # consulted. Abort rc 1 exactly as today.
+    _write_workspace(tmp_path, stages=["ticket", "plan"], compounding=False)
+    _stub_git_head(monkeypatch)
+    ds.cmd_init(tmp_path, "FT-1")
+
+    def stub_classify(*args: Any, **kwargs: Any) -> Any:
+        del args, kwargs
+        return (
+            False,
+            "drift: engine, workspace_toml",
+            ["engine", "workspace_toml"],
+            {"master_hash": "x"},
+        )
+
+    def boom_clean(*args: Any, **kwargs: Any) -> bool:
+        raise AssertionError("engine_tree_clean must not be consulted for mixed drift")
+
+    monkeypatch.setattr(ds, "classify_drift", stub_classify)
+    monkeypatch.setattr(ds, "engine_tree_clean", boom_clean)
+    rc, payload = ds.cmd_next(tmp_path, "FT-1")
+    assert rc == 1
+    assert "engine_reanchored" not in payload
     assert "reconciled_drift" not in payload
     assert "engine" in payload["detail"]
 

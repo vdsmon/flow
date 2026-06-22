@@ -42,7 +42,13 @@ import state
 import validate_workspace as vw
 from _registry import StageEntry, registry_by_name
 from _timeutil import utcnow_iso
-from snapshot import classify_drift, component_files, snapshot_sha_path, write_snapshot
+from snapshot import (
+    classify_drift,
+    component_files,
+    engine_tree_clean,
+    snapshot_sha_path,
+    write_snapshot,
+)
 
 _STAGE_REGISTRY_RELATIVE = Path("stage-registry.toml")
 
@@ -410,17 +416,19 @@ def _planned_files(td: Path) -> set[str]:
 
 def _gate_drift(
     workspace_root: Path, ticket: str, td: Path, revision: str | None = None
-) -> tuple[dict[str, Any] | None, str | None, dict[str, Any] | None]:
+) -> tuple[dict[str, Any] | None, str | None, dict[str, Any] | None, list[str]]:
     """Classify the canonical-snapshot drift gate.
 
-    Returns (abort_payload, reconciled_label, current_snapshot). abort_payload
-    is the exit-1 dict when genuine drift must halt the run, else None.
-    reconciled_label is the comma-joined drifted-component names when the drift
-    is owned (every changed component maps to a file in this run's
+    Returns (abort_payload, reconciled_label, current_snapshot, components).
+    abort_payload is the exit-1 dict when genuine drift must halt the run, else
+    None. reconciled_label is the comma-joined drifted-component names when the
+    drift is owned (every changed component maps to a file in this run's
     planned_files, an intended edit → reload the baseline, don't abort), else
     None. A handler-tree drift maps to no single file and so is never owned.
     current_snapshot is classify_drift's computed snapshot, reused on reconcile
-    so write_snapshot skips a second compute.
+    so write_snapshot skips a second compute. components is the ordered drifted-
+    component list (surfaced on the abort path too so cmd_next can recognize an
+    engine-ONLY abort and run the engine re-anchor / re-verify discriminator).
     """
     drift_ok, detail, components, current_snapshot = classify_drift(
         workspace_root, ticket, skill_root=_skill_root_from_script(), revision=revision
@@ -434,8 +442,8 @@ def _gate_drift(
         if all(files[c] is not None and files[c] in planned for c in components):
             reconciled_label = ", ".join(components)
     if (not drift_ok) and reconciled_label is None:
-        return {**_DRIFT_ABORT, "detail": detail}, None, None
-    return None, reconciled_label, current_snapshot
+        return {**_DRIFT_ABORT, "detail": detail}, None, None, components
+    return None, reconciled_label, current_snapshot, components
 
 
 def _guard_lease_ownership(
@@ -473,6 +481,81 @@ def _guard_lease_ownership(
     return None
 
 
+def _resolve_engine_drift(
+    workspace_root: Path, ticket: str, revision: str | None
+) -> tuple[tuple[int, dict[str, Any]] | None, dict[str, bool]]:
+    """Re-verify / re-anchor an engine-ONLY drift abort (flow-p9sc).
+
+    Called only after the lease guard confirms ownership, so a re-anchor write
+    never precedes the lease check. Re-runs a FRESH classify_drift (re-reading
+    the first pass would just reproduce the drift): re-verify clean → transient
+    concurrent-read race, proceed with NO mutation (engine_drift_reverified);
+    still engine-only AND the engine working tree clean vs HEAD → a committed
+    lagging-main / marketplace advance, re-anchor the snapshot (engine_reanchored);
+    a dirty (uncommitted) engine tree or a now-non-engine/mixed re-verify →
+    fail-closed abort (PRESERVED GUARD). Returns (error_tuple_or_None, markers);
+    error_tuple short-circuits cmd_next, markers ride the descriptor payload.
+    """
+    rok, rdetail, rcomps, rsnapshot = classify_drift(
+        workspace_root, ticket, skill_root=_skill_root_from_script(), revision=revision
+    )
+    if rok:
+        sys.stderr.write(f"dispatch: engine drift re-verified clean (transient) for {ticket}\n")
+        return None, {"engine_drift_reverified": True}
+    if rcomps == ["engine"] and engine_tree_clean(_skill_root_from_script()):
+        try:
+            write_snapshot(
+                workspace_root,
+                ticket,
+                skill_root=_skill_root_from_script(),
+                snapshot=rsnapshot,
+                revision=revision,
+            )
+        except Exception:
+            return (1, {**_DRIFT_ABORT, "detail": "drift: engine"}), {}
+        sys.stderr.write(
+            f"dispatch: auto-reconciled owned drift (engine re-anchored) for {ticket}\n"
+        )
+        return None, {"engine_reanchored": True}
+    return (1, {**_DRIFT_ABORT, "detail": rdetail}), {}
+
+
+def _reconcile_post_lease(
+    workspace_root: Path,
+    ticket: str,
+    revision: str | None,
+    *,
+    engine_abort: bool,
+    owned_reconcile: str | None,
+    drift_snapshot: dict[str, Any] | None,
+) -> tuple[tuple[int, dict[str, Any]] | None, dict[str, bool]]:
+    """Settle a deferred drift AFTER the lease guard confirms ownership.
+
+    An engine-only abort runs the re-verify / re-anchor discriminator
+    (_resolve_engine_drift). An owned drift (every component maps to a planned
+    file) reloads the snapshot baseline so later dispatch calls verify against
+    the intended workspace.toml. The two are mutually exclusive (an engine-only
+    abort is never owned). Returns (error_tuple_or_None, markers).
+    """
+    if engine_abort:
+        return _resolve_engine_drift(workspace_root, ticket, revision)
+    if owned_reconcile:
+        try:
+            write_snapshot(
+                workspace_root,
+                ticket,
+                skill_root=_skill_root_from_script(),
+                snapshot=drift_snapshot,
+                revision=revision,
+            )
+        except Exception:
+            return (1, {**_DRIFT_ABORT, "detail": f"drift: {owned_reconcile}"}), {}
+        sys.stderr.write(
+            f"dispatch: auto-reconciled owned drift ({owned_reconcile}) for {ticket}\n"
+        )
+    return None, {}
+
+
 def cmd_next(
     workspace_root: Path,
     ticket: str,
@@ -496,11 +579,15 @@ def cmd_next(
     # TOCTOU: refuse if workspace.toml / registry / a handler plugin drifted
     # since the run started. EXCEPTION: an owned drift whose changed component(s)
     # all map to planned files auto-reconciles (snapshot reload) AFTER the lease
-    # guard confirms us.
-    abort_payload, owned_reconcile, drift_snapshot = _gate_drift(
+    # guard confirms us. SECOND EXCEPTION: an engine-ONLY abort defers past the
+    # lease guard, then re-verifies / re-anchors (flow-p9sc) so a committed
+    # lagging-main / marketplace advance or a transient concurrent-read race
+    # self-heals; a dirty (uncommitted) engine tree still fail-closes.
+    abort_payload, owned_reconcile, drift_snapshot, components = _gate_drift(
         workspace_root, ticket, td, revision
     )
-    if abort_payload is not None:
+    engine_abort = abort_payload is not None and components == ["engine"]
+    if abort_payload is not None and not engine_abort:
         return 1, abort_payload
     # Lease: if one exists it must still be ours (detects a takeover). A run with
     # no lease (legacy / direct test call) proceeds without one.
@@ -509,22 +596,19 @@ def cmd_next(
     if guard is not None:
         return guard
 
-    # Owned drift confirmed AND the lease is ours: reload the snapshot baseline so
-    # later dispatch calls verify against the intended workspace.toml.
-    if owned_reconcile:
-        try:
-            write_snapshot(
-                workspace_root,
-                ticket,
-                skill_root=_skill_root_from_script(),
-                snapshot=drift_snapshot,
-                revision=revision,
-            )
-        except Exception:
-            return 1, {**_DRIFT_ABORT, "detail": f"drift: {owned_reconcile}"}
-        sys.stderr.write(
-            f"dispatch: auto-reconciled owned drift ({owned_reconcile}) for {ticket}\n"
-        )
+    # Lease confirmed: settle any deferred drift. An engine-only abort re-verifies
+    # / re-anchors (flow-p9sc); an owned drift reloads the snapshot baseline. The
+    # engine markers ride the descriptor payload like reconciled_drift.
+    reconcile_err, engine_markers = _reconcile_post_lease(
+        workspace_root,
+        ticket,
+        revision,
+        engine_abort=engine_abort,
+        owned_reconcile=owned_reconcile,
+        drift_snapshot=drift_snapshot,
+    )
+    if reconcile_err is not None:
+        return reconcile_err
 
     failed = state.find_failed(ts)
     if failed is not None:
@@ -565,6 +649,7 @@ def cmd_next(
         payload["reference_doc"] = stage_meta.reference_doc
     if owned_reconcile:
         payload["reconciled_drift"] = owned_reconcile
+    payload.update(engine_markers)
     if exit_code == 1:
         payload["state_recovered_from_backup"] = True
 
