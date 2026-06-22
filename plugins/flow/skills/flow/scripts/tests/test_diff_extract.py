@@ -225,12 +225,44 @@ def test_check_ownership_renamed_planned_file_with_space(tmp_repo: Path, tmp_pat
     _git(["add", "old.py"], tmp_repo)
     _git(["commit", "-m", "add old"], tmp_repo)
     ticket_dir = tmp_repo / ".flow" / "runs" / "FT-1"
-    diff_extract.record_baseline("implement", ticket_dir, tmp_repo, files=["new name.py"])
+    diff_extract.record_baseline("implement", ticket_dir, tmp_repo, files=["old.py", "new name.py"])
     _git(["mv", "old.py", "new name.py"], tmp_repo)
     payload = diff_extract.check_ownership(ticket_dir, tmp_repo)
     assert payload["ok"] is True
     assert payload["unowned_changes"] == []
     assert "new name.py" in payload["changed"]
+    assert "old.py" in payload["changed"]
+
+
+def test_check_ownership_unowned_rename_source_refuses(tmp_repo: Path, tmp_path: Path) -> None:
+    # git mv of an unplanned source into a planned destination must not drop the
+    # source deletion; the gate refuses the out-of-scope source.
+    (tmp_repo / "old.py").write_text("print('x')\n", encoding="utf-8")
+    _git(["add", "old.py"], tmp_repo)
+    _git(["commit", "-m", "add old"], tmp_repo)
+    ticket_dir = tmp_repo / ".flow" / "runs" / "FT-1"
+    diff_extract.record_baseline("implement", ticket_dir, tmp_repo, files=["new name.py"])
+    _git(["mv", "old.py", "new name.py"], tmp_repo)
+    payload = diff_extract.check_ownership(ticket_dir, tmp_repo)
+    assert payload["ok"] is False
+    assert "old.py" in payload["unowned_changes"]
+
+
+def test_check_ownership_rename_within_flow_dir_excluded(tmp_repo: Path, tmp_path: Path) -> None:
+    # both rename endpoints route through the .flow/ exclusion, so neither side
+    # of a `git mv .flow/x -> .flow/y` counts against ownership.
+    (tmp_repo / ".flow").mkdir()
+    (tmp_repo / ".flow" / "x.py").write_text("print('x')\n", encoding="utf-8")
+    _git(["add", "-f", ".flow/x.py"], tmp_repo)
+    _git(["commit", "-m", "add flow x"], tmp_repo)
+    ticket_dir = tmp_repo / ".flow" / "runs" / "FT-1"
+    diff_extract.record_baseline("implement", ticket_dir, tmp_repo, files=["a.py"])
+    (tmp_repo / "a.py").write_text("print('planned')\n", encoding="utf-8")
+    _git(["mv", ".flow/x.py", ".flow/y.py"], tmp_repo)
+    payload = diff_extract.check_ownership(ticket_dir, tmp_repo)
+    assert payload["ok"] is True
+    assert ".flow/x.py" not in payload["changed"]
+    assert ".flow/y.py" not in payload["changed"]
 
 
 def test_unquote_porcelain_path_octal_utf8() -> None:
