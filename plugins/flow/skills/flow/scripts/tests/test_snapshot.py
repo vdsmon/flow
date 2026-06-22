@@ -738,3 +738,25 @@ def test_snapshot_revision_isolation(tmp_path: Path) -> None:
         workspace_root, "FT-1", skill_root=skill_root, revision="r1"
     )
     assert ok is False and "workspace_toml" in detail
+
+
+# ─── engine_tree_clean (flow-p9sc) ─────────────────────────────────────────────
+# The discriminator for the engine-drift re-anchor: a committed advance leaves
+# the engine working tree clean vs its own HEAD; a dirty (uncommitted) tree is
+# the only way a genuine mid-run engine mutation manifests and stays fail-closed.
+
+
+def test_engine_tree_clean_on_committed_checkout(tmp_path: Path) -> None:
+    _repo, skill = _make_engine_checkout(tmp_path, branch="main")
+    assert snapshot.engine_tree_clean(skill) is True
+
+
+def test_engine_tree_clean_false_when_dirty(tmp_path: Path) -> None:
+    _repo, skill = _make_engine_checkout(tmp_path, branch="main")
+    _write(skill / "scripts" / "engine.py", "X = 99\n")  # tracked edit, uncommitted
+    assert snapshot.engine_tree_clean(skill) is False
+
+
+def test_engine_tree_clean_false_outside_git(tmp_path: Path) -> None:
+    skill_root = _make_skill_root(tmp_path)
+    assert snapshot.engine_tree_clean(skill_root) is False

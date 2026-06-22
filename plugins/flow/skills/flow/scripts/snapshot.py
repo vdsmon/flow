@@ -124,6 +124,79 @@ def _tree_hash(plugin_root: Path) -> str:
 _PROTECTED_BRANCHES = frozenset({"main", "master", "dev", "develop"})
 
 
+def _resolve_engine_root(skill_root: Path) -> tuple[Path, Path] | None:
+    """Resolve the MAIN-checkout engine root for the active engine component.
+
+    Returns (main_root, rel) when the engine component is ACTIVE: skill_root is
+    inside a git repo whose first `git worktree list` stanza (the main checkout)
+    sits on a protected branch and whose engine tree (main_root / rel) exists.
+    Returns None on any resolution failure or inactive case (not a git repo,
+    detached/bare, feature branch, tree gone, git missing). `rel` is skill_root
+    relative to its own toplevel, reused under main_root so the cleanliness
+    check (engine_tree_clean) reads the SAME tree the hash reads.
+    """
+    import subprocess
+
+    def _git_text(args: list[str], cwd: Path) -> str:
+        res = subprocess.run(
+            ["git", *args], cwd=str(cwd), capture_output=True, text=True, timeout=30
+        )
+        if res.returncode != 0:
+            raise OSError(res.stderr.strip() or "git failed")
+        return res.stdout
+
+    try:
+        if not skill_root.is_dir():
+            return None
+        toplevel = Path(_git_text(["rev-parse", "--show-toplevel"], skill_root).strip()).resolve()
+        porcelain = _git_text(["worktree", "list", "--porcelain"], skill_root)
+        first_stanza = porcelain.split("\n\n", 1)[0].splitlines()
+        main_root = Path(first_stanza[0].removeprefix("worktree ").strip()).resolve()
+        branch_lines = [ln for ln in first_stanza if ln.startswith("branch ")]
+        if not branch_lines:  # detached or bare main checkout
+            return None
+        branch = branch_lines[0].removeprefix("branch refs/heads/").strip()
+        if branch not in _PROTECTED_BRANCHES:
+            return None
+        rel = skill_root.resolve().relative_to(toplevel)
+        engine_root = main_root / rel
+        if not engine_root.is_dir():
+            return None
+        return main_root, rel
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+
+
+def engine_tree_clean(skill_root: Path) -> bool:
+    """True only when the MAIN-checkout engine working tree is clean vs its HEAD.
+
+    A committed advance (lagging-main / marketplace pull) leaves the engine
+    working tree == HEAD; a transient concurrent-read race re-verifies clean.
+    A DIRTY engine tree (an uncommitted mid-run mutation, the raw-Edit threat)
+    returns False so the drift guard still fail-closes. Resolves via
+    _resolve_engine_root (the SAME (main_root, rel) the hash uses); None
+    resolution / dirty / any error all fail closed to False.
+    """
+    import subprocess
+
+    resolved = _resolve_engine_root(skill_root)
+    if resolved is None:
+        return False
+    main_root, rel = resolved
+    try:
+        res = subprocess.run(
+            ["git", "-C", str(main_root), "diff", "--quiet", "HEAD", "--", rel.as_posix()],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    # rc 0 = clean; rc 1 = dirty; any other rc = git error. Only rc 0 is clean.
+    # a "daemon terminated" stderr line with rc 0 is cosmetic fsmonitor noise.
+    return res.returncode == 0
+
+
 def _engine_component(skill_root: Path) -> dict[str, str]:
     """{branch, tree_hash} over the MAIN checkout's skill tree; {} when inactive.
 
@@ -158,23 +231,15 @@ def _engine_component(skill_root: Path) -> dict[str, str]:
             raise OSError(res.stderr.strip() or "git failed")
         return res.stdout
 
+    resolved = _resolve_engine_root(skill_root)
+    if resolved is None:
+        return {}
+    main_root, rel = resolved
+    engine_root = main_root / rel
     try:
-        if not skill_root.is_dir():
-            return {}
-        toplevel = Path(_git_text(["rev-parse", "--show-toplevel"], skill_root).strip()).resolve()
-        porcelain = _git_text(["worktree", "list", "--porcelain"], skill_root)
-        first_stanza = porcelain.split("\n\n", 1)[0].splitlines()
-        main_root = Path(first_stanza[0].removeprefix("worktree ").strip()).resolve()
-        branch_lines = [ln for ln in first_stanza if ln.startswith("branch ")]
-        if not branch_lines:  # detached or bare main checkout
-            return {}
-        branch = branch_lines[0].removeprefix("branch refs/heads/").strip()
-        if branch not in _PROTECTED_BRANCHES:
-            return {}
-        rel = skill_root.resolve().relative_to(toplevel)
-        engine_root = main_root / rel
-        if not engine_root.is_dir():
-            return {}
+        # branch is a label on the output dict; the topology/protected gate that
+        # made the component active was already settled by _resolve_engine_root.
+        branch = _git_text(["rev-parse", "--abbrev-ref", "HEAD"], main_root).strip()
         # Enumerate via git ls-files, not a filesystem walk: the main checkout
         # carries untracked machine-local trees (scripts/.venv, .pytest_cache,
         # editor scratch) whose churn is not an engine swap and must not abort
@@ -487,6 +552,7 @@ __all__ = [
     "component_files",
     "compute_snapshot",
     "drifted_components",
+    "engine_tree_clean",
     "snapshot_json_path",
     "snapshot_sha_path",
     "stage_registry_path",
