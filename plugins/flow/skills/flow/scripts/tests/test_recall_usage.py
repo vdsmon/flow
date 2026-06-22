@@ -378,3 +378,19 @@ def test_recall_hit_rate_cli_via_metric(tmp_path: Path, capsys) -> None:
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["surfaced"] == 1 and payload["hit_rate"] == 1.0
+
+
+def test_cli_main_record_usage_no_state_returns_3(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path, semantic=False)
+    rc = recall_usage.cli_main(
+        [
+            "record-usage",
+            "--ticket",
+            "FT-99",
+            "--ticket-dir",
+            str(_ticket_dir(tmp_path, "FT-99")),
+            "--workspace-root",
+            str(tmp_path),
+        ]
+    )
+    assert rc == 3
