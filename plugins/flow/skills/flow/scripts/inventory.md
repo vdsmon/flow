@@ -190,9 +190,9 @@ Pluggable PR-host seam (`forge.py` Protocol + `forge_cli.py` + `forge_github.py`
 | `pr_info` / `pr-info` | `gh pr view PR --json number,url,isDraft,baseRefName,headRefName,state` (PR-number reverse lookup, ANY state — revise reads `head`+`state`/detects MERGED; None on empty/garbage JSON, ForgeError on absent PR) | `bkt api .../pullrequests/PR` → `_pr_from_api` (None on empty body) |
 | `open_pr` / `open-pr` | `gh pr create --base --head --title --body [--draft]` | `bkt api .../pullrequests -X POST -d {title,source,destination,draft,description}` |
 | `ci_rollup` / `ci-rollup` | `gh pr view PR --json statusCheckRollup` (green = non-empty + every check COMPLETED-SUCCESS) | `bkt pr checks PR` → Pipeline line state (SUCCESSFUL→green, INPROGRESS→pending, FAILED/STOPPED/ERROR→failed) |
-| `review_threads` / `review-threads` | **NotSupported** (no live review-bot-on-GitHub yet) | CodeRabbit actionable inline findings via paginated `.../comments`, unresolved only |
-| `post_reply` / `post-reply` | NotSupported | `bkt api .../comments -X POST -d {content.raw, parent.id}` |
-| `resolve_thread` / `resolve-thread` | NotSupported | `POST .../comments/CID/resolve` then re-fetch + verify `.resolution != null` |
+| `review_threads` / `review-threads` | `gh api graphql` — unresolved threads, normalized (drops resolved) | CodeRabbit actionable inline findings via paginated `.../comments`, unresolved only |
+| `post_reply` / `post-reply` | `gh api graphql addPullRequestReviewThreadReply` | `bkt api .../comments -X POST -d {content.raw, parent.id}` |
+| `resolve_thread` / `resolve-thread` | `gh api graphql resolveReviewThread`; returns bool `isResolved` | `POST .../comments/CID/resolve` then re-fetch + verify `.resolution != null` |
 | `mark_ready` / `mark-ready` | `gh pr ready PR` | `bkt api .../pullrequests/PR -X PUT -d {draft:false}` |
 | `merge` / `merge` | `gh pr merge PR --squash` | `bkt api .../pullrequests/PR/merge -X POST -d {merge_strategy:squash}` |
 | `delete_branch` / `delete-branch` | `git push origin --delete B` | `git push origin --delete B` |
