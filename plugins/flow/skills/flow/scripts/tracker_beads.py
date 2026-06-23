@@ -623,6 +623,28 @@ class BeadsAdapter:
             "source": "live_backend_query",
         }
 
+    # ─── Authoring helpers (degraded, no NotSupported) ───────────────────
+
+    def list_issue_types(self) -> list[dict[str, Any]]:
+        """bd's `--type` enum, each `{name, hierarchyLevel}`. epic is hierarchy-1.
+
+        Static; bd has a fixed type vocabulary (see `bd create --help`). Shape
+        mirrors JiraAdapter.list_issue_types so the `new` verb consumes both
+        backends uniformly.
+        """
+        return [
+            {"name": "task", "hierarchyLevel": 0},
+            {"name": "bug", "hierarchyLevel": 0},
+            {"name": "feature", "hierarchyLevel": 0},
+            {"name": "epic", "hierarchyLevel": 1},
+            {"name": "chore", "hierarchyLevel": 0},
+            {"name": "decision", "hierarchyLevel": 0},
+        ]
+
+    def list_epics(self) -> list[dict[str, Any]]:
+        """No epic-parent picker on beads; `new` falls back to no parent."""
+        return []
+
     # ─── Capability-gated (all NotSupported) ─────────────────────────────
 
     def set_sprint(self, key: str, sprint_id: str) -> None:

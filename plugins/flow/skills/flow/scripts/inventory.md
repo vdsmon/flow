@@ -951,6 +951,10 @@ Reads `.flow/workspace.toml` `[tracker]` block, flattens the per-backend sub-blo
 | `create` | `--summary "..." --description "..." --type task [--parent K] [--label L ...] [--assignee A]` | `tracker.create(...)` → `{"key": new_key}` JSON. |
 | `is-shipped` | `--key FT-1` | `tracker.is_shipped(key)` → JSON. |
 | `download-attachments` | `--key FT-1 --out <dir> [--max-bytes N]` | Downloads ticket attachments to `<dir>`; skips files over `--max-bytes` (default 25 MiB). |
+| `list-types` | (none) | `tracker.list_issue_types()` → `[{name, hierarchyLevel}]` JSON. Jira = createmeta issuetypes; beads = static `bd` type enum (epic→1). |
+| `list-epics` | (none) | `tracker.list_epics()` → `[{key, summary}]` JSON. Jira = active hierarchy-1 issues (type name resolved, not hardcoded "Epic"); beads = `[]`. |
+| `list-sprints` | `[--project FT]` | `tracker.list_sprints(project)` → JSON array. On `NotSupported` (beads) emits `{"supported": false, "sprints": []}`, exit 0. |
+| `set-sprint` | `--key FT-1 --sprint-id 831` | `tracker.set_sprint(key, sprint_id)` → `{ok, key, sprint_id}`. On `NotSupported` (beads) emits `{"supported": false, "key": ...}`, exit 0. |
 
 Exit codes: 0=ok, 1=transient/unknown tracker error (network/auth/retryable/unknown failure_kind), 2=workspace config invalid, 3=invalid args, 4=hard transition failure (permission_denied / validator_failed / missing_required_field), 5=transition not applicable (wrong_source_state / ambiguous_transition).
 

@@ -897,6 +897,110 @@ def test_upload_attachment_escapes_quoted_filename(
     )
 
 
+# ─── list_issue_types ───────────────────────────────────────────────────────
+
+
+def test_list_issue_types_returns_name_and_hierarchy(monkeypatch: pytest.MonkeyPatch) -> None:
+    http = _FakeHttp(
+        [
+            _Response(
+                {
+                    "issueTypes": [
+                        {"id": "1", "name": "Task", "hierarchyLevel": 0, "subtask": False},
+                        {"id": "2", "name": "Epic", "hierarchyLevel": 1, "subtask": False},
+                        {"id": "3", "name": "Sub-task", "hierarchyLevel": -1, "subtask": True},
+                    ]
+                }
+            )
+        ]
+    )
+    adapter = _make_adapter(monkeypatch, http)
+    types = adapter.list_issue_types()
+    assert types == [
+        {"name": "Task", "hierarchyLevel": 0},
+        {"name": "Epic", "hierarchyLevel": 1},
+        {"name": "Sub-task", "hierarchyLevel": -1},
+    ]
+    req = http.calls[0]
+    assert req.method == "GET"
+    assert "/rest/api/3/issue/createmeta/FT/issuetypes" in req.full_url
+
+
+def test_list_issue_types_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+    http = _FakeHttp([_Response({"issueTypes": []})])
+    adapter = _make_adapter(monkeypatch, http)
+    assert adapter.list_issue_types() == []
+
+
+# ─── list_epics ─────────────────────────────────────────────────────────────
+
+
+def test_list_epics_resolves_hierarchy1_type_then_searches(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    http = _FakeHttp(
+        [
+            _Response(
+                {
+                    "issueTypes": [
+                        {"id": "1", "name": "Task", "hierarchyLevel": 0},
+                        {"id": "2", "name": "Project", "hierarchyLevel": 1},
+                    ]
+                }
+            ),
+            _Response(
+                {
+                    "issues": [
+                        {"key": "FT-400", "fields": {"summary": "DX Improvements"}},
+                        {"key": "FT-401", "fields": {"summary": "Platform work"}},
+                    ]
+                }
+            ),
+        ]
+    )
+    adapter = _make_adapter(monkeypatch, http)
+    epics = adapter.list_epics()
+    assert epics == [
+        {"key": "FT-400", "summary": "DX Improvements"},
+        {"key": "FT-401", "summary": "Platform work"},
+    ]
+    # Two calls: createmeta (resolve hierarchy-1 type), then JQL search.
+    create_req, search_req = http.calls
+    assert "/rest/api/3/issue/createmeta/FT/issuetypes" in create_req.full_url
+    assert search_req.method == "POST"
+    assert "/rest/api/3/search/jql" in search_req.full_url
+    jql = _body_dict(search_req)["jql"]
+    # Resolved hierarchy-1 type name is used, NOT a hardcoded "Epic".
+    assert "issuetype = 'Project'" in jql
+    assert "project = FT" in jql
+    assert "statusCategory != Done" in jql
+
+
+def test_list_epics_no_hierarchy1_type_returns_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Only a single createmeta call; no search when there is no hierarchy-1 type.
+    http = _FakeHttp(
+        [_Response({"issueTypes": [{"id": "1", "name": "Task", "hierarchyLevel": 0}]})]
+    )
+    adapter = _make_adapter(monkeypatch, http)
+    assert adapter.list_epics() == []
+    assert len(http.calls) == 1
+
+
+def test_list_epics_escapes_apostrophe_in_type_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A hierarchy-1 type name with an apostrophe must be backslash-escaped in the
+    # JQL string literal, or the query is malformed.
+    http = _FakeHttp(
+        [
+            _Response({"issueTypes": [{"id": "1", "name": "Bug's Nest", "hierarchyLevel": 1}]}),
+            _Response({"issues": []}),
+        ]
+    )
+    adapter = _make_adapter(monkeypatch, http)
+    adapter.list_epics()
+    jql = _body_dict(http.calls[1])["jql"]
+    assert "issuetype = 'Bug\\'s Nest'" in jql
+
+
 # ─── Public surface ─────────────────────────────────────────────────────────
 
 
