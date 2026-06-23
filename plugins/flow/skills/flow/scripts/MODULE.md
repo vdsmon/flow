@@ -28,7 +28,7 @@ The live "which script does what" map. One line per script: purpose + CLI surfac
 | Script | Role | Surface / touches |
 |--------|------|-------------------|
 | `tracker.py` (lib) | Tracker Protocol base + `make_tracker()` factory + `CAPABILITY_ENUM`. | imported by `tracker_jira`, `tracker_beads`, `tracker_cli`, `sync`, `group_candidates`, `group_persist`, `flow_worktree` (lazy in `_refuse_terminal_bead`) |
-| `tracker_cli.py` | CLI wrapper around the Protocol (the only tracker surface the prose calls). | `get` / `state` / `transition` / `comment` / `create` / `is-shipped` / `list-assigned` / `download-attachments` |
+| `tracker_cli.py` | CLI wrapper around the Protocol (the only tracker surface the prose calls). | `get` / `state` / `transition` / `comment` / `create` / `is-shipped` / `list-assigned` / `download-attachments` / `list-types` / `list-epics` / `list-sprints` / `set-sprint` |
 | `tracker_jira.py` (lib) | Jira Cloud REST v3 + Agile/1.0 adapter (Basic auth via `ATLASSIAN_EMAIL`/`ATLASSIAN_API_TOKEN`). | imported by tracker.py (lazy in make_tracker) |
 | `tracker_beads.py` (lib) | Beads `bd` CLI adapter (local-only tracker). | imported by triage, tracker (make_tracker factory) |
 | `resolve_handler.py` | Resolve a `skill:<name>` handler: confirm bundle installed + manifest valid, return concrete `skill_name`/`skill_args`. | `--handler <string> --search-roots`; exit 1 not-installed / 2 invalid |

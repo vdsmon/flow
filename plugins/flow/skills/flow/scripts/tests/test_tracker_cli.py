@@ -96,6 +96,24 @@ class _FakeTracker:
         self._record("is_shipped", key)
         return {"state": "not_shipped", "shipped_at": None, "evidence": None, "source": "none"}
 
+    def list_issue_types(self) -> list[dict[str, Any]]:
+        self._record("list_issue_types")
+        return [
+            {"name": "Task", "hierarchyLevel": 0},
+            {"name": "Epic", "hierarchyLevel": 1},
+        ]
+
+    def list_epics(self) -> list[dict[str, Any]]:
+        self._record("list_epics")
+        return [{"key": "FT-400", "summary": "DX"}]
+
+    def list_sprints(self, project: str) -> list[dict[str, Any]]:
+        self._record("list_sprints", project)
+        return [{"id": "831", "name": "Sprint 5", "state": "active"}]
+
+    def set_sprint(self, key: str, sprint_id: str) -> None:
+        self._record("set_sprint", key, sprint_id)
+
 
 class _FailingTracker(_FakeTracker):
     def get(self, key: str) -> dict[str, Any]:
@@ -424,6 +442,133 @@ def test_is_shipped_emits_state(tmp_path: Path, capsys: pytest.CaptureFixture[st
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["state"] == "not_shipped"
+
+
+# ─── new-verb subcommands: list-types / list-epics / list-sprints / set-sprint ─
+
+
+def test_list_types_emits_json(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    _seed_workspace(tmp_path)
+    tk = _FakeTracker()
+    rc = tracker_cli.cli_main(
+        ["--workspace-root", str(tmp_path), "list-types"],
+        tracker_factory=_factory(tk),
+    )
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert {"name": "Epic", "hierarchyLevel": 1} in payload
+    assert tk.calls[0] == ("list_issue_types", (), {})
+
+
+def test_list_epics_emits_json(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    _seed_workspace(tmp_path)
+    tk = _FakeTracker()
+    rc = tracker_cli.cli_main(
+        ["--workspace-root", str(tmp_path), "list-epics"],
+        tracker_factory=_factory(tk),
+    )
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == [{"key": "FT-400", "summary": "DX"}]
+    assert tk.calls[0] == ("list_epics", (), {})
+
+
+def test_list_sprints_emits_json(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    _seed_workspace(tmp_path)
+    tk = _FakeTracker()
+    rc = tracker_cli.cli_main(
+        ["--workspace-root", str(tmp_path), "list-sprints", "--project", "FT"],
+        tracker_factory=_factory(tk),
+    )
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload[0]["state"] == "active"
+    assert tk.calls[0] == ("list_sprints", ("FT",), {})
+
+
+def test_list_sprints_default_project_is_workspace_key(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # --project is optional; absent it passes "" (Jira ignores it, beads uses it).
+    _seed_workspace(tmp_path)
+    tk = _FakeTracker()
+    rc = tracker_cli.cli_main(
+        ["--workspace-root", str(tmp_path), "list-sprints"],
+        tracker_factory=_factory(tk),
+    )
+    assert rc == 0
+    assert tk.calls[0] == ("list_sprints", ("",), {})
+
+
+def test_set_sprint_invokes_tracker(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    _seed_workspace(tmp_path)
+    tk = _FakeTracker()
+    rc = tracker_cli.cli_main(
+        [
+            "--workspace-root",
+            str(tmp_path),
+            "set-sprint",
+            "--key",
+            "FT-99",
+            "--sprint-id",
+            "831",
+        ],
+        tracker_factory=_factory(tk),
+    )
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {"ok": True, "key": "FT-99", "sprint_id": "831"}
+    assert tk.calls[0] == ("set_sprint", ("FT-99", "831"), {})
+
+
+def test_set_sprint_not_supported_surfaces_cleanly(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _seed_workspace(tmp_path, backend="beads")
+
+    class _NoSprint(_FakeTracker):
+        def set_sprint(self, key: str, sprint_id: str) -> None:
+            from tracker import NotSupported
+
+            raise NotSupported("BeadsAdapter does not support sprints")
+
+    tk = _NoSprint()
+    rc = tracker_cli.cli_main(
+        [
+            "--workspace-root",
+            str(tmp_path),
+            "set-sprint",
+            "--key",
+            "bd-1",
+            "--sprint-id",
+            "1",
+        ],
+        tracker_factory=_factory(tk),
+    )
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["supported"] is False
+
+
+def test_list_sprints_not_supported_surfaces_cleanly(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _seed_workspace(tmp_path, backend="beads")
+
+    class _NoSprint(_FakeTracker):
+        def list_sprints(self, project: str) -> list[dict[str, Any]]:
+            from tracker import NotSupported
+
+            raise NotSupported("BeadsAdapter does not support sprints")
+
+    tk = _NoSprint()
+    rc = tracker_cli.cli_main(
+        ["--workspace-root", str(tmp_path), "list-sprints"],
+        tracker_factory=_factory(tk),
+    )
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {"supported": False, "sprints": []}
 
 
 # ─── Error paths ─────────────────────────────────────────────────────────────

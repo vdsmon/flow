@@ -824,6 +824,28 @@ def test_capability_gated_methods_raise_not_supported() -> None:
         adapter.upload_attachment("bd-1", "/tmp/x.png")
 
 
+# ─── list_issue_types / list_epics degradation ───────────────────────────────
+
+
+def test_list_issue_types_returns_bd_types() -> None:
+    adapter, runner = _build_adapter([])
+    types = adapter.list_issue_types()
+    names = [t["name"] for t in types]
+    assert names == ["task", "bug", "feature", "epic", "chore", "decision"]
+    # epic is the only hierarchy-1 type; the rest are 0.
+    by_name = {t["name"]: t["hierarchyLevel"] for t in types}
+    assert by_name["epic"] == 1
+    assert by_name["task"] == 0
+    # Static list; no bd call.
+    assert runner.calls == []
+
+
+def test_list_epics_returns_empty() -> None:
+    adapter, runner = _build_adapter([])
+    assert adapter.list_epics() == []
+    assert runner.calls == []
+
+
 # ─── Protocol conformance ───────────────────────────────────────────────────
 
 

@@ -799,6 +799,59 @@ class JiraAdapter:
             )
         return out
 
+    def list_issue_types(self) -> list[dict[str, Any]]:
+        """Issue types available for the project, each `{name, hierarchyLevel}`.
+
+        Reads the createmeta issuetypes page (takes the project KEY, not a
+        numeric id). The verb uses `hierarchyLevel` to find the epic/parent type
+        and to offer a type vocab.
+        """
+        resp = self._request(
+            "GET",
+            f"/issue/createmeta/{urllib.parse.quote(self.project_key)}/issuetypes",
+            query={"maxResults": 50},
+        )
+        out: list[dict[str, Any]] = []
+        for it in resp.get("issueTypes") or []:
+            out.append(
+                {
+                    "name": it.get("name", ""),
+                    "hierarchyLevel": it.get("hierarchyLevel"),
+                }
+            )
+        return out
+
+    def list_epics(self) -> list[dict[str, Any]]:
+        """Active hierarchy-1 issues for parent selection, `[{key, summary}]`.
+
+        Resolves the hierarchy-1 type name via `list_issue_types()` (never
+        hardcodes "Epic" — some projects name it "Project"). Returns `[]` when
+        no hierarchy-1 type exists.
+        """
+        epic_type = next(
+            (it["name"] for it in self.list_issue_types() if it.get("hierarchyLevel") == 1),
+            None,
+        )
+        if not epic_type:
+            return []
+        # JQL quotes are backslash-escaped; a type name may legitimately carry an
+        # apostrophe (e.g. "Bug's Nest"), which would otherwise break the query.
+        esc = epic_type.replace("\\", "\\\\").replace("'", "\\'")
+        jql = (
+            f"project = {self.project_key} AND issuetype = '{esc}' "
+            "AND statusCategory != Done ORDER BY updated DESC"
+        )
+        resp = self._request(
+            "POST",
+            "/search/jql",
+            body={"jql": jql, "fields": ["summary"], "maxResults": 50},
+        )
+        out: list[dict[str, Any]] = []
+        for issue in resp.get("issues") or []:
+            f = issue.get("fields") or {}
+            out.append({"key": issue.get("key", ""), "summary": f.get("summary", "")})
+        return out
+
     def add_watcher(self, key: str, account_id: str) -> None:
         # /watchers endpoint takes a bare JSON-encoded string body (e.g. "abc123"),
         # not a JSON object. Send via body_bytes with the right Content-Type.

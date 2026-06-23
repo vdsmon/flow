@@ -201,6 +201,41 @@ def _cmd_is_shipped(tracker_obj: Any, args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_list_types(tracker_obj: Any, args: argparse.Namespace) -> int:
+    del args
+    types = tracker_obj.list_issue_types()
+    sys.stdout.write(json.dumps(types, indent=2, sort_keys=True, default=str) + "\n")
+    return 0
+
+
+def _cmd_list_epics(tracker_obj: Any, args: argparse.Namespace) -> int:
+    del args
+    epics = tracker_obj.list_epics()
+    sys.stdout.write(json.dumps(epics, indent=2, sort_keys=True, default=str) + "\n")
+    return 0
+
+
+def _cmd_list_sprints(tracker_obj: Any, args: argparse.Namespace) -> int:
+    try:
+        sprints = tracker_obj.list_sprints(args.project)
+    except NotSupported:
+        # Backends without sprints (beads): not an error, nothing to list.
+        sys.stdout.write(json.dumps({"supported": False, "sprints": []}) + "\n")
+        return 0
+    sys.stdout.write(json.dumps(sprints, indent=2, sort_keys=True, default=str) + "\n")
+    return 0
+
+
+def _cmd_set_sprint(tracker_obj: Any, args: argparse.Namespace) -> int:
+    try:
+        tracker_obj.set_sprint(args.key, args.sprint_id)
+    except NotSupported:
+        sys.stdout.write(json.dumps({"supported": False, "key": args.key}) + "\n")
+        return 0
+    sys.stdout.write(json.dumps({"ok": True, "key": args.key, "sprint_id": args.sprint_id}) + "\n")
+    return 0
+
+
 def _safe_filename(name: str) -> str:
     """Strip directory components and unsafe chars from an attachment filename."""
     base = re.sub(r"[^\w.\-]+", "_", Path(name).name).strip("._")
@@ -282,6 +317,19 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     p_create.add_argument("--label", action="append", default=None, help="label (repeatable).")
     p_create.add_argument("--assignee", default=None)
 
+    p_types = sub.add_parser("list-types", help="tracker.list_issue_types()")
+    del p_types  # no flags
+
+    p_epics = sub.add_parser("list-epics", help="tracker.list_epics()")
+    del p_epics  # no flags
+
+    p_sprints = sub.add_parser("list-sprints", help="tracker.list_sprints(project)")
+    p_sprints.add_argument("--project", default="", help="project key (beads scopes by it).")
+
+    p_set_sprint = sub.add_parser("set-sprint", help="tracker.set_sprint(key, sprint_id)")
+    p_set_sprint.add_argument("--key", required=True)
+    p_set_sprint.add_argument("--sprint-id", required=True)
+
     p_ship = sub.add_parser("is-shipped", help="tracker.is_shipped(key)")
     p_ship.add_argument("--key", required=True)
 
@@ -307,6 +355,10 @@ _DISPATCH: dict[str, Any] = {
     "create": _cmd_create,
     "is-shipped": _cmd_is_shipped,
     "download-attachments": _cmd_download_attachments,
+    "list-types": _cmd_list_types,
+    "list-epics": _cmd_list_epics,
+    "list-sprints": _cmd_list_sprints,
+    "set-sprint": _cmd_set_sprint,
 }
 
 
