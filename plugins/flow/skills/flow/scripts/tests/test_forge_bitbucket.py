@@ -203,6 +203,62 @@ def test_review_threads_filters_and_normalizes_with_pagination():
     assert by_id["1"]["line"] == 12
 
 
+# Real CodeRabbit inline header bytes captured from PR #2867 (real CR bytes).
+_CR_MAJOR_HEADER = (
+    "_\U0001f3af Functional Correctness_ | _\U0001f7e0 Major_ | _⚡ Quick win_\n\n"
+    "**Narrow the `ValueError` scope in source resolution.**\n…"
+)
+_CR_MINOR_HEADER = (
+    "_\U0001f4d0 Maintainability & Code Quality_ | _\U0001f7e1 Minor_ | _⚡ Quick win_\n\n"
+    "**Remove ticket IDs from test docstrings/comments.**\n…"
+)
+
+
+def test_review_threads_surfaces_coderabbit_emoji_pipe_format():
+    page = {"values": [_comment(1, raw=_CR_MAJOR_HEADER)]}
+
+    def h(args):
+        path = _api_path(args)
+        if "page=1" in path:
+            return json.dumps(page)
+        return "null"
+
+    fg, _ = _adapter(h)
+    threads = fg.review_threads("9")
+    assert len(threads) == 1
+    t = threads[0]
+    assert t["severity"] == "major"
+    assert t["title"] == "Narrow the `ValueError` scope in source resolution."
+
+
+def test_is_actionable_inline_recognizes_emoji_pipe_metadata():
+    from forge_bitbucket import _is_actionable_inline
+
+    assert _is_actionable_inline(_comment(1, raw=_CR_MAJOR_HEADER)) is True
+    assert _is_actionable_inline(_comment(2, raw=_CR_MINOR_HEADER)) is True
+
+
+def test_is_actionable_inline_old_format_still_actionable():
+    from forge_bitbucket import _is_actionable_inline
+
+    assert _is_actionable_inline(_comment(1, raw="**X**\nPotential issue here")) is True
+    assert _is_actionable_inline(_comment(2, raw="**X**\nsuggestion: rename")) is True
+
+
+def test_is_actionable_inline_excludes_walkthrough_summary():
+    from forge_bitbucket import _is_actionable_inline
+
+    assert _is_actionable_inline(_comment(1, raw="Walkthrough summary")) is False
+    assert _is_actionable_inline(_comment(2, raw="Actionable comments posted: 2")) is False
+
+
+def test_is_actionable_inline_rejects_non_actionable_inline():
+    from forge_bitbucket import _is_actionable_inline
+
+    assert _is_actionable_inline(_comment(1, raw="just some plain prose, nothing here")) is False
+    assert _is_actionable_inline(_comment(2, raw="**bold only, no pipe**")) is False
+
+
 def _bot_checks(coderabbit_state: str | None):
     # `bkt pr checks` output with the pipeline still in progress, so the test
     # proves bot_review_present keys on the CodeRabbit line, not the pipeline.
