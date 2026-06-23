@@ -103,8 +103,9 @@ You cannot wait for or solicit that approval yourself — just return a plan goo
   Do not invent a plan from the ticket key alone.
   (If an embedded ticket-context block IS present — the `--auto` pre-bootstrap
   path — proceed normally from that block; do NOT bail.)
-- Ticket goal genuinely ambiguous → do not guess silently.
-  State the competing interpretations in your returned plan and let the approver pick.
+- Ticket goal genuinely ambiguous → first try to dissolve the ambiguity by investigation: read the code you would touch, recall prior runs, Context7 any library claim. A fork whose answer is reachable by reading is unfinished investigation, not ambiguity — resolve it and fold the answer into the plan.
+  Do not guess silently, and do not punt a dissolvable fork to the approver.
+  State the competing interpretations in your returned plan ONLY for tensions that survive investigation — genuine forks where the evidence cannot pick and a human must.
 
 ## Skip conditions
 
