@@ -30,6 +30,7 @@ from typing import Any
 import _memory_paths
 import memory_append
 import recall
+from _evolve_common import BRANCH_PREFIX as _BRANCH_PREFIX
 from _jsonl import iter_jsonl
 
 DEFAULT_TYPES = ("DECISION", "FACT")
@@ -94,7 +95,7 @@ def apply(workspace_root: Path, records: list[dict[str, Any]]) -> dict[str, Any]
         superseded_id = str(rec.get("superseded_id", ""))
         ticket = str(rec.get("superseding_ticket", ""))
         rationale = str(rec.get("rationale", ""))
-        branch = str(rec.get("branch") or f"feature/{ticket}")
+        branch = str(rec.get("branch") or f"{_BRANCH_PREFIX}{ticket}")
         if superseded_id in dead:
             results.append({"superseded_id": superseded_id, "result": "skipped"})
             continue

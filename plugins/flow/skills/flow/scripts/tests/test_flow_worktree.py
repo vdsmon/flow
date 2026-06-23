@@ -130,6 +130,13 @@ def _run(tmp: Path, main: Path, **kw):
 # ─── bootstrap ────────────────────────────────────────────────────────────────
 
 
+def test_is_ticket_branch_accepts_both_prefixes() -> None:
+    assert fw._is_ticket_branch("feat/FT-1", "FT-1")
+    assert fw._is_ticket_branch("feat/FT-1-some-slug", "FT-1")
+    assert fw._is_ticket_branch("feature/FT-1-some-slug", "FT-1")  # legacy
+    assert not fw._is_ticket_branch("feat/FT-10-other", "FT-1")  # no prefix-bleed
+
+
 def test_seeds_plan_completed_with_output_path(tmp_path: Path) -> None:
     main = _main_checkout(tmp_path)
     res = _run(tmp_path, main)

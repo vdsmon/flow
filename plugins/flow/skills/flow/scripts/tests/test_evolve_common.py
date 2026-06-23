@@ -33,9 +33,13 @@ def test_loads_tolerates_garbage_and_dict_shapes():
 
 
 def test_key_from_ref():
+    # current `feat/` prefix
+    assert ec.key_from_ref("feat/flow-7mb-evolve-verb") == "flow-7mb"
+    assert ec.key_from_ref("origin/feat/flow-aut.6-fix") == "flow-aut.6"
+    assert ec.key_from_ref("feat/flow-abc") == "flow-abc"
+    # legacy `feature/` prefix still resolves (transition)
     assert ec.key_from_ref("feature/flow-7mb-evolve-verb") == "flow-7mb"
     assert ec.key_from_ref("origin/feature/flow-aut.6-fix") == "flow-aut.6"
-    assert ec.key_from_ref("feature/flow-abc") == "flow-abc"
     assert ec.key_from_ref("main") is None
 
 
@@ -51,6 +55,13 @@ def test_run_dir_for_absent_returns_none(tmp_path):
 
 
 def test_run_dir_for_finds_pool_worktree(tmp_path):
+    repo = tmp_path / "flow"
+    run_dir = repo / ".flow" / "worktrees" / "feat-flow-abc-slug" / ".flow" / "runs" / "flow-abc"
+    run_dir.mkdir(parents=True)
+    assert ec.run_dir_for(repo, "flow-abc") == run_dir
+
+
+def test_run_dir_for_finds_legacy_feature_dir(tmp_path):
     repo = tmp_path / "flow"
     run_dir = repo / ".flow" / "worktrees" / "feature-flow-abc-slug" / ".flow" / "runs" / "flow-abc"
     run_dir.mkdir(parents=True)
@@ -75,9 +86,14 @@ def test_primary_anchor_absent():
 
 
 def test_is_inflight_prefix_match():
-    refs = {"feature/flow-a-some-desc"}
+    refs = {"feat/flow-a-some-desc"}
     assert ec.is_inflight("flow-a", refs)
     assert not ec.is_inflight("flow-ab", refs)  # must not prefix-bleed
+
+
+def test_is_inflight_matches_legacy_feature_prefix():
+    assert ec.is_inflight("flow-a", {"feature/flow-a-some-desc"})
+    assert ec.is_inflight("flow-a", {"feature/flow-a"})
 
 
 def test_gather_refs_returns_refs_and_pr_refs():

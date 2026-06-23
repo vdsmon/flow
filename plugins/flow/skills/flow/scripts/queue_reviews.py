@@ -8,8 +8,8 @@ zero unresolved Major+", so a genuine new human CHANGES_REQUESTED (→ `major`) 
 exactly what makes a parked PR newly actionable → `/flow revise <pr#>`.
 
 PR resolution uses the EXACT slugged head ref the queue already gathered, NOT a
-reconstructed `feature/<key>` (which would not match the real
-`feature/<key>-<slug>` branch and silently flag nothing). The caller passes
+reconstructed `feat/<key>` (which would not match the real
+`feat/<key>-<slug>` branch and silently flag nothing). The caller passes
 `--pr-refs` = every open-PR head ref; each parked key joins to its ref via
 `key_from_ref`.
 

@@ -49,6 +49,7 @@ from pathlib import Path
 import launch_ledger
 from _evolve_common import (
     ACTIVE_STATUSES,
+    WORKTREE_PREFIXES,
     NotMaintainer,
     ToolError,
     key_from_ref,
@@ -109,7 +110,11 @@ def _worktree_keys(repo: Path) -> set[str]:
     teardown targets.
     """
     base = repo / ".flow" / "worktrees"
-    return {Path(p).name for p in glob.glob(str(base / "feature-*" / ".flow" / "runs" / "*"))}
+    return {
+        Path(p).name
+        for prefix in WORKTREE_PREFIXES
+        for p in glob.glob(str(base / f"{prefix}*" / ".flow" / "runs" / "*"))
+    }
 
 
 def _active_evolve_keys(runner: Runner) -> set[str]:

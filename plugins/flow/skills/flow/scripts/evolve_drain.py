@@ -54,6 +54,8 @@ from pathlib import Path
 
 import launch_ledger
 import lease
+from _evolve_common import BRANCH_PREFIX as _BRANCH_PREFIX
+from _evolve_common import WORKTREE_PREFIXES as _WORKTREE_PREFIXES
 from _evolve_common import bead_labels
 from _evolve_common import key_from_ref as _key_from_ref
 from _evolve_common import loads as _loads
@@ -191,11 +193,12 @@ def _inprogress_evolve_keys(runner: Runner, *, include_proposals: bool) -> set[s
 
 
 def _worktree_for(repo: Path, key: str) -> str | None:
-    """The `.flow/worktrees/feature-<key>-*` worktree dir for `key`, if present."""
+    """The `.flow/worktrees/feat-<key>-*` worktree dir for `key`, if present (legacy `feature-` too)."""
     base = repo / ".flow" / "worktrees"
-    for wt in sorted(glob.glob(str(base / f"feature-{key}*"))):
-        if (Path(wt) / ".flow" / "runs" / key).exists():
-            return wt
+    for p in _WORKTREE_PREFIXES:
+        for wt in sorted(glob.glob(str(base / f"{p}{key}*"))):
+            if (Path(wt) / ".flow" / "runs" / key).exists():
+                return wt
     return None
 
 
@@ -235,7 +238,9 @@ def stranded_pre_pr(
             continue
         if liveness_map(repo, [key]).get(key) in ("live", "corrupt"):
             continue
-        out.append({"key": key, "branch": f"feature/{key}", "worktree": _worktree_for(repo, key)})
+        out.append(
+            {"key": key, "branch": f"{_BRANCH_PREFIX}{key}", "worktree": _worktree_for(repo, key)}
+        )
     return out
 
 

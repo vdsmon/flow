@@ -2,7 +2,7 @@
 
 Definitions duplicated verbatim across evolve_reap / evolve_select /
 evolve_drain / evolve_session_cleanup / queue_select live here once: the
-tool-call wrappers, the `feature/<key>` branch regex, the bead-label query
+tool-call wrappers, the `feat/<key>` branch regex, the bead-label query
 sets, the worktree-pool run-dir resolution, and the selector primitives
 (in-flight join, ref gather, pre-PR lease scan, BLAST-RADIUS anchor).
 """
@@ -21,9 +21,14 @@ import lease
 from _runner import CwdRunner as Runner
 from _timeutil import utcnow_iso
 
-FLOW_KEY_RE = re.compile(r"^feature/(flow-[a-z0-9]+(?:\.\d+)?)(?:-.*)?$", re.IGNORECASE)
-BRANCH_PREFIX = "feature/"
-# a CLOSED or DEFERRED bead is never in flight regardless of a leaked feature/<key>-* branch
+# detection accepts both the current `feat/` prefix and the legacy `feature/` so
+# branches/PRs opened before the rename stay in-flight through the transition.
+FLOW_KEY_RE = re.compile(r"^feat(?:ure)?/(flow-[a-z0-9]+(?:\.\d+)?)(?:-.*)?$", re.IGNORECASE)
+BRANCH_PREFIX = "feat/"
+BRANCH_PREFIXES = ("feat/", "feature/")
+# worktree-dir form (branch `/` becomes `-`); both accepted while legacy dirs survive
+WORKTREE_PREFIXES = ("feat-", "feature-")
+# a CLOSED or DEFERRED bead is never in flight regardless of a leaked feat/<key>-* branch
 ACTIVE_STATUSES = "open,in_progress,blocked"
 _BLAST_RE = re.compile(r"^\s*BLAST[ _]RADIUS:\s*(.+?)\s*$", re.IGNORECASE | re.MULTILINE)
 
@@ -80,10 +85,10 @@ def primary_anchor(description: str | None) -> str | None:
 
 
 def is_inflight(key: str, refs: set[str]) -> bool:
-    """A key is in-flight when a branch/PR head is `feature/<key>` or `feature/<key>-*`."""
-    exact = f"{BRANCH_PREFIX}{key}"
-    pre = f"{exact}-"
-    return any(r == exact or r.startswith(pre) for r in refs)
+    """A key is in-flight when a branch/PR head is `feat/<key>` or `feat/<key>-*` (legacy `feature/` too)."""
+    exacts = {f"{p}{key}" for p in BRANCH_PREFIXES}
+    pres = tuple(f"{p}{key}-" for p in BRANCH_PREFIXES)
+    return any(r in exacts or r.startswith(pres) for r in refs)
 
 
 def gather_refs(runner: Runner) -> tuple[set[str], set[str]]:
@@ -110,18 +115,19 @@ def gather_refs(runner: Runner) -> tuple[set[str], set[str]]:
 def live_run_keys(repo: Path) -> set[str]:
     """Ticket keys with a LIVE (unexpired) pre-PR lease in the worktree pool.
 
-    Globs `<repo>/.flow/worktrees/feature-*/.flow/runs/*` (mirrors
-    run_dir_for's layout) and keeps only run dirs whose lease classifies
+    Globs `<repo>/.flow/worktrees/feat-*/.flow/runs/*` (legacy `feature-*` too;
+    mirrors run_dir_for's layout) and keeps only run dirs whose lease classifies
     `live`. Live-only by design: an expired/absent lease contributes nothing,
     so an orphan still reads `done`/parked exactly as before.
     """
     base = repo / ".flow" / "worktrees"
     now = utcnow_iso()
     live: set[str] = set()
-    for run_dir in glob.glob(str(base / "feature-*" / ".flow" / "runs" / "*")):
-        key = Path(run_dir).name
-        if lease.classify(Path(run_dir), now).get("state") == "live":
-            live.add(key)
+    for p in WORKTREE_PREFIXES:
+        for run_dir in glob.glob(str(base / f"{p}*" / ".flow" / "runs" / "*")):
+            key = Path(run_dir).name
+            if lease.classify(Path(run_dir), now).get("state") == "live":
+                live.add(key)
     return live
 
 
@@ -148,14 +154,16 @@ def fleet_live_keys(repo: Path) -> set[str]:
 def run_dir_for(repo: Path, key: str) -> Path | None:
     """The in-flight run's ticket dir under the worktree pool for `key`.
 
-    Worktrees live at `<repo>/.flow/worktrees/feature-<key>-<slug>/` (see
-    flow_worktree._worktree_path); the run state is `.flow/runs/<key>/`. Absent =
-    no lease to read (a leaked branch with no worktree, or the common post-reap
-    case), so the caller treats it as non-live rather than waiting on it forever.
+    Worktrees live at `<repo>/.flow/worktrees/feat-<key>-<slug>/` (legacy
+    `feature-<key>-<slug>/` too; see flow_worktree._worktree_path); the run state
+    is `.flow/runs/<key>/`. Absent = no lease to read (a leaked branch with no
+    worktree, or the common post-reap case), so the caller treats it as non-live
+    rather than waiting on it forever.
     """
     base = repo / ".flow" / "worktrees"
-    for wt in sorted(glob.glob(str(base / f"feature-{key}*"))):
-        run_dir = Path(wt) / ".flow" / "runs" / key
-        if run_dir.exists():
-            return run_dir
+    for p in WORKTREE_PREFIXES:
+        for wt in sorted(glob.glob(str(base / f"{p}{key}*"))):
+            run_dir = Path(wt) / ".flow" / "runs" / key
+            if run_dir.exists():
+                return run_dir
     return None

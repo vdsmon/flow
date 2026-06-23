@@ -27,7 +27,7 @@ Exit 0 → `$KEY`. Exit 3 → the branch name carries no ticket key; surface + s
 **Non-numeric arg → a ticket key.** It is `$KEY` directly. Find the ticket's feature branch with plain git (host-agnostic), then ask the seam for its PR:
 ```bash
 BRANCH=$(git worktree list --porcelain | awk '/^branch /{print $2}' \
-  | sed 's,^refs/heads/,,' | grep -E "^feature/${KEY}([-/]|$)" | head -1)
+  | sed 's,^refs/heads/,,' | grep -E "^feat(ure)?/${KEY}([-/]|$)" | head -1)
 PR_JSON=$(python3 ${CLAUDE_SKILL_DIR}/scripts/forge_cli.py detect-pr \
   --workspace-root . --branch "$BRANCH")
 ```

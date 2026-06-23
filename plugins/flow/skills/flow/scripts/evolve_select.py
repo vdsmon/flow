@@ -17,7 +17,7 @@ Selection inputs (all read-only, queryable):
   - `bd ready -l evolve --json` — open, dependency-unblocked candidates (bd ready
     already excludes blocked beads and carries structured `labels` incl. `hot`).
   - `gh pr list` + `git for-each-ref` — in-flight join by branch name
-    `feature/<key>-*` (drop already-running beads; count open PRs for backpressure).
+    `feat/<key>-*` (drop already-running beads; count open PRs for backpressure).
 
 CLI:
   evolve_select.py --workspace-root <dir> [--cap N] [--concurrency N]
@@ -37,7 +37,7 @@ from pathlib import Path
 
 import launch_ledger
 from _evolve_common import ACTIVE_STATUSES as _ACTIVE_STATUSES
-from _evolve_common import BRANCH_PREFIX as _BRANCH_PREFIX
+from _evolve_common import BRANCH_PREFIXES as _BRANCH_PREFIXES
 from _evolve_common import NotMaintainer, ToolError, bead_labels, primary_anchor
 from _evolve_common import fleet_live_keys as _fleet_live_keys
 from _evolve_common import gather_refs as _gather_refs_common
@@ -142,7 +142,9 @@ def partition(
 def _gather_refs(runner: Runner) -> tuple[set[str], set[str], int]:
     """Return (in-flight head refs, open-PR head refs, GLOBAL open flow-PR count)."""
     refs, pr_refs = _gather_refs_common(runner)
-    open_pr_count = sum(1 for r in pr_refs if r.startswith(f"{_BRANCH_PREFIX}flow-"))
+    open_pr_count = sum(
+        1 for r in pr_refs if any(r.startswith(f"{p}flow-") for p in _BRANCH_PREFIXES)
+    )
     return refs, pr_refs, open_pr_count
 
 
@@ -153,7 +155,7 @@ def _hot_inflight(
     include_proposals: bool = False,
     extra_keys: frozenset[str] | set[str] = frozenset(),
 ) -> bool:
-    """True if any in-flight `feature/flow-*` ref maps to a hot evolve bead.
+    """True if any in-flight `feat/flow-*` ref maps to a hot evolve bead.
 
     Under `include_proposals` the hot slot also serializes hot *proposal* beads, so
     a hot proposal already in flight blocks the next hot launch (the `proposal`

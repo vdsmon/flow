@@ -48,7 +48,7 @@ classifier fails safe toward NOT stopping):
     over the stale field. `claude stop` is non-destructive + resumable, so this
     replaces an unreliable proxy with direct evidence — not an erosion of the fail-safe.
   - lease (PRIMARY guard) — resolve the worktree run dir for `<key>`
-    (`<repo>/.flow/worktrees/feature-<key>-<slug>/.flow/runs/<key>/`, the pool glob
+    (`<repo>/.flow/worktrees/feat-<key>-<slug>/.flow/runs/<key>/`, the pool glob
     reap/drain use) and call `lease.classify(run_dir, now)`; `live` or `corrupt`
     → skip. This is the same mechanism reap uses to skip a mid-reflect session, so
     the catastrophic kill-mid-reflect failure is inherited-guarded. An ABSENT run

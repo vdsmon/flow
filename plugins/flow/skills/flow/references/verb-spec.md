@@ -66,7 +66,7 @@ Everything from the bootstrap onward is shared by the self-approve branch; the d
      --ticket "$KEY" \
      --plan-from "$PLAN" \
      --base "$(git rev-parse --abbrev-ref HEAD)" \
-     --branch "feature/$KEY-<slug>" \
+     --branch "feat/$KEY-<slug>" \
      --main-root . \
      --planned-files "<comma-separated files the plan will touch>" \
      --commit-type <feat|fix|chore|...> \
@@ -75,7 +75,7 @@ Everything from the bootstrap onward is shared by the self-approve branch; the d
      --e2e-recipe "<the e2e recipe from step 4 — omit ONLY when e2e is none>" \
      --lane "<the effective hot-clamped lane from step 4 — omit when full; interactive-only>"
    ```
-   Derive `<slug>` from the ticket summary, and `--planned-files` from the plan's "Files to change" list — which (per stage-plan.md) already includes any anticipated NEW test file paths the TDD implement will create, so the stamped `planned_files` covers them.
+   Derive `<slug>` from the ticket summary: keep it **short and descriptive — aim for ~3 meaningful words, ≤24 chars**. Drop articles/prepositions/filler and anything already in `$KEY`, abbreviate long words (`feature`→`feat`, `invoice`→`inv` only when still legible). The slug rides into the worktree dir name (`branch.replace("/","-")`) and the status line, so a 33-char slug like `tenant-filter-reinf-invoice-query` should land as `tenant-inv-filter`. Derive `--planned-files` from the plan's "Files to change" list — which (per stage-plan.md) already includes any anticipated NEW test file paths the TDD implement will create, so the stamped `planned_files` covers them.
    **`--covers` (grouped runs only):** pass it when this run folds sibling tickets into one piece of work (the SKILL.md multi-key fold). `$KEY` is the LEAD and owns identity; the covers ride its frontmatter and the commit/PR/reflect steps fan out to close each. Each cover must be a distinct, live, non-epic ticket — create refuses (exit 2 self-reference, exit 6 terminal, exit 7 epic) otherwise. The plan must have settled the lead + cover set at the gate (the cover scopes are part of the approved plan). Omit entirely for a normal single-ticket run.
    **Auto-derive (the `group` defer path):** when no `--covers` was passed on the command, a grouping may have been persisted earlier by `/flow group` (a `flow-group covers:` marker comment on the lead). Derive it before building the create command:
    ```bash
@@ -102,10 +102,10 @@ Everything from the bootstrap onward is shared by the self-approve branch; the d
    ```bash
    python3 ${CLAUDE_SKILL_DIR}/scripts/recall.py --query-file "$QF" \
      --semantic --top-n 30 --record-pending \
-     --branch "feature/$KEY-<slug>" --ticket "$KEY" \
+     --branch "feat/$KEY-<slug>" --ticket "$KEY" \
      --workspace-root "<the worktree path the bootstrap printed>"
    ```
-   **Critical: target the WORKTREE, not the main checkout.** `--workspace-root` must be the bootstrap's `result.worktree` path and `--branch` must be the `flow_worktree.py create --branch` feature branch (NOT `$B`/the integration branch). The dispatcher's `init` promotes from inside the worktree (`recall_pending.promote_matching` with `cwd=worktree`, `branch=feature/$KEY-<slug>`, reading the worktree's `recall-pending.jsonl`), and its promotion rules are exact matches on branch + cwd + a head-sha-ancestor check. Recording against the main checkout (`--workspace-root .`, `--branch "$B"`) writes a DIFFERENT `recall-pending.jsonl` with mismatched branch/cwd, so nothing promotes and `recalled_entries` stays empty. The step-3 READ stays main-root (it is only a query, it matches nothing). `--auto` has no plan mode, so it runs this single `--record-pending` form once here (the step-3 READ and this WRITE collapse to one call, against the worktree). Best-effort: a failure here never blocks the bootstrap.
+   **Critical: target the WORKTREE, not the main checkout.** `--workspace-root` must be the bootstrap's `result.worktree` path and `--branch` must be the `flow_worktree.py create --branch` feature branch (NOT `$B`/the integration branch). The dispatcher's `init` promotes from inside the worktree (`recall_pending.promote_matching` with `cwd=worktree`, `branch=feat/$KEY-<slug>`, reading the worktree's `recall-pending.jsonl`), and its promotion rules are exact matches on branch + cwd + a head-sha-ancestor check. Recording against the main checkout (`--workspace-root .`, `--branch "$B"`) writes a DIFFERENT `recall-pending.jsonl` with mismatched branch/cwd, so nothing promotes and `recalled_entries` stays empty. The step-3 READ stays main-root (it is only a query, it matches nothing). `--auto` has no plan mode, so it runs this single `--record-pending` form once here (the step-3 READ and this WRITE collapse to one call, against the worktree). Best-effort: a failure here never blocks the bootstrap.
 
 7. **Enter the worktree and continue the pipeline in this same session.**
    The bootstrap printed the worktree path (`result.worktree` in its stdout JSON). Switch this session into it:

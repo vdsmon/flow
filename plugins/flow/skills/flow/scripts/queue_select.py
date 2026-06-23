@@ -11,7 +11,7 @@ auto-launches; no opt-in exists here), or `hot` (a hot non-evolve bead would be
 invisible to evolve's one-hot gate, so it never auto-launches either). No
 hot-serialization layer — hotness is evolve-machinery-only.
 
-Backpressure is queue-scoped: only open `feature/flow-*` PRs whose key is NOT
+Backpressure is queue-scoped: only open `feat/flow-*` PRs whose key is NOT
 an active evolve bead count toward the `[queue]` cap, so a busy evolve drain
 never starves this queue. Conservative edge: a flow-key PR whose evolve bead is
 already closed/deferred counts toward the day-job cap (transient

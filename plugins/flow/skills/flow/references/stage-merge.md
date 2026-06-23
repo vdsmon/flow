@@ -85,7 +85,7 @@ If the reviewer reports `property_removed: true` → **do NOT merge.** Post a PR
 **Merge ONLY the exact commit CI validated.** `review_loop`'s green verdict was for the branch HEAD it pushed; `reflect` does not commit to the run branch (it names repo-artifact gaps instead of adding files, and machinery self-edits land on a separate skill-checkout tree — `references/stage-reflect.md`). Guard against it anyway: if a TRACKED file has an uncommitted change, or there is an unpushed commit, CI never saw it, so do NOT self-merge — leave it for the drain reap / human. **Untracked files do not count** — the run's own scratch (`.flow/tickets/`, `.flow/runs/`) is never part of the PR, so `--untracked-files=no` is deliberate (a bare `git status --porcelain` would trip on that scratch and block every self-merge).
 
 ```bash
-BRANCH=$(git rev-parse --abbrev-ref HEAD)   # the run's feature/<key>-* branch
+BRANCH=$(git rev-parse --abbrev-ref HEAD)   # the run's feat/<key>-* branch
 git fetch --quiet origin "$BRANCH"   # refresh refs/remotes/origin/$BRANCH; a flow worktree records NO upstream tracking (@{u} empty), so prove the push via the remote-tracking ref
 if [ -n "$(git status --porcelain --untracked-files=no)" ] || [ "$(git rev-parse HEAD)" != "$(git rev-parse "origin/$BRANCH" 2>/dev/null)" ]; then
   echo "branch has uncommitted (tracked) or unpushed changes CI never validated — skipping self-merge"

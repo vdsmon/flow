@@ -14,7 +14,7 @@ Opens a PR for the run's feature branch — a draft by default, or ready for rev
    The base branch resolves from `[create_pr] base` in `workspace.toml`, default `main`; an explicit `--base` overrides both.
    - Exit 0 → prints `PR_URL=<url>`. The branch is pushed and the PR is open — draft by default, ready for review when configured (idempotent: an existing open PR for the branch is reused, never double-opened on resume).
    - Exit 2 → git or forge error (incl. a missing `[forge]` block); surface stderr, set `STATUS=failed`.
-   - Exit 3 → refused (current branch is a protected/integration branch). Should never happen inside a run on a `feature/...` branch; surface and set `STATUS=failed`.
+   - Exit 3 → refused (current branch is a protected/integration branch). Should never happen inside a run on a `feat/...` branch; surface and set `STATUS=failed`.
 
 2. Capture the output. Write the script's stdout (the `PR_URL=<url>` line) to `$TICKET_DIR/stages/create_pr.out` and pass `--output-path "$TICKET_DIR/stages/create_pr.out"` on `advance`. The final summary and the `review_loop` notification read the `PR_URL=` token from that file.
 

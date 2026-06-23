@@ -337,8 +337,15 @@ def _parse_worktree_list(porcelain: str) -> list[tuple[str, str | None]]:
 
 
 def _is_ticket_branch(short_branch: str, ticket: str) -> bool:
-    """True when `short_branch` is this ticket's feature branch (exact or slugged)."""
-    return short_branch == f"feature/{ticket}" or short_branch.startswith(f"feature/{ticket}-")
+    """True when `short_branch` is this ticket's feature branch (exact or slugged).
+
+    Accepts both the current `feat/` prefix and the legacy `feature/` so worktrees
+    created before the rename still resolve.
+    """
+    return any(
+        short_branch == f"{p}{ticket}" or short_branch.startswith(f"{p}{ticket}-")
+        for p in ("feat/", "feature/")
+    )
 
 
 def _ticket_siblings(ticket: str, main_root: Path, runner: Runner) -> list[tuple[Path, str]]:
@@ -415,7 +422,7 @@ def reap_worktree(
 
     The squash-merge (`gh pr merge --squash`) deletes no branch (gh's
     branch-delete is skipped), and the separate `git push origin --delete
-    <branch>` touches only the remote ref; so the local `feature/<key>-*`
+    <branch>` touches only the remote ref; so the local `feat/<key>-*`
     branch and its still-registered worktree survive regardless (the worktree
     holds that branch checked out, which also blocks any local-branch delete).
     This reaps them, gated on the per-ticket lease: when the worktree's run is
@@ -498,7 +505,7 @@ def locate_or_reseed(
 
     A revision (/flow revise) needs the worktree the original run left behind. The
     norm (PR-open ⇒ worktree-present) is a LOCATE: a registered worktree on a
-    `feature/<ticket>*` branch is returned as-is (reseeded:false). When the worktree
+    `feat/<ticket>*` branch is returned as-is (reseeded:false). When the worktree
     was externally reaped, RESEED: fetch the existing remote branch and `git worktree
     add <path> <branch>` (checkout, NOT -b), then re-copy gitignored config + redirect
     memory + mise trust via the same helpers bootstrap uses (reseeded:true).
@@ -994,7 +1001,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         help="base branch/ref for the new worktree; '@default' = the freshly-fetched "
         "default branch (use for --auto/autonomous runs so the launcher's branch never leaks in)",
     )
-    p.add_argument("--branch", required=True, help="new branch name (e.g. feature/FT-1-thing)")
+    p.add_argument("--branch", required=True, help="new branch name (e.g. feat/FT-1-thing)")
     p.add_argument("--main-root", default=".", help="path to the main checkout (default cwd)")
     p.add_argument("--worktree-path", default=None, help="override the derived worktree path")
     p.add_argument("--copy", default=None, help="extra comma-separated gitignored paths to copy")
