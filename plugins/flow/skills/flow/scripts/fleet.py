@@ -332,12 +332,14 @@ def is_live(workspace_root: Path, key: str) -> bool:
     worst TOCTOU from select-time to act-time, it does not close it.)
 
     Imports `lease` directly + inlines the worktree-pool glob (mirrors
-    _evolve_common.run_dir_for) to avoid a fleet<->_evolve_common import cycle.
+    _evolve_common.run_dir_for, both `feat-`/legacy `feature-` dir prefixes) to
+    avoid a fleet<->_evolve_common import cycle.
     """
     repo = resolve_maintainer_repo(workspace_root)
     base = (repo if repo is not None else workspace_root) / ".flow" / "worktrees"
+    matches = glob.glob(str(base / f"feat-{key}*")) + glob.glob(str(base / f"feature-{key}*"))
     try:
-        for wt in sorted(glob.glob(str(base / f"feature-{key}*"))):
+        for wt in sorted(matches):
             run_dir = Path(wt) / ".flow" / "runs" / key
             if run_dir.exists():
                 if lease.classify(run_dir, utcnow_iso()).get("state") in ("live", "corrupt"):

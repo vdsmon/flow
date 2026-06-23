@@ -21,7 +21,7 @@ over the `merge` set. The remote branch is deleted separately via
 registered worktree holds the local branch checked out, which makes gh's
 branch-delete step fail and an otherwise-clean merge exit 1.
 
-Eligibility (all required): branch is `feature/<key>-*`; the bead carries `evolve`;
+Eligibility (all required): branch is `feat/<key>-*`; the bead carries `evolve`;
 the check rollup is non-empty and all SUCCESS (green); mergeable (CLEAN, or DRAFT
 which just needs `gh pr ready`). A hot PR additionally needs `auto_merge_hot`
 plus isolation (it is the only hot-eligible PR this pass). Hotness is the `hot`

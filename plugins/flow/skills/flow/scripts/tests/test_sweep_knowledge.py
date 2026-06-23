@@ -400,7 +400,7 @@ def test_apply_derives_branch_from_ticket(
     )
     assert rc == 0
     appended = next(e for e in _load_all(tmp_path) if e.get("supersedes") == FLOW_8WE_ID)
-    assert appended["branch"] == "feature/flow-mse"
+    assert appended["branch"] == "feat/flow-mse"
 
 
 def test_apply_explicit_branch_honored(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
