@@ -121,4 +121,9 @@ If the description contains plan-like headings (case-insensitive line-anchored r
 Ticket body has a fix plan — /flow <KEY> will offer to use it as the spec-stage plan (skip PLANNING).
 ```
 
-No prompts. Do not invoke `/flow <KEY>` yourself — the user picks when to start the pipeline. Planning happens in `spec`, not here.
+Then **offer to start the pipeline now** — authoring a ticket is usually a prelude to running it, so make the common next step one keystroke. One `AskUserQuestion`: "Start the pipeline for `<KEY>` now?" — **Start now** (recommended) / **Not yet**.
+
+- **Start now** → route into the `spec` verb for `<KEY>` in this SAME session, exactly as if the user had typed `/flow <KEY>`: follow SKILL.md's spec procedure from its step 1 (`EnterPlanMode`, fetch the ticket, design the plan WITH the user, the `ExitPlanMode` gate, then the tail). The ticket you just created is the spec input.
+- **Not yet** → stop. The user starts it later with `/flow <KEY>`.
+
+Planning still happens in `spec`, never in `new` — the offer only chains into spec; it does not plan, write code, or invoke the pipeline without the user's yes.
