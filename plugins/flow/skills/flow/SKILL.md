@@ -1,6 +1,5 @@
 ---
 name: flow
-disable-model-invocation: true
 argument-hint: <ticket> | spec <ticket> | do | revise | status | recall | triage | recover | group | sync | init
 description: Ticket pipeline. /flow <ticket> plans in plan mode (ExitPlanMode = the one gate), then enters a worktree and runs the autonomous implement→PR tail in the same session; background it (/bg) anytime to run unattended. You spec and review the draft PR. Multi-tracker engine (Jira | beads), pluggable handlers, compounding memory.
 when_to_use: User runs /flow <ticket> or /flow spec <ticket> to spec a ticket and run it to a draft PR, /flow do <ticket> to run/resume the pipeline standalone, or /flow init, recall, status, triage, recover, sync, baseline. A bare ticket key with no verb defaults to spec.
