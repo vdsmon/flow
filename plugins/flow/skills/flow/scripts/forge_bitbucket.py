@@ -307,7 +307,14 @@ def _is_actionable_inline(comment: dict) -> bool:
     raw = (comment.get("content") or {}).get("raw", "")
     if "Actionable comments posted" in raw or "Walkthrough" in raw:
         return False
-    return "Potential issue" in raw or "suggestion" in raw.lower()
+    if "Potential issue" in raw or "suggestion" in raw.lower():
+        return True
+    # recognize CodeRabbit's current emoji/pipe metadata header (`_…_ | _…_`);
+    # the old "Potential issue"/"suggestion" markers miss it.
+    return bool(_CR_INLINE_META_RE.search(raw))
+
+
+_CR_INLINE_META_RE = re.compile(r"_[^_]+_\s*\|\s*_[^_]+_")
 
 
 def _classify_severity(raw: str) -> THREAD_SEVERITY:
