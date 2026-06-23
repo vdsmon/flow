@@ -41,6 +41,10 @@ plugins/flow/**/.venv/
 # per-namespace memory + friction + ship-events (local, per-machine)
 **/.flow/*/knowledge.jsonl
 **/.flow/*/knowledge.jsonl.lock
+**/.flow/*/knowledge.embed
+**/.flow/*/knowledge.embed.lock
 **/.flow/*/friction.jsonl
 **/.flow/*/friction.jsonl.lock
+**/.flow/*/recall-usage.jsonl
+**/.flow/*/recall-usage.jsonl.lock
 **/.flow/*/ship-events/
