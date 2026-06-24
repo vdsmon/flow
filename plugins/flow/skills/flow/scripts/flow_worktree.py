@@ -530,16 +530,23 @@ def locate_or_reseed(
 _DEFAULT_BASE = "@default"
 
 
-def _default_branch(main_root: Path, runner: Runner) -> str | None:
+def _default_branch(main_root: Path, runner: Runner, *, strict: bool) -> str | None:
     """The freshly-fetched remote default branch ref (`origin/<HEAD>`), or None.
 
-    Fetches origin first so the ref is current — best-effort: a missing or
-    unreachable `origin` is not fatal, so an offline interactive run still
-    bootstraps off its local base. Then reads `refs/remotes/origin/HEAD`,
-    populating it via `remote set-head` when unset. Returns None when no remote
-    default resolves (no `origin` remote at all).
+    Fetches origin first so the ref is current, then reads
+    `refs/remotes/origin/HEAD`, populating it via `remote set-head` when unset.
+    Returns None when no remote default resolves (no `origin` remote at all).
+
+    `strict` hard-fails on a fetch error — the autonomous `@default` contract is
+    "branch off a genuinely fresh remote default or do not start" (a clean abort
+    leaves no orphan; the next drain retries). Non-strict swallows the fetch
+    error so an offline/origin-less interactive run still bootstraps off its
+    local base.
     """
-    runner(["git", "fetch", "--quiet", "origin"], main_root)
+    if strict:
+        _git(["fetch", "--quiet", "origin"], main_root, runner)
+    else:
+        runner(["git", "fetch", "--quiet", "origin"], main_root)
     head = runner(
         ["git", "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"], main_root
     )
@@ -564,12 +571,13 @@ def _resolve_base(base: str, main_root: Path, runner: Runner) -> str:
     already-merged commits), so it branches off `origin/main` instead of the
     local tip. A feature branch passes through unchanged — an interactive run
     stacked on a parent `feat/` branch keeps stacking (the parent may be
-    local-only) — but its remote-tracking refs are now fresh. With no resolvable
-    remote default (no `origin`/offline), every base keeps its local value;
-    `@default` still falls back to `origin/main` since an autonomous run needs a
-    concrete remote base.
+    local-only) — but its remote-tracking refs are now fresh. The interactive
+    fetch is best-effort (an offline/origin-less repo still bootstraps off its
+    local base); the autonomous `@default` fetch hard-fails instead, since that
+    contract is a guaranteed-fresh remote base (a clean abort, not a stale run).
     """
-    default = _default_branch(main_root, runner)
+    strict = base == _DEFAULT_BASE
+    default = _default_branch(main_root, runner, strict=strict)
     if base == _DEFAULT_BASE:
         return default or "origin/main"
     if default is None:

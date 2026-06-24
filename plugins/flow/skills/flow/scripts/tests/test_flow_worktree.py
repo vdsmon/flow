@@ -924,6 +924,26 @@ def test_resolve_base_default_fallback(tmp_path):
     assert fw._resolve_base("@default", tmp_path, run) == "origin/main"
 
 
+def _fetch_failing_runner():
+    # fetch returns non-zero (unreachable/missing origin); symbolic-ref + set-head
+    # also fail (no origin/HEAD), so the remote default never resolves.
+    def run(args, cwd):
+        return subprocess.CompletedProcess(args, 1, "", "fatal: no origin")
+
+    return run
+
+
+def test_resolve_base_default_hard_fails_on_fetch_error(tmp_path):
+    # the autonomous @default contract is guaranteed-fresh: a fetch failure aborts.
+    with pytest.raises(fw._GitError):
+        fw._resolve_base("@default", tmp_path, _fetch_failing_runner())
+
+
+def test_resolve_base_interactive_degrades_to_local_on_fetch_error(tmp_path):
+    # an offline/origin-less interactive run still bootstraps off its local base.
+    assert fw._resolve_base("feat/x", tmp_path, _fetch_failing_runner()) == "feat/x"
+
+
 # ─── reap subcommand ──────────────────────────────────────────────────────────
 
 
