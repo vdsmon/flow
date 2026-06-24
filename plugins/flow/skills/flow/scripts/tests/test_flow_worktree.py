@@ -889,10 +889,22 @@ def _base_runner(symref_outputs):
     return run, calls
 
 
-def test_resolve_base_passthrough(tmp_path):
-    run, calls = _base_runner([])
+def test_resolve_base_feature_branch_stacks_but_fetches(tmp_path):
+    # a feature branch keeps stacking, but still fetches (always pull upstream).
+    run, calls = _base_runner([(0, "origin/main\n")])
     assert fw._resolve_base("feature/x", tmp_path, run) == "feature/x"
-    assert calls == []  # a literal base never touches the network
+    assert ["git", "fetch", "--quiet", "origin"] in calls
+
+
+def test_resolve_base_local_default_redirects_to_origin_head(tmp_path):
+    # launching from the local default branch redirects to the fresh remote tip.
+    run, _ = _base_runner([(0, "origin/main\n")])
+    assert fw._resolve_base("main", tmp_path, run) == "origin/main"
+
+
+def test_resolve_base_detached_redirects_to_origin_head(tmp_path):
+    run, _ = _base_runner([(0, "origin/main\n")])
+    assert fw._resolve_base("HEAD", tmp_path, run) == "origin/main"
 
 
 def test_resolve_base_default_resolves_origin_head(tmp_path):
