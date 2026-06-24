@@ -530,18 +530,23 @@ def locate_or_reseed(
 _DEFAULT_BASE = "@default"
 
 
-def _resolve_base(base: str, main_root: Path, runner: Runner) -> str:
-    """Resolve the worktree base ref.
+def _default_branch(main_root: Path, runner: Runner, *, strict: bool) -> str | None:
+    """The freshly-fetched remote default branch ref (`origin/<HEAD>`), or None.
 
-    `@default` resolves to the freshly-fetched default branch (`origin/<HEAD>`),
-    so an autonomous (`--auto`) run never inherits the launcher's current branch
-    or a stale local `main` — branching off either pollutes the PR with
-    already-merged commits. Any other value passes through unchanged (interactive
-    runs branch off their integration branch on purpose).
+    Fetches origin first so the ref is current, then reads
+    `refs/remotes/origin/HEAD`, populating it via `remote set-head` when unset.
+    Returns None when no remote default resolves (no `origin` remote at all).
+
+    `strict` hard-fails on a fetch error — the autonomous `@default` contract is
+    "branch off a genuinely fresh remote default or do not start" (a clean abort
+    leaves no orphan; the next drain retries). Non-strict swallows the fetch
+    error so an offline/origin-less interactive run still bootstraps off its
+    local base.
     """
-    if base != _DEFAULT_BASE:
-        return base
-    _git(["fetch", "--quiet", "origin"], main_root, runner)
+    if strict:
+        _git(["fetch", "--quiet", "origin"], main_root, runner)
+    else:
+        runner(["git", "fetch", "--quiet", "origin"], main_root)
     head = runner(
         ["git", "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"], main_root
     )
@@ -553,7 +558,34 @@ def _resolve_base(base: str, main_root: Path, runner: Runner) -> str:
             ["git", "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"], main_root
         )
         name = head.stdout.strip() if head.returncode == 0 else ""
-    return name or "origin/main"
+    return name or None
+
+
+def _resolve_base(base: str, main_root: Path, runner: Runner) -> str:
+    """Resolve the worktree base ref — always off a freshly-fetched origin.
+
+    Every invocation fetches origin (best-effort), so a run never branches off a
+    stale ref. `@default`, the local default branch, and a detached HEAD all
+    resolve to the remote default (`origin/<HEAD>`): launching `/flow` from a
+    lagging local `main` is the common stale-base error (a PR polluted with
+    already-merged commits), so it branches off `origin/main` instead of the
+    local tip. A feature branch passes through unchanged — an interactive run
+    stacked on a parent `feat/` branch keeps stacking (the parent may be
+    local-only) — but its remote-tracking refs are now fresh. The interactive
+    fetch is best-effort (an offline/origin-less repo still bootstraps off its
+    local base); the autonomous `@default` fetch hard-fails instead, since that
+    contract is a guaranteed-fresh remote base (a clean abort, not a stale run).
+    """
+    strict = base == _DEFAULT_BASE
+    default = _default_branch(main_root, runner, strict=strict)
+    if base == _DEFAULT_BASE:
+        return default or "origin/main"
+    if default is None:
+        return base
+    default_name = default.split("/", 1)[1] if "/" in default else default
+    if base.strip() in ("", "HEAD", default_name):
+        return default
+    return base
 
 
 def _enforce_hot_floor(
