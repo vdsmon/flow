@@ -77,6 +77,8 @@ Leave your work as uncommitted changes in the working tree.
    Smallest change that makes the tests pass.
    Match the surrounding file's style and conventions.
 
+   **Comment density follows the user's CLAUDE.md, not the file's existing habit.** Default to no comments, and add one only for a real non-obvious WHY. A file with bloated comments already in it doesn't excuse more of the same, so before you return, reread every comment you just wrote and cut anything that restates the code or narrates the diff.
+
 5. Run the project's FULL CI-equivalent gate before declaring green — not just the tests.
    Discover the gate the same way you discover the test command (CI config / mise / package.json / Makefile), and run every part CI runs:
    - the linter;

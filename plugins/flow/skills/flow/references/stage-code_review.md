@@ -36,6 +36,7 @@ That bias is acceptable for personal-mode flow; work-mode users opt in to `skill
    - Obvious bugs (off-by-one, null-deref, missing await, etc.).
    - Regressions in nearby tests not updated by implement stage.
    - Style violations against existing file conventions.
+   - Comment bloat: a new comment that restates the code or narrates the diff, even if it matches a comment already sitting in the file. CLAUDE.md's comment policy (no comments by default, one line only for a real non-obvious WHY) overrides whatever the file already does.
    - Security-sensitive patterns (eval, raw SQL, missing escape).
 
 3. Report findings inline as a structured list:
