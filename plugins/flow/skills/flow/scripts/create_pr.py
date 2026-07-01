@@ -19,7 +19,7 @@ Prints `PR_URL=<url>` on stdout; the do-loop captures that into
 notification read the `PR_URL=` token.
 
 CLI:
-  create_pr.py --workspace-root <dir> [--base BRANCH] [--ticket KEY] [--draft]
+  create_pr.py --workspace-root <dir> [--base BRANCH] [--ticket KEY] [--draft] [--body-file PATH]
 
 The base branch resolves as: explicit `--base`, else `[create_pr] base` in
 `workspace.toml`, else `main`.
@@ -86,11 +86,33 @@ def _ok(result: subprocess.CompletedProcess[str], what: str) -> str:
     return result.stdout or ""
 
 
+def _compose_body(raw: str, subject: str, body_file: Path | None) -> str:
+    """The PR body passed to open_pr.
+
+    With `body_file`: the authored markdown (de-AI scrubbed as a floor) plus the
+    deterministic `Closes` footer from the commit trailer. Without it: the
+    commit-derived fallback (build_body + scrub). Empty prose falls back to the
+    commit subject.
+    """
+    if body_file is None:
+        return pr_body.scrub(pr_body.build_body(raw)).strip() or subject
+    try:
+        authored = body_file.read_text()
+    except OSError as exc:
+        raise ToolError(f"--body-file {body_file} unreadable: {exc}") from exc
+    body = pr_body.scrub(authored).strip()
+    if not body:
+        return subject
+    footer = pr_body.closes_footer(raw)
+    return f"{body}\n\n{footer}" if footer else body
+
+
 def open_or_get_pr(
     workspace_root: Path,
     *,
     base: str = "main",
     draft: bool = True,
+    body_file: Path | None = None,
     runner: Runner | None = None,
     forge: Forge | None = None,
 ) -> str:
@@ -120,7 +142,7 @@ def open_or_get_pr(
         # already-merged commits, and --fill then mistitles from the branch name.
         subject = _ok(run(["git", "log", "-1", "--format=%s"]), "git log").strip()
         raw = _ok(run(["git", "log", "-1", "--format=%b"]), "git log")
-        body = pr_body.scrub(pr_body.build_body(raw)).strip() or subject
+        body = _compose_body(raw, subject, body_file)
         pr = fg.open_pr(base, branch, subject, body, draft)
     except ForgeError as exc:
         raise ToolError(str(exc)) from exc
@@ -169,12 +191,21 @@ def cli_main(argv: list[str]) -> int:
         default=None,
         help="open a draft PR (overrides the [create_pr] draft workspace setting).",
     )
+    parser.add_argument(
+        "--body-file",
+        default=None,
+        help=(
+            "path to an authored PR body (markdown); the Closes footer is appended "
+            "and a de-AI scrub applied. Absent = derive the body from the commit."
+        ),
+    )
     args = parser.parse_args(argv)
     ws = Path(args.workspace_root)
     draft = args.draft if args.draft is not None else _draft_config(ws)
     base = args.base if args.base is not None else (_base_config(ws) or "main")
+    body_file = Path(args.body_file) if args.body_file else None
     try:
-        url = open_or_get_pr(ws, base=base, draft=draft)
+        url = open_or_get_pr(ws, base=base, draft=draft, body_file=body_file)
     except RefusedBranch as exc:
         print(str(exc), file=sys.stderr)
         return 3

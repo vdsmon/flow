@@ -126,6 +126,29 @@ def test_scrub_leaves_fenced_code_untouched():
     assert "Intro, here." in out
 
 
+# ─── closes_footer ───────────────────────────────────────────────────────────
+
+
+def test_closes_footer_collects_trailer_closes():
+    raw = _realistic_raw_b("Prose body.\n", covers=("flow-nr8c", "flow-pms6"))
+    assert pr_body.closes_footer(raw) == "Closes flow-nr8c\nCloses flow-pms6"
+
+
+def test_closes_footer_none_when_no_covers():
+    raw = _realistic_raw_b("Prose body.\n", covers=())
+    assert pr_body.closes_footer(raw) == ""
+
+
+def test_closes_footer_empty_on_no_trailer():
+    assert pr_body.closes_footer("Just prose, no trailer.\n") == ""
+
+
+def test_closes_footer_ignores_prose_closes():
+    # a Closes AFTER the blank (in prose) is not a trailer footer.
+    raw = "ticket: flow-x\nCloses flow-real\n\nThis Closes the gap.\n"
+    assert pr_body.closes_footer(raw) == "Closes flow-real"
+
+
 # ─── totality: never raise on adversarial input ──────────────────────────────
 
 
@@ -143,6 +166,7 @@ def test_build_and_scrub_never_raise_on_adversarial():
     for c in cases:
         assert isinstance(pr_body.build_body(c), str)
         assert isinstance(pr_body.scrub(c), str)
+        assert isinstance(pr_body.closes_footer(c), str)
         # build then scrub composes without raising
         assert isinstance(pr_body.scrub(pr_body.build_body(c)), str)
 

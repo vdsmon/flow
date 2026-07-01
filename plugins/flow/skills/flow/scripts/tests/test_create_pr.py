@@ -348,3 +348,66 @@ def test_empty_prose_body_falls_back_to_subject(tmp_path):
     fg = _FakeForge(existing=None)
     cp.open_or_get_pr(tmp_path, base="main", runner=run, forge=fg)
     assert fg.opened[0]["body"] == "chore: subj only"
+
+
+# ─── authored body via --body-file ───────────────────────────────────────────
+
+
+def test_authored_body_file_reaches_open_pr_with_footer(tmp_path):
+    # --body-file: the authored prose is used verbatim (scrubbed), and the
+    # deterministic Closes footer from the commit trailer is appended. The commit
+    # prose is NOT used.
+    run, _ = _git_runner()
+    fg = _FakeForge(existing=None)
+    body_file = tmp_path / "pr_body.md"
+    body_file.write_text(
+        "**Summary line.**\n\nWhy this change.\n\n## Changes\n- `x.py`: does a thing\n"
+    )
+    cp.open_or_get_pr(tmp_path, base="main", runner=run, forge=fg, body_file=body_file)
+    body = fg.opened[0]["body"]
+    assert body.startswith("**Summary line.**")
+    assert "## Changes" in body
+    assert "builds a real PR" not in body  # commit prose not used
+    assert body.rstrip().endswith("Closes flow-nr8c")  # deterministic footer from %b
+
+
+def test_authored_body_scrub_floor_runs(tmp_path):
+    run, _ = _git_runner()
+    fg = _FakeForge(existing=None)
+    body_file = tmp_path / "pr_body.md"
+    body_file.write_text("Summary — with an em dash.\n")
+    cp.open_or_get_pr(tmp_path, base="main", runner=run, forge=fg, body_file=body_file)
+    assert "—" not in fg.opened[0]["body"]  # scrub floor ran over authored prose
+
+
+def test_authored_empty_body_falls_back_to_subject(tmp_path):
+    run, _ = _git_runner()
+    fg = _FakeForge(existing=None)
+    body_file = tmp_path / "pr_body.md"
+    body_file.write_text("   \n")
+    cp.open_or_get_pr(tmp_path, base="main", runner=run, forge=fg, body_file=body_file)
+    assert fg.opened[0]["body"] == "chore: add coverage"
+
+
+def test_missing_body_file_is_tool_error(tmp_path):
+    run, _ = _git_runner()
+    fg = _FakeForge(existing=None)
+    with pytest.raises(cp.ToolError):
+        cp.open_or_get_pr(
+            tmp_path, base="main", runner=run, forge=fg, body_file=tmp_path / "nope.md"
+        )
+
+
+def test_cli_passes_body_file(tmp_path, monkeypatch):
+    captured: dict = {}
+
+    def fake_open(ws, *, base, draft, body_file=None):
+        captured["body_file"] = body_file
+        return "https://u/1"
+
+    monkeypatch.setattr(cp, "open_or_get_pr", fake_open)
+    bf = tmp_path / "b.md"
+    bf.write_text("x")
+    rc = cp.cli_main(["--workspace-root", str(tmp_path), "--body-file", str(bf)])
+    assert rc == 0
+    assert str(captured["body_file"]) == str(bf)
