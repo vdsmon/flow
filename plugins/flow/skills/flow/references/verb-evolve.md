@@ -323,13 +323,29 @@ Each spawns a detached run that auto-plans and either drives its PR to green-and
 
 ### --dry-run
 
-`/flow evolve drain --dry-run`: run ONE turn's **A** reap classification (`evolve_reap.py`, print the `merge`/`not_green`/`skipped_hot`/`blocked`/`held_main_red` sets, do NOT merge) + **A2** session-cleanup classification (`evolve_session_cleanup.py`, print the `stoppable` set, do NOT `claude stop` or `rm`) + **A3** deferred-escalation classification (scan deferred sonnet beads, print the would-reopen set, do NOT `bd update --status open`) + **B** (`evolve_drain.py`, print the action + would-launch keys + parked) + **B2** group-fold (print the fold plan — each cluster's lead + covers — do NOT wire deps or launch), then STOP. No merges, no stops, no reopens, no dep-wiring, no launches, no loop.
+`/flow evolve drain --dry-run`: run ONE turn's **A** reap classification (`evolve_reap.py`, print the `merge`/`not_green`/`skipped_hot`/`blocked`/`held_main_red` sets, do NOT merge) + **A2** session-cleanup classification (`evolve_session_cleanup.py`, print the `stoppable` set, do NOT `claude stop` or `rm`) + **A3** deferred-escalation classification (scan deferred sonnet beads, print the would-reopen set, do NOT `bd update --status open`) + **B** (`evolve_drain.py`, print the action + would-launch keys + parked) + **B2** group-fold (print the fold plan — each cluster's lead + covers — do NOT wire deps or launch), then STOP. No merges, no stops, no reopens, no dep-wiring, no launches, no loop, no post-`done` final session sweep.
 
 ### --include-proposals (dangerous)
 
 `/flow evolve drain --include-proposals` widens the loop from the `evolve` backlog to **also auto-launch + reap plain `proposal` beads** — the judgment-side work (features, real refactors, reorgs) that §propose deliberately routes to the maintainer's own backlog so a human accepts it at the spec-plan gate. With this flag, each ready `proposal` bead is fanned out as a `/flow <key> --auto` run that self-plans and self-merges at ≥90% confidence, **bypassing that human accept**. This is the one place drain ships taste-and-fit work with no human in the loop; use it only when you genuinely want the proposal backlog drained autonomously.
 
 Mechanically it threads through the whole turn: `evolve_select` pulls a second `bd ready -l proposal` candidate set (merged by id) and drops its proposal-exclusion guard; `evolve_drain.py --include-proposals` carries the flag into select and echoes `include_proposals: true` in its JSON; `evolve_reap.py --include-proposals` widens its label index so proposal **orphans** (runs that died before self-merging) reap too — pass it on the step **A** invocation or those PRs never merge. Hot proposals serialize on the same single hot slot as hot evolve beads. Composable with `--dry-run` to preview what the dangerous mode would launch. The Report (below) names `include_proposals: true` so a run that auto-drained judgment work says so.
+
+### Post-drain: final session sweep (A2 tail)
+
+When the loop exits (`done`), the LAST launched batch's `--auto` sessions have just finished — `done` fires the instant the last run's LEASE frees (step **B**), but a bg session goes idle only AFTER that (it still streams its final summary; `--auto` self-teardown is best-effort). The per-turn **A2** cleanup ran while that batch was still non-idle and skipped it, and no turn follows `done` — so without this step the last batch always leaks as agent-panel tombstones for the maintainer to `claude stop` by hand (flow-opnl). This sweep collects them.
+
+At `done` EVERY lease is freed by definition, so the conservative per-turn A2 bar (the 600s `--stale-idle-threshold-secs` that guards a mid-drain session whose `state` still reads `working`/`blocked`) is unnecessary here: the three hard doneness signals (lease non-live ∧ tempo ∈ {idle, blocked} ∧ bead terminal) already hold. Run A2 with a SHORT idle bar so a just-finished session (idle only ~1-2 min) qualifies, in a BOUNDED poll (self-terminating — NOT a bare `while true`):
+
+- Repeat up to 3 passes, ~45s apart (one self-contained bash loop with an internal `sleep 45`, ~3 min cap). Each pass classifies with BOTH bars short:
+  ```bash
+  python3 ${CLAUDE_SKILL_DIR}/scripts/evolve_session_cleanup.py --workspace-root . \
+    --self-job "$(basename "$CLAUDE_JOB_DIR")" \
+    --idle-threshold-secs 45 --stale-idle-threshold-secs 45
+  ```
+  then stop + tombstone each `stoppable` entry with the IDENTICAL step-A2 recipe (fleet `is-live` recheck FIRST → validate `job_id` is 8-hex + `job_dir` is under `~/.claude/jobs/<8-hex>` → `claude stop <job_id>` BEFORE `rm -rf <job_dir>`).
+- Stop early after a pass returns `stoppable: []` (the last batch has settled); otherwise stop at the cap — a straggler still non-idle at the cap is caught by the NEXT drain's per-turn A2, unchanged.
+- **Skip this whole step under `--dry-run`** (print the would-sweep note only), like every other §drain side effect. Only this post-`done` sweep runs the short bars; the per-turn A2 default (600s) is untouched.
 
 ### Post-drain: advance the checkout (DEFAULT, always run)
 
