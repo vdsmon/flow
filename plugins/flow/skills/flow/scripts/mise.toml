@@ -1,11 +1,14 @@
 # Pins toolchain versions for reproducibility.
 # Run from this directory: `mise run lint`, `mise run test`.
+# python is pinned to an exact patch on purpose: a floating "3.14" keeps the
+# mise-action cache key stable while a new CPython patch silently invalidates
+# the cached install, forcing a cold python re-download inside the CI step.
 
 [tools]
-python = "3.14"
+python = "3.14.6"
 ruff = "0.15.15"
 ty = "0.0.42"
-"pipx:pytest" = { version = "8.3.3", uvx_args = "--with pytest-cov", pipx_args = "--preinstall pytest-cov" }
+"pipx:pytest" = { version = "8.3.3", uvx_args = "--with pytest-cov --with pytest-xdist", pipx_args = "--preinstall pytest-cov --preinstall pytest-xdist" }
 
 [tasks.lint]
 description = "ruff check + ruff format --check + ty check (scripts + plugin hooks)"
@@ -18,7 +21,7 @@ run = [
 [tasks.test]
 description = "pytest scripts/tests/ + plugin hooks/tests/ -q"
 run = [
-    "pytest tests/ -q",
+    "pytest tests/ -q -n auto --dist loadfile",
     "pytest ../../../hooks/tests/ -q",
 ]
 
