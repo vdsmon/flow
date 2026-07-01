@@ -92,7 +92,8 @@ _BACKTICK_IDENT_RE = re.compile(r"`([a-z_][a-z0-9_]*)`")
 # The quoted token after the anchor is a role literal whose only validator is the
 # registry roles array (SKILL.md prose, no argparse surface).
 _ROLE_MEMBERSHIP_RE = re.compile(r"roles[`\s]*(?:includes?|contains?|has)\b")
-_ROLE_LITERAL_RE = re.compile(r"[\"'`]+([a-z][a-z0-9_]+)[\"'`]+")
+# quotes-only: a later backticked prose token must not over-capture as a role
+_ROLE_LITERAL_RE = re.compile(r"[\"']+([a-z][a-z0-9_]+)[\"']+")
 
 # An inline-code span: text between a pair of backticks on one line.
 _INLINE_SPAN_RE = re.compile(r"`([^`]*)`")
