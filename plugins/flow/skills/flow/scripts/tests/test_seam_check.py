@@ -620,6 +620,24 @@ def test_prose_role_citation_ignores_non_membership_roles_mention() -> None:
     assert seam_check.prose_role_citations(text) == []
 
 
+def test_prose_role_citation_ignores_later_backticked_token() -> None:
+    # a backticked lowercase token AFTER the role literal must not read as a role
+    text = 'when `descriptor.roles` includes `"work"`, pass `model` in the Agent call.\n'
+    assert seam_check.prose_role_citations(text) == [(1, "work")]
+
+
+def test_live_role_citations_recognized() -> None:
+    # flow-rvrv: role_literal_drift()==[] passes on ZERO capture; assert the live
+    # sentences are actually recognized, so the fix did not drop live coverage
+    roles = {
+        r
+        for _, r in seam_check.prose_role_citations(
+            (seam_check.SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
+        )
+    }
+    assert {"records_diff_baseline", "work"} <= roles
+
+
 def test_role_literal_drift_flags_renamed_role(tmp_path) -> None:
     doc = tmp_path / "SKILL.md"
     doc.write_text('if `descriptor.roles` includes `"records_baseline"`:\n', encoding="utf-8")
