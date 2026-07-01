@@ -125,6 +125,27 @@ def _unwrap_prose(lines: list[str]) -> str:
     return "\n".join(out)
 
 
+def closes_footer(raw_commit_body: str) -> str:
+    """Extract the `Closes <KEY>` lines from the leading trailer block.
+
+    Same trailer scan as build_body: walk the contiguous leading trailer lines,
+    collect the `Closes` ones, stop at the first blank or non-trailer line. Returns
+    the newline-joined footer, or "". A `Closes` in the prose (after the blank) is
+    NOT a trailer footer. TOTAL: never raises.
+    """
+    try:
+        lines = raw_commit_body.splitlines()
+        closes: list[str] = []
+        i = 0
+        while i < len(lines) and _is_trailer_line(lines[i]):
+            if _CLOSES_RE.match(lines[i]):
+                closes.append(lines[i].strip())
+            i += 1
+        return "\n".join(closes)
+    except Exception:
+        return ""
+
+
 def scrub(body: str) -> str:
     """Deterministic de-AI pass: fix, not detect; idempotent; passthrough on error.
 
@@ -196,4 +217,4 @@ def _sentence_case(text: str) -> str:
     return " ".join(result)
 
 
-__all__ = ["build_body", "scrub"]
+__all__ = ["build_body", "closes_footer", "scrub"]
