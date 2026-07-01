@@ -58,7 +58,11 @@ mise run test   # scripts + hooks green
    - the verify command + result: `$TICKET_DIR/stages/implement.out`,
    - the why: the ticket (`ticket.json`) and plan.
 
-2. **Humanize (mandatory-when-present).** If `humanize:humanize` is in your available skills you MUST run the authored body through it and use the rewrite. Skip silently if the skill is absent; if it errors, log one line and proceed (a polish hiccup never fails the stage). Same rule as the code-comment bar in `references/stage-implement.md`.
+2. **Humanize (mandatory-when-present).** If `humanize:humanize` is in your available skills you MUST run the authored body through it. Two things the skill's behavior forces (verified against a filled template):
+   - It returns a **4-part scaffold** (Draft rewrite / Residual-tells / Final rewrite / optional Changelog). Take ONLY the **Final rewrite** section as the body. Never paste the scaffold.
+   - It preserves markdown structure (`##` headings, one-line bullets, and fenced code all survive), but it STRIPS the bold on the summary line (its mechanical-boldface rule). **Re-apply `**...**` to the summary line** after humanizing, so the scannable anchor stays.
+
+   Skip silently if the skill is absent; if it errors, log one line and proceed (a polish hiccup never fails the stage). Same mandatory-when-present rule flow applies to authored code comments.
 
 3. **Write the body worktree-safely.** The orchestrator's own `Write` to a worktree path is rejected in bg mode, so emit the body via a quoted heredoc (the pattern in `references/verb-do.md`) to `$TICKET_DIR/stages/pr_body.md`:
    ```bash
