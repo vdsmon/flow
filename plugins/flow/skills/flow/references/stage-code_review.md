@@ -36,7 +36,7 @@ That bias is acceptable for personal-mode flow; work-mode users opt in to `skill
    - Obvious bugs (off-by-one, null-deref, missing await, etc.).
    - Regressions in nearby tests not updated by implement stage.
    - Style violations against existing file conventions.
-   - Comment bloat: a new comment that restates the code or narrates the diff, even if it matches a comment already sitting in the file. CLAUDE.md's comment policy (no comments by default, one line only for a real non-obvious WHY) overrides whatever the file already does.
+   - Comment bloat: flag any comment that violates the code-comment bar in `references/stage-implement.md` Step 4 (self-document first; WHY-only plus the workaround / invariant / dense-expression tail; wrapped to the configured line length; no AI tells). That bar overrides local file precedent: a new comment that restates the code or narrates the diff is a violation even if it matches a comment already sitting in the file.
    - Security-sensitive patterns (eval, raw SQL, missing escape).
 
 3. Report findings inline as a structured list:
