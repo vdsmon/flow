@@ -74,10 +74,12 @@ Leave your work as uncommitted changes in the working tree.
    Run them and confirm they fail for the right reason.
 
 4. Implement the production code.
-   Smallest change that makes the tests pass.
-   Match the surrounding file's style and conventions.
+   Smallest change that makes the tests pass. Match the surrounding file's structural conventions (docstring format, section banners, naming). The comment-quality bar below is absolute and never inherits a file's bad habits: a stricter host convention wins, a looser one does not.
 
-   **Comment density follows the user's CLAUDE.md, not the file's existing habit.** Default to no comments, and add one only for a real non-obvious WHY. A file with bloated comments already in it doesn't excuse more of the same, so before you return, reread every comment you just wrote and cut anything that restates the code or narrates the diff.
+   **Code comments.** Self-document first: try a rename or restructure that removes the need for the comment. Write one only when a non-obvious *why* survives, or for a workaround (name the cause), a surprising invariant, or an unavoidably dense expression (regex, bit-twiddle). Never restate the code or narrate obvious flow.
+   Wrap comment and docstring prose to the project's configured line length (discover it: ruff/black/flake8 `line-length` or `.editorconfig`, else the language default). Formatters do not reflow comment text, so fill to the limit and do NOT self-wrap at a narrower width (the ~60-70 col habit).
+   Terse but not cryptic: plain language, self-contained, readable by a human and an agent. No em-dashes, no filler (`just`, `simply`, `note that`), no inflated verbs (`leverage`, `robustly`, `seamlessly`), no rule-of-three, no "not X but Y".
+   Before returning, reread the comments you added against this bar. If `humanize:humanize` is in your available skills you MUST run it as that final pass and apply its rewrite; skip only if the skill is absent, and if it errors, log one line and proceed (a polish hiccup never fails a green stage).
 
 5. Run the project's FULL CI-equivalent gate before declaring green — not just the tests.
    Discover the gate the same way you discover the test command (CI config / mise / package.json / Makefile), and run every part CI runs:
