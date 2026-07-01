@@ -198,9 +198,13 @@ def select(
     model_per_key: dict[str, str] = {}
     for key in result["launch"]:
         labels = labels_by_id.get(key, [])
+        # hot-first: a hot bead follows the opus-plans/sonnet-writes split too, so pin
+        # its session to worker_model (opus) to keep the judgment layer real. Checking
+        # hot before tier keeps a hot+tier:trivial bead on opus, not sonnet.
         if "hot" in labels:
-            continue
-        if "tier:trivial" in labels or "tier:light" in labels:
+            if worker_model:
+                model_per_key[key] = worker_model
+        elif "tier:trivial" in labels or "tier:light" in labels:
             model_per_key[key] = "sonnet"
         elif worker_model:
             model_per_key[key] = worker_model

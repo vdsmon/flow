@@ -28,6 +28,12 @@ worker_model = "opus"
 # every PR; the floor was pure friction). Merge-time guard-property review + CI gate.
 adjudicate_hot = true
 
+# opus plans, sonnet writes is ON BY DEFAULT (scripts/model_resolve.py): a full-lane
+# run's code-writing subagents (implement, the review_loop fix subagent) drop to sonnet
+# while planning / code_review / the --auto ship gate / inline stages stay on the opus
+# session ([evolve] worker_model). No [models] block needed to get it. To disable or
+# override, add `[models]` with `work_model = "off"` (or another model name).
+
 # This repo opens PRs ready for review, not draft (maintainer preference). The
 # default is open; a workspace that wants draft PRs sets draft = true here.
 [create_pr]

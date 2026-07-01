@@ -72,7 +72,9 @@ required_fields = ["planned_files"]
 required = false
 required_when_compounding = false
 reference_doc = "references/stage-implement.md"
-roles = ["records_diff_baseline"]
+# "work" marks this a code-writing stage: the do-loop consults model_resolve.py and
+# pins the subagent to [models] work_model on a full-lane run (opus plans, sonnet writes).
+roles = ["records_diff_baseline", "work"]
 
 [[stage]]
 name = "code_review"
