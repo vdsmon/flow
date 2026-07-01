@@ -480,8 +480,9 @@ def test_select_light_non_hot_downshifts_to_sonnet(tmp_path):
 
 
 def test_select_light_hot_never_downshifts(tmp_path):
-    # a mis-stamped tier:light+hot bead launches (single hot, no in-flight) but is
-    # ABSENT from model_per_key — hot's continue precedes the tier check.
+    # a mis-stamped tier:light+hot bead launches (single hot, no in-flight); with no
+    # worker_model configured, hot-first leaves it ABSENT from model_per_key (omit
+    # --model), so it never downshifts to sonnet.
     ws = _marked_ws(tmp_path)
     run, _ = _dispatch(
         ready=[_cand("flow-lh", labels=["evolve", "tier:light", "hot"], blast="z.py")]
@@ -500,7 +501,8 @@ def test_select_worker_model_light_beats_worker_model(tmp_path):
 
 def test_select_trivial_hot_never_downshifts(tmp_path):
     # belt-and-suspenders: a mis-stamped tier:trivial+hot bead launches (single hot,
-    # no in-flight, so it takes the hot slot) but is ABSENT from model_per_key.
+    # no in-flight, so it takes the hot slot); with no worker_model configured,
+    # hot-first leaves it ABSENT from model_per_key, so it never downshifts to sonnet.
     ws = _marked_ws(tmp_path)
     run, _ = _dispatch(
         ready=[_cand("flow-th", labels=["evolve", "tier:trivial", "hot"], blast="z.py")]
@@ -532,22 +534,27 @@ def test_select_worker_model_trivial_beats_worker_model(tmp_path):
     assert out["model_per_key"]["flow-t"] == "sonnet"
 
 
-def test_select_worker_model_hot_omitted(tmp_path):
+def test_select_worker_model_hot_pinned_to_worker(tmp_path):
+    # hot-first: a hot bead follows the split (opus plans/reviews, sonnet writes), so its
+    # session is pinned to worker_model (opus) rather than omitted -- the explicit pin
+    # keeps the opus judgment layer real instead of inheriting a maybe-Fable launcher.
     ws = _worker_ws(tmp_path)
     run, _ = _dispatch(ready=[_cand("flow-h", labels=["evolve", "hot"], blast="z.py")])
     out = es.select(ws, cap=5, concurrency=3, runner=run)
     assert "flow-h" in out["launch"]
-    assert "flow-h" not in out["model_per_key"]
+    assert out["model_per_key"]["flow-h"] == "opus"
 
 
-def test_select_worker_model_trivial_hot_omitted(tmp_path):
+def test_select_worker_model_trivial_hot_stays_opus(tmp_path):
+    # hot is checked BEFORE the tier branch, so a mis-stamped tier:trivial+hot bead pins
+    # to worker_model (opus), NOT sonnet -- hot's opus session wins over the downshift.
     ws = _worker_ws(tmp_path)
     run, _ = _dispatch(
         ready=[_cand("flow-th", labels=["evolve", "tier:trivial", "hot"], blast="z.py")]
     )
     out = es.select(ws, cap=5, concurrency=3, runner=run)
     assert "flow-th" in out["launch"]
-    assert "flow-th" not in out["model_per_key"]
+    assert out["model_per_key"]["flow-th"] == "opus"
 
 
 def test_worker_model_reads_evolve_section(tmp_path):

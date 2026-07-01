@@ -36,6 +36,7 @@ from typing import Any
 
 import snapshot
 from _registry import StageEntry, load_registry
+from model_resolve import OFF_VALUES
 
 KNOWN_BACKENDS: tuple[str, ...] = ("jira", "beads")
 KNOWN_FORGE_BACKENDS: tuple[str, ...] = ("github", "bitbucket")
@@ -45,6 +46,7 @@ _HANDLER_RE = re.compile(r"^(inline|none|subagent:[A-Za-z0-9_-]+|skill:[A-Za-z0-
 @dataclass
 class ValidationResult:
     violations: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
@@ -52,6 +54,10 @@ class ValidationResult:
 
     def add(self, key_path: str, message: str, *, severity: str = "error") -> None:
         self.violations.append(f"{severity}: {key_path}: {message}")
+
+    def warn(self, key_path: str, message: str) -> None:
+        # non-fatal: surfaced on stderr but never flips `ok`, so the HARD GATE passes
+        self.warnings.append(f"warning: {key_path}: {message}")
 
 
 # ─── stage-registry loader ──────────────────────────────────────────────────
@@ -223,6 +229,30 @@ def _validate_pipeline_block(
     return stages, _parse_handlers(pipeline, stages, result)
 
 
+def _warn_inline_work_model(
+    data: dict[str, Any], handlers: dict[str, str], result: ValidationResult
+) -> None:
+    """Warn (non-fatal) when `[models] work_model` is EXPLICITLY set but implement is inline.
+
+    An inline stage runs on the session model and cannot be model-pinned, so an
+    explicit `work_model` would silently not apply to it. Only an explicit, non-opt-out
+    `work_model` warns (a config intent that won't take effect); the on-by-default case
+    (no `[models]` block) does not, to keep validate quiet for the common setup.
+    """
+    models = data.get("models")
+    if not isinstance(models, dict):
+        return
+    work_model = models.get("work_model")
+    if not isinstance(work_model, str) or work_model.strip().lower() in OFF_VALUES:
+        return
+    if handlers.get("implement") == "inline":
+        result.warn(
+            "models.work_model",
+            "implement handler is 'inline'; an inline stage cannot be model-pinned, "
+            "so its code-writing runs on the session model and work_model is ignored for it",
+        )
+
+
 def _validate_memory_block(data: dict[str, Any], result: ValidationResult) -> bool:
     memory = data.get("memory")
     if not isinstance(memory, dict):
@@ -297,6 +327,8 @@ def validate(
     registry = stage_registry or load_registry(_stage_registry_path())
     stages, handlers = _validate_pipeline_block(data, registry, compounding, result)
 
+    _warn_inline_work_model(data, handlers, result)
+
     if not result.ok or backend is None:
         return result, None
 
@@ -334,6 +366,8 @@ def cli_main(argv: list[str]) -> int:
     except (OSError, ValueError) as exc:
         sys.stderr.write(f"validate-workspace: {exc}\n")
         return 1
+    for line in result.warnings:
+        sys.stderr.write(line + "\n")
     if not result.ok:
         for line in result.violations:
             sys.stderr.write(line + "\n")

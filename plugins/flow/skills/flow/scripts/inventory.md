@@ -221,6 +221,16 @@ repo_slug = "rs"
 
 `validate_workspace.py` validates the block only when present (`KNOWN_FORGE_BACKENDS = ("github", "bitbucket")`); github needs no sub-keys, bitbucket requires `workspace` + `repo_slug`.
 
+### `[models]` workspace schema (opus plans, sonnet writes — ON BY DEFAULT)
+
+```toml
+# The block is OPTIONAL. Omit it entirely for the default (work=sonnet on full-lane runs).
+[models]
+work_model = "sonnet"   # override the model, or "off"/"none"/"" to DISABLE the downshift
+```
+
+The downshift is **on by default** — no `[models]` block needed. It pins the code-writing subagents (`implement`, the `review_loop` fix subagent) to `sonnet` on a full-lane run, while planning, `code_review`, the `--auto` ship gate, and every inline stage stay on the launch/session model (`[evolve] worker_model`). `model_resolve.py --workspace-root . --ticket <KEY>` is the resolver: it prints `sonnet` (the default) when the frontmatter `lane` is absent-or-`full`, prints a workspace's `[models] work_model` override when set, and prints nothing when the run is `express`/`light` (already a cheap session) or the workspace opts out (`work_model` ∈ `{off, none, ""}`). `hot` and normal full-lane runs both downshift (a hot bead follows the split; its opus protection is the session-model judgment layer + CI + the merge keystone). `validate_workspace.py` accepts the block as unknown-but-tolerated and emits a non-fatal WARNING (never a violation) when an EXPLICIT non-opt-out `work_model` is set AND `implement = "inline"` — an inline stage rides the session model and cannot be pinned.
+
 ## `.flow-bundle.toml` schema
 
 External plugins declare which flow stages they provide handlers for via a top-level `.flow-bundle.toml`.

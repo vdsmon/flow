@@ -538,3 +538,44 @@ def test_forge_unknown_backend_fails(tmp_path: Path) -> None:
     result, _ = vw.validate(root)
     assert not result.ok
     assert any("forge.backend" in v for v in result.violations)
+
+
+# ─── [models] work_model opt-in guard ────────────────────────────────────────
+
+
+def test_inline_implement_with_work_model_warns(tmp_path: Path) -> None:
+    # opt-in [models] work_model + an inline implement -> non-fatal warning (an inline
+    # stage cannot be model-pinned), but validation still passes (ok stays True).
+    root = _make_workspace(tmp_path, backend="beads")  # default handlers: implement inline
+    _append_forge(root, '[models]\nwork_model = "sonnet"\n')
+    result, _ = vw.validate(root)
+    assert result.ok
+    assert any("work_model" in w and "inline" in w for w in result.warnings)
+
+
+def test_subagent_implement_with_work_model_no_warn(tmp_path: Path) -> None:
+    stages = ["ticket", "plan", "implement", "commit", "reflect"]
+    handlers = {s: "inline" for s in stages}
+    handlers["implement"] = "subagent:general-purpose"
+    root = _make_workspace(tmp_path, backend="beads", stages=stages, handlers=handlers)
+    _append_forge(root, '[models]\nwork_model = "sonnet"\n')
+    result, _ = vw.validate(root)
+    assert result.ok
+    assert result.warnings == []
+
+
+def test_work_model_absent_no_warn(tmp_path: Path) -> None:
+    # no [models] block -> the downshift is on by default, but there is no explicit
+    # config intent to defeat, so an inline implement warns nothing (avoids spam).
+    root = _make_workspace(tmp_path, backend="beads")
+    result, _ = vw.validate(root)
+    assert result.warnings == []
+
+
+def test_opt_out_work_model_inline_no_warn(tmp_path: Path) -> None:
+    # work_model = "off" (opt-out) + inline implement -> no warning (nothing to apply).
+    root = _make_workspace(tmp_path, backend="beads")  # default handlers: implement inline
+    _append_forge(root, '[models]\nwork_model = "off"\n')
+    result, _ = vw.validate(root)
+    assert result.ok
+    assert result.warnings == []

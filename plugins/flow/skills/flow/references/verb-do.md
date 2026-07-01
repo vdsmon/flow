@@ -102,6 +102,16 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/flow_friction.py \
   --workspace-root . || true
 ```
 
+## Work-stage opus retry (one-shot)
+
+When the `implement` stage returns `failed` on a run whose work subagents were sonnet-pinned — i.e. `model_resolve.py --workspace-root . --ticket "$KEY"` prints a non-empty model (a full-lane run with the downshift active, which is the default) — re-dispatch `implement` EXACTLY ONCE with NO `model` pin (inherit the opus session) before recording the failure. Under per-subagent pinning a sonnet work-DNF returns control to the still-live opus session and marks the bead `blocked`/`in_progress` (not `open`), so the drain reappearance-trigger that feeds the whole-run sonnet→opus ladder never fires; this in-run retry closes that gap.
+
+- **Trigger:** `STATUS=failed` from the `implement` dispatch AND `model_resolve.py` returns non-empty for this ticket AND no prior opus retry has run for `implement` this run (one-shot).
+- **Action:** append a `RETRY` friction entry (`flow_friction.py ... --type RETRY --stage implement`), then re-run the implement subagent spawn (the SKILL.md `subagent:<type>` branch) OMITTING the `model=` argument so it inherits the opus session. Re-evaluate `STATUS` from the retry's report.
+- **Bound:** exactly one opus retry. It does NOT distinguish a sonnet-capacity DNF from a genuine code failure — any `implement` failure on a downshifted run buys one opus re-run of a stage that would otherwise dead-end. If the opus retry also returns `failed`, advance `implement --status failed` as normal (the dispatcher then blocks the run for `/flow recover`).
+- **Scope:** `implement` ONLY. The inline `review_loop` fix subagent is NOT retried this way — re-running it would restart the whole CI-wait+fix loop and its interaction with the §2 3-fix-cycle cap is undefined; a `review_loop` capacity failure rides its own cap.
+- The whole-run sonnet→opus ladder (`references/verb-evolve.md` §C) is UNCHANGED: it still escalates a drain-launched `sonnet`-*session* run that DNFs the whole run (the bead re-appears `open`). This in-run retry covers the DIFFERENT case where only the work *subagent* is sonnet under an opus session.
+
 ## Post-implement reconcile (records_diff_baseline stages only)
 
 After the implement stage returns, if its report flags files it created/modified OUTSIDE the recorded `planned_files` (a package `__init__.py`, a `.gitignore` negation, etc.) that genuinely must ship, expand the set BEFORE `finish`. The commit stage reads `planned_files` from `baseline.json`, so a needed file missing there is silently dropped from the commit. To widen it, rewrite the `planned_files` array in `.flow/tickets/<KEY>.md` frontmatter with the full set — pass a bracketed TOML array literal, NOT a bare comma list (a bare `a,b,c` is stored as the string `"a,b,c"`, not an array):
