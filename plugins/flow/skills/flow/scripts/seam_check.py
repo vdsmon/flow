@@ -33,7 +33,10 @@ SCRIPTS_DIR = Path(__file__).resolve().parent
 SKILL_ROOT = SCRIPTS_DIR.parent
 
 # A script reference inside prose, e.g. `${CLAUDE_SKILL_DIR}/scripts/init.py`.
-_SCRIPT_RE = re.compile(r"\$\{CLAUDE_SKILL_DIR\}/scripts/([a-z_]+\.py)")
+# Char class is [a-z0-9_]+ (NOT [a-z_]+): omitting the digit silently skips a
+# digit-bearing basename like embedder_model2vec.py, same lesson _MODULE_NAME_RE
+# and _STAGE_DOC_RE carry.
+_SCRIPT_RE = re.compile(r"\$\{CLAUDE_SKILL_DIR\}/scripts/([a-z0-9_]+\.py)")
 # A long-option token. Matches the flag name and stops before `=`.
 _FLAG_RE = re.compile(r"--[a-zA-Z][a-zA-Z0-9-]*")
 # Quoted strings and command substitutions hold VALUES, not flags of this
@@ -101,7 +104,7 @@ _INLINE_SPAN_RE = re.compile(r"`([^`]*)`")
 _FENCE_RE = re.compile(r"^\s*(```|~~~)")
 # A user-facing slash command in prose, e.g. `/flow recover --ticket X`. The verb
 # is the first word after `/flow `; cross-checked against scripts/<verb>.py.
-_SLASH_RE = re.compile(r"^/flow\s+([a-z][a-z-]*)\b(.*)$")
+_SLASH_RE = re.compile(r"^/flow\s+([a-z][a-z0-9-]*)\b(.*)$")
 
 
 @dataclass(frozen=True)
@@ -168,33 +171,35 @@ def _clean(token: str) -> str:
 def find_invocations(doc_name: str, text: str) -> list[Invocation]:
     invs: list[Invocation] = []
     for lineno, logical in _logical_lines(text):
-        m = _SCRIPT_RE.search(logical)
-        if not m:
-            continue
-        script = m.group(1)
-        # Args are everything after the script reference on this logical line,
-        # truncated at a shell sequencing operator so a second command's flags
-        # are not attributed to this script.
-        args = logical[m.end() :]
-        # Strip quoted value-spans FIRST so a sequencing char inside a quoted
-        # value (e.g. `--text "a; b"`) does not truncate the span mid-way and
-        # leak inner --flags. Unquoted operators survive the sub.
-        args = _VALUE_SPAN_RE.sub(" ", args)
-        for sep in ("&&", "||", "|", ";"):
-            idx = args.find(sep)
-            if idx != -1:
-                args = args[:idx]
-        flags = _FLAG_RE.findall(args)
-        invs.append(
-            Invocation(
-                doc=doc_name,
-                line=lineno,
-                script=script,
-                subcommand=None,  # resolved later, once the surface is known
-                flags=flags,
-                raw=logical.strip(),
+        matches = list(_SCRIPT_RE.finditer(logical))
+        # Every match on the logical line yields an Invocation (a `&&`-joined
+        # recipe names two commands, both must lint). Each invocation's args
+        # span runs to the next match's start, then is truncated at a shell
+        # sequencing operator so a second command's flags are not attributed
+        # to this script.
+        for i, m in enumerate(matches):
+            script = m.group(1)
+            end = matches[i + 1].start() if i + 1 < len(matches) else len(logical)
+            args = logical[m.end() : end]
+            # Strip quoted value-spans FIRST so a sequencing char inside a quoted
+            # value (e.g. `--text "a; b"`) does not truncate the span mid-way and
+            # leak inner --flags. Unquoted operators survive the sub.
+            args = _VALUE_SPAN_RE.sub(" ", args)
+            for sep in ("&&", "||", "|", ";"):
+                idx = args.find(sep)
+                if idx != -1:
+                    args = args[:idx]
+            flags = _FLAG_RE.findall(args)
+            invs.append(
+                Invocation(
+                    doc=doc_name,
+                    line=lineno,
+                    script=script,
+                    subcommand=None,  # resolved later, once the surface is known
+                    flags=flags,
+                    raw=logical[m.start() : end].strip(),
+                )
             )
-        )
     return invs
 
 

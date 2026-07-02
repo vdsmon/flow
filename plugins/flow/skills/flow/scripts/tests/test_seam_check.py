@@ -49,6 +49,29 @@ def test_find_invocations_quoted_value_with_sequencing_char() -> None:
     assert "--auto" not in inv.flags
 
 
+def test_find_invocations_matches_digit_bearing_script() -> None:
+    # Guards the [a-z_]+ regression: without the digit in _SCRIPT_RE, the `2`
+    # in embedder_model2vec.py breaks the match and the invocation goes unlinted.
+    text = "${CLAUDE_SKILL_DIR}/scripts/embedder_model2vec.py --texts-file X"
+    invs = seam_check.find_invocations("t.md", text)
+    assert len(invs) == 1
+    assert invs[0].script == "embedder_model2vec.py"
+
+
+def test_find_invocations_two_commands_on_one_line() -> None:
+    # Both commands of a &&-joined recipe must lint, each with its own flags.
+    text = (
+        "${CLAUDE_SKILL_DIR}/scripts/state.py read --key X && "
+        "${CLAUDE_SKILL_DIR}/scripts/tracker_cli.py get --key Y"
+    )
+    invs = seam_check.find_invocations("t.md", text)
+    assert len(invs) == 2
+    assert invs[0].script == "state.py"
+    assert invs[0].flags == ["--key"]
+    assert invs[1].script == "tracker_cli.py"
+    assert invs[1].flags == ["--key"]
+
+
 def test_find_invocations_handles_bare_form() -> None:
     text = "   ${CLAUDE_SKILL_DIR}/scripts/tracker_cli.py --workspace-root . get --key X"
     invs = seam_check.find_invocations("t.md", text)
