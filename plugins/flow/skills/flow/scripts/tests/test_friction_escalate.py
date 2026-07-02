@@ -286,6 +286,10 @@ def test_escalate_files_bead_with_recurrent_label_and_dedup_key(tmp_path: Path):
     create_args = next(c[0] for c in calls if c[0][:2] == ["bd", "create"])
     stamped = create_args[create_args.index("--labels") + 1]
     assert "recurrent" in stamped.split(",")
+    # propose-only is LOCKED, not merely true: an evolve label would make the
+    # bead drain-eligible, and any verb beyond list/create would be a mutation.
+    assert "evolve" not in stamped.split(",")
+    assert {c[0][1] for c in calls} <= {"list", "create"}
 
     import flow_beads_create as fbc
 
