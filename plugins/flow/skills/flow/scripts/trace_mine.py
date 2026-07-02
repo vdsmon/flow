@@ -720,7 +720,11 @@ def _build_signature(
     ts_values = [t for t in (_str_field(e, "ts") for e in members) if t]
     related = sorted(union - {primary}) if primary else sorted(union)
     return {
-        "dedup_key": f"{primary or stage}::{kind}-{stage}",
+        # An anchorless group must not collide with a group whose anchor IS the
+        # stage name (code_review/create_pr/review_loop are all real anchors()
+        # tokens). "no-anchor" contains a hyphen, which anchors() never emits,
+        # so the marker is collision-free and the left part stays non-empty.
+        "dedup_key": f"{primary or 'no-anchor'}::{kind}-{stage}",
         "summary": f"{kind} in {stage}" + (f" ({primary})" if primary else ""),
         "terminal_cause": {
             "kind": kind,

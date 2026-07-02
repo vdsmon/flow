@@ -927,7 +927,7 @@ def test_cluster_stall_gap_always_surfaces() -> None:
     assert result["missed"] == 1
     sig = result["signatures"][0]
     assert sig["mechanism"]["anchor"] == ""
-    assert sig["dedup_key"] == "implement::stall_gap-implement"
+    assert sig["dedup_key"] == "no-anchor::stall_gap-implement"
 
 
 def test_cluster_silent_retry_missed_by_loop_surfaces() -> None:
@@ -1067,3 +1067,32 @@ def test_cluster_cli_reads_events_from_stdin(
     assert rc == 0
     assert result is not None
     assert result["missed"] == 1
+
+
+def test_cluster_anchorless_key_distinct_from_stage_named_anchor():
+    # code_review is itself an anchors() token: an anchorless drift group and a
+    # code_review-anchored drift group in the same stage must not share a key.
+    anchored = {
+        "id": "e-1",
+        "ts": "2026-06-01T00:00:00.000Z",
+        "kind": "drift",
+        "stage": "code_review",
+        "run_id": "r1",
+        "ticket": "T-1",
+        "body": "code_review drifted on code_review",
+        "detail": "",
+    }
+    anchorless = {
+        "id": "e-2",
+        "ts": "2026-06-01T00:01:00.000Z",
+        "kind": "drift",
+        "stage": "code_review",
+        "run_id": "r1",
+        "ticket": "T-1",
+        "body": "???",
+        "detail": "",
+    }
+    result = trace_mine.cluster_signatures([anchored, anchorless], [])
+    keys = [s["dedup_key"] for s in result["signatures"]]
+    assert len(keys) == len(set(keys)), keys
+    assert all(k.split("::")[0] for k in keys)
