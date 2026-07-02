@@ -41,8 +41,9 @@ Exit codes:
       frontmatter is malformed)
   1 = lock contention (couldn't acquire after 3 x 1s retry)
   2 = update-side schema invalid (file has content but no/!parseable
-      frontmatter block; aborts without touching the file), or a malformed
-      --set pair
+      frontmatter block; aborts without touching the file), a malformed
+      --set pair, or an existing value of a type the emitter cannot
+      round-trip (a hand-edited table)
   3 = I/O error
 """
 
@@ -176,10 +177,7 @@ def _split_frontmatter(text: str) -> tuple[str | None, str]:
 
 def _parse_frontmatter(fm: str) -> dict[str, Any]:
     """Parse TOML block. Raises tomllib.TOMLDecodeError on failure."""
-    data = tomllib.loads(fm)
-    if not isinstance(data, dict):
-        raise tomllib.TOMLDecodeError("frontmatter root is not a table")
-    return data
+    return tomllib.loads(fm)
 
 
 # ─── Emit ────────────────────────────────────────────────────────────────────
@@ -190,13 +188,23 @@ def _emit_value(value: Any) -> str:
         return "true" if value else "false"
     if isinstance(value, int):
         return str(value)
-    # datetime is a subclass of date; one branch covers both. ISO 8601 with a
-    # `T` separator is a TOML datetime literal, emitted unquoted to keep the type.
-    if isinstance(value, datetime.date):
+    if isinstance(value, float):
+        # repr output is inside the TOML float grammar for every value,
+        # including inf/nan, so hand-edited floats round-trip typed.
+        return repr(value)
+    # datetime is a subclass of date; one branch covers both, plus local time.
+    # ISO 8601 output is a TOML datetime/time literal, emitted unquoted to keep
+    # the type.
+    if isinstance(value, (datetime.date, datetime.time)):
         return value.isoformat()
     if isinstance(value, list):
         return "[" + ", ".join(_emit_value(v) for v in value) + "]"
-    return _toml_escape(str(value))
+    if isinstance(value, str):
+        return _toml_escape(value)
+    # a stringified fallthrough would silently corrupt the type (a hand-edited
+    # [table] re-emitted as its Python repr); refuse loudly instead, before the
+    # atomic write, so the file is left untouched.
+    raise _SchemaInvalid(f"cannot emit frontmatter value of type {type(value).__name__}")
 
 
 def _emit_key(key: str) -> str:

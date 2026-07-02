@@ -41,11 +41,12 @@ The applied patch comes from the recorded `implement.diff` — NOT from `git add
      --cwd .
    ```
    - Exit 0 → `<ticket-dir>/implement.diff` exists.
-   - Exit 1 → no baseline.
+   - Exit 1 with stderr `planned file(s) gitignored, cannot be committed: <files>` → a planned file is gitignored. Do NOT retry implement: it re-records the same baseline and capture fails identically. Fix the cause instead — add a narrow `.gitignore` negation for the named file(s) (adding `.gitignore` to the plan via `record-baseline --files ...`), or drop them from `planned_files` and re-record; then rerun this step.
+   - Exit 1 otherwise → no/malformed baseline.
      Abort; recover via `/flow recover <KEY>` → `retry --stage implement` (its records_diff_baseline pre-hook re-records the baseline).
    - Exit 2 → git error. Abort.
 
-2b. Content-ownership gate. Verify the working tree carries only planned changes before the commit is composed — a PR must hold only what was planned. `planned_files` has already been widened by the post-implement reconcile, so a legitimately-touched file is owned by now; anything still outside it is unplanned and must not ride along.
+2b. Content-ownership gate. Verify the branch carries only planned changes before the commit is composed — a PR must hold only what was planned. The scan covers the full delta against the recorded baseline: commits made since `baseline.head_sha` AND the dirty working tree, so a change already committed on the branch is flagged the same as an uncommitted edit (committing a stray file does not hide it). `planned_files` has already been widened by the post-implement reconcile, so a legitimately-touched file is owned by now; anything still outside it is unplanned and must not ride along.
    ```bash
    ${CLAUDE_SKILL_DIR}/scripts/diff_extract.py check-ownership \
      --ticket <KEY> \
@@ -53,12 +54,13 @@ The applied patch comes from the recorded `implement.diff` — NOT from `git add
      --cwd .
    ```
    - Exit 0 → ownership clean; continue.
-   - Exit 3 → ownership violation. The printed JSON's `unowned_changes` lists files changed outside `planned_files`. Do NOT commit. Surface the unowned files and resolve by either (a) adding genuinely-needed files to the plan and re-recording the baseline (`record-baseline --files ...` — the reconcile path), or (b) reverting the stray edit; then rerun. If it cannot be resolved, abort with status=failed. Never commit past an unowned change, and never crash on it — exit 3 is a clean refusal to act on, not a fault.
-   - Exit 1 → no baseline. Abort; `/flow recover <KEY>` → `retry --stage implement` (re-records the baseline).
+   - Exit 3 → ownership violation. The printed JSON's `unowned_changes` lists files changed outside `planned_files` (committed since the baseline or dirty in the tree). Do NOT commit. Surface the unowned files and resolve by either (a) adding genuinely-needed files to the plan and re-recording the baseline (`record-baseline --files ...` — the reconcile path), or (b) reverting the stray edit — for a change already committed on the branch that means removing it from the branch (revert or rewrite the commit), not just cleaning the working tree; then rerun. If it cannot be resolved, abort with status=failed. Never commit past an unowned change, and never crash on it — exit 3 is a clean refusal to act on, not a fault.
+   - Exit 1 → no/malformed baseline (or a baseline missing `head_sha`). Abort; `/flow recover <KEY>` → `retry --stage implement` (re-records the baseline).
    - Exit 2 → git error. Abort.
 
 3. Compose the commit skeleton.
-   Read `commit_type` + `commit_summary` from the ticket frontmatter (or ask the user if missing):
+   Read `commit_type` + `commit_summary` from the ticket frontmatter (or ask the user if missing).
+   Grouped runs: also read `covers` from the same frontmatter (the step-8 read); when non-empty, pass it as `--covers <c1>,<c2>` so the commit trailer carries one `Closes <KEY>` per cover — `create_pr` builds the PR's Closes footer solely from these trailers (the agent must not write the footer itself), and the orphan reap closes covers from them too. Omitting the flag on a grouped run breaks the SKILL.md per-cover Closes promise.
    ```bash
    ${CLAUDE_SKILL_DIR}/scripts/compose_commit.py \
      --ticket <KEY> \
@@ -66,6 +68,7 @@ The applied patch comes from the recorded `implement.diff` — NOT from `git add
      --summary "<short summary>" \
      [--scope <scope>] \
      [--files <comma-list-from-baseline.planned_files>] \
+     [--covers <comma-list-from-frontmatter-covers>] \
      > "${TMPDIR:-/tmp}/flow-commit-<KEY>.txt"
    ```
    - Exit 0 → commit skeleton at `${TMPDIR:-/tmp}/flow-commit-<KEY>.txt`. Bare `/tmp` is not writable under the harness Bash sandbox; `$TMPDIR` is. Run `echo "${TMPDIR:-/tmp}"` once and use the resolved absolute path in steps 4 and 6.
@@ -84,7 +87,7 @@ The applied patch comes from the recorded `implement.diff` — NOT from `git add
    ```bash
    ${CLAUDE_SKILL_DIR}/scripts/scrub_ci_skip.py "${TMPDIR:-/tmp}/flow-commit-<KEY>.txt"
    ```
-   Run via Bash so the rewrite lands on disk regardless of the harness Read/Write tracking. It exits 0 always, scrubbing in place: it strips the brackets from `[skip ci]` / `[ci skip]` / `[no ci]` / `[skip actions]` / `[actions skip]` (any case), keeping the words. If its stderr reports neutralized tokens, that is the step-4 caution being caught after the fact; continue.
+   Run via Bash so the rewrite lands on disk regardless of the harness Read/Write tracking. It exits 0 always, scrubbing in place: it strips the brackets from `[skip ci]` / `[ci skip]` / `[no ci]` / `[skip actions]` / `[actions skip]` (any case), keeping the words, and drops the colon from a whole-line `skip-checks: true` trailer (GitHub's unbracketed CI-skip form). If its stderr reports neutralized tokens, that is the step-4 caution being caught after the fact; continue.
 
 5. Reset the index to HEAD, then apply the recorded patch:
    ```bash
@@ -151,9 +154,11 @@ The applied patch comes from the recorded `implement.diff` — NOT from `git add
 
 - `lint_ticket.py` exit 1 → user must populate `commit_type` +
   `commit_summary` frontmatter.
-- `diff_extract.py check-ownership` exit 3 → changes outside `planned_files`;
-  do NOT commit. Reconcile the plan (`record-baseline --files ...`) or revert
-  the stray edit, then rerun. Fail-safe: a clean refusal, never a silent commit.
+- `diff_extract.py check-ownership` exit 3 → changes outside `planned_files`
+  (committed since the baseline or dirty in the tree); do NOT commit. Reconcile
+  the plan (`record-baseline --files ...`) or revert the stray edit (removing a
+  committed stray from the branch, not just the tree), then rerun. Fail-safe: a
+  clean refusal, never a silent commit.
 - `git apply --cached` fail → working tree drift. `/flow recover <KEY>` → `retry --stage implement` re-records the baseline.
 - `tracker_cli.py transition` exit 1 → transient; log warning, do not block.
   The commit is the source of truth. `--enqueue-on-transient` queues the

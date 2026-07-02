@@ -265,6 +265,109 @@ def test_check_ownership_rename_within_flow_dir_excluded(tmp_repo: Path, tmp_pat
     assert ".flow/y.py" not in payload["changed"]
 
 
+def test_check_ownership_committed_unplanned_change_refused(tmp_repo: Path, tmp_path: Path) -> None:
+    # Regression: a rogue `git commit` of an unplanned file mid-implement leaves
+    # `git status` clean for that path, so a working-tree-only scan passed it and
+    # the change rode the branch into the PR. The gate must also cover the
+    # baseline.head_sha..HEAD delta.
+    ticket_dir = tmp_repo / ".flow" / "runs" / "FT-1"
+    diff_extract.record_baseline("implement", ticket_dir, tmp_repo, files=["a.py"])
+    (tmp_repo / "a.py").write_text("print('planned')\n", encoding="utf-8")
+    (tmp_repo / "rogue.py").write_text("print('rogue')\n", encoding="utf-8")
+    _git(["add", "rogue.py"], tmp_repo)
+    _git(["commit", "-m", "rogue"], tmp_repo)
+    assert "rogue.py" not in _git(["status", "--porcelain"], tmp_repo)
+    payload = diff_extract.check_ownership(ticket_dir, tmp_repo)
+    assert payload["ok"] is False
+    assert "rogue.py" in payload["unowned_changes"]
+    assert "rogue.py" in payload["changed"]
+
+
+def test_check_ownership_committed_planned_change_ok(tmp_repo: Path, tmp_path: Path) -> None:
+    ticket_dir = tmp_repo / ".flow" / "runs" / "FT-1"
+    diff_extract.record_baseline("implement", ticket_dir, tmp_repo, files=["a.py"])
+    (tmp_repo / "a.py").write_text("print('planned')\n", encoding="utf-8")
+    _git(["add", "a.py"], tmp_repo)
+    _git(["commit", "-m", "planned work"], tmp_repo)
+    payload = diff_extract.check_ownership(ticket_dir, tmp_repo)
+    assert payload["ok"] is True
+    assert payload["unowned_changes"] == []
+    assert "a.py" in payload["changed"]
+
+
+def test_check_ownership_committed_flow_dir_change_excluded(tmp_repo: Path, tmp_path: Path) -> None:
+    ticket_dir = tmp_repo / ".flow" / "runs" / "FT-1"
+    diff_extract.record_baseline("implement", ticket_dir, tmp_repo, files=["a.py"])
+    (tmp_repo / ".flow" / "notes.md").write_text("run scratch\n", encoding="utf-8")
+    _git(["add", "-f", ".flow/notes.md"], tmp_repo)
+    _git(["commit", "-m", "flow scratch"], tmp_repo)
+    payload = diff_extract.check_ownership(ticket_dir, tmp_repo)
+    assert payload["ok"] is True
+    assert ".flow/notes.md" not in payload["changed"]
+
+
+def test_check_ownership_committed_rename_source_refused(tmp_repo: Path, tmp_path: Path) -> None:
+    # a committed `git mv` of an unplanned source into a planned destination must
+    # surface the source deletion; --no-renames lists both endpoints.
+    (tmp_repo / "old.py").write_text("print('x')\n", encoding="utf-8")
+    _git(["add", "old.py"], tmp_repo)
+    _git(["commit", "-m", "add old"], tmp_repo)
+    ticket_dir = tmp_repo / ".flow" / "runs" / "FT-1"
+    diff_extract.record_baseline("implement", ticket_dir, tmp_repo, files=["new.py"])
+    _git(["mv", "old.py", "new.py"], tmp_repo)
+    _git(["commit", "-m", "rename"], tmp_repo)
+    payload = diff_extract.check_ownership(ticket_dir, tmp_repo)
+    assert payload["ok"] is False
+    assert "old.py" in payload["unowned_changes"]
+    assert "new.py" not in payload["unowned_changes"]
+
+
+def test_check_ownership_committed_and_dirty_both_flagged(tmp_repo: Path, tmp_path: Path) -> None:
+    ticket_dir = tmp_repo / ".flow" / "runs" / "FT-1"
+    diff_extract.record_baseline("implement", ticket_dir, tmp_repo, files=["a.py"])
+    (tmp_repo / "rogue.py").write_text("committed\n", encoding="utf-8")
+    _git(["add", "rogue.py"], tmp_repo)
+    _git(["commit", "-m", "rogue"], tmp_repo)
+    (tmp_repo / "dirty.py").write_text("uncommitted\n", encoding="utf-8")
+    payload = diff_extract.check_ownership(ticket_dir, tmp_repo)
+    assert payload["ok"] is False
+    assert "rogue.py" in payload["unowned_changes"]
+    assert "dirty.py" in payload["unowned_changes"]
+
+
+def test_check_ownership_missing_head_sha_raises(tmp_repo: Path, tmp_path: Path) -> None:
+    # a baseline without head_sha cannot anchor the committed-delta scan; fail
+    # closed (exit 1) instead of silently narrowing to the working tree.
+    ticket_dir = tmp_repo / ".flow" / "runs" / "FT-1"
+    ticket_dir.mkdir(parents=True)
+    (ticket_dir / "baseline.json").write_text(
+        json.dumps({"stage": "implement", "planned_files": ["a.py"], "blobs": {}}),
+        encoding="utf-8",
+    )
+    with pytest.raises(diff_extract._BaselineMissing, match="head_sha"):
+        diff_extract.check_ownership(ticket_dir, tmp_repo)
+
+
+def test_check_ownership_cli_exit_3_for_committed_change(tmp_repo: Path, tmp_path: Path) -> None:
+    ticket_dir = tmp_repo / ".flow" / "runs" / "FT-1"
+    diff_extract.record_baseline("implement", ticket_dir, tmp_repo, files=["a.py"])
+    (tmp_repo / "rogue.py").write_text("x\n", encoding="utf-8")
+    _git(["add", "rogue.py"], tmp_repo)
+    _git(["commit", "-m", "rogue"], tmp_repo)
+    rc = diff_extract.cli_main(
+        [
+            "check-ownership",
+            "--ticket",
+            "FT-1",
+            "--ticket-dir",
+            str(ticket_dir),
+            "--cwd",
+            str(tmp_repo),
+        ]
+    )
+    assert rc == 3
+
+
 def test_unquote_porcelain_path_octal_utf8() -> None:
     # quotePath=false keeps non-ASCII literal so this is unreachable through
     # check_ownership; exercise the octal multibyte round-trip at the helper level.

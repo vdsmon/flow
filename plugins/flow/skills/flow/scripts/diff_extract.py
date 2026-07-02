@@ -393,16 +393,31 @@ def capture_implement_diff(
     return out_path
 
 
+def _ownership_excluded(path: str) -> bool:
+    # flow's own run state lives under .flow/; its writes are never an
+    # unrelated user edit, so they never count against ownership. the
+    # bootstrap (flow_worktree._copy_config) likewise copies the whole
+    # .claude/ scaffolding (hooks/skills/settings) into each worktree; it is
+    # dev config, never the ticket's own edit, so it is excluded too.
+    if path == ".flow" or path.startswith(".flow/"):
+        return True
+    return path == ".claude" or path.startswith(".claude/")
+
+
 def check_ownership(
     ticket_dir: Path,
     cwd: Path,
     runner: Runner | None = None,
 ) -> OwnershipResult:
-    """Refuse if the working tree has changes outside the baseline planned_files.
+    """Refuse if the branch delta has changes outside the baseline planned_files.
 
     Filename-level gate (the commit stage stages by patch from implement.diff, so
-    this guards against unrelated edits sneaking into the commit). Hunk-level
-    ownership against implement.diff is a deeper check deferred to a later phase.
+    this guards against unrelated edits sneaking into the commit). The scan covers
+    the full delta against the recorded baseline: commits made since
+    baseline.head_sha AND the dirty working tree, so a change smuggled in via a
+    rogue `git commit` mid-implement is seen too, not only uncommitted edits.
+    Hunk-level ownership against implement.diff is a deeper check deferred to a
+    later phase.
     """
     r = runner or _default_runner()
     bpath = _baseline_path(ticket_dir)
@@ -412,13 +427,16 @@ def check_ownership(
         baseline = json.loads(bpath.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
         raise _BaselineMissing(f"baseline.json malformed: {exc}") from exc
+    head_sha = baseline.get("head_sha")
+    if not isinstance(head_sha, str) or not head_sha:
+        raise _BaselineMissing("baseline.json missing head_sha")
     planned = baseline.get("planned_files", [])
     owned = {str(p) for p in planned} if isinstance(planned, list) else set()
     # --untracked-files=all lists each untracked file individually; without it
     # git collapses a fully-untracked directory to "foo/", which never matches a
     # per-file planned_files entry and false-positives the whole dir as unowned.
     raw = _git(["status", "--porcelain", "--untracked-files=all"], cwd, r)
-    changed: list[str] = []
+    changed: set[str] = set()
     for line in raw.splitlines():
         if not line.strip():
             continue
@@ -429,16 +447,24 @@ def check_ownership(
         tokens = [side.strip() for side in token.split(" -> ", 1)] if " -> " in token else [token]
         for tok in tokens:
             path = _unquote_porcelain_path(tok)
-            # flow's own run state lives under .flow/; its writes are never an
-            # unrelated user edit, so they never count against ownership. the
-            # bootstrap (flow_worktree._copy_config) likewise copies the whole
-            # .claude/ scaffolding (hooks/skills/settings) into each worktree; it is
-            # dev config, never the ticket's own edit, so it is excluded too.
-            if path == ".flow" or path.startswith(".flow/"):
+            if _ownership_excluded(path):
                 continue
-            if path == ".claude" or path.startswith(".claude/"):
-                continue
-            changed.append(path)
+            changed.add(path)
+    # `git status` is blind to changes already committed on the branch, so a
+    # rogue `git commit` of an unplanned file mid-implement would slip past a
+    # working-tree-only scan and ride into the PR. Diff the recorded baseline
+    # sha against HEAD to cover the committed delta too (empty on the normal
+    # path where HEAD still equals head_sha). --no-renames lists both rename
+    # endpoints so an out-of-scope rename source is seen here as well.
+    raw = _git(["diff", "--name-only", "--no-renames", f"{head_sha}..HEAD"], cwd, r)
+    for line in raw.splitlines():
+        tok = line.strip()
+        if not tok:
+            continue
+        path = _unquote_porcelain_path(tok)
+        if _ownership_excluded(path):
+            continue
+        changed.add(path)
     unowned = sorted(p for p in changed if p not in owned)
     return {
         "ok": not unowned,

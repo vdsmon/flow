@@ -93,6 +93,37 @@ def test_cli_covers_comma_split(capsys: pytest.CaptureFixture[str]) -> None:
 # ─── CLI ─────────────────────────────────────────────────────────────────────
 
 
+def test_cli_files_empty_segments_dropped(capsys: pytest.CaptureFixture[str]) -> None:
+    # a doubled or trailing comma (easy when joining baseline.planned_files)
+    # must not emit a blank "  - " bullet into the commit message.
+    rc = compose_commit.cli_main(
+        ["--ticket", "FT-1", "--type", "feat", "--summary", "x", "--files", "a.py,,b.py,"]
+    )
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "  - a.py" in out
+    assert "  - b.py" in out
+    assert "  - \n" not in out
+    assert "  -\n" not in out
+
+
+def test_cli_files_only_commas_omits_section(capsys: pytest.CaptureFixture[str]) -> None:
+    rc = compose_commit.cli_main(
+        ["--ticket", "FT-1", "--type", "feat", "--summary", "x", "--files", " , ,"]
+    )
+    assert rc == 0
+    assert "files:" not in capsys.readouterr().out
+
+
+def test_cli_covers_empty_segments_dropped(capsys: pytest.CaptureFixture[str]) -> None:
+    rc = compose_commit.cli_main(
+        ["--ticket", "FT-1", "--type", "fix", "--summary", "x", "--covers", "FT-2,,FT-3,"]
+    )
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert out.count("Closes ") == 2
+
+
 def test_cli_happy_path(capsys: pytest.CaptureFixture[str]) -> None:
     rc = compose_commit.cli_main(
         [
