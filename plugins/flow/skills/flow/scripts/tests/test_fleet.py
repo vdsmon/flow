@@ -329,6 +329,19 @@ def test_is_live_false_on_expired_lease_no_fleet(tmp_path):
     assert fleet.is_live(main, "flow-x") is False
 
 
+def test_is_live_follows_memory_root_redirect_from_worktree(tmp_path):
+    # called from a worktree, the pool must resolve to MAIN's .flow/worktrees via
+    # the memory-root redirect (same as fleet storage). resolve_maintainer_repo
+    # would return the worktree itself (its workspace.toml byte copy carries
+    # self_target), whose empty pool read a LIVE run as provably-not-live and
+    # inverted the fail-safe in front of the drain's stop/reap acts.
+    main = _marked(tmp_path, "flow")
+    wt = _marked(tmp_path, "wt")
+    (wt / ".flow" / "memory-root").write_text(str(main / ".flow"), encoding="utf-8")
+    _pool_lease(main, "flow-x")  # live lease in MAIN's pool
+    assert fleet.is_live(wt, "flow-x") is True
+
+
 def test_is_live_cli_exit_codes(tmp_path):
     main = _marked(tmp_path, "flow")
     _pool_lease(main, "flow-x")  # live lease => is_live True => exit 0

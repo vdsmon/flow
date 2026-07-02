@@ -491,3 +491,62 @@ def test_select_budget_shrinks_with_launched_pending(tmp_path):
     out = qs.select(ws, cap=10, concurrency=8, runner=run)
     assert len(out["launch"]) == 2  # 8 - 6 launched_pending
     assert sorted(out["launched_pending"]) == sorted(pending)
+
+
+# ---- budget is queue-scoped: evolve sessions never consume day-job slots ----
+
+
+def test_select_evolve_sessions_do_not_consume_budget(tmp_path):
+    # the docstring's never-starves claim: 3 live evolve runs at [queue]
+    # concurrency 3 used to zero the budget (inflight was repo-global) and the
+    # drain read a false `done` with day-job work ready.
+    ws = _marked_ws(tmp_path)
+    repo = qs.resolve_maintainer_repo(ws)
+    assert repo is not None
+    evolve = ["flow-e1", "flow-e2", "flow-e3"]
+    for key in evolve:
+        _write_lease(_pool_run_dir(repo, key))
+    run, _ = _dispatch(
+        ready=[_cand("flow-d1")],
+        evolve_list=[{"id": k, "labels": ["evolve"], "status": "in_progress"} for k in evolve],
+    )
+    out = qs.select(ws, cap=5, concurrency=3, runner=run)
+    assert out["launch"] == ["flow-d1"]
+    # the evolve keys still surface in live_runs (queue_drain subtracts them for
+    # the wait gate); only the budget subtraction happens here
+    assert sorted(out["live_runs"]) == evolve
+
+
+def test_select_mixed_sessions_only_day_job_consumes_budget(tmp_path):
+    # discriminator: one evolve lease + one day-job launch marker at
+    # concurrency 2 leaves exactly one slot (evolve subtracted, day-job counted)
+    ws = _marked_ws(tmp_path)
+    repo = qs.resolve_maintainer_repo(ws)
+    assert repo is not None
+    import launch_ledger
+
+    _write_lease(_pool_run_dir(repo, "flow-ev"))
+    launch_ledger.add(repo, "flow-day")
+    run, _ = _dispatch(
+        ready=[_cand("flow-r1"), _cand("flow-r2")],
+        evolve_list=[{"id": "flow-ev", "labels": ["evolve"], "status": "in_progress"}],
+    )
+    out = qs.select(ws, cap=5, concurrency=2, runner=run)
+    assert len(out["launch"]) == 1  # 2 - 1 day-job session; the evolve lease is free
+
+
+def test_select_active_evolve_query_is_unlimited(tmp_path):
+    # --limit 0: bd's default 50-row priority-sorted page would silently drop an
+    # active evolve key past the cutoff, letting its PR count toward this cap
+    # and its session eat this budget.
+    ws = _marked_ws(tmp_path)
+    run, calls = _dispatch(
+        ready=[],
+        prs=[{"headRefName": "feature/flow-day-wip"}],
+        evolve_list=[],
+    )
+    qs.select(ws, cap=5, concurrency=3, runner=run)
+    list_calls = [a for a in calls if a[:2] == ["bd", "list"]]
+    assert len(list_calls) == 1
+    args = list_calls[0]
+    assert args[args.index("--limit") + 1] == "0"

@@ -319,4 +319,78 @@ def test_cli_output_shape(tmp_path, monkeypatch, capsys):
     rc = qst.cli_main(["--workspace-root", str(ws)])
     assert rc == 0
     out = json.loads(capsys.readouterr().out)
-    assert set(out) == {"action", "launch", "parked", "liveness", "ready", "select"}
+    assert set(out) == {
+        "action",
+        "launch",
+        "parked",
+        "stranded_pre_pr",
+        "liveness",
+        "ready",
+        "select",
+    }
+
+
+# ---- advisory parity with queue_drain (evolve scoping + stranded) ----
+
+
+def test_live_evolve_run_does_not_wait(tmp_path):
+    # the advisory must mirror queue_drain's scoping: a live evolve lease in the
+    # shared pool is not this queue's to wait on, so the real drain ignores it
+    # and the report must too (it used to say `wait`).
+    ws = _marked_ws(tmp_path)
+    _write_lease(_pool_run_dir(ws, "flow-ev"))
+    run, _ = _dispatch(
+        ready=[],
+        evolve_list=[{"id": "flow-ev", "labels": ["evolve"], "status": "in_progress"}],
+    )
+    out = qst.status(ws, cap=5, concurrency=3, runner=run)
+    assert out["liveness"] == {}
+    assert out["action"] == "done"
+
+
+def _stranded_dispatch(in_progress: list[dict]):
+    """bd list dispatched by `-l` like queue_drain's stub: the label-scoped
+    active-evolve query returns [], the unscoped in_progress query returns the
+    fixture (a single fixture list cannot serve both without conflating scopes)."""
+    calls: Recorder = []
+
+    def run(args: list[str]) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        if args[:2] == ["bd", "ready"]:
+            return subprocess.CompletedProcess(args, 0, "[]", "")
+        if args[:2] == ["bd", "list"]:
+            payload = [] if "-l" in args else in_progress
+            return subprocess.CompletedProcess(args, 0, json.dumps(payload), "")
+        if args[:3] == ["gh", "pr", "list"]:
+            return subprocess.CompletedProcess(args, 0, "[]", "")
+        if args[:2] == ["git", "for-each-ref"]:
+            return subprocess.CompletedProcess(args, 0, "", "")
+        return subprocess.CompletedProcess(args, 1, "", f"unexpected: {args}")
+
+    return run, calls
+
+
+def test_stranded_day_job_bead_reports_recover(tmp_path):
+    # an in_progress day-job bead with no lease, no PR, no launch marker is
+    # STRANDED; the real drain returns `recover`, so the advisory must too
+    # (it used to false-positive `done`).
+    ws = _marked_ws(tmp_path)
+    run, _ = _stranded_dispatch([{"id": "flow-strand"}])
+    out = qst.status(ws, cap=5, concurrency=3, runner=run)
+    assert out["action"] == "recover"
+    assert [e["key"] for e in out["stranded_pre_pr"]] == ["flow-strand"]
+
+
+def test_stranded_detection_stays_read_only(tmp_path):
+    # the stranded probe adds bd/gh reads only; the launch-ledger marker of an
+    # unregistered key must survive the status call untouched
+    ws = _marked_ws(tmp_path)
+    launch_ledger.add(ws, "flow-strand")
+    marker = ws / ".flow" / "launch-ledger" / "flow-strand"
+    run, calls = _stranded_dispatch([{"id": "flow-strand"}])
+    out = qst.status(ws, cap=5, concurrency=3, runner=run)
+    # launched_pending covers the key, so it is still booting, not stranded
+    assert out["stranded_pre_pr"] == []
+    assert marker.exists()
+    for args in calls:
+        assert any(args[: len(p)] == p for p in _READ_ONLY_PREFIXES), f"mutating call: {args}"

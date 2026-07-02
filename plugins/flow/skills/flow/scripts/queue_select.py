@@ -12,10 +12,12 @@ invisible to evolve's one-hot gate, so it never auto-launches either). No
 hot-serialization layer. Hotness is evolve-machinery-only.
 
 Backpressure is queue-scoped: only open `feat/flow-*` PRs whose key is NOT
-an active evolve bead count toward the `[queue]` cap, so a busy evolve drain
-never starves this queue. Conservative edge: a flow-key PR whose evolve bead is
-already closed/deferred counts toward the day-job cap (transient
-under-launching, never over-launching).
+an active evolve bead count toward the `[queue]` cap, and the concurrency
+budget's in-flight session count (the shared worktree pool + launch ledger)
+subtracts the same active-evolve set, so a busy evolve drain never starves
+this queue. Conservative edge: a flow-key PR whose evolve bead is already
+closed/deferred counts toward the day-job cap (transient under-launching,
+never over-launching).
 
 Partition is best-effort coarse, NOT a disjointness guarantee (planning is
 post-launch, so the selector never knows a bead's real file set). It serializes
@@ -42,21 +44,23 @@ from pathlib import Path
 
 import launch_ledger
 from _evolve_common import (
-    ACTIVE_STATUSES,
     NotMaintainer,
     ToolError,
+    active_evolve_keys,
     fleet_live_keys,
     gather_refs,
     is_inflight,
     key_from_ref,
     live_run_keys,
     loads,
+    model_per_key,
     ok,
     primary_anchor,
+    read_cap_concurrency,
 )
+from _evolve_common import read_worker_model as _worker_model
 from _runner import CwdRunner as Runner
 from _runner import cwd_default_runner as _default_runner
-from _workspace import WorkspaceConfigError, load_workspace_toml
 from maintainer import resolve_maintainer_repo
 
 DEFAULT_CAP = 5
@@ -131,24 +135,6 @@ def partition(
     }
 
 
-def _day_job_open_prs(runner: Runner, pr_refs: set[str]) -> list[str]:
-    """The day-job keys behind the open flow-* PRs (evolve PRs excluded).
-
-    A PR key is evolve's iff `bd list -l evolve` over the active statuses knows
-    it; everything else (incl. a key whose evolve bead is already closed)
-    counts toward THIS queue's cap.
-    """
-    pr_keys = {k for r in pr_refs if (k := key_from_ref(r))}
-    if not pr_keys:
-        return []
-    raw = ok(
-        runner(["bd", "list", "-l", "evolve", "--status", ACTIVE_STATUSES, "--json"]),
-        "bd list",
-    )
-    active_evolve = {str(b["id"]) for b in loads(raw) if isinstance(b, dict) and b.get("id")}
-    return sorted(pr_keys - active_evolve)
-
-
 def select(
     workspace_root: Path,
     *,
@@ -163,7 +149,6 @@ def select(
 
     candidates = loads(ok(run(["bd", "ready", "--json"]), "bd ready"))
     refs, pr_refs = gather_refs(run)
-    open_pr_keys = _day_job_open_prs(run, pr_refs)
     # live_keys is LEASE-ONLY (-> result["live_runs"], which the queue-drain uses for
     # the launch-marker registered-check); fleet must NOT leak into it or a still-
     # booting pre-lease run gets evicted from launched_pending a turn early (flow-d4s).
@@ -171,6 +156,17 @@ def select(
     live_keys = live_run_keys(repo)  # lease-only -> result["live_runs"]
     fleet_keys = fleet_live_keys(repo)  # lease | fleet (reconciled in-flight authority)
     launched_keys = launch_ledger.live_keys(repo)  # pre-init launch->init window
+    sessions = fleet_keys | launched_keys
+    pr_keys = {k for r in pr_refs if (k := key_from_ref(r))}
+    # The PR set, worktree pool, and launch ledger are all repo-global (shared with
+    # the evolve drain), so the active-evolve keys leave BOTH backpressure terms: an
+    # evolve PR belongs to the evolve queue's cap, and an evolve session must not
+    # consume this queue's concurrency budget (a saturated evolve drain would
+    # otherwise zero it and starve the day-job queue). One query serves both;
+    # skipped when there is nothing to subtract from. A key whose evolve bead is
+    # already closed/deferred still counts here (transient under-launching only).
+    active_evolve = active_evolve_keys(run) if (pr_keys or sessions) else set()
+    open_pr_keys = sorted(pr_keys - active_evolve)
     inflight_keys = (
         {c["id"] for c in candidates if c.get("id") and is_inflight(c["id"], refs)}
         | fleet_keys
@@ -183,7 +179,7 @@ def select(
         len(open_pr_keys),
         cap=cap,
         concurrency=concurrency,
-        inflight_count=len(fleet_keys | launched_keys),
+        inflight_count=len(sessions - active_evolve),
     )
     result["cap"] = cap
     result["concurrency"] = concurrency
@@ -194,51 +190,14 @@ def select(
     result["live_runs"] = sorted(live_keys)
     result["launched_pending"] = sorted(launched_keys)
     labels_by_id = {c["id"]: (c.get("labels") or []) for c in candidates if c.get("id")}
-    worker_model = _worker_model(workspace_root)
-    model_per_key: dict[str, str] = {}
-    for key in result["launch"]:
-        labels = labels_by_id.get(key, [])
-        # hot-first: a hot bead follows the opus-plans/sonnet-writes split too, so pin
-        # its session to worker_model (opus) to keep the judgment layer real. Checking
-        # hot before tier keeps a hot+tier:trivial bead on opus, not sonnet.
-        if "hot" in labels:
-            if worker_model:
-                model_per_key[key] = worker_model
-        elif "tier:trivial" in labels or "tier:light" in labels:
-            model_per_key[key] = "sonnet"
-        elif worker_model:
-            model_per_key[key] = worker_model
-    result["model_per_key"] = model_per_key
+    result["model_per_key"] = model_per_key(
+        result["launch"], labels_by_id, _worker_model(workspace_root)
+    )
     return result
 
 
 def _config_defaults(workspace_root: Path) -> tuple[int, int]:
-    try:
-        config = load_workspace_toml(workspace_root)
-    except WorkspaceConfigError:
-        return DEFAULT_CAP, DEFAULT_CONCURRENCY
-    section = config.get("queue")
-    if not isinstance(section, dict):
-        return DEFAULT_CAP, DEFAULT_CONCURRENCY
-    cap = section.get("cap")
-    conc = section.get("concurrency")
-    return (
-        cap if isinstance(cap, int) and cap > 0 else DEFAULT_CAP,
-        conc if isinstance(conc, int) and conc > 0 else DEFAULT_CONCURRENCY,
-    )
-
-
-def _worker_model(workspace_root: Path) -> str | None:
-    # worker_model is a shared [evolve] knob; cap/concurrency stay [queue]-scoped (see _config_defaults).
-    try:
-        config = load_workspace_toml(workspace_root)
-    except WorkspaceConfigError:
-        return None
-    section = config.get("evolve")
-    if not isinstance(section, dict):
-        return None
-    val = section.get("worker_model")
-    return val if isinstance(val, str) and val else None
+    return read_cap_concurrency(workspace_root, "queue", DEFAULT_CAP, DEFAULT_CONCURRENCY)
 
 
 def cli_main(argv: list[str]) -> int:

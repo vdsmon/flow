@@ -44,8 +44,9 @@ def flag_parked_reviews(keys: list[str], pr_refs: list[str], adapter: Any) -> li
     """For each parked key with a matching open-PR ref, count unresolved Major+ threads.
 
     Returns a result dict only for keys whose `unresolved_major > 0`. Best-effort:
-    a forge error (incl. `NotSupported`) on one key is swallowed, that key is not
-    flagged, the others still process.
+    any per-key adapter error (a `ForgeError` incl. `NotSupported`, or an
+    unexpected payload shape) is swallowed, that key is not flagged, the others
+    still process.
     """
     ref_by_key: dict[str, str] = {}
     for ref in pr_refs:
@@ -62,8 +63,14 @@ def flag_parked_reviews(keys: list[str], pr_refs: list[str], adapter: Any) -> li
             pr = adapter.detect_pr(ref)
             if pr is None:
                 continue
-            threads = adapter.review_threads(pr["id"])
-        except forge.ForgeError:
+            pr_id = pr.get("id")
+            if not pr_id:
+                continue
+            threads = adapter.review_threads(pr_id)
+        except Exception:
+            # not just ForgeError: an unexpected payload shape (KeyError/TypeError)
+            # or a raw parse error surfacing from an adapter must also skip the
+            # key, or the always-exit-0 status contract breaks
             continue
 
         flagged = [t for t in threads if t.get("severity") in _MAJOR_PLUS and not t.get("resolved")]
@@ -72,7 +79,7 @@ def flag_parked_reviews(keys: list[str], pr_refs: list[str], adapter: Any) -> li
         results.append(
             {
                 "key": key,
-                "pr_id": pr["id"],
+                "pr_id": pr_id,
                 "pr_url": pr.get("url"),
                 "unresolved_major": len(flagged),
                 "threads": [

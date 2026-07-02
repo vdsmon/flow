@@ -275,12 +275,18 @@ def _enumerate_jobs(jobs_root: Path) -> list[JobRecord]:
 
     Most job dirs on disk carry a 0-byte state.json (a session that never wrote
     one); `json.loads("")` raises, so an empty or unparseable file is silently
-    dropped (cannot classify → omit).
+    dropped (cannot classify → omit). A file that vanishes between the glob and
+    the read (the drain's own A2 step `rm -rf`s stoppable job dirs each turn, and
+    claude itself tears jobs down) is the same cannot-classify case, so an OSError
+    on the read also omits the record instead of crashing the whole cleanup.
     """
     records: list[JobRecord] = []
     for state_path in sorted(glob.glob(str(jobs_root / "*" / "state.json"))):
         path = Path(state_path)
-        raw = path.read_text(encoding="utf-8").strip()
+        try:
+            raw = path.read_text(encoding="utf-8").strip()
+        except OSError:
+            continue
         if not raw:
             continue
         try:

@@ -13,7 +13,7 @@ PR_URL=$(grep -oE '^PR_URL=.*' "$TICKET_DIR/stages/create_pr.out" | head -1 | cu
 PR_ID=$(printf '%s' "$PR_URL" | grep -oE '[0-9]+$')
 ```
 
-**Already-merged short-circuit.** Before re-reading CI or asking the gate, check the PR's actual merge state — a `hot` leaf PR can auto-merge (via the evolve janitor) before this run's own merge stage runs, and the eligibility gate below does NOT read PR merge state (it decides from CI-green + self-target + evolve-bead + hot-policy), so an already-MERGED PR with still-green CI would return `action: "merge"`, burn a §2 guard review on a merged PR, then trip §3's push-state guard once origin has deleted the branch (its `git rev-parse origin/$BRANCH` cannot resolve the deleted ref). The check sits here, right after PR_ID is in hand, so it short-circuits all of that. Read the state with raw `gh` (the established precedent for this inline, self-target-only GitHub stage — §2 already uses `gh pr diff`; `forge_cli detect-pr` filters `--state open` and cannot see an already-MERGED known PR_ID):
+**Already-merged short-circuit.** Before re-reading CI or asking the gate, check the PR's actual merge state — a `hot` leaf PR can auto-merge (via the evolve janitor) before this run's own merge stage runs, and the eligibility gate below does NOT read PR merge state (it decides from CI-green + self-target + evolve-bead + hot-policy), so an already-MERGED PR with still-green CI would return `action: "merge"`, burn a §2 guard review on a merged PR, then trip §3's push-state guard once origin has deleted the branch (its `git rev-parse origin/$BRANCH` cannot resolve the deleted ref). The check sits here, right after PR_ID is in hand, so it short-circuits all of that. Read the state with raw `gh` (the established precedent for this inline, GitHub-self-target-only stage — §2 already uses `gh pr diff`, and §3's `mergeStateStatus` read has no forge-seam equivalent; `forge_cli pr-info --pr` could read this state through the seam, so this is a consistency choice for the stage, not a seam limitation):
 
 ```bash
 PR_STATE=$(gh pr view "$PR_ID" --json state -q .state)
@@ -35,11 +35,17 @@ CI=$(python3 ${CLAUDE_SKILL_DIR}/scripts/forge_cli.py --workspace-root . ci-roll
   | python3 -c 'import sys,json;print(json.load(sys.stdin)["status"])')
 ```
 
+**Read the observed diff once.** The PR's merge-time file list feeds two consumers below: the harness-eval trigger and the eligibility gate's `--changed-files` (the observed-diff hotness input):
+
+```bash
+CHANGED_FILES=$(gh pr diff "$PR_ID" --name-only)
+```
+
 **Harness non-regression eval (Self-Harness no-degradation rule).** When the PR touches the engine's own scripts, replay the frozen decider corpus against the candidate tree before asking the gate:
 
 ```bash
 EVAL_STATUS=""
-if gh pr diff "$PR_ID" --name-only | grep -qE '^plugins/flow/skills/flow/scripts/.*\.py$'; then
+if printf '%s\n' "$CHANGED_FILES" | grep -qE '^plugins/flow/skills/flow/scripts/.*\.py$'; then
   python3 ${CLAUDE_SKILL_DIR}/scripts/harness_eval.py score \
     --candidate plugins/flow/skills/flow/scripts \
     > "$TICKET_DIR/stages/harness_eval.json"
@@ -61,10 +67,11 @@ Ask the pure gate whether this run may self-merge:
 ```bash
 _merge_args=(--workspace-root . --key "$KEY" --ci-status "$CI" --main-ci-status "$MAIN_CI")
 [ -n "$EVAL_STATUS" ] && _merge_args+=(--eval-status "$EVAL_STATUS")
+[ -n "$CHANGED_FILES" ] && _merge_args+=(--changed-files "$(printf '%s' "$CHANGED_FILES" | tr '\n' ',')")
 python3 ${CLAUDE_SKILL_DIR}/scripts/evolve_self_merge.py "${_merge_args[@]}"
 ```
 
-Returns `{"action": "merge"|"skip", "is_hot": bool, "reason": "..."}`. The gate skips when this is not the maintainer self-target, not an `evolve` bead, CI is not green, **main's own CI is red** (`main CI red` — auto-merge paused this turn; a probe `error` resumes, it does not skip), the harness eval did not pass (`regressed` = the no-degradation rule; `error` = no non-regression evidence, blocked conservatively), or a `hot` bead while `[evolve] auto_merge_hot` is off.
+Returns `{"action": "merge"|"skip", "is_hot": bool, "reason": "..."}`. `is_hot` ORs the `hot` label, guard-file hits in the plan-time `planned_files` frontmatter, and guard-file hits in the OBSERVED diff (`--changed-files`): a guard file that entered the PR after planning (a review-loop CI fix — e.g. the routine seam_check→SKILL.md edit — lands on the branch without any frontmatter reconcile) still rides the hot path, so the §2 guard-property review is keyed to what actually merges, not to what was planned. The observed diff can only raise hotness, never lower it. The gate skips when this is not the maintainer self-target, not an `evolve` bead, a `proposal` bead (the maintainer's judgment call — even a manually-run proposal parks for the human), CI is not green, **main's own CI is red** (`main CI red` — auto-merge paused this turn; a probe `error` resumes, it does not skip), the harness eval did not pass (`regressed` = the no-degradation rule; `error` = no non-regression evidence, blocked conservatively), or a `hot` bead while `[evolve] auto_merge_hot` is off.
 
 - **`action: "skip"`** → leave the PR as-is for the human (this is the normal outcome on a user project and for held hot beads), `STATUS=completed`. Done. On an eval-driven skip (`regressed`/`error` reason), first post a PR comment naming the regressed case ids from `$TICKET_DIR/stages/harness_eval.json` (mirrors §2's `held_guard` pattern) so the maintainer sees WHICH frozen cases moved.
 - **`action: "merge"`** → continue. If `is_hot` is true, run §2 FIRST; otherwise skip to §3.

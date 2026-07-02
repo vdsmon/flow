@@ -149,6 +149,41 @@ def test_detect_pr_error_swallowed():
     assert results == []
 
 
+def test_non_forge_error_on_one_key_does_not_drop_others():
+    # a non-ForgeError leaking from an adapter (unexpected payload -> KeyError,
+    # raw JSON parse error, ...) must be swallowed per-key like a ForgeError, or
+    # the always-exit-0 status contract breaks with a traceback.
+    ref_bad = "feature/flow-boom-slug"
+    ref_good = "feature/flow-good-slug"
+
+    class _Boom(_FakeForge):
+        def review_threads(self, pr_id):
+            if pr_id == "1":
+                raise KeyError("unexpected payload shape")
+            return super().review_threads(pr_id)
+
+    fake = _Boom(
+        prs={ref_bad: _pr(1), ref_good: _pr(2)},
+        threads={"2": [_thread("g", "critical")]},
+    )
+    results = queue_reviews.flag_parked_reviews(
+        ["flow-boom", "flow-good"], [ref_bad, ref_good], fake
+    )
+    assert {r["key"] for r in results} == {"flow-good"}
+
+
+def test_detect_pr_payload_without_id_skipped():
+    # a payload missing `id` cannot be probed for threads; skip the key instead
+    # of raising KeyError out of the enrichment.
+    ref = "feature/flow-noid-slug"
+    pr = _pr(3)
+    del pr["id"]
+    fake = _FakeForge(prs={ref: pr}, threads={})
+    results = queue_reviews.flag_parked_reviews(["flow-noid"], [ref], fake)
+    assert results == []
+    assert all(c[0] != "review_threads" for c in fake.calls)
+
+
 @pytest.mark.parametrize(
     "severity,flagged",
     [

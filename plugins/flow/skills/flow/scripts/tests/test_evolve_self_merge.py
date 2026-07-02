@@ -83,6 +83,81 @@ def test_planned_files_absent_follows_label():
     assert d["is_hot"] is False
 
 
+# ─── decide(), the observed-diff hotness input (changed_files) ───────────────
+
+
+def test_changed_files_guard_file_raises_is_hot_with_clean_plan():
+    # the flow-sdkk blind spot: a guard file entered the PR during review-loop
+    # fixes, so it is in the observed diff but planned_files never gained it.
+    d = esm.decide(
+        ["evolve"],
+        is_maintainer=True,
+        auto_merge_hot=True,
+        ci_status="green",
+        planned_files=["plugins/flow/skills/flow/scripts/recall.py"],
+        changed_files=[
+            "plugins/flow/skills/flow/scripts/recall.py",
+            "plugins/flow/skills/flow/SKILL.md",
+        ],
+    )
+    assert d["is_hot"] is True
+
+
+def test_changed_files_hot_with_auto_merge_hot_off_skips():
+    # the failure scenario end-to-end: without changed_files this returned
+    # {action: merge, is_hot: false} and bypassed both §2 and the hot hold.
+    d = esm.decide(
+        ["evolve"],
+        is_maintainer=True,
+        auto_merge_hot=False,
+        ci_status="green",
+        planned_files=["plugins/flow/skills/flow/scripts/recall.py"],
+        changed_files=["plugins/flow/skills/flow/scripts/lease.py"],
+    )
+    assert d == {
+        "action": "skip",
+        "is_hot": True,
+        "reason": "hot bead and auto_merge_hot is off",
+    }
+
+
+def test_changed_files_clean_never_lowers_hotness():
+    # observed files only RAISE is_hot: a clean diff leaves label/plan hotness alone.
+    d = esm.decide(
+        ["evolve", "hot"],
+        is_maintainer=True,
+        auto_merge_hot=True,
+        ci_status="green",
+        changed_files=["plugins/flow/skills/flow/scripts/recall.py"],
+    )
+    assert d["is_hot"] is True
+    d = esm.decide(
+        ["evolve"],
+        is_maintainer=True,
+        auto_merge_hot=True,
+        ci_status="green",
+        planned_files=["plugins/flow/skills/flow/scripts/snapshot.py"],
+        changed_files=["plugins/flow/skills/flow/scripts/recall.py"],
+    )
+    assert d["is_hot"] is True
+
+
+def test_changed_files_absent_is_byte_for_byte_legacy():
+    d = esm.decide(["evolve"], is_maintainer=True, auto_merge_hot=False, ci_status="green")
+    assert d == {"action": "merge", "is_hot": False, "reason": "eligible"}
+
+
+def test_changed_files_empty_list_is_noop():
+    d = esm.decide(
+        ["evolve"],
+        is_maintainer=True,
+        auto_merge_hot=False,
+        ci_status="green",
+        changed_files=[],
+    )
+    assert d == {"action": "merge", "is_hot": False, "reason": "eligible"}
+
+
 # ─── decide(), the harness-eval gate ─────────────────────────────────────────
 
 
@@ -340,6 +415,85 @@ def test_cli_omitted_eval_flag_unchanged(tmp_path, capsys):
     )
     assert rc == 0
     assert json.loads(capsys.readouterr().out)["action"] == "merge"
+
+
+def test_cli_main_ci_status_flows_to_decide(tmp_path, capsys):
+    # threading guard, sibling of test_cli_eval_status_flows_to_decide: dropping
+    # `main_ci_status=args.main_ci_status` from cli_main leaves the pure tests
+    # green while a red main silently stops pausing auto-merge.
+    ws = _ws(tmp_path, self_target=True, auto_merge_hot=True)
+    rc = esm.cli_main(
+        [
+            "--workspace-root",
+            str(ws),
+            "--key",
+            "flow-x",
+            "--ci-status",
+            "green",
+            "--main-ci-status",
+            "failed",
+        ],
+        runner=_runner(["evolve"]),
+    )
+    assert rc == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["action"] == "skip"
+    assert "main CI red" in out["reason"]
+
+
+def test_cli_changed_files_flows_to_decide(tmp_path, capsys):
+    # observed-diff threading: a guard file in --changed-files raises is_hot even
+    # though the ticket frontmatter's planned_files are clean.
+    ws = _ws(tmp_path, self_target=True, auto_merge_hot=True)
+    _ticket(ws, "flow-x", ["plugins/flow/skills/flow/scripts/recall.py"])
+    rc = esm.cli_main(
+        [
+            "--workspace-root",
+            str(ws),
+            "--key",
+            "flow-x",
+            "--ci-status",
+            "green",
+            "--changed-files",
+            "plugins/flow/skills/flow/scripts/recall.py,plugins/flow/skills/flow/scripts/lease.py",
+        ],
+        runner=_runner(["evolve"]),
+    )
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out)["is_hot"] is True
+
+
+def test_cli_omitted_changed_files_unchanged(tmp_path, capsys):
+    ws = _ws(tmp_path, self_target=True, auto_merge_hot=True)
+    _ticket(ws, "flow-x", ["plugins/flow/skills/flow/scripts/recall.py"])
+    rc = esm.cli_main(
+        ["--workspace-root", str(ws), "--key", "flow-x", "--ci-status", "green"],
+        runner=_runner(["evolve"]),
+    )
+    assert rc == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out == {"action": "merge", "is_hot": False, "reason": "eligible"}
+
+
+def test_cli_changed_files_tolerates_blank_segments(tmp_path, capsys):
+    # the prose builds the csv with tr '\n' ','; stray empty segments must not
+    # trip the guard-file match or crash the parse
+    ws = _ws(tmp_path, self_target=True, auto_merge_hot=True)
+    rc = esm.cli_main(
+        [
+            "--workspace-root",
+            str(ws),
+            "--key",
+            "flow-x",
+            "--ci-status",
+            "green",
+            "--changed-files",
+            ",plugins/flow/skills/flow/scripts/recall.py,,",
+        ],
+        runner=_runner(["evolve"]),
+    )
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out)["is_hot"] is False
 
 
 def test_cli_rejects_unknown_eval_status(tmp_path):
