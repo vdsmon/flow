@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import io
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -277,11 +279,12 @@ def test_extract_drift_marker_event(tmp_path: Path, capsys: pytest.CaptureFixtur
     assert events[0]["detail"] == "reconciled_drift"
     assert events[0]["body"] == "reconciled_drift=workspace_toml"
     assert events[1]["detail"] == "state_recovered_from_backup"
-    # never opens friction.jsonl (the "eaten" cross-check is child-2's job): no
-    # import of the modules that would read/locate it.
+    # extract itself reads/writes no friction; the friction cross-check now lives
+    # in the `cluster` subcommand (child-2, which does import _memory_paths). What
+    # stays invariant: extract never imports the friction WRITER, and an extract
+    # run creates no friction file.
     source = Path(trace_mine.__file__).read_text(encoding="utf-8")
     assert "import flow_friction" not in source
-    assert "import _memory_paths" not in source
     assert not list(tmp_path.rglob("friction.jsonl"))
 
 
@@ -768,3 +771,328 @@ def test_bad_args_requires_exactly_one_of_transcript_or_session(
     )
     assert rc == 1
     assert payload is None
+
+
+# ─── cluster: failure-signature clustering + friction dedup (child-2) ────────
+
+
+def _seed_workspace(root: Path, namespace: str = "demo") -> None:
+    """Seed a real workspace (`.flow/workspace.toml` + `.flow/<namespace>/`),
+    mirroring test_friction_recurrence's pattern, so `cluster` self-resolves the
+    friction log via `_memory_paths`."""
+    flow = root / ".flow"
+    (flow / namespace).mkdir(parents=True, exist_ok=True)
+    (flow / "workspace.toml").write_text(
+        f'[tracker]\nbackend = "jira"\n\n[memory]\nnamespace = "{namespace}"\n',
+        encoding="utf-8",
+    )
+
+
+def _cev(
+    *,
+    id_: str,
+    kind: str,
+    stage: str,
+    body: str,
+    detail: str = "",
+    ticket: str = "flow-eia3",
+    run_id: str = "run-1",
+    ts: str = "2026-06-01T00:00:00.000Z",
+) -> dict[str, Any]:
+    """A trace-mine extract event, minimal to the fields cluster reads."""
+    event: dict[str, Any] = {
+        "id": id_,
+        "ts": ts,
+        "run_id": run_id,
+        "ticket": ticket,
+        "stage": stage,
+        "kind": kind,
+        "body": body,
+    }
+    if detail:
+        event["detail"] = detail
+    return event
+
+
+def _fr(
+    *,
+    id_: str,
+    stage: str,
+    body: str,
+    detail: str = "",
+    type_: str = "RETRY",
+    ticket: str = "flow-eia3",
+    run_id: str = "run-1",
+    ts: str = "2026-06-01T00:00:00.000Z",
+) -> dict[str, Any]:
+    """A flow_friction.py log entry."""
+    entry: dict[str, Any] = {
+        "id": id_,
+        "ts": ts,
+        "run_id": run_id,
+        "ticket": ticket,
+        "stage": stage,
+        "type": type_,
+        "severity": "major",
+        "body": body,
+    }
+    if detail:
+        entry["detail"] = detail
+    return entry
+
+
+def _run_cluster(
+    capsys: pytest.CaptureFixture[str], *args: str
+) -> tuple[int, dict[str, Any] | None]:
+    rc = trace_mine.cli_main(["cluster", *args])
+    out = capsys.readouterr().out
+    return rc, (json.loads(out) if out.strip() else None)
+
+
+# --- library: cluster_signatures ---------------------------------------------
+
+
+def test_cluster_groups_same_stage_kind_anchor() -> None:
+    events = [
+        _cev(
+            id_="e1", kind="tool_error", stage="implement", body="boom in state.py", detail="Bash"
+        ),
+        _cev(
+            id_="e2",
+            kind="tool_error",
+            stage="implement",
+            body="state.py exploded again",
+            detail="Bash",
+            ts="2026-06-01T00:01:00.000Z",
+            run_id="run-2",
+        ),
+    ]
+    result = trace_mine.cluster_signatures(events, [])
+    assert result["total_events"] == 2
+    assert result["already_logged"] == 0
+    assert result["missed"] == 1
+    sig = result["signatures"][0]
+    assert sig["event_count"] == 2
+    assert sig["event_ids"] == ["e1", "e2"]
+    assert sig["run_ids"] == ["run-1", "run-2"]
+    assert sig["mechanism"]["stage"] == "implement"
+    assert sig["mechanism"]["anchor"] == "state.py"
+    assert sig["terminal_cause"]["kind"] == "tool_error"
+
+
+def test_cluster_primary_anchor_prefers_file_over_snake() -> None:
+    events = [
+        _cev(id_="e1", kind="drift", stage="merge", body="reconciled_drift touched create_pr.py"),
+    ]
+    sig = trace_mine.cluster_signatures(events, [])["signatures"][0]
+    assert sig["mechanism"]["anchor"] == "create_pr.py"
+    assert "reconciled_drift" in sig["mechanism"]["related_anchors"]
+
+
+def test_cluster_dedup_drops_on_overlapping_anchor_stage_ticket() -> None:
+    events = [_cev(id_="e1", kind="drift", stage="implement", body="drift on state.py")]
+    friction = [
+        _fr(id_="f1", stage="implement", type_="DRIFT", body="state.py drift reconciled"),
+    ]
+    result = trace_mine.cluster_signatures(events, friction)
+    assert result["already_logged"] == 1
+    assert result["missed"] == 0
+    assert result["signatures"] == []
+
+
+def test_cluster_dedup_matches_on_run_id_when_ticket_differs() -> None:
+    events = [
+        _cev(id_="e1", kind="drift", stage="implement", body="drift on state.py", ticket="T-a")
+    ]
+    friction = [
+        _fr(id_="f1", stage="implement", body="state.py drift", ticket="T-b", run_id="run-1"),
+    ]
+    # ticket differs but run_id matches -> still deduped.
+    assert trace_mine.cluster_signatures(events, friction)["already_logged"] == 1
+
+
+def test_cluster_dedup_requires_stage_match() -> None:
+    events = [_cev(id_="e1", kind="drift", stage="implement", body="drift on state.py")]
+    friction = [_fr(id_="f1", stage="code_review", body="state.py issue")]
+    result = trace_mine.cluster_signatures(events, friction)
+    assert result["already_logged"] == 0
+    assert result["missed"] == 1
+
+
+def test_cluster_stall_gap_always_surfaces() -> None:
+    events = [_cev(id_="e1", kind="stall_gap", stage="implement", body="stall gap of 600.0s")]
+    # a friction entry in the same stage/ticket cannot dedup an anchorless signature.
+    friction = [_fr(id_="f1", stage="implement", body="unrelated state.py note")]
+    result = trace_mine.cluster_signatures(events, friction)
+    assert result["missed"] == 1
+    sig = result["signatures"][0]
+    assert sig["mechanism"]["anchor"] == ""
+    assert sig["dedup_key"] == "no-anchor::stall_gap-implement"
+
+
+def test_cluster_silent_retry_missed_by_loop_surfaces() -> None:
+    events = [
+        _cev(
+            id_="e1",
+            kind="silent_retry",
+            stage="implement",
+            body="Connection error.",
+            detail='{"subtype": "api_error"}',
+        )
+    ]
+    result = trace_mine.cluster_signatures(events, [])
+    assert result["missed"] == 1
+    assert result["signatures"][0]["terminal_cause"]["kind"] == "silent_retry"
+
+
+def test_cluster_dedup_key_is_child3_partitionable() -> None:
+    events = [
+        _cev(id_="e1", kind="tool_error", stage="implement", body="fail in state.py"),
+        _cev(id_="e2", kind="stall_gap", stage="merge", body="stall gap of 700s"),
+    ]
+    for sig in trace_mine.cluster_signatures(events, [])["signatures"]:
+        key = sig["dedup_key"]
+        file_part, sep, symptom = key.partition("::")
+        assert sep == "::"
+        assert file_part
+        assert symptom
+        assert key.count("::") == 1
+
+
+def test_cluster_deterministic_ordering() -> None:
+    events = [
+        _cev(id_="a", kind="tool_error", stage="implement", body="x in aaa_mod.py"),
+        _cev(id_="b", kind="drift", stage="merge", body="y in bbb_mod.py"),
+        _cev(
+            id_="c",
+            kind="drift",
+            stage="merge",
+            body="y in bbb_mod.py",
+            ts="2026-06-01T00:02:00.000Z",
+        ),
+    ]
+    signatures = trace_mine.cluster_signatures(events, [])["signatures"]
+    assert [s["event_count"] for s in signatures] == [2, 1]
+    assert signatures[0]["mechanism"]["anchor"] == "bbb_mod.py"
+
+
+def test_cluster_empty_events_yields_empty() -> None:
+    assert trace_mine.cluster_signatures([], []) == {
+        "signatures": [],
+        "total_events": 0,
+        "missed": 0,
+        "already_logged": 0,
+    }
+
+
+# --- CLI: cluster ------------------------------------------------------------
+
+
+def test_cluster_cli_reads_friction_via_memory_paths(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _seed_workspace(tmp_path)
+    _write_jsonl(
+        tmp_path / ".flow" / "demo" / "friction.jsonl",
+        [_fr(id_="f1", stage="implement", body="state.py drift")],
+    )
+    payload = {
+        "events": [
+            _cev(id_="e1", kind="drift", stage="implement", body="drift on state.py"),
+            _cev(id_="e2", kind="stall_gap", stage="merge", body="stall gap of 900s"),
+        ]
+    }
+    events_file = tmp_path / "events.json"
+    events_file.write_text(json.dumps(payload), encoding="utf-8")
+    rc, result = _run_cluster(
+        capsys, "--events-file", str(events_file), "--workspace-root", str(tmp_path)
+    )
+    assert rc == 0
+    assert result is not None
+    assert result["already_logged"] == 1
+    assert result["missed"] == 1
+    assert result["signatures"][0]["terminal_cause"]["kind"] == "stall_gap"
+
+
+def test_cluster_cli_missing_friction_file_surfaces_all(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _seed_workspace(tmp_path)  # no friction.jsonl written
+    payload = {
+        "events": [_cev(id_="e1", kind="drift", stage="implement", body="drift on state.py")]
+    }
+    events_file = tmp_path / "events.json"
+    events_file.write_text(json.dumps(payload), encoding="utf-8")
+    rc, result = _run_cluster(
+        capsys, "--events-file", str(events_file), "--workspace-root", str(tmp_path)
+    )
+    assert rc == 0
+    assert result is not None
+    assert result["missed"] == 1
+    assert result["already_logged"] == 0
+
+
+def test_cluster_cli_missing_workspace_toml_exits_4(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    events_file = tmp_path / "events.json"
+    events_file.write_text(json.dumps({"events": []}), encoding="utf-8")
+    rc, result = _run_cluster(
+        capsys, "--events-file", str(events_file), "--workspace-root", str(tmp_path)
+    )
+    assert rc == 4
+    assert result is None
+
+
+def test_cluster_cli_missing_events_file_exits_3(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _seed_workspace(tmp_path)
+    rc, result = _run_cluster(
+        capsys, "--events-file", str(tmp_path / "nope.json"), "--workspace-root", str(tmp_path)
+    )
+    assert rc == 3
+    assert result is None
+
+
+def test_cluster_cli_reads_events_from_stdin(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_workspace(tmp_path)
+    payload = {
+        "events": [_cev(id_="e1", kind="stall_gap", stage="merge", body="stall gap of 500s")]
+    }
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(payload)))
+    rc, result = _run_cluster(capsys, "--events-file", "-", "--workspace-root", str(tmp_path))
+    assert rc == 0
+    assert result is not None
+    assert result["missed"] == 1
+
+
+def test_cluster_anchorless_key_distinct_from_stage_named_anchor():
+    # code_review is itself an anchors() token: an anchorless drift group and a
+    # code_review-anchored drift group in the same stage must not share a key.
+    anchored = {
+        "id": "e-1",
+        "ts": "2026-06-01T00:00:00.000Z",
+        "kind": "drift",
+        "stage": "code_review",
+        "run_id": "r1",
+        "ticket": "T-1",
+        "body": "code_review drifted on code_review",
+        "detail": "",
+    }
+    anchorless = {
+        "id": "e-2",
+        "ts": "2026-06-01T00:01:00.000Z",
+        "kind": "drift",
+        "stage": "code_review",
+        "run_id": "r1",
+        "ticket": "T-1",
+        "body": "???",
+        "detail": "",
+    }
+    result = trace_mine.cluster_signatures([anchored, anchorless], [])
+    keys = [s["dedup_key"] for s in result["signatures"]]
+    assert len(keys) == len(set(keys)), keys
+    assert all(k.split("::")[0] for k in keys)
