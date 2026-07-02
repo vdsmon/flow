@@ -53,6 +53,19 @@ def test_empty_check_runs_is_pending():
     assert mch.classify_main_ci([])["status"] == "pending"
 
 
+def test_failing_checks_exclude_superseded_and_skipped():
+    # the cancelled duplicate and the skipped job fold to pending in the classifier;
+    # the P0 bead must name only the genuine failure.
+    runs = [
+        {"name": "lint-and-test", "status": "completed", "conclusion": "failure"},
+        {"name": "lint-and-test", "status": "completed", "conclusion": "cancelled"},
+        {"name": "docs", "status": "completed", "conclusion": "skipped"},
+    ]
+    out = mch.classify_main_ci(runs)
+    assert out["status"] == "failed"
+    assert out["failing_checks"] == ["lint-and-test"]
+
+
 def test_lowercase_status_uppercased_and_classified():
     # a completed-success entry must read green ONLY because status is uppercased to
     # COMPLETED before _classify_rollup (which compares raw status != "COMPLETED").

@@ -15,12 +15,12 @@ PR_ID=$(python3 ${CLAUDE_SKILL_DIR}/scripts/forge_cli.py --workspace-root . dete
 
 Two deltas from the normal loop:
 
-- **Plain-comment floor.** Before the §4 address+resolve, pipe the fetched threads through the floor so an unresolved `minor` (a plain human comment) is bumped to the configured severity:
+- **Plain-comment floor.** Before the §4 address+resolve, fetch the threads capture-then-check (the §1 discipline: read `$?` first — piping `review-threads` straight into `apply-floor` swallows a non-zero exit, and `apply-floor` turns the empty stdin into `[]`, so a gh flake reads as ZERO maintainer threads, a false review-clean), then pipe the captured output through the floor so an unresolved `minor` (a plain human comment) is bumped to the configured severity:
   ```bash
-  THREADS=$(python3 ${CLAUDE_SKILL_DIR}/scripts/forge_cli.py --workspace-root . review-threads --pr "$PR_ID" \
-    | python3 ${CLAUDE_SKILL_DIR}/scripts/revise_config.py apply-floor --workspace-root .)
+  RAW=$(python3 ${CLAUDE_SKILL_DIR}/scripts/forge_cli.py --workspace-root . review-threads --pr "$PR_ID"); rc=$?
+  [ "$rc" -eq 0 ] && THREADS=$(printf '%s' "$RAW" | python3 ${CLAUDE_SKILL_DIR}/scripts/revise_config.py apply-floor --workspace-root .)
   ```
-  `apply-floor` reads the threads array on stdin and returns it with every unresolved `minor` bumped to `[revise] plain_comment_severity`. When that floor is `major`, an unresolved minor thread enters the Major+ fix set; the default `minor` leaves the set unchanged (today's behavior). The bump is loop-side only — the forge adapter stays pure of `[revise]` config. Use `$THREADS` (not the raw `review-threads` output) for the §4 Major+ selection.
+  On `rc != 0` that is a PROBE ERROR, not an empty thread list: retry on a bounded budget (§1's pattern), and if it persists set `STATUS=failed` surfacing the stderr — never proceed to §4/§5 as review-clean. A RAW of `{"supported": false}` (a host without thread support) is §3's degrade: skip the floor and thread handling. `apply-floor` reads the threads array on stdin and returns it with every unresolved `minor` bumped to `[revise] plain_comment_severity`. When that floor is `major`, an unresolved minor thread enters the Major+ fix set; the default `minor` leaves the set unchanged (today's behavior). The bump is loop-side only — the forge adapter stays pure of `[revise]` config. Use `$THREADS` (not the raw `review-threads` output) for the §4 Major+ selection.
 - **Reply + resolve a human thread.** After a fix commit is pushed for a human thread, `post-reply` then `resolve-thread` exactly as §4 (the .1 capabilities); a reasoned-skip thread gets a reply and stays open, documented.
 
 The 3-fix-cycle cap is PER-REVISION (the revision seeded its own `state.json`, fresh counter) — no change. An instruction-sourced revision (no threads) just re-greens CI.
@@ -68,16 +68,21 @@ Run exactly ONE CI Monitor at a time (stop the prior one before re-arming after 
 **Headless fallback — bounded foreground poll.** In a headless/turn-bounded session (a detached `--auto` run relaunched per turn, or a run interrupted at a turn boundary, e.g. by a rate limit) a Monitor or background task dies at turn end and its completion notification never arrives (observed in the flow-aod run: the bounded poll reached CI green in ~30s after the Monitor path silently died). There, poll in ONE Bash call with an explicit iteration cap and `timeout: 600000` (the Bash max):
 
 ```bash
-i=0; while [ $i -lt 8 ]; do
-  s=$(python3 ${CLAUDE_SKILL_DIR}/scripts/forge_cli.py --workspace-root . ci-rollup --pr "$PR_ID" 2>/dev/null \
-    | python3 -c 'import sys,json;print(json.load(sys.stdin).get("status","pending"))')
-  echo "[$(date +%T)] CI: $s"
+i=0; errs=0; while [ $i -lt 8 ]; do
+  out=$(python3 ${CLAUDE_SKILL_DIR}/scripts/forge_cli.py --workspace-root . ci-rollup --pr "$PR_ID"); crc=$?
+  s=""; [ "$crc" -eq 0 ] && s=$(printf %s "$out" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("status",""))' 2>/dev/null)
+  if [ "$crc" -ne 0 ] || [ -z "$s" ]; then
+    errs=$((errs+1)); echo "[$(date +%T)] ci-rollup probe error ($errs/3)"
+    [ "$errs" -ge 3 ] && { echo "error budget exhausted — leave for next pass"; break; }
+    sleep 60; i=$((i+1)); continue
+  fi
+  errs=0; echo "[$(date +%T)] CI: $s"
   if [ "$s" = "green" ] || [ "$s" = "failed" ]; then break; fi
   sleep 60; i=$((i+1))
 done
 ```
 
-8 × 60s = 480s keeps one call comfortably under the 600s Bash ceiling even with slow rollup calls. If still `pending` at the cap, re-issue the same call — each call is one turn-safe unit. Break on `green`/`failed` exactly like the Monitor; the §2 fix-cycle cap is unchanged. This is a fallback, not a coequal default — attached/long-lived sessions keep using the Monitor.
+8 × 60s = 480s keeps one call comfortably under the 600s Bash ceiling even with slow rollup calls. The probe reads `$?` before parsing, same as the Monitor — an erroring `gh` trips the 3-error budget instead of reading as `pending` forever (the §1 anti-pattern). If still `pending` at the cap, re-issue the same call — each call is one turn-safe unit. Break on `green`/`failed` exactly like the Monitor; the §2 fix-cycle cap is unchanged. This is a fallback, not a coequal default — attached/long-lived sessions keep using the Monitor.
 
 ## 2. On CI failed — drive fixes (delegated, bounded)
 

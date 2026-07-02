@@ -63,6 +63,44 @@ def test_detect_pr_none_when_no_match():
     assert fg.detect_pr("feature/flow-x") is None
 
 
+def test_detect_pr_follows_pagination():
+    # >50 open PRs push the run's PR past page 1; detect_pr must follow `next`
+    # (like _fetch_all_comments) or create_pr's resume idempotency breaks.
+    page1 = {"values": [{"id": 1, "source": {"branch": {"name": "other"}}}], "next": "page2"}
+    page2 = {
+        "values": [
+            {
+                "id": 9,
+                "source": {"branch": {"name": "feature/flow-x"}},
+                "destination": {"branch": {"name": "main"}},
+                "links": {"html": {"href": "https://bitbucket.org/ws/rs/pull-requests/9"}},
+                "state": "OPEN",
+            }
+        ]
+    }
+
+    def h(args):
+        path = _api_path(args)
+        if "page=1" in path:
+            return json.dumps(page1)
+        if "page=2" in path:
+            return json.dumps(page2)
+        return "null"
+
+    fg, calls = _adapter(h)
+    pr = fg.detect_pr("feature/flow-x")
+    assert pr is not None
+    assert pr["id"] == "9"
+    assert len([c for c in calls if "pullrequests?state=OPEN" in _api_path(c)]) == 2
+
+
+def test_detect_pr_no_match_stops_at_last_page():
+    listing = {"values": [{"id": 1, "source": {"branch": {"name": "other"}}}]}  # no `next`
+    fg, calls = _adapter(lambda a: json.dumps(listing))
+    assert fg.detect_pr("feature/flow-x") is None
+    assert len(calls) == 1
+
+
 def _pr_view(state: str = "OPEN") -> dict:
     return {
         "id": 9,

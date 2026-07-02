@@ -31,8 +31,9 @@ without `[forge]` is a config error (exit 2).
 Exit codes:
   0 = success
   1 = transient/unknown forge error (network / auth / retryable)
-  2 = workspace config invalid (no workspace.toml, malformed, no [forge] block)
-  3 = invalid CLI args
+  2 = workspace config invalid (no workspace.toml, malformed, no [forge] block),
+      or malformed argv (argparse's own exit code)
+  3 = invalid argument value rejected by the adapter (KeyError/ValueError)
 """
 
 from __future__ import annotations

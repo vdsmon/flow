@@ -36,7 +36,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from forge_github import _classify_rollup
+from forge_github import _NONTERMINAL_VERDICTS, _SUPERSEDED_VERDICTS, _classify_rollup
 
 Runner = Callable[[list[str]], subprocess.CompletedProcess[str]]
 
@@ -47,8 +47,10 @@ def classify_main_ci(check_runs: list) -> dict[str, Any]:
     Uppercases each entry's `status` (REST emits lowercase `completed`) so it matches
     `_classify_rollup`'s raw `status != "COMPLETED"` check, then reuses that classifier
     (inheriting its CANCELLED/STALE/NEUTRAL/SKIPPED → pending folding). Returns
-    `{status: green|pending|failed, failing_checks: [...]}`; failing_checks lists the
-    names of any check whose conclusion is terminal non-SUCCESS, empty otherwise.
+    `{status: green|pending|failed, failing_checks: [...]}`; failing_checks lists only
+    the checks the classifier counted as failures (terminal non-SUCCESS outside the
+    folded superseded/non-terminal sets), so a cancelled duplicate or a skipped job
+    never pollutes the red-main P0 bead.
     """
     rollup = [
         {**e, "status": (e.get("status") or "").upper()} for e in check_runs if isinstance(e, dict)
@@ -56,7 +58,14 @@ def classify_main_ci(check_runs: list) -> dict[str, Any]:
     classified = _classify_rollup(rollup)
     status = classified["status"]
     failing = (
-        [c["name"] for c in classified["checks"] if c["conclusion"] not in ("SUCCESS", "")]
+        [
+            c["name"]
+            for c in classified["checks"]
+            if c["status"] in ("", "COMPLETED")
+            and c["conclusion"] != "SUCCESS"
+            and c["conclusion"] not in _NONTERMINAL_VERDICTS
+            and c["conclusion"] not in _SUPERSEDED_VERDICTS
+        ]
         if status == "failed"
         else []
     )

@@ -29,21 +29,38 @@ _SKELETON_MARKER_RE = re.compile(r"^#\s*body\s*[—-]\s*fill in below this line\
 _FENCE_RE = re.compile(r"^\s*```")
 
 
-def _is_trailer_line(line: str) -> bool:
-    return bool(
-        _TICKET_RE.match(line)
-        or _CLOSES_RE.match(line)
-        or _FILES_HEAD_RE.match(line)
-        or _FILES_CHILD_RE.match(line)
-    )
+def _scan_trailer(lines: list[str]) -> tuple[int, list[str]]:
+    """Walk the contiguous leading trailer block; return (end index, Closes lines).
+
+    An indented bullet counts as a trailer line only directly under a `files:`
+    head (or another files child); with no such context it is prose and ends the
+    block, honoring build_body's no-deletion commitment.
+    """
+    closes: list[str] = []
+    i = 0
+    in_files = False
+    while i < len(lines):
+        line = lines[i]
+        if _TICKET_RE.match(line) or _CLOSES_RE.match(line) or _FILES_HEAD_RE.match(line):
+            if _CLOSES_RE.match(line):
+                closes.append(line.strip())
+            in_files = bool(_FILES_HEAD_RE.match(line))
+            i += 1
+            continue
+        if in_files and _FILES_CHILD_RE.match(line):
+            i += 1
+            continue
+        break
+    return i, closes
 
 
 def build_body(raw_commit_body: str) -> str:
     """Build a PR body from `git log -1 --format=%b`.
 
     Parses ONLY the contiguous LEADING trailer block (lines that match a trailer
-    shape: `ticket:`, `Closes <KEY>`, `files:`, indented `  - `/`  * ` children),
-    stopping at the first non-trailer or blank line. `Closes` lines become a footer;
+    shape: `ticket:`, `Closes <KEY>`, `files:`, and indented `  - `/`  * ` children
+    directly under a `files:` head), stopping at the first non-trailer or blank
+    line. `Closes` lines become a footer;
     `ticket:`/`files:` are dropped. The remaining prose is unwrapped (hard wraps
     within a paragraph joined) but never reflowed across blank-line paragraph breaks,
     never across list items, never inside a fenced code block. A stray skeleton
@@ -61,15 +78,10 @@ def build_body(raw_commit_body: str) -> str:
 
 def _build_body(raw: str) -> str:
     lines = raw.splitlines()
-    closes: list[str] = []
-    i = 0
     # consume the contiguous leading trailer block ONLY while lines match a trailer
     # shape; the first blank/non-trailer line ends it. No leading trailer => i stays
     # 0 and the whole body is prose.
-    while i < len(lines) and _is_trailer_line(lines[i]):
-        if _CLOSES_RE.match(lines[i]):
-            closes.append(lines[i].strip())
-        i += 1
+    i, closes = _scan_trailer(lines)
     # skip the single blank line separating the trailer from the prose.
     if i < len(lines) and not lines[i].strip():
         i += 1
@@ -134,13 +146,7 @@ def closes_footer(raw_commit_body: str) -> str:
     NOT a trailer footer. TOTAL: never raises.
     """
     try:
-        lines = raw_commit_body.splitlines()
-        closes: list[str] = []
-        i = 0
-        while i < len(lines) and _is_trailer_line(lines[i]):
-            if _CLOSES_RE.match(lines[i]):
-                closes.append(lines[i].strip())
-            i += 1
+        _, closes = _scan_trailer(raw_commit_body.splitlines())
         return "\n".join(closes)
     except Exception:
         return ""
@@ -206,9 +212,9 @@ def _sentence_case(text: str) -> str:
             result.append(w)
             continue
         if not seen_word:
-            # capitalize the first letter but leave an ALL-CAPS / mixed-case
-            # acronym tail alone (same guard as the non-initial branch).
-            result.append(w[:1].upper() + (w[1:] if not w[1:].islower() else w[1:].lower()))
+            # uppercase only the first character; the untouched tail keeps
+            # ALL-CAPS acronyms and mixed-case identifiers intact.
+            result.append(w[:1].upper() + w[1:])
             seen_word = True
         else:
             # leave ALL-CAPS acronyms and mixed-case identifiers alone; lowercase a

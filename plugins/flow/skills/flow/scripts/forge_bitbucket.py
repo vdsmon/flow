@@ -110,13 +110,22 @@ class BitbucketAdapter:
     # ─── PR mechanics ─────────────────────────────────────────────────────
 
     def detect_pr(self, branch: str) -> PullRequest | None:
-        data = self._api(f"{self._base()}/pullrequests?state=OPEN&pagelen=50", "bkt pr list")
-        values = (data or {}).get("values") or []
-        for item in values:
-            src = ((item.get("source") or {}).get("branch") or {}).get("name")
-            if src == branch:
-                return self._pr_from_api(item)
-        return None
+        # follow `next` like _fetch_all_comments: on a busy workspace the run's PR
+        # can sit past page 1, and a miss here breaks create_pr's resume idempotency.
+        page = 1
+        while True:
+            data = self._api(
+                f"{self._base()}/pullrequests?state=OPEN&pagelen=50&page={page}",
+                "bkt pr list",
+            )
+            data = data or {}
+            for item in data.get("values") or []:
+                src = ((item.get("source") or {}).get("branch") or {}).get("name")
+                if src == branch:
+                    return self._pr_from_api(item)
+            if "next" not in data:
+                return None
+            page += 1
 
     def pr_info(self, pr_id: str) -> PullRequest | None:
         # PR-id -> PR reverse lookup. Reads ANY state (no state filter), so `revise`

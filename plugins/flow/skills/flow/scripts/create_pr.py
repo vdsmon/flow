@@ -125,6 +125,10 @@ def open_or_get_pr(
     """
     run = runner or _default_runner(workspace_root)
     branch = _ok(run(["git", "rev-parse", "--abbrev-ref", "HEAD"]), "git rev-parse").strip()
+    if branch == "HEAD":
+        # a detached HEAD rev-parses to the literal "HEAD", which would push
+        # refs/heads/HEAD and PR from a remote branch named HEAD.
+        raise RefusedBranch("refusing to open a PR from a detached HEAD (no run branch)")
     if not branch or branch in _PROTECTED:
         raise RefusedBranch(f"refusing to open a PR from protected branch {branch!r}")
 
