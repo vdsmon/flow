@@ -429,6 +429,51 @@ def _semantic_rank(
     return results, f"semantic-active model={model} cosine_candidates={len(cosine_order)}"
 
 
+# ─── Digest rendering ───────────────────────────────────────────────────────
+
+_DIGEST_SECTION_ORDER = ("DECISION", "FACT", "LEARNED", "PATTERN", "INVESTIGATION", "DEVIATION")
+
+
+def _first_sentence(body: str) -> str:
+    """First "sentence" up to the first ". " (period+space); the whole body
+    when no such split point exists. Internal whitespace (incl. newlines)
+    collapses so the digest bullet stays one line per entry."""
+    idx = body.find(". ")
+    sentence = body if idx == -1 else body[:idx]
+    return " ".join(sentence.split())
+
+
+def _render_digest(results: list[dict[str, Any]], label: str) -> str:
+    """Render a `--label` cluster as a markdown card: one section per `type`
+    (canonical order, unknown types sorted alphabetically after), newest-first
+    within a section, one line per entry.
+    """
+    lines = [f"# Knowledge digest — {label}", ""]
+    if not results:
+        lines.append("_no entries_")
+        return "\n".join(lines) + "\n"
+
+    by_type: dict[str, list[dict[str, Any]]] = {}
+    for entry in results:
+        by_type.setdefault(str(entry.get("type")), []).append(entry)
+
+    section_order = [t for t in _DIGEST_SECTION_ORDER if t in by_type]
+    section_order += sorted(t for t in by_type if t not in _DIGEST_SECTION_ORDER)
+
+    for type_ in section_order:
+        section_entries = sorted(by_type[type_], key=lambda e: _neg_ts_key(e.get("ts", "")))
+        lines.append(f"## {type_}")
+        lines.append("")
+        for entry in section_entries:
+            body = _first_sentence(str(entry.get("body") or ""))
+            lines.append(f"- {entry.get('ts', '')} · {entry.get('ticket', '')} · {body}")
+        lines.append("")
+
+    while lines and lines[-1] == "":
+        lines.pop()
+    return "\n".join(lines) + "\n"
+
+
 # ─── CLI ─────────────────────────────────────────────────────────────────────
 
 
@@ -482,6 +527,11 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         help="hard filter to an exact labels[] match; exhaustive cluster "
         "(bypasses --top-n), query becomes optional.",
     )
+    parser.add_argument(
+        "--digest",
+        action="store_true",
+        help="render the --label cluster as a human-readable markdown card (requires --label).",
+    )
     parser.add_argument("--top-n", type=int, default=5)
     parser.add_argument("--include-superseded", action="store_true")
     parser.add_argument("--workspace-root", default=".")
@@ -495,7 +545,10 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     )
     parser.add_argument("--reindex", action="store_true", help="dispatch to memory_embed reindex.")
     parser.add_argument("--full", action="store_true", help="with --reindex: force a full rebuild.")
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if args.digest and not args.label:
+        parser.error("--digest requires --label")
+    return args
 
 
 def _record_pending(
@@ -541,6 +594,13 @@ def _record_pending(
         )
     except Exception as exc:  # recording is a side-effect; never fail the recall
         sys.stderr.write(f"recall: record-pending skipped: {exc}\n")
+
+
+def _emit_results(args: argparse.Namespace, results: list[dict[str, Any]]) -> None:
+    if args.digest:
+        sys.stdout.write(_render_digest(results, args.label))
+    else:
+        sys.stdout.write(json.dumps(results, indent=2, sort_keys=True) + "\n")
 
 
 def cli_main(argv: list[str]) -> int:
@@ -641,7 +701,7 @@ def cli_main(argv: list[str]) -> int:
             results=results,
         )
 
-    sys.stdout.write(json.dumps(results, indent=2, sort_keys=True) + "\n")
+    _emit_results(args, results)
     return 0
 
 

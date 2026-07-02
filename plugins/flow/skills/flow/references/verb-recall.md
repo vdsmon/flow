@@ -20,6 +20,17 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/recall.py "<query>" \
 
 `recall.py --label <facet:value>` (e.g. `--label form:iva_2083`) hard-filters to entries carrying that label BEFORE ranking and returns the WHOLE cluster (the `--top-n` cap is lifted to the corpus size — exhaustive retrieval, not top-n truncation). The query becomes optional: a label-only invocation returns the full live cluster ordered newest-first, and never reads stdin (safe in any harness Bash call). A label miss is `[]` exit 0, not an error. Facet vocabulary comes from `[memory] label_facets` in workspace.toml (ships empty here; a workspace with a natural facet opts in).
 
+### `--digest` (markdown card over the label cluster)
+
+`recall.py --label <facet:value> --digest` renders the exhaustive label cluster as a
+human-readable markdown card instead of the raw JSON array: one section per entry
+`type` (canonical order DECISION, FACT, LEARNED, PATTERN, INVESTIGATION, DEVIATION,
+any other type sorted alphabetically after; only non-empty sections render), entries
+newest-first (`ts` DESC) within a section, one line per entry —
+`- <ts> · <ticket> · <first sentence of body>`. Superseded entries stay excluded (the
+same `filter_superseded` upstream of ranking). `--digest` without `--label` is an
+argparse error (exit 2). Plain JSON output (no `--digest`) is unchanged.
+
 ## Semantic recall (optional overlay)
 
 When the workspace opts into `[memory.semantic] enabled = true`, recall fuses BM25 with a cosine ranking over a derived embedding sidecar (`knowledge.embed`), so a query worded differently from the stored body still surfaces it. It is byte-identical pure BM25 when the block is absent/off, and falls back to BM25 (with a stderr backend-status line) on any embedder/index failure — the `python3` runtime invariant holds because the embedder runs in a `uvx` subprocess, not in-process.
