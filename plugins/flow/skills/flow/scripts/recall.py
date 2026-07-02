@@ -108,12 +108,18 @@ def _load_entries(knowledge_path: Path) -> list[dict[str, Any]]:
 
 
 def superseded_ids(entries: list[dict[str, Any]]) -> set[str]:
-    """The dead-set: every non-empty `supersedes` target across all entries."""
+    """The dead-set: every non-empty `supersedes` target across all entries.
+
+    `supersedes` is either a single target id (str) or a list of target ids (a
+    canonical entry consolidating a whole cluster).
+    """
     dead: set[str] = set()
     for e in entries:
         target = e.get("supersedes")
         if isinstance(target, str) and target:
             dead.add(target)
+        elif isinstance(target, list):
+            dead.update(x for x in target if isinstance(x, str) and x)
     return dead
 
 

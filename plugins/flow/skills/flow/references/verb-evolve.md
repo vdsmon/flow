@@ -491,3 +491,25 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/sweep_knowledge.py apply --manifest worklist
 ```
 
 Each record is applied through the `memory_append --supersedes` seam: an append-only tombstone `DECISION` entry whose `supersedes` points at the dead id (the target is never rewritten or removed). It is **idempotent** — a record whose target is already superseded is reported `skipped` and re-running the same manifest appends nothing. It **refuses an unknown id**: that record is reported `error`, the rest of the batch still processes, and the command exits non-zero if any record errored. The output is a per-record results summary (`applied` / `skipped` / `error`).
+
+### Consolidation (density, not just staleness)
+
+`propose`/`apply` retire entries that are individually WRONG. A separate problem is entries that are individually still true but REDUNDANT — near-duplicate notes about the same narrow mechanism, written weeks apart. `cluster`/`apply-cluster` collapse a confirmed near-duplicate group to ONE canonical entry, the same three-step shape as above:
+
+1. **Cluster (read-only).** Group live, same-type, indexed entries by cosine similarity over the `memory_embed` sidecar:
+
+```bash
+python3 ${CLAUDE_SKILL_DIR}/scripts/sweep_knowledge.py cluster [--type DECISION,FACT] [--threshold 0.90] > clusters.json
+```
+
+Clustering is WITHIN-type only (never mixes a DECISION with a FACT) and complete-linkage: a candidate joins a group only if its cosine is above the threshold against EVERY current member, not just the seed, so an A~B, B~C, A!~C chain never lands in one group. An entry with no vector in the sidecar index (never embedded, or semantic indexing off) is excluded — it can neither seed nor join a group. A missing or empty sidecar yields `[]`. Each emitted group is `{cluster_id, type, min_cosine, members: [{id, ticket, ts, type, body}]}`; only groups of size >= 2 are emitted. The default threshold (0.90) was calibrated against this repo's own corpus — conservative on purpose, so it surfaces genuinely redundant pairs without proposing junk a maintainer would reject; re-tune per-corpus if the default over- or under-merges.
+
+2. **Synthesize a manifest (the judgment step).** For each cluster you confirm is truly redundant, read every member's `body` and author ONE canonical body that preserves the union of what they say (a later member is often a refinement of an earlier one — keep the refinement, fold in anything the earlier member said that the later one dropped). A cluster you do NOT confirm is left alone; nothing in `cluster`'s output is auto-applied. The manifest is a JSON array or JSONL of records, each `{canonical_body, canonical_ticket, member_ids}` (`member_ids` from the confirmed cluster's `members[].id`), with optional `type` (default `DECISION`) and `branch` (absent → derived `feat/<canonical_ticket>`).
+
+3. **Apply (write).** Collapse each confirmed cluster to one canonical entry:
+
+```bash
+python3 ${CLAUDE_SKILL_DIR}/scripts/sweep_knowledge.py apply-cluster --manifest clusters-confirmed.json
+```
+
+Each record is applied through the `memory_append --supersedes` seam with a LIST-valued `supersedes` (one canonical entry pointing at every member id at once — the mechanism that actually reduces corpus density; N single-target tombstones would collide on the same canonical body/id instead). Same discipline as `apply`: idempotent (a record whose members are ALL already dead is `skipped`), refuses an unknown member id (`error`, batch continues, non-zero exit). The output is a per-record results summary (`applied` / `skipped` / `error`), each `applied` record naming the new canonical id and the member count merged.

@@ -302,6 +302,30 @@ def test_superseded_ids_ignores_empty_and_missing() -> None:
     assert recall.superseded_ids(entries) == set()
 
 
+def test_superseded_ids_unions_list_targets() -> None:
+    entries = [
+        _make_entry("a" * 16, "first"),
+        _make_entry("b" * 16, "second"),
+        _make_entry("c" * 16, "third"),
+        {**_make_entry("d" * 16, "canonical"), "supersedes": ["a" * 16, "b" * 16, "c" * 16]},
+    ]
+    assert recall.superseded_ids(entries) == {"a" * 16, "b" * 16, "c" * 16}
+
+
+def test_superseded_ids_mixed_str_and_list_tombstones() -> None:
+    entries = [
+        _make_entry("a" * 16, "first"),
+        _make_entry("b" * 16, "second"),
+        _make_entry("c" * 16, "third"),
+        {**_make_entry("s" * 16, "str tombstone"), "supersedes": "a" * 16},
+        {**_make_entry("l" * 16, "list tombstone"), "supersedes": ["b" * 16, "c" * 16]},
+    ]
+    dead = recall.superseded_ids(entries)
+    assert dead == {"a" * 16, "b" * 16, "c" * 16}
+    survivors = {e["id"] for e in recall.filter_superseded(entries)}
+    assert survivors == {"s" * 16, "l" * 16}
+
+
 def test_filter_superseded_resolves_chain() -> None:
     # A <- B <- C: B.supersedes=A, C.supersedes=B. Only C survives.
     a = _make_entry("a" * 16, "claim A")

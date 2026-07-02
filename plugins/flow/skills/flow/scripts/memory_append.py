@@ -98,16 +98,21 @@ def compute_id(namespace: str, ticket: str, type_: str, body: str) -> str:
     return hashlib.sha256(src.encode("utf-8")).hexdigest()[:16]
 
 
-def _scan_for_id(
+def _scan_for_ids(
     knowledge_path: Path,
-    target_id: str,
+    target_ids: set[str],
     quarantine_sidecar: Path,
-) -> bool:
-    """Returns True if target_id present. Malformed lines → sidecar."""
+) -> set[str]:
+    """One pass over knowledge.jsonl. Returns the subset of target_ids present.
+    Malformed lines → sidecar."""
+    if not target_ids:
+        return set()
+    found: set[str] = set()
     for entry in iter_jsonl(knowledge_path, quarantine_sidecar):
-        if entry.get("id") == target_id:
-            return True
-    return False
+        eid = entry.get("id")
+        if eid in target_ids:
+            found.add(eid)
+    return found
 
 
 # ─── Public API ──────────────────────────────────────────────────────────────
@@ -120,9 +125,13 @@ def append(
     branch: str,
     ticket: str,
     id_override: str | None = None,
-    supersedes: str | None = None,
+    supersedes: str | list[str] | None = None,
 ) -> dict[str, Any]:
     """Append one entry to knowledge.jsonl. Returns the entry.
+
+    `supersedes` is a single target id, a list of target ids (a canonical entry
+    consolidating a whole cluster), or None. Every target must already be present
+    in knowledge.jsonl.
 
     Raises:
         _InvalidType
@@ -140,12 +149,21 @@ def append(
     entry_id = id_override or compute_id(namespace, ticket, type_, body)
     quarantine_sidecar = kpath.with_name(f"{kpath.name}.quarantine.{_ts_token()}")
 
+    if supersedes is None:
+        targets: list[str] = []
+    elif isinstance(supersedes, str):
+        targets = [supersedes] if supersedes else []
+    else:
+        targets = list(supersedes)
+
     with flock_retry(lpath):
-        if _scan_for_id(kpath, entry_id, quarantine_sidecar):
+        present = _scan_for_ids(kpath, {entry_id, *targets}, quarantine_sidecar)
+        if entry_id in present:
             raise _DuplicateId(entry_id)
-        if supersedes is not None and not _scan_for_id(kpath, supersedes, quarantine_sidecar):
-            raise _UnknownSupersedeTarget(supersedes)
-        entry = {
+        missing = set(targets) - present
+        if missing:
+            raise _UnknownSupersedeTarget(sorted(missing)[0])
+        entry: dict[str, Any] = {
             "id": entry_id,
             "ts": _utcnow_iso_ms(),
             "type": type_,
@@ -156,8 +174,8 @@ def append(
         }
         # supersedes is a tombstone pointer (metadata like ts), NOT a hash input,
         # so a superseding entry's id stays stable across recover reruns. Only
-        # present when set, to avoid churning every record with a null field.
-        if supersedes is not None:
+        # present when non-empty, to avoid churning every record with a null field.
+        if supersedes:
             entry["supersedes"] = supersedes
         kpath.parent.mkdir(parents=True, exist_ok=True)
         with kpath.open("a", encoding="utf-8") as fh:
