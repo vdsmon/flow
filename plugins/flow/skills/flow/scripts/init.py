@@ -442,6 +442,7 @@ def _render_workspace_toml(
     lines.append("auto_recall = true")
     lines.append('recall_by = ["branch", "current-ticket", "ready-tickets"]')
     lines.append("recall_top_n = 5")
+    lines.append("label_facets = []")
     lines.append(f"compounding = {str(config.memory_compounding).lower()}")
     if config.memory_root is not None:
         lines.append(f"root = {_toml_escape(config.memory_root)}")

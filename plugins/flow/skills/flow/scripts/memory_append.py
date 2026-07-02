@@ -126,12 +126,17 @@ def append(
     ticket: str,
     id_override: str | None = None,
     supersedes: str | list[str] | None = None,
+    labels: list[str] | None = None,
 ) -> dict[str, Any]:
     """Append one entry to knowledge.jsonl. Returns the entry.
 
     `supersedes` is a single target id, a list of target ids (a canonical entry
     consolidating a whole cluster), or None. Every target must already be present
     in knowledge.jsonl.
+
+    `labels` is an optional `["facet:value", ...]` array (e.g. `form:iva_2083`)
+    for `recall.py --label` cluster retrieval. Metadata like `ts`/`supersedes`,
+    NOT a `compute_id` input.
 
     Raises:
         _InvalidType
@@ -177,6 +182,8 @@ def append(
         # present when non-empty, to avoid churning every record with a null field.
         if supersedes:
             entry["supersedes"] = supersedes
+        if labels:
+            entry["labels"] = labels
         kpath.parent.mkdir(parents=True, exist_ok=True)
         with kpath.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(entry, sort_keys=True) + "\n")
@@ -198,6 +205,9 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--ticket", required=True)
     parser.add_argument("--id", dest="id_override", default=None)
     parser.add_argument("--supersedes", default=None)
+    parser.add_argument(
+        "--labels", default=None, help="comma-separated labels, e.g. form:iva_2083,area:vat"
+    )
     parser.add_argument("--workspace-root", default=".")
     return parser.parse_args(argv)
 
@@ -205,6 +215,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
 def cli_main(argv: list[str]) -> int:
     args = _parse_args(argv)
     workspace_root = Path(args.workspace_root).resolve()
+    labels = [tok.strip() for tok in (args.labels or "").split(",") if tok.strip()]
     try:
         entry = append(
             workspace_root=workspace_root,
@@ -214,6 +225,7 @@ def cli_main(argv: list[str]) -> int:
             ticket=args.ticket,
             id_override=args.id_override,
             supersedes=args.supersedes,
+            labels=labels or None,
         )
     except _InvalidType as exc:
         sys.stderr.write(f"memory-append: {exc}\n")

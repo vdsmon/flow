@@ -159,6 +159,7 @@ def test_bare_jira_init_writes_workspace_toml(tmp_path: Path) -> None:
     assert data["tracker"]["jira"]["assignee_account_id"] == "acct-1"
     assert data["memory"]["namespace"] == "FT"
     assert data["memory"]["compounding"] is True
+    assert data["memory"]["label_facets"] == []
     handlers = data["pipeline"]["handlers"]
     # Bare defaults from stage-registry.toml.
     assert handlers["plan"] == "subagent:Plan"

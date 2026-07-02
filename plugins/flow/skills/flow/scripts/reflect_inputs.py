@@ -65,6 +65,24 @@ def _reflect_config(cwd: Path) -> dict[str, bool]:
     return cfg
 
 
+def _label_facets(cwd: Path) -> list[str]:
+    """The `[memory] label_facets` convention: which facet(s) a knowledge entry
+    can be tagged with (e.g. `["form"]` -> `--labels form:iva_2083`). Absent,
+    malformed workspace.toml, or a non-list[str] value all degrade to `[]`
+    (the engine never hardcodes a facet; this is workspace config only)."""
+    try:
+        data = _workspace.load_workspace_toml(cwd)
+    except _workspace.WorkspaceConfigError:
+        return []
+    memory = data.get("memory")
+    if not isinstance(memory, dict):
+        return []
+    facets = memory.get("label_facets")
+    if isinstance(facets, list) and all(isinstance(x, str) for x in facets):
+        return facets
+    return []
+
+
 def _harness_eval_block(scripts_dir: Path | None = None) -> dict[str, Any]:
     if scripts_dir is None:
         scripts_dir = Path(__file__).resolve().parent
@@ -290,6 +308,7 @@ def bundle(
         "friction_recurrence": _recurrence(cwd),
         "recalled_entries": _recalled_entries(ticket_dir, cwd),
         "reflect_config": _reflect_config(cwd),
+        "label_facets": _label_facets(cwd),
         "harness_eval": _harness_eval_block(),
     }
 
