@@ -443,6 +443,11 @@ def _read_query(args: argparse.Namespace) -> str | None:
         return args.query
     if args.query_file:
         return Path(args.query_file).read_text(encoding="utf-8")
+    # A label-only recall must never block on stdin: the harness Bash tool
+    # feeds an open, EOF-less pipe, so the auto-read below would wedge the
+    # stage instead of falling through to the label cluster.
+    if args.label:
+        return None
     try:
         if not sys.stdin.isatty():
             piped = sys.stdin.read()

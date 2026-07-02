@@ -16,6 +16,10 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/recall.py "<query>" \
 - Exit 0 → JSON array to stdout. Surface as a formatted list to the user.
 - Exit 1 → workspace unresolvable, OR no query supplied. Surface stderr + `/flow init` hint.
 
+## Label-scoped recall (faceted memory)
+
+`recall.py --label <facet:value>` (e.g. `--label form:iva_2083`) hard-filters to entries carrying that label BEFORE ranking and returns the WHOLE cluster (the `--top-n` cap is lifted to the corpus size — exhaustive retrieval, not top-n truncation). The query becomes optional: a label-only invocation returns the full live cluster ordered newest-first, and never reads stdin (safe in any harness Bash call). A label miss is `[]` exit 0, not an error. Facet vocabulary comes from `[memory] label_facets` in workspace.toml (ships empty here; a workspace with a natural facet opts in).
+
 ## Semantic recall (optional overlay)
 
 When the workspace opts into `[memory.semantic] enabled = true`, recall fuses BM25 with a cosine ranking over a derived embedding sidecar (`knowledge.embed`), so a query worded differently from the stored body still surfaces it. It is byte-identical pure BM25 when the block is absent/off, and falls back to BM25 (with a stderr backend-status line) on any embedder/index failure — the `python3` runtime invariant holds because the embedder runs in a `uvx` subprocess, not in-process.

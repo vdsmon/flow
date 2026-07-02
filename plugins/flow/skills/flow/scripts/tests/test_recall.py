@@ -1033,3 +1033,27 @@ def test_label_only_query_forces_bm25_no_embed_call(
     assert "semantic-active" not in out.err
     payload = json.loads(out.out)
     assert payload[0]["id"] == "a" * 16
+
+
+class _MustNotReadStdin:
+    def isatty(self) -> bool:
+        return False
+
+    def read(self) -> str:
+        raise AssertionError("label-only recall must never read stdin")
+
+
+def test_label_only_recall_never_touches_stdin(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # pytest's captured stdin raises OSError on read, which _read_query
+    # swallows, masking a live hang: the harness Bash pipe has no EOF, so a
+    # blocking read wedges the stage. Pin that the read is never attempted.
+    _seed_workspace(tmp_path)
+    entries = [_labeled_entry("a" * 16, "iva note", ["form:iva_2083"])]
+    _write_entries(tmp_path, "demo", entries)
+    monkeypatch.setattr(recall.sys, "stdin", _MustNotReadStdin())
+    rc = recall.cli_main(["--label", "form:iva_2083", "--workspace-root", str(tmp_path)])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert [r["id"] for r in payload] == ["a" * 16]

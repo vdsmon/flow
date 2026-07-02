@@ -326,3 +326,30 @@ def test_apply_cluster_empty_member_ids_errors_no_append(tmp_path: Path) -> None
     assert summary["any_error"] is True
     assert summary["results"][0]["result"] == "error"
     assert len(_load_all(tmp_path)) == before
+
+
+def test_apply_cluster_canonical_carries_union_of_member_labels(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path)
+    ea = _entry(A, "DECISION", "claim A")
+    ea["labels"] = ["form:iva_2083"]
+    eb = _entry(B, "DECISION", "claim B, near-dup of A")
+    eb["labels"] = ["form:iva_2083", "area:vat"]
+    _write_entries(tmp_path, [ea, eb])
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(
+        json.dumps(
+            [
+                {
+                    "canonical_body": "merged canonical claim",
+                    "canonical_ticket": "flow-consolidated",
+                    "member_ids": [A, B],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    rc, summary = _apply_cluster(tmp_path, manifest)
+    assert rc == 0
+    new_id = summary["results"][0]["new_id"]
+    canonical = next(e for e in _load_all(tmp_path) if e["id"] == new_id)
+    assert canonical["labels"] == ["area:vat", "form:iva_2083"]
