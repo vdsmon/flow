@@ -26,16 +26,26 @@ The bootstrap holds NO run lease; the pipeline's cmd_init acquires it under the 
 per-ticket bootstrap CLAIM (a flock on <main_root>/.flow/tickets/<ticket>.claim, held across
 worktree-add → state-seed → frontmatter stamp, released at bootstrap exit), under which it refuses
 (exit 4) when a live sibling run already holds this ticket. The .claim file persists after release
-by design (deleting a flock target would race a waiter).
+by design (deleting a flock target would race a waiter). Also under the claim, past the live-sibling
+check but before `git worktree add -b`: a DEAD sibling checked out on the exact colliding branch or
+worktree path (the flow-vpg1 case — a manual relaunch after a spend-limit death) is auto-reaped so
+the worktree-add no longer collides; a checkpoint failure during that auto-reap refuses (exit 2)
+rather than destroy the sibling's uncommitted work, and a lease that goes live under the reap's own
+flock (TOCTOU) refuses (exit 4) same as a live sibling.
 
-Exit codes:
+Exit codes (create):
   0 = ok (may carry warnings on stderr)
   1 = git / worktree error
-  2 = bad args / missing main workspace config
+  2 = bad args / missing main workspace config (also: auto-reap of a dead colliding sibling
+      could not checkpoint its uncommitted work — the sibling is left intact)
   3 = I/O error
-  4 = duplicate claim (a live sibling run already holds this ticket)
+  4 = duplicate claim (a live sibling run already holds this ticket, or went live mid-auto-reap)
   6 = bead is terminal (closed/done/cancelled), nothing to bootstrap
   7 = bead is an epic (a container, not a single-PR unit), refuse to bootstrap
+
+Exit codes (reap): 0 = ok (incl. a skipped/no-op reap — inspect the receipt's `skipped`
+field); 1 = git error; 5 = checkpoint of uncommitted work failed before the destructive
+remove — the worktree was left INTACT (fail toward preserving work; see reap_worktree).
 """
 
 from __future__ import annotations
@@ -43,7 +53,6 @@ from __future__ import annotations
 import argparse
 import secrets
 import shutil
-import subprocess
 import sys
 from pathlib import Path
 from typing import cast
@@ -415,6 +424,117 @@ def _assert_no_live_sibling(ticket: str, main_root: Path, runner: Runner) -> Non
         # a dead sibling never blocks re-running the ticket.
 
 
+def _detect_colliding_sibling(
+    ticket: str, branch: str, worktree: Path, main_root: Path, runner: Runner
+) -> Path | None:
+    """A registered ticket sibling that would collide with `git worktree add -b
+    <branch> <worktree>` (flow-vpg1): a DEAD sibling from a prior spend-limit
+    death checked out on the exact same branch, or already registered at the
+    exact derived path, makes `worktree add -b` fail outright (git refuses a
+    duplicate branch checkout or a path already claimed by another worktree).
+    `_assert_no_live_sibling` already refused a live/corrupt one; this only
+    needs to spot a dead one worth auto-reaping. Returns the colliding
+    worktree's path, or None when nothing collides.
+    """
+    worktree = worktree.resolve()
+    for path, sb in _ticket_siblings(ticket, main_root, runner):
+        if sb == branch or path.resolve() == worktree:
+            return path
+    return None
+
+
+def _checkpoint_dirty_worktree(ticket: str, worktree: Path, run: Runner) -> dict:
+    """Checkpoint uncommitted work in `worktree` as a WIP commit pushed to a
+    `flow-rescue/<ticket>-<sha>` ref, before reap's destructive teardown.
+
+    Runs inside `lease.classify_then`'s flock (capture is gated on non-live, so a
+    concurrent acquire cannot go live mid-capture). `check=False` throughout (this
+    is a Runner, not `_git`, which raises): every step's failure is reported back
+    in the returned dict rather than raised, so the caller decides what "failed to
+    checkpoint" means for the teardown.
+
+    The pathspec excludes `.flow` (its `runs/` subtree is the only gitignored
+    part; `tickets/<key>.md` is NOT, so a bare `git add -A` would re-commit it)
+    and every `_copy_config` path (`.env` et al. — also not gitignored in this
+    repo). Without the exclude, a clean merged-orphan worktree would misfire as
+    dirty (`.flow/tickets/<key>.md` always differs slightly from main's copy),
+    and a dirty one could push a bootstrap-copied `.env` secret to a PUBLIC
+    `flow-rescue/*` ref. `flow-rescue/*` is deliberately outside the `feat/`/
+    `feature/` ticket-branch namespace (`_is_ticket_branch`, `_evolve_common.
+    FLOW_KEY_RE`, `is_inflight` all miss it), so it can never mark the ticket
+    in-flight or block a fresh relaunch.
+
+    DEVIATION from the literal maintainer decision text (documented loud, per the
+    plan's Risks): the decision said push to `refs/heads/<run-branch>` verbatim.
+    That target is unsafe here: `create_pr.py` pushes the run branch NON-force
+    (`git push -u origin <branch>:refs/heads/<branch>`), and a pre-PR dead run
+    never pushed its branch — rescuing onto the exact run-branch name would leave
+    a non-ancestor commit on that name, and a fresh relaunch reusing the same
+    branch slug would then have ITS OWN create_pr push rejected non-fast-forward,
+    regressing the drain recovery path this ticket exists to fix. The distinct
+    `flow-rescue/<ticket>-<sha>` ref sidesteps that collision entirely.
+
+    Returns {"status": "clean"} (nothing to capture), {"status": "captured",
+    "rescue_branch", "sha"}, or {"status": "failed", "detail"} (leave the
+    worktree untouched; fail toward preserving work).
+    """
+    pathspec = ["--", ".", ":(exclude).flow"] + [f":(exclude){p}" for p in _DEFAULT_COPY]
+
+    status = run(["git", "status", "--porcelain", *pathspec], worktree)
+    if status.returncode != 0:
+        return {"status": "failed", "detail": f"git status failed: {status.stderr.strip()}"}
+    if not status.stdout.strip():
+        return {"status": "clean"}
+
+    add = run(["git", "add", "-A", *pathspec], worktree)
+    if add.returncode != 0:
+        return {"status": "failed", "detail": f"git add failed: {add.stderr.strip()}"}
+
+    commit = run(
+        [
+            "git",
+            "commit",
+            "--no-verify",
+            "-m",
+            f"wip: flow checkpoint before reap ({ticket}) [skip ci]",
+        ],
+        worktree,
+    )
+    if commit.returncode != 0:
+        return {"status": "failed", "detail": f"git commit failed: {commit.stderr.strip()}"}
+
+    rev = run(["git", "rev-parse", "--short", "HEAD"], worktree)
+    if rev.returncode != 0:
+        return {"status": "failed", "detail": f"git rev-parse failed: {rev.stderr.strip()}"}
+    sha = rev.stdout.strip()
+    rescue_branch = f"flow-rescue/{ticket}-{sha}"
+
+    push = run(["git", "push", "origin", f"HEAD:refs/heads/{rescue_branch}"], worktree)
+    if push.returncode != 0:
+        return {"status": "failed", "detail": f"git push failed: {push.stderr.strip()}"}
+
+    return {"status": "captured", "rescue_branch": rescue_branch, "sha": sha}
+
+
+def _checkpoint_then_remove(ticket: str, worktree: Path, run: Runner, main_root: Path) -> dict:
+    """Checkpoint, then remove `worktree` — the `lease.classify_then` teardown callback.
+
+    On a failed checkpoint the worktree is left untouched (`removed=False`,
+    fail-toward-preserving-work); a clean or captured checkpoint proceeds to
+    `git worktree remove --force`. Runs a git subprocess only (no lease re-entry),
+    matching classify_then's non-reentrant-flock contract.
+    """
+    checkpoint = _checkpoint_dirty_worktree(ticket, worktree, run)
+    if checkpoint["status"] == "failed":
+        return {"removed": False, "remove_error": None, "checkpoint": checkpoint}
+    result = run(["git", "worktree", "remove", "--force", str(worktree)], main_root)
+    return {
+        "removed": result.returncode == 0,
+        "remove_error": result.stderr.strip() if result.returncode != 0 else None,
+        "checkpoint": checkpoint,
+    }
+
+
 def reap_worktree(
     *,
     ticket: str,
@@ -437,6 +557,17 @@ def reap_worktree(
     `<worktree>/.flow/runs/<ticket>`, so a mismatched pair would classify an
     ABSENT run dir as free and force-remove another ticket's live worktree.
     A mismatch refuses via the receipt, touching nothing.
+
+    FALLIBLE (flow-vpg1): before the destructive remove, `_checkpoint_then_remove`
+    checkpoints any uncommitted work as a WIP commit pushed to a `flow-rescue/*`
+    ref (see `_checkpoint_dirty_worktree`). When that capture fails, the worktree
+    is left INTACT — `worktree_removed=False`, `checkpoint_failed=True` — rather
+    than destroyed (fail toward preserving work); the CLI (`_run_reap`) surfaces
+    this as a non-zero exit so an `&&`-gated caller (the drain §Recover recipes)
+    self-heals: the bead stays in_progress and re-strands next turn instead of
+    silently losing the work. A successful capture ("clean" or "captured") still
+    removes the worktree as before; `receipt["checkpoint"]` names the rescue
+    branch only when work was actually captured.
 
     Idempotent: a second call (worktree + branch already gone) is a clean no-op.
     """
@@ -470,7 +601,7 @@ def reap_worktree(
             resolved_branch = sb
             break
 
-    receipt = {
+    receipt: dict[str, object] = {
         "ticket": ticket,
         "branch": resolved_branch,
         "worktree": str(target_path) if target_path is not None else None,
@@ -482,15 +613,15 @@ def reap_worktree(
     if target_path is not None:
         ticket_dir = target_path / ".flow" / "runs" / ticket
 
-        # Hold the lease flock ACROSS classify + the worktree-remove so a
-        # concurrent acquire cannot go live between the decision and the
+        # Hold the lease flock ACROSS classify + checkpoint + the worktree-remove
+        # so a concurrent acquire cannot go live between the decision and the
         # destructive mutation (the flow-72d9 incident family). classify_then's
-        # teardown runs only when the lease is non-live/non-corrupt; it runs a
-        # git subprocess only (no lease re-entry, flock is non-reentrant).
+        # teardown runs only when the lease is non-live/non-corrupt; it runs git
+        # subprocesses only (no lease re-entry, flock is non-reentrant).
         outcome = lease.classify_then(
             ticket_dir,
             utcnow_iso(),
-            lambda: run(["git", "worktree", "remove", "--force", str(target_path)], main_root),
+            lambda: _checkpoint_then_remove(ticket, target_path, run, main_root),
             current_boot=lease.boot_id(),
             hostname=lease.hostname(),
         )
@@ -500,11 +631,21 @@ def reap_worktree(
             else:
                 receipt["skipped"] = "lease corrupt (run.lock unparseable; possibly live)"
             return receipt
-        result = cast(subprocess.CompletedProcess[str], outcome["result"])
-        if result.returncode != 0:
-            receipt["skipped"] = f"worktree remove failed: {result.stderr.strip()}"
+        result = cast(dict, outcome["result"])
+        checkpoint = result["checkpoint"]
+        if checkpoint["status"] == "failed":
+            receipt["checkpoint_failed"] = True
+            receipt["skipped"] = f"checkpoint failed: {checkpoint['detail']}"
+            return receipt
+        if not result["removed"]:
+            receipt["skipped"] = f"worktree remove failed: {result['remove_error']}"
             return receipt
         receipt["worktree_removed"] = True
+        if checkpoint["status"] == "captured":
+            receipt["checkpoint"] = {
+                "rescue_branch": checkpoint["rescue_branch"],
+                "sha": checkpoint["sha"],
+            }
 
     if resolved_branch:
         result = run(["git", "branch", "-D", resolved_branch], main_root)
@@ -937,6 +1078,35 @@ def bootstrap(
     with _locking.flock_blocking(_claim_path(main_root, ticket)):
         _assert_no_live_sibling(ticket, main_root, run)
 
+        # flow-vpg1: a DEAD sibling (already ruled out live/corrupt above) on the
+        # exact colliding branch/path would make `worktree add -b` below fail
+        # outright — the manual-relaunch-after-spend-limit-death case. Auto-reap
+        # it first (checkpoint-then-remove, on the sibling's OWN distinct
+        # run.lock.lock, never this claim flock — no deadlock). A checkpoint
+        # failure refuses rather than destroy the sibling's uncommitted work; a
+        # lease that goes live under the reap's own flock (TOCTOU) refuses the
+        # same as a live sibling above.
+        colliding = _detect_colliding_sibling(ticket, branch, worktree, main_root, run)
+        if colliding is not None:
+            reap_receipt = reap_worktree(
+                ticket=ticket, main_root=main_root, branch=branch, runner=run
+            )
+            if reap_receipt.get("checkpoint_failed"):
+                raise _ConfigError(
+                    f"refusing to bootstrap {ticket}: the dead colliding sibling at "
+                    f"{colliding} could not be auto-reaped because checkpointing its "
+                    f"uncommitted work failed ({reap_receipt.get('skipped')}) — it is "
+                    "left intact, failing toward preserving the work. Rescue it by hand "
+                    "(inspect the worktree, push its WIP yourself), then retry."
+                )
+            if not reap_receipt.get("worktree_removed"):
+                raise _DuplicateClaim(
+                    f"refusing to bootstrap {ticket}: the dead colliding sibling at "
+                    f"{colliding} could not be auto-reaped ({reap_receipt.get('skipped')}); "
+                    "it may have gone live since classification. To unstick: resume/inspect "
+                    f"it, or tear it down by hand (`flow_worktree.py reap --ticket {ticket}`)."
+                )
+
         _git(["worktree", "add", "-b", branch, str(worktree), base], main_root, run)
 
         # Past the worktree+branch creation, ANY exception (a deliberate refusal
@@ -1136,6 +1306,11 @@ def _run_reap(args: argparse.Namespace) -> int:
         sys.stderr.write(f"flow-worktree: {exc}\n")
         return 1
     sys.stdout.write(json.dumps(receipt, indent=2, sort_keys=True) + "\n")
+    if receipt.get("checkpoint_failed"):
+        # Checkpoint capture failed; the worktree was left intact (fail toward
+        # preserving work). Non-zero so an `&&`-gated caller (drain §Recover)
+        # never advances past a reap that did not actually tear anything down.
+        return 5
     return 0
 
 
