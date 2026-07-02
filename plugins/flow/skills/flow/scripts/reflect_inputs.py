@@ -42,6 +42,10 @@ import recall
 import state
 import ticket_frontmatter
 
+# Worst-first ceiling on distilled recurrence classes; the live corpus already
+# yields 37+ and the bundle also carries the full diff + subagent reports.
+_RECURRENCE_CAP = 15
+
 # Reflect-stage gates, read from workspace.toml [reflect]. Defaults differ by
 # blast radius: machinery (the harness self-edit lens) is OFF unless a skill
 # developer opts in; claude_memory (writing the global ~/.claude memory) is ON
@@ -162,8 +166,12 @@ def _recurrence(cwd: Path) -> list[dict[str, Any]]:
     """Recurring signature classes, distilled to `{cluster_key, anchor, fired_count,
     last_fix_sha, runs_ago}`. `runs_ago` counts distinct runs that LOGGED FRICTION
     since the class's last claimed fix (a clean, friction-free run leaves no trace
-    in the log and so does not count) -- not a wall-clock run count. Best-effort:
-    any missing log / unconfigured memory degrades to []. Read-only.
+    in the log and so does not count) -- not a wall-clock run count. Capped at the
+    worst _RECURRENCE_CAP classes so the bundle stays bounded (the live corpus
+    already yields 37+). Best-effort: this is closing-stage enrichment, so ANY
+    detector failure degrades to [] rather than killing the reflect bundle
+    (friction_recurrence is a separately-evolving module; its exception surface
+    is not ours to enumerate). Read-only.
     """
     try:
         namespace = _memory_paths.resolve_namespace(cwd)
@@ -189,8 +197,9 @@ def _recurrence(cwd: Path) -> list[dict[str, Any]]:
                     "runs_ago": len(run_ids),
                 }
             )
-        return out
-    except (_memory_paths._MemoryConfigError, OSError):
+        out.sort(key=lambda c: (-c["fired_count"], c["anchor"]))
+        return out[:_RECURRENCE_CAP]
+    except Exception:
         return []
 
 

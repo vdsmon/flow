@@ -738,3 +738,51 @@ def test_bundle_recurrence_degrades_to_empty_on_no_workspace(
     assert payload["friction_recurrence"] == []
     assert payload["ticket"] == "FT-1"
     assert "state" in payload
+
+
+def test_bundle_recurrence_degrades_to_empty_on_detector_crash(
+    tmp_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The detector is a separately-evolving module: ANY exception it raises
+    # must degrade this closing-stage enrichment to [], never kill the bundle.
+    head = _git(["rev-parse", "HEAD"], tmp_repo).strip()
+    ticket_dir = tmp_path / "runs" / "FT-1"
+    _seed_state(ticket_dir, head)
+
+    def _boom(*args: object, **kwargs: object) -> dict:
+        raise ValueError("detector edge case")
+
+    monkeypatch.setattr(reflect_inputs.friction_recurrence, "analyze", _boom)
+    payload = reflect_inputs.bundle("FT-1", ticket_dir, tmp_repo)
+    assert payload["friction_recurrence"] == []
+    assert payload["ticket"] == "FT-1"
+    assert "state" in payload
+
+
+def test_bundle_recurrence_capped_worst_first(
+    tmp_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    head = _git(["rev-parse", "HEAD"], tmp_repo).strip()
+    ticket_dir = tmp_path / "runs" / "FT-1"
+    _seed_state(ticket_dir, head)
+
+    classes = [
+        {
+            "cluster_key": "signature",
+            "anchor": f"anchor_{i:02d}",
+            "post_fix_count": i,
+            "fixes": [{"ts": "2026-06-01T00:00:00.000Z", "fix_sha": None}],
+        }
+        for i in range(1, 21)
+    ]
+    monkeypatch.setattr(
+        reflect_inputs.friction_recurrence,
+        "analyze",
+        lambda *a, **k: {"signature_classes": classes},
+    )
+    monkeypatch.setattr(reflect_inputs._memory_paths, "resolve_namespace", lambda cwd: "demo")
+    payload = reflect_inputs.bundle("FT-1", ticket_dir, tmp_repo)
+    got = payload["friction_recurrence"]
+    assert len(got) == reflect_inputs._RECURRENCE_CAP
+    assert got[0]["fired_count"] == 20
+    assert got[-1]["fired_count"] == 20 - reflect_inputs._RECURRENCE_CAP + 1
