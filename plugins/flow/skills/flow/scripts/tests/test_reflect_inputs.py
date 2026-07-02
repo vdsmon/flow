@@ -1,4 +1,4 @@
-"""Tests for reflect_inputs.py — reflect-stage input bundler."""
+"""Tests for reflect_inputs.py, the reflect-stage input bundler."""
 
 from __future__ import annotations
 
@@ -96,7 +96,6 @@ def test_bundle_includes_subagent_reports_when_output_path_set(
     head = _git(["rev-parse", "HEAD"], tmp_repo).strip()
     ticket_dir = tmp_path / "runs" / "FT-1"
     _seed_state(ticket_dir, head)
-    # Simulate the implement stage having an output_path recorded.
     report_path = ticket_dir / "stages" / "implement.out"
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text("subagent report body\n", encoding="utf-8")

@@ -39,7 +39,7 @@ backend-not-attributed.
 Exit codes:
   0 = primary write succeeded
   1 = evidence JSON invalid, or run_id not 16 hex chars
-  2 = EEXIST — wrote .dupe.<n>.json instead (informational, not error)
+  2 = EEXIST, wrote .dupe.<n>.json instead (informational, not error)
   3 = I/O error, lock contention, or workspace memory config missing/invalid
       (intent log written; surfaces for /flow recover)
 """

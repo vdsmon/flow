@@ -56,7 +56,7 @@ def test_global_pointer_to_marked_repo(tmp_path, monkeypatch):
 
 
 def test_global_pointer_to_unmarked_repo_rejected(tmp_path, monkeypatch):
-    target = _ws(tmp_path, "target", NOMARKER)  # pointer target lacks the marker
+    target = _ws(tmp_path, "target", NOMARKER)
     other = _ws(tmp_path, "other", NOMARKER)
     gconf = tmp_path / "config.toml"
     gconf.write_text(f'[maintainer]\nrepo_root = "{target}"\n', encoding="utf-8")

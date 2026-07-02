@@ -111,8 +111,8 @@ def test_proposal_label_never_launched():
 
 
 def test_hot_label_defensively_never_launched():
-    # a hot non-evolve bead would be invisible to evolve's _hot_inflight gate,
-    # silently breaking the one-hot invariant across queues — never launch it here
+    # a hot non-evolve bead would be invisible to evolve's _hot_inflight gate, silently breaking
+    # the one-hot invariant across queues, so it must never launch here
     cands = [_cand("flow-hot", labels=["hot"]), _cand("flow-a")]
     out = qs.partition(cands, set(), 0, cap=10, concurrency=5)
     assert out["launch"] == ["flow-a"]

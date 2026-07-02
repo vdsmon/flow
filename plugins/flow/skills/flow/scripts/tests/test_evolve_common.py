@@ -165,7 +165,7 @@ def test_fleet_live_keys_unions_lease_and_fleet(tmp_path):
     repo.mkdir()
     # A: a live lease in the worktree pool (no fleet entry)
     _write_lease(_pool_run_dir(repo, "flow-lease"))
-    # B: a fresh fleet heartbeat (no lease) — resolve_fleet_dir(repo) == repo/.flow/fleet
+    # B: a fresh fleet heartbeat (no lease); resolve_fleet_dir(repo) == repo/.flow/fleet
     fleet.register(fleet.resolve_fleet_dir(repo), "flow-fleet", "rid", now=utcnow_iso())
     assert ec.fleet_live_keys(repo) == {"flow-lease", "flow-fleet"}
 

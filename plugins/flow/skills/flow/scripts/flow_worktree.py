@@ -1,4 +1,4 @@
-"""flow_worktree.py — post-approval bootstrap for the ticket pipeline.
+"""flow_worktree.py: post-approval bootstrap for the ticket pipeline.
 
 After `/flow spec` approves a plan (ExitPlanMode), this seeds a git worktree so the
 pipeline resumes directly at the implement stage. The spec session then enters this
@@ -20,13 +20,12 @@ concern.
      the worktree frontmatter so the commit + e2e stages do not block on a prompt
   7. print the worktree path (the spec session enters it via EnterWorktree)
 
-The bootstrap holds NO run lease; the pipeline's cmd_init acquires it under the
-run_id seeded here (it sees that run_id as the owner, so resume is clean). It
-DOES transiently hold the canonical per-ticket bootstrap CLAIM — a flock on
-<main_root>/.flow/tickets/<ticket>.claim, held across worktree-add → state-seed
-→ frontmatter stamp, released at bootstrap exit — under which it refuses
-(exit 4) when a live sibling run already holds this ticket. The .claim file
-persists after release by design (deleting a flock target would race a waiter).
+The bootstrap holds NO run lease; the pipeline's cmd_init acquires it under the run_id seeded here
+(it sees that run_id as the owner, so resume is clean). It DOES transiently hold the canonical
+per-ticket bootstrap CLAIM (a flock on <main_root>/.flow/tickets/<ticket>.claim, held across
+worktree-add → state-seed → frontmatter stamp, released at bootstrap exit), under which it refuses
+(exit 4) when a live sibling run already holds this ticket. The .claim file persists after release
+by design (deleting a flock target would race a waiter).
 
 Exit codes:
   0 = ok (may carry warnings on stderr)
@@ -34,8 +33,8 @@ Exit codes:
   2 = bad args / missing main workspace config
   3 = I/O error
   4 = duplicate claim (a live sibling run already holds this ticket)
-  6 = bead is terminal (closed/done/cancelled) — nothing to bootstrap
-  7 = bead is an epic (a container, not a single-PR unit) — refuse to bootstrap
+  6 = bead is terminal (closed/done/cancelled), nothing to bootstrap
+  7 = bead is an epic (a container, not a single-PR unit), refuse to bootstrap
 """
 
 from __future__ import annotations
@@ -130,8 +129,8 @@ def _porcelain_paths(main_root: Path, runner: Runner) -> dict[str, bool]:
     `git status --porcelain` lines are `XY <path>` (or `XY <orig> -> <path>` for a
     rename); `??` is untracked. Paths are repo-relative, matching planned_files'
     convention (`_gitignored` uses `cwd / f`). Renames take the post-`->` name.
-    Quoted paths (core.quotePath on exotic filenames) are left as-is — a rare miss,
-    not a fault, for this backstop.
+    Quoted paths (core.quotePath on exotic filenames) are left as-is (a rare miss,
+    not a fault, for this backstop).
     """
     result = runner(["git", "status", "--porcelain"], main_root)
     if result.returncode != 0:
@@ -171,8 +170,8 @@ def _relocate_spilled(
     """Carry main-checkout spilled planned edits into the seeded worktree.
 
     Direct content copy, not `git stash`: copying the full working-tree content
-    leaves no diff to conflict (the worktree just takes the agent's version), and
-    main is cleaned ONLY after the copy verifiably landed — so the work is never in
+    leaves no diff to conflict (the worktree takes the agent's version), and
+    main is cleaned ONLY after the copy verifiably landed, so the work is never in
     neither place. Worst case it lives in both (harmless, recoverable). Best-effort:
     a relocation fault degrades to a warning, never fails the bootstrap.
     """
@@ -192,7 +191,7 @@ def _relocate_spilled(
             else:
                 res = runner(["git", "checkout", "--", rel], main_root)
                 if res.returncode != 0:
-                    # Worktree has the work; main just wasn't reverted (e.g. a staged
+                    # Worktree has the work; main wasn't reverted (e.g. a staged
                     # edit). No loss, so warn rather than fail.
                     warnings.append(
                         f"relocated {rel} into the worktree but could not revert it on "
@@ -235,7 +234,7 @@ def _copy_config(main_root: Path, worktree: Path, extra: list[str]) -> list[str]
 
 def _ensure_flow_config(main_root: Path, worktree: Path, shared_flow: Path) -> None:
     """Ensure the worktree has .flow/.initialized + workspace.toml (copying from
-    main when absent — the gitignored case), then redirect the memory store to the
+    main when absent, the gitignored case), then redirect the memory store to the
     shared (main) .flow via the gitignored `.flow/memory-root` sibling.
 
     The redirect lives in the sibling, NOT in workspace.toml: the tracked
@@ -368,7 +367,7 @@ def _assert_no_live_sibling(ticket: str, main_root: Path, runner: Runner) -> Non
     Per sibling worktree, the run's <wt>/.flow/runs/<ticket> is classified via
     lease.classify: a live or corrupt run.lock refuses; an expired lease is a
     dead sibling (reap owns its teardown) and proceeds. A free lease with a
-    seeded NON-TERMINAL state.json (any stage pending/in_progress — which
+    seeded NON-TERMINAL state.json (any stage pending/in_progress, which
     includes a failed-mid-pipeline run, since /flow recover can resume it) also
     refuses: that is the bootstrap→cmd_init window where the winner has seeded
     state but not yet acquired its run lease.
@@ -467,7 +466,7 @@ def reap_worktree(
         # concurrent acquire cannot go live between the decision and the
         # destructive mutation (the flow-72d9 incident family). classify_then's
         # teardown runs only when the lease is non-live/non-corrupt; it runs a
-        # git subprocess only (no lease re-entry — flock is non-reentrant).
+        # git subprocess only (no lease re-entry, flock is non-reentrant).
         outcome = lease.classify_then(
             ticket_dir,
             utcnow_iso(),
@@ -537,7 +536,7 @@ def _default_branch(main_root: Path, runner: Runner, *, strict: bool) -> str | N
     `refs/remotes/origin/HEAD`, populating it via `remote set-head` when unset.
     Returns None when no remote default resolves (no `origin` remote at all).
 
-    `strict` hard-fails on a fetch error — the autonomous `@default` contract is
+    `strict` hard-fails on a fetch error. The autonomous `@default` contract is
     "branch off a genuinely fresh remote default or do not start" (a clean abort
     leaves no orphan; the next drain retries). Non-strict swallows the fetch
     error so an offline/origin-less interactive run still bootstraps off its
@@ -562,18 +561,16 @@ def _default_branch(main_root: Path, runner: Runner, *, strict: bool) -> str | N
 
 
 def _resolve_base(base: str, main_root: Path, runner: Runner) -> str:
-    """Resolve the worktree base ref — always off a freshly-fetched origin.
+    """Resolve the worktree base ref, always off a freshly-fetched origin.
 
-    Every invocation fetches origin (best-effort), so a run never branches off a
-    stale ref. `@default`, the local default branch, and a detached HEAD all
-    resolve to the remote default (`origin/<HEAD>`): launching `/flow` from a
-    lagging local `main` is the common stale-base error (a PR polluted with
-    already-merged commits), so it branches off `origin/main` instead of the
-    local tip. A feature branch passes through unchanged — an interactive run
-    stacked on a parent `feat/` branch keeps stacking (the parent may be
-    local-only) — but its remote-tracking refs are now fresh. The interactive
-    fetch is best-effort (an offline/origin-less repo still bootstraps off its
-    local base); the autonomous `@default` fetch hard-fails instead, since that
+    Every invocation fetches origin (best-effort), so a run never branches off a stale ref.
+    `@default`, the local default branch, and a detached HEAD all resolve to the remote default
+    (`origin/<HEAD>`): launching `/flow` from a lagging local `main` is the common stale-base
+    error (a PR polluted with already-merged commits), so it branches off `origin/main` instead of
+    the local tip. A feature branch passes through unchanged, an interactive run stacked on a
+    parent `feat/` branch keeps stacking (the parent may be local-only), but its remote-tracking
+    refs are now fresh. The interactive fetch is best-effort (an offline/origin-less repo still
+    bootstraps off its local base); the autonomous `@default` fetch hard-fails instead, since that
     contract is a guaranteed-fresh remote base (a clean abort, not a stale run).
     """
     strict = base == _DEFAULT_BASE
@@ -598,18 +595,17 @@ def _enforce_hot_floor(
 ) -> None:
     """Code-enforced hot hard-floor (flow-aen).
 
-    An autonomous run — signaled by `--auto` OR a `@default` base (the load-bearing
-    autonomous base; the drain launches from the main checkout, so `--base` alone is
-    not a sufficient signal, hence both) — may NOT self-ship a hot change (a
-    guard/safety file, or a `hot`-labelled bead) with no maintainer decision on file.
-    This lives at the single shared bootstrap every self-approve path funnels through,
-    so it holds for the clean >=90% path too — verb-spec.md step 5 only carried the
-    floor in the adjudication/decided sub-branches, so a clean re-plan could slip a
-    hot change past it. Beads-only: `triage.decided` reads a `DECISION:`/
-    `TRIAGE-DECISION:` comment, a beads-native seam (a non-beads tracker has no such
-    record, so gating it would permanently block). Caller invokes this BEFORE
-    `git worktree add`, so a refusal leaves no orphan. The `[evolve] adjudicate_hot`
-    flag (default off) skips this floor for a maintainer self-target workspace.
+    An autonomous run, signaled by `--auto` OR a `@default` base (the load-bearing autonomous
+    base; the drain launches from the main checkout, so `--base` alone is not a sufficient signal,
+    hence both), may NOT self-ship a hot change (a guard/safety file, or a `hot`-labelled bead)
+    with no maintainer decision on file. This lives at the single shared bootstrap every
+    self-approve path funnels through, so it holds for the clean >=90% path too. verb-spec.md step
+    5 only carried the floor in the adjudication/decided sub-branches, so a clean re-plan could
+    slip a hot change past it. Beads-only: `triage.decided` reads a `DECISION:`/`TRIAGE-DECISION:`
+    comment, a beads-native seam (a non-beads tracker has no such record, so gating it would
+    permanently block). Caller invokes this BEFORE `git worktree add`, so a refusal leaves no
+    orphan. The `[evolve] adjudicate_hot` flag (default off) skips this floor for a maintainer
+    self-target workspace.
     """
     if not (planned_files and (auto or base.strip() == "@default")):
         return
@@ -624,7 +620,7 @@ def _enforce_hot_floor(
     if triage.adjudicate_hot(main_root):
         return
     # No runner threaded: BeadsAdapter (via decided) needs the keyword-only
-    # KwRunner protocol, not flow_worktree's positional Runner — passing `run`
+    # KwRunner protocol, not flow_worktree's positional Runner. Passing `run`
     # here throws inside decided's try/except and silently returns block-by-default,
     # which would make the gate unable to read a recorded decision (the triage
     # bypass would never clear). Let decided build its own kw_default_runner.
@@ -650,14 +646,14 @@ def _refuse_terminal_bead(*, ticket: str, main_root: Path) -> None:
     ran it to implement. The spec `get` ran pre-worktree from the main checkout and
     reflected the bead as open at that instant; the close (its parent epic's merge)
     landed during the run. This re-reads the bead's authoritative status at the
-    bootstrap chokepoint — seconds-to-minutes after the spec fetch, so it catches a
-    bead that closed during planning — and refuses before `git worktree add` (a
+    bootstrap chokepoint (seconds-to-minutes after the spec fetch, so it catches a
+    bead that closed during planning), and refuses before `git worktree add` (a
     refusal leaves no orphan). Tracker-agnostic and unconditional (interactive +
     `--auto`): bootstrapping a done/cancelled bead is wrong either way.
 
     Fail-open is narrow: a genuine read *exception* (tracker construction / subprocess
     failure) proceeds, so a flaky tracker read never strands a legitimate run. A read
-    that SUCCEEDS but yields no usable status is NOT fail-open — it refuses, since an
+    that SUCCEEDS but yields no usable status is NOT fail-open. It refuses, since an
     affirmatively-incoherent tracker answer is suspicious, not transient. The do-loop
     ticket stage re-checks downstream (stage-ticket.md step 3b) and is the backstop for
     a close that lands after this gate.
@@ -691,12 +687,12 @@ def _refuse_terminal_bead(*, ticket: str, main_root: Path) -> None:
 
 
 def _refuse_epic_bead(*, ticket: str, main_root: Path) -> None:
-    """Refuse (exit 7) to bootstrap an epic — a container, not a single-PR unit.
+    """Refuse (exit 7) to bootstrap an epic (a container, not a single-PR unit).
 
     Witnessed (flow-jvxj, parent flow-8by2): `/flow <epic> --auto` reached this
     chokepoint on an epic bead. `evolve_select.py` filters `issue_type != "epic"`
     unconditionally so drain never launches one, but a manual or misrouted
-    `/flow <epic> --auto` had no structural floor — and bootstrapping an epic
+    `/flow <epic> --auto` had no structural floor, and bootstrapping an epic
     cram-ships fragments of an unaccepted empire as a single PR (the ouroboros
     verb-evolve.md §epic names). This mirrors the select-side filter at the
     bootstrap chokepoint. Tracker-agnostic ("epic"/"Epic") and unconditional
@@ -787,7 +783,7 @@ def _effective_lane(
 
 
 def _refuse_invalid_covers(*, ticket: str, covers: list[str], main_root: Path) -> None:
-    """Each cover must be a distinct, live, non-epic ticket — the lead's floors, looped.
+    """Each cover must be a distinct, live, non-epic ticket (the lead's floors, looped).
 
     The epic/terminal reads fail-open (a flaky tracker never strands the run); the
     self-check (a cover that is the lead itself) is deterministic and always refuses.

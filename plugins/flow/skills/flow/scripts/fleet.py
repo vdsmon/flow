@@ -7,16 +7,15 @@ ledger is the single authority those readers will collapse onto in child-3. THIS
 module (child-2) only writes it; nothing reads it authoritatively yet, so a wrong
 or stale entry cannot affect a run (the shadow-write window).
 
-Storage: one JSON file per key at `<shared .flow>/fleet/<key>.json`, where the
-shared `.flow` is resolved by `_memory_paths.resolve_memory_base` — the SAME
-worktree->main redirect the memory store uses (the gitignored `.flow/memory-root`
-sibling written at worktree bootstrap). So a per-stage heartbeat from inside a
-worktree run and a register from the drain's main session both land in the MAIN
-checkout's `.flow/fleet/`, durable across worktree teardown. This is the reason we
-do NOT resolve via `maintainer.resolve_maintainer_repo`: in self-target mode that
-returns the WORKTREE (its workspace.toml is a byte copy carrying self_target), so
-a heartbeat would write into the doomed worktree inode. `resolve_maintainer_repo`
-is still used, but only as the maintainer GATE (off in user projects).
+Storage: one JSON file per key at `<shared .flow>/fleet/<key>.json`, where the shared `.flow` is
+resolved by `_memory_paths.resolve_memory_base`, the SAME worktree->main redirect the memory store
+uses (the gitignored `.flow/memory-root` sibling written at worktree bootstrap). So a per-stage
+heartbeat from inside a worktree run and a register from the drain's main session both land in the
+MAIN checkout's `.flow/fleet/`, durable across worktree teardown. This is the reason we do NOT
+resolve via `maintainer.resolve_maintainer_repo`: in self-target mode that returns the WORKTREE (its
+workspace.toml is a byte copy carrying self_target), so a heartbeat would write into the doomed
+worktree inode. `resolve_maintainer_repo` is still used, but only as the maintainer GATE (off in
+user projects).
 
 Per-key flock on `<key>.lock` spans read->decide->atomic write, the `lease.py`
 idiom; reads are lock-free over `atomic_write_text` (os.replace => old-or-new,
@@ -26,14 +25,13 @@ re-registers (real run_id) keeps the original launch time while refreshing
 liveness. There is no separate run_id-gated heartbeat: gating the refresh would
 no-op forever after a launch register set run_id="" (false-dead).
 
-`live_keys` is the heartbeat-staleness fallback (a spike non-negotiable): a crashed
-run stops refreshing, ages past STALE_AFTER_S, and drops from "live" — the drain
-never blocks forever on a dead run. `deregister`/`deregister_run` is the positive
-removal leg: child-3 wires `deregister_run` into dispatch_stage.cmd_finish so a
-cleanly-finished run drops out of the reconciled liveness read at once instead of
-lingering until the staleness window; DNF/crashed runs (which keep their lease but
-stop heartbeating) are still covered by `live_keys`' staleness fallback. The
-reconciled read itself lives in `_evolve_common.fleet_live_keys` (lease | fleet).
+`live_keys` is the heartbeat-staleness fallback (a spike non-negotiable): a crashed run stops
+refreshing, ages past STALE_AFTER_S, and drops from "live", so the drain never blocks forever on a
+dead run. `deregister`/`deregister_run` is the positive removal leg: child-3 wires `deregister_run`
+into dispatch_stage.cmd_finish so a cleanly-finished run drops out of the reconciled liveness read
+at once instead of lingering until the staleness window; DNF/crashed runs (which keep their lease
+but stop heartbeating) are still covered by `live_keys`' staleness fallback. The reconciled read
+itself lives in `_evolve_common.fleet_live_keys` (lease | fleet).
 
 CLI:
   fleet.py register   --key <K> [--run-id <R> --hostname <H> --boot-id <B>] --workspace-root <dir>
@@ -65,16 +63,15 @@ from _memory_paths import resolve_memory_base
 from _timeutil import parse_iso, utcnow_iso
 from maintainer import resolve_maintainer_repo
 
-# A run that stops refreshing for longer than this ages out of live_keys even if it
-# never deregistered (the staleness fallback). CAVEAT, load-bearing for child-3: the
-# heartbeat fires only at cmd_next (stage TRANSITIONS), so a long intra-stage gap with
-# no transition can exceed this flat window and read a LIVE run as dead — notably the
-# merge stage's CI re-wait, which holds a session 20-40+ min between dispatch calls
-# (flow-72d9, the bug this epic exists to kill). So child-3 must reconcile live_keys
-# against the lease, never trust it alone; the real fix is an expiry-based staleness
-# (lease's stage_timeout*60 + buffer) or an intra-stage heartbeat. 1800 matches
-# launch_ledger.LAUNCH_TTL_SECONDS (whose flat TTL is fine — it only spans the short
-# launch->init window, not a whole run).
+# A run that stops refreshing for longer than this ages out of live_keys even if it never
+# deregistered (the staleness fallback). CAVEAT, load-bearing for child-3: the heartbeat fires only
+# at cmd_next (stage TRANSITIONS), so a long intra-stage gap with no transition can exceed this flat
+# window and read a LIVE run as dead, notably the merge stage's CI re-wait, which holds a session
+# 20-40+ min between dispatch calls (flow-72d9, the bug this epic exists to kill). So child-3 must
+# reconcile live_keys against the lease, never trust it alone; the real fix is an expiry-based
+# staleness (lease's stage_timeout*60 + buffer) or an intra-stage heartbeat. 1800 matches
+# launch_ledger.LAUNCH_TTL_SECONDS (whose flat TTL is fine, it only spans the short launch->init
+# window, not a whole run).
 STALE_AFTER_S = 1800
 
 
@@ -320,12 +317,12 @@ def is_live(workspace_root: Path, key: str) -> bool:
     True, so a re-check before reap merge+close / session-cleanup stop+rm never green-
     lights destroying a run that acquired a lease in the classify->act gap.
 
-    LEASE-ONLY by design (NOT lease|fleet). The reap (merge a dead orphan) and cleanup
-    (stop a done session) sites are always POST-lease, so the only liveness fleet adds
-    over the lease is the launch->init window — which neither site is ever in. What an
-    OR with the fleet term WOULD add here is harm: fleet's flat staleness (1800s) lingers
-    long after a dead orphan's lease expired (~stage_timeout+buffer, ~900s), so it would
-    read a reapable dead orphan as live and skip the very reap that exists to merge it.
+    LEASE-ONLY by design (NOT lease|fleet). The reap (merge a dead orphan) and cleanup (stop a done
+    session) sites are always POST-lease, so the only liveness fleet adds over the lease is the
+    launch->init window, which neither site is ever in. What an OR with the fleet term WOULD add
+    here is harm: fleet's flat staleness (1800s) lingers long after a dead orphan's lease expired
+    (~stage_timeout+buffer, ~900s), so it would read a reapable dead orphan as live and skip the
+    very reap that exists to merge it.
     The lease's per-stage TTL is the accurate signal: a run that went live in the gap has
     a fresh lease and is caught here. (True atomic read+act under one flock is impossible
     for a prose `gh pr merge`; that is child-4's merge-token. This re-check NARROWS the

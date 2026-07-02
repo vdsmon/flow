@@ -3,12 +3,12 @@
 Library + thin CLI. Stdlib-only.
 
 Two files, two roles:
-- `<workspace_root>/.flow/recall-pending.jsonl` — the hook is the SOLE writer,
-  appending one entry per recall it observed. The dispatcher promotes matching
-  entries (and rewrites the file) but runs only in worktrees, so the hook also
-  evicts stale entries (`evict_stale`) on append to compact the main checkout.
-- `<workspace_root>/.flow/runs/<ticket>/recall-log.jsonl` — promoted entries
-  land here, dispatcher-stamped with `recalled_at`.
+- `<workspace_root>/.flow/recall-pending.jsonl`: the hook is the SOLE writer, appending one entry
+  per recall it observed. The dispatcher promotes matching entries (and rewrites the file) but runs
+  only in worktrees, so the hook also evicts stale entries (`evict_stale`) on append to compact the
+  main checkout.
+- `<workspace_root>/.flow/runs/<ticket>/recall-log.jsonl`: promoted entries land here, dispatcher-
+  stamped with `recalled_at`.
 
 Idempotency key:
 

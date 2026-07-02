@@ -38,7 +38,7 @@ def _sel(launch=None, launched_pending=None):
     return {"launch": launch or [], "launched_pending": launched_pending or []}
 
 
-# ─── decide() — the termination core ─────────────────────────────────────────
+# ─── decide(): the termination core ──────────────────────────────────────────
 
 
 def test_launch_nonempty_launches():
@@ -118,7 +118,7 @@ def test_corrupt_with_parked_still_waits():
 
 
 def test_launched_pending_blocks_even_with_no_live_lease():
-    # a just-launched run is pre-lease (no run.lock yet) so liveness is empty, but it
+    # a newly launched run is pre-lease (no run.lock yet) so liveness is empty, but it
     # has NOT finished → block termination, don't abandon a held_hot bead behind it.
     d = ed.decide(_sel(launched_pending=["flow-new"]), {})
     assert d["action"] == "wait"
@@ -140,7 +140,7 @@ def test_launched_pending_empty_still_done():
     assert d["parked"] == []
 
 
-# ─── _run_dir_for / liveness_map — the worktree resolution ───────────────────
+# ─── _run_dir_for / liveness_map: the worktree resolution ────────────────────
 
 
 def test_run_dir_for_absent_returns_none(tmp_path):
@@ -196,7 +196,7 @@ def test_liveness_map_reboot_clearable_lease(tmp_path, monkeypatch):
     assert ed.decide(_sel(), ed.liveness_map(repo, ["flow-rb"]))["action"] == "done"
 
 
-# ─── cli_main — --include-proposals threading ────────────────────────────────
+# ─── cli_main: --include-proposals threading ─────────────────────────────────
 
 
 def _stub_cli(monkeypatch, tmp_path, captured):
@@ -236,7 +236,7 @@ def test_cli_include_proposals_threads_to_select(monkeypatch, tmp_path, capsys):
     assert "WARNING" in cap.err  # the dangerous-mode banner fires
 
 
-# ─── cli_main — exit codes ───────────────────────────────────────────────────
+# ─── cli_main: exit codes ────────────────────────────────────────────────────
 
 
 def _plain_ws(tmp_path):
@@ -281,7 +281,7 @@ def test_cli_tool_error_exit_2(monkeypatch, tmp_path, capsys):
     assert "bd blew up" in capsys.readouterr().err
 
 
-# ─── cli_main — pre-PR live-run liveness (real lease + real liveness_map) ─────
+# ─── cli_main: pre-PR live-run liveness (real lease + real liveness_map) ──────
 
 
 def _stub_cli_live(monkeypatch, tmp_path, sel):
@@ -363,7 +363,7 @@ def test_cli_removes_launch_marker_once_registered(monkeypatch, tmp_path, capsys
 def test_cli_removes_launch_marker_via_open_pr_alone(monkeypatch, tmp_path, capsys):
     # registration proven by an OPEN PR, not a live lease: the run opened its PR then
     # its session ended (lease expired/absent), so live_runs lacks the key but
-    # open_pr_keys has it. The marker MUST still drop — registered is the union, and
+    # open_pr_keys has it. The marker MUST still drop; registered is the union, and
     # the open-PR half carries this case (kills the `| open_pr_keys` mutation).
     sel = {
         "launch": [],
@@ -392,7 +392,7 @@ def test_cli_removes_launch_marker_via_open_pr_alone(monkeypatch, tmp_path, caps
     assert out["select"]["launched_pending"] == []
 
 
-# ─── decide() — the STRANDED recover gate (flow-9ljv) ────────────────────────
+# ─── decide(): the STRANDED recover gate (flow-9ljv) ─────────────────────────
 
 
 def test_stranded_nonempty_recovers():
@@ -405,7 +405,7 @@ def test_stranded_nonempty_recovers():
 
 def test_stranded_excluded_from_parked():
     # a stranded key that ALSO shows in liveness as non-live must not double-count
-    # into parked — it is reaped, not handed to the human.
+    # into parked, it is reaped, not handed to the human.
     d = ed.decide(_sel(), {"flow-a": "absent", "flow-b": "absent"}, stranded=["flow-a"])
     assert d["action"] == "recover"
     assert d["stranded"] == ["flow-a"]
@@ -437,7 +437,7 @@ def test_launch_beats_stranded():
     assert "stranded" not in d
 
 
-# ─── cli_main — STRANDED detection (stub bd/gh reads + on-disk lease) ─────────
+# ─── cli_main: STRANDED detection (stub bd/gh reads + on-disk lease) ──────────
 
 
 def _cp(stdout="", returncode=0):
@@ -549,7 +549,7 @@ def test_cli_stranded_query_is_evolve_label_scoped(monkeypatch, tmp_path, capsys
     # the cross-domain-stomp guard: detection must query `bd list -l evolve --status
     # in_progress`, NEVER a bare unscoped `--status in_progress` (which would let the
     # evolve drain reap a day-job run's worktree in the shared pool). Assert the argv,
-    # not just empty-in→empty-out — a regression dropping `-l evolve` stays caught.
+    # not merely empty-in→empty-out, a regression dropping `-l evolve` stays caught.
     sel = {"launch": [], "skipped_in_flight": [], "live_runs": [], "open_pr_keys": []}
     runner = _StrandRunner(in_progress=[])
     _stub_cli_strand(monkeypatch, tmp_path, sel, runner)
@@ -558,15 +558,12 @@ def test_cli_stranded_query_is_evolve_label_scoped(monkeypatch, tmp_path, capsys
     out = json.loads(capsys.readouterr().out)
     assert out["stranded_pre_pr"] == []
     assert out["action"] == "done"
-    # the real guard: every in_progress query is label-scoped to evolve, never a bare
-    # `--status in_progress` (a regression dropping `-l evolve` stays caught here).
     assert runner.bd_list_calls, "detection must run a bd list query"
     assert all("-l" in c for c in runner.bd_list_calls), "every query must be label-scoped"
     assert any("evolve" in c for c in runner.bd_list_calls), "must query the evolve label"
     assert not any("--status" in c and "-l" not in c for c in runner.bd_list_calls), (
         "no bare unscoped in_progress query"
     )
-    # every in_progress query carried `-l evolve`; none was an unscoped bare list
     assert runner.bd_list_calls, "detection never queried bd list"
     for call in runner.bd_list_calls:
         assert "in_progress" in call
@@ -574,7 +571,7 @@ def test_cli_stranded_query_is_evolve_label_scoped(monkeypatch, tmp_path, capsys
         assert call[i + 1] == "evolve"
 
 
-# ─── stranded_pre_pr — injectable in_progress scope (flow-y8zs, queue parity) ──
+# ─── stranded_pre_pr: injectable in_progress scope (flow-y8zs, queue parity) ───
 
 
 def test_stranded_pre_pr_injected_keys_bypass_evolve_query(tmp_path):
@@ -597,7 +594,7 @@ def test_stranded_pre_pr_injected_keys_bypass_evolve_query(tmp_path):
 
 def test_stranded_pre_pr_default_uses_evolve_query(tmp_path):
     # the evolve path (in_progress_keys=None) still computes the set via the
-    # evolve-label bd list query — back-compat with evolve_drain.cli_main.
+    # evolve-label bd list query, for back-compat with evolve_drain.cli_main.
     repo = tmp_path / "flow"
     repo.mkdir()
     runner = _StrandRunner(in_progress=["flow-evo"])

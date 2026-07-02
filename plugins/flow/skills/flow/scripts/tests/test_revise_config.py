@@ -1,4 +1,4 @@
-"""Tests for revise_config.py — the [revise] block reader + plain-comment floor."""
+"""Tests for revise_config.py: the [revise] block reader + plain-comment floor."""
 
 from __future__ import annotations
 

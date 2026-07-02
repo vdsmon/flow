@@ -1,4 +1,4 @@
-"""Tests for baseline_collect.py — pre-migration time-to-PR baseline."""
+"""Tests for baseline_collect.py: pre-migration time-to-PR baseline."""
 
 from __future__ import annotations
 

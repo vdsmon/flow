@@ -547,7 +547,6 @@ def test_covers_surfaced_on_held_main_red_entry():
 
 
 def test_covers_dedups_across_multiple_commits():
-    # a cover named in two commits surfaces once.
     prs = [
         _pr(
             1,

@@ -1,6 +1,6 @@
 """Per-ticket TOML frontmatter reader/writer.
 
-Library + thin CLI. Stdlib-only — `tomllib` for parse, hand-rolled emit.
+Library + thin CLI. Stdlib-only (`tomllib` for parse, hand-rolled emit).
 
 **Frontmatter format**: `+++`-delimited TOML at top of file, followed by
 freeform markdown body. We OWN this format (no preexisting ticket files).
@@ -259,10 +259,10 @@ def read(path: Path) -> dict[str, Any]:
 def update(path: Path, updates: dict[str, str]) -> None:
     """Atomic in-place update of frontmatter values.
 
-    Read-modify-write is fully serialized under the file's `.lock` flock — two
-    concurrent updaters cannot interleave their RMW windows. Preserves body
-    bytes + key ordering; new keys appended in insertion order. On unparseable
-    existing frontmatter raises `_SchemaInvalid` (CLI surfaces as exit 2).
+    Read-modify-write is fully serialized under the file's `.lock` flock. Two concurrent
+    updaters cannot interleave their RMW windows. Preserves body bytes + key ordering; new keys
+    appended in insertion order. On unparseable existing frontmatter raises `_SchemaInvalid`
+    (CLI surfaces as exit 2).
     """
     with _Flock(_lock_path(path)):
         text = path.read_text(encoding="utf-8") if path.exists() else f"{DELIM}\n{DELIM}\n"

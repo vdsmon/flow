@@ -1,4 +1,4 @@
-"""Tests for recall.py — hand-rolled BM25 ranker."""
+"""Tests for recall.py, hand-rolled BM25 ranker."""
 
 from __future__ import annotations
 
@@ -60,8 +60,7 @@ def test_tokenize_collapses_whitespace_and_punct() -> None:
 
 
 def test_tokenize_nfkc_normalizes_unicode_compat() -> None:
-    # Full-width ASCII codepoints: U+FF46 U+FF4F U+FF4F.
-    # NFKC normalizes these to plain f / o / o.
+    # Full-width ASCII codepoints U+FF46 U+FF4F U+FF4F; NFKC normalizes these to plain f / o / o.
     full_width = chr(0xFF46) + chr(0xFF4F) + chr(0xFF4F)
     assert recall.tokenize(full_width) == ["foo"]
 
@@ -74,7 +73,7 @@ def test_tokenize_preserves_word_underscores() -> None:
     assert recall.tokenize("foo_bar") == ["foo_bar"]
 
 
-# ─── rank() — empty corpora ──────────────────────────────────────────────────
+# ─── rank(), empty corpora ───────────────────────────────────────────────────
 
 
 def test_rank_empty_corpus_returns_empty() -> None:
@@ -93,7 +92,7 @@ def test_rank_whitespace_query_returns_no_results() -> None:
     assert recall.rank("   \t\n", entries, top_n=10) == []
 
 
-# ─── rank() — basic BM25 ─────────────────────────────────────────────────────
+# ─── rank(), basic BM25 ──────────────────────────────────────────────────────
 
 
 def test_rank_query_match_in_body_outranks_no_match() -> None:
@@ -131,7 +130,7 @@ def test_rank_returns_entry_shape_with_score() -> None:
     assert "score" in results[0]
 
 
-# ─── rank() — exact-match boost ──────────────────────────────────────────────
+# ─── rank(), exact-match boost ───────────────────────────────────────────────
 
 
 def test_branch_exact_match_boosts_score() -> None:
@@ -209,7 +208,7 @@ def test_ticket_exact_match_ranks_first_even_with_zero_text_score() -> None:
     assert results[0]["score"] > results[1]["score"]
 
 
-# ─── rank() — field weights ──────────────────────────────────────────────────
+# ─── rank(), field weights ───────────────────────────────────────────────────
 
 
 def test_field_weights_branch_outranks_body() -> None:
@@ -226,7 +225,7 @@ def test_field_weights_branch_outranks_body() -> None:
     assert results[0]["id"] == "a" * 16
 
 
-# ─── rank() — tiebreak ts DESC ───────────────────────────────────────────────
+# ─── rank(), tiebreak ts DESC ────────────────────────────────────────────────
 
 
 def test_tiebreak_ts_desc() -> None:
@@ -594,8 +593,9 @@ def test_semantic_threshold_drops_low_cosine(
 def test_semantic_fusion_reorders_vs_bm25(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """Fusion must MOVE results, not just run. BM25 ranks the lexical match (A)
-    first; the strong cosine match (B, no lexical overlap) is lifted above it.
+    """Fusion must actually reorder results; running without error is not enough. BM25 ranks
+    the lexical match (A) first; the strong cosine match (B, no lexical overlap) is lifted
+    above it.
 
     Stub 4-dim bins by sum(ord(word)) % 4. Query "fsync" -> bin3 = [0,0,0,1].
     A "fsync zzz" -> [0,0,1,1], cosine 0.707 (dropped by tau=0.8) but BM25 rank0.

@@ -20,10 +20,9 @@ Subcommands:
   merge          --pr ID [--squash]                 forge.merge(id, squash) -> {ok}
   delete-branch  --branch B                         forge.delete_branch(branch) -> {ok}
 
-Capability-gated subcommands (review-threads / review-status / post-reply /
-resolve-thread / mark-ready / delete-branch) degrade on `NotSupported` to `{"supported": false}` with
-exit 0, so a host that cannot do X is not an error (mirrors tracker_cli's
-download-attachments on beads).
+Capability-gated subcommands (review-threads / review-status / post-reply / resolve-thread /
+mark-ready / delete-branch) degrade on `NotSupported` to `{"supported": false}` with exit 0, so a
+host that cannot do X is not an error (mirrors tracker_cli's download-attachments on beads).
 
 Workspace resolution: reads `.flow/workspace.toml` `[forge]` block via
 `forge.read_forge_config`. The block is OPTIONAL; a forge subcommand on a workspace
@@ -198,7 +197,7 @@ def cli_main(argv: list[str], forge_factory: Any = None) -> int:
     try:
         return handler(forge, args)
     except NotSupported:
-        # Capability-gated op the host cannot do — degrade, not an error.
+        # Capability-gated op the host cannot do: degrade, not an error.
         return _emit({"supported": False})
     except ForgeError as exc:
         sys.stderr.write(f"forge-cli: forge error: {exc}\n")

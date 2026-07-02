@@ -488,7 +488,7 @@ def _resolve_engine_drift(
 
     Called only after the lease guard confirms ownership, so a re-anchor write
     never precedes the lease check. Re-runs a FRESH classify_drift (re-reading
-    the first pass would just reproduce the drift): re-verify clean → transient
+    the first pass would reproduce the drift): re-verify clean → transient
     concurrent-read race, proceed with NO mutation (engine_drift_reverified);
     still engine-only AND the engine working tree clean vs HEAD → a committed
     lagging-main / marketplace advance, re-anchor the snapshot (engine_reanchored);
@@ -746,7 +746,6 @@ def cmd_finish(
     except (ValueError, state.StateUnrecoverable) as exc:
         return 1, {"error": str(exc), **recovery}
 
-    # Compute next_pending for caller convenience.
     _, snapshot = vw.validate(workspace_root)
     next_pending: str | None = None
     if snapshot is not None and state.find_failed(new_state) is None:

@@ -21,7 +21,6 @@ def test_iter_jsonl_quarantines_bad_lines(tmp_path):
     recs = [json.loads(line) for line in lines]
     assert recs[0]["raw"] == "not json"
     assert recs[1]["raw"] == "[1, 2]"
-    # main file untouched
     assert p.read_text(encoding="utf-8").startswith('{"ok": 1}')
 
 

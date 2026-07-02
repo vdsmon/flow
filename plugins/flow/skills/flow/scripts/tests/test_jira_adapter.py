@@ -3,7 +3,7 @@
 Strategy:
 
 - Pure helpers (`_content_to_adf`, `_normalize_state`, `_classify_transition_error`,
-  `_adf_to_plain`) are unit-tested directly — no HTTP, no auth.
+  `_adf_to_plain`) are unit-tested directly (no HTTP, no auth).
 - Adapter methods are tested via a `FakeHttp` callable that returns canned
   `urlopen`-shaped responses. The adapter's `http` constructor parameter is the
   injection point.
@@ -66,7 +66,7 @@ def _http_error(
 
 
 class _FakeHttp:
-    """Sequenced fake HTTP. Each entry is (predicate, response_or_exception)."""
+    """Sequenced fake HTTP. Each entry is a response object or an exception to raise."""
 
     def __init__(self, responses: Iterable[Any]) -> None:
         self._iter = iter(responses)
@@ -492,7 +492,7 @@ def test_is_shipped_not_yet_observed_when_done_no_pr_required(
     http = _FakeHttp(
         [
             _Response(_issue_payload(native_status="Done", category_key="done")),  # state()
-            # project_requires_pr() — empty workflow list => False
+            # project_requires_pr(): empty workflow list => False
             _Response({"values": []}),
         ]
     )

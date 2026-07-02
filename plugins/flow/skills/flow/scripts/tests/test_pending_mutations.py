@@ -1,4 +1,4 @@
-"""Contract tests for pending_mutations.py — durable failed-mutation queue."""
+"""Contract tests for pending_mutations.py, durable failed-mutation queue."""
 
 from __future__ import annotations
 

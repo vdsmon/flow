@@ -2,11 +2,11 @@
 
 Wraps `queue_select.select()` (the canonical partition) with the full day-job
 ready backlog, per-key lease liveness (`evolve_drain.liveness_map`), and the
-ADVISORY next action a queue drain would take (`evolve_drain.decide`) — the
+ADVISORY next action a queue drain would take (`evolve_drain.decide`): the
 `action` field reports what a drain would do next, it is never acted on here.
 
 Read-only by construction: this script touches no file, ever. No launches, no
-bd mutations, no launch-ledger marker removal — the launched_pending-minus-
+bd mutations, no launch-ledger marker removal; the launched_pending-minus-
 registered set is computed in memory only (evolve_drain's cli_main owns the
 physical marker removal).
 

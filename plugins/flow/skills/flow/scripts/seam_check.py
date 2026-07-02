@@ -61,7 +61,7 @@ _MODULE_NAME_RE = re.compile(r"[a-z0-9_]+\.py")
 # A script basename inside a stage-registry.toml [[stage]].description. Allows
 # hyphens and uppercase so a stale hyphenated reference (compose-commit.py for
 # the real compose_commit.py) is matched literally and flagged, not normalized
-# away. Do NOT reuse `[a-z_]+\.py` here — it cannot match a hyphenated drift.
+# away. Do NOT reuse `[a-z_]+\.py` here. It cannot match a hyphenated drift.
 _REGISTRY_SCRIPT_RE = re.compile(r"[A-Za-z0-9_-]+\.py")
 
 # A stage-doc basename, e.g. references/stage-e2e.md. The char class is
@@ -621,7 +621,7 @@ def emitted_descriptor_keys(script_path: Path | None = None) -> set[str] | None:
 
     Extracted statically: every string key of every dict literal, PLUS every
     string-constant subscript assignment target (`payload["reference_doc"] = ...`,
-    which is not a dict literal). Over-capture is safe and intended — the gate is
+    which is not a dict literal). Over-capture is safe and intended. The gate is
     one-directional (a prose-cited key absent from THIS set is the drift), so a
     superset only suppresses false errors, never causes one. Returns None if the
     script is missing or unparseable (the gate then no-ops rather than mass-fail).

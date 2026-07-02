@@ -1,4 +1,4 @@
-"""Tests for recall_pending.py — hook-appends / dispatcher-promotes protocol.
+"""Tests for recall_pending.py: hook-appends / dispatcher-promotes protocol.
 
 Most tests inject a fake git runner for the ancestor check (rule (e)); one test
 uses a real tmp git repo to exercise merge-base --is-ancestor for real.
@@ -140,7 +140,6 @@ def test_promote_matches_and_writes_log(tmp_path: Path) -> None:
     assert len(log_lines) == 1
     assert json.loads(log_lines[0])["recalled_at"] == _NOW_ISO
 
-    # removed from pending
     assert recall_pending.list_pending(tmp_path) == []
 
 

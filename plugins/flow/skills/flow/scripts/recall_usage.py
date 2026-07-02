@@ -15,17 +15,17 @@ One append-only file `.flow/<namespace>/recall-usage.jsonl`, two record kinds:
   miss:  {"kind":"miss","type":"RECALL_MISS","run_id","ticket","relearned_id",
           "missed_id","similarity","ts"}
     a near-duplicate of an existing live entry was written THIS run while that
-    existing entry was NOT recalled — the run re-learned a fact it already had.
+    existing entry was NOT recalled. The run re-learned a fact it already had.
     A false-negative proxy for recall.
 
 The metric reads one file: `metric.py recall-hit-rate` joins both kinds.
 
 Both record kinds are deduped on a stable per-run key so a `/flow recover` rerun
-(same `run_id`) does not double-count. The surfaced set is defined ONE way — the
-per-run recall-log `returned_ids` — so the agent only judges `--used-ids`.
+(same `run_id`) does not double-count. The surfaced set is defined ONE way (the
+per-run recall-log `returned_ids`), so the agent only judges `--used-ids`.
 
 Exit codes:
-  0 = ok (records written, possibly zero — e.g. semantic off, model mismatch).
+  0 = ok (records written, possibly zero, e.g. semantic off, model mismatch).
   2 = lock contention.
   3 = invalid args (no state.json / unresolvable run).
   4 = I/O error, or workspace memory config missing/invalid.
@@ -123,7 +123,7 @@ def _append_records(
 
 
 def _surfaced_ids(workspace_root: Path, ticket: str) -> list[str]:
-    """Distinct ids surfaced into the run — the recall-log `returned_ids`, in
+    """Distinct ids surfaced into the run (the recall-log `returned_ids`), in
     first-seen order. Empty when no recall-log (nothing was recalled).
     """
     log_path = _recall_log_path(workspace_root, ticket)
@@ -204,7 +204,7 @@ def detect_misses(
 
     Self-contained and best-effort. Returns [] (no-op, no embedder shelled) when:
     semantic is disabled; no entries were written this run; the sidecar index is
-    absent or its model != the configured model (the post-swap reindex hazard —
+    absent or its model != the configured model (the post-swap reindex hazard,
     comparing a fresh bge vector to a potion-era index is garbage); or the
     embedder is unavailable. New entries are embedded FRESH (1..N texts) rather
     than read from the sidecar, so a stale/failed reindex cannot silently starve

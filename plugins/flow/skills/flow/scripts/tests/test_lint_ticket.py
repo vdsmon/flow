@@ -1,4 +1,4 @@
-"""Tests for lint_ticket.py — HARD GATE per-stage required-field validator."""
+"""Tests for lint_ticket.py, HARD GATE per-stage required-field validator."""
 
 from __future__ import annotations
 

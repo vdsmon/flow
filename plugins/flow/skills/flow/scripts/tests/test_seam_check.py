@@ -168,7 +168,7 @@ def test_slash_adjacent_backtick_spans_do_not_merge() -> None:
 
 def test_slash_phantom_flag_in_fenced_block_is_error() -> None:
     # The phantom-flag catch must also fire when the slash command sits on a
-    # fenced-code line, not just an inline backtick span.
+    # fenced-code line, not only an inline backtick span.
     text = "Example:\n\n```\n/flow recover --reset-foo\n```\n"
     invs = seam_check.find_slash_invocations("t.md", text)
     assert len(invs) == 1
@@ -586,7 +586,7 @@ def test_live_descriptor_keys_all_emitted() -> None:
 
 
 def test_live_skill_cites_the_do_loop_descriptor_keys() -> None:
-    """The anchors fire on the real SKILL.md, not just synthetic input."""
+    """The anchors fire on the real SKILL.md, not only synthetic input."""
     text = (seam_check.SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
     cited = {k for _, k in seam_check.prose_descriptor_key_citations(text)}
     assert {"done", "blocked_by", "reason", "stage", "head_sha", "roles"} <= cited

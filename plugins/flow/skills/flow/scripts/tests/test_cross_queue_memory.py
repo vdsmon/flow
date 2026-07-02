@@ -1,11 +1,10 @@
 """Cross-queue memory dedup: individual vs drain-batch runs converge on one store.
 
-A ticket run individually (main checkout) and the same ticket run as one of N
-concurrent drain-fleet worktrees must hit the SAME knowledge store with the
-SAME idempotency id (path/branch/ts excluded from the formula) and the SAME
-lock file. These tests append through two distinct workspace roots — main and
-a bootstrap-shaped worktree (byte-copied workspace.toml + `.flow/memory-root`
-sibling, mirroring flow_worktree._ensure_flow_config) — into one shared store.
+A ticket run individually (main checkout) and the same ticket run as one of N concurrent
+drain-fleet worktrees must hit the SAME knowledge store with the SAME idempotency id
+(path/branch/ts excluded from the formula) and the SAME lock file. These tests append through two
+distinct workspace roots, main and a bootstrap-shaped worktree (byte-copied workspace.toml +
+`.flow/memory-root` sibling, mirroring flow_worktree._ensure_flow_config), into one shared store.
 """
 
 from __future__ import annotations

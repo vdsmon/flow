@@ -7,7 +7,7 @@ import pytest
 
 import evolve_self_merge as esm
 
-# ─── decide() — the pure gate ────────────────────────────────────────────────
+# ─── decide(), the pure gate ─────────────────────────────────────────────────
 
 
 def test_skip_when_not_maintainer():
@@ -83,7 +83,7 @@ def test_planned_files_absent_follows_label():
     assert d["is_hot"] is False
 
 
-# ─── decide() — the harness-eval gate ────────────────────────────────────────
+# ─── decide(), the harness-eval gate ─────────────────────────────────────────
 
 
 def test_eval_regressed_blocks_merge():
@@ -163,7 +163,7 @@ def test_eval_gate_sits_before_hot_gate():
     assert d["is_hot"] is True
 
 
-# ─── decide() — the main-CI health gate (flow-a1ti.3) ────────────────────────
+# ─── decide(), the main-CI health gate (flow-a1ti.3) ─────────────────────────
 
 
 def test_main_ci_failed_skips_even_when_otherwise_eligible():

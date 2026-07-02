@@ -7,19 +7,18 @@ and recommended bounding the machinery to high-complexity/hot work. flow already
 classifies beads (tier:trivial / tier:light, see verb-evolve.md) but the label only
 picks the worker MODEL (evolve_select.py model_per_key). This maps the SAME labels to
 a verification LANE that the spec/implement/reflect stages branch on (they read the
-lane string directly — verb-spec.md `--auto`, stage-implement.md, stage-reflect.md;
+lane string directly: verb-spec.md `--auto`, stage-implement.md, stage-reflect.md;
 the per-lane gate policy lives in that prose, not here).
 
-Safety: a tier label is a vetted judgment from the Opus producer's audit step, so an
-express/light lane is "don't re-run judgment that already happened," NOT "skip
-judgment." The independent review (CI + the review bot) and the deterministic safety
-machinery (lease / snapshot / content-ownership / push-state) run on every lane. A
-hot or untiered bead always gets the full lane. tier:light keeps TDD (it can be
-behavior-changing); tier:trivial is behavior-preserving by the producer's definition,
-so it earns the plan/test skips.
+Safety: a tier label is a vetted judgment already made upstream, during the Opus producer's
+audit step; an express/light lane trusts that judgment and skips re-running it. The independent
+review (CI + the review bot) and the deterministic safety machinery (lease / snapshot /
+content-ownership / push-state) run on every lane. A hot or untiered bead always gets the full
+lane. tier:light keeps TDD (it can be behavior-changing); tier:trivial is behavior-preserving by
+the producer's definition, so it earns the plan/test skips.
 
 Imported by `triage.lane` (spec-time, via raw bd read) and `flow_worktree._lane_for_bead`
-(bootstrap-time, via the tracker). No I/O here — callers supply the labels.
+(bootstrap-time, via the tracker). No I/O here, callers supply the labels.
 """
 
 from __future__ import annotations

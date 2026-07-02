@@ -109,10 +109,10 @@ def staleness_block(record_path: Path, now: datetime) -> str:
     """Warn when an armed evolve schedule's run-record signals trouble.
 
     Three conditions, per schedule, in priority order:
-      1. hung  — a `start` with no `end` after it, past the zombie grace (3h
-                 nightly / 6h weekly). A run in flight within grace stays silent.
-      2. fail  — the latest `end` recorded outcome `fail` (trap-EXIT crash-capture).
-      3. stale — the latest `end` is older than the staleness threshold (36h / 8d).
+      1. hung: a `start` with no `end` after it, past the zombie grace (3h nightly
+         / 6h weekly). A run in flight within grace stays silent.
+      2. fail: the latest `end` recorded outcome `fail` (trap-EXIT crash-capture).
+      3. stale: the latest `end` is older than the staleness threshold (36h / 8d).
 
     Hung keys on `last_start > last_end` (not `last_end is None`), so a fresh
     hung start is caught even with prior completed runs in the accumulating file.
@@ -157,8 +157,8 @@ def staleness_block(record_path: Path, now: datetime) -> str:
 def cli_main(run_record_path: Path | None = None) -> int:
     try:
         record = run_record_path if run_record_path is not None else _run_record_path()
-        # The evolve deadman is machine-level (~/.flow-evolve/), so it renders in
-        # every session, not only ones started inside a flow workspace.
+        # The evolve deadman is machine-level (~/.flow-evolve/), so it renders in every
+        # session, not only ones started inside a flow workspace.
         staleness = staleness_block(record, _now())
         if staleness:
             sys.stdout.write(staleness + "\n")

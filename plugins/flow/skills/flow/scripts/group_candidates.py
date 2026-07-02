@@ -8,7 +8,7 @@ The clustering itself is judgment (shared files / deps / subsystem) and lives
 in the reference doc. This script owns only the deterministic half: fetch,
 normalize each ticket to a compact record (key, summary, status, type, parent,
 links, whether the body is empty), and surface duplicate HINTS (an empty-body
-ticket whose title strongly overlaps a sibling — the FT-1190 pattern). Hints
+ticket whose title strongly overlaps a sibling, the FT-1190 pattern). Hints
 are suggestions the prose confirms, never verdicts.
 
 Exit codes:
@@ -40,7 +40,7 @@ def _summary_tokens(summary: str) -> set[str]:
     """Lowercase alphanumeric tokens (len >= 2) of a summary, minus stopwords.
 
     Punctuation is dropped, so "[AR 2083 - Rappi] - Sheet 3 - Arca" and
-    "[AR 2083 - Rappi / Sheet 3 - ARCA]" tokenize identically — which is exactly
+    "[AR 2083 - Rappi / Sheet 3 - ARCA]" tokenize identically. That is exactly
     the empty-body title-twin (FT-1190 vs FT-1207) the dup hint is meant to catch.
     """
     raw = re.findall(r"[a-z0-9]{2,}", summary.lower())

@@ -115,9 +115,9 @@ def test_epic_is_skipped():
 
 
 def test_proposal_label_never_launched():
-    # the `proposal`-exclusion guard keeps a mislabeled `evolve,proposal` bead
-    # out of `launch` — defense-in-depth, since plain proposals now live in a
-    # separate non-`evolve` backlog and never reach drain.
+    # the `proposal`-exclusion guard keeps a mislabeled `evolve,proposal` bead out of `launch`
+    # (defense-in-depth, since plain proposals now live in a separate non-`evolve` backlog and
+    # never reach drain).
     cands = [_cand("flow-prop", labels=["evolve", "proposal"]), _cand("flow-a")]
     out = es.partition(cands, set(), False, 0, cap=10, concurrency=5)
     assert out["launch"] == ["flow-a"]
@@ -386,7 +386,7 @@ def test_select_tool_error(tmp_path):
         es.select(ws, cap=5, concurrency=3, runner=run)
 
 
-# ---- _live_run_keys — pre-PR lease scan ----
+# ---- _live_run_keys - pre-PR lease scan ----
 
 
 def _pool_run_dir(repo: Path, key: str, slug: str = "wip") -> Path:
@@ -447,11 +447,10 @@ def test_select_pre_pr_live_run_is_inflight(tmp_path):
 
 
 def test_select_fleet_only_key_inflight_but_absent_from_live_runs(tmp_path):
-    # flow-8by2.3 regression: a key registered in the fleet ledger at launch (no
-    # lease yet) must suppress relaunch (in-flight) but must NOT appear in live_runs
-    # — else the drain's marker-remove (registered = live_runs | open_pr_keys) would
-    # evict it from launched_pending a turn early and re-open the blind window
-    # launch_ledger closes (flow-d4s).
+    # flow-8by2.3 regression: a key registered in the fleet ledger at launch (no lease yet) must
+    # suppress relaunch (in-flight) but must NOT appear in live_runs. Otherwise the drain's
+    # marker-remove (registered = live_runs | open_pr_keys) would evict it from launched_pending
+    # a turn early and re-open the blind window launch_ledger closes (flow-d4s).
     ws = _marked_ws(tmp_path)
     repo = es.resolve_maintainer_repo(ws)
     assert repo is not None
@@ -460,7 +459,7 @@ def test_select_fleet_only_key_inflight_but_absent_from_live_runs(tmp_path):
     out = es.select(ws, cap=5, concurrency=3, runner=run)
     assert out["launch"] == ["flow-y"]  # fleet-live key suppressed, not relaunched
     assert out["skipped_in_flight"] == ["flow-fleet"]  # in-flight via fleet
-    assert out["live_runs"] == []  # NOT in live_runs (lease-only) — the bug guard
+    assert out["live_runs"] == []  # NOT in live_runs (lease-only, the bug guard)
 
 
 def test_select_trivial_non_hot_downshifts_to_sonnet(tmp_path):
@@ -598,7 +597,7 @@ def test_select_pre_pr_live_hot_blocks_second_hot(tmp_path):
     assert out["live_runs"] == ["flow-old"]
 
 
-# ---- launch ledger — the launch->init blind-window regression ----
+# ---- launch ledger - the launch->init blind-window regression ----
 
 
 def _ledger_add(repo: Path, key: str) -> None:
@@ -682,7 +681,7 @@ def test_select_budget_shrinks_with_launched_pending(tmp_path):
 
 
 def test_select_launched_pending_open_hot_serializes_next_hot(tmp_path):
-    # a hot key sits in launched_pending with status `open` (just launched, pre-transition),
+    # a hot key sits in launched_pending with status `open` (newly launched, pre-transition),
     # no lease and no ref/PR. It must consume the single hot slot, holding the next hot.
     ws = _marked_ws(tmp_path)
     repo = es.resolve_maintainer_repo(ws)

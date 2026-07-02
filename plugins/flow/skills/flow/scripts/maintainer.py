@@ -6,11 +6,11 @@ machinery friction stays dormant and `/flow evolve` is disabled.
 
 Two signals, by context:
 
-1. Committed marker — `[maintainer] self_target = true` in the workspace's own
+1. Committed marker: `[maintainer] self_target = true` in the workspace's own
    `.flow/workspace.toml`. It travels with the repo, so the cloud clone and local
    dogfooding both see it without any machine-local config; the flow repo IS the
    target, so repo_root is the workspace itself. This is the primary signal.
-2. Local pointer (optional) — `[maintainer] repo_root = "<path>"` in
+2. Local pointer (optional): `[maintainer] repo_root = "<path>"` in
    `~/.flow/config.toml`, so a run in some OTHER repo can sling flow friction back
    to a local flow checkout. The pointed-at repo must itself carry the committed
    marker, so a stray path can never be mistaken for the flow repo.

@@ -1,4 +1,4 @@
-"""Contract tests for snapshot.py — TOCTOU run snapshot emit + verify.
+"""Contract tests for snapshot.py (TOCTOU run snapshot emit + verify).
 
 Covers: emit then verify match; workspace.toml edit -> drift names workspace_toml;
 stage-registry edit -> drift names stage_registry; no snapshot -> (True, absent);
@@ -457,11 +457,10 @@ def test_classify_drift_vanished_stage_registry_fails_closed(tmp_path: Path) -> 
 def test_classify_drift_plugin_reinstall_race_fails_closed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The primary threat: a tracked file vanishes between rglob-enumerate and read_bytes
-    during a plugin reinstall. Physical deletion can't reproduce the enumerate-then-vanish
-    race (rglob just never enumerates a gone file), so patch read_bytes to raise on the
-    real _tree_hash read path and prove classify_drift catches it into a
-    fail-closed abort."""
+    """The primary threat: a tracked file vanishes between rglob-enumerate and read_bytes during a
+    plugin reinstall. Physical deletion can't reproduce the enumerate-then-vanish race (rglob never
+    enumerates a gone file), so patch read_bytes to raise on the real _tree_hash read path and prove
+    classify_drift catches it into a fail-closed abort."""
     skill_root = _make_skill_root(tmp_path)
     workspace_root = _make_workspace(tmp_path, _skill_workspace_text())
     plugin_parent, _ = _make_plugin(tmp_path)
@@ -572,11 +571,10 @@ def test_write_snapshot_accepts_precomputed_snapshot(tmp_path: Path) -> None:
 
 
 # ─── Engine component (flow-2pp) ─────────────────────────────────────────────
-# The canonical snapshot gains an "engine" component: a tree hash over the MAIN
-# checkout's skill tree (resolved via `git worktree list`, invocation-path
-# independent), active ONLY when that checkout sits on a protected branch —
-# exactly the marketplace-tracks-main window where a mid-run `git pull` +
-# `claude plugin marketplace update` swaps engine code under a running pipeline.
+# The canonical snapshot gains an "engine" component: a tree hash over the MAIN checkout's skill
+# tree (resolved via `git worktree list`, invocation-path independent), active ONLY when that
+# checkout sits on a protected branch, exactly the marketplace-tracks-main window where a mid-run
+# `git pull` + `claude plugin marketplace update` swaps engine code under a running pipeline.
 
 
 def _git(cwd: Path, *args: str) -> None:

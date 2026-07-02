@@ -1,44 +1,38 @@
 """Classify open evolve PRs for auto-merge (the drain loop's reap-step core, pure).
 
-User opted in: green LEAF evolve PRs auto-merge to the default branch unattended,
-immediate on green. Hot PRs auto-merge too, but only under the `auto_merge_hot`
-config AND isolation (exactly one hot-eligible PR this pass — serialize hot
-merges, at most one per pass); otherwise they land in skipped_hot for the human.
-Non-green and conflicted PRs always wait. With the flag off (the default, every
-user project), hot PRs stay in skipped_hot — the human gate survives where risk
-lives.
+User opted in: green LEAF evolve PRs auto-merge to the default branch unattended, immediate on
+green. Hot PRs auto-merge too, but only under the `auto_merge_hot` config AND isolation (exactly one
+hot-eligible PR this pass: serialize hot merges, at most one per pass); otherwise they land in
+skipped_hot for the human. Non-green and conflicted PRs always wait. With the flag off (the default,
+every user project), hot PRs stay in skipped_hot. The human gate survives where risk lives.
 
-Repo reality (this build): GitHub-native auto-merge is off and there is no branch
-protection, so the drain reap step owns the merge in code and enforces "green" by reading
-the actual check rollup rather than trusting GitHub. CI runs on `push` + every
-`pull_request`, so a PR's checks go green while it is still a draft — this classify
-can confirm green here, and the verb marks the PR ready just before merging.
+Repo reality (this build): GitHub-native auto-merge is off and there is no branch protection, so the
+drain reap step owns the merge in code and enforces "green" by reading the actual check rollup
+rather than trusting GitHub. CI runs on `push` + every `pull_request`, so a PR's checks go green
+while it is still a draft. This classify can confirm green here, and the verb marks the PR ready
+right before merging.
 
-This module is pure classification (no side effects). The `/flow evolve drain`
-reap step performs the merge: `gh pr ready` (if draft) then `gh pr merge --squash`
-over the `merge` set. The remote branch is deleted separately via
-`git push origin --delete` — `--delete-branch` is dropped because the still-
-registered worktree holds the local branch checked out, which makes gh's
-branch-delete step fail and an otherwise-clean merge exit 1.
+This module is pure classification (no side effects). The `/flow evolve drain` reap step performs
+the merge: `gh pr ready` (if draft) then `gh pr merge --squash` over the `merge` set. The remote
+branch is deleted separately via `git push origin --delete`. `--delete-branch` is dropped because
+the still-registered worktree holds the local branch checked out, which makes gh's branch-delete
+step fail and an otherwise-clean merge exit 1.
 
-Eligibility (all required): branch is `feat/<key>-*`; the bead carries `evolve`;
-the check rollup is non-empty and all SUCCESS (green); mergeable (CLEAN, or DRAFT
-which just needs `gh pr ready`). A hot PR additionally needs `auto_merge_hot`
-plus isolation (it is the only hot-eligible PR this pass). Hotness is the `hot`
-label OR a diff touching a `triage._GUARD_FILES` guard file — a substantively-hot
-PR counts as hot even with no label, so it can't slip into the non-hot lane. A
-green PR that is DIRTY (conflicted) lands in `blocked` with reason `"DIRTY"`:
-branches no longer carry a version line (server-side `version-stamp.yml` stamps
-main post-merge), so a DIRTY here is a genuine code conflict that belongs to a
-human, never an auto-recoverable version-line conflict. A green PR whose run lease
-still reads live/corrupt lands in skipped_live (held, not merged) — the run
-self-merges in its own merge stage, so the reap stays an orphan-only safety-net.
-Before any promotion, reap() probes main's OWN CI health for the turn
-(main_ci_health.py): when main is genuinely red (failed), every would-be-merge (the
-promoted hot AND the non-hot leaves) routes into held_main_red instead, no hot promotes,
-and reap() files ONE deduped P0 naming the failing sha + check(s). Green / pending / a
-transient probe error all resume normally. Anything else lands in
-not_green / skipped_hot / skipped_live / blocked / held_main_red / ignored.
+Eligibility (all required): branch is `feat/<key>-*`; the bead carries `evolve`; the check rollup is
+non-empty and all SUCCESS (green); mergeable (CLEAN, or DRAFT which needs only `gh pr ready`). A hot
+PR additionally needs `auto_merge_hot` plus isolation (it is the only hot-eligible PR this pass).
+Hotness is the `hot` label OR a diff touching a `triage._GUARD_FILES` guard file. A substantively-
+hot PR counts as hot even with no label, so it can't slip into the non-hot lane. A green PR that is
+DIRTY (conflicted) lands in `blocked` with reason `"DIRTY"`: branches no longer carry a version line
+(server-side `version-stamp.yml` stamps main post-merge), so a DIRTY here is a genuine code conflict
+that belongs to a human, never an auto-recoverable version-line conflict. A green PR whose run lease
+still reads live/corrupt lands in skipped_live (held, not merged). The run self-merges in its own
+merge stage, so the reap stays an orphan-only safety-net. Before any promotion, reap() probes main's
+OWN CI health for the turn (main_ci_health.py): when main is genuinely red (failed), every would-be-
+merge (the promoted hot AND the non-hot leaves) routes into held_main_red instead, no hot promotes,
+and reap() files ONE deduped P0 naming the failing sha + check(s). Green / pending / a transient
+probe error all resume normally. Anything else lands in not_green / skipped_hot / skipped_live /
+blocked / held_main_red / ignored.
 
 CLI:
   evolve_reap.py --workspace-root <dir>
@@ -100,11 +94,11 @@ def rollup_is_green(rollup: list) -> bool:
 def _covers_from_commits(pr: dict, lead_key: str) -> list[str]:
     """Cover keys this PR co-delivers, parsed from its commits' `Closes <KEY>` trailers.
 
-    A folded `--covers` run emits one `Closes <cover>` footer per cover (plus one for
-    the lead itself) via compose_commit.py. The orphan-reap prose closes each cover, so
-    the merge entry surfaces them here — the live run uses its worktree frontmatter, the
-    reap has only the PR's commit messages. The lead's own key is filtered out (it closes
-    via the bead close, not as a cover). Total: a missing/malformed `commits` key → [].
+    A folded `--covers` run emits one `Closes <cover>` footer per cover (plus one for the lead
+    itself) via compose_commit.py. The orphan-reap prose closes each cover, so the merge entry
+    surfaces them here. The live run uses its worktree frontmatter, the reap has only the PR's
+    commit messages. The lead's own key is filtered out (it closes via the bead close, not as a
+    cover). Total: a missing/malformed `commits` key → [].
     """
     commits = pr.get("commits")
     if not isinstance(commits, list):

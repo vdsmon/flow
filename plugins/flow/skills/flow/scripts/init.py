@@ -1,4 +1,4 @@
-"""/flow init — transactional workspace bootstrap.
+"""/flow init: transactional workspace bootstrap.
 
 Library + thin CLI. Stdlib-only (`tomllib` for reads, hand-written TOML for the
 single small workspace.toml output).
@@ -71,7 +71,7 @@ PhaseLiteral = Literal[
 # Ignore all transient .flow/ state (runs, worktrees, locks, memory-root,
 # per-namespace dirs); whitelist the config pair that stays tracked. Broad rule
 # so new transient files are ignored without enumerating each. _GITIGNORE_MARKER
-# is the idempotency probe — its presence means we already seeded.
+# is the idempotency probe. Its presence means we already seeded.
 _GITIGNORE_MARKER = ".flow/*"
 _GITIGNORE_BLOCK = (
     "# flow: ignore transient run state; keep config trackable\n"
@@ -96,11 +96,11 @@ def _ensure_gitignore(root: Path) -> dict[str, Any] | None:
     return None
 
 
-# AGENTS.md is the cross-harness entry point (Cursor, Windsurf, opencode, a bare
-# loop all read it; Claude Code does not — it loads flow via the plugin manifest,
-# so this file is invisible to CC). Opt-in via `--agents-md`: a tracked root file,
-# so default-off keeps a pure-CC init byte-identical. Marker-guarded + append-only
-# like the gitignore block, so re-init / a pre-existing AGENTS.md is never clobbered.
+# AGENTS.md is the cross-harness entry point (Cursor, Windsurf, opencode, a bare loop all
+# read it; Claude Code does not, it loads flow via the plugin manifest, so this file is
+# invisible to CC). Opt-in via `--agents-md`: a tracked root file, so default-off keeps a
+# pure-CC init byte-identical. Marker-guarded + append-only like the gitignore block, so
+# re-init / a pre-existing AGENTS.md is never clobbered.
 _AGENTS_MARKER = "<!-- flow:begin -->"
 _AGENTS_STANZA = """<!-- flow:begin -->
 ## /flow — ticket→PR pipeline (harness portability)
@@ -930,7 +930,7 @@ def _run_init_phases(
 
     _run_phase("mkdirs", _phase_mkdirs)
 
-    # Phase: ensure_gitignore — keep transient .flow/ state out of the project's
+    # Phase: ensure_gitignore, keep transient .flow/ state out of the project's
     # git status (the worktree pool lives at .flow/worktrees/).
     _run_phase("ensure_gitignore", lambda: _ensure_gitignore(root))
 
@@ -974,7 +974,7 @@ def _run_init_phases(
 
     _run_phase("append_checkpoint", _phase_append_checkpoint)
 
-    # Phase: finalize — atomic rename .initializing → .initialized
+    # Phase: finalize, atomic rename .initializing → .initialized
     def _phase_finalize() -> dict[str, Any] | None:
         os.replace(initializing, initialized)
         return None

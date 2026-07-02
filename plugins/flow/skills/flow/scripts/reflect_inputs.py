@@ -17,7 +17,7 @@ Exit codes:
   0 = ok.
   1 = state.json invalid/missing, or diff environment broken (git not on
       PATH / bad cwd raises FileNotFoundError, caught before _GitError).
-  2 = diff-extract git error (git ran, returned nonzero — e.g. bad ref).
+  2 = diff-extract git error (git ran, returned nonzero, e.g. bad ref).
   3 = I/O error reading state.
 """
 
@@ -80,8 +80,8 @@ def _harness_eval_block(scripts_dir: Path | None = None) -> dict[str, Any]:
 
 
 def _lenient_jsonl(path: Path) -> list[Any]:
-    """Per-line json.loads, skipping blanks + malformed lines. Read-only — never
-    writes a quarantine sidecar (mirrors the friction read in bundle()).
+    """Per-line json.loads, skipping blanks + malformed lines. Read-only, never writes a
+    quarantine sidecar (mirrors the friction read in bundle()).
     """
     out: list[Any] = []
     for line in path.read_text(encoding="utf-8").splitlines():
@@ -201,8 +201,8 @@ def bundle(
             }
         )
 
-    # In-flight friction entries for THIS run — the primary evidence for reflect's
-    # machinery lens. Tolerant of an absent log / unconfigured memory (best-effort).
+    # In-flight friction entries for THIS run, the primary evidence for reflect's machinery
+    # lens. Tolerant of an absent log / unconfigured memory (best-effort).
     friction: list[dict[str, Any]] = []
     try:
         namespace = _memory_paths.resolve_namespace(cwd)

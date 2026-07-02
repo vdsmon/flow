@@ -1,4 +1,4 @@
-"""Tests for flow_worktree.py — the post-approval worktree bootstrap.
+"""Tests for flow_worktree.py, the post-approval worktree bootstrap.
 
 git/mise are injected via a fake runner; the worktree dir is materialized by the
 fake `git worktree add` (simulating a checkout where .flow is gitignored, so the
@@ -206,7 +206,7 @@ def test_seeds_planned_files_as_list(tmp_path: Path) -> None:
 
 def test_no_recovery_without_flag_even_with_dirty_planned_file(tmp_path: Path) -> None:
     # The CC-first guarantee: WITHOUT --recover-spill (the CC path never passes it),
-    # a dirty planned file on main — the user's own pre-existing WIP — is NOT touched.
+    # a dirty planned file on main (the user's own pre-existing WIP) is NOT touched.
     main = _main_checkout(tmp_path)
     (main / "src").mkdir()
     (main / "src" / "a.py").write_text("user wip\n", encoding="utf-8")
@@ -296,7 +296,7 @@ def test_relocate_spilled_real_git_leaves_work_in_worktree_main_reverted(
 ) -> None:
     # The destructive path (real `git checkout` + real unlink) against a real repo:
     # the one load-bearing safety claim is "work ends in the worktree, never in
-    # neither place" — fake-git can't prove it, so exercise real git + fs here.
+    # neither place"; fake-git can't prove it, so exercise real git + fs here.
     main = tmp_path / "main"
     main.mkdir()
 
@@ -735,7 +735,7 @@ def test_bootstrap_rejects_gitignored_planned_file(tmp_path: Path) -> None:
     # A gitignored planned file (no .gitignore in the plan) would be silently
     # dropped from the commit: refuse at the gate. The ignore check runs INSIDE the
     # worktree (base may carry .gitignore negations main lacks), so the worktree is
-    # created first, then removed on rejection — refusing leaves no orphan.
+    # created first, then removed on rejection. Refusing leaves no orphan.
     main = _main_checkout(tmp_path)
     calls: list = []
     with pytest.raises(fw._ConfigError):
@@ -805,7 +805,7 @@ def test_bootstrap_cleans_up_on_midbody_git_error(tmp_path: Path) -> None:
 def test_bootstrap_cleans_up_on_midbody_raise(tmp_path: Path) -> None:
     # A raw exception from a body op (here `mise trust` raising, mirroring the
     # ticket's _seed_state / mise-raising examples) also triggers worktree+branch
-    # cleanup before propagating — not only the deliberate gitignored refusal.
+    # cleanup before propagating, not only the deliberate gitignored refusal.
     main = _main_checkout(tmp_path, with_mise=True)
     calls: list = []
     base = _fake_runner(calls=calls, main=main)
@@ -1415,7 +1415,7 @@ def test_non_beads_backend_skips_gate(tmp_path, monkeypatch):
 def _fake_beads_adapter(payload):
     """A BeadsAdapter stand-in whose `_run_json` returns canned `bd show` output,
     so the REAL triage.decided runs (label/comment parsing, is_hot, decided) with
-    only the subprocess faked — the path the monkeypatch-decided tests skip."""
+    only the subprocess faked (the path the monkeypatch-decided tests skip)."""
 
     class _A:
         def __init__(self, config, runner=None):

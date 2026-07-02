@@ -68,7 +68,6 @@ def test_register_quarantines_corrupt_prior_then_writes_fresh(tmp_path):
     fd.mkdir(parents=True)
     (fd / "flow-x.json").write_text("not-json{", encoding="utf-8")
     fleet.register(fd, "flow-x", "rid-1", now=T0)
-    # fresh entry is valid
     fresh = fleet.read(fd, "flow-x")
     assert fresh is not None
     assert fresh["run_id"] == "rid-1"
@@ -306,7 +305,7 @@ def _pool_lease(main: Path, key: str, *, expired: bool = False) -> None:
 
 def test_is_live_false_on_fresh_fleet_entry_no_lease(tmp_path):
     # is_live is LEASE-ONLY: a fresh fleet entry with no live lease is NOT live.
-    # This is the dead-orphan-reap case — fleet staleness (1800s) outlives the lease
+    # This is the dead-orphan-reap case: fleet staleness (1800s) outlives the lease
     # (~900s), so an OR-with-fleet would skip reaping a reapable dead orphan.
     main = _marked(tmp_path, "flow")
     fleet.register(fleet.resolve_fleet_dir(main), "flow-x", "rid", now=utcnow_iso())

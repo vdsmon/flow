@@ -2,14 +2,14 @@
 
 `group` proposes a lead + covers, but if you do not run `spec --covers` right
 away the decision lived only in the proposal. This persists it where it survives
-sessions, machines, and the review wait — and is re-derivable — using only the
+sessions, machines, and the review wait, and is re-derivable, using only the
 mandatory, cross-backend tracker ops (`comment` to write, `get` to read).
 
 A cover set is recorded as a marker COMMENT on the lead ticket:
 
     flow-group covers: FT-1207, FT-1208, FT-1209
 
-`derive` reads it back from `get(lead)` (no search, no label-merge — portable
+`derive` reads it back from `get(lead)` (no search, no label-merge, portable
 across jira and beads). `spec <lead>` with no `--covers` consumes it to auto-fill
 the run. Persisting is an explicit act, so `group` itself stays read-only.
 

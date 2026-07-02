@@ -335,10 +335,10 @@ class GitHubAdapter:
         return threads
 
     def bot_review_present(self, pr_id: str) -> bool:
-        # No review bot is wired on the GitHub self-target (flow's own PRs get no
-        # CodeRabbit review — hot beads gate on the stage-merge §2 subagent instead),
-        # so there is no async-review completion signal to wait for. Unsupported ->
-        # forge_cli degrades to {"supported": false} and review_loop skips the wait.
+        # No review bot is wired on the GitHub self-target (flow's own PRs get no CodeRabbit
+        # review; hot beads gate on the stage-merge §2 subagent instead), so there is no
+        # async-review completion signal to wait for. Unsupported -> forge_cli degrades to
+        # {"supported": false} and review_loop skips the wait.
         raise NotSupported("bot_review_status not implemented for github")
 
     def post_reply(self, pr_id: str, thread_id: str, body: str) -> None:

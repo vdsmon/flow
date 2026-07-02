@@ -1,4 +1,4 @@
-"""Tests for triage.py — surface the deferred queue + each bead's open question.
+"""Tests for triage.py, surface the deferred queue + each bead's open question.
 
 Offline, `_FakeRunner`-driven (mirrors test_beads_adapter.py): the runner returns
 a sequence of `subprocess.CompletedProcess` objects, the first being the
@@ -224,7 +224,6 @@ def test_zero_comment_deferred_shows_placeholder(tmp_path: Path) -> None:
 
 def test_two_deferred_both_json_shapes(tmp_path: Path) -> None:
     _seed_workspace(tmp_path, backend="beads")
-    # bare-list shape
     list_bare = json.dumps([{"id": "flow-a", "title": "Alpha"}, {"id": "flow-b", "title": "Beta"}])
     issue_a = {
         "id": "flow-a",
@@ -241,7 +240,6 @@ def test_two_deferred_both_json_shapes(tmp_path: Path) -> None:
     assert "flow-a" in out
     assert "flow-b" in out
 
-    # wrapper {"issues": [...]} shape
     list_wrap = json.dumps({"issues": [{"id": "flow-a", "title": "Alpha"}]})
     runner2 = _FakeRunner([_version_ok(), _cp(stdout=list_wrap), _cp(stdout="[]"), _show(issue_a)])
     code2, out2, _ = _run(["--workspace-root", str(tmp_path)], runner2)

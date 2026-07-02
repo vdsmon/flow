@@ -1,9 +1,8 @@
 """Contract tests for state.py.
 
-Covers atomic write semantics, flock contention (via multiprocessing, not
-threads — GIL hides POSIX flock from threading), quarantine load-from-bak,
-all-bak-corrupt exit 2, rolling backup trim to 5, schema valid/invalid,
-lifecycle transitions, and pick_next/find_failed helpers.
+Covers atomic write semantics, flock contention (via multiprocessing, not threads, since the GIL
+hides POSIX flock from threading), quarantine load-from-bak, all-bak-corrupt exit 2, rolling backup
+trim to 5, schema valid/invalid, lifecycle transitions, and pick_next/find_failed helpers.
 """
 
 from __future__ import annotations
@@ -93,7 +92,7 @@ def test_begin_stage_idempotent_when_already_in_progress(tmp_path: Path) -> None
     state.begin_stage(tmp_path, "plan", "deadbeef")
     # Second call should not raise; should keep the original started_at_iso.
     ts = state.begin_stage(tmp_path, "plan", "newhead")
-    assert ts.stages["plan"].started_at_sha == "deadbeef"  # original sha preserved
+    assert ts.stages["plan"].started_at_sha == "deadbeef"
 
 
 def test_begin_stage_rejects_completed_stage(tmp_path: Path) -> None:
@@ -316,9 +315,7 @@ def test_backup_trim_keeps_only_last_five(tmp_path: Path) -> None:
     _seed(tmp_path)
     # 7 writes total → 6 backups → trim to 5.
     for i, name in enumerate(["plan", "implement", "commit", "reflect"]):
-        # Each begin_stage call writes once.
         state.begin_stage(tmp_path, name, f"h{i}")
-        # And finish_stage writes again.
         state.finish_stage(tmp_path, name, "completed", f"h{i}")
     backups = list(tmp_path.glob("state.json.*.bak"))
     assert len(backups) <= state.BACKUP_RETENTION
@@ -330,7 +327,6 @@ def test_backup_trim_keeps_only_last_five(tmp_path: Path) -> None:
 def test_quarantine_when_state_json_corrupt_loads_from_bak(tmp_path: Path) -> None:
     _seed(tmp_path)
     state.begin_stage(tmp_path, "ticket", "h1")
-    # Corrupt the live state.json.
     (tmp_path / "state.json").write_text("not json at all", encoding="utf-8")
     loaded, exit_code = state.read(tmp_path)
     assert exit_code == 1  # quarantine triggered, loaded from .bak
@@ -368,7 +364,6 @@ def test_quarantine_on_unexpected_stage_record_key(tmp_path: Path) -> None:
 
 def test_unrecoverable_when_state_json_corrupt_and_no_bak(tmp_path: Path) -> None:
     _seed(tmp_path)
-    # Remove all backups, then corrupt state.json.
     for bak in tmp_path.glob("state.json.*.bak"):
         bak.unlink()
     (tmp_path / "state.json").write_text("not json", encoding="utf-8")
@@ -380,7 +375,6 @@ def test_unrecoverable_when_state_json_corrupt_and_no_bak(tmp_path: Path) -> Non
 def test_unrecoverable_when_all_baks_also_corrupt(tmp_path: Path) -> None:
     _seed(tmp_path)
     state.begin_stage(tmp_path, "ticket", "h1")
-    # Corrupt every backup AND the live file.
     for bak in tmp_path.glob("state.json.*.bak"):
         bak.write_text("nope", encoding="utf-8")
     (tmp_path / "state.json").write_text("nope", encoding="utf-8")

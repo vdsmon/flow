@@ -212,7 +212,6 @@ def test_abort_refused_on_live_lease(tmp_path: Path) -> None:
     assert rc == 1
     assert payload["aborted"] is False
     assert "live" in payload["error"]
-    # the live lease survives untouched.
     on_disk = lease.read_lease(td)
     assert on_disk is not None
     assert on_disk.run_id == "live-run"

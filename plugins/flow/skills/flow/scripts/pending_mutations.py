@@ -15,7 +15,7 @@ The key omits run_id on purpose: a retry from a recovered run must collide with
 the original entry so the dedup scan suppresses a second write. first_run_id is
 metadata only.
 
-Quarantine semantics (sidecar — main file untouched):
+Quarantine semantics (sidecar, main file untouched):
 - Malformed lines encountered during scan are appended to `<file>.quarantine`.
 - The main file is never rewritten on read (append-only invariant). compact()
   is the sole rewriter, and only it drops entries.

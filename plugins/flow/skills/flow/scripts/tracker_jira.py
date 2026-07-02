@@ -1,4 +1,4 @@
-"""JiraAdapter — Atlassian Jira Cloud adapter for the Tracker protocol.
+"""JiraAdapter: Atlassian Jira Cloud adapter for the Tracker protocol.
 
 Stdlib-only. Transport is `urllib.request.urlopen` by default; tests inject a
 fake via the `http` constructor parameter.
@@ -81,7 +81,6 @@ _JIRA_CAPABILITIES: list[Capability] = [
 ]
 
 
-# Default ticket fields fetched for `get()`.
 _GET_FIELDS = [
     "summary",
     "description",
@@ -247,7 +246,7 @@ def _normalize_state(
             f"category=indeterminate + native={native_status!r} -> in_progress (default)",
         )
 
-    # Unknown category — fall through to in_progress as conservative default.
+    # Unknown category: fall through to in_progress as conservative default.
     return "in_progress", f"unknown category={category_key!r} + native={native_status!r}"
 
 
@@ -475,7 +474,6 @@ class JiraAdapter:
             f"/issue/{urllib.parse.quote(key)}",
             query={"fields": ",".join(_GET_FIELDS)},
         )
-        # Remote links + linked issues are folded into .links.
         links: list[Link] = []
         try:
             remote = self._request("GET", f"/issue/{urllib.parse.quote(key)}/remotelink")
@@ -487,7 +485,6 @@ class JiraAdapter:
         except TrackerError:
             # Remote link failures are non-fatal for the main fetch.
             pass
-        # Linked issues
         for lnk in issue.get("fields", {}).get("issuelinks") or []:
             kind = (lnk.get("type") or {}).get("name", "relates").lower()
             inward = lnk.get("inwardIssue") or {}
@@ -685,9 +682,9 @@ class JiraAdapter:
     def project_requires_pr(self) -> bool:
         """Conservative default. Requires `workflows.read` scope; many tokens lack it.
 
-        Returns False on auth failure or empty workflow list — the workspace's
-        ship-event observer is the authoritative source. This is just a hint
-        used by `is_shipped` to decide between "shipped" and "indeterminate".
+        Returns False on auth failure or empty workflow list; the workspace's ship-event observer is
+        the authoritative source. This is a hint used by `is_shipped` to decide between "shipped"
+        and "indeterminate".
         """
         try:
             resp = self._request(
@@ -711,10 +708,9 @@ class JiraAdapter:
     def is_shipped(self, key: str) -> ShipState:
         """PURE READ. Never writes under `.flow/`.
 
-        Caller (the workspace's `observe_ship_event`) is responsible for
-        persisting the evidence dict when `state == "not_yet_observed"`.
-        Adapter has no knowledge of `.flow/` path — see plan section "Shipped
-        predicate / ship-event evidence".
+        Caller (the workspace's `observe_ship_event`) is responsible for persisting the evidence
+        dict when `state == "not_yet_observed"`. Adapter has no knowledge of `.flow/` path, see plan
+        section "Shipped predicate / ship-event evidence".
         """
         issue_state = self.state(key)
         if issue_state["normalized"] != "done":
@@ -824,9 +820,8 @@ class JiraAdapter:
     def list_epics(self) -> list[dict[str, Any]]:
         """Active hierarchy-1 issues for parent selection, `[{key, summary}]`.
 
-        Resolves the hierarchy-1 type name via `list_issue_types()` (never
-        hardcodes "Epic" — some projects name it "Project"). Returns `[]` when
-        no hierarchy-1 type exists.
+        Resolves the hierarchy-1 type name via `list_issue_types()` (never hardcodes "Epic", some
+        projects name it "Project"). Returns `[]` when no hierarchy-1 type exists.
         """
         epic_type = next(
             (it["name"] for it in self.list_issue_types() if it.get("hierarchyLevel") == 1),

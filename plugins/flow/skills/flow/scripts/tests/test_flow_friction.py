@@ -1,4 +1,4 @@
-"""Contract tests for flow_friction.py — append-only friction log."""
+"""Contract tests for flow_friction.py, append-only friction log."""
 
 from __future__ import annotations
 

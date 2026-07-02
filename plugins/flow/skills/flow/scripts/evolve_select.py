@@ -5,18 +5,18 @@ beads plus the in-flight branches/PRs, decide which keys to fan out as
 `/flow <key> --auto` runs. The `/flow evolve drain` loop consumes this (via
 `evolve_drain.py`, which adds in-flight lease liveness) and does the launching.
 
-Partition is best-effort coarse, NOT a disjointness guarantee — planning is
+Partition is best-effort coarse, NOT a disjointness guarantee. Planning is
 post-launch (the headless Plan subagent runs after `claude --bg` fires), so the
 selector never knows a bead's real file set. It serializes on the two signals it
 does have (the `hot` label + a primary-file anchor parsed from the bead's BLAST
 RADIUS line) and relies on the keystone gate: each run is worktree/lease-isolated,
-so any residual file overlap surfaces as a merge conflict at human review —
-friction, never corruption. Keep CONCURRENCY low so that stays rare.
+so any residual file overlap surfaces as a merge conflict at human review
+(friction, never corruption). Keep CONCURRENCY low so that stays rare.
 
 Selection inputs (all read-only, queryable):
-  - `bd ready -l evolve --json` — open, dependency-unblocked candidates (bd ready
+  - `bd ready -l evolve --json`, open dependency-unblocked candidates (bd ready
     already excludes blocked beads and carries structured `labels` incl. `hot`).
-  - `gh pr list` + `git for-each-ref` — in-flight join by branch name
+  - `gh pr list` + `git for-each-ref`, in-flight join by branch name
     `feat/<key>-*` (drop already-running beads; count open PRs for backpressure).
 
 CLI:
@@ -159,7 +159,7 @@ def _hot_inflight(
 
     Under `include_proposals` the hot slot also serializes hot *proposal* beads, so
     a hot proposal already in flight blocks the next hot launch (the `proposal`
-    label can carry `hot` too — see references/verb-evolve.md §propose).
+    label can carry `hot` too, see references/verb-evolve.md §propose).
 
     `extra_keys` seeds the in-flight set with keys known live by another channel
     (e.g. a pre-PR lease that has no ref/PR yet), so a hot pre-PR run blocks the
@@ -220,7 +220,7 @@ def select(
     # would mark a still-booting pre-lease run "registered" and evict it from
     # launched_pending a turn early, re-opening the blind window launch_ledger closes
     # (flow-d4s). The reconciled lease|fleet read is for the IN-FLIGHT suppression set
-    # only (don't re-launch / don't over-budget a fleet-live run) — flow-8by2.3.
+    # only (don't re-launch / don't over-budget a fleet-live run); flow-8by2.3.
     live_keys = _live_run_keys(repo)  # lease-only -> result["live_runs"]
     fleet_keys = _fleet_live_keys(repo)  # lease | fleet (reconciled in-flight authority)
     launched_keys = launch_ledger.live_keys(repo)  # pre-init launch->init window

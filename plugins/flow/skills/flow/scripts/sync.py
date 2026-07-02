@@ -2,10 +2,9 @@
 
 Reads .flow/pending-mutations.jsonl (written by the commit-stage transition
 chokepoint, `tracker_cli.py transition --enqueue-on-transient`, on a transient
-failure), and for
-each entry: if its postcondition is already satisfied it is dropped as
-applied-externally; if its pre-state no longer holds it is dropped as superseded;
-otherwise the op is replayed. Reconciliation, not blind replay.
+failure), and for each entry: if its postcondition is already satisfied it is
+dropped as applied-externally; if its pre-state no longer holds it is dropped as
+superseded; otherwise the op is replayed. Reconciliation, not blind replay.
 
 Transition reconciliation is read-before-replay (idempotent on target state).
 For comment/link/create/edit the probe-based dedup is deferred; those are

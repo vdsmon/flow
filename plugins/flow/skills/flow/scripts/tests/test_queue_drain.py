@@ -93,7 +93,7 @@ def _out(capsys):
     return json.loads(capsys.readouterr().out)
 
 
-# ─── classify_reap — the pure reap classification ────────────────────────────
+# ─── classify_reap: the pure reap classification ─────────────────────────────
 
 
 def test_classify_reap_active_bead_with_worktree():
@@ -163,12 +163,12 @@ def test_classify_reap_dedupes_keys_first_pr_wins():
     assert out[0]["pr"] == 20
 
 
-# ─── cli_main — launch exclusion of merged keys ──────────────────────────────
+# ─── cli_main: launch exclusion of merged keys ───────────────────────────────
 
 
 def test_cli_drops_launch_key_with_merged_pr(monkeypatch, tmp_path, capsys):
-    # merged-but-unclosed bead: select re-offers it, the reap set diverts it to
-    # the close path — it must never relaunch.
+    # merged-but-unclosed bead: select re-offers it, the reap set diverts it to the close path. It
+    # must never relaunch.
     runner = _StubRunner(
         merged_prs=[{"number": 30, "headRefName": "feature/flow-k-x"}],
         bead_status={"flow-k": "open"},
@@ -191,7 +191,7 @@ def test_cli_drops_launch_key_with_merged_pr(monkeypatch, tmp_path, capsys):
 
 
 def test_cli_launch_passthrough_smoke(monkeypatch, tmp_path, capsys):
-    # decide() contract is owned by test_evolve_drain; just prove the passthrough
+    # decide() contract is owned by test_evolve_drain; this test proves only the passthrough
     _stub_cli(monkeypatch, tmp_path, _sel(launch=["flow-a", "flow-b"]))
     rc = qd.cli_main(["--workspace-root", str(tmp_path)])
     assert rc == 0
@@ -228,7 +228,7 @@ def test_cli_reap_classifies_worktree_key(monkeypatch, tmp_path, capsys):
     ]
 
 
-# ─── cli_main — queue-scoping of the wait gate ───────────────────────────────
+# ─── cli_main: queue-scoping of the wait gate ────────────────────────────────
 
 
 def test_cli_scopes_liveness_to_day_job_keys(monkeypatch, tmp_path, capsys):
@@ -274,7 +274,7 @@ def test_cli_evolve_launched_pending_does_not_block(monkeypatch, tmp_path, capsy
     assert marker.exists()
 
 
-# ─── cli_main — marker removal at registration ───────────────────────────────
+# ─── cli_main: marker removal at registration ────────────────────────────────
 
 
 def test_cli_removes_launch_marker_once_registered(monkeypatch, tmp_path, capsys):
@@ -301,10 +301,10 @@ def test_cli_removes_launch_marker_once_registered(monkeypatch, tmp_path, capsys
 
 
 def test_cli_removes_launch_marker_via_open_pr_alone(monkeypatch, tmp_path, capsys):
-    # registration proven by an OPEN PR, not a live lease: the run opened its PR then
-    # its session ended (lease expired/absent), so live_runs lacks the key but
-    # open_pr_keys has it. The marker MUST still drop — registered is the union, and
-    # the open-PR half carries this case (kills the `| open_pr_keys` mutation).
+    # registration proven by an OPEN PR, not a live lease: the run opened its PR then its session
+    # ended (lease expired/absent), so live_runs lacks the key but open_pr_keys has it. The marker
+    # MUST still drop: registered is the union, and the open-PR half carries this case (kills the
+    # `| open_pr_keys` mutation).
     sel = _sel(
         open_pr_keys=["flow-k"],
         launched_pending=["flow-k"],
@@ -332,7 +332,7 @@ def test_cli_unregistered_pending_still_blocks(monkeypatch, tmp_path, capsys):
     assert _out(capsys)["action"] == "wait"
 
 
-# ─── cli_main — lease liveness (real lease + real liveness_map) ──────────────
+# ─── cli_main: lease liveness (real lease + real liveness_map) ───────────────
 
 
 def test_cli_pre_pr_live_run_waits(monkeypatch, tmp_path, capsys):
@@ -368,7 +368,7 @@ def test_cli_open_pr_key_without_run_dir_is_parked(monkeypatch, tmp_path, capsys
     assert out["parked"] == ["flow-pr"]
 
 
-# ─── cli_main — exit codes ───────────────────────────────────────────────────
+# ─── cli_main: exit codes ────────────────────────────────────────────────────
 
 
 def _plain_ws(tmp_path):
@@ -429,7 +429,7 @@ def test_cli_bead_status_gather_is_bounded(monkeypatch, tmp_path, capsys):
     assert _out(capsys)["reap"][0]["key"] == "flow-k"
 
 
-# ─── cli_main — STRANDED day-job detection (flow-y8zs queue parity) ───────────
+# ─── cli_main: STRANDED day-job detection (flow-y8zs queue parity) ────────────
 
 
 def test_cli_stranded_dayjob_true_positive_recovers(monkeypatch, tmp_path, capsys):
@@ -507,9 +507,9 @@ def test_cli_stranded_skips_open_and_merged_pr(monkeypatch, tmp_path, capsys):
 
 
 def test_cli_stranded_query_is_unscoped_not_evolve_labelled(monkeypatch, tmp_path, capsys):
-    # the day-job detection must query a BARE `bd list --status in_progress` (NO
-    # `-l evolve`) — the inverse of the evolve drain's label-scoped query. A
-    # regression that reused `-l evolve` would query the wrong queue.
+    # the day-job detection must query a BARE `bd list --status in_progress` (NO `-l evolve`). This
+    # is the inverse of the evolve drain's label-scoped query. A regression that reused `-l evolve`
+    # would query the wrong queue.
     runner = _StubRunner(in_progress=[{"id": "flow-x"}])
     _stub_cli(monkeypatch, tmp_path, _sel(), runner=runner)
     rc = qd.cli_main(["--workspace-root", str(tmp_path)])

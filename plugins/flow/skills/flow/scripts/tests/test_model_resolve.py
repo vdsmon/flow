@@ -1,4 +1,4 @@
-"""Contract tests for model_resolve.py — the work-phase model resolver.
+"""Contract tests for model_resolve.py: the work-phase model resolver.
 
 Disposition is ON BY DEFAULT: a full-lane run downshifts to `sonnet` unless the
 workspace overrides `[models] work_model` or opts out (work_model in OFF_VALUES).

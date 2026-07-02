@@ -1,6 +1,6 @@
 """Embedder seam + derived sidecar index for semantic recall.
 
-Pure stdlib. Never imports the embedding model — that lives ONLY inside the uvx
+Pure stdlib. Never imports the embedding model. It lives ONLY inside the uvx
 subprocess (`embedder_fastembed.py`, the default; `embedder_model2vec.py`, the
 lighter static alternative). The runtime python3 cannot import them, so the
 embedder is a CONFIGURED COMMAND that is shelled: newline texts on stdin, a JSON
@@ -21,8 +21,8 @@ Embedder command resolution:
   `_EmbedderUnavailable`.
 
 CLI:
-  `memory_embed.py reindex --workspace-root . [--full]` — refresh the sidecar.
-  `memory_embed.py embed` — stdin texts → JSON vectors (exercises the contract).
+  `memory_embed.py reindex --workspace-root . [--full]`, refresh the sidecar.
+  `memory_embed.py embed`, stdin texts → JSON vectors (exercises the contract).
 
 Exit codes:
   0 = ok.
@@ -53,7 +53,7 @@ _DEFAULT_MODEL = "BAAI/bge-small-en-v1.5"
 # (BM25 fallback), same as any other embedder failure. The ceiling SCALES with
 # batch size: the base covers the fixed cold-start (model load + uvx env resolve),
 # the per-text term covers throughput. A single plan-phase query (1 text) stays a
-# fast-fail (~base); a full-corpus reindex needs real headroom — bge/ONNX is far
+# fast-fail (~base); a full-corpus reindex needs real headroom. bge/ONNX is far
 # heavier than the old static model2vec, and the flat 120s ceiling killed a
 # 337-entry reindex mid-batch.
 _EMBED_TIMEOUT_BASE_S = 120

@@ -1,4 +1,5 @@
-"""Classify finished background sessions for the drain loop to stop + tombstone (pure core + read-only CLI).
+"""Classify finished background sessions for the drain loop to stop + tombstone
+(pure core + read-only CLI).
 
 A `claude --bg /flow <key> --auto` run does not exit when its work finishes: after
 the PR merges + the reflect stage runs, the session goes idle but lingers in the
@@ -8,7 +9,7 @@ module is the read-only half of an auto-cleanup pass: each drain turn (after the
 step-A reap) it enumerates the jobs, applies the liveness + cwd + terminal-bead +
 self gates, and prints the set that is safe to stop. The destructive ops
 (`claude stop <id>`, `rm -rf <job_dir>`) live in reviewable prose in
-`references/verb-evolve.md` (§drain step A2) — mirrors `evolve_reap.py`: pure
+`references/verb-evolve.md` (§drain step A2). This mirrors `evolve_reap.py`: pure
 classify here, the loop runs the side effects.
 
 Enumeration + liveness are FILESYSTEM-ONLY. Never `claude agents --json`: it blocks
@@ -19,47 +20,48 @@ firstTerminalAt, updatedAt. There is NO `pid` field, so no process-liveness chec
 
 Session→bead map: the `intent` field. A drain-launched `claude --bg "/flow <key>
 --auto"` job records `intent == "/flow <key> --auto"` (confirmed live on a done +
-a working sample 2026-06-08), `cwd == repo root` (NOT the worktree — the bg
+a working sample 2026-06-08), `cwd == repo root` (NOT the worktree; the bg
 orchestrator runs from the maintainer checkout), and an empty `name`. So the key
 comes from `intent`, not the cwd basename; the same regex doubles as the flow-job
 filter (a foreign job like `ft-1121` has a non-matching intent → excluded).
 
 A session is STOPPABLE only when ALL hold (any busy/unknown signal → skip; the
 classifier fails safe toward NOT stopping):
-  - self-job — its job_id is not the orchestrator's own `$CLAUDE_JOB_DIR` basename.
-  - flow-job + cross-project — `intent` parses a `<key>` AND `cwd` is the maintainer
+  - self-job: its job_id is not the orchestrator's own `$CLAUDE_JOB_DIR` basename.
+  - flow-job + cross-project: `intent` parses a `<key>` AND `cwd` is the maintainer
     repo root (`<repo>`); a foreign project / non-flow job is skipped. The
     orchestrator's own bg job sits at the same repo root with the same intent shape,
     so the self-job flag + the non-terminal-bead gate (its own bead is in_progress)
     are what exclude it, not cwd.
-  - activity — `tempo ∈ {idle, blocked}` (never stop a session reporting active work).
+  - activity: `tempo ∈ {idle, blocked}` (never stop a session reporting active work).
     `blocked` is admitted because a bg run that DIED blocked (rate limit, permission
     ask, auth outage) rests at `tempo == blocked` forever; the terminal-bead gate
     below separates that dead zombie from a genuine needs-input run, and the three
     independent signals (lease non-live ∧ transcript idle past stale ∧ bead terminal)
     still gate it. NOTE: `state` is deliberately NOT gated. A finished bg run rests at
-    `state == working` (or `blocked`) INDEFINITELY — a `session_cron` keepalive task, or simply a daemon
-    that never flips the field, holds it there; a clean `done` is the exception, not
-    the rule (witnessed: a whole drain's worth of finished runs all sat at `working`,
-    cron-bearing or not). Gating on `state ∈ {done, stopped}` therefore skipped the
-    COMMON case and leaked every run as a zombie. Doneness instead rests on the three
-    INDEPENDENT signals below; when `state` is not a clean terminal, the transcript
-    must be idle past a LONGER `stale_idle_threshold` before those signals are trusted
-    over the stale field. `claude stop` is non-destructive + resumable, so this
-    replaces an unreliable proxy with direct evidence — not an erosion of the fail-safe.
-  - lease (PRIMARY guard) — resolve the worktree run dir for `<key>`
+    `state == working` (or `blocked`) INDEFINITELY: a `session_cron` keepalive task, or
+    a daemon that never flips the field, holds it there; a clean `done` is the
+    exception, not the rule (witnessed: a whole drain's worth of finished runs all sat
+    at `working`, cron-bearing or not). Gating on `state ∈ {done, stopped}` therefore
+    skipped the COMMON case and leaked every run as a zombie. Doneness instead rests on
+    the three INDEPENDENT signals below; when `state` is not a clean terminal, the
+    transcript must be idle past a LONGER `stale_idle_threshold` before those signals
+    are trusted over the stale field. `claude stop` is non-destructive + resumable, so
+    this replaces an unreliable proxy with direct evidence, not an erosion of the
+    fail-safe.
+  - lease (PRIMARY guard): resolve the worktree run dir for `<key>`
     (`<repo>/.flow/worktrees/feat-<key>-<slug>/.flow/runs/<key>/`, the pool glob
     reap/drain use) and call `lease.classify(run_dir, now)`; `live` or `corrupt`
     → skip. This is the same mechanism reap uses to skip a mid-reflect session, so
     the catastrophic kill-mid-reflect failure is inherited-guarded. An ABSENT run
     dir (the worktree was already reaped, the COMMON post-reap cleanup case) reads
-    as non-live and PROCEEDS — treating absent as skip would rebuild a silent
+    as non-live and PROCEEDS; treating absent as skip would rebuild a silent
     no-op that never cleans up after reap.
-  - transcript mtime — `state.json.linkScanPath` → the session transcript; mtime
+  - transcript mtime: `state.json.linkScanPath` → the session transcript; mtime
     fresher than `now - idle_threshold` (or `now - stale_idle_threshold` when `state`
     is not a clean terminal) → still writing (mid-reflect even if tempo lags) → skip.
     Missing/empty/unreadable path → cannot prove idle → skip.
-  - terminal bead — the `<key>` maps to a bead whose status ∈ {closed, blocked,
+  - terminal bead: the `<key>` maps to a bead whose status ∈ {closed, blocked,
     deferred}. Open/in_progress → skip (it may relaunch). The bead lookup is
     injected (CLI backs it with `bd show <key> --json`).
 
@@ -96,7 +98,7 @@ from _timeutil import parse_iso, utcnow_iso
 from maintainer import resolve_maintainer_repo
 
 DEFAULT_IDLE_THRESHOLD_SECS = 300
-# When `state` is NOT a clean terminal (the common case — a finished bg run rests at
+# When `state` is NOT a clean terminal (the common case: a finished bg run rests at
 # 'working'/'blocked'), the transcript must be idle past THIS longer threshold before
 # the three done-signals are trusted over the stale state field. Longer than the
 # normal idle threshold: extra caution before stopping a session whose own state field
@@ -124,13 +126,13 @@ class JobRecord:
     """A parsed `~/.claude/jobs/<id>/state.json` plus its dir.
 
     job_dir is the absolute path to the job directory (named by the 8-hex
-    daemonShort). job_id is that basename — the handle `claude stop` accepts; the
+    daemonShort). job_id is that basename, the handle `claude stop` accepts; the
     full session UUID does NOT work (`claude stop <uuid>` → "No job matching"). The
     session_id is kept only to locate the resumable transcript, never as a stop
     handle. The CLI builds these; classify is pure over them.
     """
 
-    job_id: str  # the job dir basename (daemonShort, 8 hex) — the `claude stop` handle
+    job_id: str  # the job dir basename (daemonShort, 8 hex), the `claude stop` handle
     job_dir: str  # absolute path to ~/.claude/jobs/<job_id>/
     session_id: str  # full sessionId UUID (transcript handle, NOT a stop handle)
     state: str
@@ -205,11 +207,11 @@ def classify(
             skip(rec, "cwd is not this repo's root")
             continue
         # tempo is the activity signal: never stop a session reporting active work.
-        # `idle` and `blocked` are both admitted — a bg run that DIED blocked (rate
+        # `idle` and `blocked` are both admitted: a bg run that DIED blocked (rate
         # limit, permission ask, auth outage) rests at tempo=blocked forever, and the
         # bead-terminal gate below separates that dead zombie (bead terminal → eligible)
         # from a genuine needs-input run (bead open/in_progress → skipped). Any other
-        # non-idle tempo (e.g. `active`) is real work → skip. `state` is NOT gated — a
+        # non-idle tempo (e.g. `active`) is real work → skip. `state` is NOT gated: a
         # finished bg run rests at 'working'/'blocked' indefinitely (module docstring),
         # so doneness rests on the three independent signals below (lease non-live ∧
         # transcript idle ∧ bead terminal).
@@ -233,7 +235,7 @@ def classify(
 
         # a clean terminal state trusts the normal idle threshold; a stale
         # 'working'/'blocked' state demands the LONGER threshold before we override it.
-        # tempo=blocked never trusts the short bar even if state reads clean — a
+        # tempo=blocked never trusts the short bar even if state reads clean; a
         # dead-blocked zombie must clear the stale-idle bar.
         clean_terminal = rec.state in _STOPPABLE_STATES and rec.tempo != "blocked"
         required_idle = idle_threshold_secs if clean_terminal else stale_idle_threshold_secs

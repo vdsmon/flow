@@ -286,7 +286,7 @@ def test_bot_review_present_false_when_check_inprogress():
 
 
 def test_bot_review_present_false_when_check_absent():
-    # CR not registered yet — must not read "no line" as done (the bug: an empty
+    # CR not registered yet: must not read "no line" as done (the bug: an empty
     # thread list at CI-green looked review-clean before CR ran).
     fg, _ = _adapter(_bot_checks(None))
     assert fg.bot_review_present("9") is False

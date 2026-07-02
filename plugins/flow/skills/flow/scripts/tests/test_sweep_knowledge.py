@@ -1,4 +1,4 @@
-"""Contract tests for sweep_knowledge.py — maintainer-gated curation over knowledge.jsonl."""
+"""Contract tests for sweep_knowledge.py: maintainer-gated curation over knowledge.jsonl."""
 
 from __future__ import annotations
 

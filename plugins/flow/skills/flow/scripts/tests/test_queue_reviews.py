@@ -65,9 +65,9 @@ def _thread(tid, severity, *, resolved=False, title="t"):
 
 
 def test_slugged_ref_resolves_and_flags_major():
-    # DISCRIMINATING: feed the SLUGGED head ref, not the bare feature/<key>.
-    # A bare-key resolution (detect_pr("feature/flow-kx17.5")) would NOT match
-    # this ref and silently flag nothing.
+    # DISCRIMINATING: feed the SLUGGED head ref, not the bare feature/<key>. A bare-key
+    # resolution (detect_pr("feature/flow-kx17.5")) would NOT match this ref and silently
+    # flag nothing.
     ref = "feature/flow-kx17.5-queue-surfacing"
     fake = _FakeForge(
         prs={ref: _pr(310)},
@@ -86,8 +86,8 @@ def test_slugged_ref_resolves_and_flags_major():
 
 
 def test_resolved_and_minor_threads_not_flagged():
-    # only resolved threads + a leftover bot minor -> NOT flagged.
-    # proves the plain-comment floor is NOT applied at this surfacing layer.
+    # only resolved threads + a leftover bot minor -> NOT flagged. proves the plain-comment
+    # floor is NOT applied at this surfacing layer.
     ref = "feature/flow-abc-slug"
     fake = _FakeForge(
         prs={ref: _pr(100)},

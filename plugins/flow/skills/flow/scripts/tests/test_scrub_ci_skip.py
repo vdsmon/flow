@@ -1,4 +1,4 @@
-"""Tests for scrub_ci_skip.py — CI-skip token neutralizer."""
+"""Tests for scrub_ci_skip.py: CI-skip token neutralizer."""
 
 from __future__ import annotations
 

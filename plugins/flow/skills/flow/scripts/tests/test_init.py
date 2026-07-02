@@ -1,4 +1,4 @@
-"""Contract tests for init.py — transactional workspace bootstrap.
+"""Contract tests for init.py, transactional workspace bootstrap.
 
 Coverage:
 - Pre-flight refusals: already-initialized, already-initializing.
