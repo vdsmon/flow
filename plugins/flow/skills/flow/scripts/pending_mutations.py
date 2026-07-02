@@ -44,7 +44,9 @@ from _jsonl import iter_jsonl
 from _locking import LockContention, flock_retry
 from _timeutil import utcnow_iso
 
-VALID_OPS: tuple[str, ...] = ("create", "edit", "transition", "comment", "link")
+# "edit" is not a valid op: the Tracker protocol dropped generic edit(fields)
+# (see tracker.py), so a queued edit could never be replayed by /flow sync.
+VALID_OPS: tuple[str, ...] = ("create", "transition", "comment", "link")
 
 Clock = Callable[[], str]
 

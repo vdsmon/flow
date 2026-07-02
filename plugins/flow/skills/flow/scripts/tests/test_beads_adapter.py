@@ -313,6 +313,22 @@ def test_list_assigned_emits_assignee_filter() -> None:
     assert "--status" in args
 
 
+def test_list_assigned_open_expands_to_not_done_statuses() -> None:
+    # Jira's "open" filter is statusCategory != Done; the bd equivalent is every
+    # stored status whose normalized state is not done/cancelled.
+    adapter, runner = _build_adapter([_cp(stdout=json.dumps([_issue_json(id="bd-1")]))])
+    adapter.list_assigned("open")
+    args = runner.calls[-1][0]
+    assert args[args.index("--status") + 1] == "open,in_progress,blocked"
+
+
+def test_list_assigned_passes_through_explicit_status() -> None:
+    adapter, runner = _build_adapter([_cp(stdout="[]")])
+    adapter.list_assigned("closed")
+    args = runner.calls[-1][0]
+    assert args[args.index("--status") + 1] == "closed"
+
+
 def test_list_linked_fetches_each_dependency_target() -> None:
     deps_payload = [{"type": "blocks", "target": "bd-2"}]
     target_payload = _issue_json(id="bd-2")

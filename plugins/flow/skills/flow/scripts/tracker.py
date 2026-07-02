@@ -255,7 +255,7 @@ class Tracker(Protocol):
     """Cross-backend ticket interface. Implemented by per-backend adapters.
 
     Lifecycle methods (`get`, `list_assigned`, `list_linked`, `list_transitions`,
-    `create`, `edit`, `transition`, `comment`, `link`, `state`,
+    `create`, `transition`, `comment`, `link`, `state`,
     `project_requires_pr`, `is_shipped`) are MANDATORY for all backends.
 
     Typed Jira-rich methods (`set_sprint`, `list_sprints`, `add_watcher`,

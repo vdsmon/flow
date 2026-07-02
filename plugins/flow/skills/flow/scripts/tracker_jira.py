@@ -338,6 +338,11 @@ class JiraAdapter:
             return min(_retry_after_seconds(header_val, 1.0), 30.0)
         if 500 <= status < 600 and attempt < 2:
             return 1.0 if attempt == 0 else 3.0
+        if status == 429 or 500 <= status < 600:
+            # Exhausted 5xx/429 retries raise plain TrackerError (matching URLError
+            # exhaustion) so transition() never classifies them as hard 4xx failures
+            # and enqueue-on-transient callers hit the transient path.
+            raise TrackerError(f"HTTP {status} on {path}: transient retries exhausted") from e
         # Caller-visible 4xx (other than the special-cased ones) -- re-raise as HTTPError
         # so callers expecting transition-style classification can catch + handle.
         raise _JiraHTTPError(status, parsed_body, raw_body, path) from e
