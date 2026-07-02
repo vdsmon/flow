@@ -5,7 +5,7 @@
 - **bare `/flow queue`** (optionally `--dry-run`) — the read-only **status report** (§2-§4): ready beads, in-flight runs with lease liveness, queue-scoped backpressure. `--dry-run` additionally prints the exact batch a drain would launch — and still launches nothing.
 - **`/flow queue drain`** — the day-job **consumer** (§drain): a single looping pass that drains the ready day-job backlog. Each turn it reaps merged-and-exited runs (close the bead, delete the remote branch, tear down the worktree — lease-gated), then fans out the next launchable batch as background `/flow <key> --auto` runs. It loops — launching, waiting while runs are live, reaping — until nothing is startable. Open PRs awaiting the maintainer's review+merge are this queue's **normal success terminal**, not leftovers.
 
-**Read-only invariant for the status path (load-bearing):** bare `/flow queue` (with or without `--dry-run`) performs NO side effects, ever. No launches, no merges, no `bd` mutations, no launch-ledger marker pruning or removal. The `action` field in its JSON is **advisory** — what a drain WOULD do next — never an instruction to do it here. Only `/flow queue drain` mutates.
+**Read-only invariant for the status path (load-bearing):** bare `/flow queue` (with or without `--dry-run`) performs NO side effects, ever. No launches, no merges, no `bd` mutations, no fleet-ledger writes. The `action` field in its JSON is **advisory** — what a drain WOULD do next — never an instruction to do it here. Only `/flow queue drain` mutates.
 
 ## 0. Dispatch
 
@@ -81,14 +81,13 @@ The day-job consumer. A single LOOP that drains the ready backlog: each turn it 
 
 Repeat the turn below until step **C** returns `done`.
 
-**A. Decide.** Ledger hygiene first, then the decision:
+**A. Decide.**
 
 ```bash
-python3 ${CLAUDE_SKILL_DIR}/scripts/launch_ledger.py prune --workspace-root .  # hygiene: drop expired launch markers
 python3 ${CLAUDE_SKILL_DIR}/scripts/queue_drain.py --workspace-root .
 ```
 
-`queue_drain.py` runs `queue_select` (day-job ready beads: unlabelled `bd ready` minus epics and minus `evolve`/`proposal`/`hot`, in-flight dropped, backpressure ≥ `[queue] cap` open day-job PRs), annotates each in-flight day-job run with its lease liveness, and classifies merged PRs for reaping. It returns JSON `{action: "launch"|"recover"|"wait"|"done", launch:[keys], parked:[keys], reap:[entries], stranded:[keys], stranded_pre_pr:[{key,branch,worktree}], liveness:{}, select:{...}}` (the top-level `stranded` key rides only the `recover` action; `stranded_pre_pr` is always present, empty when nothing is stranded). The wait gate is queue-scoped: the worktree pool and the launch ledger are shared with the evolve drain, so active-evolve keys are subtracted before liveness — this loop never blocks on (and never unmarks) a live evolve run. `select.launched_pending` lists the day-job keys still in the launch→init blind window; after `select` returns, the CLI physically removes a registered key's marker, an unregistered one blocks termination until it registers or its marker TTL-expires.
+`queue_drain.py` runs `queue_select` (day-job ready beads: unlabelled `bd ready` minus epics and minus `evolve`/`proposal`/`hot`, in-flight dropped, backpressure ≥ `[queue] cap` open day-job PRs), annotates each in-flight day-job run with its lease liveness, and classifies merged PRs for reaping. It returns JSON `{action: "launch"|"recover"|"wait"|"done", launch:[keys], parked:[keys], reap:[entries], stranded:[keys], stranded_pre_pr:[{key,branch,worktree}], liveness:{}, select:{...}}` (the top-level `stranded` key rides only the `recover` action; `stranded_pre_pr` is always present, empty when nothing is stranded). The wait gate is queue-scoped: the worktree pool and the fleet ledger are shared with the evolve drain, so active-evolve keys are subtracted before liveness — this loop never blocks on (and never unmarks) a live evolve run. `select.launched_pending` lists the day-job keys still in the launch→init blind window; after `select` returns, the CLI drops a registered key from `launched_pending`, an unregistered one blocks termination until it registers or its fleet entry ages past `STALE_AFTER_S`.
 
 **B. Reap — tear down merged-and-exited runs, every turn.** Each `reap` entry `{key, branch, pr, bead_active, has_worktree}` is a merged flow PR whose key still has a registered worktree or sits in this turn's launch batch — `queue_drain.py` has already dropped any such key from `launch`, so a merged-but-unclosed bead diverts here and never relaunches. For each entry:
 
@@ -107,10 +106,8 @@ When `bead_active` is true and the `bd close` FAILS, skip the branch delete + wo
 - **`launch`** → for each key in `launch`, read the per-key worker model from the step-**A** JSON (`result.select.model_per_key[key]`) and append `--model <model>` when present. Hot is excluded upstream here, so only `sonnet` (a `tier:trivial` OR `tier:light` bead) or `[evolve] worker_model` (any other bead when set) is reachable; absent → omit the flag and inherit the launcher default:
 
   ```bash
-  # record the launch FIRST so the very next turn's select sees this key as in-flight
+  # register the launch FIRST so the very next turn's select sees this key as in-flight
   # even before it registers a branch/lease (closes the re-launch window).
-  python3 ${CLAUDE_SKILL_DIR}/scripts/launch_ledger.py add --key <key> --workspace-root .
-  # shadow-register the launch in the fleet liveness ledger (epic flow-8by2; child-3 reads it).
   python3 ${CLAUDE_SKILL_DIR}/scripts/fleet.py register --key <key> --workspace-root .
   claude --bg [--model sonnet] "/flow <key> --auto"
   ```

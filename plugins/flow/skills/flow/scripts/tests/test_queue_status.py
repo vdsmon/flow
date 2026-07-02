@@ -5,7 +5,7 @@ import subprocess
 from collections.abc import Callable
 from pathlib import Path
 
-import launch_ledger
+import fleet
 import lease
 import queue_status as qst
 from _timeutil import utcnow_iso
@@ -216,17 +216,16 @@ def test_expired_lease_parks_and_done(tmp_path):
 
 def test_registered_key_drops_from_launched_pending_in_memory_only(tmp_path):
     # a launched key with a live lease has registered: the REPORT drops it from
-    # launched_pending, but the marker file stays on disk (evolve_drain's
-    # cli_main owns removal; this script never mutates anything)
+    # launched_pending, but the fleet entry stays on disk (this script never
+    # mutates anything, read-only by construction)
     ws = _marked_ws(tmp_path)
-    launch_ledger.add(ws, "flow-k")
-    marker = ws / ".flow" / "launch-ledger" / "flow-k"
-    assert marker.exists()
+    fleet.register(fleet.resolve_fleet_dir(ws), "flow-k", "", now=utcnow_iso())
+    assert fleet.read(fleet.resolve_fleet_dir(ws), "flow-k") is not None
     _write_lease(_pool_run_dir(ws, "flow-k"))
     run, calls = _dispatch(ready=[_cand("flow-k")])
     out = qst.status(ws, cap=5, concurrency=3, runner=run)
     assert out["select"]["launched_pending"] == []
-    assert marker.exists()
+    assert fleet.read(fleet.resolve_fleet_dir(ws), "flow-k") is not None
     for args in calls:
         assert any(args[: len(p)] == p for p in _READ_ONLY_PREFIXES), f"mutating call: {args}"
 
@@ -234,12 +233,12 @@ def test_registered_key_drops_from_launched_pending_in_memory_only(tmp_path):
 def test_unregistered_launched_key_stays_pending(tmp_path):
     # no lease, no PR: the launch->init blind window still holds the key
     ws = _marked_ws(tmp_path)
-    launch_ledger.add(ws, "flow-led")
+    fleet.register(fleet.resolve_fleet_dir(ws), "flow-led", "", now=utcnow_iso())
     run, _ = _dispatch(ready=[_cand("flow-led")])
     out = qst.status(ws, cap=5, concurrency=3, runner=run)
     assert out["select"]["launched_pending"] == ["flow-led"]
     assert out["action"] == "wait"
-    assert (ws / ".flow" / "launch-ledger" / "flow-led").exists()
+    assert fleet.read(fleet.resolve_fleet_dir(ws), "flow-led") is not None
 
 
 # ---- model_per_key passthrough ----
@@ -382,15 +381,14 @@ def test_stranded_day_job_bead_reports_recover(tmp_path):
 
 
 def test_stranded_detection_stays_read_only(tmp_path):
-    # the stranded probe adds bd/gh reads only; the launch-ledger marker of an
+    # the stranded probe adds bd/gh reads only; the fleet entry of an
     # unregistered key must survive the status call untouched
     ws = _marked_ws(tmp_path)
-    launch_ledger.add(ws, "flow-strand")
-    marker = ws / ".flow" / "launch-ledger" / "flow-strand"
+    fleet.register(fleet.resolve_fleet_dir(ws), "flow-strand", "", now=utcnow_iso())
     run, calls = _stranded_dispatch([{"id": "flow-strand"}])
     out = qst.status(ws, cap=5, concurrency=3, runner=run)
     # launched_pending covers the key, so it is still booting, not stranded
     assert out["stranded_pre_pr"] == []
-    assert marker.exists()
+    assert fleet.read(fleet.resolve_fleet_dir(ws), "flow-strand") is not None
     for args in calls:
         assert any(args[: len(p)] == p for p in _READ_ONLY_PREFIXES), f"mutating call: {args}"
