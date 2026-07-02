@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import subprocess
 
-import launch_ledger
 import lease
 import queue_drain as qd
 from _timeutil import utcnow_iso
@@ -274,42 +273,34 @@ def test_cli_active_evolve_query_is_unlimited(monkeypatch, tmp_path, capsys):
 
 
 def test_cli_evolve_launched_pending_does_not_block(monkeypatch, tmp_path, capsys):
-    # the launch ledger is shared too: an evolve drain's pre-lease launch marker
-    # must not hold THIS loop's termination gate (and its marker is evolve's to
-    # remove, never this loop's).
+    # the fleet ledger is shared too: an evolve drain's pre-lease launch entry
+    # must not hold THIS loop's termination gate.
     runner = _StubRunner(evolve_keys=["flow-ev"])
-    repo = _stub_cli(monkeypatch, tmp_path, _sel(launched_pending=["flow-ev"]), runner=runner)
-    launch_ledger.add(repo, "flow-ev")
-    marker = repo / ".flow" / "launch-ledger" / "flow-ev"
+    _stub_cli(monkeypatch, tmp_path, _sel(launched_pending=["flow-ev"]), runner=runner)
     rc = qd.cli_main(["--workspace-root", str(tmp_path)])
     assert rc == 0
     out = _out(capsys)
     assert out["action"] == "done"
     assert out["select"]["launched_pending"] == []
-    assert marker.exists()
 
 
-# ─── cli_main: marker removal at registration ────────────────────────────────
+# ─── cli_main: launched_pending reconciliation at registration ───────────────
 
 
 def test_cli_removes_launch_marker_once_registered(monkeypatch, tmp_path, capsys):
-    # a launched key that has REGISTERED (live lease here) drops out of the ledger:
-    # cli_main physically unlinks its marker, so it stays out of launched_pending past
-    # any later merge/teardown (the merged-teardown window is closed).
+    # a launched key that has REGISTERED (live lease here) drops out of
+    # launched_pending, so it stays out past any later merge/teardown (the
+    # merged-teardown window is closed).
     sel = _sel(
         skipped_in_flight=["flow-k"],
         live_runs=["flow-k"],
         launched_pending=["flow-k"],
     )
-    repo = _stub_cli(monkeypatch, tmp_path, sel)
+    _stub_cli(monkeypatch, tmp_path, sel)
     monkeypatch.setattr(qd, "liveness_map", lambda repo, keys: {})
-    launch_ledger.add(repo, "flow-k")
-    marker = repo / ".flow" / "launch-ledger" / "flow-k"
-    assert marker.exists()
 
     rc = qd.cli_main(["--workspace-root", str(tmp_path)])
     assert rc == 0
-    assert not marker.exists()
     out = _out(capsys)
     assert out["action"] == "done"
     assert out["select"]["launched_pending"] == []
@@ -317,22 +308,18 @@ def test_cli_removes_launch_marker_once_registered(monkeypatch, tmp_path, capsys
 
 def test_cli_removes_launch_marker_via_open_pr_alone(monkeypatch, tmp_path, capsys):
     # registration proven by an OPEN PR, not a live lease: the run opened its PR then its session
-    # ended (lease expired/absent), so live_runs lacks the key but open_pr_keys has it. The marker
-    # MUST still drop: registered is the union, and the open-PR half carries this case (kills the
-    # `| open_pr_keys` mutation).
+    # ended (lease expired/absent), so live_runs lacks the key but open_pr_keys has it.
+    # launched_pending MUST still drop: registered is the union, and the open-PR half
+    # carries this case (kills the `| open_pr_keys` mutation).
     sel = _sel(
         open_pr_keys=["flow-k"],
         launched_pending=["flow-k"],
     )
-    repo = _stub_cli(monkeypatch, tmp_path, sel)
+    _stub_cli(monkeypatch, tmp_path, sel)
     monkeypatch.setattr(qd, "liveness_map", lambda repo, keys: {})
-    launch_ledger.add(repo, "flow-k")
-    marker = repo / ".flow" / "launch-ledger" / "flow-k"
-    assert marker.exists()
 
     rc = qd.cli_main(["--workspace-root", str(tmp_path)])
     assert rc == 0
-    assert not marker.exists()
     out = _out(capsys)
     assert out["action"] == "done"
     assert out["select"]["launched_pending"] == []

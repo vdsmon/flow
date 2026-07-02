@@ -69,9 +69,9 @@ from maintainer import resolve_maintainer_repo
 # window and read a LIVE run as dead, notably the merge stage's CI re-wait, which holds a session
 # 20-40+ min between dispatch calls (flow-72d9, the bug this epic exists to kill). So child-3 must
 # reconcile live_keys against the lease, never trust it alone; the real fix is an expiry-based
-# staleness (lease's stage_timeout*60 + buffer) or an intra-stage heartbeat. 1800 matches
-# launch_ledger.LAUNCH_TTL_SECONDS (whose flat TTL is fine, it only spans the short launch->init
-# window, not a whole run).
+# staleness (lease's stage_timeout*60 + buffer) or an intra-stage heartbeat. 1800 also bounds the
+# launch->init window now that the retired launch_ledger no longer carries its own TTL for it
+# (flow-8by2.5).
 STALE_AFTER_S = 1800
 
 

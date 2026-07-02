@@ -69,6 +69,12 @@ Side effects are non-destructive to history: the transcript at
 `~/.claude/projects/<slug>/<id>.jsonl` is untouched, so the session stays resumable
 after stop or dir-removal.
 
+Retained role (flow-8by2.5, demoted not deleted): a run that crashes BEFORE its
+first `fleet.py register` write is invisible to the fleet ledger (nothing to
+find) but still visible here as a `~/.claude/jobs/<id>/` dir -- this scan is the
+only signal for that pre-first-register crash window, so it stays a permanent
+crash-artifact fallback rather than a superseded liveness channel.
+
 CLI:
   evolve_session_cleanup.py --workspace-root <dir> [--self-job <basename>]
                             [--idle-threshold-secs N] [--stale-idle-threshold-secs N]

@@ -13,7 +13,7 @@ hot-serialization layer. Hotness is evolve-machinery-only.
 
 Backpressure is queue-scoped: only open `feat/flow-*` PRs whose key is NOT
 an active evolve bead count toward the `[queue]` cap, and the concurrency
-budget's in-flight session count (the shared worktree pool + launch ledger)
+budget's in-flight session count (the shared worktree pool + fleet ledger)
 subtracts the same active-evolve set, so a busy evolve drain never starves
 this queue. Conservative edge: a flow-key PR whose evolve bead is already
 closed/deferred counts toward the day-job cap (transient under-launching,
@@ -42,7 +42,6 @@ import json
 import sys
 from pathlib import Path
 
-import launch_ledger
 from _evolve_common import (
     NotMaintainer,
     ToolError,
@@ -149,16 +148,17 @@ def select(
 
     candidates = loads(ok(run(["bd", "ready", "--json"]), "bd ready"))
     refs, pr_refs = gather_refs(run)
-    # live_keys is LEASE-ONLY (-> result["live_runs"], which the queue-drain uses for
-    # the launch-marker registered-check); fleet must NOT leak into it or a still-
-    # booting pre-lease run gets evicted from launched_pending a turn early (flow-d4s).
-    # The reconciled lease|fleet read is for the in-flight suppression set only.
+    # live_keys is LEASE-ONLY (-> result["live_runs"], which the queue-drain uses to
+    # decide a launched run has "registered" a lease); fleet must NOT leak into it or
+    # a still-booting pre-lease run gets evicted from launched_pending a turn early
+    # (flow-d4s). The reconciled lease|fleet read is for the in-flight suppression
+    # set only.
     live_keys = live_run_keys(repo)  # lease-only -> result["live_runs"]
     fleet_keys = fleet_live_keys(repo)  # lease | fleet (reconciled in-flight authority)
-    launched_keys = launch_ledger.live_keys(repo)  # pre-init launch->init window
-    sessions = fleet_keys | launched_keys
+    launched_keys = fleet_keys - live_keys  # pre-lease fleet entries -> result["launched_pending"]
+    sessions = fleet_keys
     pr_keys = {k for r in pr_refs if (k := key_from_ref(r))}
-    # The PR set, worktree pool, and launch ledger are all repo-global (shared with
+    # The PR set, worktree pool, and fleet ledger are all repo-global (shared with
     # the evolve drain), so the active-evolve keys leave BOTH backpressure terms: an
     # evolve PR belongs to the evolve queue's cap, and an evolve session must not
     # consume this queue's concurrency budget (a saturated evolve drain would
@@ -167,11 +167,9 @@ def select(
     # already closed/deferred still counts here (transient under-launching only).
     active_evolve = active_evolve_keys(run) if (pr_keys or sessions) else set()
     open_pr_keys = sorted(pr_keys - active_evolve)
-    inflight_keys = (
-        {c["id"] for c in candidates if c.get("id") and is_inflight(c["id"], refs)}
-        | fleet_keys
-        | launched_keys
-    )
+    inflight_keys = {
+        c["id"] for c in candidates if c.get("id") and is_inflight(c["id"], refs)
+    } | fleet_keys
 
     result = partition(
         candidates,

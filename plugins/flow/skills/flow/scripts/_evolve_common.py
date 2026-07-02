@@ -220,8 +220,8 @@ def fleet_live_keys(repo: Path) -> set[str]:
     a cross-process snapshot, collapsing the per-site L/M unions to one definition.
 
     Fail-open: a ledger read error degrades to the lease-only set (the pre-cutover
-    behavior), so a fleet fault never breaks the drain. fleet stays additive here;
-    launch_ledger still backstops the launch window until child-5 retires it.
+    behavior), so a fleet fault never breaks the drain -- the drain's in-flight
+    suppression narrows to lease-only in that window.
     """
     keys = live_run_keys(repo)
     with contextlib.suppress(Exception):

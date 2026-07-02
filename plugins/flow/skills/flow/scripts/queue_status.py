@@ -13,9 +13,9 @@ to the close path can still appear in it (the reap classification needs the
 merged-PR + per-key `bd show` gather this status verb skips).
 
 Read-only by construction: this script touches no file, ever. No launches, no
-bd mutations, no launch-ledger marker removal; the launched_pending-minus-
-registered set is computed in memory only (evolve_drain's cli_main owns the
-physical marker removal).
+bd mutations, no fleet-ledger writes; the launched_pending-minus-registered set
+is computed in memory only (the underlying fleet entry is left untouched -- it
+ages out on its own staleness clock, `fleet.STALE_AFTER_S`).
 
 CLI:
   queue_status.py --workspace-root <dir> [--cap N] [--concurrency N]
@@ -82,7 +82,7 @@ def status(
     live = evolve_drain.liveness_map(repo, inflight)
 
     # in-memory only: a registered key leaves launched_pending in the report,
-    # but its marker stays on disk (read-only invariant)
+    # but its fleet entry stays on disk (read-only invariant)
     pending = set(sel.get("launched_pending") or []) - evolve_keys
     registered = live_runs | open_pr_keys
     sel["launched_pending"] = sorted(pending - registered)
