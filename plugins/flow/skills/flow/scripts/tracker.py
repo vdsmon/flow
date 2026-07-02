@@ -4,7 +4,7 @@ Library module (no shebang, no PEP 723 inline deps). Imported by other scripts.
 
 The Tracker Protocol declares the cross-backend contract. Adapters (jira / beads /
 future markdown / linear) implement it. Day 1 adapters live in `tracker_jira.py`
-and `tracker_beads.py` — they are constructed by `make_tracker(config)`, which
+and `tracker_beads.py`. They are constructed by `make_tracker(config)`, which
 lazy-imports them so this module stays stdlib-only.
 
 Key invariants:

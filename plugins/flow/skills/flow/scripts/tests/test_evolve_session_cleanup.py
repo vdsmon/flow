@@ -44,7 +44,7 @@ _transcript_counter = [0]
 
 
 def _transcript(tmp_path, *, fresh: bool = False, idle_secs: float | None = None) -> str:
-    """A transcript file whose mtime is fresh (just-now), idle (well past threshold),
+    """A transcript file whose mtime is fresh (moments ago), idle (well past threshold),
     or idle by an explicit number of seconds (`idle_secs`, for boundary tests).
 
     Each call gets a unique filename so an overridden default never clobbers the
@@ -105,7 +105,7 @@ def _setup_happy(tmp_path):
     return repo, rec
 
 
-# ─── classify core — happy path + one negative per guard ─────────────────────
+# ─── classify core: happy path + one negative per guard ──────────────────────
 
 
 def test_happy_path_terminal_bead_is_stoppable(tmp_path):
@@ -171,8 +171,8 @@ def test_lease_reboot_clearable_proceeds(tmp_path, monkeypatch):
 
 
 def test_fresh_transcript_mtime_skips(tmp_path):
-    # state=done, tempo=idle, bead terminal, lease expired — but the transcript was
-    # just written → still mid-reflect (tempo lags) → skip. The load-bearing case.
+    # state=done, tempo=idle, bead terminal, lease expired, but the transcript was written moments
+    # ago → still mid-reflect (tempo lags) → skip. The load-bearing case.
     repo = tmp_path / "flow"
     repo.mkdir()
     rec = _record(repo, tmp_path, link_scan_path=_transcript(tmp_path, fresh=True))
@@ -203,8 +203,8 @@ def test_unreadable_transcript_path_skips(tmp_path):
 
 
 def test_tempo_not_idle_skips(tmp_path):
-    # tempo is the one hard activity signal — never stop a session reporting work,
-    # regardless of state.
+    # tempo is the one hard activity signal. Never stop a session reporting work, regardless of
+    # state.
     repo, _ = _setup_happy(tmp_path)
     rec = _record(tmp_path / "flow", tmp_path, tempo="active")
     out = _classify(repo, [rec])
@@ -213,10 +213,10 @@ def test_tempo_not_idle_skips(tmp_path):
 
 
 def test_stale_working_state_is_stoppable_via_override(tmp_path):
-    # the PRIMARY case: a finished bg run rests at state='working' (a session_cron
-    # keepalive or a daemon that never flips the field). With a long-idle transcript
-    # (past the stale threshold), a dead lease, and a terminal bead, it is stoppable —
-    # `state` is an unreliable proxy, overridden by the three direct signals.
+    # the PRIMARY case: a finished bg run rests at state='working' (a session_cron keepalive or a
+    # daemon that never flips the field). With a long-idle transcript (past the stale threshold), a
+    # dead lease, and a terminal bead, it is stoppable: `state` is an unreliable proxy, overridden
+    # by the three direct signals.
     repo, _ = _setup_happy(tmp_path)
     rec = _record(
         tmp_path / "flow",
@@ -300,8 +300,8 @@ def test_blocked_tempo_idle_only_past_short_threshold_skips(tmp_path):
 
 
 def test_clean_terminal_state_uses_short_threshold(tmp_path):
-    # a clean state='done' run idle past the SHORT threshold (but not the stale one)
-    # is stoppable — the longer bar applies only when overriding a non-terminal state.
+    # a clean state='done' run idle past the SHORT threshold (but not the stale one) is stoppable:
+    # the longer bar applies only when overriding a non-terminal state.
     repo, _ = _setup_happy(tmp_path)
     rec = _record(
         tmp_path / "flow",
@@ -315,13 +315,13 @@ def test_clean_terminal_state_uses_short_threshold(tmp_path):
 
 
 def test_just_finished_session_stoppable_under_short_bars(tmp_path):
-    # contract lock (flow-opnl): the drain's post-`done` final session sweep passes
-    # short --idle-threshold-secs AND --stale-idle-threshold-secs so a JUST-finished
-    # bg run (state stuck at working/blocked, transcript idle only ~60s) is reaped
-    # instead of leaking as a panel. At `done` every lease is freed, so the three hard
-    # signals (lease non-live, tempo idle/blocked, bead terminal) already prove
-    # doneness and the long 600s stale bar is unnecessary. This pins that the CLI flags
-    # reach the stale-state transcript-idle gate; it breaks if the flag is ever removed.
+    # contract lock (flow-opnl): the drain's post-`done` final session sweep passes short
+    # --idle-threshold-secs AND --stale-idle-threshold-secs so a freshly-finished bg run (state
+    # stuck at working/blocked, transcript idle only ~60s) is reaped instead of leaking as a panel.
+    # At `done` every lease is freed, so the three hard signals (lease non-live, tempo idle/blocked,
+    # bead terminal) already prove doneness and the long 600s stale bar is unnecessary. This pins
+    # that the CLI flags reach the stale-state transcript-idle gate; it breaks if the flag is ever
+    # removed.
     repo, _ = _setup_happy(tmp_path)
     for state, tempo in (("working", "idle"), ("blocked", "blocked")):
         rec = _record(

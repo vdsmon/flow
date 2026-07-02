@@ -53,7 +53,7 @@ def test_ambiguous_anchor(skill_root):
     assert code == 4
     assert result["status"] == "ambiguous"
     assert result["occurrences"] == 2
-    assert f.read_text() == "dup\ndup\n"  # untouched
+    assert f.read_text() == "dup\ndup\n"
 
 
 def test_refuse_path_outside_tree(skill_root, tmp_path):
@@ -81,7 +81,7 @@ def test_refuse_protected_branch(skill_root):
     assert code == 2
     assert result["status"] == "refused"
     assert "protected branch" in result["reason"]
-    assert f.read_text() == "OLD\n"  # untouched
+    assert f.read_text() == "OLD\n"
 
 
 def test_feature_branch_still_applies(skill_root):
@@ -109,7 +109,7 @@ def test_refuse_detached_head(skill_root):
     assert code == 2
     assert result["status"] == "refused"
     assert "detached" in result["reason"]
-    assert f.read_text() == "OLD\n"  # untouched
+    assert f.read_text() == "OLD\n"
 
 
 def test_refuse_empty_branch(skill_root):
@@ -118,7 +118,7 @@ def test_refuse_empty_branch(skill_root):
     result, code = apply_edit(skill_root, f, "OLD", "NEW", branch_resolver=lambda _: "")
     assert code == 2
     assert result["status"] == "refused"
-    assert f.read_text() == "OLD\n"  # untouched
+    assert f.read_text() == "OLD\n"
 
 
 def test_refuse_git_error_sentinel_caller(skill_root):
@@ -131,7 +131,7 @@ def test_refuse_git_error_sentinel_caller(skill_root):
     assert result["status"] == "refused"
     assert "failing closed" in result["reason"]
     assert "git failed" in result["reason"]
-    assert f.read_text() == "OLD\n"  # untouched
+    assert f.read_text() == "OLD\n"
 
 
 class _FakeProc:

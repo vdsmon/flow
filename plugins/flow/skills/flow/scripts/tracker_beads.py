@@ -1,17 +1,17 @@
-"""BeadsAdapter — `bd` CLI subprocess adapter for the Tracker protocol.
+"""BeadsAdapter: `bd` CLI subprocess adapter for the Tracker protocol.
 
 Stdlib-only. Transport is `subprocess.run` by default; tests inject a fake via
 the `runner` constructor parameter (same shape as JiraAdapter's `http=`).
 
-Auth: none — `bd` is a local-only tracker; the database lives under the
+Auth: none. `bd` is a local-only tracker; the database lives under the
 workspace's `.beads/` dir. Adapter operates on whatever workspace `bd` resolves
 from `BEADS_DIR` env or cwd.
 
 Workspace config (`[tracker.beads]` block in `.flow/workspace.toml`):
 
-- `prefix` — repo-derived slug used by `bd init`. Already created by init.py.
-- `shared_server` — bool, default True. Adapter doesn't read this; bd does.
-- `actor` — optional. Defaults to `$USER`. Used by `list_assigned`.
+- `prefix`: repo-derived slug used by `bd init`. Already created by init.py.
+- `shared_server`: bool, default True. Adapter doesn't read this; bd does.
+- `actor`: optional. Defaults to `$USER`. Used by `list_assigned`.
 
 See `inventory.md` "Beads CLI surface" section for the full subcommand table,
 state normalization, transition synthesis, and stderr-to-failure-kind mapping.
@@ -79,7 +79,7 @@ _BD_TRANSITIONS: dict[str, list[str]] = {
     "closed": ["open"],
 }
 
-# Closed-enum capability advertisement. 14 entries — exactly the
+# Closed-enum capability advertisement (14 entries), exactly the
 # CAPABILITY_ENUM from tracker.py. Only comments_markdown + resolutions are
 # True; beads is local-only and intentionally narrow.
 _BEADS_CAPABILITIES: list[Capability] = [
@@ -553,11 +553,11 @@ class BeadsAdapter:
         """PURE READ. Never writes under `.flow/`.
 
         Returns:
-            not_shipped         — status != closed
-            not_yet_observed    — status == closed + a commit ON THE DEFAULT
-                                  BRANCH (origin/<HEAD>) referencing key
-            indeterminate       — status == closed but no default-branch commit
-                                  references key (e.g. closed-unmerged)
+            not_shipped:      status != closed
+            not_yet_observed: status == closed + a commit ON THE DEFAULT BRANCH
+                               (origin/<HEAD>) referencing key
+            indeterminate:    status == closed but no default-branch commit
+                               references key (e.g. closed-unmerged)
 
         The default-branch gate is what keeps a closed-but-unmerged bead (its
         work commit sits only on a feature branch, never squash-merged) from

@@ -1,39 +1,36 @@
 """Decide the next action for the day-job `queue drain` loop (pure core + thin CLI).
 
-Day-job sibling of `evolve_drain.py`. The loop itself — reap merged-and-exited
-runs, fan out `claude --bg "/flow <key> --auto"`, Monitor-wait — is prose in
-`references/verb-queue.md` (§drain); this module supplies the decision it
-consumes. The `launch | recover | wait | done` core and the lease-liveness
-annotation are `evolve_drain.decide` / `evolve_drain.liveness_map`, imported (both
-pure), not duplicated; the selection is `queue_select.select`. New here is
+Day-job sibling of `evolve_drain.py`. The loop itself (reap merged-and-exited runs, fan out
+`claude --bg "/flow <key> --auto"`, Monitor-wait) is prose in `references/verb-queue.md`
+(§drain); this module supplies the decision it consumes. The `launch | recover | wait | done`
+core and the lease-liveness annotation are `evolve_drain.decide` / `evolve_drain.liveness_map`,
+imported (both pure), not duplicated; the selection is `queue_select.select`. New here is
 `classify_reap`, the merged-PR reap classification.
 
-STRANDED pre-PR parity: a day-job `/flow <key> --auto` run that dies pre-PR
-strands its bead in_progress with no lease and no PR, invisible to every channel
-(the loop would false-positive to `done`). `cli_main` detects it with the SAME
-`evolve_drain.stranded_pre_pr` core, fed a DAY-JOB-scoped in_progress set (all
-in_progress beads minus epics minus the `{evolve, proposal, hot}` labels — the
-inverse of evolve's per-label union), and threads the keys into `decide` as
-`stranded` so it returns `recover` instead of `done`. The recover recipe (reap
-the dirty worktree + reopen, bounded by the prose `STRANDED-RECOVERY:` ladder)
-lives in `references/verb-queue.md` §Recover.
+STRANDED pre-PR parity: a day-job `/flow <key> --auto` run that dies pre-PR strands its bead
+in_progress with no lease and no PR, invisible to every channel (the loop would false-positive
+to `done`). `cli_main` detects it with the SAME `evolve_drain.stranded_pre_pr` core, fed a
+DAY-JOB-scoped in_progress set (all in_progress beads minus epics minus the `{evolve, proposal,
+hot}` labels, the inverse of evolve's per-label union), and threads the keys into `decide` as
+`stranded` so it returns `recover` instead of `done`. The recover recipe (reap the dirty
+worktree + reopen, bounded by the prose `STRANDED-RECOVERY:` ladder) lives in
+`references/verb-queue.md` §Recover.
 
-Unlike the evolve drain this loop NEVER merges PRs: a day-job run's merge stage
-skips on a non-evolve bead, so every green PR parks for the maintainer's review
-— parked open PRs are this queue's normal success terminal, not leftovers.
+Unlike the evolve drain this loop NEVER merges PRs: a day-job run's merge stage skips on a
+non-evolve bead, so every green PR parks for the maintainer's review. Parked open PRs are this
+queue's normal success terminal, not leftovers.
 
-The wait gate is queue-scoped: `live_runs` and `launched_pending` from select
-are repo-global (the worktree pool and the launch ledger are SHARED with the
-evolve drain), so the active-evolve key set is subtracted from both before
-liveness — the day-job loop never blocks waiting on a live evolve run.
-Conservative direction preserved: anything not provably evolve's is waited on.
+The wait gate is queue-scoped: `live_runs` and `launched_pending` from select are repo-global
+(the worktree pool and the launch ledger are SHARED with the evolve drain), so the
+active-evolve key set is subtracted from both before liveness. The day-job loop never blocks
+waiting on a live evolve run. Conservative direction preserved: anything not provably evolve's
+is waited on.
 
-Reap classification: a merged flow PR whose key still has a registered worktree
-(run exited, teardown pending) or sits in this turn's launch batch (merged PR
-but bead never closed) is a reap candidate; `bead_active` says whether the loop
-must still `bd close` it. Any launch key in the reap set is dropped from
-`launch` — a merged-but-unclosed bead diverts to the close path, never
-relaunches.
+Reap classification: a merged flow PR whose key still has a registered worktree (run exited,
+teardown pending) or sits in this turn's launch batch (merged PR but bead never closed) is a
+reap candidate; `bead_active` says whether the loop must still `bd close` it. Any launch key in
+the reap set is dropped from `launch`. A merged-but-unclosed bead diverts to the close path,
+never relaunches.
 
 Exit codes: 0 ok; 2 = a `bd`/`git`/`gh` call failed; 4 = not a maintainer setup.
 """
@@ -74,10 +71,10 @@ def classify_reap(
     """Pure: the merged flow PRs whose runs the loop must reap.
 
     merged_prs: parsed `gh pr list --state merged` items (number, headRefName).
-    candidate_keys: keys with a registered worktree UNION this turn's launch
-    keys — anything else merged within the window is long-since torn down.
-    bead_status: key -> bd status for the candidates (a `deferred`/`closed`
-    bead reads bead_active=False; deferred stays the human's triage call).
+    candidate_keys: keys with a registered worktree UNION this turn's launch keys. Anything else
+    merged within the window is long-since torn down.
+    bead_status: key -> bd status for the candidates (a `deferred`/`closed` bead reads
+    bead_active=False; deferred stays the human's triage call).
     One entry per key (first PR in list order wins).
     """
     out: list[dict] = []
@@ -105,9 +102,8 @@ def classify_reap(
 def _worktree_keys(repo: Path) -> set[str]:
     """Every key with a registered worktree run dir, live or not (reap candidates).
 
-    Same pool layout `_evolve_common.run_dir_for` documents; unlike
-    `live_run_keys` this keeps expired/exited runs — they are exactly the
-    teardown targets.
+    Same pool layout `_evolve_common.run_dir_for` documents; unlike `live_run_keys` this keeps
+    expired/exited runs. They are exactly the teardown targets.
     """
     base = repo / ".flow" / "worktrees"
     return {
@@ -129,12 +125,12 @@ def _active_evolve_keys(runner: Runner) -> set[str]:
 def _inprogress_dayjob_keys(runner: Runner) -> set[str]:
     """Keys of IN_PROGRESS day-job beads (the inverse of the evolve scope).
 
-    Day-job = all in_progress beads minus epics minus the `{evolve, proposal,
-    hot}` labels — the same filter `queue_select._day_job` applies to `bd ready`,
-    re-run over `--status in_progress` (stranded beads have left `bd ready`).
-    Unscoped on purpose (NO `-l`): the day-job queue is everything NOT evolve's,
-    so it cannot be expressed as a label union. `--limit 0` because bd list
-    defaults to 50 and would silently truncate.
+    Day-job = all in_progress beads minus epics minus the `{evolve, proposal, hot}` labels, the same
+    filter `queue_select._day_job` applies to `bd ready`, re-run over `--status in_progress`
+    (stranded beads have left `bd ready`).
+    Unscoped on purpose (NO `-l`): the day-job queue is everything NOT evolve's, so it cannot be
+    expressed as a label union. `--limit 0` because bd list defaults to 50 and would silently
+    truncate.
     """
     raw = ok(
         runner(["bd", "list", "--status", "in_progress", "--json", "--limit", "0"]),

@@ -1,4 +1,4 @@
-"""Contract tests for memory_append.py — single-writer JSONL append."""
+"""Contract tests for memory_append.py (single-writer JSONL append)."""
 
 from __future__ import annotations
 

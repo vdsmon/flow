@@ -1,4 +1,4 @@
-"""Tests for metric.py corpus-health — knowledge.jsonl live-vs-superseded health.
+"""Tests for metric.py corpus-health (knowledge.jsonl live-vs-superseded health).
 
 Seeds a real workspace (`.flow/workspace.toml` + namespace dir) and writes
 `.flow/<namespace>/knowledge.jsonl` lines matching the recall entry schema

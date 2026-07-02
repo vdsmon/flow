@@ -40,7 +40,7 @@ FORGE_CAPABILITY_ENUM = Literal[
     "draft_prs",  # open_pr honors draft=True
     "ready_toggle",  # mark_ready() flips draft -> ready
     "review_threads",  # review_threads()/post_reply()/resolve_thread() implemented
-    "bot_review_status",  # bot_review_present() — review-bot completion signal
+    "bot_review_status",  # bot_review_present() is the review-bot completion signal
     "squash_merge",  # merge(squash=True)
     "delete_branch",  # delete_branch()
     "ci_rollup",  # ci_rollup() implemented

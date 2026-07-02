@@ -556,7 +556,7 @@ def compute_corpus_health(
     reader. An entry is superseded iff its `id` is named by some other entry's
     `supersedes` (the tombstone). supersession_rate is superseded/total.
     supersedes_in_window counts tombstones (entries with a non-empty `supersedes`)
-    whose `ts` parses and falls in the half-open window [since, until) — the
+    whose `ts` parses and falls in the half-open window [since, until), the
     over-time axis. The DECISION breakdown counts `type == "DECISION"` entries and,
     among the live (non-superseded) ones with a parseable `ts`, surfaces the oldest
     as {id, ts, age_days} measured against now_iso (None when there are none).
@@ -646,7 +646,7 @@ def compute_recall_hit_rate(
     Reads `.flow/<namespace>/recall-usage.jsonl` (usage + miss records, written by
     `recall_usage.py`) via the quarantine-on-malformed reader. A record counts iff
     its `ts` parses and is in [since, until). Among `kind=="usage"` records,
-    hit_rate = used / surfaced (0.0 when surfaced == 0) — the precision of what
+    hit_rate = used / surfaced (0.0 when surfaced == 0), the precision of what
     recall put in front of the run. `kind=="miss"` records (a known fact re-learned
     without being recalled) are counted separately as the false-negative proxy.
     runs is the distinct run_id count across both kinds. Neither half is
@@ -813,7 +813,6 @@ def _resolve_main_ref(workspace_root: Path) -> str:
     """Pick the default-branch ref to scan: origin/HEAD target first, then fallbacks."""
     sym = _git_out(workspace_root, ["symbolic-ref", "refs/remotes/origin/HEAD"])
     if sym:
-        # e.g. refs/remotes/origin/main -> origin/main
         ref = sym.replace("refs/remotes/", "", 1)
         if _git_out(workspace_root, ["rev-parse", "--verify", "--quiet", ref]) is not None:
             return ref
@@ -925,7 +924,7 @@ def compute_revert_rate(
     Undecidable / unmeasurable events are skip-and-recorded (not counted in
     `shipped`): `history_unavailable` (bd read failed), `tracker_unsupported`
     (non-beads backend short-circuit, no bd invocation), `reopened_not_yet_reclosed`
-    (in-flight reopen — the DECISION requires reopen AND re-close).
+    (in-flight reopen, the DECISION requires reopen AND re-close).
     """
     since = parse_iso(since_iso)
     until = parse_iso(until_iso)

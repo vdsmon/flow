@@ -4,9 +4,9 @@ Used by the reflect sling-bead path and `/flow evolve`. Two guarantees:
 
 - Gated on maintainer mode. Outside it the bead is NOT filed (exit 4), so a normal
   user run never requires a flow checkout and machinery friction stays dormant.
-- Always targets flow's beads (the resolved maintainer repo root), never the run's
-  tracker — which may be Jira. A machinery finding is about the harness, not the
-  user's project, so it must land in flow's backlog regardless of the run.
+- Always targets flow's beads (the resolved maintainer repo root), never the run's tracker,
+  which may be Jira. A machinery finding is about the harness, not the user's project, so it
+  must land in flow's backlog regardless of the run.
 
 Stdlib-only. `bd` is invoked with cwd = the flow repo so it resolves that repo's
 .beads DB.
@@ -21,13 +21,12 @@ Identity / convergence (two-layer seam). `--dedup-key <s>` feeds two dedup nets:
    to its basename) is fingerprinted into an `evidfile:` anchor. On an exact miss, beads
    carrying that anchor are listed and the new summary is token-compared (Jaccard over a
    stemmed, stopword-filtered token set) against each candidate's title; a score over
-   THRESHOLD also dedups (exit 5). This catches re-discoveries of the same same-file
-   defect phrased differently — where the whole-key exact hash would mint a fresh slug.
+   THRESHOLD also dedups (exit 5). This catches re-discoveries of the same same-file defect
+   phrased differently, where the whole-key exact hash would mint a fresh slug.
 
-Anchor the key on the finding's primary file path (prose convention) so the same defect
-maps to the same fingerprint across runs — that is what stops the audit refiling open
-work AND re-proposing findings already closed or rejected, so the loop converges instead
-of churning.
+Anchor the key on the finding's primary file path (prose convention) so the same defect maps
+to the same fingerprint across runs. That is what stops the audit refiling open work AND
+re-proposing findings already closed or rejected, so the loop converges instead of churning.
 
 CLI:
   flow_beads_create.py --workspace-root <dir> --summary <s> --description <d>
@@ -72,10 +71,10 @@ class DuplicateBead(Exception):
         self.dedup_key = dedup_key
 
 
-# every stored status, so dedup also catches closed/rejected findings (not just open)
+# every stored status, so dedup also catches closed/rejected findings alongside open ones
 _ALL_STATUSES = "open,in_progress,blocked,deferred,closed"
 
-# function words only — NOT tuned to any one finding pair (symptom words stay)
+# function words only, not tuned to any one finding pair (symptom words stay)
 _STOPWORDS = frozenset({"a", "an", "the", "to", "of", "that", "and", "or", "for", "in", "on"})
 
 # 0.45 is calibrated on the single real pair available (flow-mst vs flow-9jk, ~0.61);
@@ -188,16 +187,16 @@ def create_bead(
 ) -> str:
     """File a bead into flow's beads and return the new key.
 
-    Raises NotMaintainer outside maintainer mode (caller decides whether that is
-    fine — for the reflect dormant path it is). Raises DuplicateBead when
-    dedup_key matches an existing bead. Raises BeadCreateError on bd failure.
+    Raises NotMaintainer outside maintainer mode. Caller decides whether that is fine (for the
+    reflect dormant path it is). Raises DuplicateBead when dedup_key matches an existing bead.
+    Raises BeadCreateError on bd failure.
 
     `acceptance_invariant` (when set) is appended to the description as a single-line
-    `ACCEPTANCE-INVARIANT: <text>` stem — bd has no custom-field flag, so the
-    checkable spec invariant a behavior-changing tier:light downshift must satisfy
-    is recorded as a greppable marker (the established flow stem pattern, alongside
-    SONNET-LADDER: / DECISION:). The ship-event reader (stage-reflect) pulls it back
-    out for ship-event correlation, mirroring how the tier label already flows.
+    `ACCEPTANCE-INVARIANT: <text>` stem (bd has no custom-field flag, so the checkable spec
+    invariant a behavior-changing tier:light downshift must satisfy is recorded as a greppable
+    marker, the established flow stem pattern, alongside SONNET-LADDER: / DECISION:). The
+    ship-event reader (stage-reflect) pulls it back out for ship-event correlation, mirroring
+    how the tier label already flows.
     """
     repo = resolve_maintainer_repo(workspace_root)
     if repo is None:

@@ -1,4 +1,4 @@
-"""Tests for group_persist.py — durable cover-set persist/derive."""
+"""Tests for group_persist.py: durable cover-set persist/derive."""
 
 from __future__ import annotations
 

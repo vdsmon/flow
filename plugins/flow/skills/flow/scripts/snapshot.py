@@ -16,11 +16,10 @@ Snapshot content (hashed via canonical JSON -> sha256):
     a {stage: {manifest, tree_hash}} record. manifest is the matching
     .flow-bundle.toml text; tree_hash is a content hash over every *.py/*.sh/
     *.md/*.toml under the plugin_root. Bare workspaces have an empty dict here.
-  - engine: {branch, tree_hash} over the MAIN checkout's own skill tree
-    (resolved via `git worktree list`, stage-registry.toml excluded), active
-    only when that checkout sits on a protected branch — the marketplace-
-    tracks-main window where a mid-run checkout advance swaps engine code.
-    {} when inactive (feature branch, detached, or not a git repo).
+  - engine: {branch, tree_hash} over the MAIN checkout's own skill tree (resolved via `git worktree
+    list`, stage-registry.toml excluded), active only when that checkout sits on a protected branch
+    (the marketplace-tracks-main window where a mid-run checkout advance swaps engine code). {} when
+    inactive (feature branch, detached, or not a git repo).
   - master_hash: sha256 of the canonical-JSON of the four keys above.
 
 verify recomputes via compute_snapshot (the single source of hashing), compares
@@ -205,21 +204,19 @@ def _engine_component(skill_root: Path) -> dict[str, str]:
     state.py / reference docs under a running pipeline with no drift detection
     (the handlers component covers only external skill: bundles).
 
-    Anchoring: `_skill_root_from_script()` is BISTABLE mid-run — the do-loop
-    invokes engine scripts via the absolute installed path (main checkout) or a
-    repo-relative path (the run's worktree copy) depending on how the agent
-    typed the command (proven 2026-06-09, 12-transcript sweep on flow-2pp). So
-    the component anchors on the MAIN checkout resolved via `git worktree list`
-    — identical no matter which copy computes it — and hashes THAT engine tree.
+    Anchoring: `_skill_root_from_script()` is BISTABLE mid-run. The do-loop invokes engine scripts
+    via the absolute installed path (main checkout) or a repo-relative path (the run's worktree
+    copy) depending on how the agent typed the command (proven 2026-06-09, 12-transcript sweep on
+    flow-2pp). So the component anchors on the MAIN checkout resolved via `git worktree list`,
+    identical no matter which copy computes it, and hashes THAT engine tree.
 
-    Branch gate: active only when the main checkout sits on a protected branch.
-    machinery_edit refuses self-edits on protected branches, so the guard's
-    active window is exactly the complement of the legitimate self-edit window:
-    no false abort on a reflect self-heal, and no unguarded marketplace window.
-    Worktree engine copies stay uncovered (run-private; only the run itself
-    mutates them). Any resolution failure (not a git repo, git missing,
-    detached HEAD, tree gone) deactivates the component rather than crashing —
-    a bare/non-git install has no marketplace-advance window to guard.
+    Branch gate: active only when the main checkout sits on a protected branch. machinery_edit
+    refuses self-edits on protected branches, so the guard's active window is exactly the complement
+    of the legitimate self-edit window: no false abort on a reflect self-heal, and no unguarded
+    marketplace window. Worktree engine copies stay uncovered (run-private; only the run itself
+    mutates them). Any resolution failure (not a git repo, git missing, detached HEAD, tree gone)
+    deactivates the component rather than crashing. A bare/non-git install has no
+    marketplace-advance window to guard.
     """
     import subprocess
 
@@ -417,10 +414,9 @@ def component_files(
 ) -> dict[str, str | None]:
     """Map drifted component labels to a workspace-root-relative posix path.
 
-    workspace_toml and stage_registry map to their path relative to
-    workspace_root (or None when the file lives outside it — a separate skill
-    checkout, so the edit cannot be a planned file of this run). A handler or
-    engine tree component maps to None: a tree_hash names no single file, so
+    workspace_toml and stage_registry map to their path relative to workspace_root (or None when the
+    file lives outside it, a separate skill checkout, so the edit cannot be a planned file of this
+    run). A handler or engine tree component maps to None: a tree_hash names no single file, so
     those drifts are never owned (deliberate scope limit).
     """
     out: dict[str, str | None] = {}

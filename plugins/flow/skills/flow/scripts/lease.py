@@ -523,13 +523,12 @@ def takeover_clear(
     a lease that still looks live (the recover abort --force escape hatch).
     takeover never passes it, so its refuse-on-live guarantee is unchanged.
 
-    `on_cleared`, when given, runs WHILE the flock is STILL held, on the cleared
-    paths only (never on a refused-live). It lets recover takeover do its stage
-    resets + snapshot atomically with the clear, so a concurrent acquire cannot
-    land between the unlink and the resets and have its just-begun stage
-    clobbered. Same teardown-under-flock contract as classify_then: on_cleared
-    must NOT call any lease function that re-takes this flock (it would
-    self-deadlock). Its return value is discarded.
+    `on_cleared`, when given, runs WHILE the flock is STILL held, on the cleared paths only
+    (never on a refused-live). It lets recover takeover do its stage resets + snapshot
+    atomically with the clear, so a concurrent acquire cannot land between the unlink and the
+    resets and have its newly begun stage clobbered. Same teardown-under-flock contract as
+    classify_then: on_cleared must NOT call any lease function that re-takes this flock (it
+    would self-deadlock). Its return value is discarded.
     """
     with flock_blocking(_flock_path(ticket_dir)):
         info = classify(ticket_dir, now_iso, current_boot=current_boot, hostname=hostname)
@@ -574,17 +573,16 @@ def classify_then(
 
     Two non-obvious invariants the caller must respect:
 
-    (i) flock non-reentrancy — teardown must NOT call any lease function that
-    re-takes the flock (flock_blocking opens a fresh fd per call and LOCK_EX
-    blocks across fds even within one process, so re-entering self-deadlocks).
-    reap's teardown only runs a git subprocess, which is safe.
+    (i) flock non-reentrancy: teardown must NOT call any lease function that re-takes the flock
+    (flock_blocking opens a fresh fd per call and LOCK_EX blocks across fds even within one
+    process, so re-entering self-deadlocks). reap's teardown only runs a git subprocess, which
+    is safe.
 
-    (ii) doomed-inode — when teardown deletes the worktree containing the lock
-    file, the held flock fd survives the unlink (POSIX): the file is gone from
-    the namespace but the open fd keeps the inode alive until close. A later
-    acquirer that recreates the lock path lands on a fresh inode and is no longer
-    mutually excluded from this span, but that is safe: classify already observed
-    non-live under the lock and the worktree is being torn down regardless.
+    (ii) doomed-inode: when teardown deletes the worktree containing the lock file, the held
+    flock fd survives the unlink (POSIX): the file is gone from the namespace but the open fd
+    keeps the inode alive until close. A later acquirer that recreates the lock path lands on a
+    fresh inode and is no longer mutually excluded from this span, but that is safe: classify
+    already observed non-live under the lock and the worktree is being torn down regardless.
     """
     with flock_blocking(_flock_path(ticket_dir)):
         info = classify(ticket_dir, now_iso, current_boot=current_boot, hostname=hostname)

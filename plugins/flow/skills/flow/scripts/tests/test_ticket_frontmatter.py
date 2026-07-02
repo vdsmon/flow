@@ -1,4 +1,4 @@
-"""Contract tests for ticket_frontmatter.py — TOML frontmatter r/w."""
+"""Contract tests for ticket_frontmatter.py: TOML frontmatter r/w."""
 
 from __future__ import annotations
 

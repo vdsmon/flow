@@ -1,4 +1,4 @@
-"""Reference embedder for the semantic-recall seam — run BY `uvx`, not imported.
+"""Reference embedder for the semantic-recall seam, run BY `uvx`, not imported.
 
 The shipped default embedder. Imports fastembed (ONNX runtime, no torch). It is a
 standalone subprocess entrypoint: `memory_embed.embed` shells the default command
@@ -8,8 +8,8 @@ import it). No stdlib-path script imports this module. `embedder_model2vec.py` i
 the lighter static alternative, selectable via `[memory.semantic].embedder`.
 
 Contract:
-  stdin  — newline-delimited texts (one per line; trailing newline ignored).
-  stdout — a JSON array of vectors, `[[float, ...], ...]`, one per input line.
+  stdin:  newline-delimited texts (one per line; trailing newline ignored).
+  stdout: a JSON array of vectors, `[[float, ...], ...]`, one per input line.
 
 Exit codes:
   0 = ok.

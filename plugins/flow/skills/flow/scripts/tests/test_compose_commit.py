@@ -1,4 +1,4 @@
-"""Tests for compose_commit.py — conventional commit message emitter."""
+"""Tests for compose_commit.py: conventional commit message emitter."""
 
 from __future__ import annotations
 

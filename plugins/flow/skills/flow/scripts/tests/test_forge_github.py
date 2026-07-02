@@ -16,7 +16,7 @@ def _is_graphql(args: list[str]) -> bool:
 
 
 def _graphql_mutation(args: list[str]) -> str:
-    """'resolve' / 'reply' / 'read' — keyed on the query text in the argv."""
+    """'resolve' / 'reply' / 'read', keyed on the query text in the argv."""
     blob = " ".join(args)
     if "resolveReviewThread" in blob:
         return "resolve"

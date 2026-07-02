@@ -92,7 +92,7 @@ def resolve(
 ) -> str | None:
     """Returns ticket key on match, None on no-match.
 
-    When `branch` is given, resolve the key from THAT branch name (no git call) —
+    When `branch` is given, resolve the key from THAT branch name (no git call),
     the PR->ticket enabler for `/flow revise <pr#>`, which is not checked out on
     the PR branch. When `branch` is None, behavior is byte-identical to before:
     resolve from the current git branch.

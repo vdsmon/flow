@@ -9,7 +9,7 @@ Day-job = `bd ready --json` (unlabelled) minus epics and minus beads labelled
 `evolve` (the evolve drain's queue), `proposal` (judgment work never
 auto-launches; no opt-in exists here), or `hot` (a hot non-evolve bead would be
 invisible to evolve's one-hot gate, so it never auto-launches either). No
-hot-serialization layer — hotness is evolve-machinery-only.
+hot-serialization layer. Hotness is evolve-machinery-only.
 
 Backpressure is queue-scoped: only open `feat/flow-*` PRs whose key is NOT
 an active evolve bead count toward the `[queue]` cap, so a busy evolve drain
@@ -17,12 +17,12 @@ never starves this queue. Conservative edge: a flow-key PR whose evolve bead is
 already closed/deferred counts toward the day-job cap (transient
 under-launching, never over-launching).
 
-Partition is best-effort coarse, NOT a disjointness guarantee — planning is
-post-launch, so the selector never knows a bead's real file set. It serializes
+Partition is best-effort coarse, NOT a disjointness guarantee (planning is
+post-launch, so the selector never knows a bead's real file set). It serializes
 on the primary-file anchor parsed from the bead's BLAST RADIUS line and relies
 on the keystone gate: each run is worktree/lease-isolated, so any residual file
-overlap surfaces as a merge conflict at human review — friction, never
-corruption.
+overlap surfaces as a merge conflict at human review (friction, never
+corruption).
 
 CLI:
   queue_select.py --workspace-root <dir> [--cap N] [--concurrency N]
@@ -87,7 +87,7 @@ def partition(
     candidates: parsed `bd ready --json` items (id, priority, labels,
     issue_type, description). The day-job filter applies BEFORE the in-flight
     split, so an in-flight bead from another queue (e.g. an evolve bead the
-    evolve drain is running) never surfaces in `skipped_in_flight` — the
+    evolve drain is running) never surfaces in `skipped_in_flight`. The
     queue-drain's liveness wait stays scoped to its own queue.
     """
     day_job = _day_job(candidates)

@@ -166,7 +166,7 @@ def test_review_status_emits_reviewed(ws, capsys):
 
 def test_review_status_degrades_on_not_supported(ws, capsys):
     rc, _ = _run(["review-status", "--pr", "7"], ws, bot_review_supported=False)
-    assert rc == 0  # degrade, not error — review_loop skips the wait
+    assert rc == 0  # degrade, not error, review_loop skips the wait
     assert json.loads(capsys.readouterr().out) == {"supported": False}
 
 

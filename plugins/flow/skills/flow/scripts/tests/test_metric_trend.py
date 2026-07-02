@@ -1,4 +1,4 @@
-"""Tests for metric.py `trend` — the five-measure window roll-up.
+"""Tests for metric.py `trend`: the five-measure window roll-up.
 
 `trend` calls compute(), compute_time_to_pr(), compute_friction_per_run(),
 compute_revert_rate(), and compute_recall_hit_rate() over one [since, until)

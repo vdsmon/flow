@@ -2,7 +2,7 @@
 
 Covers init/next/finish/status lifecycle, blocked_by surfacing, handler-type
 routing JSON, and validate-workspace HARD GATE. git rev-parse HEAD is stubbed
-via monkeypatch.setattr(subprocess, "run", ...) — no real git repo needed.
+via monkeypatch.setattr(subprocess, "run", ...). No real git repo needed.
 """
 
 from __future__ import annotations
@@ -310,7 +310,6 @@ def test_next_surfaces_roles_for_stage_with_roles(
     )
     _stub_git_head(monkeypatch, "abc123")
     ds.cmd_init(tmp_path, "FT-1")
-    # advance past ticket stage
     ds.cmd_next(tmp_path, "FT-1")
     ds.cmd_finish(tmp_path, "FT-1", "ticket", "completed")
     rc, payload = ds.cmd_next(tmp_path, "FT-1")
@@ -341,7 +340,6 @@ def test_next_routes_subagent_handler(tmp_path: Path, monkeypatch: pytest.Monkey
     )
     _stub_git_head(monkeypatch)
     ds.cmd_init(tmp_path, "FT-1")
-    # First next picks ticket.
     rc, payload = ds.cmd_next(tmp_path, "FT-1")
     assert payload["stage"] == "ticket"
     ds.cmd_finish(tmp_path, "FT-1", "ticket", "completed")
@@ -1140,7 +1138,7 @@ def test_full_loop_init_to_done_releases_lease(
 
 def test_finish_cli_flag_contract_matches_skill_prose() -> None:
     # Guards the prose<->CLI seam: SKILL.md's do-loop finish call must parse.
-    # head_sha is derived internally by cmd_finish, NOT a flag — prose passing
+    # head_sha is derived internally by cmd_finish, NOT a flag: prose passing
     # --head-sha would die "unrecognized arguments" (a bug the unit tests, which
     # call cmd_finish directly, cannot see).
     args = ds._parse_args(
@@ -1264,7 +1262,7 @@ def test_next_refuses_unowned_workspace_drift_without_baseline(
 def test_next_engine_drift_dirty_aborts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # flow-p9sc GUARD (replaces test_next_refuses_engine_drift_never_owned): a
     # persistent engine-only drift whose engine working tree is DIRTY
-    # (engine_tree_clean False) still fail-closes (rc 1) — the raw-Edit-on-
+    # (engine_tree_clean False) still fail-closes (rc 1), the raw-Edit-on-
     # machinery threat. An engine-mapped path seeded in planned_files must NOT
     # flip it to a reconcile: component_files(["engine"], ...) -> {"engine":
     # None}, so engine is never OWNED via planned_files (the re-anchor is a

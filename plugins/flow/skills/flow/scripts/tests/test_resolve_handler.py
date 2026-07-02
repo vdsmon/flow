@@ -184,9 +184,9 @@ def test_cli_unknown_handler_exit_3() -> None:
 
 
 def test_skill_cross_name_provides_fallback(tmp_path: Path) -> None:
-    # Bundle dir is "tools" (bundle.name = "tools") but the handler string is
-    # "skill:my-action", so select_bundle(result, "my-action") returns None.
-    # The fallback loop in _resolve_skill must find it via _provides_skill.
+    # Bundle dir is "tools" (bundle.name = "tools") but the handler string is "skill:my-action",
+    # so select_bundle(result, "my-action") returns None. The fallback loop in _resolve_skill
+    # must find it via _provides_skill.
     content = """\
 schema_version = 1
 

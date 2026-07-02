@@ -1,4 +1,4 @@
-"""Tests for memory_embed.py — embedder seam + sidecar index.
+"""Tests for memory_embed.py (embedder seam + sidecar index).
 
 A STUB embedder command (a tiny inline python script emitting deterministic fake
 vectors) exercises the real subprocess socket so the suite is dependency-free.
@@ -120,7 +120,6 @@ def test_reindex_incremental_embeds_only_missing(tmp_path: Path, stub_cmd: str) 
     _seed_workspace(tmp_path)
     _write_entries(tmp_path, "demo", [_entry("a" * 16, "one")])
     memory_embed.reindex(tmp_path, "demo", embedder=stub_cmd)
-    # add a second entry; an incremental reindex embeds only it.
     _write_entries(tmp_path, "demo", [_entry("a" * 16, "one"), _entry("b" * 16, "two")])
     summary = memory_embed.reindex(tmp_path, "demo", embedder=stub_cmd)
     assert summary["embedded"] == 1
@@ -157,7 +156,6 @@ def test_reindex_drops_dead_id_on_supersede(tmp_path: Path, stub_cmd: str) -> No
     _seed_workspace(tmp_path)
     _write_entries(tmp_path, "demo", [_entry("a" * 16, "live")])
     memory_embed.reindex(tmp_path, "demo", embedder=stub_cmd)
-    # now a supersedes the live entry; reindex must drop a's vector.
     _write_entries(
         tmp_path,
         "demo",

@@ -1,4 +1,4 @@
-"""Tests for branch_ticket.py — git branch → ticket key resolver."""
+"""Tests for branch_ticket.py, git branch → ticket key resolver."""
 
 from __future__ import annotations
 

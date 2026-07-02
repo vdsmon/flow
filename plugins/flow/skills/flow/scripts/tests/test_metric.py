@@ -1,4 +1,4 @@
-"""Tests for metric.py — tickets-per-week behind the 14-day checkpoint.
+"""Tests for metric.py, tickets-per-week behind the 14-day checkpoint.
 
 Builds real ship-events + state.json on temp dirs (matching the on-disk shapes
 observe_ship_event.py and state.py write), with an explicit `now` so window math

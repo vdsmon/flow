@@ -1,4 +1,4 @@
-"""Tests for diff_extract.py — git diff capture for flow stages.
+"""Tests for diff_extract.py, git diff capture for flow stages.
 
 Uses real tmp git repos for fidelity (binary capture, rename detection, blob
 sha behavior are git-internal and not worth mocking).

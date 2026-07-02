@@ -1,10 +1,10 @@
-"""TTL launch ledger — bridges the launch→init blind window for the drain selector.
+"""TTL launch ledger: bridges the launch→init blind window for the drain selector.
 
 A run launched by `claude --bg "/flow <key> --auto"` is invisible to BOTH of
 `evolve_select`'s in-flight detectors during its plan+bootstrap phase: it has no
-branch/PR ref yet (`_gather_refs`) and no pre-PR lease yet (`_live_run_keys`) —
+branch/PR ref yet (`_gather_refs`) and no pre-PR lease yet (`_live_run_keys`);
 minutes pass before either registers. In that window the selector re-emits the
-just-launched key AND can offer a SECOND concurrent hot bead, breaking the
+newly launched key AND can offer a SECOND concurrent hot bead, breaking the
 one-hot-per-pass isolation invariant.
 
 This ledger closes the window: the drain orchestrator writes a per-key marker at
@@ -68,7 +68,7 @@ def live_keys(repo: Path, *, now: str | None = None) -> set[str]:
     """Keys with a non-expired launch marker (age < TTL).
 
     Robust to a missing ledger dir (returns empty) and to an unparseable/empty
-    marker (skipped — never counted live).
+    marker (skipped, never counted live).
     """
     now = now or utcnow_iso()
     d = _ledger_dir(repo)

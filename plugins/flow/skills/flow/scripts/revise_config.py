@@ -9,11 +9,11 @@ A plain human comment maps to `minor` and is dropped by the Major+ fix loop; thi
 floor lets a maintainer opt those unresolved minor threads up to `major` so they
 enter the fix set. Default `minor` keeps today's behavior.
 
-The bump is applied LOOP-SIDE via `apply_floor`, not in the forge adapter — the
+The bump is applied LOOP-SIDE via `apply_floor`, not in the forge adapter, so the
 adapter (`forge_github._severity_from_state`) stays pure of `[revise]` config.
 
 Exit codes:
-  0 = ok (including the bad-value/missing-config fallback to the default — the
+  0 = ok (including the bad-value/missing-config fallback to the default; the
       review_loop bash captures the JSON, so this never exits nonzero on config).
 """
 
@@ -60,7 +60,7 @@ def apply_floor(threads: list[dict], severity: str) -> list[dict]:
     """Bump every UNRESOLVED `minor` thread up to `severity`. Returns NEW dicts;
     the input is never mutated. No-op when `severity == "minor"`.
 
-    Only unresolved minor is bumped — resolved/major/critical/nit threads pass
+    Only unresolved minor is bumped; resolved/major/critical/nit threads pass
     through unchanged (a `nit` is below minor in the enum but the floor only
     promotes the maintainer's plain minor comments into the Major+ fix set).
     """

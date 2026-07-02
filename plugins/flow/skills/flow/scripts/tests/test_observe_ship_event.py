@@ -1,4 +1,4 @@
-"""Tests for observe_ship_event.py — sole writer of ship-events."""
+"""Tests for observe_ship_event.py (sole writer of ship-events)."""
 
 from __future__ import annotations
 

@@ -11,7 +11,7 @@ PRs open as drafts by default; set `[create_pr] draft = false` in
 Idempotent on resume: if a PR already exists for the branch it returns that URL
 instead of erroring, so a re-run after a crash does not double-open. The title comes
 from the HEAD (work) commit subject, which the commit stage built from
-`commit_summary`, so there is no `pr_title` field to populate — do NOT add a
+`commit_summary`, so there is no `pr_title` field to populate. Do NOT add a
 lint_ticket gate for it.
 
 Prints `PR_URL=<url>` on stdout; the do-loop captures that into
@@ -27,7 +27,7 @@ The base branch resolves as: explicit `--base`, else `[create_pr] base` in
 Exit codes:
   0 = ok (prints PR_URL=<url>)
   2 = tool error (git/gh failed; stderr propagated)
-  3 = refused (current branch is a protected/integration branch — never PR from it)
+  3 = refused (current branch is a protected/integration branch, never PR from it)
 """
 
 from __future__ import annotations

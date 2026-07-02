@@ -55,7 +55,7 @@ def test_empty_check_runs_is_pending():
 
 def test_lowercase_status_uppercased_and_classified():
     # a completed-success entry must read green ONLY because status is uppercased to
-    # COMPLETED before _classify_rollup (which compares raw status \!= "COMPLETED").
+    # COMPLETED before _classify_rollup (which compares raw status != "COMPLETED").
     runs = [{"name": "x", "status": "completed", "conclusion": "success"}]
     assert mch.classify_main_ci(runs)["status"] == "green"
 

@@ -1,4 +1,4 @@
-"""Contract tests for bundle_discover.py — manifest discovery + validation.
+"""Contract tests for bundle_discover.py: manifest discovery + validation.
 
 Covers: zero manifests, partial bundle, full bundle, invalid unrelated manifest
 (warning-only), invalid SELECTED manifest (exit 2), duplicate-provider conflict,
@@ -96,7 +96,6 @@ def test_invalid_unrelated_manifest_is_warning_not_error(tmp_path: Path) -> None
         "schema_version = 1\n[bundle]\n# missing name\n",
     )
     result = bd.discover(roots=[tmp_path])
-    # Valid manifest still discovered; broken one in invalid list.
     assert len(result.valid) == 1
     assert len(result.invalid) == 1
     assert "broken-third-party" in result.invalid[0].path

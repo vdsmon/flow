@@ -1,7 +1,7 @@
 """Flag parked PRs carrying a NEW unresolved human review as `/flow revise` candidates.
 
 The final enrichment of `/flow queue`'s status path (epic flow-kx17.5). The queue
-already surfaces `parked` keys — open PRs awaiting the maintainer's review+merge.
+already surfaces `parked` keys: open PRs awaiting the maintainer's review+merge.
 This asks one more question per parked PR: does it carry an unresolved Major+ review
 thread? On a day-job delivery the original review_loop terminal was "CI green AND
 zero unresolved Major+", so a genuine new human CHANGES_REQUESTED (→ `major`) is
@@ -13,7 +13,7 @@ reconstructed `feat/<key>` (which would not match the real
 `--pr-refs` = every open-PR head ref; each parked key joins to its ref via
 `key_from_ref`.
 
-Surfaces NATIVE Major+ only — no `revise_config` / `apply_floor`. The plain-comment
+Surfaces NATIVE Major+ only, no `revise_config` / `apply_floor`. The plain-comment
 severity floor is a revise-TIME knob (what the fix loop chases); applying it here
 would bump leftover bot minors to major and produce false "human review" flags.
 
@@ -44,7 +44,7 @@ def flag_parked_reviews(keys: list[str], pr_refs: list[str], adapter: Any) -> li
     """For each parked key with a matching open-PR ref, count unresolved Major+ threads.
 
     Returns a result dict only for keys whose `unresolved_major > 0`. Best-effort:
-    a forge error (incl. `NotSupported`) on one key is swallowed — that key is not
+    a forge error (incl. `NotSupported`) on one key is swallowed, that key is not
     flagged, the others still process.
     """
     ref_by_key: dict[str, str] = {}

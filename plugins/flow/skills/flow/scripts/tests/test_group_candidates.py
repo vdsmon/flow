@@ -1,4 +1,4 @@
-"""Tests for group_candidates.py — the deterministic half of /flow group."""
+"""Tests for group_candidates.py: the deterministic half of /flow group."""
 
 from __future__ import annotations
 

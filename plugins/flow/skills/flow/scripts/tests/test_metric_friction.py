@@ -1,4 +1,4 @@
-"""Tests for metric.py friction-per-run — friction events per distinct run.
+"""Tests for metric.py friction-per-run (friction events per distinct run).
 
 Seeds a real workspace (`.flow/workspace.toml` + namespace dir) and writes
 `.flow/<namespace>/friction.jsonl` lines matching flow_friction.append's key set

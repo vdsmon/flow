@@ -1,4 +1,4 @@
-"""Reference embedder for the semantic-recall seam — run BY `uvx`, not imported.
+"""Reference embedder for the semantic-recall seam, run BY `uvx`, not imported.
 
 The ONLY file that imports model2vec/numpy. It is a standalone subprocess
 entrypoint: `memory_embed.embed` shells the default command
@@ -7,8 +7,8 @@ model2vec resolves in uvx's own cached env, independent of the runtime python3
 (which cannot import numpy). No stdlib-path script imports this module.
 
 Contract:
-  stdin  — newline-delimited texts (one per line; trailing newline ignored).
-  stdout — a JSON array of vectors, `[[float, ...], ...]`, one per input line.
+  stdin: newline-delimited texts (one per line; trailing newline ignored).
+  stdout: a JSON array of vectors, `[[float, ...], ...]`, one per input line.
 
 Exit codes:
   0 = ok.

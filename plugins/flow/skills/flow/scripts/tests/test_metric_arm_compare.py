@@ -1,4 +1,4 @@
-"""Tests for metric.py arm-compare — per-arm flow-vs-control comparison.
+"""Tests for metric.py arm-compare (per-arm flow-vs-control comparison).
 
 Ship-events partition on the `arm` field (absent -> "flow"; legacy events read as
 flow). Per arm {flow, control} the compute renders median_time_to_pr_hours,

@@ -12,10 +12,10 @@ same id, letting the dedup scan suppress re-writes. `--id <override>` exists
 for entries bound to specific intents (ship-event anchors) where the
 formula's inputs aren't sufficient.
 
-Quarantine semantics (sidecar — main file untouched):
+Quarantine semantics (sidecar, main file untouched):
 - Malformed lines encountered during scan are APPENDED to
   `<file>.quarantine.<ts>` (one sidecar per invocation).
-- Main `knowledge.jsonl` is NEVER rewritten — append-only invariant holds.
+- Main `knowledge.jsonl` is NEVER rewritten, append-only invariant holds.
 - Scan continues with remaining valid lines. Never crash.
 
 Exit codes:

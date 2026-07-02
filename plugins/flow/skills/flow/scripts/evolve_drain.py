@@ -3,15 +3,15 @@
 The drain loop reaps finished orphans, then asks this module: given the current
 `evolve_select` result plus the liveness of every in-flight run, should the loop
 LAUNCH the next batch, WAIT for a live run to settle, or is it DONE (nothing
-startable)? The loop itself — reap, fan out `claude --bg`, Monitor-wait — is prose
-in `references/verb-evolve.md` (§drain); this is the pure decision it consumes.
+startable)? The loop itself (reap, fan out `claude --bg`, Monitor-wait) is prose in
+`references/verb-evolve.md` (§drain); this is the pure decision it consumes.
 
 The in-flight set is derived from the actual OPEN evolve PRs (plus any ready bead
 that is in-flight), NOT from `evolve_select`'s `skipped_in_flight` alone: a run
 that occupies the open-PR cap may have left `bd ready` (its bead is claimed), so
-`skipped_in_flight` can be empty even while runs are in flight — relying on it
-would make the loop quit the moment backpressure hits. Liveness over the open PRs
-is the authoritative picture.
+`skipped_in_flight` can be empty even while runs are in flight. Relying on it would
+make the loop quit the moment backpressure hits. Liveness over the open PRs is the
+authoritative picture.
 
 Termination: `action == "done"` iff `launch` is empty AND `launched_pending` is
 empty AND no in-flight run is BLOCKING. A run is blocking when its lease reads
@@ -25,7 +25,7 @@ live-equivalent because this decision gates a self-merge: an in-flight run we
 cannot confirm dead must never let the loop drain to done. A withheld hot bead
 (the in-run reviewer raised `held_guard`) leaves a ready PR + a branch but its
 session has ended, so its lease is non-blocking (expired/absent): it never reads
-as "wait," so the loop cannot spin on it — it terminates and reports it `parked`
+as "wait," so the loop cannot spin on it. It terminates and reports it `parked`
 for the human. A still-running run reads "live" → the loop waits → it self-merges
 → the next turn's reap clears the cap / `hot_inflight` → the next batch launches.
 A corrupt lease blocks until a human runs `recover takeover`.
@@ -86,7 +86,7 @@ def decide(
                                    to every other channel; the loop reaps the
                                    worktree + reopens the bead so the next turn
                                    relaunches it fresh). A non-empty `stranded` MUST
-                                   never let the loop read `done` — that was the
+                                   never let the loop read `done`. That was the
                                    false-positive termination this gate closes.
     launch empty, a blocking run -> wait (live OR corrupt: corrupt cannot be
                                    confirmed dead, so it blocks a self-merge).
@@ -99,8 +99,8 @@ def decide(
     `launched_pending` (from the select result) is the still-pre-lease launched keys;
     `stranded` is the pre-PR-dead in_progress keys the CLI detected (empty for the
     day-job `queue_drain` caller, which passes only the first two positionally);
-    `parked` is the keys whose run is not live and not still bootstrapping — what the
-    loop hands the human (withheld hot PRs, non-green drafts, orphaned branches).
+    `parked` is the keys whose run is not live and not still bootstrapping (what the
+    loop hands the human: withheld hot PRs, non-green drafts, orphaned branches).
 
     The EMPTY-`stranded` path returns the byte-identical pre-stranded shape (no
     `stranded` key), so the frozen `evolve_drain.decide` corpus stays green; only the
@@ -221,8 +221,8 @@ def stranded_pre_pr(
     The in_progress source is injectable: `in_progress_keys=None` (the evolve
     default) computes the evolve-label-scoped set via `_inprogress_evolve_keys`,
     while `queue_drain` injects its own day-job-scoped set (the inverse filter).
-    Everything downstream — the merged/open-PR/launched_pending exclusions and the
-    lease-liveness probe — is scope-agnostic.
+    Everything downstream (the merged/open-PR/launched_pending exclusions and the
+    lease-liveness probe) is scope-agnostic.
     """
     in_progress = (
         _inprogress_evolve_keys(runner, include_proposals=include_proposals)

@@ -74,8 +74,8 @@ def primary_anchor(description: str | None) -> str | None:
     """First file path on the bead's `BLAST RADIUS:` line, else None.
 
     Best-effort: the line is free-text prose written by the audit. A missing or
-    unparseable line just means this bead carries no anchor and skips
-    anchor-dedup serialization.
+    unparseable line means this bead carries no anchor and skips anchor-dedup
+    serialization.
     """
     m = _BLAST_RE.search(description or "")
     if not m:
@@ -85,7 +85,8 @@ def primary_anchor(description: str | None) -> str | None:
 
 
 def is_inflight(key: str, refs: set[str]) -> bool:
-    """A key is in-flight when a branch/PR head is `feat/<key>` or `feat/<key>-*` (legacy `feature/` too)."""
+    """A key is in-flight when a branch/PR head is `feat/<key>` or `feat/<key>-*`
+    (legacy `feature/` too)."""
     exacts = {f"{p}{key}" for p in BRANCH_PREFIXES}
     pres = tuple(f"{p}{key}-" for p in BRANCH_PREFIXES)
     return any(r in exacts or r.startswith(pres) for r in refs)
@@ -135,14 +136,14 @@ def fleet_live_keys(repo: Path) -> set[str]:
     """The reconciled liveness authority (epic flow-8by2.3): a key is live if its
     pre-PR lease is live (live_run_keys) OR the fleet ledger has a fresh heartbeat.
 
-    The lease covers an active run's long stages via its per-stage TTL refresh —
+    The lease covers an active run's long stages via its per-stage TTL refresh;
     the fleet heartbeat fires only at stage transitions, so fleet alone would age a
     live long-stage run out (the merge-stage CI re-wait, flow-72d9); reconciling
     against the lease closes that. The fleet adds the launch->init blind window and
     a cross-process snapshot, collapsing the per-site L/M unions to one definition.
 
     Fail-open: a ledger read error degrades to the lease-only set (the pre-cutover
-    behavior), so a fleet fault never breaks the drain. fleet stays additive here —
+    behavior), so a fleet fault never breaks the drain. fleet stays additive here;
     launch_ledger still backstops the launch window until child-5 retires it.
     """
     keys = live_run_keys(repo)

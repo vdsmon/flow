@@ -1,11 +1,10 @@
 """Contract tests for lease.py.
 
-The lease is a per-ticket mutex, not a liveness checker: identity is
-run_id + boot_id + hostname compared under a flock. All logic tests inject
-current_boot/hostname/cwd/now explicitly so nothing touches real platform
-state. The contention test uses multiprocessing("spawn") (threads can't show
-POSIX flock — the GIL hides it) with a fixed large TTL so exactly one of two
-foreign-run_id acquirers wins.
+The lease is a per-ticket mutex, not a liveness checker: identity is run_id + boot_id + hostname
+compared under a flock. All logic tests inject current_boot/hostname/cwd/now explicitly so nothing
+touches real platform state. The contention test uses multiprocessing("spawn") (threads can't show
+POSIX flock; the GIL hides it) with a fixed large TTL so exactly one of two foreign-run_id acquirers
+wins.
 """
 
 from __future__ import annotations
@@ -360,8 +359,8 @@ def test_assert_lease_still_mine_boot_mismatch(tmp_path: Path) -> None:
 
 
 def test_assert_lease_still_mine_unknown_current_boot_skips_check(tmp_path: Path) -> None:
-    # sandboxed runs can't read sysctl, so boot_id() returns "" — that must
-    # not read as a reboot (false lost-lease exit 7).
+    # sandboxed runs can't read sysctl, so boot_id() returns "", that must not read as a reboot
+    # (false lost-lease exit 7).
     _acquire(tmp_path, "run-1", boot="boot-A")
     lease.assert_lease_still_mine(tmp_path, "run-1", current_boot="")  # no raise
 

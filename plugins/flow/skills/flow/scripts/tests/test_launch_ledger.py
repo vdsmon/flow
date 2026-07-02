@@ -43,10 +43,9 @@ def test_add_writes_marker_and_live(tmp_path):
 def test_live_keys_drops_expired_past_ttl(tmp_path):
     repo = _marked_repo(tmp_path)
     ll.add(repo, "flow-x", now=T0)
-    # one second past the TTL window -> expired
     later = _at(T0, ll.LAUNCH_TTL_SECONDS + 1)
     assert ll.live_keys(repo, now=later) == set()
-    # still fresh just before the boundary
+    # still fresh, one second before the boundary
     assert ll.live_keys(repo, now=_at(T0, ll.LAUNCH_TTL_SECONDS - 1)) == {"flow-x"}
 
 

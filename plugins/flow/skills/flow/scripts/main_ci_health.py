@@ -1,4 +1,4 @@
-"""Probe the default branch's (main's) CI health by sha — the per-drain-turn gate.
+"""Probe the default branch's (main's) CI health by sha, the per-drain-turn gate.
 
 Before any evolve self-merge or drain reap promotion, /flow asks this whether main's
 own CI is genuinely red. Two concurrently-green PRs that semantically conflict can land
@@ -6,14 +6,14 @@ on main untested; the red surfaces only when a later run inherits it. There is n
 to host a standing watcher, so this is a PER-TURN GATE, not a watcher: probe once, pause
 this turn if red, resume next turn.
 
-The verdict is ASYMMETRIC — only `failed` pauses. `green`, `pending`, and a probe
+The verdict is ASYMMETRIC: only `failed` pauses. `green`, `pending`, and a probe
 `error` (transient gh 401 / network) all resume: a pause on a still-running or
 unprobeable main would freeze auto-merge on noise. `_classify_rollup` (reused from
 forge_github) already folds CANCELLED/STALE/NEUTRAL/SKIPPED → pending, so a superseded
 concurrent run never reads as a failure.
 
-Probe path: `gh api repos/{owner}/{repo}/commits/<sha>/check-runs` — REST, sha-keyed
-(owner/repo auto-resolve from the cwd git remote). REST returns lowercase `status`
+Probe path: `gh api repos/{owner}/{repo}/commits/<sha>/check-runs` (REST, sha-keyed;
+owner/repo auto-resolve from the cwd git remote). REST returns lowercase `status`
 (`completed`), so each entry's `status` is uppercased before `_classify_rollup` (which
 compares raw `status != "COMPLETED"`); `conclusion` passes through (the classifier
 uppercases it). flow's CI is one GitHub Actions check on `push` to main, so a fresh

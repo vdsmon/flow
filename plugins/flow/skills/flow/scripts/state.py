@@ -187,14 +187,13 @@ def read(ticket_dir: Path) -> tuple[TicketState | None, int]:
         2 = unrecoverable (state.json missing + no usable .bak).
 
     Note: `state=None` with exit_code 0 is the "not yet initialized" signal.
-    `state=None` with exit_code 2 is the "broken and no backup" signal —
+    `state=None` with exit_code 2 is the "broken and no backup" signal;
     callers MUST distinguish these by checking exit_code.
     """
-    # short-circuit an absent state.json: same (None, 0) as the locked read,
-    # but skips flock_blocking's mkdir+O_CREAT so a read against a missing run
-    # never materializes a phantom <td>/.flow tree + state.json.lock. checks
-    # the state file, not just ticket_dir, so an existing-but-empty dir leaves
-    # no lock either.
+    # short-circuit an absent state.json: same (None, 0) as the locked read, but skips
+    # flock_blocking's mkdir+O_CREAT so a read against a missing run never materializes a phantom
+    # <td>/.flow tree + state.json.lock. Checks the state file itself, not ticket_dir, so an
+    # existing-but-empty dir leaves no lock either.
     if not _state_path(ticket_dir).exists():
         return None, 0
     with flock_blocking(_lock_path(ticket_dir)):

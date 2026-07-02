@@ -9,7 +9,7 @@ Config requires `workspace` + `repo_slug` (the Bitbucket API path needs both).
 
 Resolve gotchas (learned the hard way in ship-it, do NOT re-derive):
 - `POST .../comments/<CID>/resolve` is the resolve endpoint; the `links.resolve` rel
-  is often absent but the endpoint still works — never gate on the rel.
+  is often absent but the endpoint still works, never gate on the rel.
 - Success returns a `comment_resolution` object with NO top-level `resolved:true`.
   Judge success by re-fetching the comment and testing `.resolution != null`.
 - Only top-level inline comments (`parent == null`) can be resolved; replies cannot.
@@ -262,7 +262,7 @@ class BitbucketAdapter:
         would never fire and would burn the full wait on every clean PR (verified
         on brinta-data-platform: zero-finding PRs carry `CodeRabbit: SUCCESSFUL`
         but no count comment). Comment markers are also unreliable as a START vs
-        DONE signal — the Walkthrough is posted at review start (flow-arva).
+        DONE signal, the Walkthrough is posted at review start (flow-arva).
 
         Absent line (CR not registered yet) or INPROGRESS -> not done; any
         terminal state (incl. FAILED) means CR has stopped, so waiting longer

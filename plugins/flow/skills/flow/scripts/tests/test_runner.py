@@ -1,4 +1,4 @@
-"""Tests for _runner.py — shared subprocess-runner factories (three contracts)."""
+"""Tests for _runner.py: shared subprocess-runner factories (three contracts)."""
 
 from __future__ import annotations
 

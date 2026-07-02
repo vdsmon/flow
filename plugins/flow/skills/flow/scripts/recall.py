@@ -55,7 +55,7 @@ B_PARAM = 0.75
 RRF_K = 60
 # Cosine candidates are selected by RANK (top-K), not an absolute threshold: the
 # right cutoff is embedder-scale-dependent, so an absolute gate silently starves
-# to 0 candidates on an embedder swap (the flow-nylh no-op — τ=0.30 tuned for
+# to 0 candidates on an embedder swap (the flow-nylh no-op, τ=0.30 tuned for
 # potion-retrieval-32M dropped everything once relevant cosines moved). K scales
 # with the requested top_n. DEFAULT_THRESHOLD survives only as a low floor that
 # drops anti-correlated (non-positive) cosines.
@@ -188,11 +188,9 @@ def rank(
     query_tokens = tokenize(query)
     if not query_tokens:
         return []
-    # Per-field tokenization for every doc.
     per_field_tokens: dict[str, list[list[str]]] = {
         field: [tokenize(_doc_field_text(e, field)) for e in entries] for field in FIELD_WEIGHTS
     }
-    # Per-field IDF map + avgdl.
     field_idf: dict[str, dict[str, float]] = {}
     field_avgdl: dict[str, float] = {}
     for field, docs_toks in per_field_tokens.items():
@@ -298,7 +296,7 @@ def rrf_fuse(
     Each list contributes `weight / (k + rank)` (rank 0-based). `weights` is
     (bm25, cosine); the default (1, 1) is equal-weight RRF. An id present in one
     list only still scores from that list, so a cosine-missing (unindexed) entry
-    still ranks via BM25 — the graceful partial-index property.
+    still ranks via BM25 (the graceful partial-index property).
 
     The weight is wired but DORMANT: config does not expose it yet. Tuning waits
     on the recall hit-rate metric (flow-nylh.2) so the bm25/semantic balance is
@@ -516,7 +514,7 @@ def cli_main(argv: list[str]) -> int:
         return memory_embed.cli_main(sub)
 
     if args.record_pending and (not args.branch or not args.ticket):
-        # validate before any embedding cost, not after
+        # validate before incurring any embedding cost
         sys.stderr.write("recall: --record-pending needs --branch and --ticket\n")
         return 1
 

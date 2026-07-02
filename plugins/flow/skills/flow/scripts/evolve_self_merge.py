@@ -66,8 +66,8 @@ def decide(
     if "evolve" not in labels:
         return {"action": "skip", "is_hot": is_hot, "reason": "not an evolve bead"}
     if "proposal" in labels:
-        # Proposal beads are the maintainer's judgment call (the auto-vs-propose
-        # line), even if one was manually run. Leave the PR for the human.
+        # Proposal beads are the maintainer's judgment call (the auto-vs-propose line), even
+        # if one was manually run. Leave the PR for the human.
         return {"action": "skip", "is_hot": is_hot, "reason": "proposal bead — maintainer merges"}
     if ci_status != "green":
         return {"action": "skip", "is_hot": is_hot, "reason": f"CI not green ({ci_status})"}

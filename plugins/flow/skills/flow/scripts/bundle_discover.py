@@ -267,7 +267,7 @@ def discover(
 
     Returns a `DiscoveryResult` with valid manifests, invalid manifests
     (warnings), and duplicate stage-providers (warnings). Never raises for
-    individual manifest failures — callers decide whether a failure blocks them
+    individual manifest failures. Callers decide whether a failure blocks them
     based on the bundle name they care about.
     """
     if roots is None:
@@ -282,7 +282,6 @@ def discover(
         else:
             invalid.append(result)
 
-    # Duplicate-provider check across valid manifests.
     stage_to_bundles: dict[str, list[str]] = {}
     for manifest in valid:
         for skill in manifest.skills:

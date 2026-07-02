@@ -1,4 +1,4 @@
-"""Tests for tracker_cli.py — CLI wrapper around the Tracker Protocol."""
+"""Tests for tracker_cli.py, the CLI wrapper around the Tracker Protocol."""
 
 from __future__ import annotations
 

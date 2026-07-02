@@ -166,7 +166,7 @@ def _seed_miss_scenario(
     tmp_path: Path, *, returned_ids: list[str], model: str = "stub-model"
 ) -> Path:
     """Pre-existing entry P (in the index) + a near-dup new entry N (NOT in the
-    index — proves detect embeds fresh). Returns the run's ticket-dir."""
+    index, proves detect embeds fresh). Returns the run's ticket-dir."""
     embedder = _stub_embedder_cmd(tmp_path)
     _seed_workspace(tmp_path, semantic=True, embedder=embedder, model=model)
     # P only, then reindex → the sidecar holds P but not N.

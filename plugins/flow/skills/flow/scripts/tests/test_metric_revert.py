@@ -1,4 +1,4 @@
-"""Tests for metric.py revert-rate — reopened-bead join (option A).
+"""Tests for metric.py revert-rate (reopened-bead join, option A).
 
 A revert is a shipped bead that is reopened and re-closed AFTER its shipped_at,
 detected at compute time by joining each in-window ship-event to its tracker

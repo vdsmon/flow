@@ -1,4 +1,4 @@
-"""Contract tests for tracker.py — factory dispatch + capability advertisement.
+"""Contract tests for tracker.py (factory dispatch + capability advertisement).
 
 Phase 2 deliverable. Adapter modules are stubs; this test asserts the factory
 correctly hands construction off to them and surfaces stub failures as
@@ -103,7 +103,6 @@ def test_known_backends_enum_matches_factory_branches(monkeypatch: pytest.Monkey
 
     monkeypatch.setattr(tb, "_default_runner", lambda: fake_runner)
     for backend in t.KNOWN_BACKENDS:
-        # Construction should succeed for every wired backend.
         adapter = t.make_tracker(
             {"backend": backend, "cloud_id": "x", "project_key": "FT", "prefix": "p"}
         )
@@ -333,7 +332,6 @@ def test_ticket_ref_subset_of_ticket() -> None:
 
 
 def test_ship_state_pure_read_shape() -> None:
-    # Frozen evidence case.
     frozen: t.ShipState = {
         "state": "shipped",
         "shipped_at": "2026-05-27T18:00:00Z",
@@ -347,7 +345,6 @@ def test_ship_state_pure_read_shape() -> None:
         "evidence": {"tracker_status": "Done", "pr_merge_commit_sha": "abc"},
         "source": "live_backend_query",
     }
-    # Negative / unknown case.
     not_shipped: t.ShipState = {
         "state": "not_shipped",
         "shipped_at": None,
