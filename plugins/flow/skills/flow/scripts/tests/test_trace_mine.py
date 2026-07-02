@@ -37,11 +37,32 @@ def _run_extract(
     return rc, payload
 
 
-def _tool_use_line(tool_id: str, name: str, ts: str, session: str = "sess1") -> dict[str, Any]:
+def _flow_intent_line(
+    ticket: str, ts: str, session: str = "sess1", branch: str = "main"
+) -> dict[str, Any]:
+    return {
+        "type": "user",
+        "timestamp": ts,
+        "gitBranch": branch,
+        "sessionId": session,
+        "message": {
+            "role": "user",
+            "content": (
+                "<command-message>flow:flow</command-message>\n"
+                "<command-name>/flow:flow</command-name>\n"
+                f"<command-args>{ticket}</command-args>"
+            ),
+        },
+    }
+
+
+def _tool_use_line(
+    tool_id: str, name: str, ts: str, session: str = "sess1", branch: str = "main"
+) -> dict[str, Any]:
     return {
         "type": "assistant",
         "timestamp": ts,
-        "gitBranch": "main",
+        "gitBranch": branch,
         "sessionId": session,
         "message": {
             "role": "assistant",
@@ -50,11 +71,13 @@ def _tool_use_line(tool_id: str, name: str, ts: str, session: str = "sess1") -> 
     }
 
 
-def _tool_error_line(tool_id: str, ts: str, body: str, session: str = "sess1") -> dict[str, Any]:
+def _tool_error_line(
+    tool_id: str, ts: str, body: str, session: str = "sess1", branch: str = "main"
+) -> dict[str, Any]:
     return {
         "type": "user",
         "timestamp": ts,
-        "gitBranch": "main",
+        "gitBranch": branch,
         "sessionId": session,
         "message": {
             "role": "user",
@@ -70,6 +93,23 @@ def _tool_error_line(tool_id: str, ts: str, body: str, session: str = "sess1") -
     }
 
 
+def _tool_result_line(
+    tool_id: str, ts: str, body: str = "ok", session: str = "sess1", branch: str = "main"
+) -> dict[str, Any]:
+    return {
+        "type": "user",
+        "timestamp": ts,
+        "gitBranch": branch,
+        "sessionId": session,
+        "message": {
+            "role": "user",
+            "content": [
+                {"type": "tool_result", "tool_use_id": tool_id, "is_error": False, "content": body}
+            ],
+        },
+    }
+
+
 def _descriptor_line(
     ts: str,
     stage: str,
@@ -77,6 +117,7 @@ def _descriptor_line(
     finished_stage: str | None = None,
     ticket_dir: str = "/x/.flow/runs/flow-eia3",
     session: str = "sess1",
+    branch: str = "main",
     **markers: Any,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
@@ -93,7 +134,7 @@ def _descriptor_line(
     return {
         "type": "user",
         "timestamp": ts,
-        "gitBranch": "main",
+        "gitBranch": branch,
         "sessionId": session,
         "message": {
             "role": "user",
@@ -124,6 +165,19 @@ def _retry_line(ts: str, session: str = "sess1", subtype: str = "api_error") -> 
     }
 
 
+def _extract_args(transcript: Path, workspace_root: Path, tmp_path: Path, ticket: str) -> list[str]:
+    return [
+        "--transcript",
+        str(transcript),
+        "--ticket",
+        ticket,
+        "--workspace-root",
+        str(workspace_root),
+        "--projects-root",
+        str(tmp_path / "projects"),
+    ]
+
+
 # ─── slug convention (hardcoded, independent of _slugify's own logic) ──────
 
 
@@ -143,16 +197,11 @@ def test_extract_tool_error_event(tmp_path: Path, capsys: pytest.CaptureFixture[
         [
             _tool_use_line("toolu_1", "Bash", "2026-06-01T00:00:00.000Z"),
             _tool_error_line("toolu_1", "2026-06-01T00:00:01.000Z", "boom"),
+            _descriptor_line("2026-06-01T00:00:02.000Z", "implement"),
         ],
     )
     rc, payload = _run_extract(
-        capsys,
-        "--transcript",
-        str(transcript),
-        "--workspace-root",
-        str(workspace_root),
-        "--projects-root",
-        str(tmp_path / "projects"),
+        capsys, *_extract_args(transcript, workspace_root, tmp_path, "flow-eia3")
     )
     assert rc == 0
     assert payload is not None
@@ -163,6 +212,7 @@ def test_extract_tool_error_event(tmp_path: Path, capsys: pytest.CaptureFixture[
     assert ev["body"] == "boom"
     assert ev["detail"] == "Bash"
     assert ev["tool_use_id"] == "toolu_1"
+    assert ev["ticket"] == "flow-eia3"
     assert ev["stage"] == "<pre-dispatch>"
 
 
@@ -171,22 +221,21 @@ def test_extract_silent_retry_event(tmp_path: Path, capsys: pytest.CaptureFixtur
     transcript = _project_dir(tmp_path, workspace_root) / "t1.jsonl"
     # C1: subtype differs from the confirmed-live "api_error" -- predicate must
     # still fire off retryAttempt presence alone.
-    _write_jsonl(transcript, [_retry_line("2026-06-01T00:00:00.000Z", subtype="something_else")])
+    _write_jsonl(
+        transcript,
+        [
+            _retry_line("2026-06-01T00:00:00.000Z", subtype="something_else"),
+            _descriptor_line("2026-06-01T00:00:01.000Z", "implement"),
+        ],
+    )
     rc, payload = _run_extract(
-        capsys,
-        "--transcript",
-        str(transcript),
-        "--workspace-root",
-        str(workspace_root),
-        "--projects-root",
-        str(tmp_path / "projects"),
+        capsys, *_extract_args(transcript, workspace_root, tmp_path, "flow-eia3")
     )
     assert rc == 0
     assert payload is not None
-    events = payload["events"]
+    events = [e for e in payload["events"] if e["kind"] == "silent_retry"]
     assert len(events) == 1
     ev = events[0]
-    assert ev["kind"] == "silent_retry"
     assert ev["body"] == "Connection error."
     detail = json.loads(ev["detail"])
     assert detail["subtype"] == "something_else"
@@ -207,13 +256,7 @@ def test_extract_drift_marker_event(tmp_path: Path, capsys: pytest.CaptureFixtur
         ],
     )
     rc, payload = _run_extract(
-        capsys,
-        "--transcript",
-        str(transcript),
-        "--workspace-root",
-        str(workspace_root),
-        "--projects-root",
-        str(tmp_path / "projects"),
+        capsys, *_extract_args(transcript, workspace_root, tmp_path, "flow-eia3")
     )
     assert rc == 0
     assert payload is not None
@@ -236,26 +279,21 @@ def test_extract_stall_gap_event(tmp_path: Path, capsys: pytest.CaptureFixture[s
     _write_jsonl(
         transcript,
         [
-            _tool_use_line("toolu_1", "Bash", "2026-06-01T00:00:00.000Z"),
-            _tool_use_line("toolu_2", "Bash", "2026-06-01T00:10:00.000Z"),  # 600s gap
+            _descriptor_line("2026-06-01T00:00:00.000Z", "implement"),
+            _tool_use_line("toolu_1", "Bash", "2026-06-01T00:00:01.000Z"),
+            _tool_use_line("toolu_2", "Bash", "2026-06-01T00:10:01.000Z"),  # 600s dead air
         ],
     )
     rc, payload = _run_extract(
-        capsys,
-        "--transcript",
-        str(transcript),
-        "--workspace-root",
-        str(workspace_root),
-        "--projects-root",
-        str(tmp_path / "projects"),
+        capsys, *_extract_args(transcript, workspace_root, tmp_path, "flow-eia3")
     )
     assert rc == 0
     assert payload is not None
     gaps = [e for e in payload["events"] if e["kind"] == "stall_gap"]
     assert len(gaps) == 1
     assert gaps[0]["gap_secs"] == pytest.approx(600.0)
-    assert gaps[0]["gap_start_ts"] == "2026-06-01T00:00:00.000Z"
-    assert gaps[0]["gap_end_ts"] == "2026-06-01T00:10:00.000Z"
+    assert gaps[0]["gap_start_ts"] == "2026-06-01T00:00:01.000Z"
+    assert gaps[0]["gap_end_ts"] == "2026-06-01T00:10:01.000Z"
 
 
 def test_stall_gap_below_threshold_emits_none(
@@ -266,22 +304,137 @@ def test_stall_gap_below_threshold_emits_none(
     _write_jsonl(
         transcript,
         [
-            _tool_use_line("toolu_1", "Bash", "2026-06-01T00:00:00.000Z"),
-            _tool_use_line("toolu_2", "Bash", "2026-06-01T00:01:40.000Z"),  # 100s gap
+            _descriptor_line("2026-06-01T00:00:00.000Z", "implement"),
+            _tool_use_line("toolu_1", "Bash", "2026-06-01T00:00:01.000Z"),
+            _tool_use_line("toolu_2", "Bash", "2026-06-01T00:01:41.000Z"),  # 100s gap
         ],
     )
     rc, payload = _run_extract(
-        capsys,
-        "--transcript",
-        str(transcript),
-        "--workspace-root",
-        str(workspace_root),
-        "--projects-root",
-        str(tmp_path / "projects"),
+        capsys, *_extract_args(transcript, workspace_root, tmp_path, "flow-eia3")
     )
     assert rc == 0
     assert payload is not None
     assert [e for e in payload["events"] if e["kind"] == "stall_gap"] == []
+
+
+def test_stall_gap_suppressed_by_in_flight_tool_op(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A long op in flight (a subagent Task, a ~30min merge-stage CI wait) shows
+    # up as a tool_use whose tool_result arrives well past the threshold. That
+    # is the pipeline working, not dead air, so it must NOT emit a stall_gap; a
+    # genuine dead-air gap of the same size still does.
+    workspace_root = tmp_path / "repo"
+    transcript = _project_dir(tmp_path, workspace_root) / "t1.jsonl"
+    _write_jsonl(
+        transcript,
+        [
+            _descriptor_line("2026-06-01T00:00:00.000Z", "merge"),
+            _tool_use_line("toolu_ci", "Bash", "2026-06-01T00:00:01.000Z"),
+            _tool_result_line("toolu_ci", "2026-06-01T00:10:01.000Z", "ci green"),  # 600s in flight
+            _tool_use_line("toolu_next", "Bash", "2026-06-01T00:20:01.000Z"),  # 600s dead air
+        ],
+    )
+    rc, payload = _run_extract(
+        capsys, *_extract_args(transcript, workspace_root, tmp_path, "flow-eia3")
+    )
+    assert rc == 0
+    assert payload is not None
+    gaps = [e for e in payload["events"] if e["kind"] == "stall_gap"]
+    assert len(gaps) == 1
+    assert gaps[0]["gap_start_ts"] == "2026-06-01T00:10:01.000Z"
+    assert gaps[0]["gap_end_ts"] == "2026-06-01T00:20:01.000Z"
+
+
+# ─── run-window scoping ─────────────────────────────────────────────────────
+
+
+def test_multi_run_scoping_yields_only_target_run(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    workspace_root = tmp_path / "repo"
+    transcript = _project_dir(tmp_path, workspace_root) / "t1.jsonl"
+    _write_jsonl(
+        transcript,
+        [
+            # day-old unrelated main content, before this run's intent
+            _tool_use_line("toolu_old", "Bash", "2026-06-01T00:00:00.000Z"),
+            _tool_error_line("toolu_old", "2026-06-01T00:00:01.000Z", "OLD UNRELATED ERROR"),
+            # target run
+            _flow_intent_line("flow-eia3", "2026-06-02T10:00:00.000Z"),
+            _descriptor_line("2026-06-02T10:00:05.000Z", "implement"),
+            _tool_use_line("toolu_r1", "Bash", "2026-06-02T10:00:06.000Z"),
+            _tool_error_line("toolu_r1", "2026-06-02T10:00:07.000Z", "RUN1 ERROR"),
+            # foreign-branch interleave inside the window -> dropped
+            _tool_use_line("toolu_fb", "Bash", "2026-06-02T10:00:08.000Z", branch="worktree-other"),
+            _tool_error_line(
+                "toolu_fb",
+                "2026-06-02T10:00:09.000Z",
+                "FOREIGN BRANCH ERROR",
+                branch="worktree-other",
+            ),
+            # next run's intent bounds the target window; its bootstrap + events
+            # sit on the same main branch and must NOT leak in
+            _flow_intent_line("flow-other", "2026-06-02T11:00:00.000Z"),
+            _tool_use_line("toolu_r2b", "Bash", "2026-06-02T11:00:01.000Z"),
+            _tool_error_line("toolu_r2b", "2026-06-02T11:00:02.000Z", "RUN2 BOOTSTRAP ERROR"),
+            _descriptor_line(
+                "2026-06-02T11:00:05.000Z", "implement", ticket_dir="/x/.flow/runs/flow-other"
+            ),
+            _tool_use_line("toolu_r2", "Bash", "2026-06-02T11:00:06.000Z"),
+            _tool_error_line("toolu_r2", "2026-06-02T11:00:07.000Z", "RUN2 ERROR"),
+        ],
+    )
+    rc, payload = _run_extract(
+        capsys, *_extract_args(transcript, workspace_root, tmp_path, "flow-eia3")
+    )
+    assert rc == 0
+    assert payload is not None
+    assert payload["ticket"] == "flow-eia3"
+    assert [e["body"] for e in payload["events"]] == ["RUN1 ERROR"]
+    assert payload["stage_order"] == ["implement"]
+
+
+def test_no_dispatch_activity_exits_5(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    workspace_root = tmp_path / "repo"
+    transcript = _project_dir(tmp_path, workspace_root) / "t1.jsonl"
+    _write_jsonl(
+        transcript,
+        [
+            _tool_use_line("toolu_1", "Bash", "2026-06-01T00:00:00.000Z"),
+            _tool_error_line("toolu_1", "2026-06-01T00:00:01.000Z", "boom"),
+            _descriptor_line(
+                "2026-06-01T00:00:02.000Z", "implement", ticket_dir="/x/.flow/runs/flow-other"
+            ),
+        ],
+    )
+    rc, payload = _run_extract(
+        capsys, *_extract_args(transcript, workspace_root, tmp_path, "flow-eia3")
+    )
+    assert rc == 5
+    assert payload is None
+
+
+def test_eventless_run_emits_empty_events(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    workspace_root = tmp_path / "repo"
+    transcript = _project_dir(tmp_path, workspace_root) / "t1.jsonl"
+    _write_jsonl(
+        transcript,
+        [
+            _flow_intent_line("flow-eia3", "2026-06-01T00:00:00.000Z"),
+            _descriptor_line("2026-06-01T00:00:01.000Z", "implement"),
+            _descriptor_line("2026-06-01T00:00:02.000Z", "code_review", finished_stage="implement"),
+        ],
+    )
+    rc, payload = _run_extract(
+        capsys, *_extract_args(transcript, workspace_root, tmp_path, "flow-eia3")
+    )
+    assert rc == 0
+    assert payload is not None
+    assert payload["events"] == []
+    assert payload["stage_order"] == ["implement", "code_review"]
 
 
 # ─── stage bucketing ────────────────────────────────────────────────────────
@@ -304,13 +457,7 @@ def test_stage_bucketing_from_dispatch_descriptors(
         ],
     )
     rc, payload = _run_extract(
-        capsys,
-        "--transcript",
-        str(transcript),
-        "--workspace-root",
-        str(workspace_root),
-        "--projects-root",
-        str(tmp_path / "projects"),
+        capsys, *_extract_args(transcript, workspace_root, tmp_path, "flow-eia3")
     )
     assert rc == 0
     assert payload is not None
@@ -327,25 +474,67 @@ def test_tool_use_id_links_to_tool_name(tmp_path: Path, capsys: pytest.CaptureFi
     _write_jsonl(
         transcript,
         [
-            _tool_use_line("toolu_a", "Bash", "2026-06-01T00:00:00.000Z"),
-            _tool_use_line("toolu_b", "Read", "2026-06-01T00:00:01.000Z"),
-            _tool_error_line("toolu_a", "2026-06-01T00:00:02.000Z", "bash boom"),
-            _tool_error_line("toolu_b", "2026-06-01T00:00:03.000Z", "read boom"),
+            _descriptor_line("2026-06-01T00:00:00.000Z", "implement"),
+            _tool_use_line("toolu_a", "Bash", "2026-06-01T00:00:01.000Z"),
+            _tool_use_line("toolu_b", "Read", "2026-06-01T00:00:02.000Z"),
+            _tool_error_line("toolu_a", "2026-06-01T00:00:03.000Z", "bash boom"),
+            _tool_error_line("toolu_b", "2026-06-01T00:00:04.000Z", "read boom"),
         ],
     )
     rc, payload = _run_extract(
-        capsys,
-        "--transcript",
-        str(transcript),
-        "--workspace-root",
-        str(workspace_root),
-        "--projects-root",
-        str(tmp_path / "projects"),
+        capsys, *_extract_args(transcript, workspace_root, tmp_path, "flow-eia3")
     )
     assert rc == 0
     assert payload is not None
     by_id = {e["tool_use_id"]: e["detail"] for e in payload["events"] if e["kind"] == "tool_error"}
     assert by_id == {"toolu_a": "Bash", "toolu_b": "Read"}
+
+
+def test_descriptor_with_prefixed_junk_is_parsed(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A descriptor tool_result can carry a stderr prefix with a stray brace
+    # before the real JSON object. The boundary (and its drift marker) must
+    # still be recovered by scanning past the first non-parsing "{".
+    workspace_root = tmp_path / "repo"
+    transcript = _project_dir(tmp_path, workspace_root) / "t1.jsonl"
+    payload_obj = {
+        "done": False,
+        "stage": "implement",
+        "head_sha": "abc123",
+        "handler_type": "inline",
+        "ticket_dir": "/x/.flow/runs/flow-eia3",
+        "reconciled_drift": "workspace_toml",
+    }
+    text = "dispatch: auto-reconciled {oops not json}\n" + json.dumps(payload_obj, indent=2)
+    line = {
+        "type": "user",
+        "timestamp": "2026-06-01T00:00:00.000Z",
+        "gitBranch": "main",
+        "sessionId": "sess1",
+        "message": {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "toolu_d",
+                    "is_error": False,
+                    "content": text,
+                }
+            ],
+        },
+    }
+    _write_jsonl(transcript, [line])
+    rc, payload = _run_extract(
+        capsys, *_extract_args(transcript, workspace_root, tmp_path, "flow-eia3")
+    )
+    assert rc == 0
+    assert payload is not None
+    assert payload["stage_order"] == ["implement"]
+    drifts = [e for e in payload["events"] if e["kind"] == "drift"]
+    assert len(drifts) == 1
+    assert drifts[0]["stage"] == "implement"
+    assert drifts[0]["detail"] == "reconciled_drift"
 
 
 # ─── resilience ─────────────────────────────────────────────────────────────
@@ -354,14 +543,16 @@ def test_tool_use_id_links_to_tool_name(tmp_path: Path, capsys: pytest.CaptureFi
 def test_malformed_line_resilience(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     workspace_root = tmp_path / "repo"
     transcript = _project_dir(tmp_path, workspace_root) / "t1.jsonl"
-    valid_use = json.dumps(_tool_use_line("toolu_1", "Bash", "2026-06-01T00:00:00.000Z"))
-    valid_err = json.dumps(_tool_error_line("toolu_1", "2026-06-01T00:00:01.000Z", "boom"))
+    valid_desc = json.dumps(_descriptor_line("2026-06-01T00:00:00.000Z", "implement"))
+    valid_use = json.dumps(_tool_use_line("toolu_1", "Bash", "2026-06-01T00:00:01.000Z"))
+    valid_err = json.dumps(_tool_error_line("toolu_1", "2026-06-01T00:00:02.000Z", "boom"))
     transcript.parent.mkdir(parents=True, exist_ok=True)
     transcript.write_text(
         "\n".join(
             [
                 "",
                 "{not json at all",
+                valid_desc,
                 valid_use,
                 "plain text, not even braces",
                 '{"truncated": ',
@@ -372,13 +563,7 @@ def test_malformed_line_resilience(tmp_path: Path, capsys: pytest.CaptureFixture
         encoding="utf-8",
     )
     rc, payload = _run_extract(
-        capsys,
-        "--transcript",
-        str(transcript),
-        "--workspace-root",
-        str(workspace_root),
-        "--projects-root",
-        str(tmp_path / "projects"),
+        capsys, *_extract_args(transcript, workspace_root, tmp_path, "flow-eia3")
     )
     assert rc == 0
     assert payload is not None
@@ -388,37 +573,52 @@ def test_malformed_line_resilience(tmp_path: Path, capsys: pytest.CaptureFixture
     assert events[0]["body"] == "boom"
 
 
-def test_empty_vs_missing_transcript(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_lenient_jsonl_tolerates_bad_bytes(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A single non-UTF-8 byte must not raise out of the OSError-only guard; the
+    # bad line is dropped and valid lines still parse.
     workspace_root = tmp_path / "repo"
-    project_dir = _project_dir(tmp_path, workspace_root)
-
-    empty_transcript = project_dir / "empty.jsonl"
-    empty_transcript.parent.mkdir(parents=True, exist_ok=True)
-    empty_transcript.write_text("", encoding="utf-8")
+    transcript = _project_dir(tmp_path, workspace_root) / "t1.jsonl"
+    transcript.parent.mkdir(parents=True, exist_ok=True)
+    valid_desc = json.dumps(_descriptor_line("2026-06-01T00:00:00.000Z", "implement")).encode()
+    valid_use = json.dumps(_tool_use_line("toolu_1", "Bash", "2026-06-01T00:00:01.000Z")).encode()
+    valid_err = json.dumps(_tool_error_line("toolu_1", "2026-06-01T00:00:02.000Z", "boom")).encode()
+    transcript.write_bytes(
+        b"\xff\xfe not a utf-8 line\n" + valid_desc + b"\n" + valid_use + b"\n" + valid_err + b"\n"
+    )
     rc, payload = _run_extract(
-        capsys,
-        "--transcript",
-        str(empty_transcript),
-        "--workspace-root",
-        str(workspace_root),
-        "--projects-root",
-        str(tmp_path / "projects"),
+        capsys, *_extract_args(transcript, workspace_root, tmp_path, "flow-eia3")
     )
     assert rc == 0
     assert payload is not None
-    assert payload["events"] == []
+    events = payload["events"]
+    assert len(events) == 1
+    assert events[0]["kind"] == "tool_error"
+    assert events[0]["body"] == "boom"
 
-    missing_transcript = project_dir / "missing.jsonl"
+
+def test_missing_transcript_exits_3(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    workspace_root = tmp_path / "repo"
+    missing_transcript = _project_dir(tmp_path, workspace_root) / "missing.jsonl"
     rc, payload = _run_extract(
-        capsys,
-        "--transcript",
-        str(missing_transcript),
-        "--workspace-root",
-        str(workspace_root),
-        "--projects-root",
-        str(tmp_path / "projects"),
+        capsys, *_extract_args(missing_transcript, workspace_root, tmp_path, "flow-eia3")
     )
     assert rc == 3
+    assert payload is None
+
+
+def test_empty_transcript_has_no_dispatch_activity(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    workspace_root = tmp_path / "repo"
+    empty_transcript = _project_dir(tmp_path, workspace_root) / "empty.jsonl"
+    empty_transcript.parent.mkdir(parents=True, exist_ok=True)
+    empty_transcript.write_text("", encoding="utf-8")
+    rc, payload = _run_extract(
+        capsys, *_extract_args(empty_transcript, workspace_root, tmp_path, "flow-eia3")
+    )
+    assert rc == 5
     assert payload is None
 
 
@@ -429,13 +629,7 @@ def test_self_target_rejection(tmp_path: Path, capsys: pytest.CaptureFixture[str
     workspace_root = tmp_path / "repo"
     outside_transcript = tmp_path / "projects" / "-some-other-project" / "x.jsonl"
     rc, payload = _run_extract(
-        capsys,
-        "--transcript",
-        str(outside_transcript),
-        "--workspace-root",
-        str(workspace_root),
-        "--projects-root",
-        str(tmp_path / "projects"),
+        capsys, *_extract_args(outside_transcript, workspace_root, tmp_path, "flow-eia3")
     )
     assert rc == 4
     assert payload is None
@@ -449,15 +643,9 @@ def test_self_target_accepts_parent_repo_dir_for_worktree_workspace_root(
     repo_root = tmp_path / "repo"
     workspace_root = repo_root / ".flow" / "worktrees" / "feat-x"
     transcript = _project_dir(tmp_path, repo_root) / "t1.jsonl"
-    _write_jsonl(transcript, [_tool_use_line("toolu_1", "Bash", "2026-06-01T00:00:00.000Z")])
+    _write_jsonl(transcript, [_descriptor_line("2026-06-01T00:00:00.000Z", "implement")])
     rc, payload = _run_extract(
-        capsys,
-        "--transcript",
-        str(transcript),
-        "--workspace-root",
-        str(workspace_root),
-        "--projects-root",
-        str(tmp_path / "projects"),
+        capsys, *_extract_args(transcript, workspace_root, tmp_path, "flow-eia3")
     )
     assert rc == 0
     assert payload is not None
@@ -466,6 +654,8 @@ def test_self_target_accepts_parent_repo_dir_for_worktree_workspace_root(
 def test_bad_args_requires_exactly_one_of_transcript_or_session(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    rc, payload = _run_extract(capsys, "--workspace-root", str(tmp_path / "repo"))
+    rc, payload = _run_extract(
+        capsys, "--ticket", "flow-eia3", "--workspace-root", str(tmp_path / "repo")
+    )
     assert rc == 1
     assert payload is None
