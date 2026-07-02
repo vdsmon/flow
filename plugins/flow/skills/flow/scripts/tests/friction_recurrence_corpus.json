@@ -1,0 +1,113 @@
+{
+  "knowledge": [
+    {
+      "id": "k-atu",
+      "ts": "2026-06-07T04:08:34.206Z",
+      "ticket": "flow-7nl",
+      "type": "LEARNED",
+      "body": "MACHINERY: merge stage push-state guard uses git rev-parse @{u}; when a PR auto-merges before the merge stage runs, @{u} fatals and the guard wrongly reports the branch unpushed. A pre-check for an already-merged PR would short-circuit cleanly."
+    },
+    {
+      "id": "k-flaky",
+      "ts": "2026-05-20T10:00:00.000Z",
+      "ticket": "flow-9zz",
+      "type": "LEARNED",
+      "body": "MACHINERY: flaky_check retries were silently swallowed; fixed the retry loop (commit ab12cd3) so failures now surface."
+    }
+  ],
+  "friction": [
+    {
+      "id": "f1",
+      "ts": "2026-06-05T15:45:07.425Z",
+      "run_id": "r-2fe",
+      "ticket": "flow-2fe",
+      "stage": "merge",
+      "type": "RECONCILE",
+      "severity": "minor",
+      "body": "merge push-state guard false-dirty: @{u} unset because branch pushed without -u; verified via git ls-remote and proceeded"
+    },
+    {
+      "id": "f2",
+      "ts": "2026-06-10T12:57:59.673Z",
+      "run_id": "r-5fp",
+      "ticket": "flow-5fp",
+      "stage": "merge",
+      "type": "RECONCILE",
+      "severity": "minor",
+      "body": "merge push-state guard @{u} check fataled again; verified origin ref manually"
+    },
+    {
+      "id": "f3",
+      "ts": "2026-06-10T13:20:57.900Z",
+      "run_id": "r-k8f3",
+      "ticket": "flow-k8f3",
+      "stage": "merge",
+      "type": "MISSING_TOOL",
+      "severity": "minor",
+      "body": "merge @{u} push-state guard: git rev-parse failed, no upstream tracking; worked around"
+    },
+    {
+      "id": "f4",
+      "ts": "2026-06-10T14:54:18.442Z",
+      "run_id": "r-ztfv",
+      "ticket": "flow-ztfv",
+      "stage": "merge",
+      "type": "DRIFT",
+      "severity": "minor",
+      "body": "merge push-state guard @{u} drifted from actual pushed state; corrected"
+    },
+    {
+      "id": "f5",
+      "ts": "2026-06-10T16:26:57.659Z",
+      "run_id": "r-8l6q",
+      "ticket": "flow-8l6q",
+      "stage": "merge",
+      "type": "RECONCILE",
+      "severity": "minor",
+      "body": "merge push-state guard @{u} empty again in sandboxed worktree; reconciled via explicit ref check"
+    },
+    {
+      "id": "f6",
+      "ts": "2026-05-25T09:00:00.000Z",
+      "run_id": "r-9zz2",
+      "ticket": "flow-9zz",
+      "stage": "implement",
+      "type": "RETRY",
+      "severity": "minor",
+      "body": "flaky_check still flaked despite the retry-loop fix"
+    },
+    {
+      "id": "f7",
+      "ts": "2026-06-11T09:00:00.000Z",
+      "run_id": "r-abcd",
+      "ticket": "flow-abcd",
+      "stage": "ticket",
+      "type": "DRIFT",
+      "severity": "minor",
+      "body": "unrelated frontmatter_parse hiccup, unrelated to push-state"
+    },
+    {
+      "id": "f8",
+      "ts": "2026-06-11T10:00:00.000Z",
+      "run_id": "r-efgh",
+      "ticket": "flow-efgh",
+      "stage": "plan",
+      "type": "MISSING_TOOL",
+      "severity": "minor",
+      "body": "missing some_other_tool during planning"
+    },
+    {
+      "id": "f9",
+      "ts": "2026-06-12T08:00:00.000Z",
+      "run_id": "r-ijkl",
+      "ticket": "flow-ijkl",
+      "stage": "commit",
+      "type": "RETRY",
+      "severity": "minor",
+      "body": "commit stage retried due to lock_contention noise"
+    }
+  ],
+  "ship_events": {
+    "flow-7nl": {"evidence": {"commit_sha": "8fd871e99a"}}
+  }
+}
