@@ -113,6 +113,7 @@ Pluggable PR-host seam, structural twin of the tracker seam. The `create_pr` and
 | `recover.py` | Inspect + remediate a broken run. | `detect` / `takeover` / `retry` / `skip` / `abort` / `reload-snapshot` |
 | `flow_friction.py` | Append-only `friction.jsonl` log (the reflect/self-evolution feedstock). | `--ticket --run-id --stage --type --body [--detail --severity]` |
 | `friction_recurrence.py` | Read-only forward-join of `friction.jsonl` to MACHINERY-prefixed `knowledge.jsonl` entries: surfaces friction classes that recurred after a claimed fix, clustered two ways (`signature_classes`, a single distinctive anchor token, cross-cutting stage/type; `structural_classes`, `(stage, type, anchor)`), carrying evidence (entry ids, run ids, fix sha) for a downstream judge. Reads friction/knowledge/ship-events, never writes. | `--workspace-root` |
+| `trace_mine.py` | Read-only miner: extracts tool-error/silent-retry/drift-marker/stall-gap events from one flow-dogfood run transcript (`~/.claude` session JSONL), bucketed by dispatch-stage descriptor; self-target guarded to this workspace's own `~/.claude/projects/<slug>` tree (or a worktree sibling). Never reads `friction.jsonl`. | `extract (--transcript | --session) --workspace-root [--projects-root --stall-threshold-secs]`; exit 3 missing transcript / 4 self-target rejection |
 
 ## Shared helpers (lib)
 
