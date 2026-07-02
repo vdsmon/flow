@@ -29,15 +29,18 @@ import _workspace
 import forge
 
 _DEFAULT_SEVERITY = "minor"
-_VALID_SEVERITIES = frozenset(get_args(forge.THREAD_SEVERITY))
+# THREAD_SEVERITY is ordered high -> low; a floor below minor (nit/unknown) would
+# DEMOTE unresolved minors out of the Major+ fix set, so only minor+ is accepted.
+_SEVERITY_ORDER = get_args(forge.THREAD_SEVERITY)
+_VALID_FLOORS = frozenset(_SEVERITY_ORDER[: _SEVERITY_ORDER.index(_DEFAULT_SEVERITY) + 1])
 
 
 def plain_comment_severity(workspace_root: Path) -> str:
     """Return the configured `[revise] plain_comment_severity` floor.
 
     Falls back to `"minor"` (and warns to stderr) on a missing/unparseable
-    workspace.toml or an invalid severity value, so a caller capturing the CLI
-    JSON always gets a valid severity.
+    workspace.toml or an invalid/below-minor severity value, so a caller capturing
+    the CLI JSON always gets a floor that can only raise.
     """
     try:
         block = _workspace.load_workspace_toml(workspace_root).get("revise", {})
@@ -47,7 +50,7 @@ def plain_comment_severity(workspace_root: Path) -> str:
         # a non-table `revise = "..."` at top level; treat as unconfigured
         return _DEFAULT_SEVERITY
     value = block.get("plain_comment_severity", _DEFAULT_SEVERITY)
-    if value not in _VALID_SEVERITIES:
+    if value not in _VALID_FLOORS:
         sys.stderr.write(
             f"revise-config: invalid [revise] plain_comment_severity {value!r}; "
             f"falling back to {_DEFAULT_SEVERITY!r}\n"

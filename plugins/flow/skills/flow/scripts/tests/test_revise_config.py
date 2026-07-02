@@ -49,6 +49,21 @@ def test_invalid_value_falls_back_to_default(tmp_path, capsys):
     assert "bogus" in capsys.readouterr().err
 
 
+def test_below_minor_floor_rejected(tmp_path, capsys):
+    # nit/unknown are valid THREAD severities but invalid FLOORS: they would DEMOTE
+    # an unresolved minor below the Major+ selection instead of raising it.
+    root = _workspace(tmp_path, "[revise]\nplain_comment_severity = 'nit'\n")
+    assert revise_config.plain_comment_severity(root) == "minor"
+    assert "nit" in capsys.readouterr().err
+    root2 = _workspace(tmp_path / "u", "[revise]\nplain_comment_severity = 'unknown'\n")
+    assert revise_config.plain_comment_severity(root2) == "minor"
+
+
+def test_critical_floor_accepted(tmp_path):
+    root = _workspace(tmp_path, "[revise]\nplain_comment_severity = 'critical'\n")
+    assert revise_config.plain_comment_severity(root) == "critical"
+
+
 # ─── apply_floor() ───────────────────────────────────────────────────────────
 
 

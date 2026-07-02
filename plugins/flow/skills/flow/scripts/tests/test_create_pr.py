@@ -146,6 +146,14 @@ def test_refuses_protected_branch(tmp_path):
         cp.open_or_get_pr(tmp_path, runner=run, forge=_FakeForge())
 
 
+def test_refuses_detached_head(tmp_path):
+    # a detached HEAD rev-parses to the literal "HEAD"; never push refs/heads/HEAD.
+    run, calls = _git_runner(branch="HEAD")
+    with pytest.raises(cp.RefusedBranch):
+        cp.open_or_get_pr(tmp_path, runner=run, forge=_FakeForge())
+    assert not _ran(calls, ["git", "push"])
+
+
 def test_push_failure_is_tool_error(tmp_path):
     run, _ = _git_runner(push_rc=1)
     with pytest.raises(cp.ToolError):

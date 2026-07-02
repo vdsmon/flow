@@ -61,6 +61,24 @@ def test_no_closes_no_footer():
     assert out == "Body text."
 
 
+def test_leading_indented_bullets_are_prose_not_trailer():
+    # commitment #1 adversarial case: an indented bullet with NO files: head above
+    # it is prose, not a files child; it must survive, not be eaten by the scan.
+    raw = "  - fixed the lease race\n  - added regression tests\n\nSecond paragraph.\n"
+    out = pr_body.build_body(raw)
+    assert "fixed the lease race" in out
+    assert "added regression tests" in out
+    assert "Second paragraph." in out
+
+
+def test_indented_bullet_after_non_files_trailer_ends_block():
+    # a ticket: line does not open files context; the bullet after it is prose.
+    raw = "ticket: flow-x\n  - looks like a files child but is not\n\nBody.\n"
+    out = pr_body.build_body(raw)
+    assert "looks like a files child but is not" in out
+    assert "ticket:" not in out
+
+
 # ─── build_body: prose unwrap ────────────────────────────────────────────────
 
 
@@ -147,6 +165,13 @@ def test_closes_footer_ignores_prose_closes():
     # a Closes AFTER the blank (in prose) is not a trailer footer.
     raw = "ticket: flow-x\nCloses flow-real\n\nThis Closes the gap.\n"
     assert pr_body.closes_footer(raw) == "Closes flow-real"
+
+
+def test_closes_footer_leading_bullet_ends_trailer_scan():
+    # same files-context guard as build_body: a leading indented bullet is prose,
+    # so the Closes after it is prose too, not a trailer footer.
+    raw = "  - a prose bullet\nCloses flow-x\n\nBody.\n"
+    assert pr_body.closes_footer(raw) == ""
 
 
 # ─── totality: never raise on adversarial input ──────────────────────────────
