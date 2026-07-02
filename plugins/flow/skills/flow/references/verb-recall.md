@@ -16,6 +16,10 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/recall.py "<query>" \
 - Exit 0 → JSON array to stdout. Surface as a formatted list to the user.
 - Exit 1 → workspace unresolvable, OR no query supplied. Surface stderr + `/flow init` hint.
 
+## Label-scoped recall (faceted memory)
+
+`recall.py --label <facet:value>` (e.g. `--label form:iva_2083`) hard-filters to entries carrying that label BEFORE ranking and returns the WHOLE cluster (the `--top-n` cap is lifted to the corpus size — exhaustive retrieval, not top-n truncation). The query becomes optional: a label-only invocation returns the full live cluster ordered newest-first, and never reads stdin (safe in any harness Bash call). A label miss is `[]` exit 0, not an error. Facet vocabulary comes from `[memory] label_facets` in workspace.toml (ships empty here; a workspace with a natural facet opts in).
+
 ## Semantic recall (optional overlay)
 
 When the workspace opts into `[memory.semantic] enabled = true`, recall fuses BM25 with a cosine ranking over a derived embedding sidecar (`knowledge.embed`), so a query worded differently from the stored body still surfaces it. It is byte-identical pure BM25 when the block is absent/off, and falls back to BM25 (with a stderr backend-status line) on any embedder/index failure — the `python3` runtime invariant holds because the embedder runs in a `uvx` subprocess, not in-process.
@@ -115,3 +119,11 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/recall.py --metric trend \
 ```
 
 Rolls up all five window measures (tickets-per-week, time-to-pr, friction-per-run, revert-rate, recall-hit-rate) over one `[since, until)` window. Default output is a human-readable table, one row per measure with its headline numbers; `--json` emits a JSON object keyed by the five measure names (each carrying that measure's full report) plus top-level `since`, `until`, and `resolved_workspace_root`. The revert row surfaces the `reverts_by_source` `{tracker, git}` split. `--namespace` is required. No `--checkpoint` option. Inherits revert-rate's git-repo requirement, so it fails loud on a git-scan error rather than emitting an empty roll-up.
+
+```bash
+python3 ${CLAUDE_SKILL_DIR}/scripts/recall.py --metric fix-efficacy \
+  --namespace <ns> --workspace-root . \
+  [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--json]
+```
+
+Per closed MACHINERY-fix bead (a `.flow/<namespace>/knowledge.jsonl` entry whose body starts with `MACHINERY`, grouped by `ticket`), reports whether the friction anchor(s) it claimed to fix recurred afterward: a `recurred` / `clean` verdict plus evidence (`post_fix_count`, `claimed_anchors`, `recurrence_run_ids`, `stages`, `types`, `recurrences`, `fix_shas`). A bead is `unmeasurable` (still counted `clean`, never a third verdict) when it claims no distinctive anchor or has no usable fix timestamp — it cannot forward-join, so it cannot recur. Default output is a per-bead table; `--json` emits `{beads, totals, resolved_workspace_root}`, where `totals` carries `fix_beads`/`recurred`/`clean`/`unmeasurable`/`recurrence_rate` (recurred / fix_beads, over ALL fix_beads including the unmeasurable ones). `--namespace` is optional (auto-resolves from workspace.toml when omitted). This is a lifetime metric: `--since`/`--until` are accepted for CLI-surface symmetry but IGNORED.

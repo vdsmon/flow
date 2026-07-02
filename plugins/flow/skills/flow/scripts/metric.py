@@ -49,12 +49,14 @@ import re
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import _memory_paths
 import _workspace
+import friction_recurrence
 import observe_ship_event
 import recall
 import recall_usage
@@ -696,6 +698,140 @@ def compute_recall_hit_rate(
     }
 
 
+# ─── Fix efficacy ────────────────────────────────────────────────────────────
+
+
+def _entry_anchors(entry: dict[str, Any]) -> set[str]:
+    """Replicates friction_recurrence._entry_anchors (private there, needed here)."""
+    body = entry.get("body")
+    detail = entry.get("detail")
+    text = f"{body if isinstance(body, str) else ''} {detail if isinstance(detail, str) else ''}"
+    return friction_recurrence.anchors(text)
+
+
+def _fix_efficacy_recurrence_dicts(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return sorted(
+        (
+            {
+                "id": e.get("id", ""),
+                "run_id": e.get("run_id", ""),
+                "ticket": e.get("ticket", ""),
+                "ts": e.get("ts", ""),
+                "stage": e.get("stage", ""),
+                "type": e.get("type", ""),
+            }
+            for e in entries
+        ),
+        key=lambda x: (x["ts"], x["id"]),
+    )
+
+
+def compute_fix_efficacy(workspace_root: Path, namespace: str) -> dict[str, Any]:
+    """Per closed MACHINERY-fix bead, did the friction class it claimed to fix recur?
+
+    Mirrors friction_recurrence.analyze()'s read and distinctive-anchor selection,
+    then joins per BEAD (`ticket`) instead of per anchor class: analyze()'s
+    class-level `earliest_fix_ts` would smear one bead's recurrence across every
+    other bead sharing that anchor. Lifetime metric (no time window); "closed" is
+    read as "a MACHINERY entry exists for this ticket", not a live tracker check.
+    """
+    fpath = _memory_paths.friction_path(workspace_root, namespace)
+    fsidecar = fpath.with_name(f"{fpath.name}.quarantine.{_ts_token()}")
+    friction_entries = [e for e in iter_jsonl(fpath, fsidecar) if isinstance(e, dict)]
+
+    kpath = _memory_paths.knowledge_path(workspace_root, namespace)
+    ksidecar = kpath.with_name(f"{kpath.name}.quarantine.{_ts_token()}")
+    knowledge_entries = [e for e in iter_jsonl(kpath, ksidecar) if isinstance(e, dict)]
+
+    machinery_entries = [
+        e
+        for e in knowledge_entries
+        if isinstance(e.get("body"), str)
+        and e["body"].startswith(friction_recurrence.MACHINERY_PREFIX)
+    ]
+
+    friction_anchored = [(f, _entry_anchors(f)) for f in friction_entries]
+    machinery_anchored = [(m, _entry_anchors(m)) for m in machinery_entries]
+
+    df = friction_recurrence.document_frequencies(
+        [a for _, a in friction_anchored] + [a for _, a in machinery_anchored]
+    )
+    machinery_tokens: set[str] = set()
+    for _, a in machinery_anchored:
+        machinery_tokens |= a
+    distinct = friction_recurrence.distinctive_anchors(df, machinery_tokens)
+
+    groups: dict[str, list[tuple[dict[str, Any], set[str]]]] = {}
+    for m, ma in machinery_anchored:
+        ticket = m.get("ticket")
+        if isinstance(ticket, str) and ticket:
+            groups.setdefault(ticket, []).append((m, ma))
+
+    beads: list[dict[str, Any]] = []
+    for ticket, entries in groups.items():
+        claimed_anchors: set[str] = set()
+        for _, ma in entries:
+            claimed_anchors |= ma & distinct
+
+        fix_ts_values = [m["ts"] for m, _ in entries if isinstance(m.get("ts"), str) and m["ts"]]
+        fix_ts = min(fix_ts_values) if fix_ts_values else None
+        # an empty/missing fix_ts must never forward-join: `ts > None` raises, and
+        # `ts > ""` would be true for every friction entry (false positives).
+        measurable = bool(claimed_anchors) and fix_ts is not None
+
+        recurring: list[dict[str, Any]] = []
+        if measurable:
+            for f, fa in friction_anchored:
+                f_ts = f.get("ts")
+                if isinstance(f_ts, str) and f_ts > fix_ts and (fa & claimed_anchors):
+                    recurring.append(f)
+
+        recurrences = _fix_efficacy_recurrence_dicts(recurring)
+        fix_shas = sorted(
+            {
+                sha
+                for m, _ in entries
+                if (sha := friction_recurrence.fix_sha(m, workspace_root, namespace)) is not None
+            }
+        )
+        beads.append(
+            {
+                "ticket": ticket,
+                "verdict": "recurred" if recurring else "clean",
+                "measurable": measurable,
+                "fix_ts": fix_ts,
+                "claimed_anchors": sorted(claimed_anchors),
+                "post_fix_count": len(recurring),
+                "recurrence_run_ids": sorted({r["run_id"] for r in recurrences}),
+                "stages": sorted({r["stage"] for r in recurrences}),
+                "types": sorted({r["type"] for r in recurrences}),
+                "recurrences": recurrences,
+                "fix_shas": fix_shas,
+            }
+        )
+
+    beads.sort(
+        key=lambda b: (0 if b["verdict"] == "recurred" else 1, -b["post_fix_count"], b["ticket"])
+    )
+
+    fix_beads = len(beads)
+    recurred = sum(1 for b in beads if b["verdict"] == "recurred")
+    clean = fix_beads - recurred
+    unmeasurable = sum(1 for b in beads if not b["measurable"])
+    recurrence_rate = round(recurred / fix_beads, 6) if fix_beads else 0
+
+    return {
+        "beads": beads,
+        "totals": {
+            "fix_beads": fix_beads,
+            "recurred": recurred,
+            "clean": clean,
+            "unmeasurable": unmeasurable,
+            "recurrence_rate": recurrence_rate,
+        },
+    }
+
+
 # ─── Revert rate ─────────────────────────────────────────────────────────────
 
 _REOPEN_STATES = frozenset({"open", "in_progress", "blocked"})
@@ -1315,6 +1451,13 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         "recall-hit-rate", help="Recall precision (used/surfaced) + miss count in a window."
     )
     _add_common_args(p_rhr)
+
+    p_fe = sub.add_parser(
+        "fix-efficacy",
+        help="Per closed MACHINERY-fix bead, did the friction class it claimed to fix recur?",
+    )
+    _add_common_args(p_fe)
+    p_fe.add_argument("--json", action="store_true")
     return parser.parse_args(argv)
 
 
@@ -1580,6 +1723,49 @@ def _run_trend(args: argparse.Namespace, since_iso: str, until_iso: str, now_iso
     return 0
 
 
+def _render_fix_efficacy_table(result: dict[str, Any]) -> str:
+    totals = result["totals"]
+    lines = [
+        f"fix-efficacy  workspace: {result['resolved_workspace_root']}",
+        "",
+        f"  totals: fix_beads={totals['fix_beads']} recurred={totals['recurred']} "
+        f"clean={totals['clean']} unmeasurable={totals['unmeasurable']} "
+        f"recurrence_rate={totals['recurrence_rate']} (over all fix_beads)",
+        "",
+    ]
+    for bead in result["beads"]:
+        lines.append(
+            f"  {bead['ticket']:<16} {bead['verdict']:<9} "
+            f"post_fix_count={bead['post_fix_count']} "
+            f"claimed_anchors={bead['claimed_anchors']} "
+            f"fix_shas={bead['fix_shas']}"
+        )
+    return "\n".join(lines) + "\n"
+
+
+def _run_fix_efficacy(args: argparse.Namespace) -> int:
+    workspace_root = Path(args.workspace_root).resolve()
+    namespace = args.namespace
+    if not namespace:
+        try:
+            namespace = _memory_paths.resolve_namespace(workspace_root)
+        except _memory_paths._MemoryConfigError as exc:
+            sys.stderr.write(f"metric: {exc}\n")
+            return 1
+    err = _check_flow_dir(workspace_root)
+    if err:
+        sys.stderr.write(err)
+        return 1
+    result = compute_fix_efficacy(workspace_root, namespace)
+    out = dict(result)
+    out["resolved_workspace_root"] = str(workspace_root)
+    if args.json:
+        sys.stdout.write(json.dumps(out, indent=2, sort_keys=True) + "\n")
+    else:
+        sys.stdout.write(_render_fix_efficacy_table(out))
+    return 0
+
+
 def cli_main(argv: list[str]) -> int:
     args = _parse_args(argv)
     now_iso = utcnow_iso()
@@ -1589,26 +1775,20 @@ def cli_main(argv: list[str]) -> int:
         sys.stderr.write(f"metric: {exc}\n")
         return 1
 
-    if args.command == "time-to-pr":
-        return _run_time_to_pr(args, since_iso, until_iso, now_iso)
-
-    if args.command == "friction-per-run":
-        return _run_friction_per_run(args, since_iso, until_iso)
-
-    if args.command == "revert-rate":
-        return _run_revert_rate(args, since_iso, until_iso)
-
-    if args.command == "arm-compare":
-        return _run_arm_compare(args, since_iso, until_iso)
-
-    if args.command == "trend":
-        return _run_trend(args, since_iso, until_iso, now_iso)
-
-    if args.command == "corpus-health":
-        return _run_corpus_health(args, since_iso, until_iso, now_iso)
-
-    if args.command == "recall-hit-rate":
-        return _run_recall_hit_rate(args, since_iso, until_iso)
+    # explicit-command dispatch: a dict collapses what would otherwise be one
+    # `if` per command (C901 complexity) into a single lookup + call.
+    dispatchers: dict[str, Callable[[], int]] = {
+        "time-to-pr": lambda: _run_time_to_pr(args, since_iso, until_iso, now_iso),
+        "friction-per-run": lambda: _run_friction_per_run(args, since_iso, until_iso),
+        "revert-rate": lambda: _run_revert_rate(args, since_iso, until_iso),
+        "arm-compare": lambda: _run_arm_compare(args, since_iso, until_iso),
+        "trend": lambda: _run_trend(args, since_iso, until_iso, now_iso),
+        "corpus-health": lambda: _run_corpus_health(args, since_iso, until_iso, now_iso),
+        "recall-hit-rate": lambda: _run_recall_hit_rate(args, since_iso, until_iso),
+        "fix-efficacy": lambda: _run_fix_efficacy(args),
+    }
+    if args.command in dispatchers:
+        return dispatchers[args.command]()
 
     if getattr(args, "checkpoint", False):
         if args.mode is None:
@@ -1674,6 +1854,7 @@ __all__ = [
     "compute_arm_compare",
     "compute_checkpoint",
     "compute_corpus_health",
+    "compute_fix_efficacy",
     "compute_friction_per_run",
     "compute_recall_hit_rate",
     "compute_revert_rate",

@@ -35,7 +35,6 @@ import json
 import sys
 from pathlib import Path
 
-import launch_ledger
 from _evolve_common import ACTIVE_STATUSES as _ACTIVE_STATUSES
 from _evolve_common import BRANCH_PREFIXES as _BRANCH_PREFIXES
 from _evolve_common import NotMaintainer, ToolError, bead_labels, primary_anchor
@@ -217,16 +216,16 @@ def select(
     candidates = _ready_candidates(run, include_proposals)
     refs, pr_refs, open_pr_count = _gather_refs(run)
     # live_keys is LEASE-ONLY: it surfaces as result["live_runs"], which the drain
-    # uses to decide a launch marker has "registered" (evolve_drain.cli_main). Fleet
-    # registers at launch (before claude --bg), so letting fleet leak into live_runs
-    # would mark a still-booting pre-lease run "registered" and evict it from
-    # launched_pending a turn early, re-opening the blind window launch_ledger closes
+    # uses to decide a launched run has "registered" a lease (evolve_drain.cli_main).
+    # Fleet registers at launch (before claude --bg), so letting fleet leak into
+    # live_runs would mark a still-booting pre-lease run "registered" and evict it
+    # from launched_pending a turn early, re-opening the launch->init blind window
     # (flow-d4s). The reconciled lease|fleet read is for the IN-FLIGHT suppression set
     # only (don't re-launch / don't over-budget a fleet-live run); flow-8by2.3.
     live_keys = _live_run_keys(repo)  # lease-only -> result["live_runs"]
     fleet_keys = _fleet_live_keys(repo)  # lease | fleet (reconciled in-flight authority)
-    launched_keys = launch_ledger.live_keys(repo)  # pre-init launch->init window
-    inflight_pre = fleet_keys | launched_keys
+    launched_keys = fleet_keys - live_keys  # pre-lease fleet entries -> result["launched_pending"]
+    inflight_pre = fleet_keys
     inflight_keys = {
         c["id"] for c in candidates if c.get("id") and _is_inflight(c["id"], refs)
     } | inflight_pre

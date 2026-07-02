@@ -276,6 +276,13 @@ def _validate_memory_block(data: dict[str, Any], result: ValidationResult) -> bo
             result.add("memory.root", "present but not a non-empty string")
         elif not Path(root).expanduser().is_absolute():
             result.add("memory.root", "must be an absolute path")
+    # Optional facet-tagging convention (which recall.py --label to write).
+    # Validated only when present, same "no default enforcement" pattern as root.
+    label_facets = memory.get("label_facets")
+    if label_facets is not None and (
+        not isinstance(label_facets, list) or not all(isinstance(x, str) for x in label_facets)
+    ):
+        result.add("memory.label_facets", "present but not a list[str]")
     return bool(memory.get("compounding", True))
 
 

@@ -304,6 +304,104 @@ def test_transition_falls_back_to_unavailable_match(tmp_path: Path) -> None:
     assert tk.calls[1] == ("transition", ("FT-1", "21", None), {})
 
 
+class _AmbiguousInProgressTracker(_FakeTracker):
+    """'Testing' and 'In Progress' both normalize to in_progress (FT-1328 board)."""
+
+    def __init__(self, testing_first: bool = True) -> None:
+        super().__init__()
+        self._testing_first = testing_first
+
+    def list_transitions(self, key: str) -> list[dict[str, Any]]:
+        self._record("list_transitions", key)
+        testing = {
+            "id": "51",
+            "name": "Testing",
+            "to_state": "Testing",
+            "to_normalized_state": "in_progress",
+        }
+        in_progress = {
+            "id": "31",
+            "name": "In Progress",
+            "to_state": "In Progress",
+            "to_normalized_state": "in_progress",
+        }
+        return [testing, in_progress] if self._testing_first else [in_progress, testing]
+
+
+def test_transition_prefers_in_progress_hint_over_testing(tmp_path: Path) -> None:
+    # Regression for FT-1328: board lists 'Testing' before 'In Progress'; both
+    # normalize to in_progress, but the native In Progress transition must win.
+    _seed_workspace(tmp_path)
+    tk = _AmbiguousInProgressTracker(testing_first=True)
+    rc = tracker_cli.cli_main(
+        [
+            "--workspace-root",
+            str(tmp_path),
+            "transition",
+            "--key",
+            "FT-1",
+            "--to-state",
+            "in_progress",
+        ],
+        tracker_factory=_factory(tk),
+    )
+    assert rc == 0
+    assert tk.calls[1] == ("transition", ("FT-1", "31", None), {})
+
+
+def test_transition_in_progress_hint_order_independent(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path)
+    tk = _AmbiguousInProgressTracker(testing_first=False)
+    rc = tracker_cli.cli_main(
+        [
+            "--workspace-root",
+            str(tmp_path),
+            "transition",
+            "--key",
+            "FT-1",
+            "--to-state",
+            "in_progress",
+        ],
+        tracker_factory=_factory(tk),
+    )
+    assert rc == 0
+    assert tk.calls[1] == ("transition", ("FT-1", "31", None), {})
+
+
+def test_transition_in_progress_no_hint_falls_back(tmp_path: Path) -> None:
+    # No native-hinted candidate: the pre-pass finds nothing and falls through
+    # to the existing first-available-match behavior.
+    _seed_workspace(tmp_path)
+
+    class _OnlyTesting(_FakeTracker):
+        def list_transitions(self, key: str) -> list[dict[str, Any]]:
+            self._record("list_transitions", key)
+            return [
+                {
+                    "id": "51",
+                    "name": "Testing",
+                    "to_state": "Testing",
+                    "to_normalized_state": "in_progress",
+                },
+            ]
+
+    tk = _OnlyTesting()
+    rc = tracker_cli.cli_main(
+        [
+            "--workspace-root",
+            str(tmp_path),
+            "transition",
+            "--key",
+            "FT-1",
+            "--to-state",
+            "in_progress",
+        ],
+        tracker_factory=_factory(tk),
+    )
+    assert rc == 0
+    assert tk.calls[1] == ("transition", ("FT-1", "51", None), {})
+
+
 def test_transition_unknown_state_returns_3(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

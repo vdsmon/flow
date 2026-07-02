@@ -1380,6 +1380,223 @@ def test_reap_cli_prints_receipt(tmp_path: Path, monkeypatch, capsys) -> None:
     assert '"ticket": "FT-1"' in out and '"branch": "feat/FT-1-thing"' in out
 
 
+# ─── checkpoint-then-reap (flow-vpg1) ───────────────────────────────────────
+# reap now checkpoints uncommitted work as a WIP commit pushed to a
+# `flow-rescue/<ticket>-<sha>` ref BEFORE the destructive teardown; a failed
+# checkpoint leaves the worktree intact rather than destroy the work.
+
+
+def _bare_origin_repo(
+    tmp: Path, *, ticket: str = "FT-1", branch: str = "feat/FT-1-thing"
+) -> tuple[Path, Path]:
+    """A main checkout with a real `origin` remote (a bare repo) + a real
+    registered worktree checked out on `branch`, for reap-checkpoint tests that
+    need to prove an actual `git push` landed on a real remote (a fake runner
+    can't prove that)."""
+    origin = tmp / "origin.git"
+    subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(origin)], check=True)
+
+    main = tmp / "main"
+    main.mkdir()
+    git = ["git", "-C", str(main)]
+    subprocess.run([*git, "init", "-q", "-b", "main"], check=True)
+    subprocess.run([*git, "config", "user.email", "t@t"], check=True)
+    subprocess.run([*git, "config", "user.name", "t"], check=True)
+    subprocess.run([*git, "remote", "add", "origin", str(origin)], check=True)
+    (main / "README.md").write_text("x\n", encoding="utf-8")
+    subprocess.run([*git, "add", "README.md"], check=True)
+    subprocess.run([*git, "commit", "-q", "-m", "init"], check=True)
+    subprocess.run([*git, "push", "-q", "origin", "main"], check=True)
+
+    wt = main / ".flow" / "worktrees" / branch.replace("/", "-")
+    subprocess.run([*git, "worktree", "add", "-q", "-b", branch, str(wt), "main"], check=True)
+    subprocess.run(["git", "-C", str(wt), "config", "user.email", "t@t"], check=True)
+    subprocess.run(["git", "-C", str(wt), "config", "user.name", "t"], check=True)
+    return main, wt
+
+
+def test_reap_checkpoints_dirty_work_to_pushed_rescue_ref(tmp_path: Path) -> None:
+    main, wt = _bare_origin_repo(tmp_path)
+    (wt / "scratch.py").write_text("wip work\n", encoding="utf-8")
+
+    receipt = fw.reap_worktree(ticket="FT-1", main_root=main, runner=fw._default_runner())
+
+    assert receipt["worktree_removed"] is True
+    assert receipt["branch_deleted"] is True
+    checkpoint = receipt["checkpoint"]
+    assert checkpoint["rescue_branch"].startswith("flow-rescue/FT-1-")
+
+    origin = tmp_path / "origin.git"
+    ls_remote = subprocess.run(
+        ["git", "ls-remote", str(origin)], capture_output=True, text=True, check=True
+    ).stdout
+    assert f"refs/heads/{checkpoint['rescue_branch']}" in ls_remote
+
+    show = subprocess.run(
+        ["git", "show", f"refs/heads/{checkpoint['rescue_branch']}:scratch.py"],
+        cwd=str(origin),
+        capture_output=True,
+        text=True,
+    )
+    assert show.returncode == 0
+    assert show.stdout == "wip work\n"
+
+    subject = subprocess.run(
+        ["git", "log", "-1", "--format=%s", f"refs/heads/{checkpoint['rescue_branch']}"],
+        cwd=str(origin),
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    assert subject == "wip: flow checkpoint before reap (FT-1) [skip ci]"
+
+
+def test_reap_checkpoint_excludes_secrets_and_flow_dir(tmp_path: Path) -> None:
+    # the secret-leak guard: `.env` (a _DEFAULT_COPY path) and `.flow/` (only its
+    # `runs/` subtree is actually gitignored in this repo; `tickets/<key>.md` is
+    # not) must never ride into the PUBLIC flow-rescue ref.
+    main, wt = _bare_origin_repo(tmp_path)
+    (wt / ".env").write_text("SECRET=1\n", encoding="utf-8")
+    (wt / "real.py").write_text("wip\n", encoding="utf-8")
+    (wt / ".flow" / "tickets").mkdir(parents=True)
+    (wt / ".flow" / "tickets" / "FT-1.md").write_text(
+        "+++\nticket = 'FT-1'\n+++\n", encoding="utf-8"
+    )
+
+    receipt = fw.reap_worktree(ticket="FT-1", main_root=main, runner=fw._default_runner())
+    checkpoint = receipt["checkpoint"]
+    assert checkpoint["rescue_branch"].startswith("flow-rescue/FT-1-")
+
+    origin = tmp_path / "origin.git"
+    tracked = subprocess.run(
+        ["git", "ls-tree", "-r", "--name-only", f"refs/heads/{checkpoint['rescue_branch']}"],
+        cwd=str(origin),
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.splitlines()
+    assert "real.py" in tracked
+    assert ".env" not in tracked
+    assert not any(t.startswith(".flow/") for t in tracked)
+
+
+def _checkpoint_runner(
+    *,
+    worktrees: str,
+    calls: list,
+    dirty: bool = False,
+    push_rc: int = 0,
+    commit_rc: int = 0,
+    rev: str = "abc1234",
+):
+    """A runner answering reap's full sequence, incl. the checkpoint's own
+    status/add/commit/rev-parse/push, with configurable failure points."""
+
+    def run(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        if args[:4] == ["git", "worktree", "list", "--porcelain"]:
+            return subprocess.CompletedProcess(args, 0, worktrees, "")
+        if args[:3] == ["git", "status", "--porcelain"]:
+            out = "?? scratch.py\n" if dirty else ""
+            return subprocess.CompletedProcess(args, 0, out, "")
+        if args[:2] == ["git", "commit"]:
+            return subprocess.CompletedProcess(
+                args, commit_rc, "", "" if commit_rc == 0 else "commit failed"
+            )
+        if args[:3] == ["git", "rev-parse", "--short"]:
+            return subprocess.CompletedProcess(args, 0, rev + "\n", "")
+        if args[:2] == ["git", "push"]:
+            return subprocess.CompletedProcess(
+                args, push_rc, "", "" if push_rc == 0 else "push failed"
+            )
+        if args[:4] == ["git", "worktree", "remove", "--force"]:
+            return subprocess.CompletedProcess(args, 0, "", "")
+        if args[:3] == ["git", "branch", "-D"]:
+            return subprocess.CompletedProcess(args, 0, "", "")
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    return run
+
+
+def test_reap_clean_worktree_skips_checkpoint_commit(tmp_path: Path) -> None:
+    # only bootstrap-scratch uncommitted (nothing real to capture): the
+    # merged-orphan no-op path must survive unchanged, no commit/push issued.
+    wt = tmp_path / "main" / ".flow" / "worktrees" / "feat-FT-1-thing"
+    wt.mkdir(parents=True)
+    calls: list = []
+    runner = _checkpoint_runner(
+        worktrees=_porcelain([(str(wt), "feat/FT-1-thing")]), calls=calls, dirty=False
+    )
+    receipt = fw.reap_worktree(ticket="FT-1", main_root=tmp_path / "main", runner=runner)
+    assert receipt["worktree_removed"] is True
+    assert receipt["branch_deleted"] is True
+    assert "checkpoint" not in receipt
+    assert not any(c[:2] == ["git", "commit"] for c in calls)
+    assert not any(c[:2] == ["git", "push"] for c in calls)
+
+
+def test_reap_checkpoint_failure_leaves_worktree_intact(tmp_path: Path) -> None:
+    wt = tmp_path / "main" / ".flow" / "worktrees" / "feat-FT-1-thing"
+    wt.mkdir(parents=True)
+    calls: list = []
+    runner = _checkpoint_runner(
+        worktrees=_porcelain([(str(wt), "feat/FT-1-thing")]),
+        calls=calls,
+        dirty=True,
+        push_rc=1,
+    )
+    receipt = fw.reap_worktree(ticket="FT-1", main_root=tmp_path / "main", runner=runner)
+    assert receipt["worktree_removed"] is False
+    assert receipt["branch_deleted"] is False
+    assert receipt["checkpoint_failed"] is True
+    assert receipt["skipped"] and "checkpoint failed" in receipt["skipped"]
+    assert not any(c[:4] == ["git", "worktree", "remove", "--force"] for c in calls)
+    assert not any(c[:3] == ["git", "branch", "-D"] for c in calls)
+
+
+def test_reap_cli_exits_5_on_checkpoint_failure(tmp_path: Path, monkeypatch, capsys) -> None:
+    wt = tmp_path / "main" / ".flow" / "worktrees" / "feat-FT-1-thing"
+    wt.mkdir(parents=True)
+    calls: list = []
+    runner = _checkpoint_runner(
+        worktrees=_porcelain([(str(wt), "feat/FT-1-thing")]),
+        calls=calls,
+        dirty=True,
+        push_rc=1,
+    )
+    monkeypatch.setattr(fw, "_default_runner", lambda: runner)
+    rc = fw.cli_main(
+        [
+            "reap",
+            "--ticket",
+            "FT-1",
+            "--branch",
+            "feat/FT-1-thing",
+            "--main-root",
+            str(tmp_path / "main"),
+        ]
+    )
+    assert rc == 5
+    out = capsys.readouterr().out
+    assert '"checkpoint_failed": true' in out
+
+
+def test_rescue_branch_not_ticket_branch() -> None:
+    assert not fw._is_ticket_branch("flow-rescue/flow-x1-abc1234", "flow-x1")
+
+
+def test_rescue_branch_not_flow_key_re() -> None:
+    import _evolve_common
+
+    assert _evolve_common.key_from_ref("flow-rescue/flow-x1-abc1234") is None
+
+
+def test_rescue_branch_not_inflight() -> None:
+    import _evolve_common
+
+    assert not _evolve_common.is_inflight("flow-x1", {"flow-rescue/flow-x1-abc1234"})
+
+
 # ─── hot hard-floor (code-enforced, flow-aen) ───────────────────────────────
 # The is_hot_change floor lives here at the shared bootstrap so every autonomous
 # self-approve path (incl. clean >=90%, which step-5 prose never gated) is caught.
@@ -1772,6 +1989,152 @@ def test_bootstrap_claim_released_after_refusal(tmp_path: Path) -> None:
     with pytest.raises(fw._DuplicateClaim):
         _run(tmp_path, main, runner=runner)
     _assert_claim_released(main.resolve() / ".flow" / "tickets" / "FT-1.claim")
+
+
+# ─── auto-reap a dead colliding sibling at create (flow-vpg1) ──────────────
+# A DEAD sibling checked out on the exact branch/path this bootstrap wants (a
+# manual relaunch after a spend-limit death) would otherwise make
+# `git worktree add -b` fail outright; create auto-reaps it first via the
+# same checkpoint-then-remove reap_worktree uses.
+
+
+def test_create_auto_reaps_dead_colliding_sibling_same_branch(tmp_path: Path) -> None:
+    main = _main_checkout(tmp_path)
+    sib, td = _sibling_ticket_dir(tmp_path)
+    lease.acquire(
+        td,
+        run_id="r1",
+        ttl_seconds=60,
+        now_iso="2020-01-01T00:00:00Z",
+        current_boot="other-boot",
+        hostname="other-host",
+        cwd="/x",
+    )
+    calls: list = []
+    runner = _fake_runner(
+        calls=calls, main=main, worktree_list=_siblings_porcelain(sib, branch="feat/FT-1-thing")
+    )
+    res = _run(tmp_path, main, runner=runner)
+    assert res["ticket"] == "FT-1"
+    assert any(c[:4] == ["git", "worktree", "remove", "--force"] for c in calls)
+    assert any(c[:3] == ["git", "worktree", "add"] for c in calls)
+
+
+def test_create_no_collision_auto_reap_is_noop(tmp_path: Path) -> None:
+    # a dead sibling on a DIFFERENT branch/path never collides with THIS
+    # bootstrap's worktree-add path; auto-reap must not touch it (regression:
+    # test_bootstrap_proceeds_past_expired_sibling_lease already pins the
+    # end-to-end proceed, this pins that no reap call fires alongside it).
+    main = _main_checkout(tmp_path)
+    sib, td = _sibling_ticket_dir(tmp_path)
+    lease.acquire(
+        td,
+        run_id="r1",
+        ttl_seconds=60,
+        now_iso="2020-01-01T00:00:00Z",
+        current_boot="other-boot",
+        hostname="other-host",
+        cwd="/x",
+    )
+    calls: list = []
+    runner = _fake_runner(calls=calls, main=main, worktree_list=_siblings_porcelain(sib))
+    res = _run(tmp_path, main, runner=runner)
+    assert res["ticket"] == "FT-1"
+    assert sib.exists()
+    assert not any(c[:4] == ["git", "worktree", "remove", "--force"] for c in calls)
+
+
+def test_create_refuses_when_auto_reap_checkpoint_fails(tmp_path: Path) -> None:
+    main = _main_checkout(tmp_path)
+    sib, td = _sibling_ticket_dir(tmp_path)
+    lease.acquire(
+        td,
+        run_id="r1",
+        ttl_seconds=60,
+        now_iso="2020-01-01T00:00:00Z",
+        current_boot="other-boot",
+        hostname="other-host",
+        cwd="/x",
+    )
+    calls: list = []
+
+    def run(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        if args[:4] == ["git", "worktree", "list", "--porcelain"]:
+            return subprocess.CompletedProcess(
+                args, 0, _siblings_porcelain(sib, branch="feat/FT-1-thing"), ""
+            )
+        if args[:3] == ["git", "status", "--porcelain"]:
+            dirty = str(cwd) == str(sib)
+            return subprocess.CompletedProcess(args, 0, "?? scratch.py\n" if dirty else "", "")
+        if args[:2] == ["git", "push"]:
+            return subprocess.CompletedProcess(args, 1, "", "push failed")
+        if args[:3] == ["git", "worktree", "add"]:
+            wt = Path(args[5])  # git worktree add -b <branch> <path> <base>
+            wt.mkdir(parents=True, exist_ok=True)
+            return subprocess.CompletedProcess(args, 0, "", "")
+        if args[:2] == ["git", "check-ignore"]:
+            return subprocess.CompletedProcess(args, 1, "", "")
+        if args[:2] == ["git", "rev-parse"]:
+            return subprocess.CompletedProcess(args, 0, "wtsha0001\n", "")
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    with pytest.raises(fw._ConfigError):
+        _run(tmp_path, main, runner=run)
+    assert sib.exists()
+    assert not any(c[:4] == ["git", "worktree", "remove", "--force"] for c in calls)
+    assert not any(c[:3] == ["git", "worktree", "add"] for c in calls)
+
+
+def test_create_toctou_sibling_goes_live_during_auto_reap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # dead at _assert_no_live_sibling, but a concurrent acquire wins the
+    # sibling's OWN run.lock.lock flock first during the auto-reap's
+    # classify_then: the live lease must be observed and the reap refused,
+    # mirroring test_reap_skips_remove_when_lease_goes_live_under_flock.
+    import contextlib
+    from collections.abc import Iterator
+
+    main = _main_checkout(tmp_path)
+    sib, td = _sibling_ticket_dir(tmp_path)
+    lease.acquire(
+        td,
+        run_id="r1",
+        ttl_seconds=60,
+        now_iso="2020-01-01T00:00:00Z",
+        current_boot="other-boot",
+        hostname="other-host",
+        cwd="/x",
+    )
+    real_flock = lease.flock_blocking
+
+    @contextlib.contextmanager
+    def racing_flock(path: Path) -> Iterator[None]:
+        with real_flock(path):
+            if path == lease._flock_path(td):
+                lease.run_lock_path(td).write_text(
+                    lease._serialize(
+                        lease.Lease(
+                            run_id="racer",
+                            boot_id="boot-x",
+                            hostname="host-x",
+                            cwd="/cwd-x",
+                            acquired_at="2999-01-01T00:00:00Z",
+                            lease_expires_at="2999-01-01T01:00:00Z",
+                        )
+                    ),
+                    encoding="utf-8",
+                )
+            yield
+
+    monkeypatch.setattr(lease, "flock_blocking", racing_flock)
+    runner = _fake_runner(
+        main=main, worktree_list=_siblings_porcelain(sib, branch="feat/FT-1-thing")
+    )
+    with pytest.raises(fw._DuplicateClaim):
+        _run(tmp_path, main, runner=runner)
+    assert sib.exists()
 
 
 def _real_repo(tmp: Path) -> Path:

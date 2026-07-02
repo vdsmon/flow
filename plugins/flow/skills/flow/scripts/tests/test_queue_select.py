@@ -306,13 +306,11 @@ def test_select_pre_pr_live_run_is_inflight(tmp_path):
 
 
 def test_select_launched_key_is_inflight_not_relaunched(tmp_path):
-    # a key in the launch ledger (no ref, no lease yet) must read as in-flight
+    # a key registered in the fleet ledger (no ref, no lease yet) must read as in-flight
     ws = _marked_ws(tmp_path)
     repo = qs.resolve_maintainer_repo(ws)
     assert repo is not None
-    import launch_ledger
-
-    launch_ledger.add(repo, "flow-led")
+    fleet.register(fleet.resolve_fleet_dir(repo), "flow-led", "", now=utcnow_iso())
     run, _ = _dispatch(ready=[_cand("flow-led"), _cand("flow-y")])
     out = qs.select(ws, cap=5, concurrency=3, runner=run)
     assert out["launch"] == ["flow-y"]
@@ -481,11 +479,9 @@ def test_select_budget_shrinks_with_launched_pending(tmp_path):
     ws = _marked_ws(tmp_path)
     repo = qs.resolve_maintainer_repo(ws)
     assert repo is not None
-    import launch_ledger
-
     pending = [f"flow-p{i}" for i in range(1, 7)]  # 6 launched, pre-init
     for key in pending:
-        launch_ledger.add(repo, key)
+        fleet.register(fleet.resolve_fleet_dir(repo), key, "", now=utcnow_iso())
     # ready candidates DISJOINT from the launched set, so they only feel the budget
     run, _ = _dispatch(ready=[_cand(f"flow-r{i}") for i in range(5)])
     out = qs.select(ws, cap=10, concurrency=8, runner=run)
@@ -523,10 +519,8 @@ def test_select_mixed_sessions_only_day_job_consumes_budget(tmp_path):
     ws = _marked_ws(tmp_path)
     repo = qs.resolve_maintainer_repo(ws)
     assert repo is not None
-    import launch_ledger
-
     _write_lease(_pool_run_dir(repo, "flow-ev"))
-    launch_ledger.add(repo, "flow-day")
+    fleet.register(fleet.resolve_fleet_dir(repo), "flow-day", "", now=utcnow_iso())
     run, _ = _dispatch(
         ready=[_cand("flow-r1"), _cand("flow-r2")],
         evolve_list=[{"id": "flow-ev", "labels": ["evolve"], "status": "in_progress"}],

@@ -898,3 +898,162 @@ def test_record_pending_promotes_into_recall_log(
     assert log.exists()
     lines = [json.loads(line) for line in log.read_text().splitlines() if line.strip()]
     assert any("a" * 16 in rec.get("returned_ids", []) for rec in lines)
+
+
+# ─── labels (faceted memory) ───────────────────────────────────────────────────
+
+
+def _labeled_entry(id_: str, body: str, labels: list[str], **kwargs) -> dict:
+    return {**_make_entry(id_, body, **kwargs), "labels": labels}
+
+
+def test_label_filter_returns_only_cluster_members() -> None:
+    entries = [
+        _labeled_entry("a" * 16, "iva note one", ["form:iva_2083"]),
+        _labeled_entry("b" * 16, "iva note two", ["form:iva_2083"]),
+        _make_entry("c" * 16, "unrelated"),
+    ]
+    results = recall.rank("", entries, label_filter="form:iva_2083", top_n=10)
+    ids = {r["id"] for r in results}
+    assert ids == {"a" * 16, "b" * 16}
+
+
+def test_label_filter_exhaustive_via_cli(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _seed_workspace(tmp_path)
+    entries = [_labeled_entry(f"{i:016x}", f"iva note {i}", ["form:iva_2083"]) for i in range(8)]
+    _write_entries(tmp_path, "demo", entries)
+    rc = recall.cli_main(["--label", "form:iva_2083", "--workspace-root", str(tmp_path)])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert len(payload) == 8
+
+
+def test_label_only_recall_orders_ts_desc_exit_0(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _seed_workspace(tmp_path)
+    entries = [
+        _labeled_entry("a" * 16, "old", ["form:iva_2083"], ts="2026-01-01T00:00:00.000Z"),
+        _labeled_entry("b" * 16, "new", ["form:iva_2083"], ts="2026-06-01T00:00:00.000Z"),
+    ]
+    _write_entries(tmp_path, "demo", entries)
+    rc = recall.cli_main(["--label", "form:iva_2083", "--workspace-root", str(tmp_path)])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert [r["id"] for r in payload] == ["b" * 16, "a" * 16]
+
+
+def test_labels_present_in_result_dict() -> None:
+    entries = [_labeled_entry("a" * 16, "iva note", ["form:iva_2083"])]
+    results = recall.rank("", entries, label_filter="form:iva_2083", top_n=5)
+    assert results[0]["labels"] == ["form:iva_2083"]
+
+
+def test_labels_key_defaults_empty_when_absent() -> None:
+    entries = [_make_entry("a" * 16, "foo")]
+    results = recall.rank("foo", entries, top_n=1)
+    assert results[0]["labels"] == []
+
+
+def test_backward_compat_no_labels_corpus_score_unchanged() -> None:
+    # re-assert an existing score case: adding "labels" to FIELD_WEIGHTS must be
+    # a zero-contribution no-op for a label-free corpus (avgdl==0 guard).
+    entries = [
+        _make_entry("a" * 16, "atomic write needs fsync"),
+        _make_entry("b" * 16, "lorem ipsum dolor sit amet"),
+    ]
+    results = recall.rank("atomic write", entries, top_n=2)
+    assert results[0]["body"].startswith("atomic")
+    assert results[0]["score"] > results[1]["score"]
+
+
+def test_field_weight_label_fuzzy_reach() -> None:
+    entries = [
+        _labeled_entry("a" * 16, "unrelated body", ["form:iva_2083"]),
+        _make_entry("b" * 16, "unrelated body too"),
+    ]
+    results = recall.rank("iva_2083", entries, top_n=2)
+    assert results[0]["id"] == "a" * 16
+
+
+def test_doc_field_text_list_join() -> None:
+    entry = {"labels": ["form:iva_2083"]}
+    text = recall._doc_field_text(entry, "labels")
+    assert recall.tokenize(text) == ["form", "iva_2083"]
+
+
+def test_semantic_label_filter_restricts_cluster(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # a NON-empty query keeps the semantic path active; --label restricts the
+    # candidate cluster inside _semantic_rank (distinct from the label-only,
+    # forced-BM25 case covered separately).
+    import memory_embed
+
+    embedder = _stub_embedder_cmd(tmp_path)
+    _seed_semantic_workspace(tmp_path, embedder=embedder, threshold=0.0)
+    _write_entries(
+        tmp_path,
+        "demo",
+        [
+            _labeled_entry("a" * 16, "iva note", ["form:iva_2083"]),
+            _make_entry("b" * 16, "iva note too"),
+        ],
+    )
+    memory_embed.reindex(tmp_path, "demo", model="stub-model", embedder=embedder)
+    rc = recall.cli_main(
+        ["iva note", "--label", "form:iva_2083", "--workspace-root", str(tmp_path)]
+    )
+    assert rc == 0
+    out = capsys.readouterr()
+    assert "semantic-active" in out.err
+    payload = json.loads(out.out)
+    assert {r["id"] for r in payload} == {"a" * 16}
+
+
+def test_label_only_query_forces_bm25_no_embed_call(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import memory_embed
+
+    embedder = _stub_embedder_cmd(tmp_path)
+    _seed_semantic_workspace(tmp_path, embedder=embedder, threshold=0.0)
+    _write_entries(tmp_path, "demo", [_labeled_entry("a" * 16, "iva note", ["form:iva_2083"])])
+    memory_embed.reindex(tmp_path, "demo", model="stub-model", embedder=embedder)
+
+    def _boom(*args, **kwargs):
+        raise AssertionError("embed must not be called for a label-only query")
+
+    monkeypatch.setattr(memory_embed, "embed", _boom)
+    rc = recall.cli_main(["--label", "form:iva_2083", "--workspace-root", str(tmp_path)])
+    assert rc == 0
+    out = capsys.readouterr()
+    assert "semantic-active" not in out.err
+    payload = json.loads(out.out)
+    assert payload[0]["id"] == "a" * 16
+
+
+class _MustNotReadStdin:
+    def isatty(self) -> bool:
+        return False
+
+    def read(self) -> str:
+        raise AssertionError("label-only recall must never read stdin")
+
+
+def test_label_only_recall_never_touches_stdin(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # pytest's captured stdin raises OSError on read, which _read_query
+    # swallows, masking a live hang: the harness Bash pipe has no EOF, so a
+    # blocking read wedges the stage. Pin that the read is never attempted.
+    _seed_workspace(tmp_path)
+    entries = [_labeled_entry("a" * 16, "iva note", ["form:iva_2083"])]
+    _write_entries(tmp_path, "demo", entries)
+    monkeypatch.setattr(recall.sys, "stdin", _MustNotReadStdin())
+    rc = recall.cli_main(["--label", "form:iva_2083", "--workspace-root", str(tmp_path)])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert [r["id"] for r in payload] == ["a" * 16]

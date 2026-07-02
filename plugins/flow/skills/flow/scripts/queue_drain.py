@@ -21,7 +21,7 @@ non-evolve bead, so every green PR parks for the maintainer's review. Parked ope
 queue's normal success terminal, not leftovers.
 
 The wait gate is queue-scoped: `live_runs` and `launched_pending` from select are repo-global
-(the worktree pool and the launch ledger are SHARED with the evolve drain), so the
+(the worktree pool and the fleet ledger are SHARED with the evolve drain), so the
 active-evolve key set is subtracted from both before liveness. The day-job loop never blocks
 waiting on a live evolve run. Conservative direction preserved: anything not provably evolve's
 is waited on.
@@ -43,7 +43,6 @@ import json
 import sys
 from pathlib import Path
 
-import launch_ledger
 from _evolve_common import (
     ACTIVE_STATUSES,
     WORKTREE_PREFIXES,
@@ -181,13 +180,13 @@ def cli_main(argv: list[str]) -> int:
         inflight = sorted(set(sel.get("skipped_in_flight") or []) | open_pr_keys | live_runs)
         live = liveness_map(repo, inflight)
         # a launched key that has registered (live lease OR open PR) leaves the blind
-        # window; physically drop its marker so it stays out of launched_pending past
-        # any later merge/teardown. NOT skipped_in_flight: select folds launched_pending
-        # into it, which would falsely mark an unregistered key registered.
+        # window; drop it from launched_pending so it stays out past any later
+        # merge/teardown (the fleet entry itself needs no removal here -- it ages
+        # out on its own staleness clock). NOT skipped_in_flight: select folds
+        # launched_pending into it, which would falsely mark an unregistered key
+        # registered.
         pending = set(sel.get("launched_pending") or []) - evolve_keys
         registered = live_runs | open_pr_keys
-        for key in sorted(pending & registered):
-            launch_ledger.remove(repo, key)
         sel["launched_pending"] = sorted(pending - registered)
 
         merged = loads(

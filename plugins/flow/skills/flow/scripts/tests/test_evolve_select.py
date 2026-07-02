@@ -451,7 +451,7 @@ def test_select_fleet_only_key_inflight_but_absent_from_live_runs(tmp_path):
     # flow-8by2.3 regression: a key registered in the fleet ledger at launch (no lease yet) must
     # suppress relaunch (in-flight) but must NOT appear in live_runs. Otherwise the drain's
     # marker-remove (registered = live_runs | open_pr_keys) would evict it from launched_pending
-    # a turn early and re-open the blind window launch_ledger closes (flow-d4s).
+    # a turn early and re-open the launch->init blind window (flow-d4s).
     ws = _marked_ws(tmp_path)
     repo = es.resolve_maintainer_repo(ws)
     assert repo is not None
@@ -598,18 +598,17 @@ def test_select_pre_pr_live_hot_blocks_second_hot(tmp_path):
     assert out["live_runs"] == ["flow-old"]
 
 
-# ---- launch ledger - the launch->init blind-window regression ----
+# ---- fleet-derived launched_pending - the launch->init blind-window regression ----
 
 
 def _ledger_add(repo: Path, key: str) -> None:
-    import launch_ledger
-
-    launch_ledger.add(repo, key)
+    """Seed a pre-lease fleet register, mirroring the launch-time write."""
+    fleet.register(fleet.resolve_fleet_dir(repo), key, "", now=utcnow_iso())
 
 
 def test_select_launched_key_is_inflight_not_relaunched(tmp_path):
-    # a non-hot key in the launch ledger (no ref, no lease yet) must read as
-    # in-flight: held in skipped_in_flight, never re-launched.
+    # a non-hot key registered in the fleet ledger (no ref, no lease yet) must
+    # read as in-flight: held in skipped_in_flight, never re-launched.
     ws = _marked_ws(tmp_path)
     repo = es.resolve_maintainer_repo(ws)
     assert repo is not None
@@ -622,7 +621,7 @@ def test_select_launched_key_is_inflight_not_relaunched(tmp_path):
 
 
 def test_select_launched_hot_blocks_second_hot(tmp_path):
-    # the real incident: flow-jud(hot) was launched (ledger only, no ref/lease),
+    # the real incident: flow-jud(hot) was launched (fleet-registered only, no ref/lease),
     # and the next pass must NOT offer flow-4lb as a 2nd hot. flow-hso (non-hot,
     # also launched) lands in skipped_in_flight, not re-launched.
     ws = _marked_ws(tmp_path)

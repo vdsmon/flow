@@ -2,6 +2,8 @@
 
 **Purpose.** This is the spike deliverable for epic flow-8by2 (fleet coordination authority), gating children 2-5. It inventories every coordination read and write across flow's run fleet, maps the liveness/work-state sources (L lease, M launch markers, R PR/branch refs, B bead status, J jobs-dir scan), enumerates every read-classify-then-mutate TOCTOU window the per-subsystem mappers found (with the flock-held flag and the bug class each window caused or that closed it), folds in the Agent-Teams build-vs-adopt comparison, and returns a GO/NO-GO verdict plus per-child sizing. The thesis under test: liveness is currently inferred from a five-source eventually-consistent join across six independent join sites, the architecture generates a coordination-bug class faster than point patches retire it (six coordination fixes landed on 2026-06-10 alone), and a single `.flow/fleet/` flock-serialized registration+heartbeat+deregistration ledger would collapse the three liveness sources (lease + launch markers + jobs scan) into one authority while gh/bd stay as work-state reads. Conclusion up front: the TOCTOU surface is broad and recurring enough to justify one unifying ledger, and build beats adopt on the constraints that matter. Verdict: **go**, staged, with two non-negotiables (a heartbeat-staleness fallback, and a property-equivalence proof before any retirement).
 
+**Status update (flow-8by2.5, child-5 landed).** Source **M** (launch_ledger) is retired: `launched_pending` is now derived from the fleet ledger (`fleet_keys - live_keys`, `_evolve_common.fleet_live_keys` minus the lease-only set), gated on the executable property-equivalence proof this doc's verdict required (`tests/test_launch_window_equivalence.py`). Source **J** (jobs-dir scan) was NOT retired — demoted to a permanent pre-first-register crash fallback, per the session-cleanup regression this doc flags in §4 and §6.
+
 ---
 
 ## 1. Sources, and the consolidation note
@@ -11,7 +13,7 @@ Five sources feed the fleet's liveness/work-state picture. Three are liveness (w
 | Src | What it is | Liveness or work-state | Authoritative reader primitive |
 |---|---|---|---|
 | **L** | per-ticket run lease (`run.lock` JSON under `run.lock.lock` flock) | liveness | `lease.classify()` (lock-free read), `lease.classify_then()` / `takeover_clear()` (under flock) |
-| **M** | launch-ledger TTL markers (`.flow/launch-ledger/<key>`, 1800s) | liveness (launch->init blind window only) | `launch_ledger.live_keys()` |
+| **M** | launch-ledger TTL markers (`.flow/launch-ledger/<key>`, 1800s) — **RETIRED flow-8by2.5** | liveness (launch->init blind window only) | ~~`launch_ledger.live_keys()`~~ -> `fleet_keys - live_keys` (`_evolve_common.fleet_live_keys` minus the lease-only set) |
 | **R** | open-PR head refs + git branch refs | work-state (PR/branch lifecycle), liveness-adjacent | `_evolve_common.gather_refs()` (`gh pr list` + `git for-each-ref`) |
 | **B** | bead status/labels (Dolt truth via `bd`) | work-state (open/in_progress/closed/deferred/blocked) | `bd ready` / `bd list` / `bd show` |
 | **J** | `~/.claude/jobs/*/state.json` bg-session scan | liveness (session presence; schema-less, no `pid`) | `evolve_session_cleanup._enumerate_jobs()` |
@@ -112,7 +114,7 @@ Synthesized from the `subsumed_by_ledger` analyses across all seven maps.
 
 | Concern | Subsumed by the `.flow/fleet/` ledger | Must remain (and why) |
 |---|---|---|
-| **Launch->init blind window (M)** | `launch_ledger.py` ENTIRELY: add/remove/prune/live_keys become register/dereg/heartbeat-expiry/scan. The blind window collapses because registration is the single atomic act under the fleet flock at launch | — |
+| **Launch->init blind window (M)** | **DONE (flow-8by2.5).** `launch_ledger.py` ENTIRELY: add/remove/prune/live_keys become register/dereg/heartbeat-expiry/scan. The blind window collapses because registration is the single atomic act under the fleet flock at launch | — |
 | **Pre-PR liveness (L-scan)** | `live_run_keys` / `liveness_map` per-key `classify` fan-out over the worktree pool become one ledger lookup; the four-source select union collapses to one flock'd read | The per-ticket run lease **mutex** (`run.lock` under `run.lock.lock`): `session_nonce` identity (run_id is reused from state.json on resume, so two `/flow do` on one ticket are distinguishable only by per-acquire nonce); `boot_id` reboot-clearability (both-non-empty, same-host); the both-non-empty boot/nonce discipline (flow-k8f3/#223). A ledger is a presence registry keyed by ticket, NOT a per-ticket ownership lock |
 | **Jobs-dir scan (J)** | The `_enumerate_jobs` glob, the transcript-mtime idle heuristic, the tempo/state proxies, the intent-regex job->bead map | A **reconcile/orphan-detection fallback** (see child-5 sizing): a run that crashes BEFORE its first register is invisible to a pure ledger but visible as a `~/.claude/jobs/<id>/` dir today. Dropping the scan outright is a regression |
 | **launched_pending tri-state + remove-at-registration** | Folds into the ledger's register/dereg legs (`evolve_drain.py:147-149`, `queue_drain.py:158-162` go away) | — |
