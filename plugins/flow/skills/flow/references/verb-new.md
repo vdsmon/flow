@@ -76,12 +76,13 @@ print((tk.get(b,{}) or {}).get("assignee_account_id","") or "")')
 
 ## Step 5: Create + post-create ops
 
-Create (pass `--parent` only if an epic was chosen; pass `--assignee` only if `$SELF` is non-empty):
+Create (pass `--parent` only if an epic was chosen; pass `--assignee` only if `$SELF` is non-empty). Build the optional flags as an array — the conditional-expansion form `${VAR:+--flag "$VAR"}` expands to ONE token under zsh, and argparse rejects the fused `--flag value` word:
 
 ```bash
-python3 ${CLAUDE_SKILL_DIR}/scripts/tracker_cli.py --workspace-root . create \
-  --summary "<summary>" --description "<description>" --type "<type>" \
-  ${EPIC:+--parent "$EPIC"} ${SELF:+--assignee "$SELF"}
+_create_args=(--summary "<summary>" --description "<description>" --type "<type>")
+[ -n "$EPIC" ] && _create_args+=(--parent "$EPIC")
+[ -n "$SELF" ] && _create_args+=(--assignee "$SELF")
+python3 ${CLAUDE_SKILL_DIR}/scripts/tracker_cli.py --workspace-root . create "${_create_args[@]}"
 ```
 
 `create` writes JSON `{"key": "<newkey>"}` to stdout; parse `.key`. Non-zero exit → surface stderr and stop.

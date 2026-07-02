@@ -23,10 +23,12 @@
 #   reference_doc                 - path relative to this skill dir; loaded by inline handler
 #   roles                         - open-ended list round-tripped into the dispatch descriptor
 #                                   (dispatch_stage.py); the dispatcher does NOT enforce them, a
-#                                   handler or pre-handler hook keys off a role string. Live reader:
-#                                   records_diff_baseline (implement pre-handler hook, SKILL.md).
-#                                   reflect_anchor / ship_observer are declared on the reflect stage
-#                                   but have no reader yet: reserved, round-tripped unread.
+#                                   handler or pre-handler hook keys off a role string. Live readers:
+#                                   records_diff_baseline (implement pre-handler hook, SKILL.md) and
+#                                   work (the do-loop's model_resolve.py work-stage model pin,
+#                                   SKILL.md step d). reflect_anchor / ship_observer are declared on
+#                                   the reflect stage but have no reader yet: reserved, round-tripped
+#                                   unread.
 #
 # Timeouts for plan / code_review / e2e / commit / create_pr / review_loop
 # are inferred defaults (the plan only specified ticket, implement, reflect explicitly).

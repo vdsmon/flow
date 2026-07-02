@@ -74,7 +74,10 @@ true
 - Exit 1 **with a `holder` block in the stdout JSON** → the ticket is locked by a live run.
   This now also fires when a SECOND `/flow do` re-inits a live lease without the owner's `session_nonce` (the bug flow-8i6l closed: run_id alone, read from `state.json`, no longer re-acquires a live lease). A genuine same-session resume passes `--session-nonce`; a crash-resume waits for the lease to expire (then init resumes via the expired-owner path) or uses `/flow recover`.
   Surface the holder JSON and the hint `/flow recover <ticket>`, then abort.
-  (Exit 1 *without* a `holder` block is a validate-workspace failure: surface stderr violations and abort, same as the step-2 hard gate.)
+- Exit 1 *without* a `holder` block — distinguish by the payload:
+  - `violations` present → a validate-workspace failure: surface the violations and abort, same as the step-2 hard gate.
+  - bare `error` `unrecoverable state.json at <dir>` → corrupt `state.json` with no usable `.bak`; minting a fresh all-pending run over it would replay a shipped ticket, so init refuses. Surface the error + the `/flow recover <ticket>` hint and abort — WITHOUT `release` (nothing was acquired). `init --force` is the operator-explicit reset: it replaces the unrecoverable state, and the exit-0 payload then carries `state_unrecoverable_replaced: true`.
+  - `error` `corrupt run.lock` (with a `detail`) → lease ownership cannot be confirmed; do NOT auto-clear. Surface the detail + the payload's recover hint (`/flow recover <ticket>`, human-driven takeover, which quarantines the corrupt lock) and abort.
 - Exit 5 → a stale lease from a dead run holds the ticket.
   Surface the holder JSON and the hint `/flow recover <ticket>`, then abort.
 - Do NOT auto-clear a lease on exit 1 or 5.

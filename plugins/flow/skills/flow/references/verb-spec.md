@@ -26,6 +26,7 @@ Everything from the bootstrap onward is shared by the self-approve branch; the d
    **Recall against the ticket text + your intent (plan-phase, read-only).** This is the SOLE recall now (SessionStart no longer recalls). Write the ticket title+body to a temp file, PREPENDED with a short (1–2 line) intent preamble naming the form / domain / component you are about to touch and the shape of the change (the risk), then query recall keyed on the whole file — a pure READ, legal in plan mode, NO `--record-pending` here:
    ```bash
    QF="${TMPDIR:-/tmp}/flow-recall-$KEY.txt"   # intent preamble + ticket title + body (Write tool)
+   B=$(git branch --show-current)
    python3 ${CLAUDE_SKILL_DIR}/scripts/recall.py --query-file "$QF" \
      --semantic --top-n 30 --branch "$B" --workspace-root .
    ```
