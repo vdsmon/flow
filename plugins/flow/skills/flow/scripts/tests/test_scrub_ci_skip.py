@@ -75,6 +75,53 @@ def test_clean_input_unchanged() -> None:
     assert out == text
 
 
+# ─── skip-checks trailer ─────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("raw", ["skip-checks:true", "skip-checks: true", "Skip-Checks: True"])
+def test_skip_checks_trailer_neutralized(raw: str) -> None:
+    out, n = scrub_ci_skip.scrub(f"fix: thing\n\nbody\n\n\n{raw}\n")
+    assert n == 1
+    assert raw not in out
+    assert "skip-checks:" not in out.lower()
+    assert "skip-checks " in out.lower()
+
+
+def test_skip_checks_mid_sentence_untouched() -> None:
+    text = "the docs mention skip-checks: true as a trailer form\n"
+    out, n = scrub_ci_skip.scrub(text)
+    assert n == 0
+    assert out == text
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "skip-checks: false\n",
+        "  skip-checks: true\n",
+        "skip-checks true\n",
+    ],
+)
+def test_skip_checks_near_misses_untouched(text: str) -> None:
+    out, n = scrub_ci_skip.scrub(text)
+    assert n == 0
+    assert out == text
+
+
+def test_skip_checks_idempotent() -> None:
+    once, _ = scrub_ci_skip.scrub("fix: x\n\n\nskip-checks: true\n")
+    twice, n = scrub_ci_skip.scrub(once)
+    assert n == 0
+    assert twice == once
+
+
+def test_bracketed_and_trailer_both_counted() -> None:
+    out, n = scrub_ci_skip.scrub("fix: x [skip ci]\n\nbody\n\n\nskip-checks:true\n")
+    assert n == 2
+    assert "[skip ci]" not in out
+    assert "skip-checks:true" not in out
+
+
 # ─── CLI ─────────────────────────────────────────────────────────────────────
 
 

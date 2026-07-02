@@ -84,8 +84,8 @@ def cli_main(argv: list[str]) -> int:
         args = _parse_args(argv)
     except SystemExit as exc:
         return int(exc.code) if isinstance(exc.code, int) else 1
-    files = [f.strip() for f in args.files.split(",")] if args.files else None
-    covers = [c.strip() for c in args.covers.split(",")] if args.covers else None
+    files = [f.strip() for f in args.files.split(",") if f.strip()] if args.files else None
+    covers = [c.strip() for c in args.covers.split(",") if c.strip()] if args.covers else None
     try:
         out = compose(
             ticket=args.ticket,

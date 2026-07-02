@@ -215,6 +215,54 @@ def test_update_preserves_native_datetime(tmp_path: Path) -> None:
     assert again["started_at"] == first["started_at"]
 
 
+def test_update_preserves_float(tmp_path: Path) -> None:
+    p = tmp_path / "FT-24.md"
+    p.write_text("+++\npriority = 1.5\n+++\n", encoding="utf-8")
+    ticket_frontmatter.update(p, {"status": "done"})
+    data = ticket_frontmatter.read(p)
+    # an unrelated --set must not re-emit the float as the string "1.5".
+    assert isinstance(data["priority"], float)
+    assert data["priority"] == 1.5
+
+
+def test_update_preserves_float_inf(tmp_path: Path) -> None:
+    p = tmp_path / "FT-25.md"
+    p.write_text("+++\nbudget = inf\n+++\n", encoding="utf-8")
+    ticket_frontmatter.update(p, {"status": "done"})
+    data = ticket_frontmatter.read(p)
+    assert data["budget"] == float("inf")
+
+
+def test_update_preserves_local_time(tmp_path: Path) -> None:
+    p = tmp_path / "FT-26.md"
+    p.write_text("+++\nat = 07:32:00\n+++\n", encoding="utf-8")
+    ticket_frontmatter.update(p, {"status": "done"})
+    data = ticket_frontmatter.read(p)
+    assert data["at"] == datetime.time(7, 32)
+
+
+def test_update_table_value_refuses_untouched(tmp_path: Path) -> None:
+    # a hand-edited [table] parses fine but the emitter cannot round-trip it;
+    # it must refuse loudly (exit 2 path) before the write, never re-emit the
+    # dict as its Python-repr string.
+    p = tmp_path / "FT-27.md"
+    original = '+++\nticket = "FT-27"\n[meta]\nx = 1\n+++\nbody\n'
+    p.write_text(original, encoding="utf-8")
+    with pytest.raises(ticket_frontmatter._SchemaInvalid, match="cannot emit"):
+        ticket_frontmatter.update(p, {"status": "done"})
+    assert p.read_text(encoding="utf-8") == original
+
+
+def test_cli_update_table_value_returns_2(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    p = tmp_path / "FT-28.md"
+    p.write_text("+++\nmeta = {x = 1}\n+++\n", encoding="utf-8")
+    rc = ticket_frontmatter.cli_main(["update", str(p), "--set", "status=done"])
+    assert rc == 2
+    assert "cannot emit" in capsys.readouterr().err
+
+
 def test_update_malformed_existing_raises(tmp_path: Path) -> None:
     p = tmp_path / "FT-13.md"
     p.write_text("+++\nbad = = toml\n+++\n", encoding="utf-8")
