@@ -4,8 +4,9 @@ Library + thin CLI. Stdlib-only.
 
 Backend-aware:
   - jira:  matches `<PROJECT_KEY>-\\d+` against branch name.
-  - beads: matches `<prefix>-[0-9a-z]{4,}` (mirrors `_BD_ID_RE` in
-           `tracker_beads.py`).
+  - beads: matches `<prefix>-[0-9a-z]{3,}` plus any dotted child suffix
+           (`.N`), greedy so a child-bead branch (`feat/flow-kx17.2-...`)
+           resolves to `flow-kx17.2`, never its parent `flow-kx17`.
 
 Exit codes:
   0 = match (key on stdout).
@@ -79,7 +80,7 @@ def _match_key(branch: str, cfg: _TrackerConfig) -> str | None:
         pattern = re.compile(rf"\b({re.escape(cfg.project_key)}-\d+)\b")
     else:
         assert cfg.prefix is not None
-        pattern = re.compile(rf"\b({re.escape(cfg.prefix)}-[0-9a-z]{{4,}})\b")
+        pattern = re.compile(rf"\b({re.escape(cfg.prefix)}-[0-9a-z]{{3,}}(?:\.\d+)*)\b")
     m = pattern.search(branch)
     return m.group(1) if m else None
 

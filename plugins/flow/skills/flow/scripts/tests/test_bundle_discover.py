@@ -162,6 +162,36 @@ handler_string = "skill:weird:run"
     assert "not a registered flow stage" in result.invalid[0].reason
 
 
+def test_merge_stage_accepted(tmp_path: Path) -> None:
+    # `merge` is registered in stage-registry.toml; a bundle providing it must
+    # not be rejected as an unknown stage.
+    _write_manifest(
+        tmp_path / "auto-merge",
+        """schema_version = 1
+
+[bundle]
+name = "auto-merge"
+description = "Self-merge green PRs"
+
+[skills.merge]
+handler_string = "skill:auto-merge:merge"
+""",
+    )
+    result = bd.discover(roots=[tmp_path])
+    assert result.invalid == []
+    assert result.valid[0].skills[0].stage == "merge"
+
+
+def test_known_stages_match_stage_registry() -> None:
+    # _KNOWN_STAGES hand-copies the registry's closed vocabulary; a stage
+    # registered there but missing here gets its manifests falsely rejected.
+    import tomllib
+
+    registry = Path(bd.__file__).resolve().parent.parent / "stage-registry.toml"
+    data = tomllib.loads(registry.read_text(encoding="utf-8"))
+    assert {s["name"] for s in data["stage"]} == bd._KNOWN_STAGES
+
+
 def test_handler_string_must_start_with_skill_prefix(tmp_path: Path) -> None:
     _write_manifest(
         tmp_path / "broken-handler",

@@ -181,6 +181,19 @@ def test_bootstrap_leaves_workspace_toml_byte_identical_to_main(tmp_path: Path) 
     assert wt_ws.read_bytes() == main_ws.read_bytes()
 
 
+def test_memory_redirect_honors_main_memory_root(tmp_path: Path) -> None:
+    # main initialized with [memory].root (a shared store): the sibling must
+    # point at THAT store, not literally at main/.flow, or every run worktree
+    # writes to a store no main-checkout read ever consults.
+    main = _main_checkout(tmp_path)
+    shared = tmp_path / "shared-flow"
+    ws = main / ".flow" / "workspace.toml"
+    ws.write_text(ws.read_text(encoding="utf-8") + f'root = "{shared}"\n', encoding="utf-8")
+    res = _run(tmp_path, main)
+    sibling = (Path(res["worktree"]) / ".flow" / "memory-root").read_text(encoding="utf-8")
+    assert sibling.strip() == str(shared)
+
+
 def test_prepopulates_commit_frontmatter(tmp_path: Path) -> None:
     main = _main_checkout(tmp_path)
     res = _run(tmp_path, main, commit_type="feat", commit_summary="add the thing")
@@ -728,6 +741,23 @@ def test_lane_hot_label_clamps_explicit_express(tmp_path: Path, monkeypatch) -> 
     assert "lane" not in fm
 
 
+def test_lane_explicit_ignored_under_auto(tmp_path: Path, monkeypatch) -> None:
+    # --lane is interactive-only: an --auto run derives from tier labels (none
+    # here -> full -> unstamped), never from a stray --lane express.
+    main = _main_checkout(tmp_path)
+    _patch_tracker(monkeypatch, _LabelTracker([]))
+    fm = _lane_fm(tmp_path, main, lane="express", planned_files=["src/a.py"], auto=True)
+    assert "lane" not in fm
+
+
+def test_lane_auto_derives_from_tier_label(tmp_path: Path, monkeypatch) -> None:
+    # under --auto the bead's tier label wins over a passed --lane.
+    main = _main_checkout(tmp_path)
+    _patch_tracker(monkeypatch, _LabelTracker(["tier:trivial"]))
+    fm = _lane_fm(tmp_path, main, lane="light", planned_files=["src/a.py"], auto=True)
+    assert fm["lane"] == "express"
+
+
 # ─── planned_files gitignore gate ─────────────────────────────────────────────
 
 
@@ -1255,6 +1285,62 @@ def test_reap_skips_remove_when_lease_goes_live_under_flock(
     assert not any(c[:3] == ["git", "branch", "-D"] for c in calls)
 
 
+def test_reap_refuses_mismatched_ticket_branch_pair(tmp_path: Path) -> None:
+    # --branch of ticket B under --ticket A: the lease gate classifies A's
+    # (absent) run dir inside B's worktree as free and would force-remove B's
+    # LIVE worktree. The pair must refuse outright, touching nothing.
+    wt = tmp_path / "main" / ".flow" / "worktrees" / "feature-FT-2-other"
+    wt.mkdir(parents=True)
+    _seed_live_lease(wt / ".flow" / "runs" / "FT-2")
+    calls: list = []
+    runner = _reap_runner(
+        worktrees=_porcelain([(str(wt), "feature/FT-2-other")]),
+        calls=calls,
+    )
+    receipt = fw.reap_worktree(
+        ticket="FT-1", main_root=tmp_path / "main", branch="feature/FT-2-other", runner=runner
+    )
+    assert receipt["worktree_removed"] is False
+    assert receipt["branch_deleted"] is False
+    assert receipt["skipped"] and "does not belong" in receipt["skipped"]
+    assert not any(c[:4] == ["git", "worktree", "remove", "--force"] for c in calls)
+    assert not any(c[:3] == ["git", "branch", "-D"] for c in calls)
+
+
+def test_reap_mismatched_pair_never_deletes_loose_branch(tmp_path: Path) -> None:
+    # even with no worktree checked out on it, a mismatched --branch is not
+    # this ticket's to delete.
+    calls: list = []
+    runner = _reap_runner(
+        worktrees=_porcelain([(str(tmp_path / "main"), "main")]),
+        calls=calls,
+    )
+    receipt = fw.reap_worktree(
+        ticket="FT-1", main_root=tmp_path / "main", branch="feature/FT-2-other", runner=runner
+    )
+    assert receipt["branch_deleted"] is False
+    assert receipt["skipped"] and "does not belong" in receipt["skipped"]
+    assert not any(c[:3] == ["git", "branch", "-D"] for c in calls)
+
+
+def test_reap_matching_explicit_branch_still_reaps(tmp_path: Path) -> None:
+    # the pairing guard only refuses mismatches; the drain's normal
+    # `reap --ticket <key> --branch feat/<key>-<slug>` call reaps as before.
+    wt = tmp_path / "main" / ".flow" / "worktrees" / "feature-FT-1-thing"
+    wt.mkdir(parents=True)
+    calls: list = []
+    runner = _reap_runner(
+        worktrees=_porcelain([(str(wt), "feature/FT-1-thing")]),
+        calls=calls,
+    )
+    receipt = fw.reap_worktree(
+        ticket="FT-1", main_root=tmp_path / "main", branch="feature/FT-1-thing", runner=runner
+    )
+    assert receipt["worktree_removed"] is True
+    assert receipt["branch_deleted"] is True
+    assert receipt["skipped"] is None
+
+
 def test_reap_cli_prints_receipt(tmp_path: Path, monkeypatch, capsys) -> None:
     calls: list = []
     runner = _reap_runner(
@@ -1463,6 +1549,38 @@ def test_real_decided_with_decision_clears_floor(tmp_path, monkeypatch):
     assert res["ticket"] == "flow-x1"
 
 
+def test_auto_hot_label_empty_planned_refuses(tmp_path, monkeypatch):
+    # the hot label is independent evidence of hotness: an empty --planned-files
+    # must not disable the floor (real decided(): hot label + no decision -> refuse)
+    main = _main_beads(tmp_path)
+    monkeypatch.setattr(
+        triage, "BeadsAdapter", _fake_beads_adapter([{"labels": ["hot"], "comments": []}])
+    )
+    calls: list = []
+    with pytest.raises(fw._ConfigError):
+        _boot(
+            tmp_path,
+            main,
+            base="main",
+            auto=True,
+            planned=[],
+            runner=_fake_runner(main=main, calls=calls),
+        )
+    # refused BEFORE creating the worktree -> no orphan
+    assert not any(c[:3] == ["git", "worktree", "add"] for c in calls)
+    assert not (tmp_path / "wt").exists()
+
+
+def test_auto_non_hot_empty_planned_proceeds(tmp_path, monkeypatch):
+    # the clean path is preserved: empty planned set + no hot label bootstraps.
+    main = _main_beads(tmp_path)
+    monkeypatch.setattr(
+        triage, "BeadsAdapter", _fake_beads_adapter([{"labels": [], "comments": []}])
+    )
+    res = _boot(tmp_path, main, base="main", auto=True, planned=[])
+    assert res["ticket"] == "flow-x1"
+
+
 # ─── canonical per-ticket bootstrap claim (flow-594) ────────────────────────
 # Two concurrent bootstraps of the same ticket must serialize on the claim
 # (a flock under the MAIN checkout's .flow/tickets/), and the loser must
@@ -1495,6 +1613,19 @@ def test_bootstrap_refuses_live_sibling_lease(tmp_path: Path) -> None:
     # refused BEFORE any git mutation: no worktree add, no orphan dir
     assert not any(c[:3] == ["git", "worktree", "add"] for c in calls)
     assert not (tmp_path / "wt").exists()
+
+
+def test_live_sibling_unstick_hint_targets_sibling_worktree(tmp_path: Path) -> None:
+    # recover reads <workspace_root>/.flow/runs/<ticket>; run from the main
+    # checkout it sees an empty run dir (lease free, nothing broken) and the
+    # operator loops back into exit 4. The hint must point INTO the sibling.
+    main = _main_checkout(tmp_path)
+    sib, td = _sibling_ticket_dir(tmp_path)
+    _seed_live_lease(td)
+    runner = _fake_runner(worktree_list=_siblings_porcelain(sib))
+    with pytest.raises(fw._DuplicateClaim) as exc:
+        _run(tmp_path, main, runner=runner)
+    assert f"cd {sib} && /flow recover FT-1" in str(exc.value)
 
 
 def test_cli_duplicate_claim_exits_4(tmp_path: Path, monkeypatch, capsys) -> None:
@@ -1750,6 +1881,22 @@ def test_reseed_when_externally_removed(tmp_path: Path) -> None:
     assert (wt / ".flow" / "memory-root").read_text(encoding="utf-8").strip() == str(
         main.resolve() / ".flow"
     )
+
+
+def test_reseed_memory_redirect_honors_main_memory_root(tmp_path: Path) -> None:
+    # same [memory].root contract as bootstrap: a reseeded revision worktree
+    # must share main's configured store, not fragment into main/.flow.
+    main = _main_checkout(tmp_path)
+    shared = tmp_path / "shared-flow"
+    ws = main / ".flow" / "workspace.toml"
+    ws.write_text(ws.read_text(encoding="utf-8") + f'root = "{shared}"\n', encoding="utf-8")
+    runner = _locate_runner(worktree_list=_porcelain([(str(main), "main")]), calls=[], main=main)
+    result = fw.locate_or_reseed(
+        ticket="FT-1", branch="feature/FT-1-thing", main_root=main, runner=runner
+    )
+    wt = Path(result["worktree"])
+    assert result["reseeded"] is True
+    assert (wt / ".flow" / "memory-root").read_text(encoding="utf-8").strip() == str(shared)
 
 
 def test_locate_or_reseed_cli_locate(tmp_path: Path, monkeypatch, capsys) -> None:
