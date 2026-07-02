@@ -68,8 +68,13 @@ def anchors(text: str) -> set[str]:
     return found
 
 
+def _str_field(entry: dict[str, Any], key: str) -> str:
+    value = entry.get(key)
+    return value if isinstance(value, str) else ""
+
+
 def _entry_anchors(entry: dict[str, Any]) -> set[str]:
-    return anchors(f"{entry.get('body', '')} {entry.get('detail', '')}")
+    return anchors(f"{_str_field(entry, 'body')} {_str_field(entry, 'detail')}")
 
 
 def _lenient_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -90,7 +95,7 @@ def _lenient_jsonl(path: Path) -> list[dict[str, Any]]:
 
 
 def _machinery_entries(knowledge: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [e for e in knowledge if e.get("body", "").startswith(MACHINERY_PREFIX)]
+    return [e for e in knowledge if _str_field(e, "body").startswith(MACHINERY_PREFIX)]
 
 
 def document_frequencies(anchor_sets: list[set[str]]) -> dict[str, int]:
@@ -101,8 +106,20 @@ def document_frequencies(anchor_sets: list[set[str]]) -> dict[str, int]:
     return df
 
 
-def distinctive_anchors(df: dict[str, int]) -> set[str]:
-    return {tok for tok, count in df.items() if DF_LO <= count <= DF_HI}
+def distinctive_anchors(
+    df: dict[str, int], exempt: set[str] | frozenset[str] = frozenset()
+) -> set[str]:
+    """DF band [DF_LO, DF_HI]; anchors in `exempt` skip the ceiling.
+
+    A fix-claimed anchor (one appearing in a MACHINERY entry) is the tracked
+    object itself: high document frequency there is recurrence evidence, not
+    ubiquitous noise, and a raw ceiling would drop the hottest recurring class
+    from the report the moment its DF crossed DF_HI. Only the rarity floor
+    applies to exempt anchors.
+    """
+    return {
+        tok for tok, count in df.items() if count >= DF_LO and (count <= DF_HI or tok in exempt)
+    }
 
 
 def fix_sha(entry: dict[str, Any], workspace_root: Path, namespace: str) -> str | None:
@@ -112,7 +129,7 @@ def fix_sha(entry: dict[str, Any], workspace_root: Path, namespace: str) -> str 
     `evidence.commit_sha` (only 4/83 live bodies carry an inline sha; the
     ship-event fallback is what makes most fixes traceable).
     """
-    match = _INLINE_SHA_RE.search(entry.get("body", ""))
+    match = _INLINE_SHA_RE.search(_str_field(entry, "body"))
     if match:
         return match.group(1)
     path = _memory_paths.ship_event_path(workspace_root, namespace, entry.get("ticket", ""))
@@ -176,7 +193,12 @@ def signature_classes(
         if not fixes_entries or not friction_hits:
             continue
         # ts is Z-suffixed UTC ms ISO8601; lexicographic compare == chronological.
-        earliest_fix_ts = min(m.get("ts", "") for m in fixes_entries)
+        # A ts-less fix cannot anchor a forward join; an empty min would flag
+        # every hit as post-fix.
+        fix_ts_values = [m["ts"] for m in fixes_entries if isinstance(m.get("ts"), str) and m["ts"]]
+        if not fix_ts_values:
+            continue
+        earliest_fix_ts = min(fix_ts_values)
         post_fix = [(f, fa) for f, fa in friction_hits if f.get("ts", "") > earliest_fix_ts]
         if not post_fix:
             continue
@@ -218,7 +240,10 @@ def structural_classes(
         friction_hits = [f for f, fa in friction if anchor in fa]
         if not fixes_entries or not friction_hits:
             continue
-        earliest_fix_ts = min(m.get("ts", "") for m in fixes_entries)
+        fix_ts_values = [m["ts"] for m in fixes_entries if isinstance(m.get("ts"), str) and m["ts"]]
+        if not fix_ts_values:
+            continue
+        earliest_fix_ts = min(fix_ts_values)
         buckets: dict[tuple[str, str], list[dict[str, Any]]] = {}
         for f in friction_hits:
             buckets.setdefault((f.get("stage", ""), f.get("type", "")), []).append(f)
@@ -257,7 +282,10 @@ def analyze(workspace_root: Path, namespace: str) -> dict[str, Any]:
         [anchor_set for _, anchor_set in friction_anchored]
         + [anchor_set for _, anchor_set in machinery_anchored]
     )
-    distinct = distinctive_anchors(df)
+    machinery_tokens: set[str] = set()
+    for _, anchor_set in machinery_anchored:
+        machinery_tokens |= anchor_set
+    distinct = distinctive_anchors(df, machinery_tokens)
 
     return {
         "signature_classes": signature_classes(

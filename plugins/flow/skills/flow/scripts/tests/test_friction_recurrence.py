@@ -88,6 +88,11 @@ def test_df_band_boundaries():
     assert fr.distinctive_anchors(df) == {"b", "d"}
 
 
+def test_exempt_anchor_skips_df_ceiling_not_floor():
+    df = {"hot": 20, "noise": 20, "rare": 1}
+    assert fr.distinctive_anchors(df, {"hot", "rare"}) == {"hot"}
+
+
 # --- keystone contrast: signature unifies what structural fragments ----------
 
 
@@ -211,6 +216,83 @@ def test_structural_drops_dead_bucket_but_signature_keeps_alive_one(tmp_path: Pa
     assert struct[0]["stage"] == "implement"
     assert struct[0]["type"] == "DRIFT"
     assert struct[0]["post_fix_count"] == 1
+
+
+def test_machinery_anchor_survives_df_ceiling_end_to_end(tmp_path: Path):
+    _seed_workspace(tmp_path)
+    machinery = [
+        _machinery(
+            id_="fix-hot",
+            ts="2026-06-01T00:00:00.000Z",
+            ticket="T-hot",
+            body="MACHINERY: hot_class patched. Fix (commit ddddddd).",
+        )
+    ]
+    friction = [
+        _friction(
+            id_=f"f-hot-{i}",
+            ts=f"2026-06-{i + 2:02d}T00:00:00.000Z",
+            body="hot_class fired again; also noise_token present",
+        )
+        for i in range(20)
+    ]
+    _write_jsonl(tmp_path / ".flow" / "demo" / "friction.jsonl", friction)
+    _write_jsonl(tmp_path / ".flow" / "demo" / "knowledge.jsonl", machinery)
+
+    payload = fr.analyze(tmp_path, "demo")
+    sig = [c for c in payload["signature_classes"] if c["anchor"] == "hot_class"]
+    assert len(sig) == 1
+    assert sig[0]["post_fix_count"] == 20
+    # same DF, no MACHINERY claim: the ceiling still drops it
+    assert not any(c["anchor"] == "noise_token" for c in payload["signature_classes"])
+
+
+# --- malformed-field hardening ---------------------------------------------------
+
+
+def test_null_body_line_tolerated(tmp_path: Path):
+    _seed_workspace(tmp_path)
+    machinery = [
+        _machinery(
+            id_="fix-ok",
+            ts="2026-06-01T00:00:00.000Z",
+            ticket="T-ok",
+            body="MACHINERY: guarded_token patched. Fix (commit eeeeeee).",
+        ),
+        {"id": "k-null", "ts": "2026-06-01T00:00:00.000Z", "ticket": "T-null", "body": None},
+    ]
+    friction = [
+        _friction(
+            id_="f-ok",
+            ts="2026-06-02T00:00:00.000Z",
+            body="guarded_token fired again",
+        ),
+        {"id": "f-null", "ts": "2026-06-02T00:00:00.000Z", "body": None},
+    ]
+    _write_jsonl(tmp_path / ".flow" / "demo" / "friction.jsonl", friction)
+    _write_jsonl(tmp_path / ".flow" / "demo" / "knowledge.jsonl", machinery)
+
+    payload = fr.analyze(tmp_path, "demo")
+    sig = [c for c in payload["signature_classes"] if c["anchor"] == "guarded_token"]
+    assert len(sig) == 1
+    assert sig[0]["post_fix_count"] == 1
+
+
+def test_ts_less_fix_cannot_anchor_forward_join(tmp_path: Path):
+    _seed_workspace(tmp_path)
+    machinery = [
+        {"id": "fix-nots", "ticket": "T-nots", "body": "MACHINERY: orphan_token patched."},
+    ]
+    friction = [
+        _friction(id_="f-1", ts="2026-06-02T00:00:00.000Z", body="orphan_token fired"),
+        _friction(id_="f-2", ts="2026-06-03T00:00:00.000Z", body="orphan_token fired again"),
+    ]
+    _write_jsonl(tmp_path / ".flow" / "demo" / "friction.jsonl", friction)
+    _write_jsonl(tmp_path / ".flow" / "demo" / "knowledge.jsonl", machinery)
+
+    payload = fr.analyze(tmp_path, "demo")
+    assert not any(c["anchor"] == "orphan_token" for c in payload["signature_classes"])
+    assert not any(c["anchor"] == "orphan_token" for c in payload["structural_classes"])
 
 
 # --- fix_sha: both evidence branches -------------------------------------------
