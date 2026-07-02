@@ -406,7 +406,7 @@ def assert_lease_still_mine(
         raise LeaseLost(f"run_id mismatch: on-disk {lease.run_id!r} != {run_id!r}")
     if lease.boot_id and current_boot and lease.boot_id != current_boot:
         raise LeaseLost(f"boot_id mismatch: on-disk {lease.boot_id!r} != {current_boot!r}")
-    if hostname is not None and lease.hostname != hostname:
+    if lease.hostname and hostname and lease.hostname != hostname:
         raise LeaseLost(f"hostname mismatch: on-disk {lease.hostname!r} != {hostname!r}")
     if lease.session_nonce and session_nonce and lease.session_nonce != session_nonce:
         raise LeaseLost(

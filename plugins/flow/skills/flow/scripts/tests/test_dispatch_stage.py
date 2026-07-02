@@ -164,6 +164,68 @@ def test_init_resumes_bak_recovered_state(tmp_path: Path, monkeypatch: pytest.Mo
     assert healed["run_id"] == first["run_id"]
 
 
+def _corrupt_state_and_baks(td: Path) -> None:
+    """Make state.json unrecoverable: corrupt it AND every rotated .bak."""
+    for bak in td.glob("state.json.*.bak"):
+        bak.write_text("{ corrupt bak ]", encoding="utf-8")
+    (td / "state.json").write_text("{ this is not valid json ]", encoding="utf-8")
+
+
+def test_init_refuses_unrecoverable_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # flow-k6l6, exit-2 flavor: a completed run releases its lease, state.json
+    # corrupts AND no .bak parses (state.read returns (None, 2)). cmd_init must
+    # fail closed like cmd_next/cmd_finish/cmd_status, NOT mint a fresh
+    # all-pending run that replays the shipped ticket.
+    _write_workspace(tmp_path, stages=["ticket", "plan"], compounding=False)
+    _stub_git_head(monkeypatch)
+    rc, first = ds.cmd_init(tmp_path, "FT-1")
+    assert rc == 0
+    nonce = first["session_nonce"]
+    ds.cmd_next(tmp_path, "FT-1", nonce)
+    ds.cmd_finish(tmp_path, "FT-1", "ticket", "completed", session_nonce=nonce)
+
+    td = tmp_path / ".flow" / "runs" / "FT-1"
+    ds.cmd_release(tmp_path, "FT-1", nonce)
+    assert list(td.glob("state.json.*.bak"))
+    _corrupt_state_and_baks(td)
+
+    rc2, payload = ds.cmd_init(tmp_path, "FT-1")
+    assert rc2 == 1
+    assert payload["error"] == f"unrecoverable state.json at {td}"
+    assert "recover" in payload["hint"]
+    # fail closed: no fresh run minted, no lease acquired; the corrupt file was
+    # quarantined by the read (forensics for /flow recover).
+    assert not (td / "state.json").exists()
+    assert not (td / "run.lock").exists()
+    assert list(td.glob("state.json.quarantine.*"))
+
+
+def test_init_force_replaces_unrecoverable_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # --force stays the operator-explicit reset over an unrecoverable state: a
+    # fresh all-pending run is minted and the payload carries the marker.
+    _write_workspace(tmp_path, stages=["ticket", "plan"], compounding=False)
+    _stub_git_head(monkeypatch)
+    rc, first = ds.cmd_init(tmp_path, "FT-1")
+    assert rc == 0
+    nonce = first["session_nonce"]
+    ds.cmd_next(tmp_path, "FT-1", nonce)
+    ds.cmd_finish(tmp_path, "FT-1", "ticket", "completed", session_nonce=nonce)
+
+    td = tmp_path / ".flow" / "runs" / "FT-1"
+    ds.cmd_release(tmp_path, "FT-1", nonce)
+    _corrupt_state_and_baks(td)
+
+    rc2, payload = ds.cmd_init(tmp_path, "FT-1", force=True)
+    assert rc2 == 0
+    assert payload["resumed"] is False
+    assert payload["run_id"] != first["run_id"]
+    assert payload["state_unrecoverable_replaced"] is True
+    state_data = json.loads((td / "state.json").read_text(encoding="utf-8"))
+    assert state_data["stages"]["ticket"]["status"] == "pending"
+
+
 def test_init_second_run_on_live_lease_is_blocked(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1072,6 +1134,26 @@ def test_next_refresh_lease_lost_returns_7(tmp_path: Path, monkeypatch: pytest.M
     assert data["stages"]["ticket"]["status"] == "pending"
 
 
+def test_next_probes_boot_id_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # boot_id spawns a sysctl subprocess on macOS; cmd_next passes its probe
+    # into the lease guard instead of probing a second time.
+    _write_workspace(tmp_path, stages=["ticket"], compounding=False)
+    _stub_git_head(monkeypatch)
+    ds.cmd_init(tmp_path, "FT-1")
+
+    calls = {"n": 0}
+    real_boot = lease.boot_id
+
+    def counting(*args: Any, **kwargs: Any) -> str:
+        calls["n"] += 1
+        return real_boot(*args, **kwargs)
+
+    monkeypatch.setattr(ds.lease, "boot_id", counting)
+    rc, _ = ds.cmd_next(tmp_path, "FT-1")
+    assert rc == 0
+    assert calls["n"] == 1
+
+
 def test_finish_releases_lease_on_terminal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _write_workspace(tmp_path, stages=["ticket"], handlers={"ticket": "inline"}, compounding=False)
     _stub_git_head(monkeypatch)
@@ -1602,6 +1684,25 @@ def test_finish_corrupt_lock_returns_lease_lost_no_advance(
     state_path = tmp_path / ".flow" / "runs" / "FT-1" / "state.json"
     data = json.loads(state_path.read_text(encoding="utf-8"))
     assert data["stages"]["ticket"]["status"] == "in_progress"
+
+
+def test_release_corrupt_lock_returns_released_false(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # SKILL.md step 5 calls release unconditionally on every exit path (incl.
+    # the exit-7 corrupt-lock break), so a corrupt run.lock must return a clean
+    # released=false, never an uncaught LeaseError traceback. The corrupt lock
+    # survives for the human-driven takeover to quarantine.
+    _write_workspace(tmp_path, stages=["ticket"], handlers={"ticket": "inline"}, compounding=False)
+    _stub_git_head(monkeypatch)
+    ds.cmd_init(tmp_path, "FT-1")
+    lock = _corrupt_lock(tmp_path)
+    rc, payload = ds.cmd_release(tmp_path, "FT-1")
+    assert rc == 0
+    assert payload["released"] is False
+    assert "corrupt run.lock" in payload["detail"]
+    assert lock.exists()
+    assert lock.read_text(encoding="utf-8") == "{not json"
 
 
 def test_cli_next_corrupt_lock_exits_7(

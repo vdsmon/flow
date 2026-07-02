@@ -225,6 +225,29 @@ def test_revise_open_stages_override_honored(
     assert payload["stages"] == ["implement", "commit"]
 
 
+def test_revise_open_rejects_off_pipeline_stages(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # an explicit --stages naming a stage outside ws.stages would seed a subset
+    # cmd_next can never visit (pick_next_pending iterates ws.stages), so the
+    # revision would report done:true with everything still pending. Refuse,
+    # naming the offenders, and seed nothing.
+    stages = ["ticket", "plan", "implement", "commit", "reflect"]
+    _write_workspace(tmp_path, stages=stages)
+    _stub_git_head(monkeypatch)
+    _drive_to_terminal(tmp_path, "FT-1", stages)
+
+    rc, payload = ds.cmd_revise_open(tmp_path, "FT-1", stages=["impelment", "commit"])
+    assert rc == 1
+    assert "impelment" in payload["error"]
+    assert not (tmp_path / ".flow" / "runs" / "FT-1" / "revisions").exists()
+
+    # a valid subset still opens after the refusal (no claim side effects).
+    rc, payload = ds.cmd_revise_open(tmp_path, "FT-1", stages=["implement", "commit"])
+    assert rc == 0
+    assert payload["stages"] == ["implement", "commit"]
+
+
 # ─── concurrency: the revise.claim flock serializes two opens ────────────────
 
 
