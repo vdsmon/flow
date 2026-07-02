@@ -56,6 +56,7 @@ from typing import Any
 import _memory_paths
 import _workspace
 import observe_ship_event
+import recall
 import recall_usage
 from _jsonl import append_quarantine, iter_jsonl
 from _timeutil import iso_z, parse_iso, utcnow_iso
@@ -578,7 +579,7 @@ def compute_corpus_health(
         sidecar = kpath.with_name(f"{kpath.name}.quarantine.{_ts_token()}")
         entries = list(iter_jsonl(kpath, sidecar))
 
-    dead = {e["supersedes"] for e in entries if isinstance(e, dict) and e.get("supersedes")}
+    dead = recall.superseded_ids([e for e in entries if isinstance(e, dict)])
 
     total = len(entries)
     superseded = sum(1 for e in entries if isinstance(e, dict) and e.get("id") in dead)
@@ -1419,10 +1420,15 @@ def _run_corpus_health(
 
 
 def _run_recall_hit_rate(args: argparse.Namespace, since_iso: str, until_iso: str) -> int:
-    if not args.namespace:
-        sys.stderr.write("metric: --namespace is required\n")
-        return 1
     workspace_root = Path(args.workspace_root).resolve()
+    namespace = args.namespace
+    if not namespace:
+        # concrete for the reflect 3f surface step: no placeholder namespace needed.
+        try:
+            namespace = _memory_paths.resolve_namespace(workspace_root)
+        except _memory_paths._MemoryConfigError as exc:
+            sys.stderr.write(f"metric: {exc}\n")
+            return 1
     err = _check_flow_dir(workspace_root)
     if err:
         sys.stderr.write(err)
@@ -1430,7 +1436,7 @@ def _run_recall_hit_rate(args: argparse.Namespace, since_iso: str, until_iso: st
     try:
         result = compute_recall_hit_rate(
             workspace_root,
-            args.namespace,
+            namespace,
             since_iso=since_iso,
             until_iso=until_iso,
         )

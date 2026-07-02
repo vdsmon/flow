@@ -392,6 +392,58 @@ def test_cli_supersedes_threaded(tmp_path: Path, capsys: pytest.CaptureFixture[s
     assert payload["supersedes"] == first["id"]
 
 
+def test_append_list_supersedes_records_list_and_resolves_both(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path)
+    a = memory_append.append(tmp_path, "DECISION", "claim a", "main", "FT-1")
+    b = memory_append.append(tmp_path, "DECISION", "claim b", "main", "FT-1")
+    canonical = memory_append.append(
+        tmp_path, "DECISION", "merged claim", "main", "FT-1", supersedes=[a["id"], b["id"]]
+    )
+    assert canonical["supersedes"] == [a["id"], b["id"]]
+    entries = _read_jsonl(_memory_paths.knowledge_path(tmp_path, "demo"))
+    by_id = {e["id"]: e for e in entries}
+    assert by_id[canonical["id"]]["supersedes"] == [a["id"], b["id"]]
+    assert "supersedes" not in by_id[a["id"]]
+    assert "supersedes" not in by_id[b["id"]]
+
+
+def test_append_list_supersedes_unknown_target_raises_and_no_write(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path)
+    a = memory_append.append(tmp_path, "DECISION", "claim a", "main", "FT-1")
+    kpath = _memory_paths.knowledge_path(tmp_path, "demo")
+    before = kpath.read_text(encoding="utf-8")
+    with pytest.raises(memory_append._UnknownSupersedeTarget):
+        memory_append.append(
+            tmp_path,
+            "DECISION",
+            "merged claim",
+            "main",
+            "FT-1",
+            supersedes=[a["id"], "ffffffffffffffff"],
+        )
+    assert kpath.read_text(encoding="utf-8") == before
+
+
+def test_append_empty_list_supersedes_has_no_key(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path)
+    entry = memory_append.append(tmp_path, "LEARNED", "plain entry", "main", "FT-1", supersedes=[])
+    assert "supersedes" not in entry
+    entries = _read_jsonl(_memory_paths.knowledge_path(tmp_path, "demo"))
+    assert "supersedes" not in entries[0]
+
+
+def test_append_single_string_supersedes_byte_identical(tmp_path: Path) -> None:
+    # regression: the str path must serialize the same scalar shape as before
+    # list-valued supersedes was introduced.
+    _seed_workspace(tmp_path)
+    first = memory_append.append(tmp_path, "LEARNED", "v1", "main", "FT-1")
+    second = memory_append.append(tmp_path, "LEARNED", "v2", "main", "FT-1", supersedes=first["id"])
+    entries = _read_jsonl(_memory_paths.knowledge_path(tmp_path, "demo"))
+    by_id = {e["id"]: e for e in entries}
+    assert by_id[second["id"]]["supersedes"] == first["id"]
+    assert isinstance(by_id[second["id"]]["supersedes"], str)
+
+
 def test_cli_missing_workspace_returns_4(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

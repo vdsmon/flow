@@ -193,6 +193,12 @@ The taxonomy is closed:
    ```
    SWALLOW any error. A no-op (nothing shelled) when semantic is off, nothing was written this run, or the sidecar's model != the configured model (the post-swap reindex hazard — never compares mismatched-model vectors).
 
+3f. **Surface recall precision (best-effort).** Print the running recall-hit-rate so the human-facing reflect output carries the compounding-memory signal, not just this run's writes:
+   ```bash
+   ${CLAUDE_SKILL_DIR}/scripts/metric.py recall-hit-rate --workspace-root .
+   ```
+   `--namespace` is omitted deliberately; the command auto-resolves it from `workspace.toml`. Echo one line from the result: `recall-hit-rate: <hit_rate> (<used>/<surfaced>, <misses> misses)`. SWALLOW any error — this is observability, never a gate.
+
 4. **Zero novel signal path**: if you genuinely have nothing to append, emit exactly:
    ```
    no novel signal

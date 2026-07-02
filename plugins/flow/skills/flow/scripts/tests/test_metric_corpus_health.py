@@ -144,6 +144,29 @@ def test_superseded_decision_excluded(tmp_path: Path) -> None:
     assert old["id"] == "new_dec"  # the only live decision
 
 
+def test_list_valued_tombstone_counts_every_member(tmp_path: Path) -> None:
+    # regression: an inline `{e["supersedes"] for e in entries ...}` set-comp used
+    # to raise TypeError: unhashable type: list on a list-valued tombstone.
+    _seed_workspace(tmp_path)
+    _write_knowledge(
+        tmp_path,
+        [
+            {"id": "a", "ts": "2026-05-01T00:00:00Z", "type": "DECISION"},
+            {"id": "b", "ts": "2026-05-02T00:00:00Z", "type": "DECISION"},
+            {
+                "id": "canon",
+                "ts": "2026-06-02T00:00:00Z",
+                "type": "DECISION",
+                "supersedes": ["a", "b"],
+            },
+        ],
+    )
+    result = _compute(tmp_path)
+    assert result["total_entries"] == 3
+    assert result["superseded_entries"] == 2
+    assert result["live_entries"] == 1
+
+
 def test_missing_file_zeros(tmp_path: Path) -> None:
     _seed_workspace(tmp_path)
     result = _compute(tmp_path)
@@ -223,6 +246,24 @@ def test_cli_no_flow_dir(tmp_path: Path, capsys) -> None:
     )
     assert rc == 1
     assert "no .flow" in capsys.readouterr().err
+
+
+def test_cli_recall_hit_rate_autoresolves_namespace(tmp_path: Path, capsys) -> None:
+    _seed_workspace(tmp_path)
+    rc = metric.cli_main(
+        [
+            "recall-hit-rate",
+            "--workspace-root",
+            str(tmp_path),
+            "--since",
+            "2026-06-01",
+            "--until",
+            "2026-06-08",
+        ]
+    )
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert "namespace is required" not in err
 
 
 def test_passthrough_from_recall(tmp_path: Path, capsys) -> None:
