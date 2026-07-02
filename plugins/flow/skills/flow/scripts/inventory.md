@@ -191,6 +191,7 @@ Pluggable PR-host seam (`forge.py` Protocol + `forge_cli.py` + `forge_github.py`
 | `open_pr` / `open-pr` | `gh pr create --base --head --title --body [--draft]` | `bkt api .../pullrequests -X POST -d {title,source,destination,draft,description}` |
 | `ci_rollup` / `ci-rollup` | `gh pr view PR --json statusCheckRollup` (green = non-empty + every check COMPLETED-SUCCESS) | `bkt pr checks PR` → Pipeline line state (SUCCESSFUL→green, INPROGRESS→pending, FAILED/STOPPED/ERROR→failed) |
 | `review_threads` / `review-threads` | `gh api graphql` — unresolved threads, normalized (drops resolved) | CodeRabbit actionable inline findings via paginated `.../comments`, unresolved only |
+| `bot_review_present` / `review-status` | **NotSupported** (no review bot on the GitHub self-target; degrades to `{"supported": false}`) | `bkt pr checks` CodeRabbit line → true on any terminal state (SUCCESSFUL/FAILED/STOPPED/ERROR = the review bot has finished); the mandatory pre-thread-poll gate in `stage-review_loop.md` §3 |
 | `post_reply` / `post-reply` | `gh api graphql addPullRequestReviewThreadReply` | `bkt api .../comments -X POST -d {content.raw, parent.id}` |
 | `resolve_thread` / `resolve-thread` | `gh api graphql resolveReviewThread`; returns bool `isResolved` | `POST .../comments/CID/resolve` then re-fetch + verify `.resolution != null` |
 | `mark_ready` / `mark-ready` | `gh pr ready PR` | `bkt api .../pullrequests/PR -X PUT -d {draft:false}` |
@@ -198,7 +199,7 @@ Pluggable PR-host seam (`forge.py` Protocol + `forge_cli.py` + `forge_github.py`
 | `delete_branch` / `delete-branch` | `git push origin --delete B` | `git push origin --delete B` |
 | `set_default_reviewers` (no `forge_cli` subcommand; `create_pr` calls the adapter directly) | **NotSupported** (solo repo, CODEOWNERS covers reviewers) | `GET 2.0/user` (resolve author) + `GET .../default-reviewers`, drop author by `account_id`, `PUT .../pullrequests/PR -d {reviewers:[{uuid}...]}` |
 
-Cap-gated ops (`review-threads`/`post-reply`/`resolve-thread`/`mark-ready`/`delete-branch`) degrade on `NotSupported` to `{"supported": false}` exit 0. Exit codes: 0 ok / 1 transient forge error / 2 config invalid (incl. no `[forge]`) / 3 bad args.
+Cap-gated ops (`review-threads`/`review-status`/`post-reply`/`resolve-thread`/`mark-ready`/`delete-branch`) degrade on `NotSupported` to `{"supported": false}` exit 0. Exit codes: 0 ok / 1 transient forge error / 2 config invalid (incl. no `[forge]`) or malformed argv (argparse) / 3 adapter-rejected argument value.
 
 ### Bitbucket comment-resolve gotchas (ported from ship-it; do NOT re-derive)
 
@@ -586,7 +587,7 @@ Resolves ticket key from current git branch.
 
 | Subcommand | Flags | Exits | Notes |
 |------------|-------|-------|-------|
-| (default)  | `--workspace-root <dir>` `--cwd <dir>` `[--branch <name>]` | 0=match, 1=env-error, 3=no-match | Backend-aware: jira regex `<PROJECT_KEY>-\d+`; beads regex `<prefix>-[0-9a-z]{4,}` (mirrors `_BD_ID_RE`). `--branch` resolves from an explicit branch (no git call), the PR->ticket enabler for `/flow revise <pr#>`; absent = current branch (unchanged). |
+| (default)  | `--workspace-root <dir>` `--cwd <dir>` `[--branch <name>]` | 0=match, 1=env-error, 3=no-match | Backend-aware: jira regex `<PROJECT_KEY>-\d+`; beads regex `<prefix>-[0-9a-z]{3,}(\.\d+)*` (dotted child keys resolve too). `--branch` resolves from an explicit branch (no git call), the PR->ticket enabler for `/flow revise <pr#>`; absent = current branch (unchanged). |
 
 ### `ticket_frontmatter.py`
 
@@ -627,9 +628,8 @@ Git diff capture for implement / commit / reflect stages.
 | `since` | `--ref <git-ref> --cwd <dir>` | 0=ok, 2=git-error | `{files_touched, insertions, deletions, binary}` JSON. |
 | `since-stage` | `--stage <name> --ticket <key> --ticket-dir <dir> --cwd <dir>` | 0=ok, 1=missing-state, 2=git-error | Reads `state.json` for `stages.<name>.started_at_sha`, delegates to `since`. |
 | `record-baseline` | `--stage <name> --ticket <key> --ticket-dir <dir> [--files <csv>] [--capture-blobs] --cwd <dir>` | 0=ok, 2=git-error | Writes `<ticket-dir>/baseline.json` with `{stage, head_sha, planned_files, blobs}`. |
-| `capture-implement-diff` | `--ticket <key> --ticket-dir <dir> --cwd <dir>` | 0=ok, 1=missing-baseline, 2=git-error | Writes `<ticket-dir>/implement.diff` via `git diff --binary --raw`. |
-
-### `compose_commit.py`
+| `capture-implement-diff` | `--ticket <key> --ticket-dir <dir> --cwd <dir>` | 0=ok, 1=missing-baseline / gitignored planned file, 2=git-error | Writes `<ticket-dir>/implement.diff` via `git diff --binary --raw`. |
+| `check-ownership` | `--ticket <key> --ticket-dir <dir> --cwd <dir>` | 0=ok, 3=ownership violation (unowned paths), 1=missing/malformed baseline, 2=git-error | `{ok, planned_files, changed, unowned_changes}` JSON. Branch-wide: scans the dirty working tree AND the committed delta `baseline.head_sha..HEAD`, so a rogue mid-implement commit is seen too. Wired as stage-commit step 2b. |
 
 Skeleton conventional-commit emitter.
 Deterministic header; body is a template the LLM fills in.
@@ -641,8 +641,9 @@ Deterministic header; body is a template the LLM fills in.
 | `--summary <s>` | One-line subject (non-empty). |
 | `--scope <s>` | Optional. With scope: `type(scope): summary`. Without: `type: summary`. |
 | `--files <csv>` | Optional list of files; emits a `files:` block. |
+| `--covers <csv>` | Optional sibling tickets co-delivered by this run; emits one `Closes <KEY>` trailer per cover. |
 
-Exit 0=ok, 1=invalid type or missing required arg.
+Exit 0=ok, 1=empty/whitespace `--summary` or `--ticket`, 2=invalid `--type` or missing required flag (argparse usage error).
 
 ### `machinery_edit.py`
 
@@ -663,10 +664,11 @@ Exit 0=applied or already_applied (idempotent), 1=usage/IO error, 2=refused (out
    on hand-edit trigger read-side quarantine; write-side aborts with exit 2.
 2. **Content-ownership check on commit — RESOLVED (v0.25.18).** `diff_extract
    check-ownership` is now wired into the `commit` stage
-   (`references/stage-commit.md`): it refuses a working tree with changes outside
-   the reconciled `planned_files`, fail-safe (a clean exit-3 refusal, never a
-   silent commit). Filename-level; a hunk-level ownership check stays a deeper
-   future refinement.
+   (`references/stage-commit.md`): it refuses changes outside the reconciled
+   `planned_files` across the whole branch delta — the dirty working tree AND
+   commits since `baseline.head_sha` — fail-safe (a clean exit-3 refusal, never
+   a silent commit). Filename-level; a hunk-level ownership check stays a
+   deeper future refinement.
 3. **lint-ticket `required_fields`** — only 3 stages get non-empty lists. Other
    stages get universal-only.
 4. **No retry knob** for ticket-frontmatter lock contention — hard-coded 3×1s.
@@ -704,10 +706,12 @@ Idempotency key: `sha256(namespace + ticket + type + normalized_body)[:16]` wher
 | `--branch` | Branch name. |
 | `--ticket` | Ticket key. |
 | `--id` | Override the computed id (for ship-event-derived entries). |
+| `--supersedes` | Optional id of the live entry this one replaces (tombstone pointer, metadata only — never a hash input); the target must exist in `knowledge.jsonl`. |
 | `--workspace-root` | Default `.`. |
 
 Exit codes: 0=appended, 1=duplicate id (no-op), 2=lock contention,
-3=invalid type, 4=I/O error / workspace config error.
+3=invalid type, 4=I/O error / workspace config error, 5=unknown `--supersedes`
+target id.
 
 Locking: `fcntl.flock(LOCK_EX | LOCK_NB)` on `knowledge.jsonl.lock`, retry 3×1s.
 Sidecar quarantine: malformed lines appended to `knowledge.jsonl.quarantine.<ts>` (one per invocation); main file untouched.
@@ -903,6 +907,8 @@ Atomic + crash-safe.
 | `--run-id` | 16-hex run_id from caller. Injected as `observed_by_run_id`. |
 | `--arm` | Experiment lane `{flow, control}`. Default `flow`. Stamped as `arm`. |
 | `--tier` | Free-form tier label captured at ship time. Default `""`. Stamped as `tier`. |
+| `--acceptance-invariant` | Acceptance invariant captured at ship time. Default `""`. Stamped as `acceptance_invariant`. |
+| `--lane` | Verification lane the run took (`express`\|`light`\|`full`). Default `""`. Stamped as `lane`. |
 | `--workspace-root` | Default `.`. |
 
 Two-phase write:
@@ -914,8 +920,9 @@ Two-phase write:
    `superseded_by_dupe: false`. Exit 2.
 
 Script-owned top-level keys (rejected as `--evidence-json` inputs): `observed_at`,
-`observed_by_run_id`, `flow_attribution`, `arm`, `tier`, `plugin_version`
-(self-read from `plugins/flow/.claude-plugin/plugin.json`, `""` on any failure).
+`observed_by_run_id`, `flow_attribution`, `arm`, `tier`, `acceptance_invariant`,
+`lane`, `plugin_version` (self-read from
+`plugins/flow/.claude-plugin/plugin.json`, `""` on any failure).
 
 On non-EEXIST I/O error: write intent log to `<ticket>.json.quarantine-intent.<ts>.json` (best-effort) BEFORE re-raising.
 `/flow recover` in phase 8c replays the intent log.
@@ -956,7 +963,7 @@ Reads `.flow/workspace.toml` `[tracker]` block, flattens the per-backend sub-blo
 | `get` | `--key FT-1` | `tracker.get(key)` → JSON |
 | `list-assigned` | `[--filter open]` | `tracker.list_assigned()` → array |
 | `state` | `--key FT-1` | `tracker.state(key)` → JSON |
-| `transition` | `--key FT-1 --to-state in_progress [--field k=v ...]` | Looks up transition id by `to_normalized_state` / `to_state` / `name` (any match). Fields k=v pairs string-only in mvp. |
+| `transition` | `--key FT-1 --to-state in_progress [--field k=v ...] [--enqueue-on-transient]` | Looks up transition id by `to_normalized_state` / `to_state` / `name` (any match). Fields k=v pairs string-only in mvp. `--enqueue-on-transient`: on a transient failure (exit 1), durably queue the transition to `.flow/pending-mutations.jsonl` for `/flow sync`. |
 | `comment` | `--key FT-1 --text "..."` | Wraps body as `{"body": text, "fmt": "md"}` (Content TypedDict: fmt in {md, adf, plain}). |
 | `create` | `--summary "..." --description "..." --type task [--parent K] [--label L ...] [--assignee A]` | `tracker.create(...)` → `{"key": new_key}` JSON. |
 | `is-shipped` | `--key FT-1` | `tracker.is_shipped(key)` → JSON. |
