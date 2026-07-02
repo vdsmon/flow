@@ -2,9 +2,10 @@
 
 Library + thin CLI. Stdlib-only. Imports `state` + `validate_workspace`.
 
-Subcommands: `init`, `next`, `advance`, `finish`, `release`, `status`. The dispatcher does NOT
-invoke handlers itself; it reads/writes state.json and emits a handler-
-descriptor JSON for the SKILL.md prose layer to act on.
+Subcommands: `init`, `next`, `advance`, `finish`, `release`, `status`,
+`revise-open`. The dispatcher does NOT invoke handlers itself; it reads/writes
+state.json and emits a handler-descriptor JSON for the SKILL.md prose layer to
+act on.
 
 Lifecycle: pending → in_progress (via `next`) → completed | failed (via
 `finish`).
@@ -15,8 +16,11 @@ HARD GATE: validate_workspace.validate() runs on every `init` and every
 Exit codes:
     0 = ok
     1 = generic error / validate-workspace failure / state malformed /
-        ticket locked by a live run / config-version drift mid-run
+        unrecoverable state.json / ticket locked by a live run /
+        config-version drift mid-run
     2 = no such ticket dir / not yet initialized
+    3 = original run not terminal (revise-open)
+    4 = a revision is already live (revise-open)
     5 = stale foreign lease (needs /flow recover --takeover)
     7 = lost lease (another run took over)
 """
@@ -178,6 +182,16 @@ def cmd_init(
     # valid state is present (resume AND --force reset stay the same logical run),
     # so the lease sees us as the owner rather than a foreign run.
     existing, exit_code = state.read(td)
+    # exit_code 2 = state.read quarantined a corrupt state.json and no .bak
+    # parses. Minting a fresh all-pending run over it would replay a shipped
+    # ticket (the exit-2 flavor of flow-k6l6), so refuse like
+    # cmd_next/cmd_finish/cmd_status. --force stays the operator-explicit reset
+    # and stamps a marker below.
+    if exit_code == 2 and not force:
+        return 1, {
+            "error": f"unrecoverable state.json at {td}",
+            "hint": f"/flow recover {ticket}",
+        }
     # exit_code 1 = state.read quarantined a corrupt state.json and restored a
     # valid run from .bak (rewriting it to disk); treat it as valid-for-resume,
     # else a fresh run_id + state.init below would clobber the recovered history
@@ -185,7 +199,11 @@ def cmd_init(
     have_valid = existing is not None and exit_code in (0, 1)
     resuming = have_valid and not force
     run_id = existing.run_id if have_valid else secrets.token_hex(8)
-    recovery = {"state_recovered_from_backup": True} if exit_code == 1 else {}
+    recovery: dict[str, Any] = {}
+    if exit_code == 1:
+        recovery = {"state_recovered_from_backup": True}
+    elif exit_code == 2:
+        recovery = {"state_unrecoverable_replaced": True}
 
     # session_nonce is the per-session lease component run_id cannot supply: a
     # caller presenting the live owner's nonce re-acquires; one without it (a
@@ -351,6 +369,16 @@ def cmd_revise_open(
         return 3, {"error": "original run not terminal", "hint": "/flow do or /flow recover"}
 
     if stages is not None:
+        # cmd_next picks via pick_next_pending over ws.stages, so a seeded stage
+        # outside the pipeline is never visited and the revision would report
+        # done immediately with everything still pending. Execution order also
+        # follows ws.stages, not this list's order.
+        unknown = [s for s in stages if s not in ws.stages]
+        if unknown:
+            return 1, {
+                "error": "revision --stages not in the workspace pipeline: " + ", ".join(unknown),
+                "hint": "pipeline stages: " + ", ".join(ws.stages),
+            }
         subset = stages
     else:
         default = set(_REVISION_DEFAULT_STAGES)
@@ -447,7 +475,11 @@ def _gate_drift(
 
 
 def _guard_lease_ownership(
-    td: Path, run_id: str, session_nonce: str | None = None
+    td: Path,
+    run_id: str,
+    session_nonce: str | None = None,
+    current_boot: str | None = None,
+    hostname: str | None = None,
 ) -> tuple[int, dict[str, Any]] | None:
     """Confirm an existing lease is still ours. Returns an error tuple, or None if ok.
 
@@ -455,15 +487,17 @@ def _guard_lease_ownership(
     LeaseLost means another run took over (a rotated session_nonce, a changed
     run_id/boot/host, or a gone lock); a bare LeaseError means a corrupt
     run.lock we cannot read, so ownership is unconfirmable and the caller must
-    stop before mutating state.
+    stop before mutating state. current_boot/hostname default to probing when
+    None; cmd_next passes its precomputed pair so the hot path pays one
+    boot_id probe (a sysctl subprocess on macOS) instead of two.
     """
     try:
         if lease.read_lease(td) is not None:
             lease.assert_lease_still_mine(
                 td,
                 run_id,
-                current_boot=lease.boot_id(),
-                hostname=socket.gethostname(),
+                current_boot=lease.boot_id() if current_boot is None else current_boot,
+                hostname=socket.gethostname() if hostname is None else hostname,
                 session_nonce=session_nonce,
             )
     except lease.LeaseLost as exc:
@@ -592,7 +626,7 @@ def cmd_next(
     # Lease: if one exists it must still be ours (detects a takeover). A run with
     # no lease (legacy / direct test call) proceeds without one.
     boot, host = lease.boot_id(), socket.gethostname()
-    guard = _guard_lease_ownership(td, ts.run_id, session_nonce)
+    guard = _guard_lease_ownership(td, ts.run_id, session_nonce, current_boot=boot, hostname=host)
     if guard is not None:
         return guard
 
@@ -837,7 +871,13 @@ def cmd_release(
     ts, _ = state.read(td)
     released = False
     if ts is not None:
-        released = lease.release(td, ts.run_id, session_nonce)
+        try:
+            released = lease.release(td, ts.run_id, session_nonce)
+        except lease.LeaseError as exc:
+            # SKILL.md step 5 calls release unconditionally on every exit path,
+            # so a corrupt run.lock must yield released=false, not a traceback.
+            # The corrupt lock stays for /flow recover --takeover to quarantine.
+            return 0, {"ticket": ticket, "released": False, "detail": str(exc)}
     return 0, {"ticket": ticket, "released": released}
 
 
@@ -878,7 +918,8 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     p_revise.add_argument(
         "--stages",
         default=None,
-        help="comma-separated stage subset for the revision (default: the built-in "
+        help="comma-separated stage subset for the revision; each must be a workspace "
+        "pipeline stage and execution follows the pipeline order (default: the built-in "
         "subset intersected with the workspace's stages)",
     )
 

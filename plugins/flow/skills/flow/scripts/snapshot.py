@@ -37,6 +37,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import subprocess
 import sys
 import tomllib
 from pathlib import Path
@@ -123,6 +124,13 @@ def _tree_hash(plugin_root: Path) -> str:
 _PROTECTED_BRANCHES = frozenset({"main", "master", "dev", "develop"})
 
 
+def _git_text(args: list[str], cwd: Path) -> str:
+    res = subprocess.run(["git", *args], cwd=str(cwd), capture_output=True, text=True, timeout=30)
+    if res.returncode != 0:
+        raise OSError(res.stderr.strip() or "git failed")
+    return res.stdout
+
+
 def _resolve_engine_root(skill_root: Path) -> tuple[Path, Path] | None:
     """Resolve the MAIN-checkout engine root for the active engine component.
 
@@ -134,16 +142,6 @@ def _resolve_engine_root(skill_root: Path) -> tuple[Path, Path] | None:
     relative to its own toplevel, reused under main_root so the cleanliness
     check (engine_tree_clean) reads the SAME tree the hash reads.
     """
-    import subprocess
-
-    def _git_text(args: list[str], cwd: Path) -> str:
-        res = subprocess.run(
-            ["git", *args], cwd=str(cwd), capture_output=True, text=True, timeout=30
-        )
-        if res.returncode != 0:
-            raise OSError(res.stderr.strip() or "git failed")
-        return res.stdout
-
     try:
         if not skill_root.is_dir():
             return None
@@ -176,8 +174,6 @@ def engine_tree_clean(skill_root: Path) -> bool:
     _resolve_engine_root (the SAME (main_root, rel) the hash uses); None
     resolution / dirty / any error all fail closed to False.
     """
-    import subprocess
-
     resolved = _resolve_engine_root(skill_root)
     if resolved is None:
         return False
@@ -218,16 +214,6 @@ def _engine_component(skill_root: Path) -> dict[str, str]:
     deactivates the component rather than crashing. A bare/non-git install has no
     marketplace-advance window to guard.
     """
-    import subprocess
-
-    def _git_text(args: list[str], cwd: Path) -> str:
-        res = subprocess.run(
-            ["git", *args], cwd=str(cwd), capture_output=True, text=True, timeout=30
-        )
-        if res.returncode != 0:
-            raise OSError(res.stderr.strip() or "git failed")
-        return res.stdout
-
     resolved = _resolve_engine_root(skill_root)
     if resolved is None:
         return {}
@@ -328,9 +314,9 @@ def compute_snapshot(
 ) -> dict[str, Any]:
     """Compute the full snapshot dict from current on-disk content.
 
-    Returns {workspace_toml, stage_registry, handlers, master_hash}. The single
-    source of all serialization + hashing; verify_snapshot re-runs this rather
-    than re-deriving any hash itself.
+    Returns {workspace_toml, stage_registry, handlers, engine, master_hash}.
+    The single source of all serialization + hashing; verify_snapshot re-runs
+    this rather than re-deriving any hash itself.
     """
     workspace_toml_text = _read_text(workspace_toml_path(workspace_root))
     stage_registry_text = _read_text(stage_registry_path(skill_root))
