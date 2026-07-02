@@ -221,7 +221,7 @@ def test_select_drops_inflight_branch(tmp_path):
     ws = _marked_ws(tmp_path)
     run, _ = _dispatch(
         ready=[_cand("flow-a"), _cand("flow-b")],
-        branches="feature/flow-a-wip\nmain\n",
+        branches="feat/flow-a-wip\nmain\n",
     )
     out = qs.select(ws, cap=5, concurrency=3, runner=run)
     assert out["launch"] == ["flow-b"]
@@ -234,7 +234,7 @@ def test_select_evolve_pr_does_not_count_toward_cap(tmp_path):
     ws = _marked_ws(tmp_path)
     run, _ = _dispatch(
         ready=[_cand("flow-a")],
-        prs=[{"headRefName": "feature/flow-ev-wip"}],
+        prs=[{"headRefName": "feat/flow-ev-wip"}],
         evolve_list=[{"id": "flow-ev", "labels": ["evolve"], "status": "in_progress"}],
     )
     out = qs.select(ws, cap=5, concurrency=3, runner=run)
@@ -247,7 +247,7 @@ def test_select_non_evolve_pr_counts_toward_cap(tmp_path):
     ws = _marked_ws(tmp_path)
     run, _ = _dispatch(
         ready=[_cand("flow-a")],
-        prs=[{"headRefName": "feature/flow-day-wip"}],
+        prs=[{"headRefName": "feat/flow-day-wip"}],
         evolve_list=[],
     )
     out = qs.select(ws, cap=5, concurrency=3, runner=run)
@@ -259,7 +259,7 @@ def test_select_queue_scoped_backpressure_holds_launch(tmp_path):
     ws = _marked_ws(tmp_path)
     run, _ = _dispatch(
         ready=[_cand("flow-a")],
-        prs=[{"headRefName": "feature/flow-d1-wip"}, {"headRefName": "feature/flow-d2-wip"}],
+        prs=[{"headRefName": "feat/flow-d1-wip"}, {"headRefName": "feat/flow-d2-wip"}],
         evolve_list=[],
     )
     out = qs.select(ws, cap=2, concurrency=3, runner=run)
@@ -282,7 +282,7 @@ def test_select_bd_list_queries_active_evolve(tmp_path):
     ws = _marked_ws(tmp_path)
     run, calls = _dispatch(
         ready=[],
-        prs=[{"headRefName": "feature/flow-day-wip"}],
+        prs=[{"headRefName": "feat/flow-day-wip"}],
         evolve_list=[],
     )
     qs.select(ws, cap=5, concurrency=3, runner=run)
@@ -420,7 +420,7 @@ def test_select_tool_error(tmp_path):
 
 
 def _pool_run_dir(repo: Path, key: str, slug: str = "wip") -> Path:
-    return repo / ".flow" / "worktrees" / f"feature-{key}-{slug}" / ".flow" / "runs" / key
+    return repo / ".flow" / "worktrees" / f"feat-{key}-{slug}" / ".flow" / "runs" / key
 
 
 # ---- _config_defaults ----
@@ -542,7 +542,7 @@ def test_select_active_evolve_query_is_unlimited(tmp_path):
     ws = _marked_ws(tmp_path)
     run, calls = _dispatch(
         ready=[],
-        prs=[{"headRefName": "feature/flow-day-wip"}],
+        prs=[{"headRefName": "feat/flow-day-wip"}],
         evolve_list=[],
     )
     qs.select(ws, cap=5, concurrency=3, runner=run)

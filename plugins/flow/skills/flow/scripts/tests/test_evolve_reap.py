@@ -34,7 +34,7 @@ def _pr(
     # gh `pr list --json commits` shape is [{"messageHeadline", "messageBody", ...}].
     pr: dict = {
         "number": num,
-        "headRefName": f"feature/{key}-some-desc",
+        "headRefName": f"feat/{key}-some-desc",
         "isDraft": draft,
         "mergeStateStatus": state,
         "statusCheckRollup": rollup,
@@ -102,7 +102,7 @@ def test_green_clean_leaf_merges():
         {
             "pr": 1,
             "key": "flow-a",
-            "branch": "feature/flow-a-some-desc",
+            "branch": "feat/flow-a-some-desc",
             "is_draft": False,
             "is_hot": False,
             "covers": [],
@@ -114,13 +114,13 @@ def test_hot_bead_skipped_even_when_green():
     prs = [_pr(1, "flow-h")]
     out = er.classify(prs, _idx(**{"flow-h": ["evolve", "hot"]}))
     assert out["merge"] == []
-    assert out["skipped_hot"] == [{"pr": 1, "key": "flow-h", "branch": "feature/flow-h-some-desc"}]
+    assert out["skipped_hot"] == [{"pr": 1, "key": "flow-h", "branch": "feat/flow-h-some-desc"}]
 
 
 def test_pending_is_not_green():
     prs = [_pr(1, "flow-a", rollup=PENDING)]
     out = er.classify(prs, _idx(**{"flow-a": ["evolve"]}))
-    assert out["not_green"] == [{"pr": 1, "key": "flow-a", "branch": "feature/flow-a-some-desc"}]
+    assert out["not_green"] == [{"pr": 1, "key": "flow-a", "branch": "feat/flow-a-some-desc"}]
     assert out["merge"] == []
 
 
@@ -130,7 +130,7 @@ def test_green_nonhot_dirty_is_blocked():
     prs = [_pr(1, "flow-a", state="DIRTY")]
     out = er.classify(prs, _idx(**{"flow-a": ["evolve"]}))
     assert out["blocked"] == [
-        {"pr": 1, "key": "flow-a", "branch": "feature/flow-a-some-desc", "reason": "DIRTY"}
+        {"pr": 1, "key": "flow-a", "branch": "feat/flow-a-some-desc", "reason": "DIRTY"}
     ]
 
 
@@ -140,7 +140,7 @@ def test_hot_dirty_is_blocked():
     prs = [_pr(1, "flow-h", state="DIRTY")]
     out = er.classify(prs, _idx(**{"flow-h": ["evolve", "hot"]}))
     assert out["blocked"] == [
-        {"pr": 1, "key": "flow-h", "branch": "feature/flow-h-some-desc", "reason": "DIRTY"}
+        {"pr": 1, "key": "flow-h", "branch": "feat/flow-h-some-desc", "reason": "DIRTY"}
     ]
     assert out["skipped_hot"] == []
 
@@ -154,7 +154,7 @@ def test_guard_file_dirty_no_label_is_blocked():
     prs = [_pr(1, "flow-a", state="DIRTY", files=["snapshot.py"])]
     out = er.classify(prs, _idx(**{"flow-a": ["evolve"]}))
     assert out["blocked"] == [
-        {"pr": 1, "key": "flow-a", "branch": "feature/flow-a-some-desc", "reason": "DIRTY"}
+        {"pr": 1, "key": "flow-a", "branch": "feat/flow-a-some-desc", "reason": "DIRTY"}
     ]
 
 
@@ -162,7 +162,7 @@ def test_guard_file_green_clean_skipped_hot_when_off():
     prs = [_pr(1, "flow-a", files=["lease.py"])]
     out = er.classify(prs, _idx(**{"flow-a": ["evolve"]}))
     assert out["merge"] == []
-    assert out["skipped_hot"] == [{"pr": 1, "key": "flow-a", "branch": "feature/flow-a-some-desc"}]
+    assert out["skipped_hot"] == [{"pr": 1, "key": "flow-a", "branch": "feat/flow-a-some-desc"}]
 
 
 def test_guard_file_promotes_with_is_hot_true():
@@ -172,7 +172,7 @@ def test_guard_file_promotes_with_is_hot_true():
         {
             "pr": 1,
             "key": "flow-a",
-            "branch": "feature/flow-a-some-desc",
+            "branch": "feat/flow-a-some-desc",
             "is_draft": False,
             "is_hot": True,
             "covers": [],
@@ -190,8 +190,8 @@ def test_guard_file_and_label_hot_serialize():
     )
     assert out["merge"] == []
     assert out["skipped_hot"] == [
-        {"pr": 1, "key": "flow-a", "branch": "feature/flow-a-some-desc"},
-        {"pr": 2, "key": "flow-h", "branch": "feature/flow-h-some-desc"},
+        {"pr": 1, "key": "flow-a", "branch": "feat/flow-a-some-desc"},
+        {"pr": 2, "key": "flow-h", "branch": "feat/flow-h-some-desc"},
     ]
 
 
@@ -205,7 +205,7 @@ def test_behind_is_blocked():
     prs = [_pr(1, "flow-a", state="BEHIND")]
     out = er.classify(prs, _idx(**{"flow-a": ["evolve"]}))
     assert out["blocked"] == [
-        {"pr": 1, "key": "flow-a", "branch": "feature/flow-a-some-desc", "reason": "BEHIND"}
+        {"pr": 1, "key": "flow-a", "branch": "feat/flow-a-some-desc", "reason": "BEHIND"}
     ]
 
 
@@ -216,7 +216,7 @@ def test_draft_but_green_is_mergeable():
         {
             "pr": 1,
             "key": "flow-a",
-            "branch": "feature/flow-a-some-desc",
+            "branch": "feat/flow-a-some-desc",
             "is_draft": True,
             "is_hot": False,
             "covers": [],
@@ -228,7 +228,7 @@ def test_merge_entry_carries_branch():
     # the reap loop tears down the local branch + worktree; it needs headRefName.
     prs = [_pr(7, "flow-a")]
     out = er.classify(prs, _idx(**{"flow-a": ["evolve"]}))
-    assert out["merge"][0]["branch"] == "feature/flow-a-some-desc"
+    assert out["merge"][0]["branch"] == "feat/flow-a-some-desc"
 
 
 def test_non_flow_branch_ignored():
@@ -256,28 +256,28 @@ def test_unknown_key_ignored():
 def test_live_lease_holds_green_clean_nonhot():
     prs = [_pr(1, "flow-a")]
     out = er.classify(prs, _idx(**{"flow-a": ["evolve"]}), liveness={"flow-a": "live"})
-    assert out["skipped_live"] == [{"pr": 1, "key": "flow-a", "branch": "feature/flow-a-some-desc"}]
+    assert out["skipped_live"] == [{"pr": 1, "key": "flow-a", "branch": "feat/flow-a-some-desc"}]
     assert out["merge"] == []
 
 
 def test_corrupt_lease_holds_green_clean_nonhot():
     prs = [_pr(1, "flow-a")]
     out = er.classify(prs, _idx(**{"flow-a": ["evolve"]}), liveness={"flow-a": "corrupt"})
-    assert out["skipped_live"] == [{"pr": 1, "key": "flow-a", "branch": "feature/flow-a-some-desc"}]
+    assert out["skipped_live"] == [{"pr": 1, "key": "flow-a", "branch": "feat/flow-a-some-desc"}]
     assert out["merge"] == []
 
 
 def test_live_lease_holds_green_dirty_over_blocked():
     prs = [_pr(1, "flow-a", state="DIRTY")]
     out = er.classify(prs, _idx(**{"flow-a": ["evolve"]}), liveness={"flow-a": "live"})
-    assert out["skipped_live"] == [{"pr": 1, "key": "flow-a", "branch": "feature/flow-a-some-desc"}]
+    assert out["skipped_live"] == [{"pr": 1, "key": "flow-a", "branch": "feat/flow-a-some-desc"}]
     assert out["blocked"] == []
 
 
 def test_live_lease_holds_green_hot_over_skipped_hot():
     prs = [_pr(1, "flow-h")]
     out = er.classify(prs, _idx(**{"flow-h": ["evolve", "hot"]}), liveness={"flow-h": "live"})
-    assert out["skipped_live"] == [{"pr": 1, "key": "flow-h", "branch": "feature/flow-h-some-desc"}]
+    assert out["skipped_live"] == [{"pr": 1, "key": "flow-h", "branch": "feat/flow-h-some-desc"}]
     assert out["skipped_hot"] == []
     assert out["merge"] == []
 
@@ -285,7 +285,7 @@ def test_live_lease_holds_green_hot_over_skipped_hot():
 def test_live_lease_holds_green_guard_file_over_skipped_hot():
     prs = [_pr(1, "flow-a", files=["lease.py"])]
     out = er.classify(prs, _idx(**{"flow-a": ["evolve"]}), liveness={"flow-a": "live"})
-    assert out["skipped_live"] == [{"pr": 1, "key": "flow-a", "branch": "feature/flow-a-some-desc"}]
+    assert out["skipped_live"] == [{"pr": 1, "key": "flow-a", "branch": "feat/flow-a-some-desc"}]
     assert out["skipped_hot"] == []
 
 
@@ -310,7 +310,7 @@ def test_non_green_live_lease_stays_not_green():
     # a non-green PR lands in not_green before the liveness gate; untouched.
     prs = [_pr(1, "flow-a", rollup=PENDING)]
     out = er.classify(prs, _idx(**{"flow-a": ["evolve"]}), liveness={"flow-a": "live"})
-    assert out["not_green"] == [{"pr": 1, "key": "flow-a", "branch": "feature/flow-a-some-desc"}]
+    assert out["not_green"] == [{"pr": 1, "key": "flow-a", "branch": "feat/flow-a-some-desc"}]
     assert out["skipped_live"] == []
 
 
@@ -324,7 +324,7 @@ def test_hot_auto_merge_single_clean():
         {
             "pr": 1,
             "key": "flow-h",
-            "branch": "feature/flow-h-some-desc",
+            "branch": "feat/flow-h-some-desc",
             "is_draft": False,
             "is_hot": True,
             "covers": [],
@@ -340,7 +340,7 @@ def test_hot_auto_merge_single_draft_carries_is_draft():
         {
             "pr": 1,
             "key": "flow-h",
-            "branch": "feature/flow-h-some-desc",
+            "branch": "feat/flow-h-some-desc",
             "is_draft": True,
             "is_hot": True,
             "covers": [],
@@ -356,8 +356,8 @@ def test_hot_auto_merge_two_eligible_serialize():
     )
     assert out["merge"] == []
     assert out["skipped_hot"] == [
-        {"pr": 1, "key": "flow-h", "branch": "feature/flow-h-some-desc"},
-        {"pr": 2, "key": "flow-g", "branch": "feature/flow-g-some-desc"},
+        {"pr": 1, "key": "flow-h", "branch": "feat/flow-h-some-desc"},
+        {"pr": 2, "key": "flow-g", "branch": "feat/flow-g-some-desc"},
     ]
 
 
@@ -373,7 +373,7 @@ def test_hot_auto_merge_clean_promotes_dirty_blocks():
         {
             "pr": 1,
             "key": "flow-h",
-            "branch": "feature/flow-h-some-desc",
+            "branch": "feat/flow-h-some-desc",
             "is_draft": False,
             "is_hot": True,
             "covers": [],
@@ -381,7 +381,7 @@ def test_hot_auto_merge_clean_promotes_dirty_blocks():
     ]
     assert out["skipped_hot"] == []
     assert out["blocked"] == [
-        {"pr": 2, "key": "flow-g", "branch": "feature/flow-g-some-desc", "reason": "DIRTY"}
+        {"pr": 2, "key": "flow-g", "branch": "feat/flow-g-some-desc", "reason": "DIRTY"}
     ]
 
 
@@ -394,7 +394,7 @@ def test_hot_auto_merge_does_not_gate_non_hot_leaf():
         {
             "pr": 1,
             "key": "flow-h",
-            "branch": "feature/flow-h-some-desc",
+            "branch": "feat/flow-h-some-desc",
             "is_draft": False,
             "is_hot": True,
             "covers": [],
@@ -402,7 +402,7 @@ def test_hot_auto_merge_does_not_gate_non_hot_leaf():
         {
             "pr": 2,
             "key": "flow-a",
-            "branch": "feature/flow-a-some-desc",
+            "branch": "feat/flow-a-some-desc",
             "is_draft": False,
             "is_hot": False,
             "covers": [],
@@ -415,7 +415,7 @@ def test_hot_auto_merge_off_by_default_still_skips():
     prs = [_pr(1, "flow-h")]
     out = er.classify(prs, _idx(**{"flow-h": ["evolve", "hot"]}))
     assert out["merge"] == []
-    assert out["skipped_hot"] == [{"pr": 1, "key": "flow-h", "branch": "feature/flow-h-some-desc"}]
+    assert out["skipped_hot"] == [{"pr": 1, "key": "flow-h", "branch": "feat/flow-h-some-desc"}]
 
 
 def test_merge_entries_flag_is_hot():
@@ -440,7 +440,7 @@ def test_main_red_holds_merge_leaf():
         {
             "pr": 1,
             "key": "flow-a",
-            "branch": "feature/flow-a-some-desc",
+            "branch": "feat/flow-a-some-desc",
             "is_draft": False,
             "is_hot": False,
             "covers": [],
@@ -460,7 +460,7 @@ def test_main_red_does_not_promote_hot():
         {
             "pr": 1,
             "key": "flow-h",
-            "branch": "feature/flow-h-some-desc",
+            "branch": "feat/flow-h-some-desc",
             "is_draft": False,
             "is_hot": True,
             "covers": [],
@@ -606,14 +606,14 @@ def test_reap_integration(tmp_path):
         {
             "pr": 1,
             "key": "flow-a",
-            "branch": "feature/flow-a-some-desc",
+            "branch": "feat/flow-a-some-desc",
             "is_draft": False,
             "is_hot": False,
             "covers": [],
         }
     ]
-    assert out["skipped_hot"] == [{"pr": 2, "key": "flow-h", "branch": "feature/flow-h-some-desc"}]
-    assert out["not_green"] == [{"pr": 3, "key": "flow-b", "branch": "feature/flow-b-some-desc"}]
+    assert out["skipped_hot"] == [{"pr": 2, "key": "flow-h", "branch": "feat/flow-h-some-desc"}]
+    assert out["not_green"] == [{"pr": 3, "key": "flow-b", "branch": "feat/flow-b-some-desc"}]
 
 
 def test_reap_bulk_list_omits_files_field(tmp_path):
@@ -677,7 +677,7 @@ def test_reap_auto_merge_hot_from_config(tmp_path):
         {
             "pr": 1,
             "key": "flow-h",
-            "branch": "feature/flow-h-some-desc",
+            "branch": "feat/flow-h-some-desc",
             "is_draft": False,
             "is_hot": True,
             "covers": [],

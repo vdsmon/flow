@@ -99,15 +99,15 @@ def test_is_inflight_matches_legacy_feature_prefix():
 def test_gather_refs_returns_refs_and_pr_refs():
     def run(args: list[str]) -> subprocess.CompletedProcess[str]:
         if args[:3] == ["gh", "pr", "list"]:
-            prs = [{"headRefName": "feature/flow-pr-wip"}, {"headRefName": "main"}]
+            prs = [{"headRefName": "feat/flow-pr-wip"}, {"headRefName": "main"}]
             return subprocess.CompletedProcess(args, 0, json.dumps(prs), "")
         if args[:2] == ["git", "for-each-ref"]:
-            return subprocess.CompletedProcess(args, 0, "origin/feature/flow-br-wip\nmain\n", "")
+            return subprocess.CompletedProcess(args, 0, "origin/feat/flow-br-wip\nmain\n", "")
         return subprocess.CompletedProcess(args, 1, "", f"unexpected: {args}")
 
     refs, pr_refs = ec.gather_refs(run)
-    assert refs == {"feature/flow-pr-wip", "feature/flow-br-wip", "main"}
-    assert pr_refs == {"feature/flow-pr-wip", "main"}
+    assert refs == {"feat/flow-pr-wip", "feat/flow-br-wip", "main"}
+    assert pr_refs == {"feat/flow-pr-wip", "main"}
 
 
 def test_gather_refs_tool_error():
@@ -119,7 +119,7 @@ def test_gather_refs_tool_error():
 
 
 def _pool_run_dir(repo: Path, key: str) -> Path:
-    return repo / ".flow" / "worktrees" / f"feature-{key}-wip" / ".flow" / "runs" / key
+    return repo / ".flow" / "worktrees" / f"feat-{key}-wip" / ".flow" / "runs" / key
 
 
 def _write_lease(run_dir: Path, *, expired: bool = False) -> None:
@@ -141,6 +141,15 @@ def test_live_run_keys_finds_live_lease(tmp_path):
     repo = tmp_path / "flow"
     repo.mkdir()
     _write_lease(_pool_run_dir(repo, "flow-x"))
+    assert ec.live_run_keys(repo) == {"flow-x"}
+
+
+def test_live_run_keys_finds_live_lease_in_legacy_feature_dir(tmp_path):
+    # pre-rename pool dirs keep the feature- prefix; WORKTREE_PREFIXES stays dual
+    repo = tmp_path / "flow"
+    repo.mkdir()
+    legacy = repo / ".flow" / "worktrees" / "feature-flow-x-wip" / ".flow" / "runs" / "flow-x"
+    _write_lease(legacy)
     assert ec.live_run_keys(repo) == {"flow-x"}
 
 
