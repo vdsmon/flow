@@ -31,14 +31,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 2
+          # Full history: the guard diffs the whole push range (event.before may
+          # be many commits back) and the retry loop rebases onto origin/main.
+          fetch-depth: 0
 
       - name: Skip if this push already changed the version files
         id: guard
         run: |
-          if ! git rev-parse HEAD~1 >/dev/null 2>&1; then
-            echo "no parent commit, proceeding"
-          elif ! git diff --quiet HEAD~1 HEAD -- \
+          # Guard the whole push range, not just the tip commit: a multi-commit
+          # push can carry the version-file change anywhere in the range.
+          # event.before is empty on workflow_dispatch and all-zeros on branch
+          # creation; fall back to the tip's parent.
+          base="${{ github.event.before }}"
+          if [ -z "$base" ] || ! git cat-file -e "$base" 2>/dev/null; then
+            base=$(git rev-parse HEAD~1 2>/dev/null || true)
+          fi
+          if [ -z "$base" ]; then
+            echo "no base commit, proceeding"
+          elif ! git diff --quiet "$base" HEAD -- \
             plugins/flow/.claude-plugin/plugin.json .claude-plugin/marketplace.json; then
             echo "version files already changed in this push, skipping stamp"
             echo "skip=true" >> "$GITHUB_OUTPUT"
@@ -47,14 +57,39 @@ jobs:
       - name: Stamp and push
         if: steps.guard.outputs.skip != 'true'
         run: |
-          python3 plugins/flow/skills/flow/scripts/version.py stamp --ref HEAD --cwd .
-          if git diff --quiet -- \
-            plugins/flow/.claude-plugin/plugin.json .claude-plugin/marketplace.json; then
+          stamp_and_commit() {
+            # 0 = stamp committed, 1 = already at target; a stamp tool error
+            # fails the whole step.
+            python3 plugins/flow/skills/flow/scripts/version.py stamp --ref HEAD --cwd . || exit 1
+            if git diff --quiet -- \
+              plugins/flow/.claude-plugin/plugin.json .claude-plugin/marketplace.json; then
+              return 1
+            fi
+            git commit -m "chore: stamp plugin version [skip ci]" -- \
+              plugins/flow/.claude-plugin/plugin.json .claude-plugin/marketplace.json || exit 1
+          }
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if ! stamp_and_commit; then
             echo "version already at target, nothing to stamp"
             exit 0
           fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -m "chore: stamp plugin version [skip ci]" -- \
-            plugins/flow/.claude-plugin/plugin.json .claude-plugin/marketplace.json
-          git push origin HEAD:main
+          for attempt in 1 2 3; do
+            if git push origin HEAD:main; then
+              exit 0
+            fi
+            echo "push rejected (main advanced mid-run), retrying: attempt $attempt"
+            git fetch origin main
+            if ! git rebase origin/main; then
+              # A conflicting rebase means main's version lines changed under
+              # us; drop our stamp and re-derive on the new tip.
+              git rebase --abort
+              git reset --hard origin/main
+              if ! stamp_and_commit; then
+                echo "version already at target after main advanced"
+                exit 0
+              fi
+            fi
+          done
+          echo "push failed after 3 attempts" >&2
+          exit 1

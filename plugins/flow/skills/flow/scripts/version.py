@@ -153,7 +153,7 @@ def _set_version_in_file(path: Path, version: str) -> None:
         path.write_text(new_text, encoding="utf-8")
 
 
-def write_version(*, cwd: Path, version: str, runner: Runner | None = None) -> None:
+def write_version(*, cwd: Path, version: str) -> None:
     """Surgically set `version` in both version files (plugin.json top-level + the
     marketplace flow entry), preserving surrounding JSON formatting. Each file has
     exactly one `"version":` line; a regex line-replace keeps the rest intact."""
@@ -171,7 +171,7 @@ def stamp(
     """Compute the next version from `ref` and write it into both version files.
     Returns the compute dict {"ref", "current", "next", "bump", "commit_type"}."""
     result = compute(cwd=cwd, ref=ref, runner=runner, commit_type=commit_type)
-    write_version(cwd=cwd, version=result["next"], runner=runner)
+    write_version(cwd=cwd, version=result["next"])
     return result
 
 

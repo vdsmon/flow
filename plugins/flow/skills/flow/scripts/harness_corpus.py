@@ -4,9 +4,11 @@ The corpus lives in the sibling `harness_corpus.json`: deterministic
 (input -> expected output) cases for the four pure deciders in `DECIDERS`,
 split `held_in` / `held_out`. `tests/test_harness_corpus.py` replays every
 case against the live deciders, so any behavior change in one of them must
-re-freeze the corpus in the same PR. The flow-63q.2 score CLI consumes
-`load_corpus` + `replay`; its `resolve=` parameter is the seam for pointing
-replay at a CANDIDATE skill-checkout's modules instead of this one's.
+re-freeze the corpus in the same PR. The flow-63q.2 score CLI (`harness_eval.py`)
+consumes `load_corpus` + `DECIDERS` and replays each skill checkout in its own
+`drive` subprocess, because an in-process swap would share `sys.modules` across
+checkouts. `run_case`/`replay` and their `resolve=` parameter are a test-injection
+seam only (`tests/test_harness_corpus.py`), not the candidate-checkout path.
 
 Stdlib-only, no side effects beyond reading the corpus file.
 """

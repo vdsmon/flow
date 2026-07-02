@@ -76,9 +76,11 @@ def latest_covers(comments: list[dict[str, Any]]) -> list[str] | None:
 
 
 def persist(tracker: Any, lead: str, covers: list[str]) -> dict[str, Any]:
-    """Write the cover marker on the lead, unless the latest one already matches."""
+    """Write the cover marker on the lead, unless the latest one already records
+    the same set (order-insensitive: re-persisting FT-2,FT-1 over an FT-1, FT-2
+    marker is a no-op, not a redundant second comment)."""
     existing = latest_covers(tracker.get(lead).get("comments", []))
-    if existing == covers:
+    if existing is not None and set(existing) == set(covers):
         return {"persisted": False, "reason": "unchanged", "lead": lead, "covers": covers}
     tracker.comment(lead, {"body": format_marker(covers), "fmt": "plain"})
     return {"persisted": True, "lead": lead, "covers": covers}
