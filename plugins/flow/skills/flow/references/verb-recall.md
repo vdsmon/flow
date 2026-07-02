@@ -115,3 +115,11 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/recall.py --metric trend \
 ```
 
 Rolls up all five window measures (tickets-per-week, time-to-pr, friction-per-run, revert-rate, recall-hit-rate) over one `[since, until)` window. Default output is a human-readable table, one row per measure with its headline numbers; `--json` emits a JSON object keyed by the five measure names (each carrying that measure's full report) plus top-level `since`, `until`, and `resolved_workspace_root`. The revert row surfaces the `reverts_by_source` `{tracker, git}` split. `--namespace` is required. No `--checkpoint` option. Inherits revert-rate's git-repo requirement, so it fails loud on a git-scan error rather than emitting an empty roll-up.
+
+```bash
+python3 ${CLAUDE_SKILL_DIR}/scripts/recall.py --metric fix-efficacy \
+  --namespace <ns> --workspace-root . \
+  [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--json]
+```
+
+Per closed MACHINERY-fix bead (a `.flow/<namespace>/knowledge.jsonl` entry whose body starts with `MACHINERY`, grouped by `ticket`), reports whether the friction anchor(s) it claimed to fix recurred afterward: a `recurred` / `clean` verdict plus evidence (`post_fix_count`, `claimed_anchors`, `recurrence_run_ids`, `stages`, `types`, `recurrences`, `fix_shas`). A bead is `unmeasurable` (still counted `clean`, never a third verdict) when it claims no distinctive anchor or has no usable fix timestamp — it cannot forward-join, so it cannot recur. Default output is a per-bead table; `--json` emits `{beads, totals, resolved_workspace_root}`, where `totals` carries `fix_beads`/`recurred`/`clean`/`unmeasurable`/`recurrence_rate` (recurred / fix_beads, over ALL fix_beads including the unmeasurable ones). `--namespace` is optional (auto-resolves from workspace.toml when omitted). This is a lifetime metric: `--since`/`--until` are accepted for CLI-surface symmetry but IGNORED.
