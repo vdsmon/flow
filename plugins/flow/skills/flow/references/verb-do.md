@@ -15,7 +15,7 @@ A blocker needs no special ping: an `AskUserQuestion` surfaces natively as "need
 
 When `create_pr` completes, read `covers` from `.flow/tickets/<KEY>.md` frontmatter. For each cover key, post the PR URL as a comment so every co-delivered ticket links to the PR that closes it:
 ```bash
-${CLAUDE_SKILL_DIR}/scripts/tracker_cli.py --workspace-root . \
+python3 ${CLAUDE_SKILL_DIR}/scripts/tracker_cli.py --workspace-root . \
   comment --key <COVER> --text "Covered by <KEY> — PR: <PR_URL>"
 ```
 Best-effort (a failed cover comment never blocks the run); agent-followed, not dispatcher-enforced (v1 non-goal). The lead's own PR-link presentation is unchanged.
@@ -45,7 +45,11 @@ if printf '%s' "$JOB_ID" | grep -qxE '[0-9a-f]{8}' \
   if command -v setsid >/dev/null 2>&1; then
     setsid nohup sh -c "$TEARDOWN" >/dev/null 2>&1 </dev/null &
   else
-    nohup sh -c "$TEARDOWN" >/dev/null 2>&1 </dev/null &
+    python3 -c 'import os,sys
+if os.fork(): sys.exit(0)
+os.setsid()
+if os.fork(): sys.exit(0)
+os.execvp("sh", ["sh", "-c", sys.argv[1]])' "$TEARDOWN" >/dev/null 2>&1 </dev/null &
   fi
 fi
 true
@@ -56,7 +60,7 @@ true
 - `claude stop` takes the **8-hex job id** — the `$CLAUDE_JOB_DIR` basename — NOT the session UUID. Passing the UUID fails "No job matching".
 - **Stop before rm:** the daemon re-materializes a still-registered job dir, so an rm-first teardown silently undoes itself.
 - The rm path is validated under `~/.claude/jobs/` with an 8-hex basename BEFORE the single destructive line.
-- Detached via `setsid` when available (own session — survives the stop's process-group kill), else `nohup ... &` (macOS has no setsid binary); stdin/stdout/stderr detached.
+- Detached via `setsid` when available (own session — survives the stop's process-group kill); macOS has no setsid binary, so the fallback double-forks via `python3` (`os.setsid()` between the forks) into its own session before exec'ing the teardown. A bare `nohup ... &` child stays in the session's process group, so the group kill at session teardown murders it mid-`sleep 30` and the panel leaks (flow-al8o). `$TEARDOWN` rides in as `argv[1]` — never interpolate it into the program text. stdin/stdout/stderr detached on both branches.
 - **Best-effort:** a teardown failure must never fail, block, or delay the run. No friction entry on failure.
 - Non-destructive to history: the transcript lives outside the job dir, so `claude attach <session_id>` still works after stop + dir removal.
 
