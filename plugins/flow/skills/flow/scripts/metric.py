@@ -890,12 +890,18 @@ def _keys_in_message(message: str, candidate_keys: set[str]) -> list[str]:
 
 
 def _emit_git_revert_event(
-    workspace_root: Path, namespace: str, ticket: str, rev: dict[str, Any]
+    workspace_root: Path, namespace: str, tickets: list[str], rev: dict[str, Any]
 ) -> None:
-    """Best-effort durable revert event. Never raises (readout is the point)."""
+    """Best-effort durable revert event. Never raises (readout is the point).
+
+    One record per reverting sha carrying every matched ticket: observe_revert
+    keys the file by sha alone and treats EEXIST as a no-op, so a per-ticket emit
+    would silently drop every key after the first.
+    """
     record = {
         "kind": "revert",
-        "ticket": ticket,
+        "ticket": tickets[0],
+        "tickets": tickets,
         "reverted_commit_sha": rev.get("reverted_commit_sha"),
         "reverting_commit_sha": rev.get("reverting_commit_sha"),
         "reverting_subject": rev.get("reverting_subject"),
@@ -999,7 +1005,8 @@ def compute_revert_rate(
     git_reverted_keys: set[str] = set()
     for rev in git_reverts_scanned:
         msg = str(rev.get("reverted_message") or "")
-        for key in _keys_in_message(msg, in_window_keys):
+        keys = sorted(_keys_in_message(msg, in_window_keys))
+        for key in keys:
             git_reverted_keys.add(key)
             git_reverts.append(
                 {
@@ -1009,7 +1016,8 @@ def compute_revert_rate(
                     "reverted_commit_sha": rev.get("reverted_commit_sha"),
                 }
             )
-            _emit_git_revert_event(workspace_root, namespace, key, rev)
+        if keys:
+            _emit_git_revert_event(workspace_root, namespace, keys, rev)
     git_reverts.sort(key=lambda r: (str(r["ticket"]), str(r["reverting_commit_sha"])))
 
     return {

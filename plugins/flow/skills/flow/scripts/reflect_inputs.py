@@ -108,9 +108,13 @@ def _recalled_ids(log_path: Path) -> list[str]:
 
 
 def _recalled_entries(ticket_dir: Path, cwd: Path) -> list[dict[str, Any]]:
-    """Entries recalled INTO this run, joined recall-log `returned_ids` -> live
-    knowledge bodies. Best-effort: any missing log / knowledge / memory-config
-    degrades to []. Read-only (no quarantine sidecar): mirrors the friction read.
+    """Entries recalled INTO this run, joined recall-log `returned_ids` ->
+    knowledge bodies. An entry superseded since it was recalled stays in the
+    bundle flagged `superseded: true`: the recall-usage denominator counts every
+    surfaced id, so dropping it would make it impossible to name in `--used-ids`
+    and bias the precision metric down. Best-effort: any missing log / knowledge /
+    memory-config degrades to []. Read-only (no quarantine sidecar): mirrors the
+    friction read.
     """
     log_path = ticket_dir / "recall-log.jsonl"
     if not log_path.exists():
@@ -132,18 +136,19 @@ def _recalled_entries(ticket_dir: Path, cwd: Path) -> list[dict[str, Any]]:
         out: list[dict[str, Any]] = []
         for rid in recalled_ids:
             e = by_id.get(rid)
-            if rid in dead or e is None:
+            if e is None:
                 continue
-            out.append(
-                {
-                    "id": rid,
-                    "type": e.get("type"),
-                    "body": e.get("body"),
-                    "ts": e.get("ts"),
-                    "branch": e.get("branch"),
-                    "ticket": e.get("ticket"),
-                }
-            )
+            entry: dict[str, Any] = {
+                "id": rid,
+                "type": e.get("type"),
+                "body": e.get("body"),
+                "ts": e.get("ts"),
+                "branch": e.get("branch"),
+                "ticket": e.get("ticket"),
+            }
+            if rid in dead:
+                entry["superseded"] = True
+            out.append(entry)
         return out
     except (_memory_paths._MemoryConfigError, OSError):
         return []

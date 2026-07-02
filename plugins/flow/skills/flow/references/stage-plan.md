@@ -42,6 +42,7 @@ You cannot wait for or solicit that approval yourself — just return a plan goo
    **Recall prior knowledge keyed on the ticket text + your intent (read-only).** This is where flow's memory layer pays off — full ticket text in hand. Write the ticket title+body to a temp file, PREPENDED with a short (1–2 line) intent preamble naming the form / domain / component you are about to touch and the shape of the change (the risk), then query recall against the whole file (a pure READ; the matching WRITE — `--record-pending` — is the orchestrator's post-gate step, NOT yours):
    ```bash
    QF="${TMPDIR:-/tmp}/flow-recall-$KEY.txt"   # intent preamble + ticket title + body
+   B=$(git branch --show-current)
    python3 ${CLAUDE_SKILL_DIR}/scripts/recall.py --query-file "$QF" \
      --semantic --top-n 30 --branch "$B" --workspace-root .
    ```

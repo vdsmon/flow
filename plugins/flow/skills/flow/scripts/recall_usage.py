@@ -248,8 +248,13 @@ def detect_misses(
         return []
 
     # candidate matches: pre-existing live entries with an indexed vector. A new
-    # entry duplicating ANOTHER new entry is not a recall miss (both are this run).
-    candidates = [(eid, vec) for eid, vec in indexed.items() if eid not in new_ids]
+    # entry duplicating ANOTHER new entry is not a recall miss (both are this run),
+    # and a superseded entry is unreturnable (recall filters it before ranking), so
+    # a stale indexed vector for it must never be blamed as a miss.
+    live_ids = {e["id"] for e in live if isinstance(e.get("id"), str)}
+    candidates = [
+        (eid, vec) for eid, vec in indexed.items() if eid in live_ids and eid not in new_ids
+    ]
     if not candidates:
         return []
 

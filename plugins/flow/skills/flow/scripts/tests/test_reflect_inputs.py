@@ -401,17 +401,23 @@ def test_recalled_entries_dedups_first_seen_order(tmp_repo: Path, tmp_path: Path
     assert ids == [a["id"], b["id"]]
 
 
-def test_recalled_entries_drops_superseded(tmp_repo: Path, tmp_path: Path) -> None:
+def test_recalled_entries_keeps_superseded_flagged(tmp_repo: Path, tmp_path: Path) -> None:
+    """A recalled entry superseded before reflect stays in the bundle flagged
+    `superseded: true` so `--used-ids` can still name it (the recall-usage
+    denominator counts every surfaced id)."""
     _write_workspace(tmp_repo)
     head = _git(["rev-parse", "HEAD"], tmp_repo).strip()
     ticket_dir = tmp_path / "runs" / "FT-1"
     _seed_state(ticket_dir, head)
     a = memory_append.append(tmp_repo, "FACT", "old truth", "br", "FT-1")
+    b = memory_append.append(tmp_repo, "FACT", "live truth", "br", "FT-1")
     memory_append.append(tmp_repo, "FACT", "new truth", "br", "FT-1", supersedes=a["id"])
-    _write_recall_log(ticket_dir, [{"returned_ids": [a["id"]]}])
+    _write_recall_log(ticket_dir, [{"returned_ids": [a["id"], b["id"]]}])
     payload = reflect_inputs.bundle("FT-1", ticket_dir, tmp_repo)
-    ids = [r["id"] for r in payload["recalled_entries"]]
-    assert a["id"] not in ids
+    by_id = {r["id"]: r for r in payload["recalled_entries"]}
+    assert by_id[a["id"]]["superseded"] is True
+    assert by_id[a["id"]]["body"] == "old truth"
+    assert "superseded" not in by_id[b["id"]]
 
 
 def test_recalled_entries_drops_unjoinable_id(tmp_repo: Path, tmp_path: Path) -> None:
