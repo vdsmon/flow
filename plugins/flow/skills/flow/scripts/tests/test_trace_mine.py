@@ -110,6 +110,18 @@ def _tool_result_line(
     }
 
 
+def _keepalive_line(
+    ts: str, kind: str = "queue-operation", branch: str | None = None, session: str = "sess1"
+) -> dict[str, Any]:
+    """A session-plumbing heartbeat (the kind a backgrounded run parked on CI
+    emits): a bare typed line with a timestamp, no model/tool content.
+    """
+    line: dict[str, Any] = {"type": kind, "timestamp": ts, "sessionId": session}
+    if branch is not None:
+        line["gitBranch"] = branch
+    return line
+
+
 def _descriptor_line(
     ts: str,
     stage: str,
@@ -320,18 +332,20 @@ def test_stall_gap_below_threshold_emits_none(
 def test_stall_gap_suppressed_by_in_flight_tool_op(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    # A long op in flight (a subagent Task, a ~30min merge-stage CI wait) shows
-    # up as a tool_use whose tool_result arrives well past the threshold. That
-    # is the pipeline working, not dead air, so it must NOT emit a stall_gap; a
-    # genuine dead-air gap of the same size still does.
+    # A long op genuinely in flight (a subagent Task dispatch) shows up as a
+    # tool_use whose tool_result arrives well past the threshold. That is the
+    # pipeline working, not dead air, so it must NOT emit a stall_gap; a genuine
+    # dead-air gap of the same size still does. A backgrounded run parked on CI
+    # is a different shape (no tool in flight, keepalive-bounded) covered by
+    # test_stall_gap_suppressed_by_bg_ci_keepalives.
     workspace_root = tmp_path / "repo"
     transcript = _project_dir(tmp_path, workspace_root) / "t1.jsonl"
     _write_jsonl(
         transcript,
         [
-            _descriptor_line("2026-06-01T00:00:00.000Z", "merge"),
-            _tool_use_line("toolu_ci", "Bash", "2026-06-01T00:00:01.000Z"),
-            _tool_result_line("toolu_ci", "2026-06-01T00:10:01.000Z", "ci green"),  # 600s in flight
+            _descriptor_line("2026-06-01T00:00:00.000Z", "implement"),
+            _tool_use_line("toolu_task", "Task", "2026-06-01T00:00:01.000Z"),
+            _tool_result_line("toolu_task", "2026-06-01T00:10:01.000Z", "done"),  # 600s in flight
             _tool_use_line("toolu_next", "Bash", "2026-06-01T00:20:01.000Z"),  # 600s dead air
         ],
     )
@@ -344,6 +358,37 @@ def test_stall_gap_suppressed_by_in_flight_tool_op(
     assert len(gaps) == 1
     assert gaps[0]["gap_start_ts"] == "2026-06-01T00:10:01.000Z"
     assert gaps[0]["gap_end_ts"] == "2026-06-01T00:20:01.000Z"
+
+
+def test_stall_gap_suppressed_by_bg_ci_keepalives(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A backgrounded run parked on CI has no tool in flight: the merge-stage wait
+    # is bounded by session-plumbing heartbeats (queue-operation/system, both
+    # non-activity), not by a tool_use span. Below, each line is 1800s past the
+    # last, so every consecutive gap (activity->keepalive, keepalive->keepalive,
+    # keepalive->resume) clears the 300s threshold, yet all must be suppressed as
+    # the pipeline waiting on CI, not a stall. The trailing tool_use keeps the
+    # run's window open past the heartbeats so they are walked, not clipped.
+    workspace_root = tmp_path / "repo"
+    transcript = _project_dir(tmp_path, workspace_root) / "t1.jsonl"
+    _write_jsonl(
+        transcript,
+        [
+            _flow_intent_line("flow-eia3", "2026-06-01T00:00:00.000Z"),
+            _descriptor_line("2026-06-01T00:00:05.000Z", "merge"),
+            _tool_use_line("toolu_1", "Bash", "2026-06-01T00:00:10.000Z"),  # last pre-park activity
+            _keepalive_line("2026-06-01T00:30:10.000Z"),
+            _keepalive_line("2026-06-01T01:00:10.000Z", kind="system"),
+            _tool_use_line("toolu_2", "Bash", "2026-06-01T01:30:10.000Z"),  # run resumes post-CI
+        ],
+    )
+    rc, payload = _run_extract(
+        capsys, *_extract_args(transcript, workspace_root, tmp_path, "flow-eia3")
+    )
+    assert rc == 0
+    assert payload is not None
+    assert [e for e in payload["events"] if e["kind"] == "stall_gap"] == []
 
 
 # ─── run-window scoping ─────────────────────────────────────────────────────
@@ -393,6 +438,70 @@ def test_multi_run_scoping_yields_only_target_run(
     assert payload["ticket"] == "flow-eia3"
     assert [e["body"] for e in payload["events"]] == ["RUN1 ERROR"]
     assert payload["stage_order"] == ["implement"]
+
+
+def test_trailing_edge_drops_post_run_events_when_target_is_last_run(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The target run is the LAST flow run in the session, so no next intent bounds
+    # it from above. The window must still end at the run's own last worktree-branch
+    # activity: a post-run bootstrap error back on main and a branchless idle tail of
+    # keepalive gaps are not this run's and must not attribute to it.
+    workspace_root = tmp_path / "repo"
+    transcript = _project_dir(tmp_path, workspace_root) / "t1.jsonl"
+    wt = "feat/flow-eia3"
+    _write_jsonl(
+        transcript,
+        [
+            _flow_intent_line("flow-eia3", "2026-06-02T10:00:00.000Z"),
+            _descriptor_line("2026-06-02T10:00:05.000Z", "implement", branch=wt),
+            _tool_use_line("toolu_r1", "Bash", "2026-06-02T10:00:06.000Z", branch=wt),
+            _tool_error_line("toolu_r1", "2026-06-02T10:00:07.000Z", "IN RUN ERROR", branch=wt),
+            # run finished; the session idles back on main and via branchless keepalives
+            _tool_use_line("toolu_post", "Bash", "2026-06-02T14:48:00.000Z"),
+            _tool_error_line("toolu_post", "2026-06-02T14:49:00.000Z", "POST RUN ERROR"),
+            _keepalive_line("2026-06-02T16:00:00.000Z"),
+            _keepalive_line("2026-06-02T18:30:00.000Z"),
+        ],
+    )
+    rc, payload = _run_extract(
+        capsys, *_extract_args(transcript, workspace_root, tmp_path, "flow-eia3")
+    )
+    assert rc == 0
+    assert payload is not None
+    assert [e["body"] for e in payload["events"]] == ["IN RUN ERROR"]
+    assert [e for e in payload["events"] if e["kind"] == "stall_gap"] == []
+
+
+def test_same_ticket_relaunch_scopes_to_last_run(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A ticket relaunched after a first run appears twice. A finished-run miner
+    # wants the LAST run (the one that finished), so the earlier run's events must
+    # not leak in.
+    workspace_root = tmp_path / "repo"
+    transcript = _project_dir(tmp_path, workspace_root) / "t1.jsonl"
+    wt = "feat/flow-eia3"
+    _write_jsonl(
+        transcript,
+        [
+            _flow_intent_line("flow-eia3", "2026-06-02T10:00:00.000Z"),
+            _descriptor_line("2026-06-02T10:00:05.000Z", "implement", branch=wt),
+            _tool_use_line("toolu_r1", "Bash", "2026-06-02T10:00:06.000Z", branch=wt),
+            _tool_error_line("toolu_r1", "2026-06-02T10:00:07.000Z", "FIRST RUN ERROR", branch=wt),
+            _flow_intent_line("flow-eia3", "2026-06-02T11:00:00.000Z"),
+            _descriptor_line("2026-06-02T11:00:05.000Z", "code_review", branch=wt),
+            _tool_use_line("toolu_r2", "Bash", "2026-06-02T11:00:06.000Z", branch=wt),
+            _tool_error_line("toolu_r2", "2026-06-02T11:00:07.000Z", "SECOND RUN ERROR", branch=wt),
+        ],
+    )
+    rc, payload = _run_extract(
+        capsys, *_extract_args(transcript, workspace_root, tmp_path, "flow-eia3")
+    )
+    assert rc == 0
+    assert payload is not None
+    assert [e["body"] for e in payload["events"]] == ["SECOND RUN ERROR"]
+    assert payload["stage_order"] == ["code_review"]
 
 
 def test_no_dispatch_activity_exits_5(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

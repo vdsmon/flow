@@ -9,10 +9,15 @@ never files beads, never calls `claude agents --json`. Filesystem-scan only.
 Run-window scoping: a real session file spans many runs across days. `extract`
 requires a `--ticket` and clips output to that ticket's run window: from the
 run's `/flow` intent invocation (or, headless, the contiguous same-branch
-prefix) through its last dispatch activity, bounded above by the next run's
-intent. Events on a foreign git branch inside that window are dropped. A
-transcript carrying no dispatch activity for `--ticket` exits 5 rather than
-emitting unattributable events.
+prefix) through the run's own last activity on its worktree branch (a branchless
+idle tail or a post-run slice on the bootstrap branch is dropped). A relaunched
+ticket scopes to its last run. Events on a foreign git branch inside the window
+are dropped. A transcript carrying no dispatch activity for `--ticket` exits 5
+rather than emitting unattributable events.
+
+Stall gaps are suppressed when a long tool op spanned the gap or when the gap is
+bounded by session plumbing (a backgrounded run parked on CI emits only
+heartbeat lines); a genuine stall is bounded by model/tool activity.
 
 Self-target guard: a `--transcript` is accepted only under the project tree of
 the CLAIMED `--workspace-root` (`~/.claude/projects/<slug>/`, or a worktree
@@ -53,6 +58,10 @@ _WORKTREE_MARKER = "/.flow/worktrees/"
 _BODY_SNIPPET_LEN = 500
 _JSON_OBJECT_SCAN_LIMIT = 10
 _FLOW_COMMAND_RE = re.compile(r"<command-name>[^<]*flow", re.IGNORECASE)
+# Model/tool activity, as opposed to session plumbing (system, queue-operation,
+# worktree-state and other heartbeat/metadata lines a backgrounded run emits
+# while parked on CI). A genuine stall is bounded by activity on both ends.
+_ACTIVITY_TYPES = frozenset({"assistant", "user", "attachment"})
 
 
 class _SelfTargetRejected(Exception):
@@ -296,12 +305,19 @@ def _contiguous_prefix_start(
 def _derive_window(lines: list[dict[str, Any]], ticket: str) -> _Window | None:
     """Scope the transcript to the run that dispatched `ticket`.
 
-    Runs are delimited by `/flow` intent lines: the target run spans from the
-    intent preceding its first dispatch descriptor up to the next intent (which
-    starts the following run), so neither a prior run's tail nor the next run's
-    bootstrap on a shared branch leaks in. Same-ticket-twice scopes to the run
-    holding the FIRST target descriptor. Returns None when no descriptor names
-    the target ticket.
+    Runs are delimited by `/flow` intent lines. This is a finished-run miner, so
+    a relaunched ticket scopes to its LAST run: the window spans from the intent
+    preceding that run's dispatch up to the next intent (which starts the
+    following run), so neither an earlier run of the same ticket nor the next
+    run's bootstrap on a shared branch leaks in.
+
+    The end is bounded at the run's OWN last activity on its worktree branch. A
+    live descriptor carries `done`, but a `done: true` terminal descriptor is
+    not emitted to the transcript in practice, so the operative bound is the last
+    line on a run branch: a branchless idle tail (keepalive/system heartbeats) or
+    a post-run slice on the bootstrap branch after that is not this run's.
+
+    Returns None when no descriptor names the target ticket.
     """
     intents = [i for i, obj in enumerate(lines) if _is_flow_command(obj)]
     descriptors = [
@@ -312,7 +328,6 @@ def _derive_window(lines: list[dict[str, Any]], ticket: str) -> _Window | None:
     target = [i for i, tk in descriptors if tk == ticket]
     if not target:
         return None
-    first_dispatch = target[0]
 
     run_branches = {
         branch
@@ -322,22 +337,31 @@ def _derive_window(lines: list[dict[str, Any]], ticket: str) -> _Window | None:
     }
     allowed = set(run_branches)
 
-    prior_intents = [j for j in intents if j <= first_dispatch]
+    last_target = target[-1]
+    prior_intents = [j for j in intents if j <= last_target]
+    later_intents = [j for j in intents if j > last_target]
+    span_end = later_intents[0] if later_intents else len(lines)
+
     if prior_intents:
         start = prior_intents[-1]
         branch = lines[start].get("gitBranch")
         if isinstance(branch, str) and branch:
             allowed.add(branch)
     else:
-        start = _contiguous_prefix_start(lines, first_dispatch, run_branches)
+        start = _contiguous_prefix_start(lines, target[0], run_branches)
 
-    later_intents = [j for j in intents if j > first_dispatch]
-    span_end = later_intents[0] if later_intents else len(lines)
-
-    in_span = [i for i in target if start <= i < span_end]
-    last_dispatch = max(in_span) if in_span else first_dispatch
+    in_span = [i for i in target if start <= i < span_end] or target
+    last_dispatch = max(in_span)
     foreign_after = [i for i, tk in descriptors if last_dispatch < i < span_end and tk != ticket]
-    end = foreign_after[0] if foreign_after else span_end
+    if foreign_after:
+        span_end = min(span_end, foreign_after[0])
+
+    run_activity = [
+        i
+        for i in range(last_dispatch, span_end)
+        if isinstance(lines[i], dict) and lines[i].get("gitBranch") in run_branches
+    ]
+    end = run_activity[-1] + 1 if run_activity else span_end
 
     return _Window(start=start, end=end, allowed_branches=frozenset(allowed))
 
@@ -358,14 +382,16 @@ class _Cursor:
     session_id: str = ""
     last_ts_dt: datetime | None = None
     last_ts_raw: str | None = None
+    last_is_activity: bool = False
 
 
 def _spans_open_tool_use(
     obj: dict[str, Any], id_to_start_ts: dict[str, datetime], gap_start_dt: datetime | None
 ) -> bool:
     """True when this user line closes a tool_use that was already in flight at
-    the gap start: a long op (subagent Task, ~30min merge-stage CI wait) covered
-    the whole gap, so the dead-air reading is spurious.
+    the gap start: a long op (a subagent Task dispatch) covered the whole gap, so
+    the dead-air reading is spurious. A backgrounded run parked on CI has no tool
+    in flight; that case is caught by the plumbing-bound test in extract_events.
     """
     if gap_start_dt is None or obj.get("type") != "user":
         return False
@@ -386,11 +412,12 @@ def _record_gap(
     session_id: str,
     stall_threshold_secs: int,
     suppress: bool,
+    cur_is_activity: bool,
 ) -> dict[str, Any] | None:
     """Emit a stall_gap when this line's timestamp exceeds the threshold past the
-    last one seen, then advance the cursor's last-timestamp regardless. A gap a
-    long in-flight tool op spanned (`suppress`) advances the clock without
-    emitting.
+    last one seen, then advance the cursor's last-timestamp regardless. A
+    suppressed gap (a long in-flight tool op, or a plumbing-bound bg CI park)
+    advances the clock without emitting.
     """
     event: dict[str, Any] | None = None
     if not suppress and ts_dt is not None and cursor.last_ts_dt is not None:
@@ -413,6 +440,7 @@ def _record_gap(
     if ts_dt is not None:
         cursor.last_ts_dt = ts_dt
         cursor.last_ts_raw = ts_raw
+        cursor.last_is_activity = cur_is_activity
     return event
 
 
@@ -581,6 +609,9 @@ def extract_events(
         ts_raw = obj.get("timestamp")
         ts_dt = parse_iso(ts_raw) if isinstance(ts_raw, str) else None
 
+        line_type = obj.get("type")
+        cur_is_activity = line_type in _ACTIVITY_TYPES
+
         branch = obj.get("gitBranch") or ""
         if branch and branch not in window.allowed_branches:
             # foreign-branch interleave inside the window: keep the clock moving
@@ -589,20 +620,35 @@ def extract_events(
             if ts_dt is not None:
                 cursor.last_ts_dt = ts_dt
                 cursor.last_ts_raw = ts_raw
+                cursor.last_is_activity = cur_is_activity
             continue
 
         event_session = (
             line_session if isinstance(line_session, str) and line_session else cursor.session_id
         )
 
-        suppress = _spans_open_tool_use(obj, cursor.id_to_start_ts, cursor.last_ts_dt)
+        # Suppress a stall gap that a long tool op spanned, or one bounded by
+        # session plumbing on either end: a backgrounded run parked on CI emits
+        # only system/queue-operation heartbeats, which is the pipeline waiting,
+        # not a stall. A genuine stall is bounded by model/tool activity.
+        plumbing_bound = not (cursor.last_is_activity and cur_is_activity)
+        suppress = plumbing_bound or _spans_open_tool_use(
+            obj, cursor.id_to_start_ts, cursor.last_ts_dt
+        )
         gap_event = _record_gap(
-            cursor, i, ts_raw, ts_dt, branch, event_session, stall_threshold_secs, suppress
+            cursor,
+            i,
+            ts_raw,
+            ts_dt,
+            branch,
+            event_session,
+            stall_threshold_secs,
+            suppress,
+            cur_is_activity,
         )
         if gap_event is not None:
             events.append(gap_event)
 
-        line_type = obj.get("type")
         if line_type == "assistant":
             _handle_assistant_line(obj, cursor, ts_dt)
         elif line_type == "user":
