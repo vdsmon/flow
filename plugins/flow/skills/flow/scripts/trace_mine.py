@@ -6,6 +6,16 @@ markers, and stall gaps, bucketed by dispatch-stage boundaries (child-1 of
 flow-eia3). Pure extractor: it never clusters, never reads `friction.jsonl`,
 never files beads, never calls `claude agents --json`. Filesystem-scan only.
 
+The `cluster` subcommand (child-2, flow-zfpe) groups those extracted events into
+Self-Harness-style failure signatures — one `(stage, kind, primary-anchor)` group
+each, carrying a terminal cause (kind + representative body) and a reusable
+mechanism (stage + anchor) — and dedups them against the already-logged
+`flow_friction.py` entries, surfacing only the friction the in-flight logger
+MISSED. It resolves the friction log through `_memory_paths` (like
+`friction_recurrence`) and reuses that module's `anchors` model, so both sides of
+the dedup are anchored by the same function. Each surfaced signature carries a
+`dedup_key` the child-3 `flow_beads_create` seam partitions on `::`.
+
 Run-window scoping: a real session file spans many runs across days. `extract`
 requires a `--ticket` and clips output to that ticket's run window: from the
 run's `/flow` intent invocation (or, headless, the contiguous same-branch
@@ -28,12 +38,17 @@ Known limitation: a dispatch descriptor re-emitted inside an `isMeta` text
 block (seen on resumed runs) is not parsed; only tool_result-carried
 descriptors bound stages.
 
-Exit codes:
+Exit codes (extract):
   0 = ok (including a valid eventless run -> events: []).
   1 = bad args (neither/both of --transcript/--session given).
   3 = transcript missing/unreadable.
   4 = self-target guard rejection.
   5 = no dispatch activity for --ticket in the transcript.
+Exit codes (cluster):
+  0 = ok.
+  1 = bad args.
+  3 = events source missing/unreadable/unparseable.
+  4 = workspace.toml missing/invalid (_MemoryConfigError).
 """
 
 from __future__ import annotations
@@ -48,7 +63,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import _memory_paths
 from _timeutil import parse_iso
+from friction_recurrence import anchors
 
 DEFAULT_STALL_THRESHOLD_SECS = 300
 _PRE_DISPATCH = "<pre-dispatch>"
@@ -661,6 +678,144 @@ def extract_events(
     return events, cursor.stage_order, cursor.session_id
 
 
+# ─── cluster: failure-signature clustering + friction dedup (child-2) ────────
+
+
+def _str_field(entry: dict[str, Any], key: str) -> str:
+    value = entry.get(key)
+    return value if isinstance(value, str) else ""
+
+
+def _text_anchors(entry: dict[str, Any]) -> set[str]:
+    """Distinctive anchors of an event or friction entry, from body + detail.
+
+    Reuses friction_recurrence.anchors so both sides of the friction dedup are
+    anchored by the same function.
+    """
+    return anchors(f"{_str_field(entry, 'body')} {_str_field(entry, 'detail')}")
+
+
+def _primary_anchor(anchor_set: set[str]) -> str:
+    """Deterministic representative anchor: a file anchor (.py/.md/.toml) wins,
+    else the lexicographically-first token, else "".
+
+    Uses only the public anchors() output via a suffix test, not
+    friction_recurrence's private file-anchor regex.
+    """
+    if not anchor_set:
+        return ""
+    return sorted(anchor_set, key=lambda a: (0 if a.endswith((".py", ".md", ".toml")) else 1, a))[0]
+
+
+def _build_signature(
+    stage: str, kind: str, primary: str, members: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """One failure signature from a (stage, kind, primary-anchor) group."""
+    union: set[str] = set()
+    for event in members:
+        union |= _text_anchors(event)
+    # ts is Z-suffixed UTC-ms ISO8601, so lexicographic compare == chronological
+    # (the same assumption friction_recurrence documents in-code).
+    representative = min(members, key=lambda e: _str_field(e, "ts"))
+    ts_values = [t for t in (_str_field(e, "ts") for e in members) if t]
+    related = sorted(union - {primary}) if primary else sorted(union)
+    return {
+        "dedup_key": f"{primary or stage}::{kind}-{stage}",
+        "summary": f"{kind} in {stage}" + (f" ({primary})" if primary else ""),
+        "terminal_cause": {
+            "kind": kind,
+            "body": _str_field(representative, "body"),
+            "detail": _str_field(representative, "detail"),
+        },
+        "mechanism": {"stage": stage, "anchor": primary, "related_anchors": related},
+        "anchors": sorted(union),
+        "event_count": len(members),
+        "event_ids": sorted(_str_field(e, "id") for e in members),
+        "run_ids": sorted({r for r in (_str_field(e, "run_id") for e in members) if r}),
+        "tickets": sorted({t for t in (_str_field(e, "ticket") for e in members) if t}),
+        "ts_start": min(ts_values) if ts_values else "",
+        "ts_end": max(ts_values) if ts_values else "",
+    }
+
+
+def _already_logged(
+    signature: dict[str, Any], friction: list[tuple[dict[str, Any], set[str]]]
+) -> bool:
+    """A signature is already-logged (drop it) iff some friction entry shares its
+    run/ticket AND its stage AND at least one distinctive anchor.
+
+    Deliberately kind-agnostic: it matches on stage + anchor overlap, not on a
+    friction-type <-> event-kind map (the coupling this producer avoids). The
+    cost is coarseness — a logged friction can suppress a genuinely-missed event
+    of a DIFFERENT kind that shares an incidental anchor in the same stage
+    (likeliest on a hot file such as dispatch_stage.py). Accepted for a
+    maintainer-gated proposal producer: child-3 re-dedups the filed beads, and an
+    anchorless event (a stall_gap, an anchorless silent_retry) never overlaps, so
+    it always surfaces — the friction class the in-flight logger misses by
+    construction.
+    """
+    sig_anchors = set(signature["anchors"])
+    if not sig_anchors:
+        return False
+    stage = signature["mechanism"]["stage"]
+    tickets = set(signature["tickets"])
+    run_ids = set(signature["run_ids"])
+    for entry, entry_anchors in friction:
+        if _str_field(entry, "stage") != stage:
+            continue
+        if (
+            _str_field(entry, "ticket") not in tickets
+            and _str_field(entry, "run_id") not in run_ids
+        ):
+            continue
+        if entry_anchors & sig_anchors:
+            return True
+    return False
+
+
+def cluster_signatures(
+    events: list[dict[str, Any]], friction: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Group extract events into failure signatures and drop those a friction
+    entry already logged, surfacing only the MISSED friction.
+
+    Pure function of the two lists (no wall clock, no I/O), mirroring
+    friction_recurrence's clustering shape. Returns
+    {signatures, total_events, missed, already_logged}; `signatures` holds the
+    surfaced (missed) classes only, sorted by (-event_count, dedup_key). The
+    library takes flat lists so a caller can concatenate several runs' events;
+    the CLI clusters one extract payload per invocation.
+    """
+    groups: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        primary = _primary_anchor(_text_anchors(event))
+        key = (_str_field(event, "stage"), _str_field(event, "kind"), primary)
+        groups.setdefault(key, []).append(event)
+
+    friction_anchored = [
+        (entry, _text_anchors(entry)) for entry in friction if isinstance(entry, dict)
+    ]
+
+    surfaced: list[dict[str, Any]] = []
+    already_logged = 0
+    for (stage, kind, primary), members in groups.items():
+        signature = _build_signature(stage, kind, primary, members)
+        if _already_logged(signature, friction_anchored):
+            already_logged += 1
+        else:
+            surfaced.append(signature)
+
+    surfaced.sort(key=lambda s: (-s["event_count"], s["dedup_key"]))
+    return {
+        "signatures": surfaced,
+        "total_events": len(events),
+        "missed": len(surfaced),
+        "already_logged": already_logged,
+    }
+
+
 # ─── CLI ─────────────────────────────────────────────────────────────────────
 
 
@@ -682,6 +837,17 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument("--workspace-root", default=".")
     p.add_argument("--projects-root", default=None, help="override (default ~/.claude/projects).")
     p.add_argument("--stall-threshold-secs", type=int, default=DEFAULT_STALL_THRESHOLD_SECS)
+
+    c = sub.add_parser(
+        "cluster",
+        help="Cluster extract events into failure signatures; surface only MISSED friction.",
+    )
+    c.add_argument(
+        "--events-file",
+        default="-",
+        help="An `extract` result JSON; '-' (the default) reads stdin.",
+    )
+    c.add_argument("--workspace-root", default=".")
     return parser.parse_args(argv)
 
 
@@ -739,10 +905,57 @@ def _run_extract(args: argparse.Namespace) -> int:
     return 0
 
 
+def _read_events_source(events_file: str) -> str | None:
+    """Raw extract-payload text: stdin for '-', else the named file (None on an
+    unreadable path)."""
+    if events_file == "-":
+        return sys.stdin.read()
+    try:
+        return Path(events_file).expanduser().read_text(encoding="utf-8")
+    except OSError:
+        return None
+
+
+def _run_cluster(args: argparse.Namespace) -> int:
+    raw = _read_events_source(args.events_file)
+    if raw is None:
+        sys.stderr.write(f"trace-mine: events source not found or unreadable: {args.events_file}\n")
+        return 3
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        sys.stderr.write(f"trace-mine: could not parse events JSON: {exc}\n")
+        return 3
+    events = payload.get("events") if isinstance(payload, dict) else payload
+    if not isinstance(events, list):
+        sys.stderr.write("trace-mine: events payload has no 'events' list\n")
+        return 3
+
+    workspace_root = Path(args.workspace_root).resolve()
+    try:
+        namespace = _memory_paths.resolve_namespace(workspace_root)
+    except _memory_paths._MemoryConfigError as exc:
+        sys.stderr.write(f"trace-mine: {exc}\n")
+        return 4
+
+    fpath = _memory_paths.friction_path(workspace_root, namespace)
+    try:
+        friction = _lenient_jsonl(fpath) if fpath.exists() else []
+    except OSError as exc:
+        sys.stderr.write(f"trace-mine: I/O error reading friction log: {exc}\n")
+        return 3
+
+    result = cluster_signatures(events, friction)
+    sys.stdout.write(json.dumps(result, indent=2, sort_keys=True) + "\n")
+    return 0
+
+
 def cli_main(argv: list[str]) -> int:
     args = _parse_args(argv)
     if args.command == "extract":
         return _run_extract(args)
+    if args.command == "cluster":
+        return _run_cluster(args)
     return 1
 
 
@@ -750,4 +963,4 @@ if __name__ == "__main__":
     raise SystemExit(cli_main(sys.argv[1:]))
 
 
-__all__ = ["cli_main", "extract_events"]
+__all__ = ["cli_main", "cluster_signatures", "extract_events"]
