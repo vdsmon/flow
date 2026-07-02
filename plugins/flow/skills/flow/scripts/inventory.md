@@ -707,6 +707,7 @@ Idempotency key: `sha256(namespace + ticket + type + normalized_body)[:16]` wher
 | `--ticket` | Ticket key. |
 | `--id` | Override the computed id (for ship-event-derived entries). |
 | `--supersedes` | Optional id of the live entry this one replaces (tombstone pointer, metadata only — never a hash input); the target must exist in `knowledge.jsonl`. |
+| `--labels` | Optional CSV `facet:value` array (e.g. `form:iva_2083,area:vat`), comma-split with empties stripped; metadata only — never a hash input. Written as `entry["labels"]` ONLY when non-empty (mirrors `--supersedes`). |
 | `--workspace-root` | Default `.`. |
 
 Exit codes: 0=appended, 1=duplicate id (no-op), 2=lock contention,
@@ -730,7 +731,8 @@ flag, NOT a `--metric`-style raw-argv intercept).
 | `--branch` | Optional. Exact-match boost × 2.0. Case-insensitive. |
 | `--tickets` | Optional CSV. Exact-match boost × 3.0 (any match in CSV). |
 | `--ticket` | Ticket key for `--record-pending`. |
-| `--top-n` | Default 5. Output cap; also drives the cosine top-K candidate pool (K = top_n × 2, min 20). |
+| `--label` | Optional exact `labels[]` match. HARD pre-filter (a WHERE clause, not a boost): entries lacking this exact value are dropped before ranking, in both `rank()` and `_semantic_rank()`. Bypasses `--top-n` (raised to corpus size — exhaustive cluster retrieval, never truncated). The query becomes optional; a label-only recall (no query) still ranks via the `ts DESC` tiebreak, and forces the deterministic BM25 path (no embed call for an empty query). |
+| `--top-n` | Default 5. Output cap; also drives the cosine top-K candidate pool (K = top_n × 2, min 20). Ignored when `--label` is set. |
 | `--semantic` | Force the semantic path on (default follows `[memory.semantic].enabled`). |
 | `--threshold` | Low cosine floor — drops non-positive (anti-correlated) cosines (default `[memory.semantic].threshold`, else 0.0). NOT the candidate gate; selection is rank-based top-K. |
 | `--record-pending` | Append the recalled ids to `recall-pending` (needs `--branch` + `--ticket`). The post-gate producer that replaces the old SessionStart hook. Best-effort. |
@@ -738,9 +740,19 @@ flag, NOT a `--metric`-style raw-argv intercept).
 | `--workspace-root` | Default `.`. |
 
 BM25 params (pinned): k1=1.5, b=0.75.
-Field weights: body=1.0, type=0.5, branch=1.5, ticket=2.0.
+Field weights: body=1.0, type=0.5, branch=1.5, ticket=2.0, labels=2.0.
 Tiebreak: ts DESC (ms precision via negated-codepoint sort key over ISO8601 string).
 IDF scope: current namespace only.
+
+**Label clusters (`labels[]` + `--label`).** An entry's optional `labels` array
+(`memory_append --labels`) is a facet-tagging convention, e.g. `["form:iva_2083"]`.
+`--label facet:value` restricts BOTH scoring paths to entries carrying that exact
+value (membership over `labels`, not a substring match) BEFORE ranking, so the
+retrieval is exhaustive over the whole live cluster rather than a relevance-ranked
+top-N. A query token that happens to equal a label value still gets BM25 fuzzy
+reach through the `labels` field weight (list values are space-joined then
+tokenized) even without `--label` set; for a label-free corpus this field
+contributes 0 (the `avgdl==0` guard), so scoring is byte-identical to before.
 
 **Semantic fusion (gated by `[memory.semantic]`):** after `filter_superseded`, when
 enabled AND the sidecar index loads AND its header model matches the configured model:
@@ -755,7 +767,8 @@ line on stderr (`semantic-active model=<id> cosine_candidates=N`, or
 `bm25-fallback reason=<...>`). `[memory.semantic]` absent/off → byte-identical pure BM25
 (`rank()` is kept intact as the fallback).
 
-Output: JSON array of top-N entries with `score` field appended.
+Output: JSON array of top-N entries with `score` and `labels` fields appended
+(`labels` is `[]` for an entry with no `labels`, not an omitted key).
 Empty corpus returns `[]` exit 0.
 
 Exit codes: 0=ok, 1=workspace invalid / namespace unresolvable OR no query supplied.
@@ -827,6 +840,26 @@ Optional `workspace.toml` block (off by default; absent → semantic off → pur
 `[memory]` are now UNREAD (the SessionStart recall path was removed; plan-phase recall
 has its own `--top-n`/`--threshold`) — they stay harmless, postcondition #5 still expects
 them so `init` keeps writing them.
+
+### `[memory] label_facets` key
+
+Optional `list[str]`, default `[]`. Names the facet(s) a knowledge entry can be
+tagged with via `memory_append --labels <facet>:<value>` (e.g. `label_facets =
+["form"]` -> `--labels form:iva_2083`). Unlike `recall_by`/`recall_top_n` above,
+this key is forward-wired, not vestigial:
+- `init.py` seeds `label_facets = []` into the generated `[memory]` block.
+- `validate_workspace.py` type-checks it (`list[str]`) ONLY when present
+  (absent is valid — mirrors the `root` optional-key pattern); a present
+  non-list or non-str element is one violation, `memory.label_facets`.
+- `reflect_inputs.py` surfaces it as its own top-level bundle key
+  `label_facets` (read from `[memory]`, default `[]`; NOT folded into
+  `reflect_config`, which is the `[reflect]` gates).
+- `stage-reflect.md` step 3 reads the bundle key and tags new entries with
+  `--labels` when a facet applies; step 3b carries a superseded entry's labels
+  forward onto its successor.
+
+The engine never hardcodes a facet name; a workspace with no natural facet
+convention ships `label_facets = []` and the tagging step is a no-op.
 
 ### `recall_usage.py`
 

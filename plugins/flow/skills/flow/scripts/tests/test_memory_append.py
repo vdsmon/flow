@@ -462,3 +462,105 @@ def test_cli_missing_workspace_returns_4(
         ]
     )
     assert rc == 4
+
+
+# ─── labels (faceted memory) ─────────────────────────────────────────────────
+
+
+def test_labels_not_in_id_formula(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path)
+    plain_id = memory_append.compute_id("demo", "FT-1", "LEARNED", "same text")
+    entry = memory_append.append(
+        tmp_path, "LEARNED", "same text", "main", "FT-1", labels=["form:iva_2083"]
+    )
+    assert entry["id"] == plain_id
+
+
+def test_labels_written_verbatim(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path)
+    entry = memory_append.append(
+        tmp_path, "LEARNED", "x", "main", "FT-1", labels=["form:iva_2083", "area:vat"]
+    )
+    assert entry["labels"] == ["form:iva_2083", "area:vat"]
+    entries = _read_jsonl(_memory_paths.knowledge_path(tmp_path, "demo"))
+    assert entries[0]["labels"] == ["form:iva_2083", "area:vat"]
+
+
+def test_no_labels_key_absent(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path)
+    entry = memory_append.append(tmp_path, "LEARNED", "plain entry", "main", "FT-1")
+    assert "labels" not in entry
+    entries = _read_jsonl(_memory_paths.knowledge_path(tmp_path, "demo"))
+    assert "labels" not in entries[0]
+
+
+def test_empty_labels_list_key_absent(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path)
+    entry = memory_append.append(tmp_path, "LEARNED", "plain entry", "main", "FT-1", labels=[])
+    assert "labels" not in entry
+    entries = _read_jsonl(_memory_paths.knowledge_path(tmp_path, "demo"))
+    assert "labels" not in entries[0]
+
+
+def test_labels_and_supersedes_coexist(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path)
+    first = memory_append.append(tmp_path, "LEARNED", "v1", "main", "FT-1")
+    second = memory_append.append(
+        tmp_path,
+        "LEARNED",
+        "v2",
+        "main",
+        "FT-1",
+        supersedes=first["id"],
+        labels=["form:iva_2083"],
+    )
+    assert second["supersedes"] == first["id"]
+    assert second["labels"] == ["form:iva_2083"]
+
+
+def test_cli_labels_csv_parsed(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    _seed_workspace(tmp_path)
+    rc = memory_append.cli_main(
+        [
+            "--type",
+            "LEARNED",
+            "--text",
+            "x",
+            "--branch",
+            "main",
+            "--ticket",
+            "FT-1",
+            "--labels",
+            "a:1,b:2",
+            "--workspace-root",
+            str(tmp_path),
+        ]
+    )
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["labels"] == ["a:1", "b:2"]
+
+
+def test_cli_empty_whitespace_labels_omits_key(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _seed_workspace(tmp_path)
+    rc = memory_append.cli_main(
+        [
+            "--type",
+            "LEARNED",
+            "--text",
+            "x",
+            "--branch",
+            "main",
+            "--ticket",
+            "FT-1",
+            "--labels",
+            " , ,",
+            "--workspace-root",
+            str(tmp_path),
+        ]
+    )
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert "labels" not in payload

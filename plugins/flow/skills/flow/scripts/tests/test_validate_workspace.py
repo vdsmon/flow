@@ -579,3 +579,66 @@ def test_opt_out_work_model_inline_no_warn(tmp_path: Path) -> None:
     result, _ = vw.validate(root)
     assert result.ok
     assert result.warnings == []
+
+
+# ─── [memory] label_facets (optional; validate-if-present) ──────────────────
+
+
+def test_label_facets_absent_is_valid(tmp_path: Path) -> None:
+    root = _make_workspace(tmp_path)
+    result, _ = vw.validate(root)
+    assert result.ok
+
+
+def test_label_facets_list_str_valid(tmp_path: Path) -> None:
+    root = _make_workspace(
+        tmp_path,
+        memory={
+            "namespace": "x",
+            "auto_recall": True,
+            "compounding": True,
+            "recall_by": ["branch"],
+            "recall_top_n": 5,
+            "label_facets": ["form"],
+        },
+    )
+    result, _ = vw.validate(root)
+    assert result.ok
+
+
+def test_label_facets_non_list_fails(tmp_path: Path) -> None:
+    root = _make_workspace(
+        tmp_path,
+        memory={
+            "namespace": "x",
+            "auto_recall": True,
+            "compounding": True,
+            "recall_by": ["branch"],
+            "recall_top_n": 5,
+        },
+        workspace_toml_content=None,
+    )
+    p = root / ".flow" / "workspace.toml"
+    p.write_text(p.read_text(encoding="utf-8") + '\nlabel_facets = "form"\n', encoding="utf-8")
+    result, _ = vw.validate(root)
+    assert not result.ok
+    assert sum("memory.label_facets" in v for v in result.violations) == 1
+
+
+def test_label_facets_non_str_element_fails(tmp_path: Path) -> None:
+    root = _make_workspace(
+        tmp_path,
+        memory={
+            "namespace": "x",
+            "auto_recall": True,
+            "compounding": True,
+            "recall_by": ["branch"],
+            "recall_top_n": 5,
+        },
+        workspace_toml_content=None,
+    )
+    p = root / ".flow" / "workspace.toml"
+    p.write_text(p.read_text(encoding="utf-8") + "\nlabel_facets = [1]\n", encoding="utf-8")
+    result, _ = vw.validate(root)
+    assert not result.ok
+    assert sum("memory.label_facets" in v for v in result.violations) == 1

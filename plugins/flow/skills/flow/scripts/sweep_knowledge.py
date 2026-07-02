@@ -104,9 +104,23 @@ def _parse_manifest(text: str) -> list[dict[str, Any]]:
     return records
 
 
+def _labels_by_id(entries: list[dict[str, Any]]) -> dict[str, list[str]]:
+    return {
+        str(e.get("id")): list(e.get("labels") or [])
+        for e in entries
+        if isinstance(e, dict) and e.get("id")
+    }
+
+
 def apply(workspace_root: Path, records: list[dict[str, Any]]) -> dict[str, Any]:
-    """Apply each manifest record. Returns a per-record results summary."""
-    dead = recall.superseded_ids(_load_entries(workspace_root))
+    """Apply each manifest record. Returns a per-record results summary.
+
+    The tombstone carries the superseded entry's labels forward so the
+    supersession stays visible inside its own label cluster.
+    """
+    entries = _load_entries(workspace_root)
+    dead = recall.superseded_ids(entries)
+    labels_by_id = _labels_by_id(entries)
     results: list[dict[str, Any]] = []
     any_error = False
     for rec in records:
@@ -138,6 +152,7 @@ def apply(workspace_root: Path, records: list[dict[str, Any]]) -> dict[str, Any]
                 branch=branch,
                 ticket=ticket,
                 supersedes=superseded_id,
+                labels=labels_by_id.get(superseded_id) or None,
             )
         except memory_append._UnknownSupersedeTarget:
             any_error = True
@@ -229,8 +244,12 @@ def apply_cluster(workspace_root: Path, records: list[dict[str, Any]]) -> dict[s
     are ALL already dead is skipped (a member id superseded individually in the
     meantime is not re-litigated here). Refuses an unknown member id (the record
     errors; the batch continues; the run exits non-zero if any record errored).
+    The canonical carries the UNION of the members' labels so a consolidated
+    cluster never drops out of its own `recall.py --label` retrieval.
     """
-    dead = recall.superseded_ids(_load_entries(workspace_root))
+    entries = _load_entries(workspace_root)
+    dead = recall.superseded_ids(entries)
+    labels_by_id = _labels_by_id(entries)
     results: list[dict[str, Any]] = []
     any_error = False
     for rec in records:
@@ -251,6 +270,7 @@ def apply_cluster(workspace_root: Path, records: list[dict[str, Any]]) -> dict[s
             results.append({"member_ids": member_ids, "result": "skipped"})
             continue
         try:
+            member_labels = sorted({lab for m in member_ids for lab in labels_by_id.get(m, [])})
             entry = memory_append.append(
                 workspace_root,
                 type_=type_,
@@ -258,6 +278,7 @@ def apply_cluster(workspace_root: Path, records: list[dict[str, Any]]) -> dict[s
                 branch=branch,
                 ticket=ticket,
                 supersedes=member_ids,
+                labels=member_labels or None,
             )
         except memory_append._UnknownSupersedeTarget as exc:
             any_error = True

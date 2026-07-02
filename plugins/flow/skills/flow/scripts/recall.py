@@ -67,6 +67,7 @@ FIELD_WEIGHTS: dict[str, float] = {
     "type": 0.5,
     "branch": 1.5,
     "ticket": 2.0,
+    "labels": 2.0,
 }
 # Additive exact-match bonuses. Sized to dominate any realistic BM25 text score
 # so a requested exact match always sorts ahead of non-requested term matches,
@@ -140,6 +141,8 @@ def _idf(n_docs: int, df: int) -> float:
 
 def _doc_field_text(entry: dict[str, Any], field: str) -> str:
     value = entry.get(field, "")
+    if isinstance(value, list):
+        return " ".join(str(x) for x in value)
     return str(value) if value is not None else ""
 
 
@@ -186,13 +189,23 @@ def rank(
     entries: list[dict[str, Any]],
     branch_filter: str | None = None,
     ticket_filters: list[str] | None = None,
+    label_filter: str | None = None,
     top_n: int = 5,
 ) -> list[dict[str, Any]]:
-    """Score entries with BM25, apply boosts, sort, return top_n."""
+    """Score entries with BM25, apply boosts, sort, return top_n.
+
+    `label_filter` is a HARD pre-filter (a WHERE clause, not an additive boost
+    like `branch_filter`): when set, only entries whose `labels` list contains
+    this exact value are considered. A label-only recall (empty query, label
+    set) still ranks -- the BM25 text score is 0 for every entry, so the result
+    falls back to the `ts DESC` tiebreak, returning the whole cluster.
+    """
+    if label_filter is not None:
+        entries = [e for e in entries if label_filter in (e.get("labels") or [])]
     if not entries:
         return []
     query_tokens = tokenize(query)
-    if not query_tokens:
+    if not query_tokens and label_filter is None:
         return []
     per_field_tokens: dict[str, list[list[str]]] = {
         field: [tokenize(_doc_field_text(e, field)) for e in entries] for field in FIELD_WEIGHTS
@@ -239,6 +252,7 @@ def rank(
                 "body": entry.get("body"),
                 "ts": entry.get("ts"),
                 "score": round(score, 6),
+                "labels": entry.get("labels") or [],
             }
         )
     return results
@@ -326,6 +340,7 @@ def _semantic_rank(
     *,
     branch_filter: str | None,
     ticket_filters: list[str] | None,
+    label_filter: str | None,
     threshold: float,
     top_n: int,
 ) -> tuple[list[dict[str, Any]], str]:
@@ -334,6 +349,9 @@ def _semantic_rank(
     Returns (results, status). Raises on any failure (caller falls back to BM25).
     """
     import memory_embed
+
+    if label_filter is not None:
+        entries = [e for e in entries if label_filter in (e.get("labels") or [])]
 
     model = str(config.get("model") or memory_embed._DEFAULT_MODEL)
     embedder = config.get("embedder") or None
@@ -364,12 +382,14 @@ def _semantic_rank(
     top_k = max(top_n * COSINE_TOP_K_MULT, COSINE_MIN_K)
     cosine_order = [eid for eid, _ in sims[:top_k]]
 
-    # full BM25 ranking (all live entries), id order.
+    # full BM25 ranking (all live entries, already label-filtered above -- pass
+    # label_filter=None here to avoid double-filtering), id order.
     bm25_results = rank(
         query=query,
         entries=entries,
         branch_filter=branch_filter,
         ticket_filters=ticket_filters,
+        label_filter=None,
         top_n=len(entries),
     )
     bm25_order = [str(r["id"]) for r in bm25_results if r.get("id") is not None]
@@ -403,6 +423,7 @@ def _semantic_rank(
                 "body": entry.get("body"),
                 "ts": entry.get("ts"),
                 "score": round(fused[eid], 6),
+                "labels": entry.get("labels") or [],
             }
         )
     return results, f"semantic-active model={model} cosine_candidates={len(cosine_order)}"
@@ -422,6 +443,11 @@ def _read_query(args: argparse.Namespace) -> str | None:
         return args.query
     if args.query_file:
         return Path(args.query_file).read_text(encoding="utf-8")
+    # A label-only recall must never block on stdin: the harness Bash tool
+    # feeds an open, EOF-less pipe, so the auto-read below would wedge the
+    # stage instead of falling through to the label cluster.
+    if args.label:
+        return None
     try:
         if not sys.stdin.isatty():
             piped = sys.stdin.read()
@@ -432,12 +458,30 @@ def _read_query(args: argparse.Namespace) -> str | None:
     return None
 
 
+def _resolve_query(args: argparse.Namespace) -> str | None:
+    """Resolve the query via `_read_query`, allowing an empty query when
+    `--label` is set (a label-only recall returns the whole cluster, ordered by
+    the `ts DESC` tiebreak). None only when no query is available AND `--label`
+    is unset -- the caller exits 1.
+    """
+    query = _read_query(args)
+    if query is not None:
+        return query
+    return "" if args.label else None
+
+
 def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="BM25 ranker over knowledge.jsonl.")
     parser.add_argument("query", nargs="?", default=None)
     parser.add_argument("--branch", default=None)
     parser.add_argument("--tickets", default=None, help="comma-separated ticket keys.")
     parser.add_argument("--ticket", default=None, help="ticket key for --record-pending.")
+    parser.add_argument(
+        "--label",
+        default=None,
+        help="hard filter to an exact labels[] match; exhaustive cluster "
+        "(bypasses --top-n), query becomes optional.",
+    )
     parser.add_argument("--top-n", type=int, default=5)
     parser.add_argument("--include-superseded", action="store_true")
     parser.add_argument("--workspace-root", default=".")
@@ -537,13 +581,17 @@ def cli_main(argv: list[str]) -> int:
     if args.tickets:
         tickets = [t.strip() for t in args.tickets.split(",") if t.strip()]
 
-    query = _read_query(args)
+    query = _resolve_query(args)
     if query is None:
         sys.stderr.write("recall: no query (positional, --query-file, or stdin)\n")
         return 1
 
+    top_n = len(entries) if args.label else args.top_n
+
     config = _load_config(workspace_root)
-    semantic_on = args.semantic or bool(config.get("enabled"))
+    semantic_on = (args.semantic or bool(config.get("enabled"))) and not (
+        args.label and not query.strip()
+    )
     if args.threshold is not None:
         threshold = args.threshold
     else:
@@ -565,8 +613,9 @@ def cli_main(argv: list[str]) -> int:
                 namespace,
                 branch_filter=args.branch,
                 ticket_filters=tickets or None,
+                label_filter=args.label,
                 threshold=threshold,
-                top_n=args.top_n,
+                top_n=top_n,
             )
             sys.stderr.write(f"recall: {status}\n")
         except Exception as exc:
@@ -579,7 +628,8 @@ def cli_main(argv: list[str]) -> int:
             entries=entries,
             branch_filter=args.branch,
             ticket_filters=tickets or None,
-            top_n=args.top_n,
+            label_filter=args.label,
+            top_n=top_n,
         )
 
     if args.record_pending:
