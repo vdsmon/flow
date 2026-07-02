@@ -5,6 +5,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 import stage_merge as sm
 
 _PR_ID = "123"
@@ -830,3 +832,58 @@ def test_cli_execute_failed_merge_returns_1(tmp_path, capsys):
     assert rc == 1
     out = json.loads(capsys.readouterr().out)
     assert out["status"] == "failed"
+
+
+# ─── review pins: probe is side-effect-free; shelled argv matches argparse ─
+
+
+def test_probe_never_merges_closes_or_deletes(tmp_path):
+    ticket_dir = tmp_path / "run"
+    _create_pr_out(ticket_dir)
+    for state in ("OPEN", "MERGED", "CLOSED"):
+        rec = _probe_recorder(pr_state=state)
+        sm.probe(tmp_path, ticket_dir, "flow-x", runner=rec)
+        assert not any(_is_script("forge_cli.py", "merge")(c) for c in rec.calls)
+        assert not any(_is_script("forge_cli.py", "delete-branch")(c) for c in rec.calls)
+        assert not any(c[:2] == ["bd", "close"] for c in rec.calls)
+        assert not any(_is_script("tracker_cli.py", "transition")(c) for c in rec.calls)
+
+
+@pytest.mark.parametrize(
+    ("script", "argv"),
+    [
+        ("forge_cli.py", ["--workspace-root", ".", "merge", "--pr", "1", "--squash"]),
+        ("forge_cli.py", ["--workspace-root", ".", "delete-branch", "--branch", "feat/x"]),
+        ("forge_cli.py", ["--workspace-root", ".", "ci-rollup", "--pr", "1"]),
+        ("forge_cli.py", ["--workspace-root", ".", "pr-info", "--pr", "1"]),
+        ("main_ci_health.py", ["probe", "--workspace-root", "."]),
+        ("harness_eval.py", ["score", "--candidate", "."]),
+        (
+            "tracker_cli.py",
+            ["--workspace-root", ".", "transition", "--key", "k", "--to-state", "closed"],
+        ),
+    ],
+)
+def test_shelled_sibling_argv_matches_argparse(script, argv):
+    # seam_check covers prose only and the unit suite mocks the Runner, so a
+    # sibling flag rename would otherwise pass every gate and break at runtime.
+    # Parse the exact argv shapes stage_merge constructs against the real
+    # argparse surfaces (parse only, nothing executed).
+    import importlib
+
+    mod = importlib.import_module(script[:-3])
+    parser_fn = getattr(mod, "_parse_args", None)
+    try:
+        if parser_fn is not None:
+            parser_fn(argv)
+        else:
+            # main_ci_health builds its parser inside cli_main, which takes an
+            # injectable runner: drive the REAL entry with a stub so only the
+            # argv parse is exercised (a parse rejection raises SystemExit
+            # before the stub result matters).
+            def stub(args):
+                return subprocess.CompletedProcess(args, 1, "", "stub")
+
+            mod.cli_main(argv, runner=stub)
+    except SystemExit as exc:
+        pytest.fail(f"{script} rejected argv {argv}: exit {exc.code}")
