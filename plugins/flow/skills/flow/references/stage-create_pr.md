@@ -23,6 +23,10 @@ Human-first: skimmable, short prose, rich markdown, a natural top-to-bottom flow
 ```
 <command(s) + result, from the implement stage>
 ```
+
+## Your call
+Decisions I flagged for you rather than settling them myself (from code_review):
+- [Major] <finding> — <decision> (<file>:<loc>)
 ````
 
 Rules:
@@ -30,6 +34,7 @@ Rules:
 - Why is a headerless lead paragraph, 1-3 sentences.
 - `## Changes` and `## How to verify` are mandatory.
 - An optional `## Notes` (edge cases, risk, follow-ups) goes last. OMIT it entirely when empty, never placehold. Reach for `<details>` only on genuine overflow (a long migration list, verbose logs).
+- An optional `## Your call` lists the code_review ask-user findings: "Decisions I flagged for you rather than settling them myself (from code_review):" then plain `- [Major] <finding> — <decision> (<file>:<loc>)` bullets, authored here so it rides the humanize pass in step 2. One rule covers all three ways it is absent — render it ONLY IF `code_review.out` exists, carries the `flow:code_review-taxonomy` sentinel, AND its `## ask-user` section has at least one bullet (this omits it alike for no ask-user findings, a missing `code_review.out` (`code_review = "none"`), or a `skill:<name>` handler's free-form `.out` lacking the sentinel). OMIT the whole section rather than rendering an empty one.
 - Keep prose short: people skip walls of text, which defeats the point. Summary 1 line, why ≤3 sentences, each change bullet 1 line.
 - Do NOT write the `Closes` footer; the script appends it.
 
@@ -56,7 +61,8 @@ mise run test   # scripts + hooks green
 1. **Author the body** per the template above. Gather inputs:
    - changed files: `git diff --stat "$(git merge-base origin/<base> HEAD)"..HEAD` (`<base>` resolves as the script does: `[create_pr] base`, default `main`),
    - the verify command + result: `$TICKET_DIR/stages/implement.out`,
-   - the why: the ticket (`ticket.json`) and plan.
+   - the why: the ticket (`ticket.json`) and plan,
+   - decisions flagged for the human: `$TICKET_DIR/stages/code_review.out`, read ONLY when it exists AND its first line carries the `flow:code_review-taxonomy` sentinel (feeds the optional `## Your call` section below).
 
 2. **Humanize (mandatory-when-present).** If `humanize:humanize` is in your available skills you MUST run the authored body through it. Two things the skill's behavior forces (verified against a filled template):
    - It returns a **4-part scaffold** (Draft rewrite / Residual-tells / Final rewrite / optional Changelog). Take ONLY the **Final rewrite** section as the body. Never paste the scaffold.
