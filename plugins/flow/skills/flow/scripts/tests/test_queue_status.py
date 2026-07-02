@@ -38,7 +38,7 @@ def _write_lease(run_dir: Path, *, expired: bool = False) -> None:
 
 
 def _pool_run_dir(repo: Path, key: str, slug: str = "wip") -> Path:
-    return repo / ".flow" / "worktrees" / f"feature-{key}-{slug}" / ".flow" / "runs" / key
+    return repo / ".flow" / "worktrees" / f"feat-{key}-{slug}" / ".flow" / "runs" / key
 
 
 def _cand(
@@ -161,7 +161,7 @@ def test_backpressure_holds_launch(tmp_path):
     ws = _marked_ws(tmp_path)
     run, _ = _dispatch(
         ready=[_cand("flow-a")],
-        prs=[{"headRefName": "feature/flow-d1-wip"}, {"headRefName": "feature/flow-d2-wip"}],
+        prs=[{"headRefName": "feat/flow-d1-wip"}, {"headRefName": "feat/flow-d2-wip"}],
         evolve_list=[],
     )
     out = qst.status(ws, cap=2, concurrency=3, runner=run)
@@ -175,7 +175,7 @@ def test_backpressure_with_live_run_waits(tmp_path):
     _write_lease(_pool_run_dir(ws, "flow-d1"))
     run, _ = _dispatch(
         ready=[_cand("flow-a")],
-        prs=[{"headRefName": "feature/flow-d1-wip"}, {"headRefName": "feature/flow-d2-wip"}],
+        prs=[{"headRefName": "feat/flow-d1-wip"}, {"headRefName": "feat/flow-d2-wip"}],
         evolve_list=[],
     )
     out = qst.status(ws, cap=2, concurrency=3, runner=run)
@@ -202,7 +202,7 @@ def test_expired_lease_parks_and_done(tmp_path):
     _write_lease(_pool_run_dir(ws, "flow-x"), expired=True)
     run, _ = _dispatch(
         ready=[],
-        prs=[{"headRefName": "feature/flow-x-wip"}],
+        prs=[{"headRefName": "feat/flow-x-wip"}],
         evolve_list=[],
     )
     out = qst.status(ws, cap=5, concurrency=3, runner=run)

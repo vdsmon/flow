@@ -119,7 +119,7 @@ def _run(tmp: Path, main: Path, **kw):
         ticket="FT-1",
         plan_from=_plan_file(tmp),
         base="main",
-        branch="feature/FT-1-thing",
+        branch="feat/FT-1-thing",
         main_root=main,
         worktree_override=str(wt),
         runner=kw.pop("runner", _fake_runner()),
@@ -399,7 +399,7 @@ def test_cli_missing_main_workspace_exits_2(tmp_path: Path, monkeypatch, capsys)
             "--base",
             "main",
             "--branch",
-            "feature/FT-1-x",
+            "feat/FT-1-x",
             "--main-root",
             str(main),
             "--worktree-path",
@@ -543,7 +543,7 @@ def test_cli_terminal_bead_exits_6(tmp_path: Path, monkeypatch) -> None:
             "--base",
             "main",
             "--branch",
-            "feature/FT-1-x",
+            "feat/FT-1-x",
             "--main-root",
             str(main),
             "--worktree-path",
@@ -603,7 +603,7 @@ def test_cli_epic_bead_exits_7(tmp_path: Path, monkeypatch) -> None:
             "--base",
             "main",
             "--branch",
-            "feature/FT-1-x",
+            "feat/FT-1-x",
             "--main-root",
             str(main),
             "--worktree-path",
@@ -779,7 +779,7 @@ def test_bootstrap_rejects_gitignored_planned_file(tmp_path: Path) -> None:
     assert any(c[:4] == ["git", "worktree", "remove", "--force"] for c in calls)
     # the -b-created branch is also deleted, so a retry does not hit
     # "fatal: a branch named <branch> already exists"
-    assert any(c == ["git", "branch", "-D", "feature/FT-1-thing"] for c in calls)
+    assert any(c == ["git", "branch", "-D", "feat/FT-1-thing"] for c in calls)
 
 
 def test_bootstrap_warns_when_gitignore_also_planned(tmp_path: Path) -> None:
@@ -829,7 +829,7 @@ def test_bootstrap_cleans_up_on_midbody_git_error(tmp_path: Path) -> None:
         _run(tmp_path, main, runner=run)
     assert any(c[:3] == ["git", "worktree", "add"] for c in calls)
     assert any(c[:4] == ["git", "worktree", "remove", "--force"] for c in calls)
-    assert any(c == ["git", "branch", "-D", "feature/FT-1-thing"] for c in calls)
+    assert any(c == ["git", "branch", "-D", "feat/FT-1-thing"] for c in calls)
 
 
 def test_bootstrap_cleans_up_on_midbody_raise(tmp_path: Path) -> None:
@@ -849,7 +849,7 @@ def test_bootstrap_cleans_up_on_midbody_raise(tmp_path: Path) -> None:
     with pytest.raises(RuntimeError):
         _run(tmp_path, main, runner=run)
     assert any(c[:4] == ["git", "worktree", "remove", "--force"] for c in calls)
-    assert any(c == ["git", "branch", "-D", "feature/FT-1-thing"] for c in calls)
+    assert any(c == ["git", "branch", "-D", "feat/FT-1-thing"] for c in calls)
 
 
 def test_bootstrap_warns_on_planned_file_in_missing_dir(tmp_path: Path) -> None:
@@ -922,7 +922,7 @@ def _base_runner(symref_outputs):
 def test_resolve_base_feature_branch_stacks_but_fetches(tmp_path):
     # a feature branch keeps stacking, but still fetches (always pull upstream).
     run, calls = _base_runner([(0, "origin/main\n")])
-    assert fw._resolve_base("feature/x", tmp_path, run) == "feature/x"
+    assert fw._resolve_base("feat/x", tmp_path, run) == "feat/x"
     assert ["git", "fetch", "--quiet", "origin"] in calls
 
 
@@ -994,14 +994,14 @@ def test_parse_worktree_list_porcelain() -> None:
     blob = _porcelain(
         [
             ("/main", "main"),
-            ("/main/.flow/worktrees/feature-FT-1-thing", "feature/FT-1-thing"),
+            ("/main/.flow/worktrees/feat-FT-1-thing", "feat/FT-1-thing"),
             ("/main/.flow/worktrees/detached", None),
         ]
     )
     pairs = fw._parse_worktree_list(blob)
     assert pairs == [
         ("/main", "main"),
-        ("/main/.flow/worktrees/feature-FT-1-thing", "feature/FT-1-thing"),
+        ("/main/.flow/worktrees/feat-FT-1-thing", "feat/FT-1-thing"),
         ("/main/.flow/worktrees/detached", None),
     ]
 
@@ -1009,15 +1009,15 @@ def test_parse_worktree_list_porcelain() -> None:
 def test_worktree_path_derives_under_dot_flow_pool(tmp_path: Path) -> None:
     main = tmp_path / "repo"
     main.mkdir()
-    assert fw._worktree_path(main, "feature/FT-1-x", None) == (
-        main.resolve() / ".flow" / "worktrees" / "feature-FT-1-x"
+    assert fw._worktree_path(main, "feat/FT-1-x", None) == (
+        main.resolve() / ".flow" / "worktrees" / "feat-FT-1-x"
     )
 
 
 def test_worktree_path_override_wins(tmp_path: Path) -> None:
     main = tmp_path / "repo"
     override = tmp_path / "elsewhere" / "wt"
-    assert fw._worktree_path(main, "feature/FT-1-x", str(override)) == override.resolve()
+    assert fw._worktree_path(main, "feat/FT-1-x", str(override)) == override.resolve()
 
 
 def test_copy_config_skips_nested_worktree_pool(tmp_path: Path) -> None:
@@ -1029,9 +1029,9 @@ def test_copy_config_skips_nested_worktree_pool(tmp_path: Path) -> None:
     claude = main / ".claude"
     (claude / "skills").mkdir(parents=True)
     (claude / "settings.json").write_text("{}", encoding="utf-8")
-    (claude / "worktrees" / "feature-junk" / ".flow").mkdir(parents=True)
-    (claude / "worktrees" / "feature-junk" / "big.bin").write_text("x", encoding="utf-8")
-    worktree = main / ".flow" / "worktrees" / "feature-FT-1-x"
+    (claude / "worktrees" / "feat-junk" / ".flow").mkdir(parents=True)
+    (claude / "worktrees" / "feat-junk" / "big.bin").write_text("x", encoding="utf-8")
+    worktree = main / ".flow" / "worktrees" / "feat-FT-1-x"
     worktree.mkdir(parents=True)
 
     copied = fw._copy_config(main, worktree, [])
@@ -1078,6 +1078,24 @@ def _seed_live_lease(ticket_dir: Path) -> None:
 
 
 def test_reap_removes_worktree_and_branch_when_free(tmp_path: Path) -> None:
+    wt = tmp_path / "main" / ".flow" / "worktrees" / "feat-FT-1-thing"
+    wt.mkdir(parents=True)
+    calls: list = []
+    runner = _reap_runner(
+        worktrees=_porcelain([(str(tmp_path / "main"), "main"), (str(wt), "feat/FT-1-thing")]),
+        calls=calls,
+    )
+    receipt = fw.reap_worktree(ticket="FT-1", main_root=tmp_path / "main", runner=runner)
+    assert receipt["worktree_removed"] is True
+    assert receipt["branch_deleted"] is True
+    assert receipt["branch"] == "feat/FT-1-thing"
+    assert receipt["skipped"] is None
+    assert any(c[:4] == ["git", "worktree", "remove", "--force"] for c in calls)
+    assert any(c[:3] == ["git", "branch", "-D"] for c in calls)
+
+
+def test_reap_locates_legacy_feature_prefix_worktree(tmp_path: Path) -> None:
+    # a worktree created before the feat/ rename still resolves by ticket
     wt = tmp_path / "main" / ".flow" / "worktrees" / "feature-FT-1-thing"
     wt.mkdir(parents=True)
     calls: list = []
@@ -1089,18 +1107,15 @@ def test_reap_removes_worktree_and_branch_when_free(tmp_path: Path) -> None:
     assert receipt["worktree_removed"] is True
     assert receipt["branch_deleted"] is True
     assert receipt["branch"] == "feature/FT-1-thing"
-    assert receipt["skipped"] is None
-    assert any(c[:4] == ["git", "worktree", "remove", "--force"] for c in calls)
-    assert any(c[:3] == ["git", "branch", "-D"] for c in calls)
 
 
 def test_reap_skips_when_lease_live(tmp_path: Path) -> None:
-    wt = tmp_path / "main" / ".flow" / "worktrees" / "feature-FT-1-thing"
+    wt = tmp_path / "main" / ".flow" / "worktrees" / "feat-FT-1-thing"
     wt.mkdir(parents=True)
     _seed_live_lease(wt / ".flow" / "runs" / "FT-1")
     calls: list = []
     runner = _reap_runner(
-        worktrees=_porcelain([(str(wt), "feature/FT-1-thing")]),
+        worktrees=_porcelain([(str(wt), "feat/FT-1-thing")]),
         calls=calls,
     )
     receipt = fw.reap_worktree(ticket="FT-1", main_root=tmp_path / "main", runner=runner)
@@ -1115,13 +1130,13 @@ def test_reap_skips_when_lease_live(tmp_path: Path) -> None:
 def test_reap_skips_when_lease_corrupt(tmp_path: Path) -> None:
     import lease
 
-    wt = tmp_path / "main" / ".flow" / "worktrees" / "feature-FT-1-thing"
+    wt = tmp_path / "main" / ".flow" / "worktrees" / "feat-FT-1-thing"
     ticket_dir = wt / ".flow" / "runs" / "FT-1"
     ticket_dir.mkdir(parents=True)
     lease.run_lock_path(ticket_dir).write_text("{not json", encoding="utf-8")
     calls: list = []
     runner = _reap_runner(
-        worktrees=_porcelain([(str(wt), "feature/FT-1-thing")]),
+        worktrees=_porcelain([(str(wt), "feat/FT-1-thing")]),
         calls=calls,
     )
     receipt = fw.reap_worktree(ticket="FT-1", main_root=tmp_path / "main", runner=runner)
@@ -1138,7 +1153,7 @@ def test_reap_skips_when_lease_corrupt(tmp_path: Path) -> None:
 def test_reap_removes_expired_same_host_previous_boot_lease(tmp_path: Path) -> None:
     import lease
 
-    wt = tmp_path / "main" / ".flow" / "worktrees" / "feature-FT-1-thing"
+    wt = tmp_path / "main" / ".flow" / "worktrees" / "feat-FT-1-thing"
     ticket_dir = wt / ".flow" / "runs" / "FT-1"
     ticket_dir.mkdir(parents=True)
     lease.acquire(
@@ -1152,7 +1167,7 @@ def test_reap_removes_expired_same_host_previous_boot_lease(tmp_path: Path) -> N
     )
     calls: list = []
     runner = _reap_runner(
-        worktrees=_porcelain([(str(wt), "feature/FT-1-thing")]),
+        worktrees=_porcelain([(str(wt), "feat/FT-1-thing")]),
         calls=calls,
     )
     receipt = fw.reap_worktree(ticket="FT-1", main_root=tmp_path / "main", runner=runner)
@@ -1167,12 +1182,12 @@ def test_reap_idempotent_when_nothing_to_remove(tmp_path: Path) -> None:
         calls=calls,
     )
     receipt = fw.reap_worktree(
-        ticket="FT-1", main_root=tmp_path / "main", branch="feature/FT-1-thing", runner=runner
+        ticket="FT-1", main_root=tmp_path / "main", branch="feat/FT-1-thing", runner=runner
     )
     assert receipt["worktree_removed"] is False
     assert not any(c[:4] == ["git", "worktree", "remove", "--force"] for c in calls)
     # branch was supplied, so a (tolerant) delete is still attempted; here it returns 0
-    assert receipt["branch"] == "feature/FT-1-thing"
+    assert receipt["branch"] == "feat/FT-1-thing"
 
 
 def test_reap_noop_when_no_branch_and_no_worktree(tmp_path: Path) -> None:
@@ -1200,7 +1215,7 @@ def test_reap_tolerates_already_gone_branch(tmp_path: Path) -> None:
         branch_rc=1,
     )
     receipt = fw.reap_worktree(
-        ticket="FT-1", main_root=tmp_path / "main", branch="feature/FT-1-thing", runner=runner
+        ticket="FT-1", main_root=tmp_path / "main", branch="feat/FT-1-thing", runner=runner
     )
     assert receipt["branch_deleted"] is False
     assert receipt["skipped"] is None
@@ -1214,19 +1229,19 @@ def test_reap_deletes_leaked_branch_when_worktree_gone(tmp_path: Path) -> None:
         calls=calls,
     )
     receipt = fw.reap_worktree(
-        ticket="FT-1", main_root=tmp_path / "main", branch="feature/FT-1-thing", runner=runner
+        ticket="FT-1", main_root=tmp_path / "main", branch="feat/FT-1-thing", runner=runner
     )
     assert receipt["worktree_removed"] is False
     assert receipt["branch_deleted"] is True
-    assert any(c == ["git", "branch", "-D", "feature/FT-1-thing"] for c in calls)
+    assert any(c == ["git", "branch", "-D", "feat/FT-1-thing"] for c in calls)
 
 
 def test_reap_remove_failure_skips_branch_delete(tmp_path: Path) -> None:
-    wt = tmp_path / "main" / ".flow" / "worktrees" / "feature-FT-1-thing"
+    wt = tmp_path / "main" / ".flow" / "worktrees" / "feat-FT-1-thing"
     wt.mkdir(parents=True)
     calls: list = []
     runner = _reap_runner(
-        worktrees=_porcelain([(str(wt), "feature/FT-1-thing")]),
+        worktrees=_porcelain([(str(wt), "feat/FT-1-thing")]),
         calls=calls,
         remove_rc=1,
     )
@@ -1248,7 +1263,7 @@ def test_reap_skips_remove_when_lease_goes_live_under_flock(
     import contextlib
     from collections.abc import Iterator
 
-    wt = tmp_path / "main" / ".flow" / "worktrees" / "feature-FT-1-thing"
+    wt = tmp_path / "main" / ".flow" / "worktrees" / "feat-FT-1-thing"
     ticket_dir = wt / ".flow" / "runs" / "FT-1"
     ticket_dir.mkdir(parents=True)
     real_flock = lease.flock_blocking
@@ -1274,7 +1289,7 @@ def test_reap_skips_remove_when_lease_goes_live_under_flock(
     monkeypatch.setattr(lease, "flock_blocking", racing_flock)
     calls: list = []
     runner = _reap_runner(
-        worktrees=_porcelain([(str(wt), "feature/FT-1-thing")]),
+        worktrees=_porcelain([(str(wt), "feat/FT-1-thing")]),
         calls=calls,
     )
     receipt = fw.reap_worktree(ticket="FT-1", main_root=tmp_path / "main", runner=runner)
@@ -1289,16 +1304,16 @@ def test_reap_refuses_mismatched_ticket_branch_pair(tmp_path: Path) -> None:
     # --branch of ticket B under --ticket A: the lease gate classifies A's
     # (absent) run dir inside B's worktree as free and would force-remove B's
     # LIVE worktree. The pair must refuse outright, touching nothing.
-    wt = tmp_path / "main" / ".flow" / "worktrees" / "feature-FT-2-other"
+    wt = tmp_path / "main" / ".flow" / "worktrees" / "feat-FT-2-other"
     wt.mkdir(parents=True)
     _seed_live_lease(wt / ".flow" / "runs" / "FT-2")
     calls: list = []
     runner = _reap_runner(
-        worktrees=_porcelain([(str(wt), "feature/FT-2-other")]),
+        worktrees=_porcelain([(str(wt), "feat/FT-2-other")]),
         calls=calls,
     )
     receipt = fw.reap_worktree(
-        ticket="FT-1", main_root=tmp_path / "main", branch="feature/FT-2-other", runner=runner
+        ticket="FT-1", main_root=tmp_path / "main", branch="feat/FT-2-other", runner=runner
     )
     assert receipt["worktree_removed"] is False
     assert receipt["branch_deleted"] is False
@@ -1316,7 +1331,7 @@ def test_reap_mismatched_pair_never_deletes_loose_branch(tmp_path: Path) -> None
         calls=calls,
     )
     receipt = fw.reap_worktree(
-        ticket="FT-1", main_root=tmp_path / "main", branch="feature/FT-2-other", runner=runner
+        ticket="FT-1", main_root=tmp_path / "main", branch="feat/FT-2-other", runner=runner
     )
     assert receipt["branch_deleted"] is False
     assert receipt["skipped"] and "does not belong" in receipt["skipped"]
@@ -1326,15 +1341,15 @@ def test_reap_mismatched_pair_never_deletes_loose_branch(tmp_path: Path) -> None
 def test_reap_matching_explicit_branch_still_reaps(tmp_path: Path) -> None:
     # the pairing guard only refuses mismatches; the drain's normal
     # `reap --ticket <key> --branch feat/<key>-<slug>` call reaps as before.
-    wt = tmp_path / "main" / ".flow" / "worktrees" / "feature-FT-1-thing"
+    wt = tmp_path / "main" / ".flow" / "worktrees" / "feat-FT-1-thing"
     wt.mkdir(parents=True)
     calls: list = []
     runner = _reap_runner(
-        worktrees=_porcelain([(str(wt), "feature/FT-1-thing")]),
+        worktrees=_porcelain([(str(wt), "feat/FT-1-thing")]),
         calls=calls,
     )
     receipt = fw.reap_worktree(
-        ticket="FT-1", main_root=tmp_path / "main", branch="feature/FT-1-thing", runner=runner
+        ticket="FT-1", main_root=tmp_path / "main", branch="feat/FT-1-thing", runner=runner
     )
     assert receipt["worktree_removed"] is True
     assert receipt["branch_deleted"] is True
@@ -1355,14 +1370,14 @@ def test_reap_cli_prints_receipt(tmp_path: Path, monkeypatch, capsys) -> None:
             "--ticket",
             "FT-1",
             "--branch",
-            "feature/FT-1-thing",
+            "feat/FT-1-thing",
             "--main-root",
             str(tmp_path / "main"),
         ]
     )
     assert rc == 0
     out = capsys.readouterr().out
-    assert '"ticket": "FT-1"' in out and '"branch": "feature/FT-1-thing"' in out
+    assert '"ticket": "FT-1"' in out and '"branch": "feat/FT-1-thing"' in out
 
 
 # ─── hot hard-floor (code-enforced, flow-aen) ───────────────────────────────
@@ -1403,7 +1418,7 @@ def _boot(tmp: Path, main: Path, *, base: str, auto: bool, planned, runner=None)
         ticket="flow-x1",
         plan_from=_plan_file(tmp),
         base=base,
-        branch="feature/flow-x1-thing",
+        branch="feat/flow-x1-thing",
         main_root=main,
         worktree_override=str(tmp / "wt"),
         planned_files=planned,
@@ -1596,7 +1611,7 @@ def _sibling_ticket_dir(tmp: Path) -> tuple[Path, Path]:
     return sib, td
 
 
-def _siblings_porcelain(sib: Path, branch: str = "feature/FT-1-old") -> str:
+def _siblings_porcelain(sib: Path, branch: str = "feat/FT-1-old") -> str:
     return _porcelain([(str(sib.parent / "main"), "main"), (str(sib), branch)])
 
 
@@ -1645,7 +1660,7 @@ def test_cli_duplicate_claim_exits_4(tmp_path: Path, monkeypatch, capsys) -> Non
             "--base",
             "main",
             "--branch",
-            "feature/FT-1-x",
+            "feat/FT-1-x",
             "--main-root",
             str(main),
             "--worktree-path",
@@ -1794,15 +1809,15 @@ def test_concurrent_bootstraps_exactly_one_wins(tmp_path: Path) -> None:
     main = _real_repo(tmp_path)
     plan = _plan_file(tmp_path)
     ctx = multiprocessing.get_context("spawn")
-    p1 = ctx.Process(target=_bootstrap_proc, args=(str(main), str(plan), "feature/FT-1-a"))
-    p2 = ctx.Process(target=_bootstrap_proc, args=(str(main), str(plan), "feature/FT-1-b"))
+    p1 = ctx.Process(target=_bootstrap_proc, args=(str(main), str(plan), "feat/FT-1-a"))
+    p2 = ctx.Process(target=_bootstrap_proc, args=(str(main), str(plan), "feat/FT-1-b"))
     p1.start()
     p2.start()
     p1.join(timeout=60)
     p2.join(timeout=60)
     assert sorted([p1.exitcode, p2.exitcode]) == [0, 4]
     pool = main.resolve() / ".flow" / "worktrees"
-    made = [d for d in (pool / "feature-FT-1-a", pool / "feature-FT-1-b") if d.exists()]
+    made = [d for d in (pool / "feat-FT-1-a", pool / "feat-FT-1-b") if d.exists()]
     assert len(made) == 1
 
 
@@ -1835,15 +1850,15 @@ def _locate_runner(
 
 def test_locate_existing_worktree(tmp_path: Path) -> None:
     main = _main_checkout(tmp_path)
-    wt = main / ".flow" / "worktrees" / "feature-FT-1-thing"
+    wt = main / ".flow" / "worktrees" / "feat-FT-1-thing"
     wt.mkdir(parents=True)
     calls: list = []
     runner = _locate_runner(
-        worktree_list=_porcelain([(str(main), "main"), (str(wt), "feature/FT-1-thing")]),
+        worktree_list=_porcelain([(str(main), "main"), (str(wt), "feat/FT-1-thing")]),
         calls=calls,
     )
     result = fw.locate_or_reseed(
-        ticket="FT-1", branch="feature/FT-1-thing", main_root=main, runner=runner
+        ticket="FT-1", branch="feat/FT-1-thing", main_root=main, runner=runner
     )
     assert result == {"worktree": str(wt), "reseeded": False}
     # LOCATE never adds a worktree
@@ -1862,17 +1877,17 @@ def test_reseed_when_externally_removed(tmp_path: Path) -> None:
         main=main,
     )
     result = fw.locate_or_reseed(
-        ticket="FT-1", branch="feature/FT-1-thing", main_root=main, runner=runner
+        ticket="FT-1", branch="feat/FT-1-thing", main_root=main, runner=runner
     )
     assert result["reseeded"] is True
     wt = Path(result["worktree"])
-    assert wt == main.resolve() / ".flow" / "worktrees" / "feature-FT-1-thing"
+    assert wt == main.resolve() / ".flow" / "worktrees" / "feat-FT-1-thing"
     assert wt.exists()
     # fetched the existing remote branch, then checked it out WITHOUT -b
-    assert ["git", "fetch", "origin", "feature/FT-1-thing"] in calls
+    assert ["git", "fetch", "origin", "feat/FT-1-thing"] in calls
     add = next(c for c in calls if c[:3] == ["git", "worktree", "add"])
     assert "-b" not in add
-    assert add == ["git", "worktree", "add", str(wt), "feature/FT-1-thing"]
+    assert add == ["git", "worktree", "add", str(wt), "feat/FT-1-thing"]
     # config re-copied (the gitignored dev config from main)
     assert (wt / ".env").read_text(encoding="utf-8") == "SECRET=1\n"
     assert (wt / ".claude" / "settings.json").exists()
@@ -1892,7 +1907,7 @@ def test_reseed_memory_redirect_honors_main_memory_root(tmp_path: Path) -> None:
     ws.write_text(ws.read_text(encoding="utf-8") + f'root = "{shared}"\n', encoding="utf-8")
     runner = _locate_runner(worktree_list=_porcelain([(str(main), "main")]), calls=[], main=main)
     result = fw.locate_or_reseed(
-        ticket="FT-1", branch="feature/FT-1-thing", main_root=main, runner=runner
+        ticket="FT-1", branch="feat/FT-1-thing", main_root=main, runner=runner
     )
     wt = Path(result["worktree"])
     assert result["reseeded"] is True
@@ -1903,13 +1918,13 @@ def test_locate_or_reseed_cli_locate(tmp_path: Path, monkeypatch, capsys) -> Non
     import json
 
     main = _main_checkout(tmp_path)
-    wt = main / ".flow" / "worktrees" / "feature-FT-1-thing"
+    wt = main / ".flow" / "worktrees" / "feat-FT-1-thing"
     wt.mkdir(parents=True)
     monkeypatch.setattr(
         fw,
         "_default_runner",
         lambda: _locate_runner(
-            worktree_list=_porcelain([(str(main), "main"), (str(wt), "feature/FT-1-thing")]),
+            worktree_list=_porcelain([(str(main), "main"), (str(wt), "feat/FT-1-thing")]),
             calls=[],
         ),
     )
@@ -1919,7 +1934,7 @@ def test_locate_or_reseed_cli_locate(tmp_path: Path, monkeypatch, capsys) -> Non
             "--ticket",
             "FT-1",
             "--branch",
-            "feature/FT-1-thing",
+            "feat/FT-1-thing",
             "--main-root",
             str(main),
         ]

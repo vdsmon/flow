@@ -149,13 +149,14 @@ def test_primary_anchor_absent():
 
 
 def test_key_from_ref():
-    assert es._key_from_ref("feature/flow-7mb-evolve-verb") == "flow-7mb"
-    assert es._key_from_ref("origin/feature/flow-aut.6-fix") == "flow-aut.6"
+    assert es._key_from_ref("feat/flow-7mb-evolve-verb") == "flow-7mb"
+    assert es._key_from_ref("origin/feat/flow-aut.6-fix") == "flow-aut.6"
+    assert es._key_from_ref("feature/flow-7mb-evolve-verb") == "flow-7mb"  # legacy
     assert es._key_from_ref("main") is None
 
 
 def test_is_inflight_prefix_match():
-    refs = {"feature/flow-a-some-desc"}
+    refs = {"feat/flow-a-some-desc"}
     assert es._is_inflight("flow-a", refs)
     assert not es._is_inflight("flow-ab", refs)  # must not prefix-bleed
 
@@ -280,7 +281,7 @@ def test_hot_inflight_include_proposals_queries_both_labels():
         return subprocess.CompletedProcess(args, 1, "", "unexpected")
 
     # a hot PROPOSAL already in flight consumes the single hot slot under the flag
-    assert es._hot_inflight(run, {"feature/flow-old-wip"}, include_proposals=True) is True
+    assert es._hot_inflight(run, {"feat/flow-old-wip"}, include_proposals=True) is True
     assert seen_labels == ["evolve", "proposal"]
 
 
@@ -288,7 +289,7 @@ def test_select_drops_inflight_branch(tmp_path):
     ws = _marked_ws(tmp_path)
     run, _ = _dispatch(
         ready=[_cand("flow-a"), _cand("flow-b")],
-        branches="feature/flow-a-wip\nmain\n",
+        branches="feat/flow-a-wip\nmain\n",
     )
     out = es.select(ws, cap=5, concurrency=3, runner=run)
     assert out["launch"] == ["flow-b"]
@@ -299,7 +300,7 @@ def test_select_hot_inflight_from_open_pr(tmp_path):
     ws = _marked_ws(tmp_path)
     run, _ = _dispatch(
         ready=[_cand("flow-new", labels=["evolve", "hot"], blast="z.py")],
-        prs=[{"headRefName": "feature/flow-old-wip"}],
+        prs=[{"headRefName": "feat/flow-old-wip"}],
         evolve_list=[{"id": "flow-old", "labels": ["evolve", "hot"]}],
     )
     out = es.select(ws, cap=5, concurrency=3, runner=run)
@@ -315,8 +316,8 @@ def test_select_open_pr_keys_only_from_prs_not_branches(tmp_path):
     ws = _marked_ws(tmp_path)
     run, _ = _dispatch(
         ready=[],
-        prs=[{"headRefName": "feature/flow-pr-wip"}, {"headRefName": "main"}],
-        branches="feature/flow-branch-only-wip\n",
+        prs=[{"headRefName": "feat/flow-pr-wip"}, {"headRefName": "main"}],
+        branches="feat/flow-branch-only-wip\n",
     )
     out = es.select(ws, cap=5, concurrency=3, runner=run)
     assert out["open_pr_keys"] == ["flow-pr"]
@@ -341,12 +342,12 @@ def test_hot_inflight_ignores_closed_bead_with_leaked_ref():
     for dead_status in ("closed", "deferred"):
         beads = [{"id": "flow-old", "labels": ["evolve", "hot"], "status": dead_status}]
         run, _ = _status_aware_runner(beads)
-        assert es._hot_inflight(run, {"feature/flow-old-wip"}) is False, dead_status
+        assert es._hot_inflight(run, {"feat/flow-old-wip"}) is False, dead_status
 
 
 def test_hot_inflight_queries_active_statuses():
     run, calls = _status_aware_runner([])
-    es._hot_inflight(run, {"feature/flow-x-wip"})
+    es._hot_inflight(run, {"feat/flow-x-wip"})
     list_calls = [a for a in calls if a[:2] == ["bd", "list"]]
     assert len(list_calls) == 1
     args = list_calls[0]
@@ -358,7 +359,7 @@ def test_hot_inflight_queries_unlimited():
     # of the hot-keys set (bd's default 50-row + priority sort), which would let a
     # second hot launch and break >=1-hot-at-a-time (flow-qmp5, PR#299 class).
     run, calls = _status_aware_runner([])
-    es._hot_inflight(run, {"feature/flow-x-wip"})
+    es._hot_inflight(run, {"feat/flow-x-wip"})
     list_calls = [a for a in calls if a[:2] == ["bd", "list"]]
     assert len(list_calls) == 1
     args = list_calls[0]
@@ -390,7 +391,7 @@ def test_select_tool_error(tmp_path):
 
 
 def _pool_run_dir(repo: Path, key: str, slug: str = "wip") -> Path:
-    return repo / ".flow" / "worktrees" / f"feature-{key}-{slug}" / ".flow" / "runs" / key
+    return repo / ".flow" / "worktrees" / f"feat-{key}-{slug}" / ".flow" / "runs" / key
 
 
 def test_fleet_live_keys_finds_live_lease(tmp_path):

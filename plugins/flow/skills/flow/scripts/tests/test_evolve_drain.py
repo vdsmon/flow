@@ -25,7 +25,7 @@ def _write_lease(run_dir, *, expired: bool = False) -> None:
 
 
 def _pool_run_dir(repo, key, slug="wip"):
-    return repo / ".flow" / "worktrees" / f"feature-{key}-{slug}" / ".flow" / "runs" / key
+    return repo / ".flow" / "worktrees" / f"feat-{key}-{slug}" / ".flow" / "runs" / key
 
 
 # decide() reads `launch` and `launched_pending` from the select result; the rest of
@@ -536,7 +536,7 @@ def test_cli_stranded_skips_merged_pr(monkeypatch, tmp_path, capsys):
     sel = {"launch": [], "skipped_in_flight": [], "live_runs": [], "open_pr_keys": []}
     runner = _StrandRunner(
         in_progress=["flow-merged"],
-        merged_prs=[{"number": 7, "headRefName": "feature/flow-merged-slug"}],
+        merged_prs=[{"number": 7, "headRefName": "feat/flow-merged-slug"}],
     )
     _stub_cli_strand(monkeypatch, tmp_path, sel, runner)
     rc = ed.cli_main(["--workspace-root", str(tmp_path)])

@@ -288,8 +288,8 @@ def test_cli_not_maintainer_exit_4(tmp_path, monkeypatch):
 # ─── is-live: the drain destructive-act re-check (flow-8by2.3) ─────────────────
 
 
-def _pool_lease(main: Path, key: str, *, expired: bool = False) -> None:
-    run_dir = main / ".flow" / "worktrees" / f"feature-{key}-wip" / ".flow" / "runs" / key
+def _pool_lease(main: Path, key: str, *, expired: bool = False, prefix: str = "feat-") -> None:
+    run_dir = main / ".flow" / "worktrees" / f"{prefix}{key}-wip" / ".flow" / "runs" / key
     now = T0 if expired else utcnow_iso()
     lease.acquire(
         run_dir,
@@ -326,6 +326,20 @@ def test_is_live_false_when_no_lease_no_fleet(tmp_path):
 def test_is_live_false_on_expired_lease_no_fleet(tmp_path):
     main = _marked(tmp_path, "flow")
     _pool_lease(main, "flow-x", expired=True)  # expired lease = reapable, not live
+    assert fleet.is_live(main, "flow-x") is False
+
+
+def test_is_live_true_on_live_lease_in_legacy_feature_dir(tmp_path):
+    # pool dirs created before the feat/ rename keep the feature- prefix; the
+    # inlined glob is dual-prefix, so a live legacy run must still read live
+    main = _marked(tmp_path, "flow")
+    _pool_lease(main, "flow-x", prefix="feature-")
+    assert fleet.is_live(main, "flow-x") is True
+
+
+def test_is_live_false_on_expired_lease_in_legacy_feature_dir(tmp_path):
+    main = _marked(tmp_path, "flow")
+    _pool_lease(main, "flow-x", prefix="feature-", expired=True)
     assert fleet.is_live(main, "flow-x") is False
 
 

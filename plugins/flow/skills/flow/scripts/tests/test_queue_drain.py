@@ -25,7 +25,7 @@ def _write_lease(run_dir, *, expired: bool = False) -> None:
 
 
 def _pool_run_dir(repo, key, slug="wip"):
-    return repo / ".flow" / "worktrees" / f"feature-{key}-{slug}" / ".flow" / "runs" / key
+    return repo / ".flow" / "worktrees" / f"feat-{key}-{slug}" / ".flow" / "runs" / key
 
 
 def _cp(stdout: str = "", returncode: int = 0) -> subprocess.CompletedProcess[str]:
@@ -97,12 +97,12 @@ def _out(capsys):
 
 
 def test_classify_reap_active_bead_with_worktree():
-    merged = [{"number": 7, "headRefName": "feature/flow-a-some-slug"}]
+    merged = [{"number": 7, "headRefName": "feat/flow-a-some-slug"}]
     out = qd.classify_reap(merged, {"flow-a"}, {"flow-a": "open"}, worktree_keys={"flow-a"})
     assert out == [
         {
             "key": "flow-a",
-            "branch": "feature/flow-a-some-slug",
+            "branch": "feat/flow-a-some-slug",
             "pr": 7,
             "bead_active": True,
             "has_worktree": True,
@@ -112,12 +112,12 @@ def test_classify_reap_active_bead_with_worktree():
 
 def test_classify_reap_excludes_non_candidate_keys():
     # bead closed + worktree gone: the key never entered candidate_keys → excluded
-    merged = [{"number": 8, "headRefName": "feature/flow-gone-x"}]
+    merged = [{"number": 8, "headRefName": "feat/flow-gone-x"}]
     assert qd.classify_reap(merged, set(), {}) == []
 
 
 def test_classify_reap_closed_bead_with_worktree_is_teardown_only():
-    merged = [{"number": 9, "headRefName": "feature/flow-b-x"}]
+    merged = [{"number": 9, "headRefName": "feat/flow-b-x"}]
     out = qd.classify_reap(merged, {"flow-b"}, {"flow-b": "closed"}, worktree_keys={"flow-b"})
     assert out[0]["bead_active"] is False
     assert out[0]["has_worktree"] is True
@@ -125,7 +125,7 @@ def test_classify_reap_closed_bead_with_worktree_is_teardown_only():
 
 def test_classify_reap_deferred_bead_is_not_active():
     # deferred is the human's triage call: never auto-closed by the reap path
-    merged = [{"number": 10, "headRefName": "feature/flow-c-x"}]
+    merged = [{"number": 10, "headRefName": "feat/flow-c-x"}]
     out = qd.classify_reap(merged, {"flow-c"}, {"flow-c": "deferred"}, worktree_keys={"flow-c"})
     assert out[0]["bead_active"] is False
 
@@ -140,12 +140,12 @@ def test_classify_reap_ignores_non_flow_head_refs():
 
 def test_classify_reap_launch_key_without_worktree():
     # a merged-PR key re-offered by select (bead still open, worktree already gone)
-    merged = [{"number": 13, "headRefName": "feature/flow-k-x"}]
+    merged = [{"number": 13, "headRefName": "feat/flow-k-x"}]
     out = qd.classify_reap(merged, {"flow-k"}, {"flow-k": "open"})
     assert out == [
         {
             "key": "flow-k",
-            "branch": "feature/flow-k-x",
+            "branch": "feat/flow-k-x",
             "pr": 13,
             "bead_active": True,
             "has_worktree": False,
@@ -155,8 +155,8 @@ def test_classify_reap_launch_key_without_worktree():
 
 def test_classify_reap_dedupes_keys_first_pr_wins():
     merged = [
-        {"number": 20, "headRefName": "feature/flow-d-second"},
-        {"number": 19, "headRefName": "feature/flow-d-first"},
+        {"number": 20, "headRefName": "feat/flow-d-second"},
+        {"number": 19, "headRefName": "feat/flow-d-first"},
     ]
     out = qd.classify_reap(merged, {"flow-d"}, {"flow-d": "open"})
     assert len(out) == 1
@@ -170,7 +170,7 @@ def test_cli_drops_launch_key_with_merged_pr(monkeypatch, tmp_path, capsys):
     # merged-but-unclosed bead: select re-offers it, the reap set diverts it to the close path. It
     # must never relaunch.
     runner = _StubRunner(
-        merged_prs=[{"number": 30, "headRefName": "feature/flow-k-x"}],
+        merged_prs=[{"number": 30, "headRefName": "feat/flow-k-x"}],
         bead_status={"flow-k": "open"},
     )
     _stub_cli(monkeypatch, tmp_path, _sel(launch=["flow-k"]), runner=runner)
@@ -182,7 +182,7 @@ def test_cli_drops_launch_key_with_merged_pr(monkeypatch, tmp_path, capsys):
     assert out["reap"] == [
         {
             "key": "flow-k",
-            "branch": "feature/flow-k-x",
+            "branch": "feat/flow-k-x",
             "pr": 30,
             "bead_active": True,
             "has_worktree": False,
@@ -206,7 +206,7 @@ def test_cli_reap_classifies_worktree_key(monkeypatch, tmp_path, capsys):
     # a merged PR whose worktree is still registered (run exited, lease expired)
     # → teardown-only reap entry, and the loop reads done, not wait.
     runner = _StubRunner(
-        merged_prs=[{"number": 31, "headRefName": "feature/flow-m-z"}],
+        merged_prs=[{"number": 31, "headRefName": "feat/flow-m-z"}],
         bead_status={"flow-m": "closed"},
     )
     repo = _stub_cli(monkeypatch, tmp_path, _sel(), runner=runner)
@@ -220,7 +220,7 @@ def test_cli_reap_classifies_worktree_key(monkeypatch, tmp_path, capsys):
     assert out["reap"] == [
         {
             "key": "flow-m",
-            "branch": "feature/flow-m-z",
+            "branch": "feat/flow-m-z",
             "pr": 31,
             "bead_active": False,
             "has_worktree": True,
@@ -432,8 +432,8 @@ def test_cli_bead_status_gather_is_bounded(monkeypatch, tmp_path, capsys):
     # bd show fires only for merged-flow-PR keys that are also candidates
     runner = _StubRunner(
         merged_prs=[
-            {"number": 40, "headRefName": "feature/flow-k-x"},
-            {"number": 41, "headRefName": "feature/flow-other-y"},
+            {"number": 40, "headRefName": "feat/flow-k-x"},
+            {"number": 41, "headRefName": "feat/flow-other-y"},
         ],
         bead_status={"flow-k": "open"},
     )
@@ -513,7 +513,7 @@ def test_cli_stranded_skips_open_and_merged_pr(monkeypatch, tmp_path, capsys):
     # in_progress + an open PR (select's open_pr_keys) OR a merged PR → NOT stranded.
     runner = _StubRunner(
         in_progress=[{"id": "flow-openpr"}, {"id": "flow-mergedpr"}],
-        merged_prs=[{"number": 9, "headRefName": "feature/flow-mergedpr-slug"}],
+        merged_prs=[{"number": 9, "headRefName": "feat/flow-mergedpr-slug"}],
     )
     _stub_cli(monkeypatch, tmp_path, _sel(open_pr_keys=["flow-openpr"]), runner=runner)
     rc = qd.cli_main(["--workspace-root", str(tmp_path)])
