@@ -474,3 +474,267 @@ def test_recalled_entries_tolerates_malformed_log_line_no_sidecar(
     assert ids == [e1["id"]]
     sidecars = list(ticket_dir.glob("recall-log.jsonl.quarantine*"))
     assert sidecars == []
+
+
+# ─── friction_recurrence ─────────────────────────────────────────────────────
+
+
+def _write_jsonl(path: Path, entries: list[dict]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines = [json.dumps(e, sort_keys=True) for e in entries]
+    path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+
+
+def _friction_entry(
+    *,
+    id_: str,
+    ts: str,
+    run_id: str = "run-1",
+    stage: str = "implement",
+    type_: str = "RETRY",
+    ticket: str = "FT-1",
+    body: str = "",
+) -> dict:
+    return {
+        "id": id_,
+        "ts": ts,
+        "run_id": run_id,
+        "ticket": ticket,
+        "stage": stage,
+        "type": type_,
+        "severity": "major",
+        "body": body,
+    }
+
+
+def _machinery_entry(*, id_: str, ts: str, ticket: str = "T-fix", body: str) -> dict:
+    return {"id": id_, "ts": ts, "ticket": ticket, "type": "LEARNED", "body": body}
+
+
+def test_bundle_recurrence_block_present_for_recurring_class(
+    tmp_repo: Path, tmp_path: Path
+) -> None:
+    _write_workspace(tmp_repo)
+    head = _git(["rev-parse", "HEAD"], tmp_repo).strip()
+    ticket_dir = tmp_path / "runs" / "FT-1"
+    _seed_state(ticket_dir, head)
+    machinery = [
+        _machinery_entry(
+            id_="fix-1",
+            ts="2026-06-01T00:00:00.000Z",
+            body="MACHINERY: signature_bug was patched. Fix (commit abc1234).",
+        )
+    ]
+    friction = [
+        _friction_entry(
+            id_="f-1",
+            ts="2026-06-02T00:00:00.000Z",
+            run_id="run-x",
+            body="signature_bug fired again",
+        )
+    ]
+    _write_jsonl(tmp_repo / ".flow" / "demo" / "knowledge.jsonl", machinery)
+    _write_jsonl(tmp_repo / ".flow" / "demo" / "friction.jsonl", friction)
+    payload = reflect_inputs.bundle("FT-1", ticket_dir, tmp_repo)
+    recurrence = payload["friction_recurrence"]
+    assert recurrence != []
+    entry = recurrence[0]
+    assert entry["anchor"] == "signature_bug"
+    assert entry["fired_count"] == 1
+    assert entry["last_fix_sha"] == "abc1234"
+    assert isinstance(entry["runs_ago"], int)
+    assert entry["runs_ago"] == 1
+
+
+def test_bundle_recurrence_empty_when_no_recurrence(tmp_repo: Path, tmp_path: Path) -> None:
+    _write_workspace(tmp_repo)
+    head = _git(["rev-parse", "HEAD"], tmp_repo).strip()
+    ticket_dir = tmp_path / "runs" / "FT-1"
+    _seed_state(ticket_dir, head)
+    machinery = [
+        _machinery_entry(
+            id_="fix-2",
+            ts="2026-06-01T00:00:00.000Z",
+            body="MACHINERY: stale_flag cleaned up. Fix (commit bbbbbbb).",
+        )
+    ]
+    friction = [
+        _friction_entry(
+            id_="f-early",
+            ts="2026-05-01T00:00:00.000Z",
+            body="stale_flag lingering before the fix",
+        )
+    ]
+    _write_jsonl(tmp_repo / ".flow" / "demo" / "knowledge.jsonl", machinery)
+    _write_jsonl(tmp_repo / ".flow" / "demo" / "friction.jsonl", friction)
+    payload = reflect_inputs.bundle("FT-1", ticket_dir, tmp_repo)
+    assert payload["friction_recurrence"] == []
+
+
+def test_bundle_recurrence_runs_ago_counts_distinct_runids_globally(
+    tmp_repo: Path, tmp_path: Path
+) -> None:
+    _write_workspace(tmp_repo)
+    head = _git(["rev-parse", "HEAD"], tmp_repo).strip()
+    ticket_dir = tmp_path / "runs" / "FT-1"
+    _seed_state(ticket_dir, head)
+    fix_ts = "2026-06-01T00:00:00.000Z"
+    machinery = [
+        _machinery_entry(
+            id_="fix-3",
+            ts=fix_ts,
+            body="MACHINERY: recur_multi_token issue. Fix (commit ccc1111).",
+        )
+    ]
+    friction = [
+        _friction_entry(
+            id_="f-a",
+            ts="2026-06-02T00:00:00.000Z",
+            run_id="run-a",
+            body="recur_multi_token fired again",
+        ),
+        _friction_entry(
+            id_="f-b",
+            ts="2026-06-03T00:00:00.000Z",
+            run_id="run-b",
+            body="recur_multi_token fired again",
+        ),
+        _friction_entry(
+            id_="f-unrelated",
+            ts="2026-06-04T00:00:00.000Z",
+            run_id="run-c",
+            body="unrelated_token forms no class",
+        ),
+        _friction_entry(
+            id_="f-a-repeat",
+            ts="2026-06-05T00:00:00.000Z",
+            run_id="run-a",
+            body="recur_multi_token fired yet again",
+        ),
+    ]
+    _write_jsonl(tmp_repo / ".flow" / "demo" / "knowledge.jsonl", machinery)
+    _write_jsonl(tmp_repo / ".flow" / "demo" / "friction.jsonl", friction)
+    payload = reflect_inputs.bundle("FT-1", ticket_dir, tmp_repo)
+    recurrence = [c for c in payload["friction_recurrence"] if c["anchor"] == "recur_multi_token"]
+    assert len(recurrence) == 1
+    assert recurrence[0]["runs_ago"] == 3
+
+
+def test_bundle_recurrence_last_fix_sha_is_most_recent(tmp_repo: Path, tmp_path: Path) -> None:
+    _write_workspace(tmp_repo)
+    head = _git(["rev-parse", "HEAD"], tmp_repo).strip()
+    ticket_dir = tmp_path / "runs" / "FT-1"
+    _seed_state(ticket_dir, head)
+    machinery = [
+        _machinery_entry(
+            id_="fix-old",
+            ts="2026-06-01T00:00:00.000Z",
+            body="MACHINERY: double_fix_token issue. Fix (commit aaa1111).",
+        ),
+        _machinery_entry(
+            id_="fix-new",
+            ts="2026-06-02T00:00:00.000Z",
+            body="MACHINERY: double_fix_token issue, take two. Fix (commit bbb2222).",
+        ),
+    ]
+    friction = [
+        _friction_entry(
+            id_="f-post",
+            ts="2026-06-03T00:00:00.000Z",
+            body="double_fix_token fired again",
+        )
+    ]
+    _write_jsonl(tmp_repo / ".flow" / "demo" / "knowledge.jsonl", machinery)
+    _write_jsonl(tmp_repo / ".flow" / "demo" / "friction.jsonl", friction)
+    payload = reflect_inputs.bundle("FT-1", ticket_dir, tmp_repo)
+    recurrence = [c for c in payload["friction_recurrence"] if c["anchor"] == "double_fix_token"]
+    assert len(recurrence) == 1
+    assert recurrence[0]["last_fix_sha"] == "bbb2222"
+
+
+def test_bundle_recurrence_last_fix_sha_null_when_evidence_lost(
+    tmp_repo: Path, tmp_path: Path
+) -> None:
+    _write_workspace(tmp_repo)
+    head = _git(["rev-parse", "HEAD"], tmp_repo).strip()
+    ticket_dir = tmp_path / "runs" / "FT-1"
+    _seed_state(ticket_dir, head)
+    machinery = [
+        _machinery_entry(
+            id_="fix-silent",
+            ts="2026-06-01T00:00:00.000Z",
+            ticket="T-silent",
+            body="MACHINERY: silent_fix_token issue resolved, evidence lost.",
+        )
+    ]
+    friction = [
+        _friction_entry(
+            id_="f-post",
+            ts="2026-06-02T00:00:00.000Z",
+            body="silent_fix_token fired again",
+        )
+    ]
+    _write_jsonl(tmp_repo / ".flow" / "demo" / "knowledge.jsonl", machinery)
+    _write_jsonl(tmp_repo / ".flow" / "demo" / "friction.jsonl", friction)
+    payload = reflect_inputs.bundle("FT-1", ticket_dir, tmp_repo)
+    recurrence = [c for c in payload["friction_recurrence"] if c["anchor"] == "silent_fix_token"]
+    assert len(recurrence) == 1
+    assert recurrence[0]["last_fix_sha"] is None
+
+
+def test_bundle_friction_section_unchanged_with_recurrence(tmp_repo: Path, tmp_path: Path) -> None:
+    _write_workspace(tmp_repo)
+    head = _git(["rev-parse", "HEAD"], tmp_repo).strip()
+    ticket_dir = tmp_path / "runs" / "FT-1"
+    _seed_state(ticket_dir, head)
+    ticket_state = state.read(ticket_dir)[0]
+    assert ticket_state is not None
+    run_id = ticket_state.run_id
+    machinery = [
+        _machinery_entry(
+            id_="fix-4",
+            ts="2026-06-01T00:00:00.000Z",
+            body="MACHINERY: recur_token patched. Fix (commit cafefeed).",
+        )
+    ]
+    friction = [
+        _friction_entry(
+            id_="f-this-run",
+            ts="2026-06-02T00:00:00.000Z",
+            run_id=run_id,
+            body="unrelated friction for this run",
+        ),
+        _friction_entry(
+            id_="f-other-1",
+            ts="2026-06-03T00:00:00.000Z",
+            run_id="other-run-1",
+            body="recur_token fired again",
+        ),
+        _friction_entry(
+            id_="f-other-2",
+            ts="2026-06-04T00:00:00.000Z",
+            run_id="other-run-2",
+            body="recur_token fired again",
+        ),
+    ]
+    _write_jsonl(tmp_repo / ".flow" / "demo" / "knowledge.jsonl", machinery)
+    _write_jsonl(tmp_repo / ".flow" / "demo" / "friction.jsonl", friction)
+    payload = reflect_inputs.bundle("FT-1", ticket_dir, tmp_repo)
+    assert [f["id"] for f in payload["friction"]] == ["f-this-run"]
+    recurrence = [c for c in payload["friction_recurrence"] if c["anchor"] == "recur_token"]
+    assert len(recurrence) == 1
+    assert recurrence[0]["fired_count"] == 2
+
+
+def test_bundle_recurrence_degrades_to_empty_on_no_workspace(
+    tmp_repo: Path, tmp_path: Path
+) -> None:
+    # No workspace.toml -> namespace resolution fails; friction_recurrence
+    # degrades to [] but the rest of the bundle still populates.
+    head = _git(["rev-parse", "HEAD"], tmp_repo).strip()
+    ticket_dir = tmp_path / "runs" / "FT-1"
+    _seed_state(ticket_dir, head)
+    payload = reflect_inputs.bundle("FT-1", ticket_dir, tmp_repo)
+    assert payload["friction_recurrence"] == []
+    assert payload["ticket"] == "FT-1"
+    assert "state" in payload

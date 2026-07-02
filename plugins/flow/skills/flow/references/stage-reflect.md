@@ -42,7 +42,13 @@ The taxonomy is closed:
    ```
    - Exit 0 → JSON payload to stdout: `{ticket, run_id, state,
      ticket_frontmatter, final_diff, subagent_reports[], friction[],
-     recalled_entries[], reflect_config, harness_eval}`.
+     friction_recurrence[], recalled_entries[], reflect_config, harness_eval}`.
+     `friction_recurrence` is the list of recurring signature classes the
+     child friction-recurrence detector surfaced — friction that fired again
+     after a `MACHINERY:` fix already claimed to resolve it — each
+     `{cluster_key, anchor, fired_count, last_fix_sha, runs_ago}`; `[]` when
+     nothing recurred after a claimed fix. It is always present (`[]` reads as
+     "no recurrence", never absence).
      `recalled_entries` is the entries recalled INTO this run — the recall-log
      `returned_ids` joined to the live `knowledge.jsonl` bodies — each
      `{id, type, body, ts, branch, ticket}`; `[]` when nothing was recalled or
@@ -82,7 +88,7 @@ The taxonomy is closed:
 
 2b. **Machinery reflection (lens B — gated; mandatory when ON and the run hit any friction).** SKIP this entire step unless `reflect_config.machinery` is true. It is false by default: a stranger running flow neither wants flow editing its own source nor cares about flow-internal findings. When the flag is off, do not record `MACHINERY:` entries and do not apply harness fixes; go straight to step 2c. When it is on (the skill developer's workspace), run it in full. The steps above point the lens DOWN at the ticket's domain (the code, the tax rules, the library). This step points it UP at the harness that produced the work: did `/flow`'s own scripts, stages, exit codes, handler dispatch, and orchestration loop serve the run, or fight it? This is the feedstock `/skill-polish` consumes — produce it whether or not a human asked, at the depth of an engineering review, not a vibe check.
 
-   Reconstruct friction from evidence, not memory (a backgrounded reflect agent has no live recall): the PRIMARY source is the in-flight friction log — the bundle's `friction` array (entries the do-loop appended via `flow_friction.py` as the run hit retries, missing tools, drift, lost leases, planned-file reconciles, failed stages). Corroborate and extend it with the stage `.out` reports in `<ticket-dir>/stages/` (subagents flag things like "created a file outside planned_files"), the `state.json` stage history (retries, `failed`->`retry` transitions, stages that needed a `recover`), and anything else the run had to work around. For EACH friction point:
+   Reconstruct friction from evidence, not memory (a backgrounded reflect agent has no live recall): the PRIMARY source is the in-flight friction log — the bundle's `friction` array (entries the do-loop appended via `flow_friction.py` as the run hit retries, missing tools, drift, lost leases, planned-file reconciles, failed stages). Corroborate and extend it with the stage `.out` reports in `<ticket-dir>/stages/` (subagents flag things like "created a file outside planned_files"), the `state.json` stage history (retries, `failed`->`retry` transitions, stages that needed a `recover`), and anything else the run had to work around. A non-empty `friction_recurrence` block (step 1) is prima-facie evidence that a class the harness ALREADY claimed to fix recurred (fired_count times, last fix sha X, runs_ago runs ago) — treat each such class as a high-priority machinery finding: the prior fix did not hold, so re-diagnose the root cause rather than re-applying the same fix. For EACH friction point:
    - **Re-read the script or reference file behind it** (`scripts/<x>.py`, `references/stage-<y>.md`) — do NOT guess at the cause. Cite `file:line`.
    - State the defect concretely + a one-line fix (e.g. "`diff_extract.check_ownership` runs bare `git status --porcelain`, which collapses a fully-untracked dir to `foo/` and false-positives against per-file `planned_files`; add `--untracked-files=all`").
    - Severity-tag: **blocker** (would fail an unattended run) / **major** (needed manual intervention or a confusing recovery) / **minor** (papercut).
