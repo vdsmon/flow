@@ -114,6 +114,19 @@ def apply(workspace_root: Path, records: list[dict[str, Any]]) -> dict[str, Any]
         ticket = str(rec.get("superseding_ticket", ""))
         rationale = str(rec.get("rationale", ""))
         branch = str(rec.get("branch") or f"{_BRANCH_PREFIX}{ticket}")
+        # memory_append treats a falsy supersedes as "no supersede" and appends
+        # normally, so an empty target must be rejected here or the record
+        # writes a non-superseding junk entry and reports applied.
+        if not superseded_id:
+            any_error = True
+            results.append(
+                {
+                    "superseded_id": superseded_id,
+                    "result": "error",
+                    "detail": "empty superseded_id",
+                }
+            )
+            continue
         if superseded_id in dead:
             results.append({"superseded_id": superseded_id, "result": "skipped"})
             continue
@@ -226,7 +239,15 @@ def apply_cluster(workspace_root: Path, records: list[dict[str, Any]]) -> dict[s
         body = str(rec.get("canonical_body", ""))
         type_ = str(rec.get("type") or "DECISION")
         branch = str(rec.get("branch") or f"{_BRANCH_PREFIX}{ticket}")
-        if member_ids and all(m in dead for m in member_ids):
+        # Same guard as apply(): supersedes=[] appends a normal entry, so a
+        # wholly-empty member list would inject a canonical that merges nothing.
+        if not member_ids:
+            any_error = True
+            results.append(
+                {"member_ids": member_ids, "result": "error", "detail": "empty member_ids"}
+            )
+            continue
+        if all(m in dead for m in member_ids):
             results.append({"member_ids": member_ids, "result": "skipped"})
             continue
         try:

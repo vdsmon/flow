@@ -426,3 +426,23 @@ def test_apply_explicit_branch_honored(tmp_path: Path, capsys: pytest.CaptureFix
     assert rc == 0
     appended = next(e for e in _load_all(tmp_path) if e.get("supersedes") == FLOW_8WE_ID)
     assert appended["branch"] == "custom/branch-name"
+
+
+def test_apply_empty_superseded_id_errors_no_append(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _seed_workspace(tmp_path)
+    _write_entries(tmp_path, [_entry(FLOW_8WE_ID, "DECISION", "real")])
+    before = len(_read_entries(tmp_path))
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(
+        json.dumps([{"superseding_ticket": "flow-x", "rationale": "no target"}]),
+        encoding="utf-8",
+    )
+    rc = sweep_knowledge.cli_main(
+        ["apply", "--manifest", str(manifest), "--workspace-root", str(tmp_path)]
+    )
+    assert rc > 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["results"][0]["result"] == "error"
+    assert len(_read_entries(tmp_path)) == before

@@ -302,3 +302,27 @@ def test_apply_cluster_unknown_member_id_errors_nonzero(tmp_path: Path) -> None:
     assert summary["any_error"] is True
     assert summary["results"][0]["result"] == "error"
     assert len(_load_all(tmp_path)) == before
+
+
+def test_apply_cluster_empty_member_ids_errors_no_append(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path)
+    _write_entries(tmp_path, [_entry(A, "DECISION", "claim A")])
+    before = len(_load_all(tmp_path))
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(
+        json.dumps(
+            [
+                {
+                    "canonical_body": "canonical of nothing",
+                    "canonical_ticket": "flow-empty",
+                    "member_ids": [],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    rc, summary = _apply_cluster(tmp_path, manifest)
+    assert rc > 0
+    assert summary["any_error"] is True
+    assert summary["results"][0]["result"] == "error"
+    assert len(_load_all(tmp_path)) == before
