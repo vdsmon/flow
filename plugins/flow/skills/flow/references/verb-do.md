@@ -137,6 +137,10 @@ The descriptor's `timeout_min` is informational only.
 Agent tool does not accept a timeout argument; nothing in the prose enforces it.
 The prose-driven model has no live poller, so hung detection is post-hoc: `/flow recover` reads the lease state (after a stage returns, or on demand) to surface and take over a stalled run.
 
+### Spawned stage subagents run long commands in the foreground
+
+Because `timeout_min` is unenforceable and the Agent tool takes no timeout, a spawned stage subagent's own Bash-level `timeout` is the only remaining lever. A subagent dispatched for a `work`-role stage (the `implement` stage, and any `subagent:<type>` handler SKILL.md step d spawns) MUST run its tests and other long commands in the FOREGROUND, each a single `Bash` call with an explicit `timeout` <= 600000ms (the Bash ceiling), and MUST NEVER use `run_in_background` or `Monitor`. A spawned subagent does not receive background-task completions once its turn ends — those route to the top-level orchestrator session — so a backgrounded command leaves the subagent's turn hung "waiting for the notification" and the stage stalls until the orchestrator `SendMessage`-resumes it (FT-1328, observed twice). This is unconditional, not the headless turn-boundary fallback of `references/stage-review_loop.md` §1. Chunk any suite that would run long into per-path / per-module foreground calls (for this repo, the `scripts/tests` + `hooks/tests` split), which also keeps each call under the ~360s harness idle-watchdog (a distinct kill below the 600000ms ceiling — flow-rbr). `references/stage-implement.md` Step 5 carries the operative wording; `references/stage-review_loop.md` §1 is the mirrored bounded-foreground style.
+
 ## Working-tree drift
 
 If `git apply --cached --binary <implement.diff>` fails in stage-commit, the working tree has drifted from the baseline.

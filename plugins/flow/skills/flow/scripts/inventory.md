@@ -963,6 +963,33 @@ On non-EEXIST I/O error: write intent log to `<ticket>.json.quarantine-intent.<t
 Exit codes: 0=primary success, 1=evidence JSON invalid, 2=dupe (informational),
 3=I/O error (intent log written).
 
+### `friction_escalate.py`
+
+Propose-only recurrence escalation. Consumes `friction_recurrence.analyze` (untouched) and files
+ONE deduped `recurrent`-labelled bead per `signature_classes` entry that recurred `>=K` times since
+its LATEST claimed MACHINERY fix — not the detector's own `post_fix_count`, which grades against
+the earliest fix and over-counts a class with several fix attempts.
+
+Public API: `escalation_k(workspace_root) -> int`, `exempt_anchors(workspace_root) -> set[str]`,
+`select_escalations(analyze_payload, k, exempt) -> list[dict]` (pure core, sorted by descending
+count), `escalate(workspace_root, runner=None) -> dict`.
+
+`[evolve]` workspace.toml knobs: `recurrence_escalation_k` (int, default 3), `recurrence_exempt_anchors`
+(list[str], default `["planned_files"]`; an explicit `[]` means no exemptions, used verbatim).
+
+| Flag | Description |
+|------|-------------|
+| `escalate` | The one subcommand. |
+| `--workspace-root` | Default `.`. |
+
+Dedup key = `recurrence-escalation-<anchor>` (no `::` separator), so only `flow_beads_create`'s
+exact `evid:` net fires, never its fuzzy same-file pass. Labels = `recurrent` only (never `evolve`),
+so `bd ready -l evolve` never surfaces these — propose-only holds unconditionally. Dormant outside
+maintainer mode (`flow_beads_create.resolve_maintainer_repo` returns `None`, checked before any
+friction/knowledge read) — returns/prints `{"maintainer": false, ...}` with nothing filed.
+
+Exit codes: 0=ok (including the dormant no-op), 3=OSError, 4=`_memory_paths._MemoryConfigError`.
+
 ## Known phase 8b-mvp holes (deferred to 8c/8d)
 
 1. **No cross-namespace IDF** — recall.py IDF is per-namespace.
