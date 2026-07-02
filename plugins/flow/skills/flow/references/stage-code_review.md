@@ -46,6 +46,8 @@ That bias is acceptable for personal-mode flow; work-mode users opt in to `skill
      - **no-op** — a deliberate non-fix; cite the verbatim `plan.out` line that makes it deliberate.
      - **ask-user** — the human's call; parked on the PR, never silently dropped.
 
+   The three owners are exhaustive, and ask-user is the fallback: a finding you cannot confidently place is ask-user by definition (no-op demands a verbatim `plan.out` citation, auto-fix demands confidence — a finding qualifying for neither is the human's call). In the `.out` file the owners map to the section headers `## ask-user`, `## no-op`, and `## auto-fixed` (the one past-tense header: by write time the fix has been applied) — P2d and any other consumer keys on those headers, not on the label spellings here.
+
    A Critical's ONLY non-failing decision owner is auto-fix — never record a Critical as no-op or ask-user. A real bug is not the human's "your call" to make, and disposition is not a way to punt one.
 
    **code_review becomes a writing stage here.** Today's review only flags; the auto-fix disposition below means it now mutates the working tree before commit runs. The human-facing Critical floor (step 5) is unchanged.
@@ -82,7 +84,7 @@ That bias is acceptable for personal-mode flow; work-mode users opt in to `skill
   - [Major] <finding> — fixed in <file>:<loc>
   ```
 
-  Bullets are plain `- [Major] ...`, no `**bold:**` lead — `pr_body.py::scrub` flattens a bold bullet lead, so a bold render would be mangled when `create_pr` lifts these into the PR body. A section is omitted entirely when its finding list is empty, EXCEPT `## auto-fixed`, which is never optional when non-empty: it is the only place a reviewer sees a pre-commit mutation the run made on its own, a silently auto-fixed Critical most of all.
+  Bullets are plain `- [Major] ...`, no `**bold:**` lead — `pr_body.py::scrub` flattens a bold bullet lead, so a bold render would be mangled when `create_pr` lifts these into the PR body. A section is omitted entirely when its finding list is empty, EXCEPT `## auto-fixed`, which is never optional when non-empty: it is the run's only durable ANNOTATION of a pre-commit mutation it made on its own, a silently auto-fixed Critical most of all (the fixed code itself is reviewer-visible in the draft-PR diff; this out-file section is run-state for downstream consumers like P2d, not part of the PR body).
 
 ## Errors
 
