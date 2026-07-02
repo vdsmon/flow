@@ -11,7 +11,10 @@ Reads:
 
 Output: single JSON object to stdout, structured for the reflect LLM. Includes
 a best-effort `harness_eval` availability block advertising the frozen-corpus
-regression eval (`harness_eval.py score`) to the reflect agent.
+regression eval (`harness_eval.py score`) to the reflect agent, and a
+best-effort `friction_recurrence` block (recurring signature classes distilled
+from `friction_recurrence.analyze`; always present, `[]` when nothing
+recurred).
 
 Exit codes:
   0 = ok.
@@ -33,10 +36,15 @@ from typing import Any
 import _memory_paths
 import _workspace
 import diff_extract
+import friction_recurrence
 import harness_corpus
 import recall
 import state
 import ticket_frontmatter
+
+# Worst-first ceiling on distilled recurrence classes; the live corpus already
+# yields 37+ and the bundle also carries the full diff + subagent reports.
+_RECURRENCE_CAP = 15
 
 # Reflect-stage gates, read from workspace.toml [reflect]. Defaults differ by
 # blast radius: machinery (the harness self-edit lens) is OFF unless a skill
@@ -154,6 +162,47 @@ def _recalled_entries(ticket_dir: Path, cwd: Path) -> list[dict[str, Any]]:
         return []
 
 
+def _recurrence(cwd: Path) -> list[dict[str, Any]]:
+    """Recurring signature classes, distilled to `{cluster_key, anchor, fired_count,
+    last_fix_sha, runs_ago}`. `runs_ago` counts distinct runs that LOGGED FRICTION
+    since the class's last claimed fix (a clean, friction-free run leaves no trace
+    in the log and so does not count) -- not a wall-clock run count. Capped at the
+    worst _RECURRENCE_CAP classes so the bundle stays bounded (the live corpus
+    already yields 37+). Best-effort: this is closing-stage enrichment, so ANY
+    detector failure degrades to [] rather than killing the reflect bundle
+    (friction_recurrence is a separately-evolving module; its exception surface
+    is not ours to enumerate). Read-only.
+    """
+    try:
+        namespace = _memory_paths.resolve_namespace(cwd)
+        sig_classes = friction_recurrence.analyze(cwd, namespace).get("signature_classes", [])
+        fpath = _memory_paths.friction_path(cwd, namespace)
+        friction_all = _lenient_jsonl(fpath) if fpath.exists() else []
+        out: list[dict[str, Any]] = []
+        for c in sig_classes:
+            fixes = c.get("fixes") or []
+            last_fix = fixes[-1] if fixes else {}
+            last_fix_ts = last_fix.get("ts", "")
+            run_ids = {
+                fe.get("run_id")
+                for fe in friction_all
+                if isinstance(fe, dict) and fe.get("run_id") and fe.get("ts", "") > last_fix_ts
+            }
+            out.append(
+                {
+                    "cluster_key": c.get("cluster_key", "signature"),
+                    "anchor": c.get("anchor", ""),
+                    "fired_count": c.get("post_fix_count", 0),
+                    "last_fix_sha": last_fix.get("fix_sha"),
+                    "runs_ago": len(run_ids),
+                }
+            )
+        out.sort(key=lambda c: (-c["fired_count"], c["anchor"]))
+        return out[:_RECURRENCE_CAP]
+    except Exception:
+        return []
+
+
 def bundle(
     ticket: str,
     ticket_dir: Path,
@@ -161,6 +210,10 @@ def bundle(
     ticket_frontmatter_path: Path | None = None,
 ) -> dict[str, Any]:
     """Return a JSON-serializable bundle of reflect-stage inputs.
+
+    Keys include `friction` (this-run entries only) and `friction_recurrence`
+    (recurring signature classes across all runs; always present, `[]` when
+    nothing recurred).
 
     Raises:
         FileNotFoundError if state.json missing.
@@ -233,6 +286,8 @@ def bundle(
         "final_diff": diff_payload,
         "subagent_reports": subagent_reports,
         "friction": friction,
+        # always present; [] == no recurrence (never test "not in payload").
+        "friction_recurrence": _recurrence(cwd),
         "recalled_entries": _recalled_entries(ticket_dir, cwd),
         "reflect_config": _reflect_config(cwd),
         "harness_eval": _harness_eval_block(),
