@@ -114,6 +114,53 @@ def test_beads_no_match_other_prefix(tmp_path: Path) -> None:
     assert branch_ticket.resolve(tmp_path, tmp_path, runner) is None
 
 
+def test_beads_dotted_child_key(tmp_path: Path) -> None:
+    _beads_workspace(tmp_path, prefix="flow")
+    runner = _fake_runner("feature/flow-kx17.2-revision-lifecycle-seam")
+    assert branch_ticket.resolve(tmp_path, tmp_path, runner) == "flow-kx17.2"
+
+
+def test_beads_dotted_child_never_resolves_as_parent(tmp_path: Path) -> None:
+    # longest match wins: flow-kx17.2 is a distinct bead from its parent epic
+    # flow-kx17; stopping at the pre-dot word boundary silently operates on the
+    # wrong bead (recover / recall / revise all consume this raw)
+    _beads_workspace(tmp_path, prefix="flow")
+    runner = _fake_runner("feat/flow-kx17.2")
+    assert branch_ticket.resolve(tmp_path, tmp_path, runner) == "flow-kx17.2"
+
+
+def test_beads_parent_key_unchanged(tmp_path: Path) -> None:
+    _beads_workspace(tmp_path, prefix="flow")
+    runner = _fake_runner("feat/flow-kx17-revision-lifecycle")
+    assert branch_ticket.resolve(tmp_path, tmp_path, runner) == "flow-kx17"
+
+
+def test_beads_three_char_stem(tmp_path: Path) -> None:
+    _beads_workspace(tmp_path, prefix="flow")
+    runner = _fake_runner("feat/flow-820-fix-the-thing")
+    assert branch_ticket.resolve(tmp_path, tmp_path, runner) == "flow-820"
+
+
+def test_beads_three_char_stem_dotted_child(tmp_path: Path) -> None:
+    _beads_workspace(tmp_path, prefix="flow")
+    runner = _fake_runner("feature/flow-ml7.1-metric-attribution-stamp")
+    assert branch_ticket.resolve(tmp_path, tmp_path, runner) == "flow-ml7.1"
+
+
+def test_beads_multi_level_dotted_child(tmp_path: Path) -> None:
+    _beads_workspace(tmp_path, prefix="bd")
+    runner = _fake_runner("feat/bd-abc1.2.3-x")
+    assert branch_ticket.resolve(tmp_path, tmp_path, runner) == "bd-abc1.2.3"
+
+
+def test_beads_non_numeric_dot_suffix_falls_back_to_stem(tmp_path: Path) -> None:
+    # only `.N` child suffixes extend the key; a stray non-numeric dot segment
+    # is not part of any bead key
+    _beads_workspace(tmp_path, prefix="flow")
+    runner = _fake_runner("feat/flow-kx17.next")
+    assert branch_ticket.resolve(tmp_path, tmp_path, runner) == "flow-kx17"
+
+
 # ─── Explicit --branch (PR→ticket enabler) ───────────────────────────────────
 
 

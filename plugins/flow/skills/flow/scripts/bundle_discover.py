@@ -58,6 +58,7 @@ _KNOWN_STAGES: frozenset[str] = frozenset(
         "create_pr",
         "review_loop",
         "reflect",
+        "merge",
     }
 )
 

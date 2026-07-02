@@ -10,9 +10,10 @@ concern.
   2. copy gitignored dev config main->worktree; ensure .flow/.initialized +
      workspace.toml exist (a git worktree only materializes committed files)
   3. mise trust the worktree (toolchain) unless --no-mise-trust
-  4. redirect the worktree's memory store to the main checkout's .flow via the
-     gitignored .flow/memory-root sibling (shared store, so per-ticket worktrees
-     don't fragment the compounding-knowledge layer; tracked workspace.toml untouched)
+  4. redirect the worktree's memory store to the main checkout's resolved memory
+     base (its own `.flow/memory-root` / `[memory].root` honored) via the gitignored
+     .flow/memory-root sibling (shared store, so per-ticket worktrees don't fragment
+     the compounding-knowledge layer; tracked workspace.toml untouched)
   5. seed state.json: plan marked completed with its output_path; plan.out written
      from --plan-from; ticket left pending so the pipeline self-fetches ticket.json
      and stamps frontmatter (keeps the bootstrap offline; tracker auth stays live)
@@ -49,6 +50,7 @@ from typing import cast
 
 import _atomicio
 import _locking
+import _memory_paths
 import _workspace
 import lease
 import state
@@ -234,8 +236,10 @@ def _copy_config(main_root: Path, worktree: Path, extra: list[str]) -> list[str]
 
 def _ensure_flow_config(main_root: Path, worktree: Path, shared_flow: Path) -> None:
     """Ensure the worktree has .flow/.initialized + workspace.toml (copying from
-    main when absent, the gitignored case), then redirect the memory store to the
-    shared (main) .flow via the gitignored `.flow/memory-root` sibling.
+    main when absent, the gitignored case), then redirect the memory store to
+    `shared_flow` (main's RESOLVED memory base, so a main checkout configured with
+    `[memory].root` shares that store, not literally main/.flow) via the gitignored
+    `.flow/memory-root` sibling.
 
     The redirect lives in the sibling, NOT in workspace.toml: the tracked
     workspace.toml stays byte-identical to main's copy so a per-machine absolute
@@ -372,14 +376,15 @@ def _assert_no_live_sibling(ticket: str, main_root: Path, runner: Runner) -> Non
     refuses: that is the bootstrap→cmd_init window where the winner has seeded
     state but not yet acquired its run lease.
     """
-    unstick = (
-        f"resume/inspect it via `/flow recover {ticket}`, or tear down a dead "
-        f"sibling via `flow_worktree.py reap --ticket {ticket}`"
-    )
     now = utcnow_iso()
     boot = lease.boot_id()
     host = lease.hostname()
     for wt_path, _sb in _ticket_siblings(ticket, main_root, runner):
+        unstick = (
+            f"resume/inspect it from the sibling (cd {wt_path} && /flow recover {ticket}; "
+            f"the run's state lives in that worktree, not this checkout), or tear down a "
+            f"dead sibling via `flow_worktree.py reap --ticket {ticket}`"
+        )
         ticket_dir = wt_path / ".flow" / "runs" / ticket
         info = lease.classify(ticket_dir, now, current_boot=boot, hostname=host)
         lease_state = info.get("state")
@@ -428,10 +433,25 @@ def reap_worktree(
     still live (the bg session is, typically, in reflect) NOTHING is touched
     and a later pass reaps it.
 
+    An explicit `branch` must belong to `ticket`: the lease gate classifies
+    `<worktree>/.flow/runs/<ticket>`, so a mismatched pair would classify an
+    ABSENT run dir as free and force-remove another ticket's live worktree.
+    A mismatch refuses via the receipt, touching nothing.
+
     Idempotent: a second call (worktree + branch already gone) is a clean no-op.
     """
     run = runner or _default_runner()
     main_root = main_root.expanduser().resolve()
+
+    if branch is not None and not _is_ticket_branch(branch, ticket):
+        return {
+            "ticket": ticket,
+            "branch": branch,
+            "worktree": None,
+            "worktree_removed": False,
+            "branch_deleted": False,
+            "skipped": f"branch {branch} does not belong to ticket {ticket}; refusing to reap",
+        }
 
     listing = _git(["worktree", "list", "--porcelain"], main_root, run)
     pairs = _parse_worktree_list(listing)
@@ -520,7 +540,7 @@ def locate_or_reseed(
     _git(["fetch", "origin", branch], main_root, run)
     _git(["worktree", "add", str(worktree), branch], main_root, run)
     _copy_config(main_root, worktree, [])
-    _ensure_flow_config(main_root, worktree, main_root / ".flow")
+    _ensure_flow_config(main_root, worktree, _memory_paths.resolve_memory_base(main_root))
     if (worktree / "mise.toml").exists() or (worktree / ".mise.toml").exists():
         run(["mise", "trust"], worktree)
     return {"worktree": str(worktree), "reseeded": True}
@@ -605,9 +625,11 @@ def _enforce_hot_floor(
     comment, a beads-native seam (a non-beads tracker has no such record, so gating it would
     permanently block). Caller invokes this BEFORE `git worktree add`, so a refusal leaves no
     orphan. The `[evolve] adjudicate_hot` flag (default off) skips this floor for a maintainer
-    self-target workspace.
+    self-target workspace. The floor runs even with an EMPTY planned set: the `hot` label is
+    independent evidence of hotness (`triage.decided` reads it), so omitting `--planned-files`
+    must not disable the label half of the floor.
     """
-    if not (planned_files and (auto or base.strip() == "@default")):
+    if not (auto or base.strip() == "@default"):
         return
     import triage
 
@@ -624,11 +646,12 @@ def _enforce_hot_floor(
     # here throws inside decided's try/except and silently returns block-by-default,
     # which would make the gate unable to read a recorded decision (the triage
     # bypass would never clear). Let decided build its own kw_default_runner.
-    probe = triage.decided(config, ticket, planned_files)
+    probe = triage.decided(config, ticket, planned_files or [])
     if probe.get("is_hot") and not probe.get("decided"):
+        tripped = ", ".join(planned_files) if planned_files else "the bead's 'hot' label"
         raise _ConfigError(
             "autonomous run refuses to bootstrap a HOT change with no recorded "
-            "decision: " + ", ".join(planned_files) + " trips the is_hot_change "
+            "decision: " + tripped + " trips the is_hot_change "
             "floor (a guard/safety file or a 'hot'-labelled bead) and carries no "
             "DECISION:/TRIAGE-DECISION: comment. A hot change never self-approves "
             f'unattended. Triage it (/flow triage {ticket} "<answer>") then re-run, '
@@ -965,7 +988,7 @@ def bootstrap(
                     )
 
             copied = _copy_config(main_root, worktree, extra_copy or [])
-            _ensure_flow_config(main_root, worktree, main_root / ".flow")
+            _ensure_flow_config(main_root, worktree, _memory_paths.resolve_memory_base(main_root))
 
             if mise_trust and (
                 (worktree / "mise.toml").exists() or (worktree / ".mise.toml").exists()
@@ -988,8 +1011,10 @@ def bootstrap(
                 commit_type=commit_type,
                 commit_summary=commit_summary,
                 e2e_recipe=e2e_recipe,
+                # --lane is interactive-only; an --auto run derives its lane
+                # from the bead's tier labels (per the CLI help + verb-spec.md).
                 lane=_effective_lane(
-                    explicit=lane,
+                    explicit=None if auto else lane,
                     ticket=ticket,
                     planned_files=planned_files,
                     main_root=main_root,
