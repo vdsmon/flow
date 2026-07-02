@@ -1043,6 +1043,177 @@ class _MustNotReadStdin:
         raise AssertionError("label-only recall must never read stdin")
 
 
+# ─── digest (--digest markdown card over --label cluster) ─────────────────────
+
+
+def test_digest_without_label_is_argparse_error(tmp_path: Path) -> None:
+    with pytest.raises(SystemExit) as exc:
+        recall.cli_main(["--digest", "--workspace-root", str(tmp_path)])
+    assert exc.value.code == 2
+
+
+def test_digest_sections_grouped_in_canonical_order(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _seed_workspace(tmp_path)
+    entries = [
+        _labeled_entry("f" * 16, "a fact", ["form:iva_2083"], type_="FACT"),
+        _labeled_entry("d" * 16, "a decision", ["form:iva_2083"], type_="DECISION"),
+        _labeled_entry("l" * 16, "a learning", ["form:iva_2083"], type_="LEARNED"),
+    ]
+    _write_entries(tmp_path, "demo", entries)
+    rc = recall.cli_main(
+        ["--label", "form:iva_2083", "--digest", "--workspace-root", str(tmp_path)]
+    )
+    assert rc == 0
+    out = capsys.readouterr().out
+    # DECISION, FACT, LEARNED in that order regardless of write/entry order.
+    assert out.index("DECISION") < out.index("FACT") < out.index("LEARNED")
+
+
+def test_digest_only_non_empty_sections_rendered(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _seed_workspace(tmp_path)
+    entries = [_labeled_entry("d" * 16, "a decision", ["form:iva_2083"], type_="DECISION")]
+    _write_entries(tmp_path, "demo", entries)
+    rc = recall.cli_main(
+        ["--label", "form:iva_2083", "--digest", "--workspace-root", str(tmp_path)]
+    )
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "DECISION" in out
+    for absent in ("FACT", "LEARNED", "PATTERN", "INVESTIGATION", "DEVIATION"):
+        assert absent not in out
+
+
+def test_digest_all_six_valid_types_render(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _seed_workspace(tmp_path)
+    types = ["DECISION", "FACT", "LEARNED", "PATTERN", "INVESTIGATION", "DEVIATION"]
+    entries = [
+        _labeled_entry(t.lower().ljust(16, "x")[:16], f"body for {t}", ["form:iva_2083"], type_=t)
+        for t in types
+    ]
+    _write_entries(tmp_path, "demo", entries)
+    rc = recall.cli_main(
+        ["--label", "form:iva_2083", "--digest", "--workspace-root", str(tmp_path)]
+    )
+    assert rc == 0
+    out = capsys.readouterr().out
+    for t in types:
+        assert t in out
+    # canonical order preserved across all six.
+    positions = [out.index(t) for t in types]
+    assert positions == sorted(positions)
+
+
+def test_digest_within_section_newest_first(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _seed_workspace(tmp_path)
+    entries = [
+        _labeled_entry(
+            "a" * 16,
+            "old learning",
+            ["form:iva_2083"],
+            type_="LEARNED",
+            ts="2026-01-01T00:00:00.000Z",
+        ),
+        _labeled_entry(
+            "b" * 16,
+            "new learning",
+            ["form:iva_2083"],
+            type_="LEARNED",
+            ts="2026-06-01T00:00:00.000Z",
+        ),
+    ]
+    _write_entries(tmp_path, "demo", entries)
+    rc = recall.cli_main(
+        ["--label", "form:iva_2083", "--digest", "--workspace-root", str(tmp_path)]
+    )
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert out.index("new learning") < out.index("old learning")
+
+
+def test_digest_line_carries_ts_ticket_first_sentence(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _seed_workspace(tmp_path)
+    entries = [
+        _labeled_entry(
+            "a" * 16,
+            "First sentence here. Second sentence should be dropped.",
+            ["form:iva_2083"],
+            type_="LEARNED",
+            ts="2026-01-01T00:00:00.000Z",
+            ticket="FT-7",
+        ),
+    ]
+    _write_entries(tmp_path, "demo", entries)
+    rc = recall.cli_main(
+        ["--label", "form:iva_2083", "--digest", "--workspace-root", str(tmp_path)]
+    )
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "2026-01-01T00:00:00.000Z" in out
+    assert "FT-7" in out
+    assert "First sentence here." not in out  # trailing period stripped by split
+    assert "First sentence here" in out
+    assert "Second sentence should be dropped" not in out
+
+
+def test_digest_no_period_uses_whole_body() -> None:
+    entries = [_labeled_entry("a" * 16, "no terminal period here", ["form:iva_2083"])]
+    results = recall.rank("", entries, label_filter="form:iva_2083", top_n=5)
+    rendered = recall._render_digest(results, "form:iva_2083")
+    assert "no terminal period here" in rendered
+
+
+def test_digest_excludes_superseded(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    _seed_workspace(tmp_path)
+    entries = [
+        _labeled_entry("a" * 16, "superseded note", ["form:iva_2083"]),
+        {
+            **_labeled_entry("b" * 16, "canonical note", ["form:iva_2083"]),
+            "supersedes": "a" * 16,
+        },
+    ]
+    _write_entries(tmp_path, "demo", entries)
+    rc = recall.cli_main(
+        ["--label", "form:iva_2083", "--digest", "--workspace-root", str(tmp_path)]
+    )
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "canonical note" in out
+    assert "superseded note" not in out
+
+
+def test_digest_empty_cluster_still_renders_header(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _seed_workspace(tmp_path)
+    rc = recall.cli_main(["--label", "form:missing", "--digest", "--workspace-root", str(tmp_path)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "form:missing" in out
+    assert "no entries" in out.lower()
+
+
+def test_plain_json_output_without_digest_unchanged(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _seed_workspace(tmp_path)
+    entries = [_labeled_entry("a" * 16, "iva note", ["form:iva_2083"])]
+    _write_entries(tmp_path, "demo", entries)
+    rc = recall.cli_main(["--label", "form:iva_2083", "--workspace-root", str(tmp_path)])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload[0]["id"] == "a" * 16
+
+
 def test_label_only_recall_never_touches_stdin(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
