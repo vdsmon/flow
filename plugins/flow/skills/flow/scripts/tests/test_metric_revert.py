@@ -391,8 +391,34 @@ def test_git_revert_joins_shipped_ticket(tmp_path: Path, monkeypatch) -> None:
     assert revert_file.exists()
     data = json.loads(revert_file.read_text(encoding="utf-8"))
     assert data["ticket"] == "FT-1"
+    assert data["tickets"] == ["FT-1"]
     assert data["source"] == "git"
     assert data["kind"] == "revert"
+
+
+def test_git_revert_multi_key_records_all_tickets(tmp_path: Path, monkeypatch) -> None:
+    """One reverting commit naming two shipped keys emits one event (the file is
+    keyed by reverting sha) carrying both tickets."""
+    _seed_workspace(tmp_path)
+    _write_ship_event(tmp_path, "FT-1", "2026-06-03T00:00:00Z")
+    _write_ship_event(tmp_path, "FT-2", "2026-06-04T00:00:00Z")
+    _patch_history(
+        monkeypatch,
+        {
+            "FT-1": [("2026-06-03T00:00:00Z", "closed")],
+            "FT-2": [("2026-06-04T00:00:00Z", "closed")],
+        },
+    )
+    _, revert_sha = _make_git_revert(tmp_path, "feat: pair (#2)\n\ntickets: FT-1 FT-2")
+
+    result = _compute(tmp_path)
+    assert result["reverts_by_source"]["git"] == 2
+    assert [r["ticket"] for r in result["git_reverts"]] == ["FT-1", "FT-2"]
+
+    revert_file = _memory_paths.revert_event_path(tmp_path, "demo", revert_sha)
+    data = json.loads(revert_file.read_text(encoding="utf-8"))
+    assert data["tickets"] == ["FT-1", "FT-2"]
+    assert data["ticket"] == "FT-1"
 
 
 def test_git_revert_emit_idempotent(tmp_path: Path, monkeypatch) -> None:

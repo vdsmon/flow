@@ -538,11 +538,15 @@ def cli_main(argv: list[str]) -> int:
 
     config = _load_config(workspace_root)
     semantic_on = args.semantic or bool(config.get("enabled"))
-    threshold = (
-        args.threshold
-        if args.threshold is not None
-        else float(config.get("threshold", DEFAULT_THRESHOLD))
-    )
+    if args.threshold is not None:
+        threshold = args.threshold
+    else:
+        try:
+            threshold = float(config.get("threshold", DEFAULT_THRESHOLD))
+        except (TypeError, ValueError):
+            # a malformed config threshold must not kill recall (the module
+            # contract is BM25 fallback on ANY semantic-config failure)
+            threshold = DEFAULT_THRESHOLD
 
     results: list[dict[str, Any]] | None = None
     if semantic_on:

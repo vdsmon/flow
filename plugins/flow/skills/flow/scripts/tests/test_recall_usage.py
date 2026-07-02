@@ -238,6 +238,29 @@ def test_detect_misses_dedups_on_rerun(tmp_path: Path) -> None:
     assert second == []
 
 
+def test_detect_misses_ignores_superseded_candidate(tmp_path: Path) -> None:
+    """A superseded entry whose vector lingers in the sidecar (stale/failed
+    reindex) is unreturnable by recall, so it must never be blamed as a miss."""
+    embedder = _stub_embedder_cmd(tmp_path)
+    _seed_workspace(tmp_path, semantic=True, embedder=embedder)
+    p = _make_entry("p" * 16, "alpha beta gamma delta", "2026-01-01T00:00:00Z", "FT-1")
+    _write_knowledge(tmp_path, [p])
+    memory_embed.reindex(tmp_path, "demo", model="stub-model", embedder=embedder)
+    # supersede P after the reindex, then append this run's near-dup N: the
+    # sidecar still holds P's vector but P is no longer live.
+    successor = _make_entry("q" * 16, "totally different words", "2026-02-15T00:00:00Z", "FT-1")
+    successor["supersedes"] = "p" * 16
+    n = _make_entry("n" * 16, "alpha beta gamma delta", "2026-03-01T00:00:00Z", "FT-2")
+    _write_knowledge(tmp_path, [p, successor, n])
+    _write_state(tmp_path, "FT-2", "run-1", "2026-02-01T00:00:00Z")
+    _write_recall_log(tmp_path, "FT-2", [])
+    misses = recall_usage.detect_misses(
+        tmp_path, ticket="FT-2", ticket_dir=_ticket_dir(tmp_path, "FT-2")
+    )
+    assert misses == []
+    assert all(r["kind"] != "miss" for r in _read_usage(tmp_path))
+
+
 # ─── metric: recall-hit-rate ─────────────────────────────────────────────────
 
 

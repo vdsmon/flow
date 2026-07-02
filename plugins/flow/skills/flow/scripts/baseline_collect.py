@@ -85,6 +85,7 @@ def build_baseline(
 
     Raises:
         _NoSamples
+        KeyError / TypeError / ValueError on a malformed sample
     """
     if not samples:
         raise _NoSamples("no samples provided")
@@ -165,6 +166,9 @@ def cli_main(argv: list[str]) -> int:
             baseline = build_baseline(samples, collected_at=utcnow_iso(), source=args.source)
         except _NoSamples as exc:
             sys.stderr.write(f"baseline-collect: {exc}\n")
+            return 1
+        except (KeyError, TypeError, ValueError) as exc:
+            sys.stderr.write(f"baseline-collect: malformed sample: {exc}\n")
             return 1
         try:
             write_baseline(path, baseline)

@@ -46,11 +46,12 @@ Add `--full` to force a full rebuild. **First-enable requires one bulk reindex**
 
 ```bash
 python3 ${CLAUDE_SKILL_DIR}/scripts/recall.py --query-file <path> \
-  --semantic --top-n 30 --record-pending --branch "$B" --ticket "$KEY" \
-  --workspace-root .
+  --semantic --top-n 30 --record-pending \
+  --branch "feat/$KEY-<slug>" --ticket "$KEY" \
+  --workspace-root "<the worktree path the bootstrap printed>"
 ```
 
-`--record-pending` appends the recalled ids to `recall-pending`; `dispatch_stage init` later promotes them into the run's `recall-log.jsonl` (so reflect's `recalled_entries` still works). It needs both `--branch` and `--ticket`.
+`--record-pending` appends the recalled ids to the worktree's `recall-pending.jsonl`; `dispatch_stage init` later promotes them into the run's `recall-log.jsonl` (so reflect's `recalled_entries` still works). It needs both `--branch` and `--ticket`. **Target the run WORKTREE and its feature branch, never the main checkout.** Promotion runs from inside the worktree and matches exactly on branch + cwd (plus a head-sha-ancestor check), so recording with `--workspace-root .` and an integration branch writes a DIFFERENT `recall-pending.jsonl` that never promotes — `recalled_entries` stays empty with no error anywhere. Full promotion rules: `verb-spec.md` step 6.
 
 ## recall --metric (the 14-day checkpoint calculator)
 
@@ -97,7 +98,15 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/recall.py --metric revert-rate \
   [--since YYYY-MM-DD] [--until YYYY-MM-DD]
 ```
 
-Joins each in-window ship-event to its tracker status history (`bd history <key> --json`): a revert is a shipped bead reopened and re-closed AFTER its `shipped_at`. Reports `shipped`, `n_reverts`, `revert_rate`, and the attribution split `reverts_via_flow` / `reverts_not_attributed`, plus per-ticket detail and a `skipped` list (`history_unavailable`, `tracker_unsupported` on non-beads, `reopened_not_yet_reclosed`). `--namespace` is required. No `--checkpoint` option. Beads-only; non-beads workspaces short-circuit to an all-skipped report.
+Joins each in-window ship-event to its tracker status history (`bd history <key> --json`): a revert is a shipped bead reopened and re-closed AFTER its `shipped_at`. Reports `shipped`, `n_reverts`, `revert_rate`, and the attribution split `reverts_via_flow` / `reverts_not_attributed`, plus per-ticket detail and a `skipped` list (`history_unavailable`, `tracker_unsupported` on non-beads, `reopened_not_yet_reclosed`). `--namespace` is required. No `--checkpoint` option. Dual-source: the tracker join is beads-only (on a non-beads backend every ship-event lands in `skipped` as `tracker_unsupported`), while a git-log scan counts revert commits naming in-window keys on ANY backend — reported as `reverts_by_source` `{tracker, git}` plus per-revert `git_reverts` detail, with a durable revert event emitted per reverting commit. A git-scan failure (e.g. not a git repo) fails loud with exit 1 rather than under-reporting.
+
+```bash
+python3 ${CLAUDE_SKILL_DIR}/scripts/recall.py --metric recall-hit-rate \
+  --namespace <ns> --workspace-root . \
+  [--since YYYY-MM-DD] [--until YYYY-MM-DD]
+```
+
+Reads `.flow/<namespace>/recall-usage.jsonl` (the usage + miss records written at reflect) and reports `surfaced`, `used`, `hit_rate` (used / surfaced, 0.0 when nothing surfaced), `misses` (near-duplicate re-learns recall failed to surface, the false-negative proxy), and `runs` (distinct run_ids across both kinds). `--namespace` is required. No `--checkpoint` option.
 
 ```bash
 python3 ${CLAUDE_SKILL_DIR}/scripts/recall.py --metric trend \
@@ -105,4 +114,4 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/recall.py --metric trend \
   [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--json]
 ```
 
-Rolls up all four window measures (tickets-per-week, time-to-pr, friction-per-run, revert-rate) over one `[since, until)` window. Default output is a human-readable table, one row per measure with its headline numbers; `--json` emits a JSON object keyed by the four measure names (each carrying that measure's full report) plus top-level `since`, `until`, and `resolved_workspace_root`. The revert row surfaces the `reverts_by_source` `{tracker, git}` split. `--namespace` is required. No `--checkpoint` option. Inherits revert-rate's beads-only + git-repo requirement, so it fails loud on a git-scan error rather than emitting an empty roll-up.
+Rolls up all five window measures (tickets-per-week, time-to-pr, friction-per-run, revert-rate, recall-hit-rate) over one `[since, until)` window. Default output is a human-readable table, one row per measure with its headline numbers; `--json` emits a JSON object keyed by the five measure names (each carrying that measure's full report) plus top-level `since`, `until`, and `resolved_workspace_root`. The revert row surfaces the `reverts_by_source` `{tracker, git}` split. `--namespace` is required. No `--checkpoint` option. Inherits revert-rate's git-repo requirement, so it fails loud on a git-scan error rather than emitting an empty roll-up.

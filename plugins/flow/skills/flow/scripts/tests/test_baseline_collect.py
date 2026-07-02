@@ -142,6 +142,28 @@ def test_cli_build_malformed_json_returns_1(tmp_path: Path) -> None:
     assert rc == 1
 
 
+def test_cli_build_sample_missing_key_returns_1(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = tmp_path / "baseline.json"
+    inline = json.dumps([{"ticket": "FT-1"}])
+    rc = baseline_collect.cli_main(["build", "--samples-json", inline, "--path", str(path)])
+    assert rc == 1
+    assert "malformed sample" in capsys.readouterr().err
+    assert not path.exists()
+
+
+def test_cli_build_sample_non_numeric_hours_returns_1(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = tmp_path / "baseline.json"
+    inline = json.dumps([{"ticket": "FT-1", "time_to_pr_hours": "fast"}])
+    rc = baseline_collect.cli_main(["build", "--samples-json", inline, "--path", str(path)])
+    assert rc == 1
+    assert "malformed sample" in capsys.readouterr().err
+    assert not path.exists()
+
+
 def test_cli_show_missing_baseline_returns_3(tmp_path: Path) -> None:
     rc = baseline_collect.cli_main(["show", "--path", str(tmp_path / "absent.json")])
     assert rc == 3

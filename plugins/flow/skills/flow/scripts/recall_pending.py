@@ -1,12 +1,13 @@
-"""Recall-pending protocol: SessionStart hook appends, dispatcher promotes.
+"""Recall-pending protocol: plan-phase recall appends, dispatcher promotes.
 
 Library + thin CLI. Stdlib-only.
 
 Two files, two roles:
-- `<workspace_root>/.flow/recall-pending.jsonl`: the hook is the SOLE writer, appending one entry
-  per recall it observed. The dispatcher promotes matching entries (and rewrites the file) but runs
-  only in worktrees, so the hook also evicts stale entries (`evict_stale`) on append to compact the
-  main checkout.
+- `<workspace_root>/.flow/recall-pending.jsonl`: the plan-phase `recall.py
+  --record-pending` (the post-gate write, targeting the run worktree) is the SOLE
+  writer, appending one entry per recall it observed. The dispatcher's `init`
+  promotes matching entries from inside that worktree; its rewrite also moves
+  stale entries to the `.stale` sidecar, so promotion is the compactor too.
 - `<workspace_root>/.flow/runs/<ticket>/recall-log.jsonl`: promoted entries land here, dispatcher-
   stamped with `recalled_at`.
 
@@ -279,47 +280,6 @@ def promote_matching(
     return promoted
 
 
-def evict_stale(
-    workspace_root: Path,
-    *,
-    now_iso: str,
-) -> list[dict[str, Any]]:
-    """Compact the recall-pending file: move >24h (or missing/unparseable
-    hook_observed_at) entries to the .stale sidecar, keep the rest.
-
-    The SessionStart hook is the sole appender and runs in every repo session,
-    but the dispatcher (the only `promote_matching` caller) runs in worktrees, so
-    the main-checkout file is never compacted by promotion. This applies the same
-    24h-stale partition `promote_matching` uses, with no ticket/ancestor matching.
-
-    No-op (no rewrite, no .stale write) when nothing is stale, so the common
-    every-session path does not churn the file. Holds the same flock for the read,
-    .stale append, and atomic rewrite. Returns the evicted entries.
-
-    Raises:
-        LockContention
-        OSError
-    """
-    now = parse_iso(now_iso) or datetime.now(UTC)
-    cutoff = now - _WINDOW
-
-    path = recall_pending_path(workspace_root)
-    quarantine = _quarantine_path(workspace_root)
-
-    stale: list[dict[str, Any]] = []
-    kept: list[dict[str, Any]] = []
-
-    with flock_retry(_lock_path(workspace_root)):
-        for entry in iter_jsonl(path, quarantine):
-            (stale if _is_stale(entry, cutoff) else kept).append(entry)
-        if not stale:
-            return []
-        _append_stale_capped(workspace_root, stale)
-        _atomic_rewrite(path, kept)
-
-    return stale
-
-
 # ─── CLI ─────────────────────────────────────────────────────────────────────
 
 
@@ -342,7 +302,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     common.add_argument("--workspace-root", default=".")
 
     parser = argparse.ArgumentParser(
-        description="Recall-pending append / list / evict / promote.", parents=[common]
+        description="Recall-pending append / list / promote.", parents=[common]
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -357,9 +317,6 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     p_append.add_argument("--hook-observed-at", default=None)
 
     sub.add_parser("list", parents=[common])
-
-    p_evict = sub.add_parser("evict", parents=[common])
-    p_evict.add_argument("--now", default=None)
 
     p_promote = sub.add_parser("promote", parents=[common])
     p_promote.add_argument("--ticket", required=True)
@@ -390,9 +347,6 @@ def cli_main(argv: list[str]) -> int:
             sys.stdout.write(json.dumps(entry, sort_keys=True) + "\n")
         elif args.command == "list":
             sys.stdout.write(json.dumps(list_pending(workspace_root), sort_keys=True) + "\n")
-        elif args.command == "evict":
-            evicted = evict_stale(workspace_root, now_iso=args.now or utcnow_iso())
-            sys.stdout.write(json.dumps(evicted, sort_keys=True) + "\n")
         else:
             promoted = promote_matching(
                 workspace_root,
@@ -424,7 +378,6 @@ __all__ = [
     "append_pending",
     "cli_main",
     "compute_pending_id",
-    "evict_stale",
     "list_pending",
     "promote_matching",
     "recall_pending_path",

@@ -544,6 +544,45 @@ def test_semantic_disabled_flag_off_no_embed_call(
     assert payload[0]["id"] == "a" * 16
 
 
+def test_malformed_config_threshold_semantic_off_still_ranks(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A workspace.toml threshold typo must not kill recall, even with semantic off."""
+    flow = tmp_path / ".flow"
+    flow.mkdir(parents=True)
+    (flow / "workspace.toml").write_text(
+        '[tracker]\nbackend = "jira"\n[tracker.jira]\ncloud_id = "x"\nproject_key = "FT"\n\n'
+        '[memory]\nnamespace = "demo"\n\n'
+        '[memory.semantic]\nenabled = false\nthreshold = "high"\n',
+        encoding="utf-8",
+    )
+    _write_entries(tmp_path, "demo", [_make_entry("a" * 16, "fsync matters")])
+    rc = recall.cli_main(["fsync", "--workspace-root", str(tmp_path)])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload[0]["id"] == "a" * 16
+
+
+def test_malformed_config_threshold_semantic_on_falls_back_to_bm25(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    flow = tmp_path / ".flow"
+    flow.mkdir(parents=True)
+    (flow / "workspace.toml").write_text(
+        '[tracker]\nbackend = "jira"\n[tracker.jira]\ncloud_id = "x"\nproject_key = "FT"\n\n'
+        '[memory]\nnamespace = "demo"\n\n'
+        '[memory.semantic]\nenabled = true\nthreshold = ["oops"]\n',
+        encoding="utf-8",
+    )
+    _write_entries(tmp_path, "demo", [_make_entry("a" * 16, "fsync matters")])
+    rc = recall.cli_main(["fsync", "--workspace-root", str(tmp_path)])
+    assert rc == 0
+    out = capsys.readouterr()
+    assert "bm25-fallback" in out.err
+    payload = json.loads(out.out)
+    assert payload[0]["id"] == "a" * 16
+
+
 # ─── semantic fusion path ──────────────────────────────────────────────────────
 
 
