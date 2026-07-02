@@ -680,6 +680,40 @@ def test_select_budget_shrinks_with_launched_pending(tmp_path):
     assert sorted(out["launched_pending"]) == sorted(pending)
 
 
+# ---- _config_defaults (mirrors the queue_select suite; was uncovered) ----
+
+
+def _ws_with_toml(tmp_path: Path, body: str) -> Path:
+    d = tmp_path / "flow"
+    (d / ".flow").mkdir(parents=True)
+    (d / ".flow" / "workspace.toml").write_text(body, encoding="utf-8")
+    return d
+
+
+def test_config_defaults_reads_evolve_section(tmp_path):
+    ws = _ws_with_toml(tmp_path, "[evolve]\ncap = 7\nconcurrency = 2\n")
+    assert es._config_defaults(ws) == (7, 2)
+
+
+def test_config_defaults_absent_section(tmp_path):
+    ws = _ws_with_toml(tmp_path, "[maintainer]\nself_target = true\n")
+    assert es._config_defaults(ws) == (es.DEFAULT_CAP, es.DEFAULT_CONCURRENCY)
+
+
+def test_config_defaults_ignores_queue_section(tmp_path):
+    ws = _ws_with_toml(tmp_path, "[queue]\ncap = 9\nconcurrency = 9\n")
+    assert es._config_defaults(ws) == (es.DEFAULT_CAP, es.DEFAULT_CONCURRENCY)
+
+
+def test_config_defaults_invalid_values(tmp_path):
+    ws = _ws_with_toml(tmp_path, '[evolve]\ncap = 0\nconcurrency = "lots"\n')
+    assert es._config_defaults(ws) == (es.DEFAULT_CAP, es.DEFAULT_CONCURRENCY)
+
+
+def test_config_defaults_no_workspace(tmp_path):
+    assert es._config_defaults(tmp_path / "nope") == (es.DEFAULT_CAP, es.DEFAULT_CONCURRENCY)
+
+
 def test_select_launched_pending_open_hot_serializes_next_hot(tmp_path):
     # a hot key sits in launched_pending with status `open` (newly launched, pre-transition),
     # no lease and no ref/PR. It must consume the single hot slot, holding the next hot.

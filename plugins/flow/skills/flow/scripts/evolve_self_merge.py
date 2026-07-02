@@ -50,17 +50,27 @@ def decide(
     planned_files: list[str] | None = None,
     eval_status: str | None = None,
     main_ci_status: str | None = None,
+    changed_files: list[str] | None = None,
 ) -> dict[str, Any]:
     """Pure self-merge gate. Returns {action, is_hot, reason}.
 
     `action` is "skip" (leave the PR for the human) or "merge". `is_hot` is the
-    `hot` label OR a guard-file hit in `planned_files` (triage.is_hot_change); it
-    tells the caller whether the §6A independent property review must run before
-    merging. `eval_status` is the harness-eval verdict ("pass"/"regressed"/"error",
-    None when the eval did not run): "pass" continues, anything else skips
-    ("regressed" by the no-degradation rule, the rest conservatively).
+    `hot` label OR a guard-file hit in `planned_files` OR one in `changed_files`
+    (triage.is_hot_change); it tells the caller whether the §6A independent
+    property review must run before merging. `changed_files` is the merge-time
+    OBSERVED PR diff: a guard file that entered the PR after planning (a
+    review-loop CI fix pushed past the ownership gate) never reaches plan-time
+    frontmatter, so the observed diff can only RAISE hotness, never lower it;
+    None keeps the plan-time derivation byte-identical. `eval_status` is the
+    harness-eval verdict ("pass"/"regressed"/"error", None when the eval did not
+    run): "pass" continues, anything else skips ("regressed" by the
+    no-degradation rule, the rest conservatively).
     """
-    is_hot = ("hot" in labels) or is_hot_change(planned_files or [])
+    is_hot = (
+        ("hot" in labels)
+        or is_hot_change(planned_files or [])
+        or is_hot_change(changed_files or [])
+    )
     if not is_maintainer:
         return {"action": "skip", "is_hot": is_hot, "reason": "not maintainer self-target"}
     if "evolve" not in labels:
@@ -147,6 +157,12 @@ def cli_main(argv: list[str], runner: Runner | None = None) -> int:
         default=None,
         help="main's CI health (main_ci_health.py probe); only 'failed' pauses the merge",
     )
+    parser.add_argument(
+        "--changed-files",
+        default=None,
+        help="comma-separated observed PR diff paths (gh pr diff --name-only); "
+        "a guard-file hit raises is_hot even when planned_files never gained it",
+    )
     args = parser.parse_args(argv)
 
     from maintainer import is_maintainer
@@ -157,6 +173,11 @@ def cli_main(argv: list[str], runner: Runner | None = None) -> int:
     fm = ticket_frontmatter.read(workspace_root / ".flow" / "tickets" / f"{args.key}.md")
     pf = fm.get("planned_files")
     planned_files = [str(x) for x in pf] if isinstance(pf, list) else []
+    changed_files = (
+        [f.strip() for f in args.changed_files.split(",") if f.strip()]
+        if args.changed_files is not None
+        else None
+    )
     result = decide(
         labels,
         is_maintainer=is_maintainer(workspace_root),
@@ -165,6 +186,7 @@ def cli_main(argv: list[str], runner: Runner | None = None) -> int:
         planned_files=planned_files,
         eval_status=args.eval_status,
         main_ci_status=args.main_ci_status,
+        changed_files=changed_files,
     )
     sys.stdout.write(json.dumps(result, indent=2, sort_keys=True) + "\n")
     return 0

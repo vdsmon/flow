@@ -258,6 +258,21 @@ def test_cli_live_evolve_run_alone_is_done(monkeypatch, tmp_path, capsys):
     assert out["action"] == "done"
 
 
+def test_cli_active_evolve_query_is_unlimited(monkeypatch, tmp_path, capsys):
+    # --limit 0 on the active-evolve subtraction query: bd list defaults to 50
+    # priority-sorted rows, so a >50 active evolve backlog would truncate a live
+    # evolve run's key out of the subtraction and this loop would wait on it,
+    # violating the never-blocks-on-evolve contract (flow-sdkk theme, PR#299 class).
+    runner = _StubRunner(evolve_keys=["flow-ev"])
+    _stub_cli(monkeypatch, tmp_path, _sel(), runner=runner)
+    rc = qd.cli_main(["--workspace-root", str(tmp_path)])
+    assert rc == 0
+    evolve_queries = [c for c in runner.bd_list_calls if "-l" in c]
+    assert evolve_queries, "the active-evolve subtraction query must run"
+    for q in evolve_queries:
+        assert q[q.index("--limit") + 1] == "0", q
+
+
 def test_cli_evolve_launched_pending_does_not_block(monkeypatch, tmp_path, capsys):
     # the launch ledger is shared too: an evolve drain's pre-lease launch marker
     # must not hold THIS loop's termination gate (and its marker is evolve's to

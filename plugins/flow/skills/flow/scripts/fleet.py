@@ -330,10 +330,14 @@ def is_live(workspace_root: Path, key: str) -> bool:
 
     Imports `lease` directly + inlines the worktree-pool glob (mirrors
     _evolve_common.run_dir_for, both `feat-`/legacy `feature-` dir prefixes) to
-    avoid a fleet<->_evolve_common import cycle.
+    avoid a fleet<->_evolve_common import cycle. The pool root resolves via
+    `resolve_memory_base` (the same worktree->main redirect fleet storage uses),
+    NOT `resolve_maintainer_repo`: in self-target mode the latter returns the
+    WORKTREE (its workspace.toml byte copy carries self_target), whose own
+    `.flow/worktrees/` is always empty, so a call from inside a worktree would
+    read a possibly-live run as provably-not-live and invert the fail-safe.
     """
-    repo = resolve_maintainer_repo(workspace_root)
-    base = (repo if repo is not None else workspace_root) / ".flow" / "worktrees"
+    base = resolve_memory_base(workspace_root) / "worktrees"
     matches = glob.glob(str(base / f"feat-{key}*")) + glob.glob(str(base / f"feature-{key}*"))
     try:
         for wt in sorted(matches):

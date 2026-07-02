@@ -396,6 +396,19 @@ def _jobs_root_with(tmp_path, *records_json):
     return root
 
 
+def test_enumerate_jobs_skips_state_json_vanished_after_glob(tmp_path):
+    # the glob->read race: the drain's own A2 step rm -rf's job dirs each turn,
+    # so a state.json can vanish between the glob and the read. A dangling
+    # symlink makes read_text raise the same OSError the race does; the record
+    # is omitted (cannot classify), the sibling still enumerates.
+    jobs_root = _jobs_root_with(tmp_path, json.dumps({"sessionId": "s-1", "tempo": "idle"}))
+    racy = jobs_root / "deadbeef"
+    racy.mkdir()
+    (racy / "state.json").symlink_to(jobs_root / "gone" / "state.json")
+    records = esc._enumerate_jobs(jobs_root)
+    assert [r.job_id for r in records] == ["00000000"]
+
+
 def test_cli_non_maintainer_exit_4(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr("maintainer._global_config_path", lambda: tmp_path / "absent.toml")
     plain = tmp_path / "proj"

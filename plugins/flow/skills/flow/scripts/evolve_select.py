@@ -45,10 +45,12 @@ from _evolve_common import is_inflight as _is_inflight
 from _evolve_common import key_from_ref as _key_from_ref
 from _evolve_common import live_run_keys as _live_run_keys
 from _evolve_common import loads as _loads
+from _evolve_common import model_per_key as _model_per_key
 from _evolve_common import ok as _ok
+from _evolve_common import read_cap_concurrency as _read_cap_concurrency
+from _evolve_common import read_worker_model as _worker_model
 from _runner import CwdRunner as Runner
 from _runner import cwd_default_runner as _default_runner
-from _workspace import WorkspaceConfigError, load_workspace_toml
 from maintainer import resolve_maintainer_repo
 
 DEFAULT_CAP = 5
@@ -252,50 +254,14 @@ def select(
     result["live_runs"] = sorted(live_keys)
     result["launched_pending"] = sorted(launched_keys)
     labels_by_id = {c["id"]: (c.get("labels") or []) for c in candidates if c.get("id")}
-    worker_model = _worker_model(workspace_root)
-    model_per_key: dict[str, str] = {}
-    for key in result["launch"]:
-        labels = labels_by_id.get(key, [])
-        # hot-first: a hot bead follows the opus-plans/sonnet-writes split too, so pin
-        # its session to worker_model (opus) to keep the judgment layer real. Checking
-        # hot before tier keeps a hot+tier:trivial bead on opus, not sonnet.
-        if "hot" in labels:
-            if worker_model:
-                model_per_key[key] = worker_model
-        elif "tier:trivial" in labels or "tier:light" in labels:
-            model_per_key[key] = "sonnet"
-        elif worker_model:
-            model_per_key[key] = worker_model
-    result["model_per_key"] = model_per_key
+    result["model_per_key"] = _model_per_key(
+        result["launch"], labels_by_id, _worker_model(workspace_root)
+    )
     return result
 
 
 def _config_defaults(workspace_root: Path) -> tuple[int, int]:
-    try:
-        config = load_workspace_toml(workspace_root)
-    except WorkspaceConfigError:
-        return DEFAULT_CAP, DEFAULT_CONCURRENCY
-    section = config.get("evolve")
-    if not isinstance(section, dict):
-        return DEFAULT_CAP, DEFAULT_CONCURRENCY
-    cap = section.get("cap")
-    conc = section.get("concurrency")
-    return (
-        cap if isinstance(cap, int) and cap > 0 else DEFAULT_CAP,
-        conc if isinstance(conc, int) and conc > 0 else DEFAULT_CONCURRENCY,
-    )
-
-
-def _worker_model(workspace_root: Path) -> str | None:
-    try:
-        config = load_workspace_toml(workspace_root)
-    except WorkspaceConfigError:
-        return None
-    section = config.get("evolve")
-    if not isinstance(section, dict):
-        return None
-    val = section.get("worker_model")
-    return val if isinstance(val, str) and val else None
+    return _read_cap_concurrency(workspace_root, "evolve", DEFAULT_CAP, DEFAULT_CONCURRENCY)
 
 
 def cli_main(argv: list[str]) -> int:

@@ -53,6 +53,7 @@ from _evolve_common import (
     loads,
     ok,
 )
+from _evolve_common import active_evolve_keys as _active_evolve_keys
 from _runner import CwdRunner as Runner
 from _runner import cwd_default_runner as _default_runner
 from evolve_drain import decide, liveness_map, stranded_pre_pr
@@ -111,15 +112,6 @@ def _worktree_keys(repo: Path) -> set[str]:
         for prefix in WORKTREE_PREFIXES
         for p in glob.glob(str(base / f"{prefix}*" / ".flow" / "runs" / "*"))
     }
-
-
-def _active_evolve_keys(runner: Runner) -> set[str]:
-    """Keys of the active evolve beads (the evolve drain's queue, not ours)."""
-    raw = ok(
-        runner(["bd", "list", "-l", "evolve", "--status", ACTIVE_STATUSES, "--json"]),
-        "bd list",
-    )
-    return {str(b["id"]) for b in loads(raw) if isinstance(b, dict) and b.get("id")}
 
 
 def _inprogress_dayjob_keys(runner: Runner) -> set[str]:
