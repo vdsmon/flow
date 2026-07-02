@@ -94,6 +94,11 @@ _FAILURE_KIND_EXIT: dict[str | None, int] = {
 }
 
 
+# Several native states can normalize to in_progress (e.g. Jira's "Testing");
+# prefer the one that reads as the actual in-progress state.
+_IN_PROGRESS_HINTS = ("in progress", "doing", "in development")
+
+
 # ─── Subcommand dispatch ─────────────────────────────────────────────────────
 
 
@@ -122,6 +127,17 @@ def _select_transition_id(transitions: list[dict[str, Any]], target: str) -> str
     it lets the backend's rejection detail surface instead of a generic "no
     transition" error.
     """
+    if target == "in_progress":
+        # Boards can offer several to_normalized_state=="in_progress" transitions
+        # (e.g. 'Testing' and 'In Progress'); break the tie toward the native one.
+        for t in transitions:
+            if not t.get("available", True):
+                continue
+            if t.get("to_normalized_state", "").lower() != "in_progress":
+                continue
+            hint_text = f"{t.get('to_state', '')} {t.get('name', '')}".lower()
+            if any(hint in hint_text for hint in _IN_PROGRESS_HINTS):
+                return t.get("id")
     unavailable_id: str | None = None
     for t in transitions:
         candidates = (
