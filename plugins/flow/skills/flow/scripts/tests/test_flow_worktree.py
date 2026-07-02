@@ -1480,6 +1480,67 @@ def test_reap_checkpoint_excludes_secrets_and_flow_dir(tmp_path: Path) -> None:
     assert not any(t.startswith(".flow/") for t in tracked)
 
 
+def test_reap_recovers_orphaned_checkpoint_before_push(tmp_path: Path) -> None:
+    # crash-window shape (flow-81xn): a prior reap's checkpoint commit landed
+    # but its rescue push never did. The tree reads clean; recovery must
+    # re-push the SAME commit rather than let the caller destroy it.
+    main, wt = _bare_origin_repo(tmp_path)
+    (wt / "scratch.py").write_text("wip work\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(wt), "add", "-A"], check=True)
+    subprocess.run(
+        ["git", "-C", str(wt), "commit", "-q", "--no-verify", "-m", fw._checkpoint_marker("FT-1")],
+        check=True,
+    )
+
+    receipt = fw.reap_worktree(ticket="FT-1", main_root=main, runner=fw._default_runner())
+
+    assert receipt["worktree_removed"] is True
+    assert receipt["branch_deleted"] is True
+    checkpoint = receipt["checkpoint"]
+    assert checkpoint["rescue_branch"].startswith("flow-rescue/FT-1-")
+
+    origin = tmp_path / "origin.git"
+    ls_remote = subprocess.run(
+        ["git", "ls-remote", str(origin)], capture_output=True, text=True, check=True
+    ).stdout
+    assert f"refs/heads/{checkpoint['rescue_branch']}" in ls_remote
+
+    show = subprocess.run(
+        ["git", "show", f"refs/heads/{checkpoint['rescue_branch']}:scratch.py"],
+        cwd=str(origin),
+        capture_output=True,
+        text=True,
+    )
+    assert show.returncode == 0
+    assert show.stdout == "wip work\n"
+
+
+def test_reap_merged_orphan_with_unpushed_head_stays_clean(tmp_path: Path) -> None:
+    # primary risk (flow-81xn): a squash-merge rewrites shas, so an already
+    # landed feature commit's HEAD always looks unpushed too. Only the exact
+    # marker subject may trigger recovery; a real feature subject must reap
+    # clean, unchanged, with no flow-rescue ref pushed.
+    main, wt = _bare_origin_repo(tmp_path)
+    (wt / "real.py").write_text("feature work\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(wt), "add", "-A"], check=True)
+    subprocess.run(
+        ["git", "-C", str(wt), "commit", "-q", "--no-verify", "-m", "feat: real feature commit"],
+        check=True,
+    )
+
+    receipt = fw.reap_worktree(ticket="FT-1", main_root=main, runner=fw._default_runner())
+
+    assert receipt["worktree_removed"] is True
+    assert receipt["branch_deleted"] is True
+    assert "checkpoint" not in receipt
+
+    origin = tmp_path / "origin.git"
+    ls_remote = subprocess.run(
+        ["git", "ls-remote", str(origin)], capture_output=True, text=True, check=True
+    ).stdout
+    assert "flow-rescue" not in ls_remote
+
+
 def _checkpoint_runner(
     *,
     worktrees: str,
@@ -1488,9 +1549,17 @@ def _checkpoint_runner(
     push_rc: int = 0,
     commit_rc: int = 0,
     rev: str = "abc1234",
+    head_subject: str = "",
+    ls_remote_out: str = "",
 ):
     """A runner answering reap's full sequence, incl. the checkpoint's own
-    status/add/commit/rev-parse/push, with configurable failure points."""
+    status/add/commit/rev-parse/push, with configurable failure points.
+
+    `head_subject` and `ls_remote_out` drive the clean-tree recovery probe
+    (`git log -1 --format=%s HEAD` / `git ls-remote origin <ref>`); the default
+    `head_subject=""` never matches a marker, so existing non-recovery tests
+    are unaffected.
+    """
 
     def run(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
         calls.append(args)
@@ -1499,6 +1568,10 @@ def _checkpoint_runner(
         if args[:3] == ["git", "status", "--porcelain"]:
             out = "?? scratch.py\n" if dirty else ""
             return subprocess.CompletedProcess(args, 0, out, "")
+        if args[:4] == ["git", "log", "-1", "--format=%s"]:
+            return subprocess.CompletedProcess(args, 0, head_subject + "\n", "")
+        if args[:2] == ["git", "ls-remote"]:
+            return subprocess.CompletedProcess(args, 0, ls_remote_out, "")
         if args[:2] == ["git", "commit"]:
             return subprocess.CompletedProcess(
                 args, commit_rc, "", "" if commit_rc == 0 else "commit failed"
@@ -1579,6 +1652,75 @@ def test_reap_cli_exits_5_on_checkpoint_failure(tmp_path: Path, monkeypatch, cap
     assert rc == 5
     out = capsys.readouterr().out
     assert '"checkpoint_failed": true' in out
+
+
+def test_reap_recovery_push_failure_leaves_worktree_intact(tmp_path: Path) -> None:
+    wt = tmp_path / "main" / ".flow" / "worktrees" / "feat-FT-1-thing"
+    wt.mkdir(parents=True)
+    calls: list = []
+    runner = _checkpoint_runner(
+        worktrees=_porcelain([(str(wt), "feat/FT-1-thing")]),
+        calls=calls,
+        dirty=False,
+        head_subject=fw._checkpoint_marker("FT-1"),
+        ls_remote_out="",
+        push_rc=1,
+    )
+    receipt = fw.reap_worktree(ticket="FT-1", main_root=tmp_path / "main", runner=runner)
+    assert receipt["worktree_removed"] is False
+    assert receipt["branch_deleted"] is False
+    assert receipt["checkpoint_failed"] is True
+    assert not any(c[:4] == ["git", "worktree", "remove", "--force"] for c in calls)
+    assert not any(c[:3] == ["git", "branch", "-D"] for c in calls)
+
+
+def test_reap_cli_exits_5_on_recovery_push_failure(tmp_path: Path, monkeypatch, capsys) -> None:
+    wt = tmp_path / "main" / ".flow" / "worktrees" / "feat-FT-1-thing"
+    wt.mkdir(parents=True)
+    calls: list = []
+    runner = _checkpoint_runner(
+        worktrees=_porcelain([(str(wt), "feat/FT-1-thing")]),
+        calls=calls,
+        dirty=False,
+        head_subject=fw._checkpoint_marker("FT-1"),
+        ls_remote_out="",
+        push_rc=1,
+    )
+    monkeypatch.setattr(fw, "_default_runner", lambda: runner)
+    rc = fw.cli_main(
+        [
+            "reap",
+            "--ticket",
+            "FT-1",
+            "--branch",
+            "feat/FT-1-thing",
+            "--main-root",
+            str(tmp_path / "main"),
+        ]
+    )
+    assert rc == 5
+    out = capsys.readouterr().out
+    assert '"checkpoint_failed": true' in out
+
+
+def test_reap_recovery_skips_push_when_rescue_ref_already_present(tmp_path: Path) -> None:
+    # reap #1's push actually landed before it crashed; recovery must not
+    # issue a duplicate push, just let the normal clean path remove.
+    wt = tmp_path / "main" / ".flow" / "worktrees" / "feat-FT-1-thing"
+    wt.mkdir(parents=True)
+    calls: list = []
+    runner = _checkpoint_runner(
+        worktrees=_porcelain([(str(wt), "feat/FT-1-thing")]),
+        calls=calls,
+        dirty=False,
+        head_subject=fw._checkpoint_marker("FT-1"),
+        ls_remote_out="abc1234\trefs/heads/flow-rescue/FT-1-abc1234\n",
+    )
+    receipt = fw.reap_worktree(ticket="FT-1", main_root=tmp_path / "main", runner=runner)
+    assert receipt["worktree_removed"] is True
+    assert receipt["branch_deleted"] is True
+    assert "checkpoint" not in receipt
+    assert not any(c[:2] == ["git", "push"] for c in calls)
 
 
 def test_rescue_branch_not_ticket_branch() -> None:

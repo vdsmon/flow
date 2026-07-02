@@ -443,6 +443,12 @@ def _detect_colliding_sibling(
     return None
 
 
+def _checkpoint_marker(ticket: str) -> str:
+    """The exact WIP checkpoint commit subject for `ticket` (shared by the
+    commit call and the crash-window recovery compare so they can never drift)."""
+    return f"wip: flow checkpoint before reap ({ticket}) [skip ci]"
+
+
 def _checkpoint_dirty_worktree(ticket: str, worktree: Path, run: Runner) -> dict:
     """Checkpoint uncommitted work in `worktree` as a WIP commit pushed to a
     `flow-rescue/<ticket>-<sha>` ref, before reap's destructive teardown.
@@ -474,9 +480,18 @@ def _checkpoint_dirty_worktree(ticket: str, worktree: Path, run: Runner) -> dict
     regressing the drain recovery path this ticket exists to fix. The distinct
     `flow-rescue/<ticket>-<sha>` ref sidesteps that collision entirely.
 
-    Returns {"status": "clean"} (nothing to capture), {"status": "captured",
-    "rescue_branch", "sha"}, or {"status": "failed", "detail"} (leave the
-    worktree untouched; fail toward preserving work).
+    A clean tree can still be an ORPHANED checkpoint from a prior reap that died
+    after this function's own `git commit` but before its rescue push landed
+    (flow-81xn): HEAD reads clean either way, so the clean branch below probes
+    HEAD's subject against `_checkpoint_marker` before declaring victory. An
+    exact match (never a substring, since a feature commit merely mentioning the
+    phrase must not misfire) re-attempts the same no-force push; anything else,
+    including a squash-merged HEAD, is the ordinary clean/merged-orphan case.
+
+    Returns {"status": "clean"} (nothing to capture, or a recovered ref already
+    pushed), {"status": "captured", "rescue_branch", "sha"}, or {"status":
+    "failed", "detail"} (leave the worktree untouched; fail toward preserving
+    work).
     """
     pathspec = ["--", ".", ":(exclude).flow"] + [f":(exclude){p}" for p in _DEFAULT_COPY]
 
@@ -484,20 +499,36 @@ def _checkpoint_dirty_worktree(ticket: str, worktree: Path, run: Runner) -> dict
     if status.returncode != 0:
         return {"status": "failed", "detail": f"git status failed: {status.stderr.strip()}"}
     if not status.stdout.strip():
-        return {"status": "clean"}
+        subject = run(["git", "log", "-1", "--format=%s", "HEAD"], worktree)
+        if subject.returncode != 0:
+            return {"status": "failed", "detail": f"git log failed: {subject.stderr.strip()}"}
+        if subject.stdout.strip() != _checkpoint_marker(ticket):
+            return {"status": "clean"}
+
+        rev = run(["git", "rev-parse", "--short", "HEAD"], worktree)
+        if rev.returncode != 0:
+            return {"status": "failed", "detail": f"git rev-parse failed: {rev.stderr.strip()}"}
+        sha = rev.stdout.strip()
+        rescue_branch = f"flow-rescue/{ticket}-{sha}"
+
+        # ls-remote is an optimization only, not the source of truth: a rc!=0
+        # (transient network hiccup) still falls through to the idempotent
+        # no-force push below rather than stranding the worktree.
+        ls = run(["git", "ls-remote", "origin", f"refs/heads/{rescue_branch}"], worktree)
+        if ls.returncode == 0 and ls.stdout.strip():
+            return {"status": "clean"}
+
+        push = run(["git", "push", "origin", f"HEAD:refs/heads/{rescue_branch}"], worktree)
+        if push.returncode != 0:
+            return {"status": "failed", "detail": f"git push failed: {push.stderr.strip()}"}
+        return {"status": "captured", "rescue_branch": rescue_branch, "sha": sha}
 
     add = run(["git", "add", "-A", *pathspec], worktree)
     if add.returncode != 0:
         return {"status": "failed", "detail": f"git add failed: {add.stderr.strip()}"}
 
     commit = run(
-        [
-            "git",
-            "commit",
-            "--no-verify",
-            "-m",
-            f"wip: flow checkpoint before reap ({ticket}) [skip ci]",
-        ],
+        ["git", "commit", "--no-verify", "-m", _checkpoint_marker(ticket)],
         worktree,
     )
     if commit.returncode != 0:
