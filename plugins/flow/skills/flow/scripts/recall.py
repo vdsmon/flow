@@ -435,12 +435,12 @@ _DIGEST_SECTION_ORDER = ("DECISION", "FACT", "LEARNED", "PATTERN", "INVESTIGATIO
 
 
 def _first_sentence(body: str) -> str:
-    """First "sentence" up to the first ". " (period+space); the whole body,
-    stripped, when no such split point exists."""
+    """First "sentence" up to the first ". " (period+space); the whole body
+    when no such split point exists. Internal whitespace (incl. newlines)
+    collapses so the digest bullet stays one line per entry."""
     idx = body.find(". ")
-    if idx == -1:
-        return body.strip()
-    return body[:idx].strip()
+    sentence = body if idx == -1 else body[:idx]
+    return " ".join(sentence.split())
 
 
 def _render_digest(results: list[dict[str, Any]], label: str) -> str:
@@ -546,7 +546,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--reindex", action="store_true", help="dispatch to memory_embed reindex.")
     parser.add_argument("--full", action="store_true", help="with --reindex: force a full rebuild.")
     args = parser.parse_args(argv)
-    if args.digest and args.label is None:
+    if args.digest and not args.label:
         parser.error("--digest requires --label")
     return args
 

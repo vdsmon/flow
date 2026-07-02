@@ -1228,3 +1228,30 @@ def test_label_only_recall_never_touches_stdin(
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
     assert [r["id"] for r in payload] == ["a" * 16]
+
+
+def test_digest_first_sentence_collapses_newlines(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _seed_workspace(tmp_path)
+    entries = [
+        _labeled_entry(
+            "a" * 16, 'scans [\n  { "k": 1 }\n] and more. Second sentence.', ["form:iva_2083"]
+        )
+    ]
+    _write_entries(tmp_path, "demo", entries)
+    rc = recall.cli_main(
+        ["--label", "form:iva_2083", "--digest", "--workspace-root", str(tmp_path)]
+    )
+    assert rc == 0
+    out = capsys.readouterr().out
+    bullet = next(line for line in out.splitlines() if line.startswith("- "))
+    assert "\n" not in bullet
+    assert 'scans [ { "k": 1 } ] and more' in bullet
+
+
+def test_digest_with_empty_label_rejected(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path)
+    with pytest.raises(SystemExit) as exc:
+        recall.cli_main(["--label", "", "--digest", "--workspace-root", str(tmp_path)])
+    assert exc.value.code == 2
