@@ -7,8 +7,10 @@ dropped as applied-externally; if its pre-state no longer holds it is dropped as
 superseded; otherwise the op is replayed. Reconciliation, not blind replay.
 
 Transition reconciliation is read-before-replay (idempotent on target state).
-For comment/link/create/edit the probe-based dedup is deferred; those are
-replayed best-effort and a successful replay drops the entry.
+For comment/link/create the probe-based dedup is deferred; those are replayed
+best-effort and a successful replay drops the entry. Legacy op="edit" entries
+are parked with a warning (the Tracker protocol dropped generic edit; no
+adapter implements it); drop them via `pending_mutations.py compact`.
 """
 
 from __future__ import annotations
@@ -20,7 +22,8 @@ from pathlib import Path
 from typing import Any, Protocol
 
 import pending_mutations
-from _workspace import WorkspaceConfigError, load_workspace_toml
+from tracker import make_tracker
+from tracker_cli import _read_tracker_config, _WorkspaceConfigError
 
 
 class _Tracker(Protocol):
@@ -28,7 +31,6 @@ class _Tracker(Protocol):
     def transition(self, key: str, transition_id: str, fields: dict | None = None) -> Any: ...
     def comment(self, key: str, body: Any) -> None: ...
     def link(self, from_key: str, to_key: str, kind: str) -> None: ...
-    def edit(self, key: str, fields: dict) -> None: ...
     def create(
         self,
         summary: Any,
@@ -41,8 +43,13 @@ class _Tracker(Protocol):
 
 
 def _state_matches(tracker: _Tracker, ticket: str, target: str) -> bool:
+    # Case-insensitive: tracker_cli enqueues the lowercased --to-state, which may
+    # be a native status name like "To Do".
     st = tracker.state(ticket)
-    return st.get("normalized") == target or st.get("native_status") == target
+    want = target.lower()
+    return (st.get("normalized") or "").lower() == want or (
+        st.get("native_status") or ""
+    ).lower() == want
 
 
 def _postcondition_met(tracker: _Tracker, entry: dict[str, Any]) -> bool:
@@ -78,9 +85,6 @@ def _invoke(tracker: _Tracker, entry: dict[str, Any]) -> bool:
     if op == "link":
         tracker.link(str(args.get("from_key", key)), str(args.get("to_key")), str(args.get("kind")))
         return True
-    if op == "edit":
-        tracker.edit(key, args.get("fields") or {})
-        return True
     if op == "create":
         tracker.create(
             args.get("summary"),
@@ -99,8 +103,19 @@ def reconcile(workspace_root: Path, tracker: _Tracker) -> dict[str, Any]:
     applied_externally: list[str] = []
     superseded: list[str] = []
     failed: list[str] = []
+    parked: list[str] = []
     for entry in pending_mutations.list_mutations(workspace_root):
         key = entry["idempotency_key"]
+        if entry.get("op") == "edit":
+            # No adapter implements generic edit; replaying would fail forever
+            # and wedge sync at exit 1. Park the entry (kept on disk, warned,
+            # excluded from the exit code) instead of dropping it silently.
+            sys.stderr.write(
+                f"sync: parked {key} (op=edit is not replayable; remove via "
+                f"pending_mutations.py compact --drop-keys {key})\n"
+            )
+            parked.append(key)
+            continue
         try:
             if _postcondition_met(tracker, entry):
                 applied_externally.append(key)
@@ -119,23 +134,15 @@ def reconcile(workspace_root: Path, tracker: _Tracker) -> dict[str, Any]:
         "applied_externally": applied_externally,
         "superseded": superseded,
         "failed": failed,
+        "parked": parked,
         "removed": removed,
     }
 
 
 def _build_tracker(workspace_root: Path) -> Any:
-    data = load_workspace_toml(workspace_root)
-    tracker_cfg = data.get("tracker")
-    if not isinstance(tracker_cfg, dict):
-        raise WorkspaceConfigError("workspace.toml missing [tracker] block")
-    backend = tracker_cfg.get("backend")
-    sub = tracker_cfg.get(backend) if backend else None
-    cfg: dict[str, Any] = {"backend": backend}
-    if isinstance(sub, dict):
-        cfg.update(sub)
-    import tracker as tracker_mod
-
-    return tracker_mod.make_tracker(cfg)
+    # _read_tracker_config threads workspace_root into the flattened config so
+    # BeadsAdapter subprocesses run in the workspace, not the caller's cwd.
+    return make_tracker(_read_tracker_config(workspace_root))
 
 
 def cli_main(argv: list[str]) -> int:
@@ -145,7 +152,7 @@ def cli_main(argv: list[str]) -> int:
     workspace_root = Path(args.workspace_root).expanduser().resolve()
     try:
         tracker = _build_tracker(workspace_root)
-    except WorkspaceConfigError as exc:
+    except _WorkspaceConfigError as exc:
         sys.stderr.write(f"sync: {exc}\n")
         return 2
     except Exception as exc:

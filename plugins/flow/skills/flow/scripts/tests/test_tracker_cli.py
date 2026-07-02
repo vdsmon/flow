@@ -253,6 +253,57 @@ def test_transition_finds_by_native_name(
     assert tk.calls[1][1] == ("FT-1", "41", None)
 
 
+class _DuplicateNameTracker(_FakeTracker):
+    """Two transitions share the target name; only the second is available."""
+
+    def __init__(self, second_available: bool = True) -> None:
+        super().__init__()
+        self._second_available = second_available
+
+    def list_transitions(self, key: str) -> list[dict[str, Any]]:
+        self._record("list_transitions", key)
+        return [
+            {
+                "id": "21",
+                "name": "Close",
+                "to_state": "Done",
+                "to_normalized_state": "done",
+                "available": False,
+            },
+            {
+                "id": "41",
+                "name": "Close",
+                "to_state": "Done",
+                "to_normalized_state": "done",
+                "available": self._second_available,
+            },
+        ]
+
+
+def test_transition_prefers_available_match(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path)
+    tk = _DuplicateNameTracker()
+    rc = tracker_cli.cli_main(
+        ["--workspace-root", str(tmp_path), "transition", "--key", "FT-1", "--to-state", "done"],
+        tracker_factory=_factory(tk),
+    )
+    assert rc == 0
+    assert tk.calls[1] == ("transition", ("FT-1", "41", None), {})
+
+
+def test_transition_falls_back_to_unavailable_match(tmp_path: Path) -> None:
+    # With no available candidate the unavailable id is still posted so the
+    # backend's rejection detail surfaces instead of a generic exit 3.
+    _seed_workspace(tmp_path)
+    tk = _DuplicateNameTracker(second_available=False)
+    rc = tracker_cli.cli_main(
+        ["--workspace-root", str(tmp_path), "transition", "--key", "FT-1", "--to-state", "done"],
+        tracker_factory=_factory(tk),
+    )
+    assert rc == 0
+    assert tk.calls[1] == ("transition", ("FT-1", "21", None), {})
+
+
 def test_transition_unknown_state_returns_3(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

@@ -23,9 +23,10 @@ config dict that `tracker.make_tracker()` expects.
 
 Exit codes:
   0 = success
-  1 = transient/unknown tracker error (network / auth / retryable / unknown failure_kind)
+  1 = transient/unknown tracker error (network / auth / retryable / unknown
+      failure_kind / no such key)
   2 = workspace config invalid (no workspace.toml, malformed, missing block)
-  3 = invalid CLI args (no such key, bad transition lookup, malformed --field)
+  3 = invalid CLI args (bad transition lookup, malformed --field)
   4 = hard transition failure (permission_denied / validator_failed / missing_required_field)
   5 = transition not applicable (wrong_source_state / ambiguous_transition)
 """
@@ -114,19 +115,33 @@ def _cmd_state(tracker_obj: Any, args: argparse.Namespace) -> int:
     return 0
 
 
-def _cmd_transition(tracker_obj: Any, args: argparse.Namespace) -> int:
-    transitions = tracker_obj.list_transitions(args.key)
-    target = args.to_state.lower()
-    selected_id: str | None = None
+def _select_transition_id(transitions: list[dict[str, Any]], target: str) -> str | None:
+    """Pick the id of the first available transition matching `target`.
+
+    Falls back to an unavailable match when no available one exists: posting
+    it lets the backend's rejection detail surface instead of a generic "no
+    transition" error.
+    """
+    unavailable_id: str | None = None
     for t in transitions:
         candidates = (
             t.get("to_normalized_state", "").lower(),
             t.get("to_state", "").lower(),
             t.get("name", "").lower(),
         )
-        if target in candidates:
-            selected_id = t.get("id")
-            break
+        if target not in candidates:
+            continue
+        if t.get("available", True):
+            return t.get("id")
+        if unavailable_id is None:
+            unavailable_id = t.get("id")
+    return unavailable_id
+
+
+def _cmd_transition(tracker_obj: Any, args: argparse.Namespace) -> int:
+    transitions = tracker_obj.list_transitions(args.key)
+    target = args.to_state.lower()
+    selected_id = _select_transition_id(transitions, target)
     if selected_id is None:
         sys.stderr.write(
             f"tracker-cli transition: no transition to {args.to_state!r} available "

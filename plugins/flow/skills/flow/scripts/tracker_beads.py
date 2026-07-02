@@ -356,7 +356,12 @@ class BeadsAdapter:
         return self._ticket_from_json(raw)
 
     def list_assigned(self, filter: str = "open") -> list[TicketRef]:
-        args = ["list", "--status", filter] if filter else ["list"]
+        # Parity with JiraAdapter's "open" (statusCategory != Done): bd's
+        # --status matches the single stored status, so expand to every status
+        # that normalizes to a not-done state (deferred is excluded; it
+        # normalizes to cancelled).
+        status = "open,in_progress,blocked" if filter == "open" else filter
+        args = ["list", "--status", status] if status else ["list"]
         if self._actor:
             args.extend(["--assignee", self._actor])
         raw = self._run_json(args)

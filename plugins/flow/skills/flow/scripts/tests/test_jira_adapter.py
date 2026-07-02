@@ -466,6 +466,37 @@ def test_transition_missing_required_field_maps_correctly(
     assert result["failure_kind"] == "missing_required_field"
 
 
+def test_transition_persistent_503_raises_tracker_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Exhausted 5xx retries are transient: they must escape transition() as a
+    # plain TrackerError (tracker_cli's enqueue-on-transient path, exit 1), not
+    # be classified into a hard validator_failed TransitionResult (exit 4).
+    http = _FakeHttp(
+        [
+            _http_error("https://x/transitions", 503, {"errorMessages": ["down"]}),
+            _http_error("https://x/transitions", 503, {"errorMessages": ["down"]}),
+            _http_error("https://x/transitions", 503, {"errorMessages": ["down"]}),
+        ]
+    )
+    adapter = _make_adapter(monkeypatch, http)
+    monkeypatch.setattr(tj.time, "sleep", lambda s: None)
+    with pytest.raises(t.TrackerError, match="transient retries exhausted") as excinfo:
+        adapter.transition("FT-1", "31")
+    assert not isinstance(excinfo.value, tj._JiraHTTPError)
+    assert len(http.calls) == 3
+
+
+def test_transition_persistent_429_raises_tracker_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    responses = [
+        _http_error("https://x/transitions", 429, {"errorMessages": ["rate limited"]})
+        for _ in range(4)
+    ]
+    adapter = _make_adapter(monkeypatch, _FakeHttp(responses))
+    monkeypatch.setattr(tj.time, "sleep", lambda s: None)
+    with pytest.raises(t.TrackerError, match="transient retries exhausted") as excinfo:
+        adapter.transition("FT-1", "31")
+    assert not isinstance(excinfo.value, tj._JiraHTTPError)
+
+
 def test_state_returns_resolution_when_present(monkeypatch: pytest.MonkeyPatch) -> None:
     payload = _issue_payload(native_status="Done", category_key="done")
     payload["fields"]["resolution"] = {"name": "Won't Do"}

@@ -44,11 +44,11 @@ def test_compute_key_distinct_for_different_args() -> None:
 
 def test_key_independent_of_run_id(tmp_path: Path) -> None:
     e1 = pm.append_mutation(
-        tmp_path, ticket="FT-1", op="edit", args={"x": 1}, first_run_id="aaaa", intent_at=_INTENT
+        tmp_path, ticket="FT-1", op="comment", args={"x": 1}, first_run_id="aaaa", intent_at=_INTENT
     )
     # Second call from a "recovered run" with a different run_id must collide.
     e2 = pm.append_mutation(
-        tmp_path, ticket="FT-1", op="edit", args={"x": 1}, first_run_id="bbbb", intent_at=_INTENT
+        tmp_path, ticket="FT-1", op="comment", args={"x": 1}, first_run_id="bbbb", intent_at=_INTENT
     )
     assert e1["idempotency_key"] == e2["idempotency_key"]
     # No-op returns the original entry, so first_run_id stays aaaa.
@@ -98,14 +98,24 @@ def test_append_idempotent(tmp_path: Path) -> None:
 
 
 def test_append_distinct_entries_both_written(tmp_path: Path) -> None:
-    pm.append_mutation(tmp_path, ticket="FT-4", op="edit", args={"a": 1}, intent_at=_INTENT)
-    pm.append_mutation(tmp_path, ticket="FT-4", op="edit", args={"a": 2}, intent_at=_INTENT)
+    pm.append_mutation(tmp_path, ticket="FT-4", op="comment", args={"a": 1}, intent_at=_INTENT)
+    pm.append_mutation(tmp_path, ticket="FT-4", op="comment", args={"a": 2}, intent_at=_INTENT)
     assert len(_read_lines(pm.pending_mutations_path(tmp_path))) == 2
 
 
 def test_invalid_op_rejected(tmp_path: Path) -> None:
     with pytest.raises(pm._InvalidArgs):
         pm.append_mutation(tmp_path, ticket="FT-5", op="bogus", args={}, intent_at=_INTENT)
+    assert not pm.pending_mutations_path(tmp_path).exists()
+
+
+def test_edit_op_rejected(tmp_path: Path) -> None:
+    # Dropped from VALID_OPS: no adapter implements generic edit, so a queued
+    # edit could never be replayed by /flow sync.
+    with pytest.raises(pm._InvalidArgs):
+        pm.append_mutation(
+            tmp_path, ticket="FT-5", op="edit", args={"fields": {}}, intent_at=_INTENT
+        )
     assert not pm.pending_mutations_path(tmp_path).exists()
 
 
@@ -120,7 +130,7 @@ def test_list_returns_entries(tmp_path: Path) -> None:
 
 
 def test_list_quarantines_malformed(tmp_path: Path) -> None:
-    pm.append_mutation(tmp_path, ticket="FT-8", op="edit", args={"a": 1}, intent_at=_INTENT)
+    pm.append_mutation(tmp_path, ticket="FT-8", op="comment", args={"a": 1}, intent_at=_INTENT)
     path = pm.pending_mutations_path(tmp_path)
     with path.open("a", encoding="utf-8") as fh:
         fh.write("this is not json\n")
@@ -138,9 +148,9 @@ def test_list_quarantines_malformed(tmp_path: Path) -> None:
 
 
 def test_compact_removes_named_keys_keeps_others(tmp_path: Path) -> None:
-    e1 = pm.append_mutation(tmp_path, ticket="FT-9", op="edit", args={"a": 1}, intent_at=_INTENT)
-    e2 = pm.append_mutation(tmp_path, ticket="FT-9", op="edit", args={"a": 2}, intent_at=_INTENT)
-    e3 = pm.append_mutation(tmp_path, ticket="FT-9", op="edit", args={"a": 3}, intent_at=_INTENT)
+    e1 = pm.append_mutation(tmp_path, ticket="FT-9", op="comment", args={"a": 1}, intent_at=_INTENT)
+    e2 = pm.append_mutation(tmp_path, ticket="FT-9", op="comment", args={"a": 2}, intent_at=_INTENT)
+    e3 = pm.append_mutation(tmp_path, ticket="FT-9", op="comment", args={"a": 3}, intent_at=_INTENT)
     removed = pm.compact(tmp_path, {e1["idempotency_key"], e3["idempotency_key"]})
     assert removed == 2
     remaining = pm.list_mutations(tmp_path)
@@ -154,7 +164,7 @@ def test_compact_missing_file_is_noop(tmp_path: Path) -> None:
 
 
 def test_compact_unknown_keys_remove_nothing(tmp_path: Path) -> None:
-    pm.append_mutation(tmp_path, ticket="FT-10", op="edit", args={"a": 1}, intent_at=_INTENT)
+    pm.append_mutation(tmp_path, ticket="FT-10", op="comment", args={"a": 1}, intent_at=_INTENT)
     removed = pm.compact(tmp_path, {"notarealkey0000"})
     assert removed == 0
     assert len(pm.list_mutations(tmp_path)) == 1
@@ -164,7 +174,7 @@ def test_compact_unknown_keys_remove_nothing(tmp_path: Path) -> None:
 
 
 def test_cli_append_then_duplicate_exit_codes(tmp_path: Path) -> None:
-    base = ["--workspace-root", str(tmp_path), "append", "--ticket", "FT-11", "--op", "edit"]
+    base = ["--workspace-root", str(tmp_path), "append", "--ticket", "FT-11", "--op", "comment"]
     rc1 = pm.cli_main([*base, "--args-json", '{"a": 1}'], clock=lambda: _INTENT)
     rc2 = pm.cli_main([*base, "--args-json", '{"a": 1}'], clock=lambda: _INTENT)
     assert rc1 == 0
@@ -199,7 +209,7 @@ def test_cli_append_bad_json_exit_3(tmp_path: Path) -> None:
             "--ticket",
             "FT-13",
             "--op",
-            "edit",
+            "comment",
             "--args-json",
             "{not json}",
         ],
@@ -209,7 +219,7 @@ def test_cli_append_bad_json_exit_3(tmp_path: Path) -> None:
 
 
 def test_cli_compact_drop_keys(tmp_path: Path) -> None:
-    e = pm.append_mutation(tmp_path, ticket="FT-14", op="edit", args={"a": 1}, intent_at=_INTENT)
+    e = pm.append_mutation(tmp_path, ticket="FT-14", op="comment", args={"a": 1}, intent_at=_INTENT)
     rc = pm.cli_main(
         ["--workspace-root", str(tmp_path), "compact", "--drop-keys", e["idempotency_key"]]
     )
@@ -226,7 +236,7 @@ def test_cli_clock_supplies_intent_at(tmp_path: Path) -> None:
             "--ticket",
             "FT-15",
             "--op",
-            "edit",
+            "comment",
             "--args-json",
             '{"a": 1}',
         ],
