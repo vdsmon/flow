@@ -22,7 +22,11 @@ Identity / convergence (two-layer seam). `--dedup-key <s>` feeds two dedup nets:
    carrying that anchor are listed and the new summary is token-compared (Jaccard over a
    stemmed, stopword-filtered token set) against each candidate's title; a score over
    THRESHOLD also dedups (exit 5). This catches re-discoveries of the same same-file defect
-   phrased differently, where the whole-key exact hash would mint a fresh slug.
+   phrased differently, where the whole-key exact hash would mint a fresh slug. This fuzzy
+   pass is auto-skipped when the file component is not a real file path (a machine-formulaic
+   key with no path separator that does not resolve to a tracked top-level file, e.g.
+   trace_mine's `<anchor>::<kind>-<stage>` cluster keys or an `epic:<track>` slug); for those
+   only the exact `evid:` net fires, so distinct formulaic findings are not over-collapsed.
 
 Anchor the key on the finding's primary file path (prose convention) so the same defect maps
 to the same fingerprint across runs. That is what stops the audit refiling open work AND
@@ -144,6 +148,38 @@ def _find_by_label(repo: Path, evid_label: str, run: Runner) -> str | None:
     return None
 
 
+def _is_tracked_top_level(path: str, repo: Path, run: Runner) -> bool:
+    """True when `path` names a tracked file at the repo root (git ls-files probe).
+
+    Runs with cwd = repo, so a bare basename whose real file lives nested (a script
+    under a subdir) does NOT match; only an exact top-level path does. A git failure
+    reads as True (keep the fuzzy pass) so a probe error never over-collapses a bare
+    machine key into a false duplicate.
+    """
+    result = run(["git", "ls-files", "--", path], repo)
+    if result.returncode != 0:
+        return True
+    return bool(result.stdout.strip())
+
+
+def _is_machine_formulaic_key(file_part: str, repo: Path, run: Runner) -> bool:
+    """True when the left-of-`::` dedup component is a formulaic machine anchor, not
+    a real file path, so the fuzzy same-file pass must be skipped (flow-5drk).
+
+    An audit caller anchors on a real relfile path, which carries a directory
+    separator (`references/stage-commit.md`), and keeps the fuzzy pass. A machine
+    producer (trace_mine's `<anchor>::<kind>-<stage>` cluster key, an `epic:<track>`
+    slug) anchors on a bare token that does not resolve to a tracked top-level file,
+    and skips the pass so distinct formulaic findings are not over-collapsed.
+    """
+    part = file_part.strip()
+    if not part:
+        return True
+    if "/" in part or "\\" in part:
+        return False
+    return not _is_tracked_top_level(part, repo, run)
+
+
 def _find_fuzzy_duplicate(
     repo: Path, evidfile_label: str, new_summary: str, run: Runner
 ) -> str | None:
@@ -216,7 +252,7 @@ def create_bead(
             raise DuplicateBead(existing, dedup_key)
         labels.append(evid_label)
         file_part, sep, _symptom = dedup_key.partition("::")
-        if sep:
+        if sep and not _is_machine_formulaic_key(file_part, repo, run):
             evidfile_label = f"evidfile:{fingerprint(_basename(file_part))}"
             fuzzy = _find_fuzzy_duplicate(repo, evidfile_label, summary, run)
             if fuzzy is not None:
