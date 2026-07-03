@@ -371,6 +371,25 @@ When the loop exits (`done`), summarise the whole run: merged (keys) + worktrees
 
 Expect defers, not all PRs: terse audit beads will sometimes score under 90% or raise questions. A high defer rate signals the audit evidence needs to be richer (a finding for the miners in §audit), not a consumer bug.
 
+### Orphan worktree janitor (standalone maintainer sweep)
+
+A separate maintainer-only sweep reaps **orphaned local worktrees** whose PR already merged but which no drain channel still sees: the run's `merge` stage closed the bead, so the run dropped out of every in-flight / open-PR-keyed reap, and an attended hand-merge never had a local teardown path at all. It is standalone (not part of the loop above) and complements the §A reap.
+
+It enumerates registered worktrees (`git worktree list --porcelain`), joins each `feat/<key>` branch to its merged PR (`gh pr list --head <branch> --state merged`, whose `headRefOid` resolves even after the squash-merge deleted the remote head), and reaps a worktree ONLY when three gates all hold:
+
+1. the worktree's local branch tip sha **equals** the merged PR head sha (never ancestry, because the repo squash-merges; a tip AHEAD of the merged head is `skipped_ahead`, since a local unpushed commit like a reflect machinery commit would be destroyed by the teardown);
+2. the bead is **terminal** (raw `bd show` status not in `open`/`in_progress`/`blocked`); an active bead defers to the drain's close-then-reap and lands in `skipped_active_bead` (this sweep never runs `bd close`);
+3. the run is **not live** (lease-only `is-live`, fail-safe toward live → `skipped_live`).
+
+Every teardown funnels through the same lease-flock + checkpoint `flow_worktree.py reap` the drain uses, so a dirty worktree is checkpointed to a `flow-rescue/*` ref before removal and left intact on capture failure.
+
+```bash
+python3 ${CLAUDE_SKILL_DIR}/scripts/worktree_janitor.py sweep --workspace-root .
+python3 ${CLAUDE_SKILL_DIR}/scripts/worktree_janitor.py sweep --workspace-root . --dry-run   # preview: reap nothing
+```
+
+`--dry-run` reports the plan (the `reaped` would-reap set plus the `skipped_live` / `skipped_active_bead` / `skipped_ahead` / `no_merged_pr` buckets) and acts on nothing. Exit 0 ok; 2 = a bd/git/gh call failed; 4 = not a maintainer setup.
+
 ---
 
 ## propose
