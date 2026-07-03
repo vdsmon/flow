@@ -942,8 +942,9 @@ def test_write_phase_rejects_illegal_handler(
         registry: list[initmod.StageEntry],
         pipeline_stages: list[str],
         discovery: object,
+        existing_handlers: dict[str, str] | None = None,
     ) -> tuple[dict[str, str], list[str]]:
-        del config, registry, discovery
+        del config, registry, discovery, existing_handlers
         return {stage: "bogus" for stage in pipeline_stages}, []
 
     monkeypatch.setattr(initmod, "_compose_handlers", _bad_compose)
@@ -980,3 +981,124 @@ def test_checkpoint_entry_records_mode_and_initialized_at(tmp_path: Path) -> Non
     ]
     assert entries[-1]["checkpoint_mode"] == "work"
     assert entries[-1]["initialized_at"] == entries[-1]["ts"]
+
+
+# ─── flow-nnft: reconfigure preserves customized handlers ──────────────────
+
+
+def test_reconfigure_preserves_customized_handler(tmp_path: Path) -> None:
+    # The incident: a customized handler must survive `--reconfigure`, not silently
+    # reset to the registry default (code_review default is "inline").
+    first = dataclasses.replace(
+        _jira_config(tmp_path),
+        bundle="custom",
+        handler_overrides={"code_review": "skill:code-review"},
+    )
+    initmod.run_init(first)
+    result = initmod.run_init(
+        dataclasses.replace(_jira_config(tmp_path), bundle="bare"), reconfigure=True
+    )
+    assert result.handlers["code_review"] == "skill:code-review"
+
+
+def test_reconfigure_handler_flag_overrides_preservation(tmp_path: Path) -> None:
+    # Explicit --handler beats preservation, even when it resets a stage to default.
+    first = dataclasses.replace(
+        _jira_config(tmp_path),
+        bundle="custom",
+        handler_overrides={"code_review": "skill:code-review"},
+    )
+    initmod.run_init(first)
+    second = dataclasses.replace(
+        _jira_config(tmp_path),
+        bundle="custom",
+        handler_overrides={"code_review": "inline"},
+    )
+    result = initmod.run_init(second, reconfigure=True)
+    assert result.handlers["code_review"] == "inline"
+
+
+def test_reconfigure_preservation_beats_manifest(tmp_path: Path) -> None:
+    # Prior customization outranks a discovered manifest. Three distinct values:
+    # prior subagent:general-purpose != manifest skill:code-review != default inline.
+    search_root = tmp_path / "plugins"
+    _write_manifest(search_root / "code-review", _code_review_manifest())
+    first = dataclasses.replace(
+        _jira_config(tmp_path),
+        bundle="custom",
+        handler_overrides={"code_review": "subagent:general-purpose"},
+        bundle_search_roots=[search_root],
+    )
+    initmod.run_init(first)
+    second = dataclasses.replace(
+        _jira_config(tmp_path),
+        bundle="recommended",
+        bundle_search_roots=[search_root],
+    )
+    result = initmod.run_init(second, reconfigure=True)
+    assert result.handlers["code_review"] == "subagent:general-purpose"
+
+
+def test_fresh_init_preserves_nothing(tmp_path: Path) -> None:
+    # No reconfigure -> existing_handlers is {} -> handlers equal registry defaults.
+    result = initmod.run_init(dataclasses.replace(_jira_config(tmp_path), bundle="bare"))
+    assert result.handlers["code_review"] == "inline"
+    assert result.handlers["e2e"] == "subagent:general-purpose"
+    assert result.discovery_warnings == []
+
+
+def test_reconfigure_freezes_value_differing_from_current_default(tmp_path: Path) -> None:
+    # A prior value that differs from the current default is frozen on reconfigure
+    # (e2e default is subagent:general-purpose; a prior "none" is preserved).
+    first = dataclasses.replace(
+        _jira_config(tmp_path),
+        bundle="custom",
+        handler_overrides={"e2e": "none"},
+    )
+    initmod.run_init(first)
+    result = initmod.run_init(
+        dataclasses.replace(_jira_config(tmp_path), bundle="bare"), reconfigure=True
+    )
+    assert result.handlers["e2e"] == "none"
+
+
+def test_reconfigure_preserved_warning_names_value_and_default(tmp_path: Path) -> None:
+    # The reset-that-wasn't is legible: the warning carries value AND registry default.
+    first = dataclasses.replace(
+        _jira_config(tmp_path),
+        bundle="custom",
+        handler_overrides={"e2e": "none"},
+    )
+    initmod.run_init(first)
+    result = initmod.run_init(
+        dataclasses.replace(_jira_config(tmp_path), bundle="bare"), reconfigure=True
+    )
+    line = next(w for w in result.discovery_warnings if "e2e" in w)
+    assert "none" in line
+    assert "subagent:general-purpose" in line
+
+
+# ─── flow-js8p: stabilize .flow/skill_dir path ───────────────────────────
+
+
+def test_stabilize_skill_dir_rewrites_cache_to_marketplace(tmp_path: Path) -> None:
+    mp_dir = tmp_path / "plugins" / "marketplaces" / "vdsmon-flow"
+    (mp_dir / ".claude-plugin").mkdir(parents=True)
+    (mp_dir / ".claude-plugin" / "marketplace.json").write_text(
+        json.dumps({"plugins": [{"name": "flow", "source": "./plugins/flow"}]}),
+        encoding="utf-8",
+    )
+    target = mp_dir / "plugins" / "flow" / "skills" / "flow"
+    target.mkdir(parents=True)
+    cache = tmp_path / "plugins" / "cache" / "vdsmon-flow" / "flow" / "0.92.1" / "skills" / "flow"
+    assert initmod._stabilize_skill_dir(str(cache)) == str(target)
+
+
+def test_stabilize_skill_dir_non_cache_unchanged() -> None:
+    assert initmod._stabilize_skill_dir("/opt/flow/skills/flow") == "/opt/flow/skills/flow"
+
+
+def test_stabilize_skill_dir_cache_but_marketplace_missing_unchanged(tmp_path: Path) -> None:
+    # Cache-shaped input but no marketplace target on disk -> returned unchanged.
+    cache = tmp_path / "plugins" / "cache" / "vdsmon-flow" / "flow" / "0.92.1" / "skills" / "flow"
+    assert initmod._stabilize_skill_dir(str(cache)) == str(cache)
