@@ -94,6 +94,18 @@ wait_for_session() {
     wait_for_session "$PSID"
   fi
 
+  SCRIPTS="$REPO/plugins/flow/skills/flow/scripts"
+  echo "--- producer: trace-mine recent transcripts (deterministic; files trace-mined proposal beads) ---"
+  # 48h window on a 24h cadence is a deliberate missed-night overlap margin:
+  # the re-mine is idempotent (cluster dedups vs friction.jsonl, file dedups
+  # via the evid: net), so overlap costs a little scan time, never dup beads.
+  python3 "$SCRIPTS/trace_mine.py" runs --since-hours 48 --workspace-root "$REPO" | while IFS=$'\t' read -r TX TK; do
+    [ -n "$TX" ] && [ -n "$TK" ] || continue
+    python3 "$SCRIPTS/trace_mine.py" extract --transcript "$TX" --ticket "$TK" --workspace-root "$REPO" \
+      | python3 "$SCRIPTS/trace_mine.py" cluster --workspace-root "$REPO" \
+      | python3 "$SCRIPTS/trace_mine.py" file --workspace-root "$REPO" || true
+  done
+
   echo "--- consumer: claude --bg /flow evolve drain ---"
   claude --bg "/flow evolve drain"
   if [ -n "$PSID" ]; then _RUN_OUTCOME=ok; fi

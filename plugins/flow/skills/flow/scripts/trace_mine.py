@@ -25,6 +25,14 @@ a single `:` before filing, so only the exact `evid:` fingerprint net fires, nev
 the fuzzy `evidfile:` same-file pass (`fingerprint()` collapses non-alphanumeric
 runs identically either way). Auto-dormant outside maintainer mode.
 
+The `runs` subcommand (child-4) enumerates this workspace's own recent finished
+transcripts (mtime-windowed by `--since-hours`, over `_accepted_project_dirs`)
+and resolves each to its distinct ticket set through the same
+`_line_descriptor`/`_descriptor_ticket` pair `extract`'s `_derive_window`
+consumes, emitting one `<transcript>\t<ticket>` line per distinct ticket so a
+scheduler can drive `extract` unattended. Pure read-only enumeration; ungated,
+since self-target is already enforced structurally by `_accepted_project_dirs`.
+
 Run-window scoping: a real session file spans many runs across days. `extract`
 requires a `--ticket` and clips output to that ticket's run window: from the
 run's `/flow` intent invocation (or, headless, the contiguous same-branch
@@ -61,6 +69,8 @@ Exit codes (cluster):
 Exit codes (file):
   0 = ok (including a dormant, non-maintainer run).
   3 = signatures source missing/unreadable/unparseable.
+Exit codes (runs):
+  0 = ok, always (including zero pairs).
 """
 
 from __future__ import annotations
@@ -70,6 +80,7 @@ import hashlib
 import json
 import re
 import sys
+import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -917,6 +928,47 @@ def file_signatures(
     return result
 
 
+# ─── runs: recent finished-transcript enumeration (child-4) ────────────────
+
+
+def find_recent_runs(
+    projects_root: Path, workspace_root: Path, since_hours: int
+) -> list[tuple[Path, str]]:
+    """One `(transcript, ticket)` pair per distinct ticket dispatched in a
+    recent transcript under this workspace's own project dirs.
+
+    Enumerates `_accepted_project_dirs(projects_root, workspace_root)`, globs
+    `*.jsonl`, and keeps files whose mtime falls within the last `since_hours`.
+    Each kept transcript's ticket set is resolved through the exact
+    `_line_descriptor` + `_descriptor_ticket` pair `_derive_window` consumes
+    inside `extract`, so every pair this emits is one `extract` can scope
+    (dispatch activity guaranteed by construction, never exit 5). A transcript
+    with no dispatch descriptors (an audit/drain session) yields no pair.
+    Sorted by (path, ticket) for determinism.
+    """
+    cutoff = time.time() - since_hours * 3600
+    pairs: list[tuple[Path, str]] = []
+    for project_dir in _accepted_project_dirs(projects_root, workspace_root):
+        if not project_dir.is_dir():
+            continue
+        for transcript in project_dir.glob("*.jsonl"):
+            try:
+                if transcript.stat().st_mtime < cutoff:
+                    continue
+                lines = _lenient_jsonl(transcript)
+            except OSError:
+                continue
+            tickets = {
+                tk
+                for obj in lines
+                if (desc := _line_descriptor(obj)) is not None
+                and (tk := _descriptor_ticket(desc)) is not None
+            }
+            pairs.extend((transcript, ticket) for ticket in tickets)
+    pairs.sort(key=lambda pair: (str(pair[0]), pair[1]))
+    return pairs
+
+
 # ─── CLI ─────────────────────────────────────────────────────────────────────
 
 
@@ -960,6 +1012,14 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         help="A `cluster` result JSON; '-' (the default) reads stdin.",
     )
     f.add_argument("--workspace-root", default=".")
+
+    r = sub.add_parser(
+        "runs",
+        help="List (transcript, ticket) pairs for recent finished dogfood-run transcripts.",
+    )
+    r.add_argument("--since-hours", type=int, default=48)
+    r.add_argument("--workspace-root", default=".")
+    r.add_argument("--projects-root", default=None, help="override (default ~/.claude/projects).")
     return parser.parse_args(argv)
 
 
@@ -1085,6 +1145,18 @@ def _run_file(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_runs(args: argparse.Namespace) -> int:
+    workspace_root = Path(args.workspace_root).resolve()
+    projects_root = (
+        Path(args.projects_root).expanduser().resolve()
+        if args.projects_root
+        else Path.home() / ".claude" / "projects"
+    )
+    for transcript, ticket in find_recent_runs(projects_root, workspace_root, args.since_hours):
+        sys.stdout.write(f"{transcript}\t{ticket}\n")
+    return 0
+
+
 def cli_main(argv: list[str]) -> int:
     args = _parse_args(argv)
     if args.command == "extract":
@@ -1093,6 +1165,8 @@ def cli_main(argv: list[str]) -> int:
         return _run_cluster(args)
     if args.command == "file":
         return _run_file(args)
+    if args.command == "runs":
+        return _run_runs(args)
     return 1
 
 
@@ -1100,4 +1174,10 @@ if __name__ == "__main__":
     raise SystemExit(cli_main(sys.argv[1:]))
 
 
-__all__ = ["cli_main", "cluster_signatures", "extract_events", "file_signatures"]
+__all__ = [
+    "cli_main",
+    "cluster_signatures",
+    "extract_events",
+    "file_signatures",
+    "find_recent_runs",
+]

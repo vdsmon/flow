@@ -9,7 +9,8 @@ This is the **outer loop** in flow's nested-loop architecture (see `plugins/flow
 1. on a clean `main`: fast-forward to `origin/main` + `claude plugin marketplace update` (advance the live checkout the plugin tracks)
 2. **producer** — `claude --bg "/flow evolve audit"` (cold scan → files `evolve` beads)
 3. **wait** — `wait_for_session` blocks until the producer finishes filing
-4. **consumer** — `claude --bg "/flow evolve drain"` (reap green orphans + launch the fleet)
+4. **producer** — `trace_mine.py runs → extract | cluster | file` (deterministic, read-only transcript mining; not `--bg`; files deduped `trace-mined` proposal beads, never auto-drained)
+5. **consumer** — `claude --bg "/flow evolve drain"` (reap green orphans + launch the fleet)
 
 On any feature branch it audits the current checkout and skips advancing — it never disturbs the working tree.
 
