@@ -852,6 +852,7 @@ def _describe_signature(sig: dict[str, Any]) -> str:
         f"Related anchors: {', '.join(mechanism.get('related_anchors', [])) or 'n/a'}.",
         f"All anchors: {', '.join(sig.get('anchors', [])) or 'n/a'}.",
         f"Run ids: {', '.join(sig.get('run_ids', [])) or 'n/a'}.",
+        f"Event ids: {', '.join(sig.get('event_ids', [])) or 'n/a'}.",
         f"Tickets: {', '.join(sig.get('tickets', [])) or 'n/a'}.",
         f"Window: {sig.get('ts_start', '')} to {sig.get('ts_end', '')}.",
         "",
@@ -875,6 +876,11 @@ def file_signatures(
     `evidfile:` same-file pass never fires. That pass wrongly collapses distinct
     signatures sharing an anchor (an anchorless stall_gap in two different
     stages, or two different kinds on the same hot file).
+
+    Under-notification tradeoff (same as friction_escalate): the evid net
+    matches every status, so one bead per signature EVER — a signature
+    recurring after its bead closed routes to `deduped` silently, never a
+    fresh bead. The safe direction for a propose-only producer.
     """
     result: dict[str, Any] = {
         "maintainer": False,

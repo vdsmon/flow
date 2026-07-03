@@ -1126,6 +1126,7 @@ def _sig(
         "mechanism": {"stage": stage, "anchor": anchor, "related_anchors": []},
         "anchors": [anchor] if anchor else [],
         "event_count": event_count,
+        "event_ids": ["ev-1"],
         "run_ids": ["run-1"],
         "tickets": ["flow-eia3"],
         "ts_start": "2026-06-01T00:00:00.000Z",
@@ -1368,3 +1369,29 @@ def test_file_cli_signatures_not_a_list_exits_3(
     )
     assert rc == 3
     assert result is None
+
+
+def test_file_signatures_bd_failure_routes_to_errors_batch_continues(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path, maintainer=True)
+    sigs = [
+        _sig("no-anchor::stall_gap-implement", "stall_gap in implement", kind="stall_gap"),
+        _sig(
+            "state.py::tool_error-implement",
+            "tool_error in implement (state.py)",
+            anchor="state.py",
+        ),
+    ]
+    inner, _calls = _persisting_runner()
+    failed_first = {"done": False}
+
+    def run(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
+        if args[:2] == ["bd", "create"] and not failed_first["done"]:
+            failed_first["done"] = True
+            return subprocess.CompletedProcess(args, 1, "", "dolt lock contention")
+        return inner(args, cwd)
+
+    result = trace_mine.file_signatures(tmp_path, sigs, runner=run)
+
+    assert len(result["errors"]) == 1
+    assert len(result["filed"]) == 1
+    assert result["deduped"] == []
