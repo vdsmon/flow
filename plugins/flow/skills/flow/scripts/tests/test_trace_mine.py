@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import io
 import json
+import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -776,14 +778,17 @@ def test_bad_args_requires_exactly_one_of_transcript_or_session(
 # ─── cluster: failure-signature clustering + friction dedup (child-2) ────────
 
 
-def _seed_workspace(root: Path, namespace: str = "demo") -> None:
+def _seed_workspace(root: Path, namespace: str = "demo", *, maintainer: bool = False) -> None:
     """Seed a real workspace (`.flow/workspace.toml` + `.flow/<namespace>/`),
     mirroring test_friction_recurrence's pattern, so `cluster` self-resolves the
-    friction log via `_memory_paths`."""
+    friction log via `_memory_paths`. `maintainer=True` adds the `[maintainer]`
+    marker (test_friction_escalate's seeding pattern), for file_signatures()
+    tests."""
     flow = root / ".flow"
     (flow / namespace).mkdir(parents=True, exist_ok=True)
+    marker = "[maintainer]\nself_target = true\n\n" if maintainer else ""
     (flow / "workspace.toml").write_text(
-        f'[tracker]\nbackend = "jira"\n\n[memory]\nnamespace = "{namespace}"\n',
+        f'{marker}[tracker]\nbackend = "jira"\n\n[memory]\nnamespace = "{namespace}"\n',
         encoding="utf-8",
     )
 
@@ -1096,3 +1101,270 @@ def test_cluster_anchorless_key_distinct_from_stage_named_anchor():
     keys = [s["dedup_key"] for s in result["signatures"]]
     assert len(keys) == len(set(keys)), keys
     assert all(k.split("::")[0] for k in keys)
+
+
+# ─── file: propose-only bead filer (child-3) ────────────────────────────────
+
+Recorder = list[tuple[list[str], Path]]
+
+
+def _sig(
+    dedup_key: str,
+    summary: str,
+    *,
+    kind: str = "tool_error",
+    stage: str = "implement",
+    anchor: str = "",
+    event_count: int = 1,
+) -> dict[str, Any]:
+    """A child-2 cluster signature dict, minimal to the fields file_signatures
+    reads (mirrors _build_signature's shape)."""
+    return {
+        "dedup_key": dedup_key,
+        "summary": summary,
+        "terminal_cause": {"kind": kind, "body": f"{kind} body", "detail": ""},
+        "mechanism": {"stage": stage, "anchor": anchor, "related_anchors": []},
+        "anchors": [anchor] if anchor else [],
+        "event_count": event_count,
+        "run_ids": ["run-1"],
+        "tickets": ["flow-eia3"],
+        "ts_start": "2026-06-01T00:00:00.000Z",
+        "ts_end": "2026-06-01T00:00:05.000Z",
+    }
+
+
+def _persisting_runner(
+    seed_by_label: dict[str, list[dict[str, Any]]] | None = None,
+) -> tuple[Callable[[list[str], Path], subprocess.CompletedProcess[str]], Recorder]:
+    """Models create_bead's own dedup lookup across calls within one
+    file_signatures() run: a `bd create` records the new bead under EVERY label
+    it carries (crucially the evidfile: anchor label), so a later `bd list` for
+    that label sees it. friction_escalate's `_runner` is non-persisting (fixed
+    pre-seed, never records creates) and would make the ::-strip regression
+    below vacuous, since that regression IS the fuzzy evidfile: pass.
+    """
+    by_label: dict[str, list[dict[str, Any]]] = {
+        k: list(v) for k, v in (seed_by_label or {}).items()
+    }
+    calls: Recorder = []
+    counter = [0]
+
+    def run(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
+        calls.append((args, cwd))
+        if len(args) >= 2 and args[1] == "list":
+            label = args[args.index("-l") + 1] if "-l" in args else ""
+            return subprocess.CompletedProcess(args, 0, json.dumps(by_label.get(label, [])), "")
+        counter[0] += 1
+        uid = f"flow-new-{counter[0]}"
+        title = next((a.split("=", 1)[1] for a in args if a.startswith("--title=")), "")
+        labels_val = args[args.index("--labels") + 1] if "--labels" in args else ""
+        for label in (s for s in labels_val.split(",") if s):
+            by_label.setdefault(label, []).append({"id": uid, "title": title})
+        return subprocess.CompletedProcess(args, 0, json.dumps({"id": uid}), "")
+
+    return run, calls
+
+
+def _create_labels(create_args: list[str]) -> list[str]:
+    return create_args[create_args.index("--labels") + 1].split(",")
+
+
+def test_file_signatures_happy_path_labels_and_shape(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path, maintainer=True)
+    sigs = [
+        _sig("no-anchor::stall_gap-implement", "stall_gap in implement", kind="stall_gap"),
+        _sig(
+            "state.py::tool_error-implement",
+            "tool_error in implement (state.py)",
+            anchor="state.py",
+        ),
+    ]
+    run, calls = _persisting_runner()
+
+    result = trace_mine.file_signatures(tmp_path, sigs, runner=run)
+
+    assert result["maintainer"] is True
+    assert result["candidates"] == 2
+    assert len(result["filed"]) == 2
+    assert result["deduped"] == []
+    assert result["errors"] == []
+
+    create_calls = [c[0] for c in calls if c[0][:2] == ["bd", "create"]]
+    assert len(create_calls) == 2
+    for create_args in create_calls:
+        stamped = set(_create_labels(create_args))
+        assert {"evolve", "proposal", "trace-mined"} <= stamped
+    assert {c[0][1] for c in calls} <= {"list", "create"}
+
+
+def test_file_signatures_strip_prevents_anchorless_collision(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path, maintainer=True)
+    sigs = [
+        _sig("no-anchor::stall_gap-implement", "stall_gap in implement", kind="stall_gap"),
+        _sig(
+            "no-anchor::stall_gap-commit",
+            "stall_gap in commit",
+            kind="stall_gap",
+            stage="commit",
+        ),
+    ]
+    run, calls = _persisting_runner()
+
+    result = trace_mine.file_signatures(tmp_path, sigs, runner=run)
+
+    assert len(result["filed"]) == 2
+    assert result["deduped"] == []
+    create_calls = [c[0] for c in calls if c[0][:2] == ["bd", "create"]]
+    evid_labels = {
+        label
+        for args in create_calls
+        for label in _create_labels(args)
+        if label.startswith("evid:")
+    }
+    assert len(evid_labels) == 2
+
+
+def test_file_signatures_strip_prevents_same_file_collision(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path, maintainer=True)
+    sigs = [
+        _sig(
+            "dispatch_stage.py::tool_error-implement",
+            "tool_error in implement (dispatch_stage.py)",
+            anchor="dispatch_stage.py",
+        ),
+        _sig(
+            "dispatch_stage.py::drift-implement",
+            "drift in implement (dispatch_stage.py)",
+            kind="drift",
+            anchor="dispatch_stage.py",
+        ),
+    ]
+    run, calls = _persisting_runner()
+
+    result = trace_mine.file_signatures(tmp_path, sigs, runner=run)
+
+    assert len(result["filed"]) == 2
+    assert result["deduped"] == []
+    create_calls = [c[0] for c in calls if c[0][:2] == ["bd", "create"]]
+    evid_labels = {
+        label
+        for args in create_calls
+        for label in _create_labels(args)
+        if label.startswith("evid:")
+    }
+    assert len(evid_labels) == 2
+
+
+def test_file_signatures_duplicate_routes_to_deduped_no_create(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path, maintainer=True)
+    sig = _sig(
+        "state.py::tool_error-implement", "tool_error in implement (state.py)", anchor="state.py"
+    )
+    stripped_key = sig["dedup_key"].replace("::", ":")
+
+    import flow_beads_create as fbc
+
+    evid = f"evid:{fbc.fingerprint(stripped_key)}"
+    run, calls = _persisting_runner(
+        seed_by_label={evid: [{"id": "flow-old", "title": sig["summary"]}]}
+    )
+
+    result = trace_mine.file_signatures(tmp_path, [sig], runner=run)
+
+    assert result["filed"] == []
+    assert result["deduped"] == [{"dedup_key": stripped_key, "existing_key": "flow-old"}]
+    assert not any(c[0][:2] == ["bd", "create"] for c in calls)
+
+
+def test_file_signatures_dormant_when_not_maintainer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("maintainer._global_config_path", lambda: tmp_path / "absent.toml")
+    _seed_workspace(tmp_path, maintainer=False)
+    sig = _sig(
+        "state.py::tool_error-implement", "tool_error in implement (state.py)", anchor="state.py"
+    )
+    run, calls = _persisting_runner()
+
+    result = trace_mine.file_signatures(tmp_path, [sig], runner=run)
+
+    assert result == {
+        "maintainer": False,
+        "candidates": 0,
+        "filed": [],
+        "deduped": [],
+        "errors": [],
+    }
+    assert calls == []
+
+
+# --- CLI: file ----------------------------------------------------------------
+
+
+def _run_file(capsys: pytest.CaptureFixture[str], *args: str) -> tuple[int, dict[str, Any] | None]:
+    rc = trace_mine.cli_main(["file", *args])
+    out = capsys.readouterr().out
+    return rc, (json.loads(out) if out.strip() else None)
+
+
+def test_file_cli_reads_from_signatures_file_dormant(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("maintainer._global_config_path", lambda: tmp_path / "absent.toml")
+    _seed_workspace(tmp_path, maintainer=False)
+    payload = {"signatures": [_sig("no-anchor::stall_gap-implement", "stall_gap in implement")]}
+    sig_file = tmp_path / "signatures.json"
+    sig_file.write_text(json.dumps(payload), encoding="utf-8")
+
+    rc, result = _run_file(
+        capsys, "--signatures-file", str(sig_file), "--workspace-root", str(tmp_path)
+    )
+    assert rc == 0
+    assert result is not None
+    assert result["maintainer"] is False
+
+
+def test_file_cli_reads_from_stdin_dormant(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("maintainer._global_config_path", lambda: tmp_path / "absent.toml")
+    _seed_workspace(tmp_path, maintainer=False)
+    payload = {"signatures": [_sig("no-anchor::stall_gap-implement", "stall_gap in implement")]}
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(payload)))
+
+    rc, result = _run_file(capsys, "--signatures-file", "-", "--workspace-root", str(tmp_path))
+    assert rc == 0
+    assert result is not None
+    assert result["maintainer"] is False
+
+
+def test_file_cli_missing_signatures_file_exits_3(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    rc, result = _run_file(
+        capsys, "--signatures-file", str(tmp_path / "nope.json"), "--workspace-root", str(tmp_path)
+    )
+    assert rc == 3
+    assert result is None
+
+
+def test_file_cli_non_json_signatures_file_exits_3(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    bad = tmp_path / "bad.json"
+    bad.write_text("not json", encoding="utf-8")
+    rc, result = _run_file(capsys, "--signatures-file", str(bad), "--workspace-root", str(tmp_path))
+    assert rc == 3
+    assert result is None
+
+
+def test_file_cli_signatures_not_a_list_exits_3(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    payload_file = tmp_path / "signatures.json"
+    payload_file.write_text(json.dumps({"signatures": {"not": "a list"}}), encoding="utf-8")
+    rc, result = _run_file(
+        capsys, "--signatures-file", str(payload_file), "--workspace-root", str(tmp_path)
+    )
+    assert rc == 3
+    assert result is None
