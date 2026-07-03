@@ -38,15 +38,18 @@ Two design choices carry the weight:
 
 The runner never disturbs the working tree: it advances + updates the plugin **only** when sitting on a clean `main`; on any feature branch it audits the current checkout and logs that it skipped advancing.
 
+Alongside the `evolve audit` producer, the same nightly fire runs a second, deterministic post-hoc miner: `trace_mine.py runs → extract | cluster | file` sweeps recent finished dogfood-run transcripts for friction the in-flight logger missed. It is NOT an LLM `--bg` run — plain `python3` piped through the shipped pipeline — and it only files propose-only beads, never auto-drained.
+
 ## The producer-altitude axis
 
-The loop is only as ambitious as its producer. flow has three producer altitudes:
+The loop is only as ambitious as its producer. flow has three producer altitudes, plus a discovery/mining producer that runs alongside them:
 
 | Altitude | Sub-verb | Unit of work | Disposition | Cadence |
 |----------|----------|--------------|-------------|---------|
 | **defect** | `evolve audit` | one file, one symptom, one PR | `evolve` bead → auto-drained | nightly |
 | **judgment** | `evolve propose` | one feature/refactor, one PR | `proposal` bead → maintainer runs `/flow <key>` | on demand |
 | **theme** | `evolve epic` | a capability track → a tree of PRs | `epic` bead + `proposal` children → maintainer accepts | **weekly** |
+| **discovery/mining** | `trace_mine runs → extract\|cluster\|file` | one missed-friction signature | `trace-mined` proposal bead → maintainer runs `/flow <key>` (never auto-drained) | nightly |
 
 `audit` and `propose` are biased small by construction ("prefer small, isolated, high-evidence items"). The **theme** altitude — `evolve epic` — is the high-altitude producer: web-grounded, audacious, conviction-gated (not track-record-gated), spike-capable. It discovers at theme altitude and **decomposes** the chosen epic into do-loop-sized children the existing per-ticket consumer can run. See `verb-evolve.md` §epic. It runs weekly, not nightly: at theme altitude a daily cadence has weak signal.
 

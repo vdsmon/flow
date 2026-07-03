@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import subprocess
 import sys
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -1395,3 +1397,180 @@ def test_file_signatures_bd_failure_routes_to_errors_batch_continues(tmp_path: P
     assert len(result["errors"]) == 1
     assert len(result["filed"]) == 1
     assert result["deduped"] == []
+
+
+# ─── runs: recent finished-transcript enumeration (child-4) ────────────────
+
+
+def _run_runs(capsys: pytest.CaptureFixture[str], *args: str) -> tuple[int, list[tuple[str, str]]]:
+    rc = trace_mine.cli_main(["runs", *args])
+    out = capsys.readouterr().out
+    pairs = [tuple(line.split("\t", 1)) for line in out.splitlines() if line.strip()]
+    return rc, pairs
+
+
+def _runs_args(workspace_root: Path, tmp_path: Path, *, since_hours: int = 48) -> list[str]:
+    return [
+        "--workspace-root",
+        str(workspace_root),
+        "--projects-root",
+        str(tmp_path / "projects"),
+        "--since-hours",
+        str(since_hours),
+    ]
+
+
+def _minable_transcript(ticket: str) -> list[dict[str, Any]]:
+    """A transcript with a genuinely extractable run: a dispatch descriptor plus
+    a tool error inside its window (mirrors test_extract_tool_error_event)."""
+    return [
+        _tool_use_line("toolu_1", "Bash", "2026-06-01T00:00:00.000Z"),
+        _tool_error_line("toolu_1", "2026-06-01T00:00:01.000Z", "boom"),
+        _descriptor_line(
+            "2026-06-01T00:00:02.000Z", "implement", ticket_dir=f"/x/.flow/runs/{ticket}"
+        ),
+    ]
+
+
+def test_runs_lists_pair_for_recent_transcript(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    workspace_root = tmp_path / "repo"
+    transcript = _project_dir(tmp_path, workspace_root) / "t1.jsonl"
+    _write_jsonl(transcript, _minable_transcript("flow-eia3"))
+    rc, pairs = _run_runs(capsys, *_runs_args(workspace_root, tmp_path))
+    assert rc == 0
+    assert pairs == [(str(transcript), "flow-eia3")]
+
+
+def test_runs_emits_one_pair_per_distinct_ticket(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    workspace_root = tmp_path / "repo"
+    transcript = _project_dir(tmp_path, workspace_root) / "t1.jsonl"
+    _write_jsonl(
+        transcript,
+        [
+            _descriptor_line(
+                "2026-06-01T00:00:00.000Z", "implement", ticket_dir="/x/.flow/runs/flow-aaaa"
+            ),
+            _descriptor_line(
+                "2026-06-01T01:00:00.000Z", "implement", ticket_dir="/x/.flow/runs/flow-bbbb"
+            ),
+        ],
+    )
+    rc, pairs = _run_runs(capsys, *_runs_args(workspace_root, tmp_path))
+    assert rc == 0
+    assert pairs == [(str(transcript), "flow-aaaa"), (str(transcript), "flow-bbbb")]
+
+
+def test_runs_excludes_transcript_older_than_window(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    workspace_root = tmp_path / "repo"
+    transcript = _project_dir(tmp_path, workspace_root) / "t1.jsonl"
+    _write_jsonl(transcript, _minable_transcript("flow-eia3"))
+    old_mtime = time.time() - 49 * 3600  # past the 48h default window
+    os.utime(transcript, (old_mtime, old_mtime))
+    rc, pairs = _run_runs(capsys, *_runs_args(workspace_root, tmp_path, since_hours=48))
+    assert rc == 0
+    assert pairs == []
+
+
+def test_runs_includes_worktree_sibling_dir(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    workspace_root = tmp_path / "repo"
+    sibling_dir = tmp_path / "projects" / f"{_slug(workspace_root)}--flow-worktrees-feat-x"
+    transcript = sibling_dir / "t1.jsonl"
+    _write_jsonl(transcript, _minable_transcript("flow-eia3"))
+    rc, pairs = _run_runs(capsys, *_runs_args(workspace_root, tmp_path))
+    assert rc == 0
+    assert pairs == [(str(transcript), "flow-eia3")]
+
+
+def test_runs_transcript_without_dispatch_yields_no_pair(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    workspace_root = tmp_path / "repo"
+    transcript = _project_dir(tmp_path, workspace_root) / "t1.jsonl"
+    _write_jsonl(
+        transcript,
+        [
+            _tool_use_line("toolu_1", "Bash", "2026-06-01T00:00:00.000Z"),
+            _tool_error_line("toolu_1", "2026-06-01T00:00:01.000Z", "boom"),
+        ],
+    )
+    rc, pairs = _run_runs(capsys, *_runs_args(workspace_root, tmp_path))
+    assert rc == 0
+    assert pairs == []
+
+
+def test_runs_drops_descriptor_with_unresolvable_ticket(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A descriptor with neither ticket_dir nor ticket: _descriptor_ticket
+    # returns None for it, so it must contribute no pair.
+    workspace_root = tmp_path / "repo"
+    transcript = _project_dir(tmp_path, workspace_root) / "t1.jsonl"
+    payload = {"done": False, "stage": "implement", "head_sha": "abc123", "handler_type": "inline"}
+    line = {
+        "type": "user",
+        "timestamp": "2026-06-01T00:00:00.000Z",
+        "gitBranch": "main",
+        "sessionId": "sess1",
+        "message": {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "toolu_d",
+                    "is_error": False,
+                    "content": json.dumps(payload),
+                }
+            ],
+        },
+    }
+    _write_jsonl(transcript, [line])
+    rc, pairs = _run_runs(capsys, *_runs_args(workspace_root, tmp_path))
+    assert rc == 0
+    assert pairs == []
+
+
+def test_runs_output_deterministically_sorted(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    workspace_root = tmp_path / "repo"
+    transcript_b = _project_dir(tmp_path, workspace_root) / "b.jsonl"
+    transcript_a = _project_dir(tmp_path, workspace_root) / "a.jsonl"
+    _write_jsonl(transcript_b, _minable_transcript("flow-zz"))
+    _write_jsonl(transcript_a, _minable_transcript("flow-aa"))
+    rc, pairs = _run_runs(capsys, *_runs_args(workspace_root, tmp_path))
+    assert rc == 0
+    assert pairs == sorted(pairs)
+    assert pairs == [(str(transcript_a), "flow-aa"), (str(transcript_b), "flow-zz")]
+
+
+def test_runs_pairs_feed_extract_without_exit5(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The linchpin: a pair find_recent_runs emits must be one `extract` can
+    # scope -- proves runs' ticket resolution matches extract's own contract.
+    workspace_root = tmp_path / "repo"
+    transcript = _project_dir(tmp_path, workspace_root) / "t1.jsonl"
+    _write_jsonl(transcript, _minable_transcript("flow-eia3"))
+    pairs = trace_mine.find_recent_runs(tmp_path / "projects", workspace_root, 48)
+    assert pairs == [(transcript, "flow-eia3")]
+    tx, tk = pairs[0]
+    rc, payload = _run_extract(capsys, *_extract_args(tx, workspace_root, tmp_path, tk))
+    assert rc == 0
+    assert payload is not None
+
+
+def test_runs_empty_projects_dir_exits_0(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    workspace_root = tmp_path / "repo"
+    rc, pairs = _run_runs(capsys, *_runs_args(workspace_root, tmp_path))
+    assert rc == 0
+    assert pairs == []
