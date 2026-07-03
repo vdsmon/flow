@@ -167,6 +167,7 @@ def test_bare_jira_init_writes_workspace_toml(tmp_path: Path) -> None:
     assert handlers["create_pr"] == "none"
     assert handlers["review_loop"] == "none"
     assert handlers["code_review"] == "inline"
+    assert handlers["e2e"] == "subagent:general-purpose"
 
 
 def test_init_writes_skill_dir_from_env(tmp_path: Path, monkeypatch) -> None:

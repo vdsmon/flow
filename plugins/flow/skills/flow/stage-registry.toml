@@ -93,8 +93,8 @@ roles = []
 
 [[stage]]
 name = "e2e"
-description = "Opt-in. End-to-end / integration / smoke suite. Positioned AFTER code_review so review catches issues before slow e2e burns time."
-default_handler = "none"
+description = "Default-on: the correctness gate that observes the change behaving end-to-end. A workspace disables it only by explicitly wiring e2e = \"none\". Positioned AFTER code_review so cheap review catches issues before a slow e2e run burns time."
+default_handler = "subagent:general-purpose"
 default_timeout_min = 30
 default_max_no_progress_min = 15
 required_capabilities = []

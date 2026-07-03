@@ -17,7 +17,7 @@ concern.
   5. seed state.json: plan marked completed with its output_path; plan.out written
      from --plan-from; ticket left pending so the pipeline self-fetches ticket.json
      and stamps frontmatter (keeps the bootstrap offline; tracker auth stays live)
-  6. stamp commit_type/commit_summary (and e2e_recipe when e2e is opted in) into
+  6. stamp commit_type/commit_summary (and e2e_recipe unless e2e is explicitly disabled) into
      the worktree frontmatter so the commit + e2e stages do not block on a prompt
   7. print the worktree path (the spec session enters it via EnterWorktree)
 
@@ -301,7 +301,8 @@ def _e2e_enabled(main_root: Path) -> bool:
     """True when the workspace wires e2e to a real handler (not 'none').
 
     A 'none' handler short-circuits the stage before its reference doc loads, so
-    no recipe is needed there. Only an opted-in e2e demands a recipe.
+    no recipe is needed there. Only a disabled e2e (handler 'none') skips the
+    recipe demand.
     """
     try:
         data = _workspace.load_workspace_toml(main_root)
@@ -1051,9 +1052,10 @@ def bootstrap(
     run = runner or _default_runner()
     main_root = main_root.expanduser().resolve()
 
-    # e2e is opt-in; when a workspace enables it the approved plan must declare
-    # what the e2e stage runs. Refuse here, while the user is still present at the
-    # spec gate, rather than let the unattended tail block at the e2e lint gate.
+    # e2e is default-on; unless a workspace explicitly disabled it, the approved
+    # plan must declare what the e2e stage runs. Refuse here, while the user is
+    # still present at the spec gate, rather than let the unattended tail block
+    # at the e2e lint gate.
     if _e2e_enabled(main_root) and not (e2e_recipe and e2e_recipe.strip()):
         raise _ConfigError(
             "e2e handler is enabled in workspace.toml; pass --e2e-recipe "
@@ -1286,8 +1288,9 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         "--e2e-recipe",
         default=None,
         help="the e2e recipe the plan declared (runner + fixture + command + expected, "
-        "or 'skip: <reason>' / 'test-ci-only'); required when the workspace enables e2e. "
-        "Seeds frontmatter e2e_recipe so the opted-in e2e stage runs unattended",
+        "or 'skip: <reason>' / 'test-ci-only'); required unless the workspace explicitly "
+        "disabled e2e (handler 'none'). Seeds frontmatter e2e_recipe so the e2e stage "
+        "runs unattended",
     )
     p.add_argument("--no-mise-trust", action="store_true")
     p.add_argument(

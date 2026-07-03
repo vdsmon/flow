@@ -3,9 +3,9 @@
 ## Purpose
 
 Execute the **e2e recipe the plan declared** and surface any failure.
-This stage is opt-in: the default handler is `none`, so it normally does nothing.
-A workspace enables it by wiring `e2e` to `subagent:*` or `skill:*` in `workspace.toml [pipeline.handlers]`.
-When enabled, the spec/plan gate requires an `e2e_recipe` frontmatter field (see `flow_worktree.py create --e2e-recipe`), so by the time you run there is a recipe to execute — you do NOT detect or guess a suite.
+This stage runs BY DEFAULT (`stage-registry.toml` default handler is `subagent:general-purpose`): it is the ONE stage that observes the change actually behaving end-to-end, and it significantly improves end-to-end correctness — no other stage exercises the change running.
+A workspace disables it only by explicitly setting `e2e = "none"` in `workspace.toml [pipeline.handlers]`; that is a deliberate opt-out, never the convenient default.
+When it runs, the spec/plan gate requires an `e2e_recipe` frontmatter field (see `flow_worktree.py create --e2e-recipe`), so by the time you run there is a recipe to execute — you do NOT detect or guess a suite.
 
 e2e sits AFTER `code_review` so cheap inline review catches obvious issues before a slow end-to-end run burns time.
 By the time you run, the implement diff has already passed review.
@@ -34,8 +34,8 @@ Your job is to run it exactly, not to reinterpret it.
    ```
    Exit 0 → continue.
    Exit 1 → `e2e_recipe` is missing/empty. The bootstrap gate should have caught
-   this; report it as a failed stage (workspace enabled e2e without a recipe) and
-   stop. (If `CLAUDE_SKILL_DIR` is unset in your environment, read the
+   this; report it as a failed stage (e2e is running but the plan never settled a
+   recipe) and stop. (If `CLAUDE_SKILL_DIR` is unset in your environment, read the
    `e2e_recipe` field directly from the frontmatter instead; same outcome — an
    absent/empty recipe is a failed stage.)
 
@@ -72,9 +72,9 @@ Your job is to run it exactly, not to reinterpret it.
 
 - Recipe runs and fails → report the failure and return with the stage
   unfinished. A failing e2e recipe is a failed stage.
-- `e2e_recipe` missing/empty → workspace misconfiguration (e2e enabled without a
+- `e2e_recipe` missing/empty → workspace misconfiguration (e2e is running without a
   recipe; the bootstrap gate normally prevents this). Report it as failed so the
-  user supplies a recipe or sets the handler back to `none`.
+  user supplies a recipe or explicitly disables e2e (`e2e = "none"`).
 - Env-prep needs a genuinely interactive step that cannot run unattended → stop
   and report the blocker (it surfaces as needs-input in `claude agents` when the
   session is backgrounded); recipes should specify a non-interactive refresh path
@@ -82,9 +82,11 @@ Your job is to run it exactly, not to reinterpret it.
 
 ## Skip conditions
 
-- Stage handler is `none` (the default). The do-loop's `none` branch
-  short-circuits the stage before this doc is ever read, and the `e2e_recipe`
-  requirement never applies. e2e runs ONLY when a workspace opts in via
-  `subagent:*` or `skill:*`.
+- Stage handler is `none`. This is NOT the default — a workspace must have
+  explicitly disabled e2e (`e2e = "none"` in `workspace.toml [pipeline.handlers]`)
+  for this to apply. The do-loop's `none` branch short-circuits the stage before
+  this doc is ever read, and the `e2e_recipe` requirement never applies.
 - A `skip: <reason>` recipe value is an in-stage skip (step 2): the stage runs,
   reads the conscious decision, and finishes completed without executing a suite.
+  This is the exceptional, justified path (a genuinely no-runnable-surface ticket)
+  — never the convenient way to dodge a real run.

@@ -74,7 +74,7 @@ The front-half `--auto` plan gate never parks: when the headless planner cannot 
 
 A stage that needs a decision raises `AskUserQuestion`.
 Attached, you answer inline. Backgrounded, the harness surfaces it as needs-input in `claude agents` — attach, answer, detach, and the run resumes.
-To minimize pauses, the bootstrap pre-populates the frontmatter keys the tail would otherwise ask for: `planned_files` (read by the implement pre-handler hook that records the diff baseline, and reused by the commit stage), `commit_type` + `commit_summary` (read by the commit stage), and `e2e_recipe` when e2e is opted in.
+To minimize pauses, the bootstrap pre-populates the frontmatter keys the tail would otherwise ask for: `planned_files` (read by the implement pre-handler hook that records the diff baseline, and reused by the commit stage), `commit_type` + `commit_summary` (read by the commit stage), and `e2e_recipe` unless the workspace explicitly disabled e2e.
 Other tail stages avoid prompts; any genuine ambiguity pauses rather than guessing.
 
 ## Verify on ticket #1 (before relying on unattended runs)
