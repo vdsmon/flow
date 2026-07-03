@@ -65,8 +65,8 @@ Verified end-to-end by `scripts/tests/test_cross_queue_memory.py`.
 The primary path is the inline forge seam: a workspace wires `create_pr = "inline"` + `review_loop = "inline"` and supplies a `[forge]` block, and the same handlers drive either GitHub (`gh`) or Bitbucket (`bkt`) per `[forge] backend` — flow's own dogfood uses `[forge] backend = "github"`. The tail then pushes + opens a draft PR (`create_pr.py` via the forge seam) and waits on the CI / review-bot loop (`forge_cli.py`).
 As a legacy alternative, `ship-it` (a Bitbucket + bkt + CodeRabbit bundle) wires the PR stages as skills instead: with it installed, `/flow init --bundle recommended` auto-wires `create_pr → skill:ship-it:create` and `review_loop → skill:ship-it:feedback`.
 
-When the PR is genuinely review-ready (after `review_loop` goes green — CI passed and every actionable reviewer thread resolved, not when the draft first opens at `create_pr`), the pipeline fires an unconditional best-effort `PushNotification` carrying the PR URL.
-PushNotification is harness-local (terminal + phone via Remote Control): it renders in-terminal when you are attached and reaches your phone when you have backgrounded the session, and it does not ride MCP/claude.ai auth — so it fires even if the tail's tracker calls 401, which is how you learn an unattended run stalled on auth.
+When the PR is genuinely review-ready (after `review_loop` goes green — CI passed and every actionable reviewer thread resolved, not when the draft first opens at `create_pr`), a non-`--auto` run fires a best-effort `PushNotification` carrying the PR URL. An `--auto` (drain-launched) run skips it — the drain report + bead close already surface completion, and the PR link still lands in `create_pr.out` (see `references/verb-do.md`).
+PushNotification is harness-local (terminal + phone via Remote Control): it renders in-terminal when you are attached and reaches your phone when you have backgrounded a non-auto session, and it does not ride MCP/claude.ai auth — so it fires even if the tail's tracker calls 401, which is how you learn an unattended `/bg` run stalled on auth.
 
 ## Blockers
 
