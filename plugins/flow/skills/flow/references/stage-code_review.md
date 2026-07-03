@@ -50,7 +50,7 @@ That bias is acceptable for personal-mode flow; work-mode users opt in to `skill
 
    A Critical's ONLY non-failing decision owner is auto-fix — never record a Critical as no-op or ask-user. A real bug is not the human's "your call" to make, and disposition is not a way to punt one.
 
-   **code_review becomes a writing stage here.** Today's review only flags; the auto-fix disposition below means it now mutates the working tree before commit runs. The human-facing Critical floor (step 5) is unchanged.
+   **code_review becomes a writing stage here.** Today's review only flags; the auto-fix disposition below means it now mutates the working tree before commit runs. The human-facing Critical floor (step 6) is unchanged.
 
 4. **Apply auto-fixes** to the working tree (inline `Edit`/`Write`), then re-assess ONCE. This is a single verification pass, not an unbounded re-review loop — do not iterate past it. Because code_review is the same biased context that just wrote the code, only fix what is confident/local/obvious; a Critical needing a design rethink is not auto-fixable and falls through to the gate below unresolved.
 
@@ -58,13 +58,37 @@ That bias is acceptable for personal-mode flow; work-mode users opt in to `skill
 
    **Auto-fix edit-path discipline.** These edits follow the same "Inline-edit path discipline" as the review_loop fix edits (`references/verb-do.md`, flow-cjgy): a worktree-absolute (or worktree-relative) path only — a main-checkout-absolute path silently escapes the worktree and writes main. In a backgrounded `--auto` run the bg-isolation guard forces the heredoc/Bash string-replace fallback for these edits, same as any other inline write in that mode.
 
-5. **Critical gate.** After the auto-fix pass, any unresolved Critical finding aborts the stage with status=failed. Surface the finding so the user can decide between rerunning implement vs overriding — unchanged from before.
+5. **Plan-blind reader pass (full lane only).** A second review by a fresh mind that has never seen the plan, closing the residual planner-bias window this same context cannot: a flawed plan faithfully implemented reads clean to the reviewer who shares the planner's assumptions. It is a DISTINCT single pass, NOT a re-entry of step 4's loop — step 4's "re-assess ONCE" guards the biased context from iterating on itself, while a plan-blind reader is categorically a different reviewer. One inline pass + one reader pass = two single passes, no loop.
 
-6. **Record no-ops** — Major/Minor findings left as deliberate non-fixes, each with a verbatim citation of the `plan.out` line that justifies it.
+   **Gate on the lane — full only.** Read the run's lane from frontmatter and SKIP this entire step on the cheap lanes (`express` / `light`), which already traded away this depth:
+   ```bash
+   LANE=$(${CLAUDE_SKILL_DIR}/scripts/ticket_frontmatter.py read .flow/tickets/<KEY>.md \
+     | python3 -c "import json,sys; print(json.load(sys.stdin).get('lane') or 'full')")
+   ```
+   Run the reader only when `LANE` is `full` (absent frontmatter reads as `full`). Gate on the LANE, never on `model_resolve.py`'s output: a full-lane run whose `[models] work_model` is opted out returns an empty model yet still carries the full planner-bias window, so it still gets a reader. Every full-lane run gets one; the model is a separate question with no config surface of its own.
 
-7. **Record ask-user items** — Major/Minor findings that are the human's call. Never fire an `AskUserQuestion` for these, even in an attended run; they ride to the PR as flagged decisions, not a mid-run blocker.
+   **Model — cheap by default, the `model_resolve.py` idiom.** Resolve the reader's model exactly as the implement stage pins its worker (`references/verb-do.md`):
+   ```bash
+   M=$(${CLAUDE_SKILL_DIR}/scripts/model_resolve.py --workspace-root . --ticket <KEY>)
+   ```
+   Pass `model=$M` on the spawn when `$M` is non-empty (`sonnet` on a default full-lane run — one cheap spawn), omit it otherwise to inherit the session model (a `work_model` opt-out — a stronger reader, not a bug).
 
-8. **Write `code_review.out`** (see Outputs), keep reporting findings inline as today, then `status=completed` when no unresolved Critical remains.
+   **Spawn — the diff, and only the diff.** Capture the post-auto-fix working-tree diff (`git diff <started_at_sha>`, no `..HEAD`, so it includes the uncommitted implement work and any step-4 auto-fixes — the diff that will actually ship), then spawn ONE fresh `Agent` (`subagent_type: general-purpose`, `model=$M` per above) whose prompt carries ONLY that diff embedded verbatim plus the fixed question: *what does this change do; what looks wrong or surprising*. Instruct it to review ONLY the shown diff and NOT read any file, open the ticket or plan, or run any command — its value is that it is blind to the intent. Embedding the diff rather than telling it to run `git` is load-bearing: a fresh subagent still shares the cwd and could otherwise wander into `.flow/tickets/` or `plan.out` and lose the plan-blindness that is the whole point.
+
+   **Triage — advisory only, no blocking power.** The reader's observations are candidates, not findings. Classify each through step 3's two-axis taxonomy, plus one reader-only disposition:
+   - **dismissed** — a hallucinated or irrelevant observation, one the inline pass already recorded (any owner — do not render the same decision twice), or one an auto-fix already resolved: drop it, or record it as a `## no-op` with a verbatim `plan.out` citation when it names a choice the plan made deliberately AND you have independently confirmed the choice is correct. Deliberate is not correct — the reader exists because plan-faithful can be plan-flawed, so a reader observation contradicting a deliberate plan choice that you can NOT independently confirm fails safe: ask-user for a Major/Minor, and for a Critical the step-6 gate (ask-user is banned for Criticals). A fourth disposition, NOT a new `.out` section.
+   - a real catch routes exactly as an inline finding — **auto-fix** (confident and confined to `planned_files`: apply it in this pass's single auto-fix application, same confinement + edit-path discipline as step 4, no reader re-spawn) or **ask-user** (uncertain, or the fix falls outside `planned_files`).
+   - the reader has NO independent blocking power: a reader-surfaced Critical fails the stage (step 6) ONLY on independent orchestrator agreement, after which it routes like any Critical (auto-fix if confined, else left unresolved). Step 3's invariant holds — a Critical's only non-failing owner is auto-fix.
+
+   **Fail-open.** A spawn or return failure never fails the stage; the reader is advisory. Log one line and proceed to the gate with the inline findings only.
+
+6. **Critical gate.** After the auto-fix pass, any unresolved Critical finding (inline, or a reader-surfaced Critical the orchestrator has independently agreed is real) aborts the stage with status=failed. Surface the finding so the user can decide between rerunning implement vs overriding — unchanged from before.
+
+7. **Record no-ops** — Major/Minor findings left as deliberate non-fixes, each with a verbatim citation of the `plan.out` line that justifies it.
+
+8. **Record ask-user items** — Major/Minor findings that are the human's call. Never fire an `AskUserQuestion` for these, even in an attended run; they ride to the PR as flagged decisions, not a mid-run blocker.
+
+9. **Write `code_review.out`** (see Outputs), keep reporting findings inline as today, then `status=completed` when no unresolved Critical remains.
 
 ## Outputs
 
