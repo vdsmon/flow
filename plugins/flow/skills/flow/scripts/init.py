@@ -151,6 +151,45 @@ def _ensure_agents_md(root: Path, *, requested: bool) -> dict[str, Any] | None:
     return None
 
 
+def _stabilize_skill_dir(skill_dir: str) -> str:
+    """Rewrite a versioned plugin-cache skill dir to the version-stable
+    marketplace-checkout path, so `.flow/skill_dir` stops rotting on every plugin
+    bump. Fail-safe: a non-cache path, a missing/unparseable marketplace.json, an
+    unresolved plugin source, or a non-existent target returns the input
+    unchanged, so a working path is never made worse."""
+    parts = Path(skill_dir).parts
+    i = next(
+        (
+            idx
+            for idx in range(len(parts) - 1)
+            if parts[idx] == "plugins" and parts[idx + 1] == "cache"
+        ),
+        None,
+    )
+    if i is None or len(parts) < i + 6:
+        return skill_dir
+    base = Path(*parts[:i])
+    mp = parts[i + 2]
+    plugin = parts[i + 3]
+    suffix = parts[i + 5 :]
+    manifest = base / "plugins" / "marketplaces" / mp / ".claude-plugin" / "marketplace.json"
+    try:
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return skill_dir
+    entries = data.get("plugins") if isinstance(data, dict) else None
+    source = None
+    if isinstance(entries, list):
+        for entry in entries:
+            if isinstance(entry, dict) and entry.get("name") == plugin:
+                source = entry.get("source")
+                break
+    if not isinstance(source, str) or not source:
+        return skill_dir
+    candidate = base / "plugins" / "marketplaces" / mp / Path(source) / Path(*suffix)
+    return str(candidate) if candidate.is_dir() else skill_dir
+
+
 def _write_skill_dir(root: Path) -> None:
     """Persist the absolute skill dir to `.flow/skill_dir` (a gitignored,
     machine-local sibling, like `.flow/memory-root`). A harness that does not
@@ -159,6 +198,7 @@ def _write_skill_dir(root: Path) -> None:
     references/harness.md. Prefer the live env var (most accurate at init time),
     fall back to the script's own location (scripts/init.py -> skill root)."""
     skill_dir = os.environ.get("CLAUDE_SKILL_DIR") or str(Path(__file__).resolve().parent.parent)
+    skill_dir = _stabilize_skill_dir(skill_dir)
     atomic_write_text(root / ".flow" / "skill_dir", skill_dir + "\n")
 
 
@@ -473,11 +513,48 @@ def _legal_handler_string(value: str) -> bool:
     return value.startswith("skill:") and len(value) > len("skill:")
 
 
+def _preserved_handlers(
+    existing_handlers: dict[str, str] | None, defaults: dict[str, str]
+) -> tuple[dict[str, str], list[str]]:
+    """Prior handlers that differ from the current registry default (reconfigure
+    preservation). Returns (preserved, warning lines that carry value + default)."""
+    preserved = {
+        stage: val
+        for stage, val in (existing_handlers or {}).items()
+        if stage in defaults and val != defaults[stage]
+    }
+    lines = [
+        f"reconfigure preserved {stage}={val} (registry default: {defaults[stage]})"
+        for stage, val in preserved.items()
+    ]
+    return preserved, lines
+
+
+def _parse_existing_handlers(workspace_toml_text: str | None) -> dict[str, str]:
+    """Parse the prior `[pipeline.handlers]` table for reconfigure preservation.
+
+    Fail-safe: None, a TOML parse error, or a missing/non-dict table yields `{}`,
+    so a malformed prior workspace never crashes reconfigure (it falls back to
+    registry defaults, the pre-preservation behavior)."""
+    if workspace_toml_text is None:
+        return {}
+    try:
+        data = tomllib.loads(workspace_toml_text)
+    except tomllib.TOMLDecodeError:
+        return {}
+    pipeline = data.get("pipeline")
+    handlers = pipeline.get("handlers") if isinstance(pipeline, dict) else None
+    if not isinstance(handlers, dict):
+        return {}
+    return {stage: val for stage, val in handlers.items() if isinstance(val, str)}
+
+
 def _compose_handlers(
     config: InitConfig,
     registry: list[StageEntry],
     pipeline_stages: list[str],
     discovery: DiscoveryResult,
+    existing_handlers: dict[str, str] | None = None,
 ) -> tuple[dict[str, str], list[str]]:
     """Return (handlers, warnings).
 
@@ -485,16 +562,26 @@ def _compose_handlers(
     custom: defaults + user overrides; rejects illegal handler strings.
     recommended: defaults + auto-overrides from discovered manifests; rejects
                  conflicts (more than one provider for any stage).
+
+    On reconfigure, `existing_handlers` carries the prior workspace's handlers.
+    Any stage whose prior value differs from the current registry default is
+    preserved. Precedence: --handler > existing customization > manifest >
+    default. `existing_handlers` None or {} (fresh init) is a no-op.
     """
     handlers: dict[str, str] = {
         s.name: s.default_handler for s in registry if s.name in pipeline_stages
     }
     warnings: list[str] = []
+    preserved, preserved_warnings = _preserved_handlers(existing_handlers, dict(handlers))
 
     if config.bundle == "bare":
+        handlers.update(preserved)
+        warnings.extend(preserved_warnings)
         return handlers, warnings
 
     if config.bundle == "custom":
+        handlers.update(preserved)
+        warnings.extend(preserved_warnings)
         for stage, value in config.handler_overrides.items():
             if stage not in pipeline_stages:
                 raise InitError(f"--handler {stage}=... but {stage!r} is not in pipeline.stages")
@@ -545,6 +632,8 @@ def _compose_handlers(
         for err in discovery.invalid:
             warnings.append(f"manifest {err.path}: {err.reason}")
 
+    handlers.update(preserved)
+    warnings.extend(preserved_warnings)
     return handlers, warnings
 
 
@@ -819,6 +908,9 @@ def run_init(
         progress = _progress_path(root)
         if progress.exists():
             progress.unlink()
+    existing_handlers = (
+        _parse_existing_handlers(reconfigure_backup.workspace_toml) if reconfigure_backup else {}
+    )
 
     completed = _read_progress(root) if resume else set()
 
@@ -847,6 +939,7 @@ def run_init(
             registry=registry,
             namespace=namespace,
             pipeline_stages=pipeline_stages,
+            existing_handlers=existing_handlers,
             init_run_id=init_run_id,
             root=root,
             flow_dir=flow_dir,
@@ -865,9 +958,10 @@ def _discover_and_compose(
     registry: list[StageEntry],
     pipeline_stages: list[str],
     root: Path,
+    existing_handlers: dict[str, str],
 ) -> tuple[DiscoveryResult, dict[str, str], list[str]]:
     d = bundle_discover_run(roots=config.bundle_search_roots, repo_root=root)
-    h, w = _compose_handlers(config, registry, pipeline_stages, d)
+    h, w = _compose_handlers(config, registry, pipeline_stages, d, existing_handlers)
     return d, h, w
 
 
@@ -878,6 +972,7 @@ def _run_init_phases(
     registry: list[StageEntry],
     namespace: str,
     pipeline_stages: list[str],
+    existing_handlers: dict[str, str],
     init_run_id: str,
     root: Path,
     flow_dir: Path,
@@ -902,7 +997,7 @@ def _run_init_phases(
     def _phase_bundle_compose() -> dict[str, Any] | None:
         nonlocal discovery, handlers, warnings
         discovery, handlers, warnings = _discover_and_compose(
-            config, registry, pipeline_stages, root
+            config, registry, pipeline_stages, root, existing_handlers
         )
         return {
             "bundle": config.bundle,
@@ -915,7 +1010,7 @@ def _run_init_phases(
     # the toml later. Recompute deterministically.
     if not handlers:
         discovery, handlers, warnings = _discover_and_compose(
-            config, registry, pipeline_stages, root
+            config, registry, pipeline_stages, root, existing_handlers
         )
 
     # Phase: mkdirs
