@@ -34,6 +34,12 @@ adjudicate_hot = true
 # session ([evolve] worker_model). No [models] block needed to get it. To disable or
 # override, add `[models]` with `work_model = "off"` (or another model name).
 
+# Maintainer preference (2026-07-03): code-writing subagents (implement, the
+# review_loop fix subagent) pin to opus instead of the default sonnet downshift.
+# worker_model above stays the session model for spawned runs.
+[models]
+work_model = "opus"
+
 # This repo opens PRs ready for review, not draft (maintainer preference). The
 # default is open; a workspace that wants draft PRs sets draft = true here.
 [create_pr]
