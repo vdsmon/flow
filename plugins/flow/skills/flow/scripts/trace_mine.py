@@ -16,6 +16,15 @@ MISSED. It resolves the friction log through `_memory_paths` (like
 the dedup are anchored by the same function. Each surfaced signature carries a
 `dedup_key` the child-3 `flow_beads_create` seam partitions on `::`.
 
+The `file` subcommand (child-3) takes cluster's surfaced signatures and files each
+as a deduped PROPOSAL bead through `flow_beads_create.create_bead`, labelled
+`["evolve", "proposal", "trace-mined"]`: `evolve` makes it a candidate in
+`bd ready -l evolve`; `proposal` makes `evolve_select.active()` exclude it from the
+launchable set, so it never auto-implements. The `dedup_key`'s `::` is stripped to
+a single `:` before filing, so only the exact `evid:` fingerprint net fires, never
+the fuzzy `evidfile:` same-file pass (`fingerprint()` collapses non-alphanumeric
+runs identically either way). Auto-dormant outside maintainer mode.
+
 Run-window scoping: a real session file spans many runs across days. `extract`
 requires a `--ticket` and clips output to that ticket's run window: from the
 run's `/flow` intent invocation (or, headless, the contiguous same-branch
@@ -49,6 +58,9 @@ Exit codes (cluster):
   1 = bad args.
   3 = events source missing/unreadable/unparseable.
   4 = workspace.toml missing/invalid (_MemoryConfigError).
+Exit codes (file):
+  0 = ok (including a dormant, non-maintainer run).
+  3 = signatures source missing/unreadable/unparseable.
 """
 
 from __future__ import annotations
@@ -64,6 +76,8 @@ from pathlib import Path
 from typing import Any
 
 import _memory_paths
+import flow_beads_create
+from _runner import Runner
 from _timeutil import parse_iso
 from friction_recurrence import anchors
 
@@ -820,6 +834,89 @@ def cluster_signatures(
     }
 
 
+# ─── file: propose-only bead filer (child-3) ────────────────────────────────
+
+
+def _describe_signature(sig: dict[str, Any]) -> str:
+    """Multi-line description mirroring friction_escalate._describe, built from
+    a child-2 signature dict's terminal cause, mechanism, and provenance."""
+    cause = sig.get("terminal_cause", {})
+    mechanism = sig.get("mechanism", {})
+    body = cause.get("body") or "n/a"
+    detail = cause.get("detail")
+    lines = [
+        f"{cause.get('kind', '')} signature ({sig.get('event_count', 0)}x) in stage "
+        f"`{mechanism.get('stage', '')}`.",
+        f"Terminal cause: {body}" + (f" ({detail})" if detail else ""),
+        f"Anchor: {mechanism.get('anchor') or 'n/a'}. "
+        f"Related anchors: {', '.join(mechanism.get('related_anchors', [])) or 'n/a'}.",
+        f"All anchors: {', '.join(sig.get('anchors', [])) or 'n/a'}.",
+        f"Run ids: {', '.join(sig.get('run_ids', [])) or 'n/a'}.",
+        f"Event ids: {', '.join(sig.get('event_ids', [])) or 'n/a'}.",
+        f"Tickets: {', '.join(sig.get('tickets', [])) or 'n/a'}.",
+        f"Window: {sig.get('ts_start', '')} to {sig.get('ts_end', '')}.",
+        "",
+        "Propose-only: informational evidence for the maintainer, carries the "
+        "`proposal` label so evolve_select excludes it from auto-drain. Never "
+        "auto-implemented; the maintainer runs it via `/flow <key>`.",
+    ]
+    return "\n".join(lines)
+
+
+def file_signatures(
+    workspace_root: Path, signatures: list[dict[str, Any]], runner: Runner | None = None
+) -> dict[str, Any]:
+    """File one deduped PROPOSAL bead per child-2 failure signature.
+
+    Dormant outside maintainer mode, checked BEFORE any per-signature work (a
+    normal user run touches nothing here). The `dedup_key`'s `::` is stripped to
+    a single `:` before it reaches `create_bead`: `fingerprint()` collapses both
+    forms identically, so the exact `evid:` net is unaffected, but the stripped
+    key has no `::` for `create_bead`'s `partition("::")` to find, so the fuzzy
+    `evidfile:` same-file pass never fires. That pass wrongly collapses distinct
+    signatures sharing an anchor (an anchorless stall_gap in two different
+    stages, or two different kinds on the same hot file).
+
+    Under-notification tradeoff (same as friction_escalate): the evid net
+    matches every status, so one bead per signature EVER — a signature
+    recurring after its bead closed routes to `deduped` silently, never a
+    fresh bead. The safe direction for a propose-only producer.
+    """
+    result: dict[str, Any] = {
+        "maintainer": False,
+        "candidates": 0,
+        "filed": [],
+        "deduped": [],
+        "errors": [],
+    }
+    if flow_beads_create.resolve_maintainer_repo(workspace_root) is None:
+        return result
+
+    result["maintainer"] = True
+    result["candidates"] = len(signatures)
+
+    for sig in signatures:
+        dedup_key = sig["dedup_key"].replace("::", ":")
+        try:
+            key = flow_beads_create.create_bead(
+                workspace_root,
+                sig["summary"],
+                _describe_signature(sig),
+                type="task",
+                labels=["evolve", "proposal", "trace-mined"],
+                dedup_key=dedup_key,
+                runner=runner,
+            )
+            result["filed"].append(
+                {"dedup_key": dedup_key, "key": key, "event_count": sig["event_count"]}
+            )
+        except flow_beads_create.DuplicateBead as exc:
+            result["deduped"].append({"dedup_key": dedup_key, "existing_key": exc.existing_key})
+        except flow_beads_create.BeadCreateError as exc:
+            result["errors"].append({"dedup_key": dedup_key, "error": str(exc)})
+    return result
+
+
 # ─── CLI ─────────────────────────────────────────────────────────────────────
 
 
@@ -852,6 +949,17 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         help="An `extract` result JSON; '-' (the default) reads stdin.",
     )
     c.add_argument("--workspace-root", default=".")
+
+    f = sub.add_parser(
+        "file",
+        help="File each cluster signature as a deduped proposal bead (maintainer-only).",
+    )
+    f.add_argument(
+        "--signatures-file",
+        default="-",
+        help="A `cluster` result JSON; '-' (the default) reads stdin.",
+    )
+    f.add_argument("--workspace-root", default=".")
     return parser.parse_args(argv)
 
 
@@ -954,12 +1062,37 @@ def _run_cluster(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_file(args: argparse.Namespace) -> int:
+    raw = _read_events_source(args.signatures_file)
+    if raw is None:
+        sys.stderr.write(
+            f"trace-mine: signatures source not found or unreadable: {args.signatures_file}\n"
+        )
+        return 3
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        sys.stderr.write(f"trace-mine: could not parse signatures JSON: {exc}\n")
+        return 3
+    signatures = payload.get("signatures") if isinstance(payload, dict) else payload
+    if not isinstance(signatures, list):
+        sys.stderr.write("trace-mine: signatures payload has no 'signatures' list\n")
+        return 3
+
+    workspace_root = Path(args.workspace_root).resolve()
+    result = file_signatures(workspace_root, signatures)
+    sys.stdout.write(json.dumps(result, indent=2, sort_keys=True) + "\n")
+    return 0
+
+
 def cli_main(argv: list[str]) -> int:
     args = _parse_args(argv)
     if args.command == "extract":
         return _run_extract(args)
     if args.command == "cluster":
         return _run_cluster(args)
+    if args.command == "file":
+        return _run_file(args)
     return 1
 
 
@@ -967,4 +1100,4 @@ if __name__ == "__main__":
     raise SystemExit(cli_main(sys.argv[1:]))
 
 
-__all__ = ["cli_main", "cluster_signatures", "extract_events"]
+__all__ = ["cli_main", "cluster_signatures", "extract_events", "file_signatures"]
