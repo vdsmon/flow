@@ -105,13 +105,16 @@ def test_cli_not_maintainer_exit_4(tmp_path, monkeypatch):
 
 
 def _dispatch_runner(
-    list_by_label: dict[str, list[dict]] | None = None, create_id: str = "flow-new"
+    list_by_label: dict[str, list[dict]] | None = None,
+    create_id: str = "flow-new",
+    tracked: set[str] | None = None,
 ) -> tuple[Callable[..., subprocess.CompletedProcess[str]], Recorder]:
-    """Fake runner answering `bd list` PER `-l <label>` and `bd create` distinctly.
+    """Fake runner answering `bd list` PER `-l <label>`, `git ls-files`, and `bd create`.
 
     list_by_label maps a label -> the items that label's list returns; unknown
     labels default to []. This lets the exact `evid:` and fuzzy `evidfile:` lists
-    return different answers (otherwise the fuzzy tests would be vacuous).
+    return different answers (otherwise the fuzzy tests would be vacuous). `tracked`
+    is the set of paths `git ls-files` reports as tracked (empty/None = none tracked).
     """
     import json
 
@@ -120,6 +123,10 @@ def _dispatch_runner(
 
     def run(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
         calls.append((args, cwd))
+        if len(args) >= 2 and args[0] == "git" and args[1] == "ls-files":
+            path = args[-1]
+            found = path if (tracked and path in tracked) else ""
+            return subprocess.CompletedProcess(args, 0, found, "")
         if len(args) >= 2 and args[1] == "list":
             label = args[args.index("-l") + 1] if "-l" in args else ""
             return subprocess.CompletedProcess(args, 0, json.dumps(by_label.get(label, [])), "")
@@ -195,14 +202,17 @@ def test_dedup_fuzzy_converges_real_symptoms(tmp_path):
 
 def test_dedup_fuzzy_path_variance_still_collides(tmp_path):
     repo = _marked_ws(tmp_path)
-    # candidate was filed under a path-prefixed file; new finding uses the bare name
+    # candidate filed under one path, new finding uses a DIFFERENT dir with the same
+    # basename: both anchor on basename `verb-spec.md`, so the fuzzy pass still collides.
     assert fbc.fingerprint(fbc._basename("references/verb-spec.md")) == fbc.fingerprint(
-        fbc._basename("verb-spec.md")
+        fbc._basename("docs/verb-spec.md")
     )
     evidfile = f"evidfile:{fbc.fingerprint('verb-spec.md')}"
     run, _ = _dispatch_runner(list_by_label={evidfile: [{"id": "flow-mst", "title": _MST_TITLE}]})
     with pytest.raises(fbc.DuplicateBead) as ei:
-        fbc.create_bead(repo, _9JK_TITLE, "b", dedup_key="verb-spec.md::bare-prefix", runner=run)
+        fbc.create_bead(
+            repo, _9JK_TITLE, "b", dedup_key="docs/verb-spec.md::bare-prefix", runner=run
+        )
     assert ei.value.existing_key == "flow-mst"
 
 
@@ -261,3 +271,80 @@ def test_dedup_no_separator_skips_fuzzy(tmp_path):
     create_args = calls[-1][0]
     stamped = create_args[create_args.index("--labels") + 1]
     assert not any(lbl.startswith("evidfile:") for lbl in stamped.split(","))
+
+
+def test_dedup_machine_key_skips_fuzzy(tmp_path):
+    repo = _marked_ws(tmp_path)
+    evidfile = f"evidfile:{fbc.fingerprint('dispatch_stage.py')}"
+    # a same-anchor candidate that WOULD fuzzy-collide if the pass ran
+    run, calls = _dispatch_runner(
+        list_by_label={evidfile: [{"id": "flow-old", "title": "tool_error in dispatch"}]},
+        tracked=set(),  # git ls-files finds no top-level dispatch_stage.py
+    )
+    key = fbc.create_bead(
+        repo,
+        "drift in dispatch",
+        "b",
+        dedup_key="dispatch_stage.py::drift-dispatch",
+        labels=["evolve"],
+        runner=run,
+    )
+    assert key == "flow-new"  # not deduped: the fuzzy pass was skipped
+    list_calls = [c for c in calls if c[0][1] == "list"]
+    assert len(list_calls) == 1  # exact evid only; no evidfile fuzzy lookup
+    assert any(c[0][:2] == ["git", "ls-files"] for c in calls)  # probe ran
+    stamped = _create_args(calls)[_create_args(calls).index("--labels") + 1]
+    assert not any(lbl.startswith("evidfile:") for lbl in stamped.split(","))
+
+
+def test_dedup_anchorless_machine_key_skips_fuzzy(tmp_path):
+    repo = _marked_ws(tmp_path)
+    evidfile = f"evidfile:{fbc.fingerprint('stall_gap')}"
+    run, calls = _dispatch_runner(
+        list_by_label={evidfile: [{"id": "flow-old", "title": "stall_gap in implement"}]},
+        tracked=set(),
+    )
+    key = fbc.create_bead(
+        repo, "stall_gap in commit", "b", dedup_key="stall_gap::implement", runner=run
+    )
+    assert key == "flow-new"  # distinct-stage findings no longer collapse
+    assert not any(
+        lbl.startswith("evidfile:")
+        for lbl in _create_args(calls)[_create_args(calls).index("--labels") + 1].split(",")
+    )
+
+
+def test_dedup_bare_real_toplevel_file_keeps_fuzzy(tmp_path):
+    repo = _marked_ws(tmp_path)
+    evidfile = f"evidfile:{fbc.fingerprint('CLAUDE.md')}"
+    run, _ = _dispatch_runner(
+        list_by_label={evidfile: [{"id": "flow-old", "title": _MST_TITLE}]},
+        tracked={"CLAUDE.md"},  # git ls-files finds a real top-level file -> keep fuzzy
+    )
+    with pytest.raises(fbc.DuplicateBead) as ei:
+        fbc.create_bead(repo, _9JK_TITLE, "b", dedup_key="CLAUDE.md::some-drift", runner=run)
+    assert ei.value.existing_key == "flow-old"
+
+
+def test_dedup_epic_child_key_skips_fuzzy(tmp_path):
+    # epic:<track> is not a relfile path -> formulaic -> skips fuzzy; the disjoint
+    # exact evid: net is what converges epic children (verb-evolve.md §E), not fuzzy.
+    repo = _marked_ws(tmp_path)
+    evidfile = f"evidfile:{fbc.fingerprint('epic:tracker-frontdoor')}"
+    run, calls = _dispatch_runner(
+        list_by_label={evidfile: [{"id": "flow-old", "title": "child 3 of tracker frontdoor"}]},
+        tracked=set(),
+    )
+    key = fbc.create_bead(
+        repo,
+        "child 3 tracker frontdoor variant",
+        "b",
+        dedup_key="epic:tracker-frontdoor::child-3-symptom",
+        labels=["proposal"],
+        runner=run,
+    )
+    assert key == "flow-new"
+    assert not any(
+        lbl.startswith("evidfile:")
+        for lbl in _create_args(calls)[_create_args(calls).index("--labels") + 1].split(",")
+    )
