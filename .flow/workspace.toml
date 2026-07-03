@@ -54,7 +54,10 @@ ticket = "inline"
 plan = "subagent:Plan"
 implement = "subagent:general-purpose"
 code_review = "inline"
-e2e = "none"
+# Dogfood flow-l014 (e2e on by default): every ticket settles a recipe at spec
+# time — a real one, test-ci-only, or a deliberate `skip: <reason>`. Recipes are
+# authored from .flow/e2e-recipes.md; --auto runs fall back per verb-spec.
+e2e = "subagent:general-purpose"
 commit = "inline"
 create_pr = "inline"
 review_loop = "inline"
