@@ -40,8 +40,9 @@ adjudicate_hot = true
 [models]
 work_model = "opus"
 
-# This repo opens PRs ready for review, not draft (maintainer preference). The
-# default is open; a workspace that wants draft PRs sets draft = true here.
+# This repo opens PRs ready for review (maintainer preference). The engine
+# default is draft (create_pr.py returns true when this key is unset), so
+# removing this override reverts to draft PRs.
 [create_pr]
 draft = false
 
