@@ -98,17 +98,16 @@ Do NOT invent inline edit logic. Delegate the fix to a subagent (the same way th
 python3 ${CLAUDE_SKILL_DIR}/scripts/forge_cli.py --workspace-root . review-status --pr "$PR_ID"
 ```
 
-- `{"supported": false}` → this host exposes no review-bot completion signal (e.g. the GitHub self-target runs no bot). **Do not wait** — go straight to the thread poll below; an empty list is legitimately clean here.
+- `{"supported": false}` → this host exposes no review-bot completion signal (e.g. the GitHub self-target runs no bot). **Do not wait** — go straight to the thread poll below. An empty list is legitimately clean here *only when no bot runs on this host at all*; when the org is known to run a review bot and the adapter merely lacks a completion probe, an empty list is the same ambiguity as the cap-expiry case below — record the not-reviewed caveat (flow-enr8) instead of asserting review-clean.
 - `{"reviewed": true}` → the bot has finished; proceed to the thread poll.
-- `{"reviewed": false}` → the bot has not finished. **First rule out the draft case (flow-uc8n).** A review bot that skips draft PRs (CodeRabbit on Bitbucket) never registers a completion check while the PR is a draft, so `review-status` stays `reviewed:false` until the cap and the re-poll below burns its full window for nothing. flow delivers a draft PR the human marks ready, and the bot reviews only after that, so `reviewed:false` on a draft means "the bot will not run yet", not "the bot is still running". Read `.draft` first:
+- `{"reviewed": false}` → the bot has not finished. Read `.draft` for context (it shapes the cap-expiry wording below; the `2>/dev/null` guards keep a transient/empty `pr-info` from dumping a traceback — `$DRAFT` degrades to empty, not `True`):
 
 ```bash
 DRAFT=$(python3 ${CLAUDE_SKILL_DIR}/scripts/forge_cli.py --workspace-root . pr-info --pr "$PR_ID" 2>/dev/null \
   | python3 -c 'import sys,json;d=json.load(sys.stdin);print(d.get("draft") if d else False)' 2>/dev/null)
 ```
 
-  - `[ "$DRAFT" = "True" ]` → **skip the bounded re-poll.** Record "PR is draft — review bot deferred until marked ready; skipped bot-wait" in the stage report and proceed to the thread poll below (legitimately empty on a draft — the bot reviews once the human marks the PR ready). The `2>/dev/null` guards keep a transient/empty `pr-info` from dumping a traceback and degrade to the re-poll path (`$DRAFT` empty, not `True`).
-  - otherwise → the bot is genuinely still running; re-poll on a bounded wait until it is `true` OR the cap is hit (turn-safe in one Bash call; an attached session MAY use a §1-style Monitor instead):
+  Then re-poll on a bounded wait until `reviewed` is `true` OR the cap is hit (turn-safe in one Bash call; an attached session MAY use a §1-style Monitor instead) — **on a draft too**. The old draft short-circuit (flow-uc8n) is retired (flow-enr8): it skipped this wait on the premise that CodeRabbit never reviews draft PRs, but whether CR reviews drafts is org configuration, not a host constant (witnessed on CO-226/PR#2939: CR reviews Bitbucket drafts there), so skipping the wait on a draft races past a review that lands a minute later. `reviewed:false` on a draft is ambiguous — still running, deferred-until-ready, or disabled org-wide — and only this bounded wait separates the first from the rest; a bot that genuinely defers drafts hits the cap and takes the not-reviewed path below, which is correct: that review really has not happened yet.
 
 ```bash
 i=0; while [ $i -lt 10 ]; do
@@ -120,7 +119,7 @@ i=0; while [ $i -lt 10 ]; do
 done
 ```
 
-10 × 45s = 450s (under the 600s Bash ceiling) covers the observed CR latency (it completed ~1min after CI-green on the witness PR). If still not finished at the cap, proceed but **record the timeout in the stage report** ("review bot did not complete within the wait window — threads may be incomplete") instead of silently asserting review-clean.
+10 × 45s = 450s (under the 600s Bash ceiling) covers the observed CR latency (it completed ~1min after CI-green on the witness PR). If still not finished at the cap, proceed to the thread poll but do NOT let an empty list read as review-clean (flow-enr8): a CR disabled org-wide keeps `reviewed:false` and `[]` threads *indefinitely* — the CO-226/PR#2939 pattern — and the empty list means "nothing reviewed", not "nothing found". Cap expired + threads empty → **record in the stage report AND surface to the user**: "review bot did not review this PR (likely disabled" — or, when `$DRAFT` is `True`, "likely deferred on draft or disabled" — "); proceeding on CI-green only — automated review did not happen". Resilience, not a block: the stage still proceeds to §5 on CI-green. Cap expired + threads NON-empty → handle them per §4 (a partial review beats none) and still record the incomplete-review caveat.
 
 Then poll the threads:
 
@@ -149,6 +148,6 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/forge_cli.py --workspace-root . resolve-thre
 
 ## 5. Terminal
 
-`STATUS=completed` when **CI is green AND §3's bot-completion gate is satisfied AND zero unresolved Major+ threads remain**. The bot-completion gate is satisfied when the review bot has finished, OR the host exposes no bot (`{"supported": false}`), OR the PR is a draft whose bot review is deferred until it is marked ready (§3's draft short-circuit). An empty thread list only means "clean" once that gate passed; never terminate review-clean on an empty list a *running* bot has not yet produced. Remaining Minor/nit threads are reported open with one-line reasons, not chased. Respect the 3-cycle cap. **Stop every Monitor on exit** (a leaked Monitor keeps the shell alive). On `completed`, the PR-ready notification fires with the PR URL (see `references/verb-do.md`); only when the handler is `none` does that notification fall back to firing at `create_pr` instead.
+`STATUS=completed` when **CI is green AND zero unresolved Major+ threads remain**, with the review-clean claim gated by §3: the bot-completion gate is satisfied when the review bot has finished, OR the host exposes no completion signal AND no bot runs there (`{"supported": false}`, first §3 bullet). When the gate is NOT satisfied at §3's cap (the bot never finished — disabled, or deferring a draft) and the thread list stayed empty, the stage still completes on CI-green but as **not-reviewed, never review-clean** (flow-enr8): the stage report AND the user-facing completion message (the PR-ready notification below) carry §3's warning verbatim — "proceeding on CI-green only — automated review did not happen". An empty thread list only means "clean" once the gate passed; never terminate review-clean on an empty list the bot did not produce. Remaining Minor/nit threads are reported open with one-line reasons, not chased. Respect the 3-cycle cap. **Stop every Monitor on exit** (a leaked Monitor keeps the shell alive). On `completed`, the PR-ready notification fires with the PR URL (see `references/verb-do.md`); only when the handler is `none` does that notification fall back to firing at `create_pr` instead.
 
 This stage MAY write a short report (cycles run, threads resolved/skipped, final CI state) to `$TICKET_DIR/stages/review_loop.out`; pass `--output-path` on `advance` if it does.
