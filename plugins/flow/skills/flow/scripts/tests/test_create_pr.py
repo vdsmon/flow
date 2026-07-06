@@ -6,6 +6,7 @@ from typing import ClassVar
 import pytest
 
 import create_pr as cp
+import pr_body
 from forge import ForgeError, NotSupported, PullRequest
 
 Recorder = list[list[str]]
@@ -404,6 +405,55 @@ def test_missing_body_file_is_tool_error(tmp_path):
         cp.open_or_get_pr(
             tmp_path, base="main", runner=run, forge=fg, body_file=tmp_path / "nope.md"
         )
+
+
+def test_authored_oversized_body_is_capped(tmp_path):
+    # an oversized fenced-<details> evidence body on the authored path is capped by
+    # _compose_body so it can never fail open_pr; the <summary> survives the trim.
+    run, _ = _git_runner()
+    fg = _FakeForge(existing=None)
+    huge = "\n".join(f"log line {i}" for i in range(20000))
+    body_file = tmp_path / "pr_body.md"
+    body_file.write_text(
+        "**Summary.**\n\nWhy.\n\n## Evidence\n<details>\n<summary>run: ok</summary>\n\n"
+        f"```\n{huge}\n```\n\n</details>\n"
+    )
+    cp.open_or_get_pr(tmp_path, base="main", runner=run, forge=fg, body_file=body_file)
+    body = fg.opened[0]["body"]
+    assert len(body) > 0
+    assert len(body) <= pr_body._FORGE_BODY_CAP
+    assert "<summary>run: ok</summary>" in body
+
+
+def test_fallback_oversized_body_is_capped(tmp_path):
+    # the no-body-file path is capped too. The oversized %b block must be FENCED:
+    # build_body unwraps prose but preserves fenced code, so a fenced block is what
+    # actually reaches enforce_cap on this path.
+    huge = "\n".join(f"log {i}" for i in range(20000))
+    raw = "ticket: flow-x\nCloses flow-nr8c\n\nWhy this change.\n\n```\n" + huge + "\n```\n"
+
+    def run(args):
+        if args[:2] == ["git", "rev-parse"]:
+            return subprocess.CompletedProcess(args, 0, "feature/flow-x\n", "")
+        if args[:2] == ["git", "push"]:
+            return subprocess.CompletedProcess(args, 0, "", "")
+        if args[:2] == ["git", "log"]:
+            fmt = next((a for a in args if a.startswith("--format=")), "")
+            if fmt == "--format=%b":
+                return subprocess.CompletedProcess(args, 0, raw, "")
+            return subprocess.CompletedProcess(args, 0, "chore: big body\n", "")
+        return subprocess.CompletedProcess(args, 1, "", f"unexpected {args}")
+
+    fg = _FakeForge(existing=None)
+    cp.open_or_get_pr(tmp_path, base="main", runner=run, forge=fg)
+    body = fg.opened[0]["body"]
+    assert len(body) > 0
+    assert len(body) <= pr_body._FORGE_BODY_CAP
+    # tier-1 structured trim, not the hard-truncate backstop: marker present,
+    # fence head and tail survive, and the Closes footer is intact.
+    assert "lines trimmed" in body
+    assert "log 0" in body and "log 19999" in body
+    assert "Closes flow-nr8c" in body
 
 
 def test_cli_passes_body_file(tmp_path, monkeypatch):

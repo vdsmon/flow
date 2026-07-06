@@ -92,10 +92,11 @@ def _compose_body(raw: str, subject: str, body_file: Path | None) -> str:
     With `body_file`: the authored markdown (de-AI scrubbed as a floor) plus the
     deterministic `Closes` footer from the commit trailer. Without it: the
     commit-derived fallback (build_body + scrub). Empty prose falls back to the
-    commit subject.
+    commit subject. Both real-body paths pass through `enforce_cap`, the
+    deterministic size net so an oversized `## Evidence` body cannot fail open_pr.
     """
     if body_file is None:
-        return pr_body.scrub(pr_body.build_body(raw)).strip() or subject
+        return pr_body.enforce_cap(pr_body.scrub(pr_body.build_body(raw)).strip() or subject)
     try:
         authored = body_file.read_text()
     except OSError as exc:
@@ -104,7 +105,7 @@ def _compose_body(raw: str, subject: str, body_file: Path | None) -> str:
     if not body:
         return subject
     footer = pr_body.closes_footer(raw)
-    return f"{body}\n\n{footer}" if footer else body
+    return pr_body.enforce_cap(f"{body}\n\n{footer}" if footer else body)
 
 
 def open_or_get_pr(

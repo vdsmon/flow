@@ -198,3 +198,92 @@ def test_build_and_scrub_never_raise_on_adversarial():
 
 def test_build_body_empty_is_empty():
     assert pr_body.build_body("") == ""
+
+
+# ─── enforce_cap: forge body-size net ────────────────────────────────────────
+
+
+def _fenced(label: str, n: int) -> str:
+    body = "\n".join(f"{label}{i}" for i in range(n))
+    return f"```\n{body}\n```"
+
+
+def test_enforce_cap_under_cap_passthrough():
+    body = "short body\n\n```\nline a\nline b\n```\n"
+    assert pr_body.enforce_cap(body, cap=10_000) == body
+
+
+def test_enforce_cap_default_cap_signature():
+    # the default-cap call (no cap arg) is passthrough on a tiny body.
+    body = "## Evidence\n\n<details>\n<summary>run: 3 passed (1s)</summary>\n\nok\n\n</details>\n"
+    assert pr_body.enforce_cap(body) == body
+
+
+def test_enforce_cap_exact_boundary_untouched():
+    body = "x" * 500
+    assert pr_body.enforce_cap(body, cap=500) == body  # len == cap is under (<=)
+
+
+def test_enforce_cap_trims_largest_fenced_block_first():
+    small = _fenced("s", 3)
+    large = _fenced("L", 200)
+    body = f"intro\n\n{small}\n\n{large}\n"
+    out = pr_body.enforce_cap(body, cap=400)
+    assert len(out) <= 400
+    assert "lines trimmed" in out  # a fenced-block trim happened
+    assert "L0" in out and "L199" in out  # head + tail of the large block survive
+    assert "s0" in out and "s2" in out  # the small block is left intact
+
+
+def test_enforce_cap_summary_lines_survive_all_tiers():
+    blocks = []
+    for i in range(10):
+        transcript = "\n".join(f"t{i}-{j}" for j in range(100))
+        blocks.append(
+            f"<details>\n<summary>run {i}: 5 passed (2s)</summary>\n\n```\n{transcript}\n```\n\n</details>"
+        )
+    body = "## Evidence\n\n" + "\n\n".join(blocks) + "\n"
+    out = pr_body.enforce_cap(body, cap=1200)
+    assert len(out) <= 1200
+    for i in range(10):
+        assert f"run {i}:" in out  # every <summary> survived the structured trim tiers
+
+
+def test_enforce_cap_idempotent():
+    block = f"intro\n\n<details>\n<summary>run</summary>\n\n{_fenced('L', 300)}\n\n</details>\n"
+    body = block * 5
+    once = pr_body.enforce_cap(body, cap=500)
+    assert len(once) <= 500
+    assert pr_body.enforce_cap(once, cap=500) == once
+
+
+def test_enforce_cap_hard_truncate_pure_prose():
+    # no fences, no <details>: only the hard-truncate backstop can enforce the cap.
+    body = "prose line\n" * 1000
+    out = pr_body.enforce_cap(body, cap=300)
+    assert len(out) <= 300
+    assert "truncated" in out
+
+
+def test_enforce_cap_never_raises_and_always_caps_on_adversarial():
+    cases = [
+        "",
+        "x" * 5000,  # pure prose, no structure
+        "```\nunclosed fence " + "y" * 5000,  # unbalanced fence
+        "<details>\n<summary>s</summary>\n" + "z" * 5000,  # unclosed <details>
+        "<details>" * 200,  # malformed markup
+        "```\n" + "a\n" * 2000 + "```",  # one big fenced block, no <details>
+    ]
+    for c in cases:
+        out = pr_body.enforce_cap(c, cap=200)
+        assert isinstance(out, str)
+        assert len(out) <= 200
+
+
+def test_enforce_cap_scrub_fence_byte_identical_under_cap():
+    # fence-preservation fixture: under cap enforce_cap is passthrough, so a fenced
+    # transcript survives scrub(enforce_cap(...)) verbatim (scrub's fence passthrough).
+    transcript = "```\ncmd — with an em dash\nline b\n```"
+    body = f"## Evidence\n\n<details>\n<summary>run: 3 passed (1s)</summary>\n\n{transcript}\n\n</details>\n"
+    assert pr_body.enforce_cap(body) == body  # default cap, under -> identical
+    assert transcript in pr_body.scrub(pr_body.enforce_cap(body))  # fenced content untouched
