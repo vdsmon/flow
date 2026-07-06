@@ -51,6 +51,7 @@ import json
 import sys
 from collections.abc import Sequence
 from pathlib import Path
+from typing import Any
 
 import lease
 from _evolve_common import BRANCH_PREFIX as _BRANCH_PREFIX
@@ -73,10 +74,10 @@ from maintainer import resolve_maintainer_repo
 
 
 def decide(
-    select_result: dict,
+    select_result: dict[str, Any],
     liveness: dict[str, str],
     stranded: Sequence[str] = (),
-) -> dict:
+) -> dict[str, Any]:
     """Pure: map a select result + in-flight liveness to the loop's next action.
 
     launch non-empty            -> launch that batch.
@@ -209,7 +210,7 @@ def stranded_pre_pr(
     open_pr_keys: set[str],
     include_proposals: bool = False,
     in_progress_keys: set[str] | None = None,
-) -> list[dict]:
+) -> list[dict[str, Any]]:
     """In_progress beads whose run died PRE-PR, invisible to every channel.
 
     STRANDED iff ALL hold: the bead is in_progress, its lease is non-live (not
@@ -231,7 +232,7 @@ def stranded_pre_pr(
     if not in_progress:
         return []
     merged = _merged_pr_keys(runner)
-    out: list[dict] = []
+    out: list[dict[str, Any]] = []
     for key in sorted(in_progress):
         if key in launched_pending or key in open_pr_keys or key in merged:
             continue

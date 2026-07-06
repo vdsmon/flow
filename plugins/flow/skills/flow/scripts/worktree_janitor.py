@@ -22,6 +22,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 import fleet
 from _evolve_common import ACTIVE_STATUSES, ToolError, key_from_ref, loads, ok
@@ -33,7 +34,7 @@ from maintainer import resolve_maintainer_repo
 _ACTIVE = frozenset(ACTIVE_STATUSES.split(","))
 
 
-def _enumerate_worktrees(porcelain: str) -> list[dict]:
+def _enumerate_worktrees(porcelain: str) -> list[dict[str, Any]]:
     """Parse `git worktree list --porcelain` into flow-branch worktree records.
 
     Porcelain emits `worktree <path>` / `HEAD <sha>` / `branch refs/heads/<name>`
@@ -42,7 +43,7 @@ def _enumerate_worktrees(porcelain: str) -> list[dict]:
     importing flow_worktree's private `_parse_worktree_list`, which drops the HEAD
     sha this sweep gates on.
     """
-    entries: list[dict] = []
+    entries: list[dict[str, Any]] = []
     cur: dict[str, str] = {}
     for line in porcelain.splitlines():
         if line.startswith("worktree "):
@@ -58,7 +59,7 @@ def _enumerate_worktrees(porcelain: str) -> list[dict]:
     return entries
 
 
-def _emit(entries: list[dict], cur: dict) -> None:
+def _emit(entries: list[dict[str, Any]], cur: dict[str, Any]) -> None:
     branch = cur.get("branch")
     if not branch:
         return
@@ -70,7 +71,9 @@ def _emit(entries: list[dict], cur: dict) -> None:
     )
 
 
-def classify_orphans(worktrees: list[dict], merged: dict[str, dict]) -> dict[str, list]:
+def classify_orphans(
+    worktrees: list[dict[str, Any]], merged: dict[str, dict[str, Any]]
+) -> dict[str, list[dict[str, Any]]]:
     """Pure: bucket each flow worktree by its merged-PR + tip-sha join.
 
     worktrees: `{key, branch, worktree, tip}` records (the flow-branch entries).
@@ -83,7 +86,7 @@ def classify_orphans(worktrees: list[dict], merged: dict[str, dict]) -> dict[str
     and would `branch -D` it, losing the work. A branch with no merged PR is
     `no_merged_pr`.
     """
-    out: dict[str, list] = {"reapable": [], "skipped_ahead": [], "no_merged_pr": []}
+    out: dict[str, list[dict[str, Any]]] = {"reapable": [], "skipped_ahead": [], "no_merged_pr": []}
     for wt in worktrees:
         branch = wt.get("branch")
         m = merged.get(branch) if branch else None
@@ -117,7 +120,7 @@ def _bead_is_active(runner: Runner, key: str) -> bool:
     return str(status) in _ACTIVE
 
 
-def _merged_pr(runner: Runner, branch: str) -> dict | None:
+def _merged_pr(runner: Runner, branch: str) -> dict[str, Any] | None:
     """The single merged PR for `branch`, `{pr, head_oid}`, else None.
 
     `headRefOid` resolves even after the remote head branch was deleted at

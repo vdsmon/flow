@@ -34,6 +34,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 from _evolve_common import ACTIVE_STATUSES as _ACTIVE_STATUSES
 from _evolve_common import BRANCH_PREFIXES as _BRANCH_PREFIXES
@@ -57,7 +58,7 @@ DEFAULT_CONCURRENCY = 3
 
 
 def partition(
-    candidates: list[dict],
+    candidates: list[dict[str, Any]],
     inflight_keys: set[str],
     hot_inflight: bool,
     open_pr_count: int,
@@ -65,7 +66,7 @@ def partition(
     concurrency: int = DEFAULT_CONCURRENCY,
     inflight_count: int = 0,
     include_proposals: bool = False,
-) -> dict:
+) -> dict[str, Any]:
     """Pure core: decide the launch batch from already-extracted inputs.
 
     candidates: parsed `bd ready -l evolve` items (id, priority, labels, issue_type,
@@ -186,7 +187,7 @@ def _hot_inflight(
     return bool(inflight_flow_keys & hot_keys)
 
 
-def _ready_candidates(run: Runner, include_proposals: bool) -> list[dict]:
+def _ready_candidates(run: Runner, include_proposals: bool) -> list[dict[str, Any]]:
     """Ready evolve beads, plus the `proposal` backlog when explicitly opted in.
 
     Two label-scoped `bd ready` calls merged by id (not `-l evolve,proposal`, whose
@@ -207,7 +208,7 @@ def select(
     concurrency: int,
     runner: Runner | None = None,
     include_proposals: bool = False,
-) -> dict:
+) -> dict[str, Any]:
     repo = resolve_maintainer_repo(workspace_root)
     if repo is None:
         raise NotMaintainer("not a flow maintainer setup; nothing to select")

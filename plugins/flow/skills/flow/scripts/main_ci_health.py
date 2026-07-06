@@ -41,7 +41,7 @@ from forge_github import _NONTERMINAL_VERDICTS, _SUPERSEDED_VERDICTS, _classify_
 Runner = Callable[[list[str]], subprocess.CompletedProcess[str]]
 
 
-def classify_main_ci(check_runs: list) -> dict[str, Any]:
+def classify_main_ci(check_runs: list[Any]) -> dict[str, Any]:
     """Pure verdict from REST check-run entries `[{name, status, conclusion}, ...]`.
 
     Uppercases each entry's `status` (REST emits lowercase `completed`) so it matches
@@ -110,7 +110,9 @@ def _gh_runner(repo: Path) -> Runner:
     return run
 
 
-def probe(workspace_root: Path, *, sha: str | None = None, runner: Runner | None = None) -> dict:
+def probe(
+    workspace_root: Path, *, sha: str | None = None, runner: Runner | None = None
+) -> dict[str, Any]:
     """Probe main's CI health by sha. Any gh/network/parse failure → status:"error"
     (resume), NEVER a pause. When `sha` is absent, resolve `origin/main` after a
     read-only fetch."""

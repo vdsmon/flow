@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import ClassVar
+from typing import ClassVar, override
 
 import pytest
 
@@ -157,6 +157,7 @@ def test_non_forge_error_on_one_key_does_not_drop_others():
     ref_good = "feat/flow-good-slug"
 
     class _Boom(_FakeForge):
+        @override
         def review_threads(self, pr_id):
             if pr_id == "1":
                 raise KeyError("unexpected payload shape")

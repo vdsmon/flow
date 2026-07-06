@@ -30,6 +30,7 @@ import json
 import re
 import sys
 from pathlib import Path
+from typing import Any
 
 from _runner import CwdRunner as Runner
 from _runner import cwd_default_runner as _default_runner
@@ -128,7 +129,7 @@ def compute(
     ref: str | None = "origin/main",
     runner: Runner | None = None,
     commit_type: str | None = None,
-) -> dict:
+) -> dict[str, Any]:
     """{"ref", "current", "next", "bump", "commit_type"} for the version on `ref`.
     An empty/None `commit_type` falls back to the HEAD commit subject's type."""
     resolved = commit_type or head_commit_type(cwd=cwd, runner=runner)
@@ -167,7 +168,7 @@ def stamp(
     ref: str = "origin/main",
     runner: Runner | None = None,
     commit_type: str | None = None,
-) -> dict:
+) -> dict[str, Any]:
     """Compute the next version from `ref` and write it into both version files.
     Returns the compute dict {"ref", "current", "next", "bump", "commit_type"}."""
     result = compute(cwd=cwd, ref=ref, runner=runner, commit_type=commit_type)

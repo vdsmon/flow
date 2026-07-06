@@ -51,6 +51,7 @@ import json
 import re
 import sys
 from pathlib import Path
+from typing import Any
 
 import lease
 import main_ci_health
@@ -70,7 +71,7 @@ _EVOLVE_STATUSES = "open,in_progress,blocked,deferred,closed"
 _MERGEABLE_STATES = {"CLEAN", "DRAFT"}  # DRAFT becomes CLEAN after `gh pr ready`
 
 
-def rollup_is_green(rollup: list) -> bool:
+def rollup_is_green(rollup: list[Any]) -> bool:
     """True iff the check rollup is non-empty and every entry is a completed SUCCESS.
 
     Handles both shapes gh emits: CheckRun ({status, conclusion}) and StatusContext
@@ -91,7 +92,7 @@ def rollup_is_green(rollup: list) -> bool:
     return True
 
 
-def _covers_from_commits(pr: dict, lead_key: str) -> list[str]:
+def _covers_from_commits(pr: dict[str, Any], lead_key: str) -> list[str]:
     """Cover keys this PR co-delivers, parsed from its commits' `Closes <KEY>` trailers.
 
     A folded `--covers` run emits one `Closes <cover>` footer per cover (plus one for the lead
@@ -115,7 +116,7 @@ def _covers_from_commits(pr: dict, lead_key: str) -> list[str]:
     return covers
 
 
-def _effective_hot(pr: dict, labels: list[str]) -> bool:
+def _effective_hot(pr: dict[str, Any], labels: list[str]) -> bool:
     """Hotness for reap routing: the `hot` label OR a diff touching a guard file.
 
     A substantively-hot PR (one whose changed paths hit `triage._GUARD_FILES`)
@@ -130,7 +131,7 @@ def _effective_hot(pr: dict, labels: list[str]) -> bool:
     return is_hot_change([f.get("path", "") for f in files if isinstance(f, dict)])
 
 
-def _hot_eligible(pr: dict, labels: list[str]) -> bool:
+def _hot_eligible(pr: dict[str, Any], labels: list[str]) -> bool:
     """A hot PR is auto-merge-eligible when it is green AND mergeable (CLEAN/DRAFT).
 
     Hotness is the `hot` label OR a guard-file diff (see `_effective_hot`).
@@ -143,13 +144,13 @@ def _hot_eligible(pr: dict, labels: list[str]) -> bool:
 
 
 def classify(
-    prs: list[dict],
+    prs: list[dict[str, Any]],
     labels_index: dict[str, list[str]],
     *,
     auto_merge_hot: bool = False,
     liveness: dict[str, str] | None = None,
     main_ci_status: str | None = None,
-) -> dict:
+) -> dict[str, Any]:
     """Pure core: bucket open PRs into merge / not_green / skipped_hot /
     skipped_live / blocked / held_main_red.
 
@@ -178,12 +179,12 @@ def classify(
     `held_main_red` is always present (empty when main is not red). reap() probes the
     verdict and files the deduped P0; classify stays pure.
     """
-    merge: list[dict] = []
-    not_green: list[dict] = []
-    skipped_hot: list[dict] = []
-    skipped_live: list[dict] = []
-    blocked: list[dict] = []
-    held_main_red: list[dict] = []
+    merge: list[dict[str, Any]] = []
+    not_green: list[dict[str, Any]] = []
+    skipped_hot: list[dict[str, Any]] = []
+    skipped_live: list[dict[str, Any]] = []
+    blocked: list[dict[str, Any]] = []
+    held_main_red: list[dict[str, Any]] = []
 
     hot_eligible = [
         pr
@@ -316,7 +317,7 @@ def _file_main_red_p0(run: Runner, sha: str | None, failing_checks: list[str]) -
         run(["bd", "create", "-p", "P0", "--title", title])
 
 
-def _enrich_pr_details(run: Runner, prs: list[dict], index: dict[str, list[str]]) -> None:
+def _enrich_pr_details(run: Runner, prs: list[dict[str, Any]], index: dict[str, list[str]]) -> None:
     """Graft per-PR `files`/`commits` onto each candidate PR via `gh pr view`.
 
     The bulk `gh pr list --json ...,commits` makes gh's GraphQL cost estimator price
@@ -344,7 +345,7 @@ def _enrich_pr_details(run: Runner, prs: list[dict], index: dict[str, list[str]]
 
 def reap(
     workspace_root: Path, *, runner: Runner | None = None, include_proposals: bool = False
-) -> dict:
+) -> dict[str, Any]:
     repo = resolve_maintainer_repo(workspace_root)
     if repo is None:
         raise NotMaintainer("not a flow maintainer setup; nothing to reap")

@@ -97,6 +97,7 @@ import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import lease
 from _evolve_common import run_dir_for as _run_dir_for
@@ -182,7 +183,7 @@ def classify(
     idle_threshold_secs: int,
     stale_idle_threshold_secs: int = DEFAULT_STALE_IDLE_THRESHOLD_SECS,
     bead_status: BeadStatusLookup,
-) -> dict:
+) -> dict[str, Any]:
     """Pure core: bucket job records into stoppable / skipped.
 
     Gates run cheapest-first so the bead lookup (the only external dep) fires last,
@@ -195,8 +196,8 @@ def classify(
     current_boot = lease.boot_id()
     host = lease.hostname()
 
-    stoppable: list[dict] = []
-    skipped: list[dict] = []
+    stoppable: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
 
     def skip(rec: JobRecord, reason: str) -> None:
         skipped.append({"session_id": rec.session_id, "reason": reason})
@@ -350,7 +351,7 @@ def cleanup(
     jobs_root: Path,
     now_iso: str,
     bead_status: BeadStatusLookup | None = None,
-) -> dict:
+) -> dict[str, Any]:
     repo = resolve_maintainer_repo(workspace_root)
     if repo is None:
         raise NotMaintainer("not a flow maintainer setup; nothing to clean")

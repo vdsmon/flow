@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import ClassVar
+from typing import ClassVar, override
 
 import pytest
 
@@ -90,6 +90,7 @@ class _FakeForge:
 
 
 class _FailingForge(_FakeForge):
+    @override
     def detect_pr(self, branch):
         raise ForgeError(f"network failed for {branch}")
 
@@ -223,6 +224,7 @@ def test_factory_error_returns_2(ws, capsys):
 
 
 class _KeyErrorForge(_FakeForge):
+    @override
     def mark_ready(self, pr_id):
         raise KeyError("bad-pr")
 
@@ -237,6 +239,7 @@ def test_invalid_argument_returns_3(ws, capsys):
 
 
 class _PostReplyNotSupportedForge(_FakeForge):
+    @override
     def post_reply(self, pr_id, thread_id, body):
         raise NotSupported("no replies")
 

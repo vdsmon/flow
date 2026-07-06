@@ -12,6 +12,7 @@ import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import ModuleType
+from typing import Any
 
 import pytest
 
@@ -36,7 +37,7 @@ def _now() -> datetime:
     return datetime(2026, 6, 11, 12, 0, 0, tzinfo=UTC)
 
 
-def _write_record(path: Path, *rows: dict) -> None:
+def _write_record(path: Path, *rows: dict[str, Any]) -> None:
     path.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
 
 

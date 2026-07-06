@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import tomllib
 from pathlib import Path
+from typing import Any
 
 from _workspace import WorkspaceConfigError, load_workspace_toml
 
@@ -30,7 +31,7 @@ def _global_config_path() -> Path:
     return Path.home() / ".flow" / "config.toml"
 
 
-def _self_target(config: dict) -> bool:
+def _self_target(config: dict[str, Any]) -> bool:
     section = config.get("maintainer")
     return isinstance(section, dict) and section.get("self_target") is True
 

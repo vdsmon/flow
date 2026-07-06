@@ -42,6 +42,7 @@ import glob
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 from _evolve_common import (
     ACTIVE_STATUSES,
@@ -63,11 +64,11 @@ _ACTIVE = frozenset(ACTIVE_STATUSES.split(","))
 
 
 def classify_reap(
-    merged_prs: list,
+    merged_prs: list[Any],
     candidate_keys: set[str],
     bead_status: dict[str, str | None],
     worktree_keys: set[str] | frozenset[str] = frozenset(),
-) -> list[dict]:
+) -> list[dict[str, Any]]:
     """Pure: the merged flow PRs whose runs the loop must reap.
 
     merged_prs: parsed `gh pr list --state merged` items (number, headRefName).
@@ -77,7 +78,7 @@ def classify_reap(
     bead_active=False; deferred stays the human's triage call).
     One entry per key (first PR in list order wins).
     """
-    out: list[dict] = []
+    out: list[dict[str, Any]] = []
     seen: set[str] = set()
     for pr in merged_prs:
         if not isinstance(pr, dict):

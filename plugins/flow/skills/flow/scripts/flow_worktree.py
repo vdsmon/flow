@@ -55,7 +55,7 @@ import secrets
 import shutil
 import sys
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import _atomicio
 import _locking
@@ -450,7 +450,7 @@ def _checkpoint_marker(ticket: str) -> str:
     return f"wip: flow checkpoint before reap ({ticket}) [skip ci]"
 
 
-def _checkpoint_dirty_worktree(ticket: str, worktree: Path, run: Runner) -> dict:
+def _checkpoint_dirty_worktree(ticket: str, worktree: Path, run: Runner) -> dict[str, Any]:
     """Checkpoint uncommitted work in `worktree` as a WIP commit pushed to a
     `flow-rescue/<ticket>-<sha>` ref, before reap's destructive teardown.
 
@@ -548,7 +548,9 @@ def _checkpoint_dirty_worktree(ticket: str, worktree: Path, run: Runner) -> dict
     return {"status": "captured", "rescue_branch": rescue_branch, "sha": sha}
 
 
-def _checkpoint_then_remove(ticket: str, worktree: Path, run: Runner, main_root: Path) -> dict:
+def _checkpoint_then_remove(
+    ticket: str, worktree: Path, run: Runner, main_root: Path
+) -> dict[str, Any]:
     """Checkpoint, then remove `worktree` — the `lease.classify_then` teardown callback.
 
     On a failed checkpoint the worktree is left untouched (`removed=False`,
@@ -573,7 +575,7 @@ def reap_worktree(
     main_root: Path,
     branch: str | None = None,
     runner: Runner | None = None,
-) -> dict:
+) -> dict[str, Any]:
     """Tear down the local worktree + branch left behind after a squash-merge.
 
     The squash-merge (`gh pr merge --squash`) deletes no branch (gh's
@@ -663,7 +665,7 @@ def reap_worktree(
             else:
                 receipt["skipped"] = "lease corrupt (run.lock unparseable; possibly live)"
             return receipt
-        result = cast(dict, outcome["result"])
+        result = cast(dict[str, Any], outcome["result"])
         checkpoint = result["checkpoint"]
         if checkpoint["status"] == "failed":
             receipt["checkpoint_failed"] = True
@@ -692,7 +694,7 @@ def locate_or_reseed(
     branch: str,
     main_root: Path,
     runner: Runner | None = None,
-) -> dict:
+) -> dict[str, Any]:
     """Locate the ticket's worktree, or re-materialize it from the PR branch (flow-kx17.2).
 
     A revision (/flow revise) needs the worktree the original run left behind. The
@@ -1048,7 +1050,7 @@ def bootstrap(
     auto: bool = False,
     recover_spill: bool = False,
     runner: Runner | None = None,
-) -> dict:
+) -> dict[str, Any]:
     run = runner or _default_runner()
     main_root = main_root.expanduser().resolve()
 
