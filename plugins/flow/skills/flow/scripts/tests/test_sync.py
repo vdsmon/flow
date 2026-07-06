@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, override
 
 import pytest
 
@@ -48,6 +48,7 @@ class _FakeTracker:
 
 
 class _RaisingTracker(_FakeTracker):
+    @override
     def comment(self, key: str, body: Any) -> None:
         raise RuntimeError("network error mid-drain")
 

@@ -56,6 +56,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 from _atomicio import atomic_write_text
 from _locking import flock_blocking
@@ -119,7 +120,7 @@ def _current_branch(skill_root: Path) -> str | None:
     return res.stdout.strip()
 
 
-def _emit(obj: dict, code: int) -> int:
+def _emit(obj: dict[str, Any], code: int) -> int:
     print(json.dumps(obj, indent=2))
     return code
 
@@ -131,7 +132,7 @@ def apply_edit(
     new: str,
     *,
     branch_resolver=_current_branch,
-) -> tuple[dict, int]:
+) -> tuple[dict[str, Any], int]:
     """Apply a single unique-anchor replacement under the machinery write lock.
 
     Pure of argparse so the test suite can drive it directly.
@@ -217,7 +218,7 @@ def apply_edit(
         }, 3
 
 
-def _load_payload(payload_path: str | None) -> dict:
+def _load_payload(payload_path: str | None) -> dict[str, Any]:
     raw = Path(payload_path).read_text(encoding="utf-8") if payload_path else sys.stdin.read()
     return json.loads(raw)
 

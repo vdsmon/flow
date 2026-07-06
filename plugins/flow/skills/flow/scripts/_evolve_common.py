@@ -15,6 +15,7 @@ import json
 import re
 import subprocess
 from pathlib import Path
+from typing import Any
 
 import fleet
 import lease
@@ -48,7 +49,7 @@ def ok(result: subprocess.CompletedProcess[str], what: str) -> str:
     return result.stdout or ""
 
 
-def loads(raw: str) -> list:
+def loads(raw: str) -> list[Any]:
     try:
         payload = json.loads(raw or "[]")
     except json.JSONDecodeError:
@@ -124,7 +125,7 @@ def read_cap_concurrency(
 
 
 def model_per_key(
-    launch: list[str], labels_by_id: dict[str, list], worker_model: str | None
+    launch: list[str], labels_by_id: dict[str, list[str]], worker_model: str | None
 ) -> dict[str, str]:
     """Per-key `--model` for a launch batch (shared by both selects).
 

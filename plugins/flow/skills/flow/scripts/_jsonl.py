@@ -66,17 +66,17 @@ def iter_jsonl(path: Path, quarantine_sidecar: Path) -> Iterator[dict[str, Any]]
             try:
                 entry = json.loads(stripped)
             except json.JSONDecodeError as exc:
-                reason: str | None = f"json: {exc}"
+                reason = f"json: {exc}"
             else:
-                reason = None if isinstance(entry, dict) else "not an object"
-            if reason is not None:
-                if seen_bad is None:
-                    seen_bad = _quarantined_raws(quarantine_sidecar)
-                if stripped not in seen_bad:
-                    append_quarantine(quarantine_sidecar, stripped, reason)
-                    seen_bad.add(stripped)
-                continue
-            yield entry
+                if isinstance(entry, dict):
+                    yield entry
+                    continue
+                reason = "not an object"
+            if seen_bad is None:
+                seen_bad = _quarantined_raws(quarantine_sidecar)
+            if stripped not in seen_bad:
+                append_quarantine(quarantine_sidecar, stripped, reason)
+                seen_bad.add(stripped)
 
 
 __all__ = ["append_quarantine", "iter_jsonl"]

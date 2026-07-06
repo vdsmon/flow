@@ -6,16 +6,20 @@
 
 [tools]
 python = "3.14.6"
-ruff = "0.15.15"
-ty = "0.0.42"
+ruff = "0.15.20"
+ty = "0.0.56"
 "pipx:pytest" = { version = "8.3.3", uvx_args = "--with pytest-cov --with pytest-xdist", pipx_args = "--preinstall pytest-cov --preinstall pytest-xdist" }
 
 [tasks.lint]
 description = "ruff check + ruff format --check + ty check (scripts + plugin hooks)"
+# ty runs with every rule at error severity. Deterministic because ty is pinned
+# above; a version bump re-triages whatever new rules surface. Per-path
+# relaxations live in pyproject.toml [[tool.ty.overrides]], which win over
+# --error all.
 run = [
     "ruff check . ../../../hooks",
     "ruff format --check . ../../../hooks",
-    "ty check . ../../../hooks",
+    "ty check --error all . ../../../hooks",
 ]
 
 [tasks.test]

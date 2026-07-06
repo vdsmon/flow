@@ -23,7 +23,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
-from typing import get_args
+from typing import Any, get_args
 
 import _workspace
 import forge
@@ -59,7 +59,7 @@ def plain_comment_severity(workspace_root: Path) -> str:
     return value
 
 
-def apply_floor(threads: list[dict], severity: str) -> list[dict]:
+def apply_floor(threads: list[dict[str, Any]], severity: str) -> list[dict[str, Any]]:
     """Bump every UNRESOLVED `minor` thread up to `severity`. Returns NEW dicts;
     the input is never mutated. No-op when `severity == "minor"`.
 
@@ -69,7 +69,7 @@ def apply_floor(threads: list[dict], severity: str) -> list[dict]:
     """
     if severity == _DEFAULT_SEVERITY:
         return [dict(t) for t in threads]
-    out: list[dict] = []
+    out: list[dict[str, Any]] = []
     for t in threads:
         nt = dict(t)
         if not nt.get("resolved") and nt.get("severity") == _DEFAULT_SEVERITY:

@@ -32,6 +32,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 import evolve_drain
 import queue_drain
@@ -47,7 +48,7 @@ def status(
     cap: int,
     concurrency: int,
     runner: Runner | None = None,
-) -> dict:
+) -> dict[str, Any]:
     repo = resolve_maintainer_repo(workspace_root)
     if repo is None:
         raise queue_select.NotMaintainer("not a flow maintainer setup; nothing to report")

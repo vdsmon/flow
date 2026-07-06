@@ -76,7 +76,12 @@ class BitbucketAdapter:
         return result.stdout or ""
 
     def _api(
-        self, path: str, what: str, *, method: str | None = None, payload: dict | None = None
+        self,
+        path: str,
+        what: str,
+        *,
+        method: str | None = None,
+        payload: dict[str, Any] | None = None,
     ) -> Any:
         args = ["bkt", "api", path]
         if method:
@@ -91,7 +96,7 @@ class BitbucketAdapter:
             raise ForgeError(f"{what}: bad JSON: {exc}") from exc
 
     @staticmethod
-    def _pr_from_api(item: dict) -> PullRequest:
+    def _pr_from_api(item: dict[str, Any]) -> PullRequest:
         links = item.get("links") or {}
         html = (links.get("html") or {}).get("href") or ""
         src = ((item.get("source") or {}).get("branch") or {}).get("name") or ""
@@ -212,8 +217,8 @@ class BitbucketAdapter:
 
     # ─── review threads (CodeRabbit) ──────────────────────────────────────
 
-    def _fetch_all_comments(self, pr_id: str) -> list[dict]:
-        comments: list[dict] = []
+    def _fetch_all_comments(self, pr_id: str) -> list[dict[str, Any]]:
+        comments: list[dict[str, Any]] = []
         page = 1
         while True:
             data = self._api(
@@ -310,7 +315,7 @@ class BitbucketAdapter:
 # ─── pure CodeRabbit parsing (ported from fetch_coderabbit_comments.py) ──────
 
 
-def _is_actionable_inline(comment: dict) -> bool:
+def _is_actionable_inline(comment: dict[str, Any]) -> bool:
     if not comment.get("inline"):
         return False
     raw = (comment.get("content") or {}).get("raw", "")

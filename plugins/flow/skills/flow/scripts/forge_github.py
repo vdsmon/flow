@@ -409,7 +409,7 @@ _NONTERMINAL_VERDICTS = frozenset(
 _SUPERSEDED_VERDICTS = frozenset({"CANCELLED", "STALE", "NEUTRAL", "SKIPPED"})
 
 
-def _classify_rollup(rollup: list) -> CIStatus:
+def _classify_rollup(rollup: list[Any]) -> CIStatus:
     """green iff non-empty and every check is completed-SUCCESS (matches
     evolve_reap.rollup_is_green); pending if any check is still running (CheckRun
     status != COMPLETED, or a StatusContext with a non-terminal state); a superseded

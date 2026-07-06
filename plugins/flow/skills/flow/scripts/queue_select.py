@@ -41,6 +41,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 from _evolve_common import (
     NotMaintainer,
@@ -67,7 +68,7 @@ DEFAULT_CONCURRENCY = 3
 _EXCLUDED_LABELS = {"evolve", "proposal", "hot"}
 
 
-def _day_job(candidates: list[dict]) -> list[dict]:
+def _day_job(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [
         c
         for c in candidates
@@ -78,13 +79,13 @@ def _day_job(candidates: list[dict]) -> list[dict]:
 
 
 def partition(
-    candidates: list[dict],
+    candidates: list[dict[str, Any]],
     inflight_keys: set[str],
     open_pr_count: int,
     cap: int = DEFAULT_CAP,
     concurrency: int = DEFAULT_CONCURRENCY,
     inflight_count: int = 0,
-) -> dict:
+) -> dict[str, Any]:
     """Pure core: decide the launch batch from already-extracted inputs.
 
     candidates: parsed `bd ready --json` items (id, priority, labels,
@@ -140,7 +141,7 @@ def select(
     cap: int,
     concurrency: int,
     runner: Runner | None = None,
-) -> dict:
+) -> dict[str, Any]:
     repo = resolve_maintainer_repo(workspace_root)
     if repo is None:
         raise NotMaintainer("not a flow maintainer setup; nothing to select")

@@ -6,7 +6,7 @@ import contextlib
 import io
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, override
 
 import pytest
 
@@ -116,6 +116,7 @@ class _FakeTracker:
 
 
 class _FailingTracker(_FakeTracker):
+    @override
     def get(self, key: str) -> dict[str, Any]:
         raise TrackerError(f"network failed for {key}")
 
@@ -260,6 +261,7 @@ class _DuplicateNameTracker(_FakeTracker):
         super().__init__()
         self._second_available = second_available
 
+    @override
     def list_transitions(self, key: str) -> list[dict[str, Any]]:
         self._record("list_transitions", key)
         return [
@@ -311,6 +313,7 @@ class _AmbiguousInProgressTracker(_FakeTracker):
         super().__init__()
         self._testing_first = testing_first
 
+    @override
     def list_transitions(self, key: str) -> list[dict[str, Any]]:
         self._record("list_transitions", key)
         testing = {
@@ -374,6 +377,7 @@ def test_transition_in_progress_no_hint_falls_back(tmp_path: Path) -> None:
     _seed_workspace(tmp_path)
 
     class _OnlyTesting(_FakeTracker):
+        @override
         def list_transitions(self, key: str) -> list[dict[str, Any]]:
             self._record("list_transitions", key)
             return [
@@ -676,6 +680,7 @@ def test_set_sprint_not_supported_surfaces_cleanly(
     _seed_workspace(tmp_path, backend="beads")
 
     class _NoSprint(_FakeTracker):
+        @override
         def set_sprint(self, key: str, sprint_id: str) -> None:
             from tracker import NotSupported
 
@@ -705,6 +710,7 @@ def test_list_sprints_not_supported_surfaces_cleanly(
     _seed_workspace(tmp_path, backend="beads")
 
     class _NoSprint(_FakeTracker):
+        @override
         def list_sprints(self, project: str) -> list[dict[str, Any]]:
             from tracker import NotSupported
 
@@ -768,6 +774,7 @@ def _run_transition(
     _seed_workspace(tmp_path)
 
     class _ScriptedTransition(_FakeTracker):
+        @override
         def transition(self, key, transition_id, fields=None):
             self._record("transition", key, transition_id, fields)
             return result
@@ -868,6 +875,7 @@ def test_transition_raised_trackererror_with_flag_enqueues(tmp_path: Path) -> No
     _seed_workspace(tmp_path)
 
     class _RaisingTransition(_FakeTracker):
+        @override
         def transition(self, key, transition_id, fields=None):
             raise TrackerError("network down")
 

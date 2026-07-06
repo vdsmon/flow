@@ -55,6 +55,15 @@ allowed-unresolved-imports = ["pytest", "fastembed", "model2vec"]
 # deliberately type-loose sample inputs.
 exclude = ["tests/_fixtures"]
 
+[[tool.ty.overrides]]
+# Test fakes and fixture builders pass literal JSON-ish blobs; spelling
+# dict[str, Any] on every helper is ceremony that catches nothing. The
+# engine itself stays strict (lint runs ty with --error all).
+include = ["tests/**"]
+
+[tool.ty.overrides.rules]
+missing-type-argument = "ignore"
+
 [tool.coverage.run]
 # measure the engine modules, not the test files (conftest lives under tests/).
 omit = ["tests/*"]

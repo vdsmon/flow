@@ -40,7 +40,7 @@ from _evolve_common import key_from_ref
 _MAJOR_PLUS = {"major", "critical"}
 
 
-def flag_parked_reviews(keys: list[str], pr_refs: list[str], adapter: Any) -> list[dict]:
+def flag_parked_reviews(keys: list[str], pr_refs: list[str], adapter: Any) -> list[dict[str, Any]]:
     """For each parked key with a matching open-PR ref, count unresolved Major+ threads.
 
     Returns a result dict only for keys whose `unresolved_major > 0`. Best-effort:
@@ -54,7 +54,7 @@ def flag_parked_reviews(keys: list[str], pr_refs: list[str], adapter: Any) -> li
         if key and key not in ref_by_key:
             ref_by_key[key] = ref
 
-    results: list[dict] = []
+    results: list[dict[str, Any]] = []
     for key in keys:
         ref = ref_by_key.get(key)
         if ref is None:
