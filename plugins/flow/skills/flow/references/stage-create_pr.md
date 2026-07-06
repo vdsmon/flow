@@ -24,6 +24,16 @@ Human-first: skimmable, short prose, rich markdown, a natural top-to-bottom flow
 <command(s) + result, from the implement stage>
 ```
 
+## Evidence
+<details>
+<summary>command: N passed, M failed (duration)</summary>
+
+```
+<transcript tail — what the run actually observed>
+```
+
+</details>
+
 ## Your call
 Decisions I flagged for you rather than settling them myself (from code_review):
 - [Major] <finding> — <decision> (<file>:<loc>)
@@ -33,6 +43,7 @@ Rules:
 - Bold summary line first (anchors the read).
 - Why is a headerless lead paragraph, 1-3 sentences.
 - `## Changes` and `## How to verify` are mandatory.
+- An optional `## Evidence` section, right after `## How to verify`, renders what the verification runs actually observed (the rerunnable command stays in `## How to verify`; this is the captured proof of running it). One collapsed `<details>` per run: the `<summary>` is the run line in scrub-safe punctuation (`command: N passed, M failed (duration)` — no em-dash, since the scrub floor rewrites em-dashes outside fences), and the body is the fenced transcript tail, plus any fingerprint or delta blocks the run captured. Sources: the e2e stage's captured report (`e2e.out`), read ONLY when its first line carries the `flow:e2e-evidence` sentinel (a `skill:<name>` handler's free-form `.out` lacks it and is skipped, exactly as `## Your call` skips a sentinel-less `code_review.out`); plus the implement stage's verify command + result tail, lifted best-effort from `implement.out` (the same input step 1 already reads for `## How to verify`). ONE degrade rule, mirroring `## Your call`: render `## Evidence` ONLY IF at least one source yields a real transcript or fingerprint; OMIT the whole section otherwise (e2e skipped and no usable implement transcript means no section, never a placeholder). Fenced content survives both humanize and the scrub floor untouched, so paste transcript tails verbatim.
 - An optional `## Notes` (edge cases, risk, follow-ups) goes last. OMIT it entirely when empty, never placehold. Reach for `<details>` only on genuine overflow (a long migration list, verbose logs).
 - An optional `## Your call` lists the code_review ask-user findings: "Decisions I flagged for you rather than settling them myself (from code_review):" then plain `- [Major] <finding> — <decision> (<file>:<loc>)` bullets, authored here so it rides the humanize pass in step 2. One rule covers all three ways it is absent — render it ONLY IF `code_review.out` exists, carries the `flow:code_review-taxonomy` sentinel, AND its `## ask-user` section has at least one bullet (this omits it alike for no ask-user findings, a missing `code_review.out` (`code_review = "none"`), or a `skill:<name>` handler's free-form `.out` lacking the sentinel). OMIT the whole section rather than rendering an empty one.
 - Keep prose short: people skip walls of text, which defeats the point. Summary 1 line, why ≤3 sentences, each change bullet 1 line.
@@ -63,6 +74,7 @@ mise run test   # scripts + hooks green
    - the verify command + result: `$TICKET_DIR/stages/implement.out`,
    - the premeditated file set + per-file rationale: `$TICKET_DIR/stages/plan.out` — its Files-to-change bullets (however the plan renders that section: `- **Files to change**` bold-label list per stage-plan.md, or a heading; each bullet an explicit path + one-line note) seed the `## Changes` bullets below (see the authoring note after this list); plus the ticket (`ticket.json`) for the overall why,
    - decisions flagged for the human: `$TICKET_DIR/stages/code_review.out`, read ONLY when it exists AND its first line carries the `flow:code_review-taxonomy` sentinel (feeds the optional `## Your call` section below).
+   - captured verification evidence: `$TICKET_DIR/stages/e2e.out`, read ONLY when its first line carries the `flow:e2e-evidence` sentinel, plus the same `implement.out` verify tail already gathered above (feeds the optional `## Evidence` section below).
 
    **Compose `## Changes` by carrying the plan's per-file notes onto the diff.** The `git diff --stat` set above is the ground truth of what shipped, so walk THAT set (every bullet then has a real hunk). For each changed file: if it appears in `plan.out`'s Files-to-change list, start its bullet from that file's one-line note and update it where the implementation diverged — carry-then-update, never the plan note verbatim; if it does NOT appear there, it entered via the post-implement reconcile, so append `(added during implementation: <why>)`, taking `<why>` best-effort from a matching `RECONCILE` entry in the friction log (`.flow/<namespace>/friction.jsonl`) or inferring it from what the file is. A planned file absent from the diff gets no bullet. File-level only: mapping a note to a specific hunk is out of scope (no metadata carries it today). When `plan.out` is absent (`plan = "none"`), compose `## Changes` straight from the diff as before, with no carryover or annotation — the same graceful degrade the `## Your call` input above uses.
 

@@ -201,6 +201,96 @@ def _scrub_line(line: str) -> str:
     return line
 
 
+# Inferred forge description cap with margin, not a verified API contract. The
+# stricter forge (Bitbucket) caps a PR description near 32768 chars; GitHub allows
+# 65536. 32000 is a conservative floor under the stricter one, the margin absorbing
+# the guess. enforce_cap is the deterministic net so an oversized evidence body can
+# never fail open_pr.
+_FORGE_BODY_CAP = 32_000
+
+_TRIM_HEAD = 8
+_TRIM_TAIL = 8
+_TIER2_NOTE = "… body trimmed to fit …"
+_TRUNCATE_MARKER = "\n\n… body truncated to fit …"
+# a collapsed <details> whose body is dropped in tier 2: keep the opening tag +
+# <summary>, replace the body with a one-line note, keep the closing tag.
+_DETAILS_RE = re.compile(
+    r"(<details\b[^>]*>\s*<summary\b[^>]*>.*?</summary>)(.*?)(</details>)", re.DOTALL
+)
+
+
+def enforce_cap(body: str, cap: int = _FORGE_BODY_CAP) -> str:
+    """Shrink an over-cap PR body deterministically so it can never fail open_pr.
+
+    Under cap: returned untouched (idempotent, byte-identical). Over cap, in order:
+    shrink the largest fenced blocks (head+tail lines around a `… N lines trimmed …`
+    marker) until it fits; still over, drop `<details>` bodies keeping their
+    `<summary>` lines; final fallback, hard-truncate with a marker. The tiers
+    guarantee a body no longer than `cap` on every non-exceptional path. TOTAL:
+    never raises; on an unexpected internal error the outer guard degrades to
+    passthrough like its siblings, trading the bound for totality.
+    """
+    try:
+        return _enforce_cap(body, cap)
+    except Exception:
+        return body
+
+
+def _enforce_cap(body: str, cap: int) -> str:
+    if len(body) <= cap:
+        return body
+    body = _trim_fenced_blocks(body, cap)
+    if len(body) <= cap:
+        return body
+    body = _DETAILS_RE.sub(lambda m: f"{m.group(1)}\n{_TIER2_NOTE}\n{m.group(3)}", body)
+    if len(body) <= cap:
+        return body
+    return _hard_truncate(body, cap)
+
+
+def _fenced_blocks(lines: list[str]) -> list[tuple[int, int]]:
+    """(open_fence_index, close_fence_index) for each closed fenced block."""
+    blocks: list[tuple[int, int]] = []
+    i, n = 0, len(lines)
+    while i < n:
+        if _FENCE_RE.match(lines[i]):
+            j = i + 1
+            while j < n and not _FENCE_RE.match(lines[j]):
+                j += 1
+            if j >= n:  # unclosed fence: no more blocks to trim
+                break
+            blocks.append((i, j))
+            i = j + 1
+        else:
+            i += 1
+    return blocks
+
+
+def _trim_fenced_blocks(body: str, cap: int) -> str:
+    lines = body.splitlines()
+    threshold = _TRIM_HEAD + _TRIM_TAIL + 1
+    while len("\n".join(lines)) > cap:
+        # a block is worth trimming only when doing so strictly shrinks it; else the
+        # trimmed head+marker+tail form would loop at a fixed size.
+        candidates = [(s, e) for (s, e) in _fenced_blocks(lines) if (e - s - 1) > threshold]
+        if not candidates:
+            break
+        # largest by content-line count, lowest start index breaks a tie.
+        s, e = max(candidates, key=lambda be: (be[1] - be[0] - 1, -be[0]))
+        content = lines[s + 1 : e]
+        removed = len(content) - _TRIM_HEAD - _TRIM_TAIL
+        marker = f"… {removed} lines trimmed …"
+        trimmed = [*content[:_TRIM_HEAD], marker, *content[-_TRIM_TAIL:]]
+        lines = lines[: s + 1] + trimmed + lines[e:]
+    return "\n".join(lines)
+
+
+def _hard_truncate(body: str, cap: int) -> str:
+    if cap <= len(_TRUNCATE_MARKER):
+        return body[:cap]
+    return body[: cap - len(_TRUNCATE_MARKER)] + _TRUNCATE_MARKER
+
+
 def _sentence_case(text: str) -> str:
     if not text.strip():
         return text
@@ -223,4 +313,4 @@ def _sentence_case(text: str) -> str:
     return " ".join(result)
 
 
-__all__ = ["build_body", "closes_footer", "scrub"]
+__all__ = ["build_body", "closes_footer", "enforce_cap", "scrub"]
