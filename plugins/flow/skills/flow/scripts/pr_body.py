@@ -211,10 +211,11 @@ _TRIM_HEAD = 8
 _TRIM_TAIL = 8
 _TIER2_NOTE = "… body trimmed to fit …"
 _TRUNCATE_MARKER = "\n\n… body truncated to fit …"
-# a collapsed <details> whose body is dropped in tier 2: keep the opening tag +
-# <summary>, replace the body with a one-line note, keep the closing tag.
+# a <details>/<summary> wrapper: group 1 = opening tag through </summary>, group 2 =
+# the summary text, group 3 = the body, group 4 = the closing tag. enforce_cap tier 2
+# keeps groups 1 and 4 around a one-line note; flatten_details rewrites from 2 and 3.
 _DETAILS_RE = re.compile(
-    r"(<details\b[^>]*>\s*<summary\b[^>]*>.*?</summary>)(.*?)(</details>)", re.DOTALL
+    r"(<details\b[^>]*>\s*<summary\b[^>]*>(.*?)</summary>)(.*?)(</details>)", re.DOTALL
 )
 
 
@@ -241,10 +242,25 @@ def _enforce_cap(body: str, cap: int) -> str:
     body = _trim_fenced_blocks(body, cap)
     if len(body) <= cap:
         return body
-    body = _DETAILS_RE.sub(lambda m: f"{m.group(1)}\n{_TIER2_NOTE}\n{m.group(3)}", body)
+    body = _DETAILS_RE.sub(lambda m: f"{m.group(1)}\n{_TIER2_NOTE}\n{m.group(4)}", body)
     if len(body) <= cap:
         return body
     return _hard_truncate(body, cap)
+
+
+def flatten_details(body: str) -> str:
+    """Rewrite each `<details>`/`<summary>` wrapper to a `###` heading plus body.
+
+    Bitbucket Cloud renders no raw HTML in markdown, so a collapsible wrapper shows
+    as literal tags there; create_pr applies this on a bitbucket forge. The summary
+    text becomes the heading and the wrapper body (fenced blocks included) follows
+    verbatim. No match is a byte-identical passthrough. TOTAL: never raises;
+    passthrough on adversarial input.
+    """
+    try:
+        return _DETAILS_RE.sub(lambda m: f"### {m.group(2).strip()}\n\n{m.group(3).strip()}", body)
+    except Exception:
+        return body
 
 
 def _fenced_blocks(lines: list[str]) -> list[tuple[int, int]]:
@@ -312,4 +328,4 @@ def _sentence_case(text: str) -> str:
     return " ".join(result)
 
 
-__all__ = ["build_body", "closes_footer", "enforce_cap", "scrub"]
+__all__ = ["build_body", "closes_footer", "enforce_cap", "flatten_details", "scrub"]

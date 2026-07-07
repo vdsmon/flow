@@ -289,3 +289,61 @@ def test_enforce_cap_scrub_fence_byte_identical_under_cap():
     body = f"## Evidence\n\n<details>\n<summary>run: 3 passed (1s)</summary>\n\n{transcript}\n\n</details>\n"
     assert pr_body.enforce_cap(body) == body  # default cap, under -> identical
     assert transcript in pr_body.scrub(pr_body.enforce_cap(body))  # fenced content untouched
+
+
+# ─── flatten_details: bitbucket no-raw-HTML flatten ──────────────────────────
+
+
+def test_flatten_details_basic_wrapper_to_heading():
+    body = (
+        "## Evidence\n\n<details>\n<summary>run: 3 passed (1s)</summary>\n\n"
+        "```\nline a\nline b\n```\n\n</details>\n"
+    )
+    out = pr_body.flatten_details(body)
+    assert "<details>" not in out
+    assert "</details>" not in out
+    assert "<summary>" not in out
+    assert "### run: 3 passed (1s)" in out
+    assert "```\nline a\nline b\n```" in out  # fenced body preserved
+
+
+def test_flatten_details_multiple_blocks():
+    blocks = "\n\n".join(
+        f"<details>\n<summary>run {i}: ok</summary>\n\nbody {i}\n\n</details>" for i in range(3)
+    )
+    out = pr_body.flatten_details(f"## Evidence\n\n{blocks}\n")
+    assert "<details>" not in out
+    assert "<summary>" not in out
+    for i in range(3):
+        assert f"### run {i}: ok" in out
+        assert f"body {i}" in out
+
+
+def test_flatten_details_no_match_byte_identical():
+    body = "plain prose\n\n## Changes\n- `x.py`: a thing\n\n```\nfenced\n```\n"
+    assert pr_body.flatten_details(body) == body
+
+
+def test_flatten_details_unclosed_and_malformed_passthrough():
+    cases = [
+        "<details>\n<summary>s</summary>\n\nnever closed",
+        "<details>\nno summary at all\n</details>",
+        "<details>" * 5,
+        "",
+    ]
+    for c in cases:
+        assert pr_body.flatten_details(c) == c
+
+
+def test_flatten_details_idempotent_and_still_capped():
+    transcript = "\n".join(f"t{j}" for j in range(200))
+    body = (
+        "## Evidence\n\n<details>\n<summary>run: ok</summary>\n\n"
+        f"```\n{transcript}\n```\n\n</details>\n"
+    )
+    flat = pr_body.flatten_details(body)
+    assert pr_body.flatten_details(flat) == flat
+    # a flattened body skips the tier-2 <details> drop; tier-1 fence trim still caps it.
+    capped = pr_body.enforce_cap(flat, cap=400)
+    assert len(capped) <= 400
+    assert "### run: ok" in capped

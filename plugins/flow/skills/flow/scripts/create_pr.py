@@ -86,22 +86,29 @@ def _ok(result: subprocess.CompletedProcess[str], what: str) -> str:
     return result.stdout or ""
 
 
-def _compose_body(raw: str, subject: str, body_file: Path | None) -> str:
+def _compose_body(raw: str, subject: str, body_file: Path | None, *, flatten: bool = False) -> str:
     """The PR body passed to open_pr.
 
     With `body_file`: the authored markdown (de-AI scrubbed as a floor) plus the
     deterministic `Closes` footer from the commit trailer. Without it: the
     commit-derived fallback (build_body + scrub). Empty prose falls back to the
-    commit subject. Both real-body paths pass through `enforce_cap`, the
-    deterministic size net so an oversized `## Evidence` body cannot fail open_pr.
+    commit subject. With `flatten` (a bitbucket forge, which renders no raw HTML
+    in markdown), `<details>` wrappers become plain `###` headings on both paths.
+    Both real-body paths pass through `enforce_cap`, the deterministic size net so
+    an oversized `## Evidence` body cannot fail open_pr.
     """
     if body_file is None:
-        return pr_body.enforce_cap(pr_body.scrub(pr_body.build_body(raw)).strip() or subject)
+        body = pr_body.scrub(pr_body.build_body(raw)).strip()
+        if flatten:
+            body = pr_body.flatten_details(body)
+        return pr_body.enforce_cap(body or subject)
     try:
         authored = body_file.read_text()
     except OSError as exc:
         raise ToolError(f"--body-file {body_file} unreadable: {exc}") from exc
     body = pr_body.scrub(authored).strip()
+    if flatten:
+        body = pr_body.flatten_details(body)
     if not body:
         return subject
     footer = pr_body.closes_footer(raw)
@@ -147,7 +154,7 @@ def open_or_get_pr(
         # already-merged commits, and --fill then mistitles from the branch name.
         subject = _ok(run(["git", "log", "-1", "--format=%s"]), "git log").strip()
         raw = _ok(run(["git", "log", "-1", "--format=%b"]), "git log")
-        body = _compose_body(raw, subject, body_file)
+        body = _compose_body(raw, subject, body_file, flatten=fg.backend == "bitbucket")
         pr = fg.open_pr(base, branch, subject, body, draft)
     except ForgeError as exc:
         raise ToolError(str(exc)) from exc

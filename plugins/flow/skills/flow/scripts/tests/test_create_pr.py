@@ -457,6 +457,75 @@ def test_fallback_oversized_body_is_capped(tmp_path):
     assert "Closes flow-nr8c" in body
 
 
+# ─── bitbucket flatten: no raw HTML in bitbucket markdown ────────────────────
+
+
+class _FakeBitbucketForge(_FakeForge):
+    backend = "bitbucket"
+
+
+_EVIDENCE_BODY = (
+    "**Summary.**\n\nWhy.\n\n## Evidence\n<details>\n<summary>run: 3 passed (1s)</summary>\n\n"
+    "```\nline a\nline b\n```\n\n</details>\n"
+)
+
+
+def test_bitbucket_authored_body_details_flattened(tmp_path):
+    # bitbucket renders no raw HTML in markdown, so the authored <details> wrapper
+    # is flattened to a plain ### heading + fenced body before open_pr.
+    run, _ = _git_runner()
+    fg = _FakeBitbucketForge(existing=None)
+    body_file = tmp_path / "pr_body.md"
+    body_file.write_text(_EVIDENCE_BODY)
+    cp.open_or_get_pr(tmp_path, base="main", runner=run, forge=fg, body_file=body_file)
+    body = fg.opened[0]["body"]
+    assert "<details>" not in body
+    assert "</details>" not in body
+    assert "<summary>" not in body
+    assert "### run: 3 passed (1s)" in body
+    assert "```\nline a\nline b\n```" in body  # fenced transcript preserved
+    assert body.rstrip().endswith("Closes flow-nr8c")  # footer still appended
+
+
+def test_github_authored_body_details_untouched(tmp_path):
+    run, _ = _git_runner()
+    fg = _FakeForge(existing=None)
+    body_file = tmp_path / "pr_body.md"
+    body_file.write_text(_EVIDENCE_BODY)
+    cp.open_or_get_pr(tmp_path, base="main", runner=run, forge=fg, body_file=body_file)
+    body = fg.opened[0]["body"]
+    assert "<details>" in body
+    assert "<summary>run: 3 passed (1s)</summary>" in body
+
+
+def test_bitbucket_fallback_body_details_flattened(tmp_path):
+    # the no-body-file (commit-derived) path flattens too.
+    raw = (
+        "ticket: flow-x\nCloses flow-nr8c\n\nWhy.\n\n<details>\n<summary>run: ok</summary>\n\n"
+        "```\nline a\n```\n\n</details>\n"
+    )
+
+    def run(args):
+        if args[:2] == ["git", "rev-parse"]:
+            return subprocess.CompletedProcess(args, 0, "feature/flow-x\n", "")
+        if args[:2] == ["git", "push"]:
+            return subprocess.CompletedProcess(args, 0, "", "")
+        if args[:2] == ["git", "log"]:
+            fmt = next((a for a in args if a.startswith("--format=")), "")
+            if fmt == "--format=%b":
+                return subprocess.CompletedProcess(args, 0, raw, "")
+            return subprocess.CompletedProcess(args, 0, "chore: subj\n", "")
+        return subprocess.CompletedProcess(args, 1, "", f"unexpected {args}")
+
+    fg = _FakeBitbucketForge(existing=None)
+    cp.open_or_get_pr(tmp_path, base="main", runner=run, forge=fg)
+    body = fg.opened[0]["body"]
+    assert "<details>" not in body
+    assert "<summary>" not in body
+    assert "### run: ok" in body
+    assert "Closes flow-nr8c" in body
+
+
 def test_cli_passes_body_file(tmp_path, monkeypatch):
     captured: dict = {}
 
