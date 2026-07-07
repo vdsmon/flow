@@ -34,6 +34,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import _evolve_common
 import evolve_drain
 import queue_drain
 import queue_select
@@ -77,16 +78,12 @@ def status(
     # drain), so the advisory must not report `wait` on a live evolve run the
     # real drain ignores
     evolve_keys = queue_drain._active_evolve_keys(run)
-    open_pr_keys = set(sel.get("open_pr_keys") or [])
-    live_runs = set(sel.get("live_runs") or []) - evolve_keys
-    inflight = sorted(set(sel.get("skipped_in_flight") or []) | open_pr_keys | live_runs)
-    live = evolve_drain.liveness_map(repo, inflight)
-
     # in-memory only: a registered key leaves launched_pending in the report,
     # but its fleet entry stays on disk (read-only invariant)
-    pending = set(sel.get("launched_pending") or []) - evolve_keys
-    registered = live_runs | open_pr_keys
-    sel["launched_pending"] = sorted(pending - registered)
+    open_pr_keys, _live_runs, inflight = _evolve_common.reconcile_launched_pending(
+        sel, exclude_keys=evolve_keys
+    )
+    live = evolve_drain.liveness_map(repo, inflight)
 
     # read-only stranded detection (same core the drain runs): without it the
     # advisory would report `done` where the drain reports `recover`

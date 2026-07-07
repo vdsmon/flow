@@ -41,3 +41,14 @@ def iso_z(dt: datetime) -> str:
 def utcnow_iso() -> str:
     """Current UTC time as ISO8601 with second precision and trailing 'Z'."""
     return iso_z(datetime.now(UTC))
+
+
+def utcnow_iso_ms() -> str:
+    """UTC ISO8601 with millisecond precision + Z suffix."""
+    now = datetime.now(UTC)
+    return now.strftime("%Y-%m-%dT%H:%M:%S") + f".{now.microsecond // 1000:03d}Z"
+
+
+def ts_token() -> str:
+    """Current UTC time as a colon-free filename token (quarantine/backup names)."""
+    return datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")

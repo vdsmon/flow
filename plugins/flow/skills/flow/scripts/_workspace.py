@@ -1,13 +1,17 @@
-"""Shared workspace.toml read + parse.
+"""Shared workspace.toml read + parse, plus the plugin-manifest self-read.
 
-The file-read + TOML-parse boilerplate was copied across branch_ticket.py,
-tracker_cli.py, validate_workspace.py and init.py. This is the one reader. Each
-consumer keeps its own `[tracker]` validation and exit-code mapping by catching
-WorkspaceConfigError, so per-consumer error contracts are unchanged.
+The file-read + TOML-parse boilerplate was copied across branch_ticket.py and
+tracker_cli.py; this is the one reader. validate_workspace.py and init.py keep
+their own reads on purpose: they report 'missing' and 'does not parse' as
+distinct validation results, which the single WorkspaceConfigError cannot
+encode. Each consumer keeps its own `[tracker]` validation and exit-code
+mapping by catching WorkspaceConfigError, so per-consumer error contracts are
+unchanged.
 """
 
 from __future__ import annotations
 
+import json
 import tomllib
 from pathlib import Path
 from typing import Any
@@ -37,4 +41,15 @@ def load_workspace_toml(workspace_root: Path) -> dict[str, Any]:
         raise WorkspaceConfigError(f"workspace.toml does not parse: {exc}") from exc
 
 
-__all__ = ["WorkspaceConfigError", "load_workspace_toml", "workspace_toml_path"]
+def plugin_version() -> str:
+    """Self-read flow plugin version; '' on any failure (never raises)."""
+    try:
+        path = Path(__file__).resolve().parents[3] / ".claude-plugin" / "plugin.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        v = data.get("version", "")
+        return v if isinstance(v, str) else ""
+    except (OSError, json.JSONDecodeError, IndexError, ValueError):
+        return ""
+
+
+__all__ = ["WorkspaceConfigError", "load_workspace_toml", "plugin_version", "workspace_toml_path"]

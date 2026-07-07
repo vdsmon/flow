@@ -246,3 +246,76 @@ def run_dir_for(repo: Path, key: str) -> Path | None:
             if run_dir.exists():
                 return run_dir
     return None
+
+
+def auto_merge_hot(workspace_root: Path) -> bool:
+    """`[evolve] auto_merge_hot` from workspace.toml (bool); default False.
+
+    The hot auto-merge safety-gate read. evolve_reap and evolve_self_merge both
+    decide on this one copy so the gate cannot drift between the two mergers.
+    """
+    try:
+        config = load_workspace_toml(workspace_root)
+    except WorkspaceConfigError:
+        return False
+    section = config.get("evolve")
+    if not isinstance(section, dict):
+        return False
+    value = section.get("auto_merge_hot")
+    return value if isinstance(value, bool) else False
+
+
+def bead_show(runner: Runner, key: str) -> dict[str, Any]:
+    """One bead via `bd show <key> --json` (sees closed beads; `bd list` hides them).
+
+    `bd show --json` returns a LIST with one element (the bead), not a bare
+    dict. Raises ToolError on a failed bd call; malformed JSON -> {}.
+    """
+    raw = ok(runner(["bd", "show", key, "--json"]), f"bd show {key}")
+    try:
+        data = json.loads(raw or "{}")
+    except json.JSONDecodeError:
+        return {}
+    if isinstance(data, list):
+        data = data[0] if data else {}
+    return data if isinstance(data, dict) else {}
+
+
+def bead_status(runner: Runner, key: str) -> str | None:
+    """The bead's raw status via bead_show; None when absent or unparseable."""
+    status = bead_show(runner, key).get("status")
+    return str(status) if status else None
+
+
+def merged_flow_prs(runner: Runner) -> list[dict[str, Any]]:
+    """Merged PRs as [{number, headRefName}] dicts via gh.
+
+    Both drain loops join beads to merged PRs through this one call; --limit 200
+    is the shared recency window (beyond it a merged PR is old enough that its
+    bead has long left the in-flight set).
+    """
+    args = ["gh", "pr", "list", "--state", "merged", "--json", "number,headRefName"]
+    return loads(ok(runner([*args, "--limit", "200"]), "gh pr list"))
+
+
+def reconcile_launched_pending(
+    sel: dict[str, Any], *, exclude_keys: frozenset[str] | set[str] = frozenset()
+) -> tuple[set[str], set[str], list[str]]:
+    """Drop registered keys from sel['launched_pending'] (mutates sel).
+
+    A launched key that has registered (live lease OR open PR) leaves the blind
+    window; dropping it here keeps it out past any later merge/teardown (the
+    fleet entry itself needs no removal -- it ages out on its own staleness
+    clock). NOT folded into skipped_in_flight: select folds launched_pending
+    into that set, which would falsely mark an unregistered key registered.
+    exclude_keys subtracts a foreign lane (the day-job loop passes the
+    active-evolve set so it never waits on a live evolve run).
+
+    Returns (open_pr_keys, live_runs, inflight) for the caller's liveness map.
+    """
+    open_pr_keys = set(sel.get("open_pr_keys") or [])
+    live_runs = set(sel.get("live_runs") or []) - set(exclude_keys)
+    inflight = sorted(set(sel.get("skipped_in_flight") or []) | open_pr_keys | live_runs)
+    pending = set(sel.get("launched_pending") or []) - set(exclude_keys)
+    sel["launched_pending"] = sorted(pending - (live_runs | open_pr_keys))
+    return open_pr_keys, live_runs, inflight

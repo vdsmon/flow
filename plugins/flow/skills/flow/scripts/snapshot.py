@@ -25,20 +25,13 @@ Snapshot content (hashed via canonical JSON -> sha256):
 verify recomputes via compute_snapshot (the single source of hashing), compares
 master_hash to the stored snapshot.sha, and only consults snapshot.json to NAME
 what drifted.
-
-CLI:
-  snapshot.py emit   --ticket T --workspace-root R [--skill-root S]  (exit 0)
-  snapshot.py verify --ticket T --workspace-root R [--skill-root S]
-      exit 0 match-or-absent, 1 drift.
 """
 
 from __future__ import annotations
 
-import argparse
 import hashlib
 import json
 import subprocess
-import sys
 import tomllib
 from pathlib import Path
 from typing import Any
@@ -494,48 +487,8 @@ def verify_snapshot(
     return ok, detail
 
 
-# ─── CLI ─────────────────────────────────────────────────────────────────────
-
-
-def _parse_args(argv: list[str]) -> argparse.Namespace:
-    common = argparse.ArgumentParser(add_help=False)
-    common.add_argument("--ticket", required=True)
-    common.add_argument("--workspace-root", required=True)
-    common.add_argument("--skill-root", default=None)
-
-    parser = argparse.ArgumentParser(description="Emit / verify the canonical run snapshot.")
-    sub = parser.add_subparsers(dest="command", required=True)
-    sub.add_parser("emit", parents=[common])
-    sub.add_parser("verify", parents=[common])
-    return parser.parse_args(argv)
-
-
-def cli_main(argv: list[str]) -> int:
-    args = _parse_args(argv)
-    workspace_root = Path(args.workspace_root).expanduser().resolve()
-    skill_root = (
-        Path(args.skill_root).expanduser().resolve()
-        if args.skill_root
-        else _skill_root_from_script()
-    )
-
-    if args.command == "emit":
-        path = write_snapshot(workspace_root, args.ticket, skill_root=skill_root)
-        sys.stdout.write(str(path) + "\n")
-        return 0
-
-    ok, detail = verify_snapshot(workspace_root, args.ticket, skill_root=skill_root)
-    sys.stdout.write(detail + "\n")
-    return 0 if ok else 1
-
-
-if __name__ == "__main__":
-    raise SystemExit(cli_main(sys.argv[1:]))
-
-
 __all__ = [
     "classify_drift",
-    "cli_main",
     "component_files",
     "compute_snapshot",
     "drifted_components",

@@ -35,7 +35,6 @@ import json
 import os
 import re
 import sys
-import time
 import unicodedata
 from pathlib import Path
 from typing import Any
@@ -43,6 +42,7 @@ from typing import Any
 import _memory_paths
 from _jsonl import iter_jsonl
 from _locking import LockContention, flock_retry
+from _timeutil import ts_token, utcnow_iso_ms
 
 VALID_TYPES: tuple[str, ...] = (
     "LEARNED",
@@ -73,18 +73,6 @@ class _UnknownSupersedeTarget(Exception):
 
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
-
-
-def _utcnow_iso_ms() -> str:
-    """UTC ISO8601 with millisecond precision + Z suffix."""
-    t = time.time()
-    secs = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(t))
-    ms = int((t - int(t)) * 1000)
-    return f"{secs}.{ms:03d}Z"
-
-
-def _ts_token() -> str:
-    return time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
 
 
 def _normalize_body(body: str) -> str:
@@ -152,7 +140,7 @@ def append(
     kpath = _memory_paths.knowledge_path(workspace_root, namespace)
     lpath = _memory_paths.knowledge_lock_path(workspace_root, namespace)
     entry_id = id_override or compute_id(namespace, ticket, type_, body)
-    quarantine_sidecar = kpath.with_name(f"{kpath.name}.quarantine.{_ts_token()}")
+    quarantine_sidecar = kpath.with_name(f"{kpath.name}.quarantine.{ts_token()}")
 
     if supersedes is None:
         targets: list[str] = []
@@ -170,7 +158,7 @@ def append(
             raise _UnknownSupersedeTarget(sorted(missing)[0])
         entry: dict[str, Any] = {
             "id": entry_id,
-            "ts": _utcnow_iso_ms(),
+            "ts": utcnow_iso_ms(),
             "type": type_,
             "namespace": namespace,
             "branch": branch,

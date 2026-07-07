@@ -19,26 +19,18 @@ Selection inputs (all read-only, queryable):
   - `gh pr list` + `git for-each-ref`, in-flight join by branch name
     `feat/<key>-*` (drop already-running beads; count open PRs for backpressure).
 
-CLI:
-  evolve_select.py --workspace-root <dir> [--cap N] [--concurrency N]
-
-Exit codes:
-  0 = ok (prints the selection JSON)
-  2 = tool error (bd/git/gh failed; stderr propagated)
-  4 = not a maintainer setup (dormant; nothing selected)
+Lib only (no CLI): consumed by evolve_drain.py's select + decide round.
+Raises NotMaintainer (drain maps to exit 4) and ToolError (exit 2).
 """
 
 from __future__ import annotations
 
-import argparse
-import json
-import sys
 from pathlib import Path
 from typing import Any
 
 from _evolve_common import ACTIVE_STATUSES as _ACTIVE_STATUSES
 from _evolve_common import BRANCH_PREFIXES as _BRANCH_PREFIXES
-from _evolve_common import NotMaintainer, ToolError, bead_labels, primary_anchor
+from _evolve_common import NotMaintainer, bead_labels, primary_anchor
 from _evolve_common import fleet_live_keys as _fleet_live_keys
 from _evolve_common import gather_refs as _gather_refs_common
 from _evolve_common import is_inflight as _is_inflight
@@ -262,31 +254,3 @@ def select(
 
 def _config_defaults(workspace_root: Path) -> tuple[int, int]:
     return _read_cap_concurrency(workspace_root, "evolve", DEFAULT_CAP, DEFAULT_CONCURRENCY)
-
-
-def cli_main(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(description="Select the next batch of evolve beads to launch.")
-    parser.add_argument("--workspace-root", required=True)
-    parser.add_argument("--cap", type=int, default=None)
-    parser.add_argument("--concurrency", type=int, default=None)
-    args = parser.parse_args(argv)
-
-    ws = Path(args.workspace_root)
-    cfg_cap, cfg_conc = _config_defaults(ws)
-    cap = args.cap if args.cap is not None else cfg_cap
-    concurrency = args.concurrency if args.concurrency is not None else cfg_conc
-
-    try:
-        result = select(ws, cap=cap, concurrency=concurrency)
-    except NotMaintainer as exc:
-        print(str(exc), file=sys.stderr)
-        return 4
-    except ToolError as exc:
-        print(str(exc), file=sys.stderr)
-        return 2
-    print(json.dumps(result, indent=2))
-    return 0
-
-
-if __name__ == "__main__":
-    sys.exit(cli_main(sys.argv[1:]))

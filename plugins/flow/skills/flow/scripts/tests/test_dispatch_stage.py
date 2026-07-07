@@ -806,34 +806,6 @@ def test_cli_init_round_trip(
     assert payload["ticket"] == "FT-1"
 
 
-def test_cli_finish_skill_output_invalid_json(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    _write_workspace(tmp_path, stages=["ticket"], compounding=False)
-    _stub_git_head(monkeypatch)
-    ds.cmd_init(tmp_path, "FT-1")
-    ds.cmd_next(tmp_path, "FT-1")
-    rc = ds.cli_main(
-        [
-            "finish",
-            "--ticket",
-            "FT-1",
-            "--workspace-root",
-            str(tmp_path),
-            "--stage",
-            "ticket",
-            "--status",
-            "completed",
-            "--skill-output",
-            "{not json",
-        ]
-    )
-    assert rc == 1
-    assert "not JSON" in capsys.readouterr().err
-
-
 def test_cli_advance_skill_output_invalid_json(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1218,14 +1190,14 @@ def test_full_loop_init_to_done_releases_lease(
     assert not (td / "run.lock").exists()
 
 
-def test_finish_cli_flag_contract_matches_skill_prose() -> None:
-    # Guards the prose<->CLI seam: SKILL.md's do-loop finish call must parse.
+def test_advance_cli_flag_contract_matches_skill_prose() -> None:
+    # Guards the prose<->CLI seam: SKILL.md's do-loop advance call must parse.
     # head_sha is derived internally by cmd_finish, NOT a flag: prose passing
     # --head-sha would die "unrecognized arguments" (a bug the unit tests, which
-    # call cmd_finish directly, cannot see).
+    # call cmd_advance directly, cannot see).
     args = ds._parse_args(
         [
-            "finish",
+            "advance",
             "--workspace-root",
             ".",
             "--ticket",
@@ -1238,12 +1210,12 @@ def test_finish_cli_flag_contract_matches_skill_prose() -> None:
             "x.out",
         ]
     )
-    assert args.cmd == "finish"
+    assert args.cmd == "advance"
     assert args.status_value == "completed"
     with pytest.raises(SystemExit):
         ds._parse_args(
             [
-                "finish",
+                "advance",
                 "--workspace-root",
                 ".",
                 "--ticket",

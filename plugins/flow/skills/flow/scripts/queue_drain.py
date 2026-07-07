@@ -49,9 +49,12 @@ from _evolve_common import (
     WORKTREE_PREFIXES,
     NotMaintainer,
     ToolError,
+    bead_status,
     key_from_ref,
     loads,
+    merged_flow_prs,
     ok,
+    reconcile_launched_pending,
 )
 from _evolve_common import active_evolve_keys as _active_evolve_keys
 from _runner import CwdRunner as Runner
@@ -140,19 +143,6 @@ def _inprogress_dayjob_keys(runner: Runner) -> set[str]:
     return out
 
 
-def _bead_status(runner: Runner, key: str) -> str | None:
-    """`bd show <key> --json` status; bd show sees closed beads, bd list hides them."""
-    raw = ok(runner(["bd", "show", key, "--json"]), f"bd show {key}")
-    try:
-        data = json.loads(raw or "{}")
-    except json.JSONDecodeError:
-        return None
-    if isinstance(data, list):
-        data = data[0] if data else {}
-    status = data.get("status") if isinstance(data, dict) else None
-    return str(status) if status else None
-
-
 def cli_main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description="Decide the day-job queue drain's next action.")
     parser.add_argument("--workspace-root", required=True)
@@ -176,38 +166,12 @@ def cli_main(argv: list[str]) -> int:
         # live_runs and launched_pending are repo-global; subtract the active
         # evolve set so this loop never waits on (or unmarks) an evolve run.
         evolve_keys = _active_evolve_keys(run)
-        open_pr_keys = set(sel.get("open_pr_keys") or [])
-        live_runs = set(sel.get("live_runs") or []) - evolve_keys
-        inflight = sorted(set(sel.get("skipped_in_flight") or []) | open_pr_keys | live_runs)
-        live = liveness_map(repo, inflight)
-        # a launched key that has registered (live lease OR open PR) leaves the blind
-        # window; drop it from launched_pending so it stays out past any later
-        # merge/teardown (the fleet entry itself needs no removal here -- it ages
-        # out on its own staleness clock). NOT skipped_in_flight: select folds
-        # launched_pending into it, which would falsely mark an unregistered key
-        # registered.
-        pending = set(sel.get("launched_pending") or []) - evolve_keys
-        registered = live_runs | open_pr_keys
-        sel["launched_pending"] = sorted(pending - registered)
-
-        merged = loads(
-            ok(
-                run(
-                    [
-                        "gh",
-                        "pr",
-                        "list",
-                        "--state",
-                        "merged",
-                        "--json",
-                        "number,headRefName",
-                        "--limit",
-                        "200",
-                    ]
-                ),
-                "gh pr list",
-            )
+        open_pr_keys, _live_runs, inflight = reconcile_launched_pending(
+            sel, exclude_keys=evolve_keys
         )
+        live = liveness_map(repo, inflight)
+
+        merged = merged_flow_prs(run)
         wt_keys = _worktree_keys(repo)
         launch_keys = set(sel.get("launch") or [])
         candidates = wt_keys | launch_keys
@@ -216,8 +180,8 @@ def cli_main(argv: list[str]) -> int:
             for p in merged
             if isinstance(p, dict) and (k := key_from_ref(str(p.get("headRefName") or "")))
         }
-        bead_status = {k: _bead_status(run, k) for k in sorted(merged_keys & candidates)}
-        reap = classify_reap(merged, candidates, bead_status, worktree_keys=wt_keys)
+        statuses = {k: bead_status(run, k) for k in sorted(merged_keys & candidates)}
+        reap = classify_reap(merged, candidates, statuses, worktree_keys=wt_keys)
         # a launch key with a merged PR diverts to the close path, never relaunches
         reap_keys = {entry["key"] for entry in reap}
         if reap_keys & launch_keys:

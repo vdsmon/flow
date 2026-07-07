@@ -42,13 +42,13 @@ import math
 import re
 import sys
 import time
-import tomllib
 import unicodedata
 from pathlib import Path
 from typing import Any
 
 import _memory_paths
 from _jsonl import iter_jsonl
+from _timeutil import ts_token
 
 K1 = 1.5
 B_PARAM = 0.75
@@ -87,13 +87,6 @@ def tokenize(text: str) -> list[str]:
     return _TOKEN_RE.findall(normalized)
 
 
-# ─── Quarantine ──────────────────────────────────────────────────────────────
-
-
-def _ts_token() -> str:
-    return time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
-
-
 # ─── Load ────────────────────────────────────────────────────────────────────
 
 
@@ -101,7 +94,7 @@ def _load_entries(knowledge_path: Path) -> list[dict[str, Any]]:
     if not knowledge_path.exists():
         return []
     # per-invocation sidecar so each scan's malformed lines land in their own file
-    sidecar = knowledge_path.with_name(f"{knowledge_path.name}.quarantine.{_ts_token()}")
+    sidecar = knowledge_path.with_name(f"{knowledge_path.name}.quarantine.{ts_token()}")
     return list(iter_jsonl(knowledge_path, sidecar))
 
 
@@ -270,24 +263,6 @@ def _neg_ts_key(ts: str) -> tuple[int, ...]:
 
 
 # ─── Semantic config + fusion ──────────────────────────────────────────────────
-
-
-def _load_config(workspace_root: Path) -> dict[str, Any]:
-    """Read `[memory.semantic]` from workspace.toml. Absent block → {} (semantic off).
-
-    Keys: `enabled` (bool), `model` (str), `threshold` (float), `embedder` (str).
-    Any read/parse error returns {} so recall stays pure BM25.
-    """
-    path = workspace_root / ".flow" / "workspace.toml"
-    try:
-        data = tomllib.loads(path.read_text(encoding="utf-8"))
-    except (OSError, tomllib.TOMLDecodeError):
-        return {}
-    memory = data.get("memory")
-    if not isinstance(memory, dict):
-        return {}
-    semantic = memory.get("semantic")
-    return semantic if isinstance(semantic, dict) else {}
 
 
 def _cosine(a: list[float], b: list[float]) -> float:
@@ -648,7 +623,7 @@ def cli_main(argv: list[str]) -> int:
 
     top_n = len(entries) if args.label else args.top_n
 
-    config = _load_config(workspace_root)
+    config = _memory_paths.load_semantic_config(workspace_root)
     semantic_on = (args.semantic or bool(config.get("enabled"))) and not (
         args.label and not query.strip()
     )

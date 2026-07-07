@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 import _memory_paths
+import _workspace
 import observe_ship_event
 
 
@@ -664,7 +665,7 @@ def test_plugin_version_guarded_to_empty_on_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _seed_workspace(tmp_path)
-    monkeypatch.setattr(observe_ship_event, "_plugin_version", lambda: "")
+    monkeypatch.setattr(observe_ship_event, "plugin_version", lambda: "")
     path, _ = observe_ship_event.observe(tmp_path, "FT-1", _payload(), "abcdef0123456789")
     data = json.loads(path.read_text(encoding="utf-8"))
     assert data["plugin_version"] == ""
@@ -675,7 +676,7 @@ def test_plugin_version_helper_swallows_oserror(monkeypatch: pytest.MonkeyPatch)
         raise OSError(13, "permission denied")
 
     monkeypatch.setattr(Path, "read_text", boom)
-    assert observe_ship_event._plugin_version() == ""
+    assert _workspace.plugin_version() == ""
 
 
 # ─── observe_revert (durable immutable revert events) ────────────────────────

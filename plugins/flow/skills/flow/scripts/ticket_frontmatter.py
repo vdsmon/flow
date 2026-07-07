@@ -19,7 +19,7 @@ Example:
 
 Invariants:
   - All writes go through atomic temp-fsync-rename + flock(EX) on a sibling
-    `<path>.lock` file (mirrors `state.py:_Flock`).
+    `<path>.lock` file (via `_locking.flock_retry`).
   - Frontmatter block is replaced wholesale on write; markdown body below the
     second `+++` is preserved byte-for-byte.
   - Read-side malformed → quarantine to `<path>.quarantine.<ts>`, return empty
@@ -52,32 +52,25 @@ from __future__ import annotations
 import argparse
 import contextlib
 import datetime
-import fcntl
 import json
 import os
 import re
 import sys
-import time
 import tomllib
 from pathlib import Path
 from typing import Any
 
 from _atomicio import atomic_write_text
-from _timeutil import utcnow_iso
+from _locking import LockContention, flock_retry
+from _timeutil import ts_token, utcnow_iso
 
 DELIM = "+++"
-LOCK_RETRY_COUNT = 3
-LOCK_RETRY_DELAY_S = 1.0
 _INT_RE = re.compile(r"^-?\d+$")
 _LIST_RE = re.compile(r"^\[.*\]$")
 _BARE_KEY_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
-
-
-def _ts_token() -> str:
-    return time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
 
 
 def _lock_path(path: Path) -> Path:
@@ -102,43 +95,6 @@ def _toml_escape(value: str) -> str:
         else:
             out.append(ch)
     return '"' + "".join(out) + '"'
-
-
-class _Flock:
-    """POSIX fcntl.flock context manager with bounded retry on contention.
-
-    Non-blocking LOCK_EX | LOCK_NB; retries up to LOCK_RETRY_COUNT with
-    LOCK_RETRY_DELAY_S backoff between attempts. On exhaustion raises
-    `_LockContention`.
-    """
-
-    def __init__(self, lock_path: Path) -> None:
-        self._lock_path = lock_path
-        self._fd: int | None = None
-
-    def __enter__(self) -> _Flock:
-        self._lock_path.parent.mkdir(parents=True, exist_ok=True)
-        self._fd = os.open(str(self._lock_path), os.O_RDWR | os.O_CREAT, 0o644)
-        for attempt in range(LOCK_RETRY_COUNT):
-            try:
-                fcntl.flock(self._fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                return self
-            except BlockingIOError:
-                if attempt < LOCK_RETRY_COUNT - 1:
-                    time.sleep(LOCK_RETRY_DELAY_S)
-        os.close(self._fd)
-        self._fd = None
-        raise _LockContention(f"could not lock {self._lock_path} after {LOCK_RETRY_COUNT} attempts")
-
-    def __exit__(self, *exc: object) -> None:
-        if self._fd is not None:
-            fcntl.flock(self._fd, fcntl.LOCK_UN)
-            os.close(self._fd)
-            self._fd = None
-
-
-class _LockContention(Exception):
-    """Raised when lock cannot be acquired within retry budget. Exit code 1."""
 
 
 class _SchemaInvalid(Exception):
@@ -228,7 +184,7 @@ def _render_full(data: dict[str, Any], body: str) -> str:
 
 
 def _quarantine(path: Path) -> Path:
-    dst = path.with_name(f"{path.name}.quarantine.{_ts_token()}")
+    dst = path.with_name(f"{path.name}.quarantine.{ts_token()}")
     with contextlib.suppress(OSError):
         os.replace(path, dst)
     return dst
@@ -271,7 +227,7 @@ def update(path: Path, updates: dict[str, str]) -> None:
     appended in insertion order. On unparseable existing frontmatter raises `_SchemaInvalid`
     (CLI surfaces as exit 2).
     """
-    with _Flock(_lock_path(path)):
+    with flock_retry(_lock_path(path)):
         text = path.read_text(encoding="utf-8") if path.exists() else f"{DELIM}\n{DELIM}\n"
         fm, body = _split_frontmatter(text)
         existing: dict[str, Any]
@@ -367,7 +323,7 @@ def cli_main(argv: list[str]) -> int:
         except _SchemaInvalid as exc:
             sys.stderr.write(f"ticket-frontmatter: {exc}\n")
             return 2
-        except _LockContention as exc:
+        except LockContention as exc:
             sys.stderr.write(f"ticket-frontmatter: {exc}\n")
             return 1
         except OSError as exc:

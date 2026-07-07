@@ -5,8 +5,7 @@ Library + thin CLI. Stdlib-only.
 HARD GATE: dispatch-stage.py runs this on every `init` and every `next`.
 Exit 0 = ok. Exit 1 = schema invalid (stderr carries one violation per line).
 
-Validates (phase 7-mvp scope; capability cross-check + canonical snapshot are
-phase 7-full):
+Validates:
 
 1. `.flow/.initialized` marker present.
 2. `[tracker]` block with `backend` ∈ {jira, beads}.
@@ -34,7 +33,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-import snapshot
 from _registry import StageEntry, load_registry
 from model_resolve import OFF_VALUES
 
@@ -357,12 +355,7 @@ def validate(
 def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Validate .flow/ workspace schema.")
     parser.add_argument("--workspace-root", default=".")
-    parser.add_argument("--ticket", default=None)
-    parser.add_argument("--emit-canonical-snapshot", action="store_true")
-    args = parser.parse_args(argv)
-    if args.emit_canonical_snapshot and not args.ticket:
-        parser.error("--emit-canonical-snapshot requires --ticket")
-    return args
+    return parser.parse_args(argv)
 
 
 def cli_main(argv: list[str]) -> int:
@@ -379,12 +372,6 @@ def cli_main(argv: list[str]) -> int:
         for line in result.violations:
             sys.stderr.write(line + "\n")
         return 1
-    if args.emit_canonical_snapshot:
-        # same skill_root resolution as snapshot.py emit and dispatch_stage init,
-        # so all three paths hash identical on-disk content.
-        skill_root = Path(__file__).resolve().parent.parent
-        path = snapshot.write_snapshot(root, args.ticket, skill_root=skill_root)
-        sys.stdout.write(str(path) + "\n")
     return 0
 
 

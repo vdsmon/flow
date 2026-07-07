@@ -45,12 +45,12 @@ import subprocess
 import sys
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from pathlib import Path
 
 from _atomicio import atomic_write_text
 from _locking import flock_blocking
-from _timeutil import iso_z, parse_iso, utcnow_iso
+from _timeutil import iso_z, parse_iso, ts_token, utcnow_iso
 
 EXIT_LEASE_LOST = 7
 
@@ -99,11 +99,6 @@ class LeaseLost(LeaseError):
 
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
-
-
-def _ts_token() -> str:
-    # colon-free so it is usable in a filename (mirrors state._ts_token).
-    return datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
 
 
 def _mint_nonce() -> str:
@@ -471,32 +466,15 @@ def _quarantine_locked(ticket_dir: Path) -> Path | None:
 
     Extracted so takeover_clear can quarantine inside its own flock span:
     flock_blocking opens a fresh fd per call and LOCK_EX blocks across fds even
-    within one process, so nesting the public quarantine_corrupt_lock would
-    self-deadlock. Returns the quarantine dst Path, or None when absent.
+    within one process, so a nested public quarantine wrapper would
+    self-deadlock (the standalone wrapper was retired as dead code). Returns the quarantine dst Path, or None when absent.
     """
     src = run_lock_path(ticket_dir)
     if not src.exists():
         return None
-    dst = ticket_dir / f"run.lock.quarantine.{_ts_token()}"
+    dst = ticket_dir / f"run.lock.quarantine.{ts_token()}"
     os.replace(src, dst)
     return dst
-
-
-def quarantine_corrupt_lock(ticket_dir: Path) -> Path | None:
-    """Rename a still-corrupt run.lock to run.lock.quarantine.<ts> for forensics.
-
-    Re-verifies corruption under the flock before renaming: any classification
-    the caller did outside the flock is stale by the time the rename runs (a
-    concurrent acquire may have replaced the corrupt file with a valid live
-    lease). A lock that is absent or parses as a valid Lease is left alone and
-    None is returned; only a lock that still raises LeaseError is renamed.
-    """
-    with flock_blocking(_flock_path(ticket_dir)):
-        try:
-            read_lease(ticket_dir)
-        except LeaseError:
-            return _quarantine_locked(ticket_dir)
-        return None
 
 
 def takeover_clear(
@@ -640,20 +618,11 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     p_acq.add_argument("--now", default=None)
     p_acq.add_argument("--force", action="store_true")
 
-    p_ref = sub.add_parser("refresh", parents=[common])
-    p_ref.add_argument("--run-id", required=True)
-    p_ref.add_argument("--ttl-seconds", type=int, required=True)
-    p_ref.add_argument("--stage", default=None)
-    p_ref.add_argument("--now", default=None)
-
     p_rel = sub.add_parser("release", parents=[common])
     p_rel.add_argument("--run-id", required=True)
 
     p_cls = sub.add_parser("classify", parents=[common])
     p_cls.add_argument("--now", default=None)
-
-    p_stat = sub.add_parser("status", parents=[common])
-    p_stat.add_argument("--now", default=None)
 
     return parser.parse_args(argv)
 
@@ -697,27 +666,6 @@ def cli_main(argv: list[str]) -> int:
         sys.stdout.write(_serialize(lease))
         return 0
 
-    if args.command == "refresh":
-        try:
-            lease = refresh(
-                ticket_dir,
-                args.run_id,
-                args.ttl_seconds,
-                now_iso,
-                stage=args.stage,
-                current_boot=boot_id(),
-                hostname=socket.gethostname(),
-                cwd=os.getcwd(),
-            )
-        except LeaseLost as exc:
-            sys.stderr.write(f"lease refresh: {exc}\n")
-            return EXIT_LEASE_LOST
-        except LeaseError as exc:
-            sys.stderr.write(f"lease refresh: {exc}\n")
-            return 3
-        sys.stdout.write(_serialize(lease))
-        return 0
-
     if args.command == "release":
         try:
             removed = release(ticket_dir, args.run_id)
@@ -727,13 +675,13 @@ def cli_main(argv: list[str]) -> int:
         sys.stdout.write(json.dumps({"released": removed}) + "\n")
         return 0
 
-    if args.command in ("classify", "status"):
+    if args.command == "classify":
         try:
             result = classify(
                 ticket_dir, now_iso, current_boot=boot_id(), hostname=socket.gethostname()
             )
         except LeaseError as exc:
-            sys.stderr.write(f"lease {args.command}: {exc}\n")
+            sys.stderr.write(f"lease classify: {exc}\n")
             return 3
         sys.stdout.write(json.dumps(result, sort_keys=True) + "\n")
         return 0
@@ -761,7 +709,6 @@ __all__ = [
     "cli_main",
     "hostname",
     "is_expired",
-    "quarantine_corrupt_lock",
     "read_lease",
     "refresh",
     "release",

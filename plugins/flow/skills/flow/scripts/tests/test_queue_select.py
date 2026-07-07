@@ -10,6 +10,7 @@ import pytest
 import fleet
 import lease
 import queue_select as qs
+from _evolve_common import ToolError
 from _timeutil import utcnow_iso
 
 Recorder = list[list[str]]
@@ -413,7 +414,7 @@ def test_select_tool_error(tmp_path):
     def run(args):
         return subprocess.CompletedProcess(args, 1, "", "bd boom")
 
-    with pytest.raises(qs.ToolError):
+    with pytest.raises(ToolError):
         qs.select(ws, cap=5, concurrency=3, runner=run)
 
 

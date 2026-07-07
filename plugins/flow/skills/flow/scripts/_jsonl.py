@@ -79,4 +79,29 @@ def iter_jsonl(path: Path, quarantine_sidecar: Path) -> Iterator[dict[str, Any]]
                 seen_bad.add(stripped)
 
 
-__all__ = ["append_quarantine", "iter_jsonl"]
+def read_jsonl_lenient(path: Path, *, replace_errors: bool = False) -> list[dict[str, Any]]:
+    """Per-line json.loads, skipping blank/malformed lines and non-object rows.
+
+    Read-only twin of iter_jsonl: never writes a quarantine sidecar, for
+    best-effort reads and foreign inputs. Missing file -> []. replace_errors=True
+    decodes with errors="replace" so a stray bad byte in a foreign file (a
+    session transcript) cannot raise UnicodeDecodeError past a caller's
+    OSError-only guard.
+    """
+    if not path.exists():
+        return []
+    text = path.read_text(encoding="utf-8", errors="replace" if replace_errors else "strict")
+    out: list[dict[str, Any]] = []
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(obj, dict):
+            out.append(obj)
+    return out
+
+
+__all__ = ["append_quarantine", "iter_jsonl", "read_jsonl_lenient"]

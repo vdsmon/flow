@@ -20,13 +20,10 @@ hung detection was removed as dead code.
 
 from __future__ import annotations
 
-import argparse
 import contextlib
 import json
 import os
 import secrets
-import sys
-import time
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
@@ -34,7 +31,7 @@ from typing import Any, Literal
 
 from _atomicio import atomic_write_text
 from _locking import flock_blocking
-from _timeutil import utcnow_iso
+from _timeutil import ts_token, utcnow_iso
 
 SCHEMA_VERSION = 1
 
@@ -74,10 +71,6 @@ class StateUnrecoverable(Exception):
 
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
-
-
-def _ts_token() -> str:
-    return time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
 
 
 def _state_path(ticket_dir: Path) -> Path:
@@ -149,7 +142,7 @@ def _quarantine_corrupt(ticket_dir: Path) -> None:
     src = _state_path(ticket_dir)
     if not src.exists():
         return
-    dst = ticket_dir / f"state.json.quarantine.{_ts_token()}"
+    dst = ticket_dir / f"state.json.quarantine.{ts_token()}"
     with contextlib.suppress(OSError):
         os.replace(src, dst)
 
@@ -332,7 +325,7 @@ def _write_locked(ticket_dir: Path, state: TicketState) -> None:
     """Write body assuming the flock is already held. See _write()."""
     path = _state_path(ticket_dir)
     if path.exists():
-        bak = ticket_dir / f"state.json.{_ts_token()}.bak"
+        bak = ticket_dir / f"state.json.{ts_token()}.bak"
         with contextlib.suppress(OSError):
             bak.write_bytes(path.read_bytes())
     atomic_write_text(path, _serialize(state))
@@ -362,107 +355,6 @@ def _update(ticket_dir: Path, mutate_fn: Callable[[TicketState], TicketState]) -
         return new_state
 
 
-# ─── CLI ─────────────────────────────────────────────────────────────────────
-
-
-def _parse_args(argv: list[str]) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Per-ticket state.json reader/writer.")
-    sub = parser.add_subparsers(dest="cmd", required=True)
-
-    p_read = sub.add_parser("read", help="Read state.json and emit to stdout.")
-    p_read.add_argument("ticket_dir")
-
-    p_init = sub.add_parser("init", help="Create new state.json with pending stages.")
-    p_init.add_argument("ticket_dir")
-    p_init.add_argument("--ticket", required=True)
-    p_init.add_argument("--backend", choices=("jira", "beads"), required=True)
-    p_init.add_argument("--stage", action="append", required=True, dest="stages")
-    p_init.add_argument("--run-id", default=None)
-
-    p_begin = sub.add_parser("begin", help="Mark stage in_progress.")
-    p_begin.add_argument("--ticket-dir", required=True)
-    p_begin.add_argument("--stage", required=True)
-    p_begin.add_argument("--head-sha", required=True)
-    p_begin.add_argument("--agent-id", default=None)
-
-    p_finish = sub.add_parser("finish", help="Mark stage completed|failed.")
-    p_finish.add_argument("--ticket-dir", required=True)
-    p_finish.add_argument("--stage", required=True)
-    p_finish.add_argument("--status", choices=("completed", "failed"), required=True)
-    p_finish.add_argument("--head-sha", required=True)
-    p_finish.add_argument("--output-path", default=None)
-    p_finish.add_argument("--skill-output", default=None, help="JSON string")
-    p_finish.add_argument("--failure-detail", default=None)
-
-    return parser.parse_args(argv)
-
-
-def cli_main(argv: list[str]) -> int:
-    args = _parse_args(argv)
-    if args.cmd == "read":
-        td = Path(args.ticket_dir).resolve()
-        state, exit_code = read(td)
-        if exit_code == 2:
-            sys.stderr.write(f"state.py: no recoverable state.json under {td}\n")
-            return 2
-        if state is None:
-            sys.stdout.write("null\n")
-            return exit_code
-        sys.stdout.write(_serialize(state))
-        return exit_code
-
-    if args.cmd == "init":
-        td = Path(args.ticket_dir).resolve()
-        state = init(td, args.ticket, args.backend, args.stages, run_id=args.run_id)
-        sys.stdout.write(_serialize(state))
-        return 0
-
-    if args.cmd == "begin":
-        td = Path(args.ticket_dir).resolve()
-        try:
-            state = begin_stage(td, args.stage, args.head_sha, agent_id=args.agent_id)
-        except (ValueError, StateUnrecoverable) as exc:
-            sys.stderr.write(f"state.py begin: {exc}\n")
-            return 1
-        sys.stdout.write(_serialize(state))
-        return 0
-
-    if args.cmd == "finish":
-        td = Path(args.ticket_dir).resolve()
-        skill_output: dict[str, Any] | None = None
-        if args.skill_output:
-            try:
-                parsed = json.loads(args.skill_output)
-            except json.JSONDecodeError as exc:
-                sys.stderr.write(f"state.py finish: --skill-output not JSON: {exc}\n")
-                return 1
-            if not isinstance(parsed, dict):
-                sys.stderr.write("state.py finish: --skill-output must be a JSON object\n")
-                return 1
-            skill_output = parsed
-        try:
-            state = finish_stage(
-                td,
-                args.stage,
-                args.status,
-                args.head_sha,
-                output_path=args.output_path,
-                skill_output=skill_output,
-                failure_detail=args.failure_detail,
-            )
-        except (ValueError, StateUnrecoverable) as exc:
-            sys.stderr.write(f"state.py finish: {exc}\n")
-            return 1
-        sys.stdout.write(_serialize(state))
-        return 0
-
-    return 1
-
-
-if __name__ == "__main__":
-    raise SystemExit(cli_main(sys.argv[1:]))
-
-
 __all__ = [
     "BACKUP_RETENTION",
     "SCHEMA_VERSION",
@@ -471,7 +363,6 @@ __all__ = [
     "StateUnrecoverable",
     "TicketState",
     "begin_stage",
-    "cli_main",
     "find_failed",
     "finish_stage",
     "force_stage_status",

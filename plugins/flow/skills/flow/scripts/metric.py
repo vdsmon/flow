@@ -48,7 +48,6 @@ import json
 import re
 import subprocess
 import sys
-import time
 from collections.abc import Callable
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -60,8 +59,8 @@ import friction_recurrence
 import observe_ship_event
 import recall
 import recall_usage
-from _jsonl import append_quarantine, iter_jsonl
-from _timeutil import iso_z, parse_iso, utcnow_iso
+from _jsonl import append_quarantine, iter_jsonl, read_jsonl_lenient
+from _timeutil import iso_z, parse_iso, ts_token, utcnow_iso
 from baseline_collect import percentile
 
 ATTR_VIA_FLOW = "shipped_via_flow"
@@ -375,24 +374,6 @@ def _default_checkpoint_manifest_path() -> Path:
     return Path.home() / ".config" / "flow" / "checkpoint-manifest.jsonl"
 
 
-def _read_manifest(path: Path) -> list[dict[str, Any]]:
-    """Read manifest entries (one JSON object per line); skip blank/malformed."""
-    if not path.exists():
-        return []
-    entries: list[dict[str, Any]] = []
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line:
-            continue
-        try:
-            entry = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(entry, dict):
-            entries.append(entry)
-    return entries
-
-
 def _participant_initialized_at(entry: dict[str, Any]) -> str | None:
     # init.py writes `ts`; the spec's checkpoint field is `initialized_at`. Read
     # the spec field first, fall back to the on-disk `ts`.
@@ -435,7 +416,7 @@ def compute_checkpoint(
     total_via_flow = 0
     total_not_attributed = 0
 
-    for entry in _read_manifest(manifest_path):
+    for entry in read_jsonl_lenient(manifest_path):
         if entry.get("checkpoint_mode") != mode:
             continue
         initialized_at = _participant_initialized_at(entry)
@@ -482,10 +463,6 @@ def compute_checkpoint(
 # ─── Friction per run ────────────────────────────────────────────────────────
 
 
-def _ts_token() -> str:
-    return time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
-
-
 def compute_friction_per_run(
     workspace_root: Path,
     namespace: str,
@@ -510,7 +487,7 @@ def compute_friction_per_run(
         raise ValueError(f"until is not a UTC ISO8601 timestamp: {until_iso!r}")
 
     path = _memory_paths.friction_path(workspace_root, namespace)
-    sidecar = path.with_name(f"{path.name}.quarantine.{_ts_token()}")
+    sidecar = path.with_name(f"{path.name}.quarantine.{ts_token()}")
 
     total_events = 0
     runs: set[str] = set()
@@ -578,7 +555,7 @@ def compute_corpus_health(
     if not kpath.exists():
         entries: list[Any] = []
     else:
-        sidecar = kpath.with_name(f"{kpath.name}.quarantine.{_ts_token()}")
+        sidecar = kpath.with_name(f"{kpath.name}.quarantine.{ts_token()}")
         entries = list(iter_jsonl(kpath, sidecar))
 
     dead = recall.superseded_ids([e for e in entries if isinstance(e, dict)])
@@ -670,7 +647,7 @@ def compute_recall_hit_rate(
     runs: set[str] = set()
 
     if path.exists():
-        sidecar = path.with_name(f"{path.name}.quarantine.{_ts_token()}")
+        sidecar = path.with_name(f"{path.name}.quarantine.{ts_token()}")
         for rec in iter_jsonl(path, sidecar):
             ts = parse_iso(rec.get("ts"))
             if ts is None or not (since <= ts < until):
@@ -736,11 +713,11 @@ def compute_fix_efficacy(workspace_root: Path, namespace: str) -> dict[str, Any]
     read as "a MACHINERY entry exists for this ticket", not a live tracker check.
     """
     fpath = _memory_paths.friction_path(workspace_root, namespace)
-    fsidecar = fpath.with_name(f"{fpath.name}.quarantine.{_ts_token()}")
+    fsidecar = fpath.with_name(f"{fpath.name}.quarantine.{ts_token()}")
     friction_entries = [e for e in iter_jsonl(fpath, fsidecar) if isinstance(e, dict)]
 
     kpath = _memory_paths.knowledge_path(workspace_root, namespace)
-    ksidecar = kpath.with_name(f"{kpath.name}.quarantine.{_ts_token()}")
+    ksidecar = kpath.with_name(f"{kpath.name}.quarantine.{ts_token()}")
     knowledge_entries = [e for e in iter_jsonl(kpath, ksidecar) if isinstance(e, dict)]
 
     machinery_entries = [

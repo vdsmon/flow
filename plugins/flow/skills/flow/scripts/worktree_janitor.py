@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any
 
 import fleet
-from _evolve_common import ACTIVE_STATUSES, ToolError, key_from_ref, loads, ok
+from _evolve_common import ACTIVE_STATUSES, ToolError, bead_show, key_from_ref, loads, ok
 from _runner import CwdRunner as Runner
 from _runner import cwd_default_runner as _default_runner
 from flow_worktree import reap_worktree
@@ -108,13 +108,9 @@ def _bead_is_active(runner: Runner, key: str) -> bool:
     positive-terminal check would no-op on the primary target.
     """
     try:
-        raw = ok(runner(["bd", "show", key, "--json"]), f"bd show {key}")
-        data = json.loads(raw or "{}")
-    except (ToolError, json.JSONDecodeError):
+        status = bead_show(runner, key).get("status")
+    except ToolError:
         return True
-    if isinstance(data, list):
-        data = data[0] if data else {}
-    status = data.get("status") if isinstance(data, dict) else None
     if not status:
         return True
     return str(status) in _ACTIVE

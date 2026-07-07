@@ -42,6 +42,7 @@ import memory_embed
 import recall
 from _evolve_common import BRANCH_PREFIX as _BRANCH_PREFIX
 from _jsonl import iter_jsonl
+from _timeutil import ts_token
 
 DEFAULT_TYPES = ("DECISION", "FACT")
 # Calibrated against the live corpus (353 vectors, flow-ro3w): 0.93+ surfaces zero
@@ -54,16 +55,12 @@ DEFAULT_TYPES = ("DECISION", "FACT")
 DEFAULT_CLUSTER_THRESHOLD = 0.90
 
 
-def _ts_token() -> str:
-    return memory_append._ts_token()
-
-
 def _load_entries(workspace_root: Path) -> list[dict[str, Any]]:
     namespace = _memory_paths.resolve_namespace(workspace_root)
     kpath = _memory_paths.knowledge_path(workspace_root, namespace)
     if not kpath.exists():
         return []
-    sidecar = kpath.with_name(f"{kpath.name}.quarantine.{_ts_token()}")
+    sidecar = kpath.with_name(f"{kpath.name}.quarantine.{ts_token()}")
     return list(iter_jsonl(kpath, sidecar))
 
 

@@ -41,6 +41,7 @@ import harness_corpus
 import recall
 import state
 import ticket_frontmatter
+from _jsonl import read_jsonl_lenient
 
 # Worst-first ceiling on distilled recurrence classes; the live corpus already
 # yields 37+ and the bundle also carries the full diff + subagent reports.
@@ -105,27 +106,10 @@ def _harness_eval_block(scripts_dir: Path | None = None) -> dict[str, Any]:
     }
 
 
-def _lenient_jsonl(path: Path) -> list[Any]:
-    """Per-line json.loads, skipping blanks + malformed lines. Read-only, never writes a
-    quarantine sidecar (mirrors the friction read in bundle()).
-    """
-    out: list[Any] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
-        try:
-            out.append(json.loads(line))
-        except json.JSONDecodeError:
-            continue
-    return out
-
-
 def _recalled_ids(log_path: Path) -> list[str]:
     ids: list[str] = []
     seen: set[str] = set()
-    for rec in _lenient_jsonl(log_path):
-        if not isinstance(rec, dict):
-            continue
+    for rec in read_jsonl_lenient(log_path):
         for rid in rec.get("returned_ids", []):
             if isinstance(rid, str) and rid and rid not in seen:
                 seen.add(rid)
@@ -154,9 +138,7 @@ def _recalled_entries(ticket_dir: Path, cwd: Path) -> list[dict[str, Any]]:
         if not kpath.exists():
             return []
         by_id: dict[str, dict[str, Any]] = {
-            e["id"]: e
-            for e in _lenient_jsonl(kpath)
-            if isinstance(e, dict) and isinstance(e.get("id"), str)
+            e["id"]: e for e in read_jsonl_lenient(kpath) if isinstance(e.get("id"), str)
         }
         dead = recall.superseded_ids(list(by_id.values()))
         out: list[dict[str, Any]] = []
@@ -195,7 +177,7 @@ def _recurrence(cwd: Path) -> list[dict[str, Any]]:
         namespace = _memory_paths.resolve_namespace(cwd)
         sig_classes = friction_recurrence.analyze(cwd, namespace).get("signature_classes", [])
         fpath = _memory_paths.friction_path(cwd, namespace)
-        friction_all = _lenient_jsonl(fpath) if fpath.exists() else []
+        friction_all = read_jsonl_lenient(fpath)
         out: list[dict[str, Any]] = []
         for c in sig_classes:
             fixes = c.get("fixes") or []
@@ -283,16 +265,7 @@ def bundle(
     try:
         namespace = _memory_paths.resolve_namespace(cwd)
         fpath = _memory_paths.friction_path(cwd, namespace)
-        if fpath.exists():
-            for line in fpath.read_text(encoding="utf-8").splitlines():
-                if not line.strip():
-                    continue
-                try:
-                    fe = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if fe.get("run_id") == ts.run_id:
-                    friction.append(fe)
+        friction = [fe for fe in read_jsonl_lenient(fpath) if fe.get("run_id") == ts.run_id]
     except (_memory_paths._MemoryConfigError, OSError):
         pass
 
