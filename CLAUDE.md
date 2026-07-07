@@ -29,12 +29,17 @@ Keeping the `plugins/flow/` nesting (option a) means the marketplace can later h
 Run from `plugins/flow/skills/flow/scripts/` (mise finds `mise.toml` there). Use `rtk proxy` in front of pytest if output looks compressed/mangled.
 
 ```
-mise run lint              # ruff + ty
+mise run lint              # ruff check + ruff format --check + ty check
+mise run lint:ruff         # ruff check only        (prek pre-commit)
+mise run lint:format       # ruff format --check     (prek pre-commit)
+mise run lint:ty           # ty check only           (prek pre-push)
 mise run test              # pytest scripts/tests + hooks/tests (run separately; they have distinct rootdirs)
 python3 seam_check.py      # prose↔CLI seam checker
 ```
 
 Runtime is stdlib-only (`python3`); the venv/mise is dev tooling only.
+
+**Fail-fast hooks (prek, opt-in).** `.pre-commit-config.yaml` at the repo root wires the CI checks as [prek](https://github.com/j178/prek) hooks so commits fail before CI: pre-commit stage = ruff check + ruff format --check + seam_check (sub-second); pre-push stage = ty (seconds). prek is pinned in the repo-root `mise.toml`; install once per clone (from repo root): `mise install && prek install`. Hooks are `repo: local`, shell out to the `lint:*` mise sub-tasks (one source of truth with CI), and are **check-only** — see the invariant below.
 
 ## Working here (gotchas)
 
@@ -49,6 +54,7 @@ Runtime is stdlib-only (`python3`); the venv/mise is dev tooling only.
 - **Self-evolution is the thesis.** The reflect stage repairs the harness from inside a run via `machinery_edit.py` (flock-serialized, snapshot-aware). See `references/self-evolution.md`. Never route machinery fixes through the raw Edit tool; never self-edit `stage-registry.toml` or a wired handler mid-run.
 - **Hot auto-merge is maintainer-only.** A HOT leaf PR may auto-merge (in-run via the `merge` stage, or via the evolve janitor for an orphan) ONLY in this maintainer self-target repo, gated by `[evolve] auto_merge_hot` + isolation (one hot at a time) + CI-green + agent diff review. For user projects the flag stays off and the human-merge keystone holds.
 - **Version bumps.** `plugins/flow/.claude-plugin/plugin.json` and the `.claude-plugin/marketplace.json` flow entry stay in sync. The sync happens post-merge on `main` via the server-side `version-stamp.yml` Action (it runs `version.py stamp`), not via a per-PR inline bump.
+- **Fail-fast hooks are CHECK-ONLY.** The prek hooks (`.pre-commit-config.yaml`) never mutate files. Autonomous `/flow --auto` runs commit through the engine inside worktrees that share the main checkout's `.git`, so any installed hook fires during those commits too; a mutating hook (`ruff --fix`, a formatter writing) would create unowned drift against the content-ownership commit gate. Split by latency: pre-commit = ruff check + ruff format --check + seam_check; pre-push = ty. Hooks stay `repo: local` and shell out to the `lint:*` mise sub-tasks, so no rule set is redeclared against CI.
 - **`scripts/` stays flat.** The engine is a flat dir of stdlib-only, single-purpose scripts — not an importable package. A filename is simultaneously the import name (`import state`), the public CLI path (`${CLAUDE_SKILL_DIR}/scripts/state.py`), and a `seam_check` entry, so any move or rename (a `src/` layout, `tracker/`+`forge/` subdirs, or a cluster-prefix rename) ripples through ~84 prose call-sites + the seam checker + the import graph, and breaks the dual import-and-CLI scripts that work only because the dir is on `sys.path`. Don't reorganize it to make `ls` shorter. Logical grouping belongs in `scripts/MODULE.md` (the enforced cluster map), not the filesystem.
 
 ## Robustness (do not erode)

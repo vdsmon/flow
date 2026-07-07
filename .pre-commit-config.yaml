@@ -1,0 +1,49 @@
+# Check-only hooks (prek). Mirror CI's `mise run lint` + seam_check so commits
+# fail fast instead of at CI time. Opt in per clone: `prek install`.
+#
+# INVARIANT: every hook is CHECK-ONLY, never mutating. Autonomous `/flow --auto`
+# runs commit through the engine inside worktrees that share the main checkout's
+# .git, so any installed hook fires during those commits too. A hook that
+# rewrites files (ruff --fix, a formatter writing) would create unowned drift
+# against the content-ownership commit gate. Keep every hook read-only.
+#
+# This file lives at the repo root; the checks run from
+# plugins/flow/skills/flow/scripts (where mise.toml + seam_check.py live), so
+# each entry cd's there first. Hooks shell out to the mise lint sub-tasks (one
+# source of truth with CI); no rule set is redeclared here.
+# files: ^plugins/flow/ gates each hook to plugin changes; pass_filenames: false
+# because every check scans the whole tree itself.
+default_install_hook_types: [pre-commit, pre-push]
+repos:
+  - repo: local
+    hooks:
+      # Sub-second checks: block the commit.
+      - id: ruff-check
+        name: ruff check
+        language: system
+        entry: "bash -c 'cd plugins/flow/skills/flow/scripts && mise run lint:ruff'"
+        files: ^plugins/flow/
+        pass_filenames: false
+        stages: [pre-commit]
+      - id: ruff-format-check
+        name: ruff format --check
+        language: system
+        entry: "bash -c 'cd plugins/flow/skills/flow/scripts && mise run lint:format'"
+        files: ^plugins/flow/
+        pass_filenames: false
+        stages: [pre-commit]
+      - id: seam-check
+        name: seam_check.py
+        language: system
+        entry: "bash -c 'cd plugins/flow/skills/flow/scripts && python3 seam_check.py'"
+        files: ^plugins/flow/
+        pass_filenames: false
+        stages: [pre-commit]
+      # Seconds-long check: block the push, not every commit.
+      - id: ty-check
+        name: ty check
+        language: system
+        entry: "bash -c 'cd plugins/flow/skills/flow/scripts && mise run lint:ty'"
+        files: ^plugins/flow/
+        pass_filenames: false
+        stages: [pre-push]
