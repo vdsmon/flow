@@ -45,6 +45,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import json
+import math
 import re
 import subprocess
 import sys
@@ -61,7 +62,23 @@ import recall
 import recall_usage
 from _jsonl import append_quarantine, iter_jsonl, read_jsonl_lenient
 from _timeutil import iso_z, parse_iso, ts_token, utcnow_iso
-from baseline_collect import percentile
+
+def percentile(values: list[float], pct: float) -> float:
+    """Linear-interpolation percentile (numpy default, C=1). pct in [0, 100].
+
+    Empty input returns 0.0. Sorts a copy; the caller's list is untouched.
+    """
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    n = len(ordered)
+    if n == 1:
+        return float(ordered[0])
+    rank = (n - 1) * pct / 100.0
+    lo = math.floor(rank)
+    hi = math.ceil(rank)
+    return ordered[lo] + (rank - lo) * (ordered[hi] - ordered[lo])
+
 
 ATTR_VIA_FLOW = "shipped_via_flow"
 ATTR_NOT_ATTRIBUTED = "shipped_backend_not_attributed"

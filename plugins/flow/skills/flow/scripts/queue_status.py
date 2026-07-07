@@ -12,6 +12,14 @@ evolve run) and STRANDED pre-PR day-job beads feed `decide` so it reads
 to the close path can still appear in it (the reap classification needs the
 merged-PR + per-key `bd show` gather this status verb skips).
 
+Also carries the parked-PR review enrichment (epic flow-kx17.5): each parked
+key's open PR is probed for unresolved NATIVE Major+ review threads (a genuine
+new human CHANGES_REQUESTED -> `/flow revise <pr#>`), surfaced as `reviews`.
+Best-effort: no `[forge]` block, no parked keys, or any per-key forge error ->
+`reviews: []`, never a failure. The `[revise] plain_comment_severity` floor is
+deliberately NOT applied here (a leftover unresolved bot minor must never
+produce a false human-review flag; the floor is a revise-time knob).
+
 Read-only by construction: this script touches no file, ever. No launches, no
 bd mutations, no fleet-ledger writes; the launched_pending-minus-registered set
 is computed in memory only (the underlying fleet entry is left untouched -- it
@@ -36,11 +44,92 @@ from typing import Any
 
 import _evolve_common
 import evolve_drain
+import forge
 import queue_drain
 import queue_select
 from _runner import CwdRunner as Runner
 from _runner import cwd_default_runner
 from maintainer import resolve_maintainer_repo
+
+# minor/nit are intentionally excluded: a leftover unresolved bot minor must never
+# produce a false human-review flag (the plain-comment floor is a revise-time knob).
+_MAJOR_PLUS = {"major", "critical"}
+
+
+def flag_parked_reviews(keys: list[str], pr_refs: list[str], adapter: Any) -> list[dict[str, Any]]:
+    """For each parked key with a matching open-PR ref, count unresolved Major+ threads.
+
+    Joins each parked key to its EXACT slugged head ref via `key_from_ref` (a
+    reconstructed bare `feat/<key>` would not match the real `feat/<key>-<slug>`
+    branch and silently flag nothing). Returns a result dict only for keys whose
+    `unresolved_major > 0`. Best-effort: any per-key adapter error (a `ForgeError`
+    incl. `NotSupported`, or an unexpected payload shape) is swallowed, that key
+    is not flagged, the others still process.
+    """
+    ref_by_key: dict[str, str] = {}
+    for ref in pr_refs:
+        key = _evolve_common.key_from_ref(ref)
+        if key and key not in ref_by_key:
+            ref_by_key[key] = ref
+
+    results: list[dict[str, Any]] = []
+    for key in keys:
+        ref = ref_by_key.get(key)
+        if ref is None:
+            continue
+        try:
+            pr = adapter.detect_pr(ref)
+            if pr is None:
+                continue
+            pr_id = pr.get("id")
+            if not pr_id:
+                continue
+            threads = adapter.review_threads(pr_id)
+        except Exception:
+            # not just ForgeError: an unexpected payload shape (KeyError/TypeError)
+            # or a raw parse error surfacing from an adapter must also skip the
+            # key, or the best-effort contract breaks
+            continue
+
+        flagged = [t for t in threads if t.get("severity") in _MAJOR_PLUS and not t.get("resolved")]
+        if not flagged:
+            continue
+        results.append(
+            {
+                "key": key,
+                "pr_id": pr_id,
+                "pr_url": pr.get("url"),
+                "unresolved_major": len(flagged),
+                "threads": [
+                    {"id": t.get("id"), "severity": t.get("severity"), "title": t.get("title")}
+                    for t in flagged
+                ],
+            }
+        )
+    return results
+
+
+def _parked_reviews(
+    workspace_root: Path,
+    keys: list[str],
+    pr_refs: list[str],
+    forge_factory: Any = None,
+) -> list[dict[str, Any]]:
+    """flag_parked_reviews behind the workspace forge config; [] on any miss."""
+    if not keys:
+        return []
+    try:
+        config = forge.read_forge_config(workspace_root)
+    except forge.ForgeConfigError:
+        config = None
+    if config is None:
+        return []
+    factory = forge_factory or forge.make_forge
+    try:
+        adapter = factory(config)
+    except Exception:
+        return []
+    return flag_parked_reviews(keys, pr_refs, adapter)
 
 
 def status(
@@ -49,10 +138,11 @@ def status(
     cap: int,
     concurrency: int,
     runner: Runner | None = None,
+    forge_factory: Any = None,
 ) -> dict[str, Any]:
     repo = resolve_maintainer_repo(workspace_root)
     if repo is None:
-        raise queue_select.NotMaintainer("not a flow maintainer setup; nothing to report")
+        raise _evolve_common.NotMaintainer("not a flow maintainer setup; nothing to report")
     run = runner or cwd_default_runner(repo)
 
     sel = queue_select.select(workspace_root, cap=cap, concurrency=concurrency, runner=run)
@@ -96,10 +186,21 @@ def status(
     )
 
     decision = evolve_drain.decide(sel, live, stranded=[e["key"] for e in stranded])
+
+    # parked-PR review enrichment: probe only when something is parked (skips
+    # the extra gh/git round-trip on the common empty case)
+    reviews: list[dict[str, Any]] = []
+    if decision["parked"]:
+        _, pr_refs = _evolve_common.gather_refs(run)
+        reviews = _parked_reviews(
+            workspace_root, decision["parked"], sorted(pr_refs), forge_factory
+        )
+
     return {
         "action": decision["action"],
         "launch": decision["launch"],
         "parked": decision["parked"],
+        "reviews": reviews,
         "stranded_pre_pr": stranded,
         "liveness": live,
         "ready": ready,
@@ -121,10 +222,10 @@ def cli_main(argv: list[str]) -> int:
 
     try:
         result = status(ws, cap=cap, concurrency=concurrency)
-    except queue_select.NotMaintainer as exc:
+    except _evolve_common.NotMaintainer as exc:
         print(str(exc), file=sys.stderr)
         return 4
-    except queue_select.ToolError as exc:
+    except _evolve_common.ToolError as exc:
         print(str(exc), file=sys.stderr)
         return 2
     print(json.dumps(result, indent=2))

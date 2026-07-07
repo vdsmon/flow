@@ -56,7 +56,7 @@ from typing import Any
 import lease
 from _evolve_common import BRANCH_PREFIX as _BRANCH_PREFIX
 from _evolve_common import WORKTREE_PREFIXES as _WORKTREE_PREFIXES
-from _evolve_common import bead_labels
+from _evolve_common import NotMaintainer, ToolError, bead_labels
 from _evolve_common import key_from_ref as _key_from_ref
 from _evolve_common import loads as _loads
 from _evolve_common import merged_flow_prs as _merged_flow_prs
@@ -66,12 +66,7 @@ from _evolve_common import run_dir_for as _run_dir_for
 from _runner import CwdRunner as Runner
 from _runner import cwd_default_runner as _default_runner
 from _timeutil import utcnow_iso
-from evolve_select import (
-    NotMaintainer,
-    ToolError,
-    _config_defaults,
-    select,
-)
+from evolve_select import _config_defaults, select
 from maintainer import resolve_maintainer_repo
 
 
