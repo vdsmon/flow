@@ -252,7 +252,7 @@ class TrackerConfigError(TrackerError):
 class Tracker(Protocol):
     """Cross-backend ticket interface. Implemented by per-backend adapters.
 
-    Lifecycle methods (`get`, `list_assigned`, `list_linked`, `list_transitions`,
+    Lifecycle methods (`get`, `list_assigned`, `list_transitions`,
     `create`, `transition`, `comment`, `link`, `state`,
     `project_requires_pr`, `is_shipped`) are MANDATORY for all backends.
 

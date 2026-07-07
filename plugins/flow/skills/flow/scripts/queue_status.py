@@ -191,10 +191,13 @@ def status(
     # the extra gh/git round-trip on the common empty case)
     reviews: list[dict[str, Any]] = []
     if decision["parked"]:
-        _, pr_refs = _evolve_common.gather_refs(run)
-        reviews = _parked_reviews(
-            workspace_root, decision["parked"], sorted(pr_refs), forge_factory
-        )
+        try:
+            _, pr_refs = _evolve_common.gather_refs(run)
+            reviews = _parked_reviews(
+                workspace_root, decision["parked"], sorted(pr_refs), forge_factory
+            )
+        except _evolve_common.ToolError:
+            reviews = []
 
     return {
         "action": decision["action"],

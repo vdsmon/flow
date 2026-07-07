@@ -1,6 +1,6 @@
 """Canonical run snapshot for TOCTOU defense across dispatch calls.
 
-Library + thin CLI. Stdlib-only.
+Library module (no CLI). Stdlib-only.
 
 The dispatcher validates workspace.toml at run start, then makes several short
 dispatch subprocess calls (init / next / finish / release) over the life of a

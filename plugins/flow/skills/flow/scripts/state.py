@@ -1,6 +1,6 @@
 """Per-ticket state.json reader/writer.
 
-Library + thin CLI. Stdlib-only.
+Library module (no CLI). Stdlib-only.
 
 Invariants:
 

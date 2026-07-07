@@ -10,7 +10,6 @@ surface the prose calls, mirroring `tracker_cli.py`.
 Subcommands:
   detect-pr      --branch B                         forge.detect_pr(branch) -> PR|null
   pr-info        --pr ID                            forge.pr_info(id) -> PR|null (ANY state)
-  open-pr        --base --head --title --body [--draft]  forge.open_pr(...) -> PR
   ci-rollup      --pr ID                            forge.ci_rollup(id) -> CIStatus (one-shot)
   review-threads --pr ID                            forge.review_threads(id) -> [thread]
   review-status  --pr ID                            forge.bot_review_present(id) -> {reviewed}

@@ -278,7 +278,6 @@ class JiraAdapter:
             )
         self._auth_header = _basic_auth_header(email, token)
         self._http: HttpFn = http if http is not None else urllib.request.urlopen
-        # Cached at first set_epic_link call. None = not yet probed.
         # Cached at first set_sprint / list_sprints call.
         self._scrum_board_id: int | None = None
 

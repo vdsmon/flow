@@ -20,11 +20,10 @@ Quarantine semantics (sidecar, main file untouched):
 - The main file is never rewritten on read (append-only invariant). compact()
   is the sole rewriter, and only it drops entries.
 
-Exit codes:
-  0 = appended (or list/compact ok)
-  1 = duplicate key (no-op, append only)
+CLI is `compact --drop-keys` only; append/list are library calls
+(tracker_cli.py + sync.py). Exit codes:
+  0 = compact ok
   2 = lock contention
-  3 = schema / invalid args
   4 = I/O error
 """
 

@@ -2,13 +2,12 @@
 
 Library + thin CLI. Stdlib-only. Imports `state` + `validate_workspace`.
 
-Subcommands: `init`, `next`, `advance`, `finish`, `release`, `status`,
-`revise-open`. The dispatcher does NOT invoke handlers itself; it reads/writes
-state.json and emits a handler-descriptor JSON for the SKILL.md prose layer to
-act on.
+Subcommands: `init`, `next`, `advance`, `release`, `revise-open`. The
+dispatcher does NOT invoke handlers itself; it reads/writes state.json and
+emits a handler-descriptor JSON for the SKILL.md prose layer to act on.
 
 Lifecycle: pending → in_progress (via `next`) → completed | failed (via
-`finish`).
+`advance`, which composes the finish step with the next pick).
 
 HARD GATE: validate_workspace.validate() runs on every `init` and every
 `next`. Schema violation = exit 1, stderr lists violations.

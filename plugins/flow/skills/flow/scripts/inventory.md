@@ -494,7 +494,7 @@ one revision may be live per ticket at a time (exit 4); rev-id allocation + the 
 stage subset = `implement, code_review, e2e, commit, reflect, review_loop` intersected with
 the workspace stages (ws order preserved); `--stages` overrides. Emits
 `{ticket, rev_id, run_id, session_nonce, revision_dir, stages}`. The
-`next`/`advance`/`finish`/`status`/`release` subcommands take `--revision <id>` to drive
+`next`/`advance`/`release` subcommands take `--revision <id>` to drive
 the sub-run (default = the ticket-level run, byte-identical to today).
 
 `flow_worktree.py locate-or-reseed --ticket T --branch B --main-root R` is the revision's
@@ -518,7 +518,7 @@ The canonical-snapshot pattern is live: a content hash is captured once at `init
 |--------------------------------------------------|-----------|
 | Lease-style run.lock (pid + boot_id + ...)       | 7-full    |
 | Background lease refresher thread                | 7-full    |
-| `--emit-canonical-snapshot` content-tree hash    | 7-full    |
+| ~~`--emit-canonical-snapshot` content-tree hash~~ (shipped as snapshot.py + the dispatch-init write; the standalone flag was retired 2026-07) | 7-full ✓ |
 | FS capability probe (flock detection)            | 7-full    |
 | `lint-ticket.py` HARD GATE pre-stage             | 8-mvp ✓   |
 | `branch-ticket.py` ticket resolution             | 8-mvp ✓   |
@@ -594,8 +594,7 @@ Git diff capture for implement / commit / reflect stages.
 
 | Subcommand | Flags | Exits | Output |
 |------------|-------|-------|--------|
-| `since` | `--ref <git-ref> --cwd <dir>` | 0=ok, 2=git-error | `{files_touched, insertions, deletions, binary}` JSON. |
-| `since-stage` | `--stage <name> --ticket <key> --ticket-dir <dir> --cwd <dir>` | 0=ok, 1=missing-state, 2=git-error | Reads `state.json` for `stages.<name>.started_at_sha`, delegates to `since`. |
+| `since-stage` | `--stage <name> --ticket <key> --ticket-dir <dir> --cwd <dir>` | 0=ok, 1=missing-state, 2=git-error | Reads `state.json` for `stages.<name>.started_at_sha`, diffs `<sha>..HEAD` → `{files_touched, insertions, deletions, binary}` JSON. |
 | `record-baseline` | `--stage <name> --ticket <key> --ticket-dir <dir> [--files <csv>] [--capture-blobs] --cwd <dir>` | 0=ok, 2=git-error | Writes `<ticket-dir>/baseline.json` with `{stage, head_sha, planned_files, blobs}`. |
 | `capture-implement-diff` | `--ticket <key> --ticket-dir <dir> --cwd <dir>` | 0=ok, 1=missing-baseline / gitignored planned file, 2=git-error | Writes `<ticket-dir>/implement.diff` via `git diff --binary --raw`. |
 | `check-ownership` | `--ticket <key> --ticket-dir <dir> --cwd <dir>` | 0=ok, 3=ownership violation (unowned paths), 1=missing/malformed baseline, 2=git-error | `{ok, planned_files, changed, unowned_changes}` JSON. Branch-wide: scans the dirty working tree AND the committed delta `baseline.head_sha..HEAD`, so a rogue mid-implement commit is seen too. Wired as stage-commit step 2b. |
@@ -878,7 +877,7 @@ Reader for the `[revise]` block of workspace.toml (revision sub-runs, epic flow-
 
 | Subcommand | Description |
 |------------|-------------|
-| `severity --workspace-root .` | Print `{"plain_comment_severity": <value>}`. Default `"minor"`; validated against `forge.THREAD_SEVERITY`. |
+| `apply-floor --workspace-root .` | Read a threads JSON array on stdin, bump every unresolved `minor` thread to the configured floor, print the floored array. The floor itself (default `"minor"`, validated against `forge.THREAD_SEVERITY`) is read internally. |
 
 `plain_comment_severity(root) -> str` — the configured floor; missing/unparseable workspace.toml or an invalid value → `"minor"` + stderr warning (always exit 0, so the review_loop bash capture stays valid).
 

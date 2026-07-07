@@ -1,6 +1,6 @@
 """Recall-pending protocol: plan-phase recall appends, dispatcher promotes.
 
-Library + thin CLI. Stdlib-only.
+Library module (no CLI). Stdlib-only.
 
 Two files, two roles:
 - `<workspace_root>/.flow/recall-pending.jsonl`: the plan-phase `recall.py

@@ -8,6 +8,7 @@ from typing import ClassVar, override
 
 import pytest
 
+import _evolve_common
 import fleet
 import lease
 import queue_status as qst
@@ -626,4 +627,20 @@ def test_status_no_parked_skips_review_probe(tmp_path):
 
     run, _ = _dispatch(ready=[_cand("flow-a")])
     out = qst.status(ws, cap=5, concurrency=3, runner=run, forge_factory=boom_factory)
+    assert out["reviews"] == []
+
+
+def test_status_review_probe_toolerror_is_swallowed(tmp_path, monkeypatch):
+    # a transient gh failure inside the review probe (gather_refs) must not
+    # abort the status report: reviews degrades to [], everything else lands
+    ws = _marked_ws(tmp_path)
+    _write_lease(_pool_run_dir(ws, "flow-x"), expired=True)
+    run, _ = _dispatch(ready=[], prs=[{"headRefName": "feat/flow-x-wip"}], evolve_list=[])
+
+    def boom(runner):
+        raise _evolve_common.ToolError("gh pr list failed: transient")
+
+    monkeypatch.setattr(_evolve_common, "gather_refs", boom)
+    out = qst.status(ws, cap=5, concurrency=3, runner=run)
+    assert out["parked"] == ["flow-x"]
     assert out["reviews"] == []
