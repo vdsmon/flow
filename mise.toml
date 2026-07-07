@@ -1,0 +1,7 @@
+# Provisions prek for the fail-fast git hooks (.pre-commit-config.yaml), which
+# run at the repo root. Pinned exact for reproducibility. Engine dev tooling
+# stays in plugins/flow/skills/flow/scripts/mise.toml; mise configs are
+# hierarchical, so that file is unaffected by this one.
+
+[tools]
+prek = "0.4.5"

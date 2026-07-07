@@ -39,7 +39,7 @@ python3 seam_check.py      # prose↔CLI seam checker
 
 Runtime is stdlib-only (`python3`); the venv/mise is dev tooling only.
 
-**Fail-fast hooks (prek, opt-in).** `.pre-commit-config.yaml` at the repo root wires the CI checks as [prek](https://github.com/j178/prek) hooks so commits fail before CI: pre-commit stage = ruff check + ruff format --check + seam_check (sub-second); pre-push stage = ty (seconds). Install once per clone: `brew install prek && prek install`. Hooks are `repo: local`, shell out to the `lint:*` mise sub-tasks (one source of truth with CI), and are **check-only** — see the invariant below.
+**Fail-fast hooks (prek, opt-in).** `.pre-commit-config.yaml` at the repo root wires the CI checks as [prek](https://github.com/j178/prek) hooks so commits fail before CI: pre-commit stage = ruff check + ruff format --check + seam_check (sub-second); pre-push stage = ty (seconds). prek is pinned in the repo-root `mise.toml`; install once per clone (from repo root): `mise install && prek install`. Hooks are `repo: local`, shell out to the `lint:*` mise sub-tasks (one source of truth with CI), and are **check-only** — see the invariant below.
 
 ## Working here (gotchas)
 
