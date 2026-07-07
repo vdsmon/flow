@@ -812,15 +812,13 @@ class JiraAdapter:
             f"/issue/createmeta/{urllib.parse.quote(self.project_key)}/issuetypes",
             query={"maxResults": 50},
         )
-        out: list[dict[str, Any]] = []
-        for it in resp.get("issueTypes") or []:
-            out.append(
-                {
-                    "name": it.get("name", ""),
-                    "hierarchyLevel": it.get("hierarchyLevel"),
-                }
-            )
-        return out
+        return [
+            {
+                "name": it.get("name", ""),
+                "hierarchyLevel": it.get("hierarchyLevel"),
+            }
+            for it in resp.get("issueTypes") or []
+        ]
 
     def list_epics(self) -> list[dict[str, Any]]:
         """Active hierarchy-1 issues for parent selection, `[{key, summary}]`.

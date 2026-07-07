@@ -20,7 +20,7 @@ def test_bump_patch_increments_patch():
 
 @pytest.mark.parametrize("bad", ["x.y", "1.2", "1.2.x"])
 def test_bump_patch_malformed_raises(bad):
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"not a MAJOR\.MINOR\.PATCH version"):
         version.bump_patch(bad)
 
 
@@ -34,7 +34,7 @@ def test_bump_minor_increments_minor_resets_patch():
 
 @pytest.mark.parametrize("bad", ["x.y", "1.2", "1.2.x"])
 def test_bump_minor_malformed_raises(bad):
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"not a MAJOR\.MINOR\.PATCH version"):
         version.bump_minor(bad)
 
 

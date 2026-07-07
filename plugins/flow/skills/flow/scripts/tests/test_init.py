@@ -208,13 +208,15 @@ def test_agents_md_appends_to_existing_without_clobber(tmp_path: Path) -> None:
 def test_ensure_agents_md_is_idempotent(tmp_path: Path) -> None:
     assert initmod._ensure_agents_md(tmp_path, requested=True) is None  # first write
     skipped = initmod._ensure_agents_md(tmp_path, requested=True)  # second is a no-op
-    assert skipped is not None and skipped.get("skipped") is True
+    assert skipped is not None
+    assert skipped.get("skipped") is True
     assert (tmp_path / "AGENTS.md").read_text(encoding="utf-8").count(initmod._AGENTS_MARKER) == 1
 
 
 def test_ensure_agents_md_not_requested_is_noop(tmp_path: Path) -> None:
     skipped = initmod._ensure_agents_md(tmp_path, requested=False)
-    assert skipped is not None and skipped.get("skipped") is True
+    assert skipped is not None
+    assert skipped.get("skipped") is True
     assert not (tmp_path / "AGENTS.md").exists()
 
 
@@ -945,7 +947,7 @@ def test_write_phase_rejects_illegal_handler(
         existing_handlers: dict[str, str] | None = None,
     ) -> tuple[dict[str, str], list[str]]:
         del config, registry, discovery, existing_handlers
-        return {stage: "bogus" for stage in pipeline_stages}, []
+        return dict.fromkeys(pipeline_stages, "bogus"), []
 
     monkeypatch.setattr(initmod, "_compose_handlers", _bad_compose)
     with pytest.raises(initmod.InitError, match="illegal handler"):

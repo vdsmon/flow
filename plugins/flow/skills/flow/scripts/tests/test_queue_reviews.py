@@ -186,7 +186,7 @@ def test_detect_pr_payload_without_id_skipped():
 
 
 @pytest.mark.parametrize(
-    "severity,flagged",
+    ("severity", "flagged"),
     [
         ("critical", True),
         ("major", True),

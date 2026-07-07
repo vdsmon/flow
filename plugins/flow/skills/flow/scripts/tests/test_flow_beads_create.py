@@ -167,12 +167,15 @@ def test_dedup_new_creates_with_evid_label(tmp_path):
     evidfile = f"evidfile:{fbc.fingerprint('verb-spec.md')}"
     list_calls = [c for c in calls if c[0][1] == "list"]
     assert len(list_calls) == 2  # exact then file-anchored
-    assert "-l" in list_calls[0][0] and evid == list_calls[0][0][list_calls[0][0].index("-l") + 1]
+    assert "-l" in list_calls[0][0]
+    assert evid == list_calls[0][0][list_calls[0][0].index("-l") + 1]
     assert evidfile == list_calls[1][0][list_calls[1][0].index("-l") + 1]
     create_args = calls[-1][0]
     assert create_args[:2] == ["bd", "create"]
     stamped = create_args[create_args.index("--labels") + 1]
-    assert evid in stamped and evidfile in stamped and "evolve" in stamped
+    assert evid in stamped
+    assert evidfile in stamped
+    assert "evolve" in stamped
 
 
 def test_dedup_existing_skips_create(tmp_path):

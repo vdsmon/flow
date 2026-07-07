@@ -35,7 +35,7 @@ def _write_workspace(
     if stages is None:
         stages = ["ticket", "plan", "implement", "commit", "reflect"]
     if handlers is None:
-        handlers = {s: "inline" for s in stages}
+        handlers = dict.fromkeys(stages, "inline")
 
     flow = root / ".flow"
     flow.mkdir()

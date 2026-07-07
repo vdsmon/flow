@@ -59,7 +59,8 @@ def test_persist_writes_marker_comment() -> None:
 def test_persist_idempotent_when_unchanged() -> None:
     tracker = _FakeTracker([_marker_comment("FT-1207, FT-1208", "2026-06-01T00:00:00Z")])
     out = gp.persist(tracker, "FT-1184", ["FT-1207", "FT-1208"])
-    assert out["persisted"] is False and out["reason"] == "unchanged"
+    assert out["persisted"] is False
+    assert out["reason"] == "unchanged"
     # no second comment appended
     assert len(tracker.get("FT-1184")["comments"]) == 1
 
@@ -67,7 +68,8 @@ def test_persist_idempotent_when_unchanged() -> None:
 def test_persist_unchanged_when_same_set_reordered() -> None:
     tracker = _FakeTracker([_marker_comment("FT-1207, FT-1208", "2026-06-01T00:00:00Z")])
     out = gp.persist(tracker, "FT-1184", ["FT-1208", "FT-1207"])
-    assert out["persisted"] is False and out["reason"] == "unchanged"
+    assert out["persisted"] is False
+    assert out["reason"] == "unchanged"
     assert len(tracker.get("FT-1184")["comments"]) == 1
 
 

@@ -384,8 +384,10 @@ def test_review_threads_passes_typed_number_and_owner_repo():
     fg, calls = _adapter({"threads": _threads_response([node])})
     fg.review_threads("7")
     gql = next(c for c in calls if _is_graphql(c) and _graphql_mutation(c) == "read")
-    assert "-F" in gql and "number=7" in gql
-    assert "owner=o" in gql and "repo=r" in gql
+    assert "-F" in gql
+    assert "number=7" in gql
+    assert "owner=o" in gql
+    assert "repo=r" in gql
 
 
 def test_resolve_thread_true_when_isresolved():
@@ -517,7 +519,8 @@ def test_detect_pr_retries_then_succeeds():
         ]
     )
     pr = fg.detect_pr("feature/flow-x")
-    assert pr is not None and pr["number"] == 7
+    assert pr is not None
+    assert pr["number"] == 7
     list_calls = [c for c in calls if c[:3] == ["gh", "pr", "list"]]
     assert len(list_calls) == 2
     assert len(sleeps) == 1
@@ -538,7 +541,8 @@ def test_detect_pr_no_retry_on_happy_path():
     listing = json.dumps([{"number": 7, "url": "https://github.com/o/r/pull/7"}])
     fg, calls, sleeps = _retry_adapter(list_returns=[_cp(0, listing, "")])
     pr = fg.detect_pr("feature/flow-x")
-    assert pr is not None and pr["number"] == 7
+    assert pr is not None
+    assert pr["number"] == 7
     list_calls = [c for c in calls if c[:3] == ["gh", "pr", "list"]]
     assert len(list_calls) == 1
     assert sleeps == []

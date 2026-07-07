@@ -263,7 +263,7 @@ def test_load_payload_from_stdin(monkeypatch):
 
 def test_load_payload_missing_file_raises(tmp_path):
     ghost = tmp_path / "nope.json"
-    with pytest.raises(OSError):
+    with pytest.raises(FileNotFoundError):
         _load_payload(str(ghost))
 
 

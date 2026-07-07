@@ -124,6 +124,7 @@ def replay_checkout(
             capture_output=True,
             text=True,
             timeout=timeout,
+            check=False,
         )
     except subprocess.TimeoutExpired as exc:
         raise EvalError(f"driver timed out after {timeout}s for {target}") from exc

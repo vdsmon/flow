@@ -50,8 +50,9 @@ def _write_index(root: Path, vectors: dict[str, list[float]], namespace: str = "
             sort_keys=True,
         )
     ]
-    for eid in sorted(vectors):
-        lines.append(json.dumps({"id": eid, "v": vectors[eid]}, sort_keys=True))
+    lines.extend(
+        json.dumps({"id": eid, "v": vectors[eid]}, sort_keys=True) for eid in sorted(vectors)
+    )
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 

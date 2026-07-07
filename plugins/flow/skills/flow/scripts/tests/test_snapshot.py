@@ -387,7 +387,7 @@ def test_partial_write_sha_present_json_absent_fails_closed(
         real_write(path, text)
 
     monkeypatch.setattr(snapshot, "atomic_write_text", flaky)
-    with pytest.raises(OSError):
+    with pytest.raises(OSError, match="interrupted on json write"):
         snapshot.write_snapshot(workspace_root, "FT-1", skill_root=skill_root)
 
     assert snapshot.snapshot_sha_path(workspace_root, "FT-1").exists()
@@ -726,7 +726,8 @@ def test_snapshot_revision_isolation(tmp_path: Path) -> None:
     ok, detail = snapshot.verify_snapshot(
         workspace_root, "FT-1", skill_root=skill_root, revision="r1"
     )
-    assert ok is True and detail == "match"
+    assert ok is True
+    assert detail == "match"
 
     _write(
         workspace_root / ".flow" / "workspace.toml",
@@ -735,7 +736,8 @@ def test_snapshot_revision_isolation(tmp_path: Path) -> None:
     ok, detail = snapshot.verify_snapshot(
         workspace_root, "FT-1", skill_root=skill_root, revision="r1"
     )
-    assert ok is False and "workspace_toml" in detail
+    assert ok is False
+    assert "workspace_toml" in detail
 
 
 # ─── engine_tree_clean (flow-p9sc) ─────────────────────────────────────────────

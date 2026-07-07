@@ -113,9 +113,8 @@ def _symptom_tokens(text: str) -> frozenset[str]:
     for tok in raw:
         if tok in _STOPWORDS:
             continue
-        if len(tok) > 3 and tok.endswith("s"):
-            tok = tok[:-1]
-        out.add(tok)
+        stem = tok[:-1] if len(tok) > 3 and tok.endswith("s") else tok
+        out.add(stem)
     return frozenset(out)
 
 

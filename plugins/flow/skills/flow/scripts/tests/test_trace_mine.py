@@ -664,18 +664,7 @@ def test_malformed_line_resilience(tmp_path: Path, capsys: pytest.CaptureFixture
     valid_err = json.dumps(_tool_error_line("toolu_1", "2026-06-01T00:00:02.000Z", "boom"))
     transcript.parent.mkdir(parents=True, exist_ok=True)
     transcript.write_text(
-        "\n".join(
-            [
-                "",
-                "{not json at all",
-                valid_desc,
-                valid_use,
-                "plain text, not even braces",
-                '{"truncated": ',
-                valid_err,
-                "",
-            ]
-        ),
+        f'\n{{not json at all\n{valid_desc}\n{valid_use}\nplain text, not even braces\n{{"truncated": \n{valid_err}\n',
         encoding="utf-8",
     )
     rc, payload = _run_extract(

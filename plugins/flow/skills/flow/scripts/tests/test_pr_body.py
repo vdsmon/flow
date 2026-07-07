@@ -185,7 +185,7 @@ def test_build_and_scrub_never_raise_on_adversarial():
         "Just prose, no trailer at all.",
         "```\nunterminated fence to end of body",
         "Closes mentioned in prose\n\n# heading",
-        "​� stray unicode \U0001f600",
+        "\u200b� stray unicode \U0001f600",
         "files:\n  - a\n  - b",  # trailer-only files block
     ]
     for c in cases:
@@ -231,8 +231,10 @@ def test_enforce_cap_trims_largest_fenced_block_first():
     out = pr_body.enforce_cap(body, cap=400)
     assert len(out) <= 400
     assert "lines trimmed" in out  # a fenced-block trim happened
-    assert "L0" in out and "L199" in out  # head + tail of the large block survive
-    assert "s0" in out and "s2" in out  # the small block is left intact
+    assert "L0" in out
+    assert "L199" in out
+    assert "s0" in out
+    assert "s2" in out
 
 
 def test_enforce_cap_summary_lines_survive_all_tiers():

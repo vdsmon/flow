@@ -21,17 +21,34 @@ extend-exclude = ["tests/_fixtures"]
 
 [tool.ruff.lint]
 select = [
-    "E",   # pycodestyle errors
-    "F",   # pyflakes
-    "I",   # isort
-    "B",   # flake8-bugbear
-    "UP",  # pyupgrade
-    "SIM", # flake8-simplify
-    "RUF", # ruff-specific
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings (formatter keeps these clean; guards W605 invalid escapes)
+    "F",    # pyflakes
+    "I",    # isort
+    "B",    # flake8-bugbear
+    "UP",   # pyupgrade
+    "SIM",  # flake8-simplify
+    "RUF",  # ruff-specific
     "C901", # mccabe complexity
+    "PT",   # flake8-pytest-style
+    "PLE",  # pylint errors
+    "PLW",  # pylint warnings (PLR/PLC skipped: magic-value + lazy-import noise)
+    "C4",   # flake8-comprehensions
+    "PERF", # perflint
+    "FURB", # refurb
+    "FLY",  # flynt
+    "RET",  # flake8-return
+    "PIE",  # flake8-pie
+    "PGH",  # pygrep-hooks (invalid noqa, eval)
+    "RSE",  # flake8-raise
+    "DTZ",  # flake8-datetimez
+    "ISC",  # implicit str concat (ISC001 ignored below)
+    "T10",  # flake8-debugger (leftover breakpoint/pdb)
+    "YTT",  # flake8-2020
 ]
 ignore = [
-    "E501",  # line length handled by formatter
+    "E501",   # line length handled by formatter
+    "ISC001", # conflicts with the formatter
 ]
 
 [tool.ruff.lint.mccabe]

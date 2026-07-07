@@ -49,13 +49,10 @@ def compose(
     lines: list[str] = [header, "", f"ticket: {ticket}"]
     # covers: sibling tickets co-delivered by this one run. One `Closes <KEY>`
     # footer per cover so the PR body lists every ticket the run satisfies.
-    for cover in covers or []:
-        if cover.strip():
-            lines.append(f"Closes {cover.strip()}")
+    lines.extend(f"Closes {cover.strip()}" for cover in covers or [] if cover.strip())
     if files:
         lines.append("files:")
-        for f in files:
-            lines.append(f"  - {f}")
+        lines.extend(f"  - {f}" for f in files)
     lines.extend(["", "# body — fill in below this line"])
     return "\n".join(lines) + "\n"
 

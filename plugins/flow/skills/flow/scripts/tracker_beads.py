@@ -806,8 +806,8 @@ class BeadsAdapter:
         if cp.returncode != 0:
             return None
         pat = re.compile(rf"(?<![\w.-]){re.escape(key)}(?![\w.-])")
-        for record in cp.stdout.split("\x1e"):
-            record = record.strip("\n")
+        for raw_record in cp.stdout.split("\x1e"):
+            record = raw_record.strip("\n")
             if not record:
                 continue
             sha, _, message = record.partition("\x00")

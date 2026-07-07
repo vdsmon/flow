@@ -1013,12 +1013,12 @@ def test_parse_files_arg_single_file() -> None:
 
 
 def test_parse_files_arg_malformed_json_raises() -> None:
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="malformed JSON array literal"):
         diff_extract._parse_files_arg('["a.py",')
 
 
 def test_parse_files_arg_non_string_elements_raises() -> None:
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="malformed JSON array literal"):
         diff_extract._parse_files_arg("[1, 2]")
 
 

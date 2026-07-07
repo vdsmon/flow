@@ -363,5 +363,6 @@ def test_status_release_redirect_with_revision(
     assert set(st["stages"]) == set(payload["stages"])
 
     rc, rel = ds.cmd_release(tmp_path, "FT-1", rev_nonce, revision=rev)
-    assert rc == 0 and rel["released"] is True
+    assert rc == 0
+    assert rel["released"] is True
     assert not lease.run_lock_path(Path(payload["revision_dir"])).exists()

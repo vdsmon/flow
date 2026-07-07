@@ -170,8 +170,7 @@ def _split_frontmatter(text: str) -> tuple[str | None, str]:
         return None, text
     fm = "".join(lines[1:end_idx])
     body = "".join(lines[end_idx + 1 :])
-    if body.startswith("\n"):
-        body = body[1:]
+    body = body.removeprefix("\n")
     return fm, body
 
 

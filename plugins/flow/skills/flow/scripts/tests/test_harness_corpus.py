@@ -56,7 +56,8 @@ def test_backfill_cases_present_with_provenance():
         case = by_id[case_id]
         assert case["split"] == "held_in", f"backfill case {case_id} must be held_in"
         source = case.get("source")
-        assert isinstance(source, str) and source, f"backfill case {case_id} missing provenance"
+        assert isinstance(source, str), f"backfill case {case_id} missing provenance"
+        assert source, f"backfill case {case_id} missing provenance"
 
 
 # ─── load_corpus validation rejections ───────────────────────────────────────

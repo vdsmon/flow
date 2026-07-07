@@ -142,7 +142,8 @@ def test_seeds_plan_completed_with_output_path(tmp_path: Path) -> None:
     res = _run(tmp_path, main)
     td = Path(res["worktree"]) / ".flow" / "runs" / "FT-1"
     ts, code = state.read(td)
-    assert code == 0 and ts is not None
+    assert code == 0
+    assert ts is not None
     assert ts.stages["plan"].status == "completed"
     plan_out = td / "stages" / "plan.out"
     assert ts.stages["plan"].output_path == str(plan_out)
@@ -157,7 +158,8 @@ def test_copies_gitignored_config(tmp_path: Path) -> None:
     wt = Path(res["worktree"])
     assert (wt / ".env").read_text(encoding="utf-8") == "SECRET=1\n"
     assert (wt / ".claude" / "settings.json").exists()
-    assert ".env" in res["copied"] and ".claude" in res["copied"]
+    assert ".env" in res["copied"]
+    assert ".claude" in res["copied"]
 
 
 def test_redirects_memory_via_sibling_not_workspace_toml(tmp_path: Path) -> None:
@@ -198,7 +200,8 @@ def test_prepopulates_commit_frontmatter(tmp_path: Path) -> None:
     main = _main_checkout(tmp_path)
     res = _run(tmp_path, main, commit_type="feat", commit_summary="add the thing")
     fm = (Path(res["worktree"]) / ".flow" / "tickets" / "FT-1.md").read_text(encoding="utf-8")
-    assert "commit_type" in fm and "feat" in fm
+    assert "commit_type" in fm
+    assert "feat" in fm
     assert "add the thing" in fm
 
 
@@ -359,7 +362,8 @@ def test_mise_trust_failure_is_warning_not_fatal(tmp_path: Path) -> None:
     # still seeded successfully
     td = Path(res["worktree"]) / ".flow" / "runs" / "FT-1"
     ts, _ = state.read(td)
-    assert ts is not None and ts.stages["plan"].status == "completed"
+    assert ts is not None
+    assert ts.stages["plan"].status == "completed"
 
 
 def test_works_when_worktree_already_has_committed_flow(tmp_path: Path) -> None:
@@ -387,7 +391,7 @@ def test_cli_missing_main_workspace_exits_2(tmp_path: Path, monkeypatch, capsys)
     # main has no .flow/workspace.toml -> _ConfigError -> exit 2
     main = tmp_path / "bare"
     main.mkdir()
-    monkeypatch.setattr(fw, "_default_runner", lambda: _fake_runner())
+    monkeypatch.setattr(fw, "_default_runner", _fake_runner)
     plan = _plan_file(tmp_path)
     rc = fw.cli_main(
         [
@@ -425,12 +429,8 @@ def _main_with_e2e_handler(tmp: Path, handler: str) -> Path:
 
 def test_e2e_enabled_without_recipe_refuses(tmp_path: Path) -> None:
     main = _main_with_e2e_handler(tmp_path, "subagent:general-purpose")
-    try:
+    with pytest.raises(fw._ConfigError, match="e2e-recipe"):
         _run(tmp_path, main)
-    except fw._ConfigError as exc:
-        assert "e2e-recipe" in str(exc)
-    else:
-        raise AssertionError("expected _ConfigError when e2e enabled and no recipe")
     # gate fires before any git side effect: no worktree dir
     assert not (tmp_path / "wt").exists()
 
@@ -1121,7 +1121,8 @@ def test_reap_skips_when_lease_live(tmp_path: Path) -> None:
     receipt = fw.reap_worktree(ticket="FT-1", main_root=tmp_path / "main", runner=runner)
     assert receipt["worktree_removed"] is False
     assert receipt["branch_deleted"] is False
-    assert receipt["skipped"] and "live" in receipt["skipped"]
+    assert receipt["skipped"]
+    assert "live" in receipt["skipped"]
     # a live session: touch NOTHING
     assert not any(c[:4] == ["git", "worktree", "remove", "--force"] for c in calls)
     assert not any(c[:3] == ["git", "branch", "-D"] for c in calls)
@@ -1143,7 +1144,8 @@ def test_reap_skips_when_lease_corrupt(tmp_path: Path) -> None:
     assert receipt["worktree_removed"] is False
     assert receipt["branch_deleted"] is False
     # distinct reason from the "live" skip, so the human can tell why it was held.
-    assert receipt["skipped"] and "corrupt" in receipt["skipped"]
+    assert receipt["skipped"]
+    assert "corrupt" in receipt["skipped"]
     assert receipt["skipped"] != "lease live (run still in progress)"
     # a possibly-live corrupt run: touch NOTHING
     assert not any(c[:4] == ["git", "worktree", "remove", "--force"] for c in calls)
@@ -1200,7 +1202,8 @@ def test_reap_noop_when_no_branch_and_no_worktree(tmp_path: Path) -> None:
     )
     receipt = fw.reap_worktree(ticket="FT-1", main_root=tmp_path / "main", runner=runner)
     assert receipt["branch"] is None
-    assert receipt["worktree_removed"] is False and receipt["branch_deleted"] is False
+    assert receipt["worktree_removed"] is False
+    assert receipt["branch_deleted"] is False
     assert not any(c[:3] == ["git", "branch", "-D"] for c in calls)
     assert not any(c[:4] == ["git", "worktree", "remove", "--force"] for c in calls)
 
@@ -1317,7 +1320,8 @@ def test_reap_refuses_mismatched_ticket_branch_pair(tmp_path: Path) -> None:
     )
     assert receipt["worktree_removed"] is False
     assert receipt["branch_deleted"] is False
-    assert receipt["skipped"] and "does not belong" in receipt["skipped"]
+    assert receipt["skipped"]
+    assert "does not belong" in receipt["skipped"]
     assert not any(c[:4] == ["git", "worktree", "remove", "--force"] for c in calls)
     assert not any(c[:3] == ["git", "branch", "-D"] for c in calls)
 
@@ -1334,7 +1338,8 @@ def test_reap_mismatched_pair_never_deletes_loose_branch(tmp_path: Path) -> None
         ticket="FT-1", main_root=tmp_path / "main", branch="feat/FT-2-other", runner=runner
     )
     assert receipt["branch_deleted"] is False
-    assert receipt["skipped"] and "does not belong" in receipt["skipped"]
+    assert receipt["skipped"]
+    assert "does not belong" in receipt["skipped"]
     assert not any(c[:3] == ["git", "branch", "-D"] for c in calls)
 
 
@@ -1377,7 +1382,8 @@ def test_reap_cli_prints_receipt(tmp_path: Path, monkeypatch, capsys) -> None:
     )
     assert rc == 0
     out = capsys.readouterr().out
-    assert '"ticket": "FT-1"' in out and '"branch": "feat/FT-1-thing"' in out
+    assert '"ticket": "FT-1"' in out
+    assert '"branch": "feat/FT-1-thing"' in out
 
 
 # ─── checkpoint-then-reap (flow-vpg1) ───────────────────────────────────────
@@ -1437,6 +1443,7 @@ def test_reap_checkpoints_dirty_work_to_pushed_rescue_ref(tmp_path: Path) -> Non
         cwd=str(origin),
         capture_output=True,
         text=True,
+        check=False,
     )
     assert show.returncode == 0
     assert show.stdout == "wip work\n"
@@ -1510,6 +1517,7 @@ def test_reap_recovers_orphaned_checkpoint_before_push(tmp_path: Path) -> None:
         cwd=str(origin),
         capture_output=True,
         text=True,
+        check=False,
     )
     assert show.returncode == 0
     assert show.stdout == "wip work\n"
@@ -1622,7 +1630,8 @@ def test_reap_checkpoint_failure_leaves_worktree_intact(tmp_path: Path) -> None:
     assert receipt["worktree_removed"] is False
     assert receipt["branch_deleted"] is False
     assert receipt["checkpoint_failed"] is True
-    assert receipt["skipped"] and "checkpoint failed" in receipt["skipped"]
+    assert receipt["skipped"]
+    assert "checkpoint failed" in receipt["skipped"]
     assert not any(c[:4] == ["git", "worktree", "remove", "--force"] for c in calls)
     assert not any(c[:3] == ["git", "branch", "-D"] for c in calls)
 
@@ -1983,7 +1992,9 @@ def test_bootstrap_refuses_live_sibling_lease(tmp_path: Path) -> None:
     with pytest.raises(fw._DuplicateClaim) as exc:
         _run(tmp_path, main, runner=runner)
     msg = str(exc.value)
-    assert str(sib) in msg and "live" in msg and "recover" in msg
+    assert str(sib) in msg
+    assert "live" in msg
+    assert "recover" in msg
     # refused BEFORE any git mutation: no worktree add, no orphan dir
     assert not any(c[:3] == ["git", "worktree", "add"] for c in calls)
     assert not (tmp_path / "wt").exists()
@@ -2088,7 +2099,8 @@ def test_bootstrap_refuses_corrupt_sibling_lock(tmp_path: Path) -> None:
     with pytest.raises(fw._DuplicateClaim) as exc:
         _run(tmp_path, main, runner=_fake_runner(worktree_list=_siblings_porcelain(sib)))
     msg = str(exc.value)
-    assert "corrupt" in msg and "recover" in msg
+    assert "corrupt" in msg
+    assert "recover" in msg
 
 
 def test_bootstrap_no_siblings_creates_claim_file(tmp_path: Path) -> None:

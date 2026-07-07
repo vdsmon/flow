@@ -327,7 +327,9 @@ def _bd_status_lookup() -> BeadStatusLookup:
     """
 
     def lookup(key: str) -> str | None:
-        result = subprocess.run(["bd", "show", key, "--json"], capture_output=True, text=True)
+        result = subprocess.run(
+            ["bd", "show", key, "--json"], capture_output=True, text=True, check=False
+        )
         if result.returncode != 0:
             raise ToolError(f"bd show {key} failed: {result.stderr.strip()}")
         try:

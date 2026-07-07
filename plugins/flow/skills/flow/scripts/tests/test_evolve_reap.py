@@ -241,7 +241,8 @@ def test_non_flow_branch_ignored():
         }
     ]
     out = er.classify(prs, _idx(**{"flow-a": ["evolve"]}))
-    assert out["merge"] == [] and out["not_green"] == []
+    assert out["merge"] == []
+    assert out["not_green"] == []
 
 
 def test_unknown_key_ignored():
@@ -654,7 +655,8 @@ def test_reap_enriches_candidates_via_pr_view(tmp_path):
     view = views[0]
     assert view[3] == "1"
     json_fields = view[view.index("--json") + 1].split(",")
-    assert "files" in json_fields and "commits" in json_fields
+    assert "files" in json_fields
+    assert "commits" in json_fields
 
 
 def _auto_merge_hot_ws(tmp_path: Path) -> Path:
