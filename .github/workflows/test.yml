@@ -12,8 +12,8 @@ jobs:
       run:
         working-directory: plugins/flow/skills/flow/scripts
     steps:
-      - uses: actions/checkout@v4
-      - uses: jdx/mise-action@v2
+      - uses: actions/checkout@v5
+      - uses: jdx/mise-action@v4
       - name: lint (ruff + ty)
         run: mise run lint
       - name: test (pytest scripts + hooks)
