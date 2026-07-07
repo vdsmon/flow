@@ -1,6 +1,8 @@
 # Matched-pair flow-vs-control protocol (maintainer lane)
 
-A pre-registered, maintainer-only experiment that measures whether the flow machinery beats a hand-driven control arm on the SAME work. It pairs leaf beads, runs one arm of each pair through `/flow` and the other through the manual `references/control-arm-recipe.md` lane, and scores the result with `recall.py --metric arm-compare`. This doc is the pre-registration: the constants below are MAINTAINER-SIGNED and authoritative. Do NOT change them, and do NOT make post-hoc changes to the success criterion.
+> Archived experiment protocol — the xqt experiment concluded (see `xqt-counterfactual-verdict-2026-06.md`); no live stage loads this doc. Moved out of the skill's `references/` runtime surface 2026-07.
+
+A pre-registered, maintainer-only experiment that measures whether the flow machinery beats a hand-driven control arm on the SAME work. It pairs leaf beads, runs one arm of each pair through `/flow` and the other through the manual `control-arm-recipe.md` (sibling in this dir) lane, and scores the result with `recall.py --metric arm-compare`. This doc is the pre-registration: the constants below are MAINTAINER-SIGNED and authoritative. Do NOT change them, and do NOT make post-hoc changes to the success criterion.
 
 This is a manual maintainer lane. It is NOT wired into any stage registry, lease, snapshot, or dispatcher. The only engine touch-point is the `arm-compare` metric, which reads the ship-event corpus both arms write to.
 
@@ -37,7 +39,7 @@ Per-event time-to-PR precedence: the `flow_attribution` stamp first, else `evide
 
 ## How interventions + outcome are captured per arm
 
-- **Control arm:** the `references/control-arm-recipe.md` evidence payload already carries `evidence.interventions` (self-reported manual-intervention count) and `evidence.outcome` (`merged` / `abandoned`). These land on the control ship-event when you stamp it with `--arm control`.
+- **Control arm:** the `control-arm-recipe.md` (sibling in this dir) evidence payload already carries `evidence.interventions` (self-reported manual-intervention count) and `evidence.outcome` (`merged` / `abandoned`). These land on the control ship-event when you stamp it with `--arm control`.
 - **Flow arm:** flow ship-events do NOT auto-stamp `interventions` / `outcome`. The flow run must self-report `evidence.interventions` and `evidence.outcome` into its own ship-event so the two arms carry the same fields. (The `flow_attribution` block is stamped automatically and supplies the flow-arm time-to-PR; interventions and outcome are the two fields a flow run must add by hand.)
 
 ## Verdict

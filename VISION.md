@@ -35,6 +35,8 @@ Scope test for any addition: does this make the factory sharper for the one pers
 
 *Software can improve and heal itself when a capable agent is given a real loop to do it through.* What is demonstrated so far is narrow and real: a guarded self-repair loop that, under maintainer-gated conditions, finds blockers to running unattended and fixes them mid-run. That is the mechanism working, not the broad thesis settled. The open question is no longer whether a harness can evolve itself at all; it is how far, and under what guardrails — and this document is the guardrail on the "how far."
 
+The experiment records behind the bounds this document asserts are archived in [docs/research/](docs/research/): the [xqt counterfactual verdict](docs/research/xqt-counterfactual-verdict-2026-06.md) (the machinery is bound to high-complexity / hot work), the [cognitive-yield burn-spike analysis](docs/research/cognitive-yield-burn-spike-2026-07.md), and the [novelty survey](docs/research/novelty-survey-2026-06.md).
+
 ## The core operating principle
 
 **Propose boldly. Auto-ship only on ground truth.**

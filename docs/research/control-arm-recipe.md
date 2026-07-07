@@ -1,5 +1,7 @@
 # Control-arm run recipe (maintainer lane)
 
+> Archived experiment protocol — the xqt experiment concluded (see `xqt-counterfactual-verdict-2026-06.md`); no live stage loads this doc. Moved out of the skill's `references/` runtime surface 2026-07.
+
 A control-arm run is the counterfactual: ship a leaf bead WITHOUT the flow machinery, then stamp its ship-event with `--arm control` so it sits in the same corpus as flow-arm events. Sibling `metric.py` work (flow-xqt.2) owns the arm-aware JOIN; this doc only covers producing a record with `arm == "control"`.
 
 This is a maintainer-only manual lane. It does NOT run through the dispatcher, lease, snapshot, or any registered stage.

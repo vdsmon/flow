@@ -885,6 +885,41 @@ def test_bootstrap_no_typo_warn_for_new_file_in_existing_dir(tmp_path: Path) -> 
     assert not any("non-existent" in w for w in res["warnings"])
 
 
+def test_bootstrap_warns_on_mislocated_stage_registry(tmp_path: Path) -> None:
+    # `scripts/stage-registry.toml` slips past the typo guard (scripts/ exists)
+    # but the registry lives at the skill root; the wrong prefix later reads as
+    # unowned drift and aborts the run (flow-l014).
+    main = _main_checkout(tmp_path)
+    wt = tmp_path / "wt"
+    (wt / "scripts").mkdir(parents=True, exist_ok=True)
+    res = _run(
+        tmp_path,
+        main,
+        worktree=wt,
+        planned_files=["scripts/stage-registry.toml"],
+        runner=_fake_runner(ignored=set(), main=main),
+    )
+    assert res["ticket"] == "FT-1"
+    assert any("skill root" in w for w in res["warnings"])
+
+
+def test_bootstrap_no_registry_warn_when_path_exists(tmp_path: Path) -> None:
+    main = _main_checkout(tmp_path)
+    wt = tmp_path / "wt"
+    reg = wt / "plugins" / "flow" / "skills" / "flow" / "stage-registry.toml"
+    reg.parent.mkdir(parents=True, exist_ok=True)
+    reg.write_text("", encoding="utf-8")
+    res = _run(
+        tmp_path,
+        main,
+        worktree=wt,
+        planned_files=["plugins/flow/skills/flow/stage-registry.toml"],
+        runner=_fake_runner(ignored=set(), main=main),
+    )
+    assert res["ticket"] == "FT-1"
+    assert not any("skill root" in w for w in res["warnings"])
+
+
 def test_bootstrap_no_typo_warn_for_existing_file(tmp_path: Path) -> None:
     # An already-existing planned file never trips the typo guard. The file must
     # really exist under the resolved worktree (fake worktree add does not

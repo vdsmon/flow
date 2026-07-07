@@ -134,6 +134,17 @@ def _typo_planned(files: list[str], cwd: Path) -> list[str]:
     return [f for f in files if not (cwd / f).exists() and not (cwd / f).parent.exists()]
 
 
+def _mislocated_registry(files: list[str], cwd: Path) -> list[str]:
+    """Planned stage-registry.toml paths that do not exist.
+
+    The registry lives at the SKILL ROOT (plugins/flow/skills/flow/), never
+    under scripts/. A `scripts/` prefix slips past _typo_planned because the
+    parent dir exists, then reads as unowned drift at the dispatcher reconcile
+    and aborts the run (flow-l014).
+    """
+    return [f for f in files if Path(f).name == "stage-registry.toml" and not (cwd / f).exists()]
+
+
 def _porcelain_paths(main_root: Path, runner: Runner) -> dict[str, bool]:
     """Map each uncommitted path in `main_root` -> is_untracked.
 
@@ -1189,6 +1200,14 @@ def bootstrap(
                         "planned files in a non-existent directory (likely a path typo): "
                         + ", ".join(typo)
                         + " (a new file in an existing dir is fine; check the parent path)"
+                    )
+                misreg = _mislocated_registry(planned_files, worktree)
+                if misreg:
+                    warnings.append(
+                        "planned stage-registry.toml path does not exist: "
+                        + ", ".join(misreg)
+                        + " (the registry lives at the skill root, never scripts/; "
+                        "a wrong prefix reads as unowned drift and aborts the run)"
                     )
 
             copied = _copy_config(main_root, worktree)

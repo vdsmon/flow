@@ -173,6 +173,26 @@ def test_update_list_with_quoted_commas(tmp_path: Path) -> None:
     assert data == {"labels": ["a,b", "c"]}
 
 
+def test_update_bare_comma_list_warns_but_stores_string(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # `a.py,b.py` without brackets stores as ONE string (flow-2wa); the write
+    # succeeds but stderr flags the probable list intent.
+    p = tmp_path / "FT-29.md"
+    ticket_frontmatter.update(p, {"planned_files": "a.py,b.py"})
+    data = ticket_frontmatter.read(p)
+    assert data == {"planned_files": "a.py,b.py"}
+    assert "wrap in [ ] for a TOML array" in capsys.readouterr().err
+
+
+def test_update_bracketed_list_does_not_warn(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    p = tmp_path / "FT-30.md"
+    ticket_frontmatter.update(p, {"planned_files": "[a.py, b.py]"})
+    assert capsys.readouterr().err == ""
+
+
 def test_update_quotes_strings_with_special_chars(tmp_path: Path) -> None:
     p = tmp_path / "FT-12.md"
     ticket_frontmatter.update(p, {"summary": 'has "quotes" inside'})

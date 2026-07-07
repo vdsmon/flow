@@ -2,7 +2,7 @@
 
 We ran flow against an unscaffolded ("vanilla") Claude session on the same six tasks, crossed with model {sonnet, opus}, and judge-scored every output on a pre-registered /10 rubric. Bottom line: the harness showed zero measurable quality gain through medium complexity and lost every speed tiebreak (6-25 min/run of overhead); it won exactly one wave, the complex hot-concurrency task, on quality. The model factor dominated. Recommendation: **bound** the flow machinery to high-complexity / hot / concurrency work.
 
-This doc is the experiment of record. It supersedes the matched-pair protocol at `references/xqt-matched-pair-protocol.md`, which was the original child-2 design and was replaced before any data was collected (see Pre-registration below).
+This doc is the experiment of record. It supersedes the matched-pair protocol at `xqt-matched-pair-protocol.md` (sibling in this dir), which was the original child-2 design and was replaced before any data was collected (see Pre-registration below).
 
 ## Design
 
