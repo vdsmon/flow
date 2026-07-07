@@ -127,12 +127,6 @@ def test_pr_info(ws, capsys):
     assert ("pr_info", "7") in fake.calls
 
 
-def test_open_pr_draft_flag(ws, capsys):
-    rc, fake = _run(["open-pr", "--head", "feature/flow-x", "--title", "t", "--draft"], ws)
-    assert rc == 0
-    assert ("open_pr", "main", "feature/flow-x", True) in fake.calls
-
-
 def test_ci_rollup(ws, capsys):
     rc, _ = _run(["ci-rollup", "--pr", "7"], ws)
     assert rc == 0

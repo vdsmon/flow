@@ -8,9 +8,7 @@ Idempotency key formula (canonical for cross-run stability):
     normalize(body) = NFKC + lowercase + collapse-whitespace + strip-trailing-punct
 
 The `ts` field is NOT in the formula so `/flow recover` reruns produce the
-same id, letting the dedup scan suppress re-writes. `--id <override>` exists
-for entries bound to specific intents (ship-event anchors) where the
-formula's inputs aren't sufficient.
+same id, letting the dedup scan suppress re-writes.
 
 Quarantine semantics (sidecar, main file untouched):
 - Malformed lines encountered during scan are APPENDED to
@@ -112,7 +110,6 @@ def append(
     body: str,
     branch: str,
     ticket: str,
-    id_override: str | None = None,
     supersedes: str | list[str] | None = None,
     labels: list[str] | None = None,
 ) -> dict[str, Any]:
@@ -139,7 +136,7 @@ def append(
     namespace = _memory_paths.resolve_namespace(workspace_root)
     kpath = _memory_paths.knowledge_path(workspace_root, namespace)
     lpath = _memory_paths.knowledge_lock_path(workspace_root, namespace)
-    entry_id = id_override or compute_id(namespace, ticket, type_, body)
+    entry_id = compute_id(namespace, ticket, type_, body)
     quarantine_sidecar = kpath.with_name(f"{kpath.name}.quarantine.{ts_token()}")
 
     if supersedes is None:
@@ -191,7 +188,6 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--text", required=True, help="entry body (raw text).")
     parser.add_argument("--branch", required=True)
     parser.add_argument("--ticket", required=True)
-    parser.add_argument("--id", dest="id_override", default=None)
     parser.add_argument("--supersedes", default=None)
     parser.add_argument(
         "--labels", default=None, help="comma-separated labels, e.g. form:iva_2083,area:vat"
@@ -211,7 +207,6 @@ def cli_main(argv: list[str]) -> int:
             body=args.text,
             branch=args.branch,
             ticket=args.ticket,
-            id_override=args.id_override,
             supersedes=args.supersedes,
             labels=labels or None,
         )

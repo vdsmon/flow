@@ -30,8 +30,6 @@ def _stage(
         'description = "test stage"',
         'default_handler = "inline"',
         "default_timeout_min = 5",
-        "default_max_no_progress_min = 5",
-        "required_capabilities = []",
         f"required_predecessors = {predecessors or []}",
     ]
     if required_fields is not None:

@@ -7,8 +7,8 @@ Coverage:
 - Construction preflight (bd --version): success, missing, too-old, malformed.
 - Capability advertisement: 14 closed-enum entries, only comments_markdown +
   resolutions True.
-- get/list_assigned/list_linked/list_transitions surface shapes.
-- create + setters with postcondition re-read verification.
+- get/list_assigned/list_transitions surface shapes.
+- create with postcondition re-read verification.
 - transition routing: close / reopen / update-status; failure classification.
 - comment via stdin; link via dep add.
 - is_shipped: not_shipped / not_yet_observed / indeterminate branches.
@@ -283,23 +283,6 @@ def test_is_shipped_unwraps_single_element_list_response() -> None:
     assert evidence["commit_sha"] == "abc123def"
 
 
-def test_set_summary_postcondition_accepts_list_wrapped_show() -> None:
-    adapter, _ = _build_adapter(
-        [_cp(stdout=""), _cp(stdout=json.dumps([_issue_json(title="new title")]))]
-    )
-    adapter.set_summary("bd-a1b2", {"body": "new title", "fmt": "plain"})
-
-
-def test_list_linked_unwraps_list_wrapped_target() -> None:
-    deps_payload = [{"type": "blocks", "target": "bd-2"}]
-    adapter, _ = _build_adapter(
-        [_cp(stdout=json.dumps(deps_payload)), _cp(stdout=json.dumps([_issue_json(id="bd-2")]))]
-    )
-    refs = adapter.list_linked("bd-1")
-    assert len(refs) == 1
-    assert refs[0]["key"] == "bd-2"
-
-
 def test_list_assigned_emits_assignee_filter() -> None:
     issues = [_issue_json(id="bd-1"), _issue_json(id="bd-2", priority=0)]
     adapter, runner = _build_adapter([_cp(stdout=json.dumps(issues))])
@@ -328,33 +311,6 @@ def test_list_assigned_passes_through_explicit_status() -> None:
     args = runner.calls[-1][0]
     assert args[args.index("--status") + 1] == "closed"
 
-
-def test_list_linked_fetches_each_dependency_target() -> None:
-    deps_payload = [{"type": "blocks", "target": "bd-2"}]
-    target_payload = _issue_json(id="bd-2")
-    adapter, _ = _build_adapter(
-        [_cp(stdout=json.dumps(deps_payload)), _cp(stdout=json.dumps(target_payload))]
-    )
-    refs = adapter.list_linked("bd-1")
-    assert len(refs) == 1
-    assert refs[0]["key"] == "bd-2"
-
-
-def test_list_linked_skips_dangling_references() -> None:
-    deps_payload = [
-        {"type": "blocks", "target": "bd-2"},
-        {"type": "blocks", "target": "bd-ghost"},
-    ]
-    adapter, _ = _build_adapter(
-        [
-            _cp(stdout=json.dumps(deps_payload)),
-            _cp(stdout=json.dumps(_issue_json(id="bd-2"))),
-            _cp(returncode=1, stderr="Error: issue not found\n"),
-        ]
-    )
-    refs = adapter.list_linked("bd-1")
-    assert len(refs) == 1
-    assert refs[0]["key"] == "bd-2"
 
 
 # ─── list_transitions ────────────────────────────────────────────────────────
@@ -427,85 +383,6 @@ def test_create_rejects_adf_description() -> None:
             type="task",
         )
 
-
-def test_set_summary_re_reads_for_postcondition() -> None:
-    issue_after = _issue_json(title="new title")
-    adapter, runner = _build_adapter([_cp(stdout=""), _cp(stdout=json.dumps(issue_after))])
-    adapter.set_summary("bd-a1b2", {"body": "new title", "fmt": "plain"})
-    # Two calls: update + show.
-    assert runner.calls[0][0][:2] == ["bd", "update"]
-    assert runner.calls[1][0][:2] == ["bd", "show"]
-
-
-def test_set_summary_postcondition_failure_raises() -> None:
-    issue_after = _issue_json(title="DIFFERENT")
-    adapter, _ = _build_adapter([_cp(stdout=""), _cp(stdout=json.dumps(issue_after))])
-    with pytest.raises(t.TrackerError, match="postcondition"):
-        adapter.set_summary("bd-a1b2", {"body": "new title", "fmt": "plain"})
-
-
-def test_set_priority_maps_string_to_bd_int() -> None:
-    issue_after = _issue_json(priority=1)
-    adapter, runner = _build_adapter([_cp(stdout=""), _cp(stdout=json.dumps(issue_after))])
-    adapter.set_priority("bd-a1b2", "P1")
-    args = runner.calls[0][0]
-    assert args == ["bd", "priority", "bd-a1b2", "1"]
-
-
-def test_set_priority_rejects_unknown_label() -> None:
-    adapter, _ = _build_adapter([])
-    with pytest.raises(t.TrackerError, match="cannot map priority"):
-        adapter.set_priority("bd-a1b2", "URGENT")
-
-
-def test_set_labels_replaces_full_list_via_update() -> None:
-    issue_after = _issue_json(labels=["x", "y"])
-    adapter, runner = _build_adapter([_cp(stdout=""), _cp(stdout=json.dumps(issue_after))])
-    adapter.set_labels("bd-a1b2", ["x", "y"])
-    args = runner.calls[0][0]
-    assert args[:3] == ["bd", "update", "bd-a1b2"]
-    assert "--set-labels" in args
-    assert "x,y" in args
-
-
-def test_set_description_re_reads_for_postcondition() -> None:
-    issue_after = _issue_json(description="new body")
-    adapter, runner = _build_adapter([_cp(stdout=""), _cp(stdout=json.dumps(issue_after))])
-    adapter.set_description("bd-a1b2", {"body": "new body", "fmt": "plain"})
-    # Two calls: update + show.
-    assert runner.calls[0][0][:2] == ["bd", "update"]
-    assert runner.calls[1][0][:2] == ["bd", "show"]
-    args = runner.calls[0][0]
-    assert "--description" in args
-    assert "new body" in args
-
-
-def test_set_description_postcondition_failure_raises() -> None:
-    issue_after = _issue_json(description="DIFFERENT")
-    adapter, _ = _build_adapter([_cp(stdout=""), _cp(stdout=json.dumps(issue_after))])
-    with pytest.raises(t.TrackerError, match="postcondition"):
-        adapter.set_description("bd-a1b2", {"body": "new body", "fmt": "plain"})
-
-
-def test_set_description_rejects_adf() -> None:
-    adapter, _ = _build_adapter([])
-    with pytest.raises(t.NotSupported, match="ADF"):
-        adapter.set_description("bd-a1b2", {"body": "{}", "fmt": "adf"})
-
-
-def test_set_assignee_passes_account_id_verbatim() -> None:
-    issue_after = _issue_json(assignee="charlie")
-    adapter, runner = _build_adapter([_cp(stdout=""), _cp(stdout=json.dumps(issue_after))])
-    adapter.set_assignee("bd-a1b2", "charlie")
-    args = runner.calls[0][0]
-    assert "--assignee" in args
-    assert "charlie" in args
-
-
-def test_set_assignee_none_unassigns() -> None:
-    issue_after = _issue_json(assignee=None)
-    adapter, _ = _build_adapter([_cp(stdout=""), _cp(stdout=json.dumps(issue_after))])
-    adapter.set_assignee("bd-a1b2", None)
 
 
 # ─── Transition ──────────────────────────────────────────────────────────────
@@ -823,21 +700,7 @@ def test_capability_gated_methods_raise_not_supported() -> None:
     with pytest.raises(t.NotSupported):
         adapter.list_sprints("proj")
     with pytest.raises(t.NotSupported):
-        adapter.add_watcher("bd-1", "alice")
-    with pytest.raises(t.NotSupported):
-        adapter.set_fix_versions("bd-1", ["v1"])
-    with pytest.raises(t.NotSupported):
-        adapter.set_components("bd-1", ["core"])
-    with pytest.raises(t.NotSupported):
-        adapter.set_epic_link("bd-1", "bd-epic")
-    with pytest.raises(t.NotSupported):
-        adapter.board_rank("bd-1", None)
-    with pytest.raises(t.NotSupported):
-        adapter.set_custom_field("bd-1", "x", "y", {"key": "x", "type": "string"})
-    with pytest.raises(t.NotSupported):
         adapter.get_attachments("bd-1")
-    with pytest.raises(t.NotSupported):
-        adapter.upload_attachment("bd-1", "/tmp/x.png")
 
 
 # ─── list_issue_types / list_epics degradation ───────────────────────────────

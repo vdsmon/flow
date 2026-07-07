@@ -100,26 +100,10 @@ def _run_cli(argv: list[str]) -> subprocess.CompletedProcess[str]:
     )
 
 
-def test_cli_severity_prints_default(tmp_path):
-    root = _workspace(tmp_path, "[forge]\nbackend = 'github'\n")
-    res = _run_cli(["severity", "--workspace-root", str(root)])
-    assert res.returncode == 0
-    assert json.loads(res.stdout) == {"plain_comment_severity": "minor"}
-
-
-def test_cli_severity_prints_override(tmp_path):
-    root = _workspace(tmp_path, "[revise]\nplain_comment_severity = 'major'\n")
-    res = _run_cli(["severity", "--workspace-root", str(root)])
-    assert res.returncode == 0
-    assert json.loads(res.stdout) == {"plain_comment_severity": "major"}
-
-
 def test_non_table_revise_block_falls_back(tmp_path):
-    # a non-table `revise = "x"` must not crash; falls back to the default, exit 0
+    # a non-table `revise = "x"` must not crash; falls back to the default
     root = _workspace(tmp_path, "revise = 'oops'\n")
-    res = _run_cli(["severity", "--workspace-root", str(root)])
-    assert res.returncode == 0
-    assert json.loads(res.stdout) == {"plain_comment_severity": "minor"}
+    assert revise_config.plain_comment_severity(root) == "minor"
 
 
 def _run_apply_floor(root: Path, threads: list[dict]) -> subprocess.CompletedProcess[str]:

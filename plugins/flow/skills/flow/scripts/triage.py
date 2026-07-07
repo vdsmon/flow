@@ -35,11 +35,6 @@ from tracker_cli import _read_tracker_config, _WorkspaceConfigError
 # share this prefix, so we match on the stem and accept whatever follows.
 _DEFER_STEM = "flow --auto could not self-approve"
 
-# Recorded-decision stems written by the reopen recipe (verb-triage.md). New
-# reopens write `TRIAGE-DECISION:`; the already-reopened beads carry the legacy
-# `DECISION:` stem, so detection accepts both (zero backfill).
-_DECISION_STEMS = ("TRIAGE-DECISION:", "DECISION:")
-
 # Anchored, case-sensitive match for a recorded decision stem. Tolerates an
 # optional `MAINTAINER ` prefix and a date/text run before the colon, so a
 # freeform `MAINTAINER DECISION <date>:` maintainer comment reads as decided

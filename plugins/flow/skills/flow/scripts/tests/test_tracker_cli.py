@@ -177,29 +177,6 @@ def test_get_emits_json(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> N
     assert tk.calls[0] == ("get", ("FT-1",), {})
 
 
-def test_list_assigned_default_filter(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    _seed_workspace(tmp_path)
-    tk = _FakeTracker()
-    rc = tracker_cli.cli_main(
-        ["--workspace-root", str(tmp_path), "list-assigned"],
-        tracker_factory=_factory(tk),
-    )
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
-    assert len(payload) == 2
-    assert tk.calls[0] == ("list_assigned", ("open",), {})
-
-
-def test_list_assigned_custom_filter(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    _seed_workspace(tmp_path)
-    tk = _FakeTracker()
-    tracker_cli.cli_main(
-        ["--workspace-root", str(tmp_path), "list-assigned", "--filter", "all"],
-        tracker_factory=_factory(tk),
-    )
-    assert tk.calls[0] == ("list_assigned", ("all",), {})
-
-
 def test_state_emits_normalized(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     _seed_workspace(tmp_path)
     tk = _FakeTracker()

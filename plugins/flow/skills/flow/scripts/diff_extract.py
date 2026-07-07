@@ -481,10 +481,6 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Git diff capture for /flow stages.")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
-    p_since = sub.add_parser("since", help="git diff <ref>..HEAD numstat.")
-    p_since.add_argument("--ref", required=True)
-    p_since.add_argument("--cwd", default=".")
-
     p_stage = sub.add_parser("since-stage", help="diff since stage started_at_sha.")
     p_stage.add_argument("--stage", required=True)
     p_stage.add_argument("--ticket", required=True)
@@ -517,11 +513,6 @@ def cli_main(argv: list[str]) -> int:
     cwd = Path(args.cwd).resolve()
 
     try:
-        if args.cmd == "since":
-            payload = diff_since(args.ref, cwd)
-            sys.stdout.write(json.dumps(payload, indent=2, sort_keys=True) + "\n")
-            return 0
-
         if args.cmd == "since-stage":
             ticket_dir = Path(args.ticket_dir).resolve()
             payload = diff_since_stage(args.stage, ticket_dir, cwd)
