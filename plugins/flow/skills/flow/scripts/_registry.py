@@ -8,9 +8,51 @@ carries every registry field; each consumer reads the subset it needs.
 
 from __future__ import annotations
 
+import re
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
+
+_SKILL_PREFIX = "skill:"
+_SUBAGENT_PREFIX = "subagent:"
+
+# Charset-strict handler grammar, the workspace.toml validation spec:
+#   inline | none | subagent:<type> | skill:<name>[:<args>]
+# subagent types and skill names are restricted to safe identifiers; skill args,
+# when present, must be non-empty. parse_handler is the lax structural twin used
+# on the runtime dispatch path; validate_workspace enforces this charset.
+HANDLER_RE = re.compile(r"^(inline|none|subagent:[A-Za-z0-9_-]+|skill:[A-Za-z0-9_.-]+(?::.+)?)$")
+
+
+@dataclass(frozen=True)
+class ParsedHandler:
+    kind: str
+    name: str = ""
+    args: str = ""
+
+
+def parse_handler(value: str) -> ParsedHandler | None:
+    """Structural parse of a handler string, or None when the kind is unknown or
+    nothing follows a `subagent:`/`skill:` prefix.
+
+    Lax on charset (that is HANDLER_RE's concern) and on an empty skill name after
+    a non-empty `skill:` body: `skill::args` parses as name="", args="args".
+    Callers that reject an empty name check `parsed.name` themselves.
+    """
+    if value in ("inline", "none"):
+        return ParsedHandler(kind=value)
+    if value.startswith(_SUBAGENT_PREFIX):
+        rest = value[len(_SUBAGENT_PREFIX) :]
+        if not rest:
+            return None
+        return ParsedHandler(kind="subagent", name=rest)
+    if value.startswith(_SKILL_PREFIX):
+        rest = value[len(_SKILL_PREFIX) :]
+        if not rest:
+            return None
+        name, _, args = rest.partition(":")
+        return ParsedHandler(kind="skill", name=name, args=args)
+    return None
 
 
 @dataclass(frozen=True)
@@ -71,4 +113,11 @@ def registry_by_name(path: Path) -> dict[str, StageEntry]:
     return {e.name: e for e in load_registry(path)}
 
 
-__all__ = ["StageEntry", "load_registry", "registry_by_name"]
+__all__ = [
+    "HANDLER_RE",
+    "ParsedHandler",
+    "StageEntry",
+    "load_registry",
+    "parse_handler",
+    "registry_by_name",
+]

@@ -30,7 +30,7 @@ from typing import Any
 
 from _evolve_common import ACTIVE_STATUSES as _ACTIVE_STATUSES
 from _evolve_common import BRANCH_PREFIXES as _BRANCH_PREFIXES
-from _evolve_common import NotMaintainer, bead_labels, primary_anchor
+from _evolve_common import NotMaintainer, backpressure_budget, bead_labels, primary_anchor
 from _evolve_common import fleet_live_keys as _fleet_live_keys
 from _evolve_common import gather_refs as _gather_refs_common
 from _evolve_common import is_inflight as _is_inflight
@@ -96,9 +96,7 @@ def partition(
             "held_anchor": [],
         }
 
-    # inflight_count = active sessions (launched_pending UNION live_runs), subtracted
-    # from the concurrency simultaneity bound (open PRs are bounded separately by cap)
-    budget = min(cap - open_pr_count, max(0, concurrency - inflight_count))
+    budget = backpressure_budget(cap, open_pr_count, concurrency, inflight_count)
     launch: list[str] = []
     held_hot: list[str] = []
     held_anchor: list[str] = []

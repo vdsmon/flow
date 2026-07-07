@@ -44,7 +44,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from _atomicio import atomic_write_text
-from _registry import StageEntry, load_registry
+from _registry import StageEntry, load_registry, parse_handler
 from _runner import KwRunner as Runner
 from _runner import kw_default_runner as _default_runner
 from _timeutil import utcnow_iso
@@ -500,11 +500,7 @@ def _render_workspace_toml(
 
 
 def _legal_handler_string(value: str) -> bool:
-    if value in ("inline", "none"):
-        return True
-    if value.startswith("subagent:") and len(value) > len("subagent:"):
-        return True
-    return value.startswith("skill:") and len(value) > len("skill:")
+    return parse_handler(value) is not None
 
 
 def _preserved_handlers(

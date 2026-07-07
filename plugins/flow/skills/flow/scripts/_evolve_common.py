@@ -124,6 +124,15 @@ def read_cap_concurrency(
     )
 
 
+def backpressure_budget(cap: int, open_pr_count: int, concurrency: int, inflight_count: int) -> int:
+    """Launch budget under both bounds: open-PR headroom (`cap - open_pr_count`)
+    and the concurrency simultaneity bound less active sessions (launched_pending
+    UNION live_runs), floored at zero. Open PRs are capped separately, so active
+    sessions subtract only from the concurrency arm.
+    """
+    return min(cap - open_pr_count, max(0, concurrency - inflight_count))
+
+
 def model_per_key(
     launch: list[str], labels_by_id: dict[str, list[str]], worker_model: str | None
 ) -> dict[str, str]:

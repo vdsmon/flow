@@ -31,6 +31,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 import bundle_discover as bd
+from _registry import parse_handler
 
 _SKILL_PREFIX = "skill:"
 _SUBAGENT_PREFIX = "subagent:"
@@ -112,49 +113,42 @@ def _resolve_skill(
     )
 
 
+def _unknown_reason(handler_string: str) -> str:
+    if handler_string.startswith(_SUBAGENT_PREFIX):
+        return f"empty subagent type in handler {handler_string!r}"
+    if handler_string.startswith(_SKILL_PREFIX):
+        return f"empty skill name in handler {handler_string!r}"
+    return f"unrecognized handler string {handler_string!r}"
+
+
 def resolve(handler_string: str, search_roots: list[Path] | None = None) -> HandlerResolution:
     """Resolve `handler_string` to a HandlerResolution.
 
     Never raises for a malformed handler string; the unparseable case returns
     `handler_type="unknown"` with `error` set so callers can branch on exit code.
     """
-    if handler_string == "inline":
-        return HandlerResolution(handler_type="inline", installed=True, manifest_valid=True)
+    parsed = parse_handler(handler_string)
+    if parsed is None:
+        return HandlerResolution(handler_type="unknown", error=_unknown_reason(handler_string))
 
-    if handler_string == "none":
-        return HandlerResolution(handler_type="none", installed=True, manifest_valid=True)
+    if parsed.kind in ("inline", "none"):
+        return HandlerResolution(handler_type=parsed.kind, installed=True, manifest_valid=True)
 
-    if handler_string.startswith(_SUBAGENT_PREFIX):
-        subagent_type = handler_string[len(_SUBAGENT_PREFIX) :]
-        if not subagent_type:
-            return HandlerResolution(
-                handler_type="unknown",
-                error=f"empty subagent type in handler {handler_string!r}",
-            )
+    if parsed.kind == "subagent":
         return HandlerResolution(
             handler_type="subagent",
-            subagent_type=subagent_type,
+            subagent_type=parsed.name,
             invocation=handler_string,
             installed=True,
             manifest_valid=True,
         )
 
-    if handler_string.startswith(_SKILL_PREFIX):
-        rest = handler_string[len(_SKILL_PREFIX) :]
-        parts = rest.split(":", 1)
-        name = parts[0]
-        args = parts[1] if len(parts) > 1 else ""
-        if not name:
-            return HandlerResolution(
-                handler_type="unknown",
-                error=f"empty skill name in handler {handler_string!r}",
-            )
-        return _resolve_skill(handler_string, name, args, search_roots)
-
-    return HandlerResolution(
-        handler_type="unknown",
-        error=f"unrecognized handler string {handler_string!r}",
-    )
+    if not parsed.name:
+        return HandlerResolution(
+            handler_type="unknown",
+            error=f"empty skill name in handler {handler_string!r}",
+        )
+    return _resolve_skill(handler_string, parsed.name, parsed.args, search_roots)
 
 
 def _exit_code(resolution: HandlerResolution) -> int:
