@@ -39,6 +39,7 @@ from typing import Any
 from _evolve_common import (
     NotMaintainer,
     active_evolve_keys,
+    backpressure_budget,
     fleet_live_keys,
     gather_refs,
     is_inflight,
@@ -100,9 +101,7 @@ def partition(
             "held_anchor": [],
         }
 
-    # inflight_count = active sessions (launched_pending UNION live_runs), subtracted
-    # from the concurrency simultaneity bound (open PRs are bounded separately by cap)
-    budget = min(cap - open_pr_count, max(0, concurrency - inflight_count))
+    budget = backpressure_budget(cap, open_pr_count, concurrency, inflight_count)
     launch: list[str] = []
     held_anchor: list[str] = []
     used_anchors: set[str] = set()

@@ -696,31 +696,6 @@ def compute_recall_hit_rate(
 # ─── Fix efficacy ────────────────────────────────────────────────────────────
 
 
-def _entry_anchors(entry: dict[str, Any]) -> set[str]:
-    """Replicates friction_recurrence._entry_anchors (private there, needed here)."""
-    body = entry.get("body")
-    detail = entry.get("detail")
-    text = f"{body if isinstance(body, str) else ''} {detail if isinstance(detail, str) else ''}"
-    return friction_recurrence.anchors(text)
-
-
-def _fix_efficacy_recurrence_dicts(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return sorted(
-        (
-            {
-                "id": e.get("id", ""),
-                "run_id": e.get("run_id", ""),
-                "ticket": e.get("ticket", ""),
-                "ts": e.get("ts", ""),
-                "stage": e.get("stage", ""),
-                "type": e.get("type", ""),
-            }
-            for e in entries
-        ),
-        key=lambda x: (x["ts"], x["id"]),
-    )
-
-
 def compute_fix_efficacy(workspace_root: Path, namespace: str) -> dict[str, Any]:
     """Per closed MACHINERY-fix bead, did the friction class it claimed to fix recur?
 
@@ -745,8 +720,8 @@ def compute_fix_efficacy(workspace_root: Path, namespace: str) -> dict[str, Any]
         and e["body"].startswith(friction_recurrence.MACHINERY_PREFIX)
     ]
 
-    friction_anchored = [(f, _entry_anchors(f)) for f in friction_entries]
-    machinery_anchored = [(m, _entry_anchors(m)) for m in machinery_entries]
+    friction_anchored = [(f, friction_recurrence.entry_anchors(f)) for f in friction_entries]
+    machinery_anchored = [(m, friction_recurrence.entry_anchors(m)) for m in machinery_entries]
 
     df = friction_recurrence.document_frequencies(
         [a for _, a in friction_anchored] + [a for _, a in machinery_anchored]
@@ -781,7 +756,7 @@ def compute_fix_efficacy(workspace_root: Path, namespace: str) -> dict[str, Any]
                 if isinstance(f_ts, str) and f_ts > fix_ts and (fa & claimed_anchors):
                     recurring.append(f)
 
-        recurrences = _fix_efficacy_recurrence_dicts(recurring)
+        recurrences = friction_recurrence.recurrence_dicts(recurring)
         fix_shas = sorted(
             {
                 sha

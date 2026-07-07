@@ -26,19 +26,17 @@ Validates:
 from __future__ import annotations
 
 import argparse
-import re
 import sys
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from _registry import StageEntry, load_registry
+from _registry import HANDLER_RE, StageEntry, load_registry
 from model_resolve import OFF_VALUES
 
 KNOWN_BACKENDS: tuple[str, ...] = ("jira", "beads")
 KNOWN_FORGE_BACKENDS: tuple[str, ...] = ("github", "bitbucket")
-_HANDLER_RE = re.compile(r"^(inline|none|subagent:[A-Za-z0-9_-]+|skill:[A-Za-z0-9_.-]+(?::.+)?)$")
 
 
 @dataclass
@@ -195,7 +193,7 @@ def _parse_handlers(
         if not isinstance(value, str):
             result.add(f"pipeline.handlers.{stage}", "missing or not a string")
             continue
-        if not _HANDLER_RE.match(value):
+        if not HANDLER_RE.match(value):
             result.add(
                 f"pipeline.handlers.{stage}",
                 f"handler {value!r} does not match "

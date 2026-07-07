@@ -74,7 +74,8 @@ def _str_field(entry: dict[str, Any], key: str) -> str:
     return value if isinstance(value, str) else ""
 
 
-def _entry_anchors(entry: dict[str, Any]) -> set[str]:
+def entry_anchors(entry: dict[str, Any]) -> set[str]:
+    """Anchor tokens from a knowledge/friction entry's `body` + `detail` text."""
     return anchors(f"{_str_field(entry, 'body')} {_str_field(entry, 'detail')}")
 
 
@@ -145,7 +146,7 @@ def _fix_dicts(
     )
 
 
-def _recurrence_dicts(friction_entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def recurrence_dicts(friction_entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return sorted(
         (
             {
@@ -186,7 +187,7 @@ def signature_classes(
         post_fix = [(f, fa) for f, fa in friction_hits if f.get("ts", "") > earliest_fix_ts]
         if not post_fix:
             continue
-        recurrences = _recurrence_dicts([f for f, _ in post_fix])
+        recurrences = recurrence_dicts([f for f, _ in post_fix])
         related = sorted({tok for _, fa in post_fix for tok in fa if tok != anchor})
         classes.append(
             {
@@ -244,7 +245,7 @@ def structural_classes(
                     "fixes": _fix_dicts(fixes_entries, workspace_root, namespace),
                     "earliest_fix_ts": earliest_fix_ts,
                     "post_fix_count": len(post_fix),
-                    "recurrences": _recurrence_dicts(post_fix),
+                    "recurrences": recurrence_dicts(post_fix),
                 }
             )
     classes.sort(
@@ -259,8 +260,8 @@ def analyze(workspace_root: Path, namespace: str) -> dict[str, Any]:
     knowledge = read_jsonl_lenient(_memory_paths.knowledge_path(workspace_root, namespace))
     machinery = _machinery_entries(knowledge)
 
-    friction_anchored: list[_Anchored] = [(f, _entry_anchors(f)) for f in friction]
-    machinery_anchored: list[_Anchored] = [(m, _entry_anchors(m)) for m in machinery]
+    friction_anchored: list[_Anchored] = [(f, entry_anchors(f)) for f in friction]
+    machinery_anchored: list[_Anchored] = [(m, entry_anchors(m)) for m in machinery]
 
     df = document_frequencies(
         [anchor_set for _, anchor_set in friction_anchored]
@@ -318,7 +319,9 @@ __all__ = [
     "cli_main",
     "distinctive_anchors",
     "document_frequencies",
+    "entry_anchors",
     "fix_sha",
+    "recurrence_dicts",
     "signature_classes",
     "structural_classes",
 ]
