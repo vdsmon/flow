@@ -192,7 +192,8 @@ def test_detect_misses_flags_unrecalled_near_dup(tmp_path: Path) -> None:
     misses = recall_usage.detect_misses(tmp_path, ticket="FT-2", ticket_dir=td)
     assert len(misses) == 1
     m = misses[0]
-    assert m["kind"] == "miss" and m["type"] == "RECALL_MISS"
+    assert m["kind"] == "miss"
+    assert m["type"] == "RECALL_MISS"
     assert m["relearned_id"] == "n" * 16
     assert m["missed_id"] == "p" * 16
     assert m["similarity"] >= 0.90
@@ -400,7 +401,8 @@ def test_recall_hit_rate_cli_via_metric(tmp_path: Path, capsys) -> None:
     )
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
-    assert payload["surfaced"] == 1 and payload["hit_rate"] == 1.0
+    assert payload["surfaced"] == 1
+    assert payload["hit_rate"] == 1.0
 
 
 def test_cli_main_record_usage_no_state_returns_3(tmp_path: Path) -> None:

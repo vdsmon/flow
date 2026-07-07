@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Prose<->CLI seam checker for /flow.
 
 Parses every `${CLAUDE_SKILL_DIR}/scripts/<x>.py` invocation out of SKILL.md +
@@ -217,8 +216,7 @@ def _slash_spans(text: str) -> list[tuple[int, str]]:
         if in_fence:
             spans.append((lineno, line.strip()))
         else:
-            for m in _INLINE_SPAN_RE.finditer(line):
-                spans.append((lineno, m.group(1).strip()))
+            spans.extend((lineno, m.group(1).strip()) for m in _INLINE_SPAN_RE.finditer(line))
     return spans
 
 
@@ -500,11 +498,9 @@ def module_md_importer_drift(
         for raw_tok in re.split(r"[,+]", cell):
             tok = raw_tok.split("(", 1)[0]
             tok = tok.strip().strip("`").strip()
-            if tok.startswith("the "):
-                tok = tok[len("the ") :]
+            tok = tok.removeprefix("the ")
             tok = tok.strip().strip(".").strip()
-            if tok.endswith(".py"):
-                tok = tok[: -len(".py")]
+            tok = tok.removesuffix(".py")
             tok = tok.strip()
             if tok:
                 tokens.append(tok)
@@ -669,12 +665,11 @@ def prose_descriptor_key_citations(text: str) -> list[tuple[int, str]]:
     """
     out: list[tuple[int, str]] = []
     for lineno, logical in _logical_lines(text):
-        for m in _DESCRIPTOR_FIELD_RE.finditer(logical):
-            out.append((lineno, m.group(1)))
+        out.extend((lineno, m.group(1)) for m in _DESCRIPTOR_FIELD_RE.finditer(logical))
         idx = logical.find(_DESCRIPTOR_ENUM_ANCHOR)
         if idx != -1:
-            for m in _BACKTICK_IDENT_RE.finditer(logical[idx + len(_DESCRIPTOR_ENUM_ANCHOR) :]):
-                out.append((lineno, m.group(1)))
+            tail = logical[idx + len(_DESCRIPTOR_ENUM_ANCHOR) :]
+            out.extend((lineno, m.group(1)) for m in _BACKTICK_IDENT_RE.finditer(tail))
         for span in re.findall(r"\{[^{}]*\}", logical):
             keys = _JSON_KEY_RE.findall(span)
             if "done" in keys:
@@ -726,8 +721,7 @@ def prose_role_citations(text: str) -> list[tuple[int, str]]:
         m = _ROLE_MEMBERSHIP_RE.search(logical)
         if not m:
             continue
-        for lm in _ROLE_LITERAL_RE.finditer(logical[m.end() :]):
-            out.append((lineno, lm.group(1)))
+        out.extend((lineno, lm.group(1)) for lm in _ROLE_LITERAL_RE.finditer(logical[m.end() :]))
     return out
 
 
@@ -778,55 +772,55 @@ def main(argv: list[str]) -> int:
     for inv in all_invs:
         problems.extend(validate(inv))
 
-    for name in sorted(scripts_missing_from_module_md()):
-        problems.append(
-            Problem(
-                doc="MODULE.md",
-                line=0,
-                level="ERROR",
-                msg=f"script not named in MODULE.md: {name}",
-                raw="",
-            )
+    problems.extend(
+        Problem(
+            doc="MODULE.md",
+            line=0,
+            level="ERROR",
+            msg=f"script not named in MODULE.md: {name}",
+            raw="",
         )
+        for name in sorted(scripts_missing_from_module_md())
+    )
 
-    for name in sorted(scripts_missing_from_registry_descriptions()):
-        problems.append(
-            Problem(
-                doc="stage-registry.toml",
-                line=0,
-                level="ERROR",
-                msg=f"description names a script not on disk: {name}",
-                raw="",
-            )
+    problems.extend(
+        Problem(
+            doc="stage-registry.toml",
+            line=0,
+            level="ERROR",
+            msg=f"description names a script not on disk: {name}",
+            raw="",
         )
+        for name in sorted(scripts_missing_from_registry_descriptions())
+    )
 
-    for drift in module_md_importer_drift():
-        problems.append(
-            Problem(
-                doc="MODULE.md",
-                line=0,
-                level="ERROR",
-                msg=(
-                    f"MODULE.md 'imported by' row for {drift.module}: "
-                    f"missing {sorted(drift.missing)}, phantom {sorted(drift.phantom)}"
-                ),
-                raw="",
-            )
+    problems.extend(
+        Problem(
+            doc="MODULE.md",
+            line=0,
+            level="ERROR",
+            msg=(
+                f"MODULE.md 'imported by' row for {drift.module}: "
+                f"missing {sorted(drift.missing)}, phantom {sorted(drift.phantom)}"
+            ),
+            raw="",
         )
+        for drift in module_md_importer_drift()
+    )
 
-    for drift in module_md_surface_cell_drift():
-        problems.append(
-            Problem(
-                doc="MODULE.md",
-                line=0,
-                level="ERROR",
-                msg=(
-                    f"MODULE.md surface cell for {drift.module}: "
-                    f"missing subcommand(s) {sorted(drift.missing)}"
-                ),
-                raw="",
-            )
+    problems.extend(
+        Problem(
+            doc="MODULE.md",
+            line=0,
+            level="ERROR",
+            msg=(
+                f"MODULE.md surface cell for {drift.module}: "
+                f"missing subcommand(s) {sorted(drift.missing)}"
+            ),
+            raw="",
         )
+        for drift in module_md_surface_cell_drift()
+    )
 
     for doc_name, count in sorted(docs_over_stage_doc_citation_limit().items()):
         problems.append(

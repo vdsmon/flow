@@ -188,8 +188,9 @@ def _write_index(
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     lines = [json.dumps({"_header": header}, sort_keys=True)]
-    for eid in sorted(vectors):
-        lines.append(json.dumps({"id": eid, "v": vectors[eid]}, sort_keys=True))
+    lines.extend(
+        json.dumps({"id": eid, "v": vectors[eid]}, sort_keys=True) for eid in sorted(vectors)
+    )
     content = "\n".join(lines) + "\n"
     with flock_retry(lock_path):
         tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")

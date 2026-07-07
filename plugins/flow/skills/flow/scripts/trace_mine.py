@@ -221,9 +221,7 @@ def _new_event(
     }
     if detail:
         event["detail"] = detail
-    for key, value in provenance.items():
-        if value is not None:
-            event[key] = value
+    event.update({key: value for key, value in provenance.items() if value is not None})
     return event
 
 

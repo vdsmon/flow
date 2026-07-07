@@ -96,15 +96,15 @@ def render_table(rows: list[dict[str, Any]]) -> str:
         return "(no runs)"
     headers = ["TICKET", "PROGRESS", "STATE", "LEASE"]
     table = [headers]
-    for r in rows:
-        table.append(
-            [
-                str(r["ticket"]),
-                f"{r['completed']}/{r['total_stages']}",
-                str(r["next_or_blocked"]),
-                str(r["lease"]),
-            ]
-        )
+    table.extend(
+        [
+            str(r["ticket"]),
+            f"{r['completed']}/{r['total_stages']}",
+            str(r["next_or_blocked"]),
+            str(r["lease"]),
+        ]
+        for r in rows
+    )
     widths = [max(len(row[i]) for row in table) for i in range(len(headers))]
     return "\n".join(
         "  ".join(cell.ljust(widths[i]) for i, cell in enumerate(row)) for row in table

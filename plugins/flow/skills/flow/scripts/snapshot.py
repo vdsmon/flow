@@ -125,7 +125,9 @@ _PROTECTED_BRANCHES = frozenset({"main", "master", "dev", "develop"})
 
 
 def _git_text(args: list[str], cwd: Path) -> str:
-    res = subprocess.run(["git", *args], cwd=str(cwd), capture_output=True, text=True, timeout=30)
+    res = subprocess.run(
+        ["git", *args], cwd=str(cwd), capture_output=True, text=True, timeout=30, check=False
+    )
     if res.returncode != 0:
         raise OSError(res.stderr.strip() or "git failed")
     return res.stdout
@@ -184,6 +186,7 @@ def engine_tree_clean(skill_root: Path) -> bool:
             capture_output=True,
             text=True,
             timeout=30,
+            check=False,
         )
     except (OSError, subprocess.SubprocessError):
         return False
@@ -380,9 +383,11 @@ def drifted_components(stored: dict[str, Any], current: dict[str, Any]) -> list[
     current_raw = current.get("handlers")
     stored_handlers: dict[str, Any] = stored_raw if isinstance(stored_raw, dict) else {}
     current_handlers: dict[str, Any] = current_raw if isinstance(current_raw, dict) else {}
-    for stage in sorted(set(stored_handlers) | set(current_handlers)):
-        if stored_handlers.get(stage) != current_handlers.get(stage):
-            changed.append(f"handler {stage}")
+    changed.extend(
+        f"handler {stage}"
+        for stage in sorted(set(stored_handlers) | set(current_handlers))
+        if stored_handlers.get(stage) != current_handlers.get(stage)
+    )
     return changed
 
 

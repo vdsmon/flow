@@ -380,8 +380,8 @@ def _read_manifest(path: Path) -> list[dict[str, Any]]:
     if not path.exists():
         return []
     entries: list[dict[str, Any]] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
         if not line:
             continue
         try:
@@ -856,6 +856,7 @@ def _status_history(
             cwd=workspace_root,
             capture_output=True,
             text=True,
+            check=False,
         )
     except (FileNotFoundError, OSError):
         return None
@@ -938,6 +939,7 @@ def _git_out(workspace_root: Path, args: list[str]) -> str | None:
             ["git", "-C", str(workspace_root), *args],
             capture_output=True,
             text=True,
+            check=False,
         )
     except (FileNotFoundError, OSError):
         return None
@@ -979,8 +981,8 @@ def _scan_main_reverts(workspace_root: Path) -> list[dict[str, Any]]:
         return []
 
     out: list[dict[str, Any]] = []
-    for sha in shas_out.splitlines():
-        sha = sha.strip()
+    for raw_sha in shas_out.splitlines():
+        sha = raw_sha.strip()
         if not sha:
             continue
         body = _git_out(workspace_root, ["log", "-1", "--format=%B", sha])
@@ -1316,9 +1318,9 @@ def compute_arm_compare(
     ttp_skipped: dict[str, list[dict[str, Any]]] = {a: [] for a in arms}
     interventions: dict[str, list[int]] = {a: [] for a in arms}
     outcomes: dict[str, list[str]] = {a: [] for a in arms}
-    reverts: dict[str, int] = {a: 0 for a in arms}
+    reverts: dict[str, int] = dict.fromkeys(arms, 0)
     reverts_skipped: dict[str, list[dict[str, Any]]] = {a: [] for a in arms}
-    n_events: dict[str, int] = {a: 0 for a in arms}
+    n_events: dict[str, int] = dict.fromkeys(arms, 0)
 
     total = 0
     for event in load_ship_events(workspace_root, namespace):
@@ -1733,13 +1735,13 @@ def _render_fix_efficacy_table(result: dict[str, Any]) -> str:
         f"recurrence_rate={totals['recurrence_rate']} (over all fix_beads)",
         "",
     ]
-    for bead in result["beads"]:
-        lines.append(
-            f"  {bead['ticket']:<16} {bead['verdict']:<9} "
-            f"post_fix_count={bead['post_fix_count']} "
-            f"claimed_anchors={bead['claimed_anchors']} "
-            f"fix_shas={bead['fix_shas']}"
-        )
+    lines.extend(
+        f"  {bead['ticket']:<16} {bead['verdict']:<9} "
+        f"post_fix_count={bead['post_fix_count']} "
+        f"claimed_anchors={bead['claimed_anchors']} "
+        f"fix_shas={bead['fix_shas']}"
+        for bead in result["beads"]
+    )
     return "\n".join(lines) + "\n"
 
 

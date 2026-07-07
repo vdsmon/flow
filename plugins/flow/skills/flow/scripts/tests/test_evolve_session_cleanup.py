@@ -67,16 +67,16 @@ def _record(repo, tmp_path, *, key="flow-abc", **overrides):
     intent = overrides.pop("intent", None)
     if intent is None:
         intent = f"/flow {key} --auto"
-    defaults = dict(
-        job_id="abc12345",
-        job_dir=str(tmp_path / "jobs" / "abc12345"),
-        session_id="abc12345-0000-0000-0000-000000000000",
-        state="done",
-        tempo="idle",
-        cwd=cwd,
-        intent=intent,
-        link_scan_path=_transcript(tmp_path, fresh=False),
-    )
+    defaults = {
+        "job_id": "abc12345",
+        "job_dir": str(tmp_path / "jobs" / "abc12345"),
+        "session_id": "abc12345-0000-0000-0000-000000000000",
+        "state": "done",
+        "tempo": "idle",
+        "cwd": cwd,
+        "intent": intent,
+        "link_scan_path": _transcript(tmp_path, fresh=False),
+    }
     defaults.update(overrides)
     return esc.JobRecord(**defaults)
 

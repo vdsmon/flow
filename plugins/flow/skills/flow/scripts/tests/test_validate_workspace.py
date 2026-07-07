@@ -37,7 +37,7 @@ def _make_workspace(
     if stages is None:
         stages = ["ticket", "plan", "implement", "commit", "reflect"]
     if handlers is None:
-        handlers = {s: "inline" for s in stages}
+        handlers = dict.fromkeys(stages, "inline")
     if memory is None:
         memory = {
             "namespace": "FT",
@@ -555,7 +555,7 @@ def test_inline_implement_with_work_model_warns(tmp_path: Path) -> None:
 
 def test_subagent_implement_with_work_model_no_warn(tmp_path: Path) -> None:
     stages = ["ticket", "plan", "implement", "commit", "reflect"]
-    handlers = {s: "inline" for s in stages}
+    handlers = dict.fromkeys(stages, "inline")
     handlers["implement"] = "subagent:general-purpose"
     root = _make_workspace(tmp_path, backend="beads", stages=stages, handlers=handlers)
     _append_forge(root, '[models]\nwork_model = "sonnet"\n')

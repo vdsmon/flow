@@ -72,7 +72,7 @@ def _ok(result, what: str) -> str:
 def bump_patch(version: str) -> str:
     """Parse MAJOR.MINOR.PATCH and return MAJOR.MINOR.(PATCH+1)."""
     parts = version.split(".")
-    if len(parts) != 3:
+    if len(parts) != 3 or not all(p.isdigit() for p in parts):
         raise ValueError(f"not a MAJOR.MINOR.PATCH version: {version!r}")
     major, minor, patch = (int(p) for p in parts)
     return f"{major}.{minor}.{patch + 1}"
@@ -81,7 +81,7 @@ def bump_patch(version: str) -> str:
 def bump_minor(version: str) -> str:
     """Parse MAJOR.MINOR.PATCH and return MAJOR.(MINOR+1).0."""
     parts = version.split(".")
-    if len(parts) != 3:
+    if len(parts) != 3 or not all(p.isdigit() for p in parts):
         raise ValueError(f"not a MAJOR.MINOR.PATCH version: {version!r}")
     major, minor, _patch = (int(p) for p in parts)
     return f"{major}.{minor + 1}.0"

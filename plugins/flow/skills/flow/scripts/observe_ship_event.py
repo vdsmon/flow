@@ -146,7 +146,7 @@ def _next_dupe_path(primary: Path) -> Path:
     for sibling in primary.parent.glob(f"{primary.name}.dupe.*.json"):
         suffix = sibling.name[len(pattern) :]
         # suffix is `<n>.json`
-        n_str = suffix[: -len(".json")] if suffix.endswith(".json") else suffix
+        n_str = suffix.removesuffix(".json")
         try:
             n = int(n_str)
         except ValueError:

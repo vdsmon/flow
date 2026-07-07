@@ -397,7 +397,8 @@ def test_list_transitions_marks_required_fields(monkeypatch: pytest.MonkeyPatch)
     assert trans[0]["id"] == "31"
     assert trans[0]["to_normalized_state"] == "done"
     required = trans[0]["required_fields"]
-    assert required and required[0]["key"] == "resolution"
+    assert required
+    assert required[0]["key"] == "resolution"
     assert required[0]["enum_values"] == ["Done", "Won't Do"]
 
 
@@ -600,11 +601,12 @@ def test_429_with_http_date_retry_after_retries_and_succeeds(
     )
     adapter = _make_adapter(monkeypatch, http)
     slept: list[float] = []
-    monkeypatch.setattr(tj.time, "sleep", lambda s: slept.append(s))
+    monkeypatch.setattr(tj.time, "sleep", slept.append)
     state = adapter.state("FT-1")
     assert state["native_status"] == ""
     assert len(http.calls) == 2
-    assert slept and slept[0] <= 30.0
+    assert slept
+    assert slept[0] <= 30.0
 
 
 # ─── Capability-gated typed methods ─────────────────────────────────────────

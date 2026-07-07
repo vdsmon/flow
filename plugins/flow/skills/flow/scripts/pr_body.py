@@ -190,8 +190,7 @@ def _scrub_line(line: str) -> str:
     m = _BOLD_BULLET_RE.match(line)
     if m:
         indent, term, rest = m.group(1), m.group(2).strip(), m.group(3).strip()
-        line = f"{indent}{term}: {rest}".rstrip() if rest else f"{indent}{term}".rstrip()
-        return line
+        return f"{indent}{term}: {rest}".rstrip() if rest else f"{indent}{term}".rstrip()
     # `# Title Case Heading` -> sentence case (keep the marker, lowercase non-initial
     # words). Idempotent: re-applying to already sentence-cased text is a no-op.
     hm = re.match(r"^(#+\s+)(.*)$", line)

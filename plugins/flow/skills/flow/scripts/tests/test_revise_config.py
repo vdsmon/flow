@@ -96,6 +96,7 @@ def _run_cli(argv: list[str]) -> subprocess.CompletedProcess[str]:
         [sys.executable, str(Path(__file__).resolve().parents[1] / "revise_config.py"), *argv],
         capture_output=True,
         text=True,
+        check=False,
     )
 
 
@@ -133,6 +134,7 @@ def _run_apply_floor(root: Path, threads: list[dict]) -> subprocess.CompletedPro
         input=json.dumps(threads),
         capture_output=True,
         text=True,
+        check=False,
     )
 
 

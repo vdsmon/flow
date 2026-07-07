@@ -41,7 +41,8 @@ def _offset(base: str, secs: int) -> str:
 def _age(now: str, ts: str) -> float:
     now_dt = lease.parse_iso(now)
     ts_dt = lease.parse_iso(ts)
-    assert now_dt is not None and ts_dt is not None
+    assert now_dt is not None
+    assert ts_dt is not None
     return (now_dt - ts_dt).total_seconds()
 
 

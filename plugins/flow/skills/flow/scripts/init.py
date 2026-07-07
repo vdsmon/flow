@@ -378,8 +378,8 @@ def _read_progress(root: Path) -> set[str]:
     if not path.exists():
         return set()
     completed: set[str] = set()
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
         if not line:
             continue
         try:
@@ -628,9 +628,7 @@ def _compose_handlers(
             "with explicit --handler overrides"
         )
 
-    if discovery.invalid:
-        for err in discovery.invalid:
-            warnings.append(f"manifest {err.path}: {err.reason}")
+    warnings.extend(f"manifest {err.path}: {err.reason}" for err in discovery.invalid)
 
     handlers.update(preserved)
     warnings.extend(preserved_warnings)
@@ -825,8 +823,8 @@ def _checkpoint_already_recorded(path: Path, workspace_root: str, init_run_id: s
     """
     if not path.exists():
         return False
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
         if not line:
             continue
         try:

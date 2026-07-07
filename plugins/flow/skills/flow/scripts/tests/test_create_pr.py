@@ -452,7 +452,8 @@ def test_fallback_oversized_body_is_capped(tmp_path):
     # tier-1 structured trim, not the hard-truncate backstop: marker present,
     # fence head and tail survive, and the Closes footer is intact.
     assert "lines trimmed" in body
-    assert "log 0" in body and "log 19999" in body
+    assert "log 0" in body
+    assert "log 19999" in body
     assert "Closes flow-nr8c" in body
 
 
