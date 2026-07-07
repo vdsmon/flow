@@ -33,7 +33,8 @@ from pathlib import Path
 from typing import Any, Literal
 
 import ticket_frontmatter
-from _workspace import WorkspaceConfigError, load_workspace_toml
+from _evolve_common import ToolError, bead_show
+from _evolve_common import auto_merge_hot as _auto_merge_hot
 from triage import is_hot_change
 
 Runner = Callable[[list[str]], subprocess.CompletedProcess[str]]
@@ -100,19 +101,6 @@ def decide(
     return {"action": "merge", "is_hot": is_hot, "reason": "eligible"}
 
 
-def _auto_merge_hot(workspace_root: Path) -> bool:
-    """`[evolve] auto_merge_hot` from workspace.toml (bool); default False."""
-    try:
-        config = load_workspace_toml(workspace_root)
-    except WorkspaceConfigError:
-        return False
-    section = config.get("evolve")
-    if not isinstance(section, dict):
-        return False
-    value = section.get("auto_merge_hot")
-    return value if isinstance(value, bool) else False
-
-
 def _default_runner() -> Runner:
     def run(args: list[str]) -> subprocess.CompletedProcess[str]:
         return subprocess.run(args, capture_output=True, text=True, check=False)
@@ -121,21 +109,14 @@ def _default_runner() -> Runner:
 
 
 def _bead_labels(key: str, runner: Runner) -> list[str]:
-    """The bead's labels via `bd show <key> --json` (authoritative; labels live in
-    the tracker, not in ticket.json). Empty list on any error.
-
-    `bd show --json` returns a LIST with one element (the bead), not a bare dict.
+    """The bead's labels via `_evolve_common.bead_show` (authoritative; labels
+    live in the tracker, not in ticket.json). Empty list on any error.
     """
-    result = runner(["bd", "show", key, "--json"])
-    if result.returncode != 0:
-        return []
     try:
-        data = json.loads(result.stdout or "[]")
-    except json.JSONDecodeError:
+        data = bead_show(runner, key)
+    except ToolError:
         return []
-    if isinstance(data, list):
-        data = data[0] if data else {}
-    labels = data.get("labels") if isinstance(data, dict) else None
+    labels = data.get("labels")
     return [str(x) for x in labels] if isinstance(labels, list) else []
 
 

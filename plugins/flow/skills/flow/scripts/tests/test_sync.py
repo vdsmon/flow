@@ -127,8 +127,8 @@ def test_reconcile_applies_pending_link(tmp_path: Path) -> None:
 def test_reconcile_parks_legacy_edit_entry(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    # op=edit predates its removal from VALID_OPS; a queued entry must not wedge
-    # sync at exit 1 (parked, kept on disk, not counted as failed).
+    # an op outside VALID_OPS (edit predates its removal) must not wedge sync
+    # at exit 1 (parked, kept on disk, not counted as failed).
     path = pending_mutations.pending_mutations_path(tmp_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     entry = {
@@ -162,14 +162,17 @@ def test_reconcile_applies_pending_create(tmp_path: Path) -> None:
     assert pending_mutations.list_mutations(tmp_path) == []
 
 
-def test_reconcile_unknown_op_falls_through(tmp_path: Path) -> None:
+def test_reconcile_parks_unknown_op(tmp_path: Path) -> None:
+    # any op outside VALID_OPS parks (kept on disk, warned, not failed) so a
+    # bogus entry can never wedge sync at exit 1 forever.
     path = pending_mutations.pending_mutations_path(tmp_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     entry = {"idempotency_key": "k-bogus", "ticket": "FT-7", "op": "bogus", "args": {}}
     path.write_text(json.dumps(entry) + "\n")
     tracker = _FakeTracker({})
     report = sync.reconcile(tmp_path, tracker)
-    assert len(report["failed"]) == 1
+    assert report["parked"] == ["k-bogus"]
+    assert report["failed"] == []
     assert report["removed"] == 0
     assert len(pending_mutations.list_mutations(tmp_path)) == 1
     assert tracker.comments == []

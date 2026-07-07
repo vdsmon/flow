@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import tomllib
 from pathlib import Path
+from typing import Any
 
 
 class _MemoryConfigError(Exception):
@@ -81,6 +82,24 @@ def knowledge_lock_path(workspace_root: Path, namespace: str) -> Path:
 
 def friction_path(workspace_root: Path, namespace: str) -> Path:
     return namespace_root(workspace_root, namespace) / "friction.jsonl"
+
+
+def load_semantic_config(workspace_root: Path) -> dict[str, Any]:
+    """Read `[memory.semantic]` from workspace.toml. Absent block -> {} (semantic off).
+
+    Keys: `enabled` (bool), `model` (str), `threshold` (float), `embedder` (str).
+    Any read/parse error returns {} so callers stay on the BM25 path.
+    """
+    path = workspace_root / ".flow" / "workspace.toml"
+    try:
+        data = tomllib.loads(path.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError):
+        return {}
+    memory = data.get("memory")
+    if not isinstance(memory, dict):
+        return {}
+    semantic = memory.get("semantic")
+    return semantic if isinstance(semantic, dict) else {}
 
 
 def friction_lock_path(workspace_root: Path, namespace: str) -> Path:

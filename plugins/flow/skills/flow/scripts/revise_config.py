@@ -81,8 +81,6 @@ def apply_floor(threads: list[dict[str, Any]], severity: str) -> list[dict[str, 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Read the [revise] block of workspace.toml.")
     sub = parser.add_subparsers(dest="cmd", required=True)
-    p = sub.add_parser("severity", help="print the configured plain_comment_severity floor")
-    p.add_argument("--workspace-root", default=".")
     pa = sub.add_parser(
         "apply-floor",
         help="read a threads JSON array on stdin, bump unresolved minor to the floor, print",
@@ -93,10 +91,6 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
 
 def cli_main(argv: list[str]) -> int:
     args = _parse_args(argv)
-    if args.cmd == "severity":
-        value = plain_comment_severity(Path(args.workspace_root).resolve())
-        sys.stdout.write(json.dumps({"plain_comment_severity": value}) + "\n")
-        return 0
     if args.cmd == "apply-floor":
         try:
             threads = json.loads(sys.stdin.read() or "[]")

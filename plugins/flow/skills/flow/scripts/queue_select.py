@@ -26,26 +26,18 @@ on the keystone gate: each run is worktree/lease-isolated, so any residual file
 overlap surfaces as a merge conflict at human review (friction, never
 corruption).
 
-CLI:
-  queue_select.py --workspace-root <dir> [--cap N] [--concurrency N]
-
-Exit codes:
-  0 = ok (prints the selection JSON)
-  2 = tool error (bd/git/gh failed; stderr propagated)
-  4 = not a maintainer setup (dormant; nothing selected)
+Lib only (no CLI): consumed by queue_drain.py's select + decide round and
+queue_status.py's advisory. Raises NotMaintainer (callers map to exit 4) and
+ToolError (exit 2).
 """
 
 from __future__ import annotations
 
-import argparse
-import json
-import sys
 from pathlib import Path
 from typing import Any
 
 from _evolve_common import (
     NotMaintainer,
-    ToolError,
     active_evolve_keys,
     fleet_live_keys,
     gather_refs,
@@ -197,33 +189,3 @@ def select(
 
 def _config_defaults(workspace_root: Path) -> tuple[int, int]:
     return read_cap_concurrency(workspace_root, "queue", DEFAULT_CAP, DEFAULT_CONCURRENCY)
-
-
-def cli_main(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(
-        description="Select the next batch of day-job beads to launch."
-    )
-    parser.add_argument("--workspace-root", required=True)
-    parser.add_argument("--cap", type=int, default=None)
-    parser.add_argument("--concurrency", type=int, default=None)
-    args = parser.parse_args(argv)
-
-    ws = Path(args.workspace_root)
-    cfg_cap, cfg_conc = _config_defaults(ws)
-    cap = args.cap if args.cap is not None else cfg_cap
-    concurrency = args.concurrency if args.concurrency is not None else cfg_conc
-
-    try:
-        result = select(ws, cap=cap, concurrency=concurrency)
-    except NotMaintainer as exc:
-        print(str(exc), file=sys.stderr)
-        return 4
-    except ToolError as exc:
-        print(str(exc), file=sys.stderr)
-        return 2
-    print(json.dumps(result, indent=2))
-    return 0
-
-
-if __name__ == "__main__":
-    sys.exit(cli_main(sys.argv[1:]))

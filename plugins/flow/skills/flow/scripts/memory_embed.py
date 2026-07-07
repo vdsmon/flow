@@ -34,18 +34,18 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import shlex
 import subprocess
 import sys
-import time
 from pathlib import Path
 from typing import Any
 
 import _memory_paths
 import recall
+from _atomicio import atomic_write_text
 from _jsonl import iter_jsonl
 from _locking import flock_retry
+from _timeutil import ts_token
 
 _DEFAULT_MODEL = "BAAI/bge-small-en-v1.5"
 # bound the embedder subprocess: a wedged model download / hung uvx must not
@@ -155,7 +155,7 @@ def load_index(
     path = embed_index_path(workspace_root, namespace)
     if not path.exists():
         return {}, {}
-    sidecar = path.with_name(f"{path.name}.quarantine.{_ts_token()}")
+    sidecar = path.with_name(f"{path.name}.quarantine.{ts_token()}")
     header: dict[str, Any] = {}
     vectors: dict[str, list[float]] = {}
     for rec in iter_jsonl(path, sidecar):
@@ -167,10 +167,6 @@ def load_index(
         if isinstance(eid, str) and isinstance(vec, list):
             vectors[eid] = [float(x) for x in vec]
     return header, vectors
-
-
-def _ts_token() -> str:
-    return time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
 
 
 def _entry_text(entry: dict[str, Any]) -> str:
@@ -193,12 +189,7 @@ def _write_index(
     )
     content = "\n".join(lines) + "\n"
     with flock_retry(lock_path):
-        tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-        with tmp.open("w", encoding="utf-8") as fh:
-            fh.write(content)
-            fh.flush()
-            os.fsync(fh.fileno())
-        os.replace(tmp, path)
+        atomic_write_text(path, content)
 
 
 def reindex(
@@ -219,7 +210,7 @@ def reindex(
     exit 2 and the index is left untouched.
     """
     kpath = _memory_paths.knowledge_path(workspace_root, namespace)
-    sidecar = kpath.with_name(f"{kpath.name}.quarantine.{_ts_token()}")
+    sidecar = kpath.with_name(f"{kpath.name}.quarantine.{ts_token()}")
     entries = recall.filter_superseded(list(iter_jsonl(kpath, sidecar))) if kpath.exists() else []
     live = {str(e["id"]): _entry_text(e) for e in entries if isinstance(e.get("id"), str)}
 
@@ -242,7 +233,7 @@ def reindex(
 
     merged = {**kept, **embedded}
     dim = len(next(iter(merged.values()))) if merged else header.get("dim", 0)
-    new_header = {"model": model, "dim": dim, "ts": _ts_token()}
+    new_header = {"model": model, "dim": dim, "ts": ts_token()}
     _write_index(
         embed_index_path(workspace_root, namespace),
         _embed_lock_path(workspace_root, namespace),
@@ -257,25 +248,6 @@ def reindex(
         "kept": len(kept),
         "full": full,
     }
-
-
-# ─── Config ────────────────────────────────────────────────────────────────────
-
-
-def _load_semantic_config(workspace_root: Path) -> dict[str, Any]:
-    """Read `[memory.semantic]` from workspace.toml. Absent → empty dict."""
-    import tomllib
-
-    path = workspace_root / ".flow" / "workspace.toml"
-    try:
-        data = tomllib.loads(path.read_text(encoding="utf-8"))
-    except (OSError, tomllib.TOMLDecodeError):
-        return {}
-    memory = data.get("memory")
-    if not isinstance(memory, dict):
-        return {}
-    semantic = memory.get("semantic")
-    return semantic if isinstance(semantic, dict) else {}
 
 
 # ─── CLI ─────────────────────────────────────────────────────────────────────
@@ -302,7 +274,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
 def cli_main(argv: list[str]) -> int:
     args = _parse_args(argv)
     workspace_root = Path(args.workspace_root).resolve()
-    config = _load_semantic_config(workspace_root)
+    config = _memory_paths.load_semantic_config(workspace_root)
     model = args.model or str(config.get("model") or _DEFAULT_MODEL)
     embedder = args.embedder or (config.get("embedder") or None)
 

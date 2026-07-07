@@ -56,6 +56,7 @@ from typing import Any
 import lease
 import main_ci_health
 from _evolve_common import NotMaintainer, ToolError, bead_labels
+from _evolve_common import auto_merge_hot as _auto_merge_hot
 from _evolve_common import key_from_ref as _key_from_ref
 from _evolve_common import loads as _loads
 from _evolve_common import ok as _ok
@@ -63,7 +64,6 @@ from _evolve_common import run_dir_for as _run_dir_for
 from _runner import CwdRunner as Runner
 from _runner import cwd_default_runner as _default_runner
 from _timeutil import utcnow_iso
-from _workspace import WorkspaceConfigError, load_workspace_toml
 from maintainer import resolve_maintainer_repo
 from triage import is_hot_change
 
@@ -275,18 +275,6 @@ def _labels_index(runner: Runner, *, include_proposals: bool = False) -> dict[st
             if isinstance(b, dict) and b.get("id"):
                 index[str(b["id"])] = list(b.get("labels") or [])
     return index
-
-
-def _auto_merge_hot(workspace_root: Path) -> bool:
-    try:
-        config = load_workspace_toml(workspace_root)
-    except WorkspaceConfigError:
-        return False
-    section = config.get("evolve")
-    if not isinstance(section, dict):
-        return False
-    value = section.get("auto_merge_hot")
-    return value if isinstance(value, bool) else False
 
 
 _MAIN_RED_STEM = "main-ci-red"

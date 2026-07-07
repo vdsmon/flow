@@ -37,7 +37,6 @@ import argparse
 import json
 import os
 import sys
-import time
 from pathlib import Path
 from typing import Any
 
@@ -46,6 +45,7 @@ import recall
 import state
 from _jsonl import iter_jsonl
 from _locking import LockContention, flock_retry
+from _timeutil import ts_token, utcnow_iso_ms
 
 # bge-small cosines for true near-duplicates sit very high; keep the gate
 # conservative so a false miss never poisons the trust the metric exists to
@@ -68,7 +68,7 @@ def _lock_path(workspace_root: Path, namespace: str) -> Path:
 
 def _quarantine_path(workspace_root: Path, namespace: str) -> Path:
     path = recall_usage_path(workspace_root, namespace)
-    return path.with_name(f"{path.name}.quarantine.{_ts_token()}")
+    return path.with_name(f"{path.name}.quarantine.{ts_token()}")
 
 
 def _recall_log_path(workspace_root: Path, ticket: str) -> Path:
@@ -76,18 +76,6 @@ def _recall_log_path(workspace_root: Path, ticket: str) -> Path:
 
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
-
-
-def _utcnow_iso_ms() -> str:
-    """UTC ISO8601 with millisecond precision + Z suffix."""
-    t = time.time()
-    secs = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(t))
-    ms = int((t - int(t)) * 1000)
-    return f"{secs}.{ms:03d}Z"
-
-
-def _ts_token() -> str:
-    return time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
 
 
 def _append_records(
@@ -131,7 +119,7 @@ def _surfaced_ids(workspace_root: Path, ticket: str) -> list[str]:
         return []
     ids: list[str] = []
     seen: set[str] = set()
-    sidecar = log_path.with_name(f"{log_path.name}.quarantine.{_ts_token()}")
+    sidecar = log_path.with_name(f"{log_path.name}.quarantine.{ts_token()}")
     for rec in iter_jsonl(log_path, sidecar):
         for rid in rec.get("returned_ids", []):
             if isinstance(rid, str) and rid and rid not in seen:
@@ -172,7 +160,7 @@ def record_usage(
     namespace = _memory_paths.resolve_namespace(workspace_root)
     surfaced = _surfaced_ids(workspace_root, ticket)
     used = set(used_ids)
-    now = _utcnow_iso_ms()
+    now = utcnow_iso_ms()
     records = [
         {
             "kind": "usage",
@@ -216,7 +204,7 @@ def detect_misses(
         _memory_paths._MemoryConfigError
         OSError
     """
-    config = recall._load_config(workspace_root)
+    config = _memory_paths.load_semantic_config(workspace_root)
     if not config.get("enabled"):
         return []
     run_id, started_at = _run_id_started_at(ticket_dir)
@@ -267,7 +255,7 @@ def detect_misses(
         return []
 
     surfaced = set(_surfaced_ids(workspace_root, ticket))
-    now = _utcnow_iso_ms()
+    now = utcnow_iso_ms()
     records: list[dict[str, Any]] = []
     for entry, vec in zip(new_entries, new_vecs, strict=True):
         best_id, best_sim = "", -1.0

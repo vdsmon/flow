@@ -651,32 +651,6 @@ def test_classify_corrupt_does_not_mutate(tmp_path: Path) -> None:
     assert list(tmp_path.glob("run.lock.quarantine.*")) == []
 
 
-def test_quarantine_corrupt_lock_renames(tmp_path: Path) -> None:
-    lock = lease.run_lock_path(tmp_path)
-    lock.write_text("{not json", encoding="utf-8")
-    dst = lease.quarantine_corrupt_lock(tmp_path)
-    assert dst is not None
-    assert dst.exists()
-    assert dst.name.startswith("run.lock.quarantine.")
-    assert dst.read_text(encoding="utf-8") == "{not json"
-    assert not lock.exists()
-
-
-def test_quarantine_corrupt_lock_absent_returns_none(tmp_path: Path) -> None:
-    assert lease.quarantine_corrupt_lock(tmp_path) is None
-
-
-def test_quarantine_corrupt_lock_skips_now_valid_lock(tmp_path: Path) -> None:
-    # a lock that parses as a valid lease (a concurrent acquire won the race
-    # since the caller classified it corrupt) must never be quarantined.
-    _acquire(tmp_path, "run-1")
-    assert lease.quarantine_corrupt_lock(tmp_path) is None
-    on_disk = lease.read_lease(tmp_path)
-    assert on_disk is not None
-    assert on_disk.run_id == "run-1"
-    assert list(tmp_path.glob("run.lock.quarantine.*")) == []
-
-
 # ─── takeover_clear ────────────────────────────────────────────────────────────
 
 

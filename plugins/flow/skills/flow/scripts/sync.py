@@ -8,9 +8,9 @@ superseded; otherwise the op is replayed. Reconciliation, not blind replay.
 
 Transition reconciliation is read-before-replay (idempotent on target state).
 For comment/link/create the probe-based dedup is deferred; those are replayed
-best-effort and a successful replay drops the entry. Legacy op="edit" entries
-are parked with a warning (the Tracker protocol dropped generic edit; no
-adapter implements it); drop them via `pending_mutations.py compact`.
+best-effort and a successful replay drops the entry. An entry whose op no
+adapter can replay (anything outside VALID_OPS, e.g. the retired generic edit)
+is parked with a warning; drop it via `pending_mutations.py compact`.
 """
 
 from __future__ import annotations
@@ -108,12 +108,13 @@ def reconcile(workspace_root: Path, tracker: _Tracker) -> dict[str, Any]:
     parked: list[str] = []
     for entry in pending_mutations.list_mutations(workspace_root):
         key = entry["idempotency_key"]
-        if entry.get("op") == "edit":
-            # No adapter implements generic edit; replaying would fail forever
+        op = entry.get("op")
+        if op not in pending_mutations.VALID_OPS:
+            # No adapter can replay an unknown op; retrying would fail forever
             # and wedge sync at exit 1. Park the entry (kept on disk, warned,
             # excluded from the exit code) instead of dropping it silently.
             sys.stderr.write(
-                f"sync: parked {key} (op=edit is not replayable; remove via "
+                f"sync: parked {key} (op={op} is not replayable; remove via "
                 f"pending_mutations.py compact --drop-keys {key})\n"
             )
             parked.append(key)

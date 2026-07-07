@@ -37,6 +37,7 @@ from pathlib import Path
 from typing import Any
 
 import _memory_paths
+from _jsonl import read_jsonl_lenient
 
 DF_LO = 2
 DF_HI = 15
@@ -75,23 +76,6 @@ def _str_field(entry: dict[str, Any], key: str) -> str:
 
 def _entry_anchors(entry: dict[str, Any]) -> set[str]:
     return anchors(f"{_str_field(entry, 'body')} {_str_field(entry, 'detail')}")
-
-
-def _lenient_jsonl(path: Path) -> list[dict[str, Any]]:
-    """Per-line json.loads, skipping blank/malformed lines. Missing file -> []."""
-    if not path.exists():
-        return []
-    out: list[dict[str, Any]] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
-        try:
-            obj = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(obj, dict):
-            out.append(obj)
-    return out
 
 
 def _machinery_entries(knowledge: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -271,8 +255,8 @@ def structural_classes(
 
 def analyze(workspace_root: Path, namespace: str) -> dict[str, Any]:
     """Pure read of the two jsonl files (no wall clock)."""
-    friction = _lenient_jsonl(_memory_paths.friction_path(workspace_root, namespace))
-    knowledge = _lenient_jsonl(_memory_paths.knowledge_path(workspace_root, namespace))
+    friction = read_jsonl_lenient(_memory_paths.friction_path(workspace_root, namespace))
+    knowledge = read_jsonl_lenient(_memory_paths.knowledge_path(workspace_root, namespace))
     machinery = _machinery_entries(knowledge)
 
     friction_anchored: list[_Anchored] = [(f, _entry_anchors(f)) for f in friction]

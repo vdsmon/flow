@@ -224,7 +224,7 @@ def find_slash_invocations(doc_name: str, text: str) -> list[Invocation]:
     """Parse user-facing `/flow <verb> ...` slash-prose and normalize each to the
     same Invocation form `find_invocations` produces, so validate() runs unchanged.
     Only verbs with a matching scripts/<verb>.py on disk are linted; verbs without
-    a script (do, evolve, new, spec, baseline) are intentionally skipped."""
+    a script (do, evolve, new, spec, triage) are intentionally skipped."""
     invs: list[Invocation] = []
     for lineno, span in _slash_spans(text):
         m = _SLASH_RE.match(span)

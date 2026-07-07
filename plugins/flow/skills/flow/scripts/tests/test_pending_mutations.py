@@ -173,51 +173,6 @@ def test_compact_unknown_keys_remove_nothing(tmp_path: Path) -> None:
 # ─── CLI ─────────────────────────────────────────────────────────────────────
 
 
-def test_cli_append_then_duplicate_exit_codes(tmp_path: Path) -> None:
-    base = ["--workspace-root", str(tmp_path), "append", "--ticket", "FT-11", "--op", "comment"]
-    rc1 = pm.cli_main([*base, "--args-json", '{"a": 1}'], clock=lambda: _INTENT)
-    rc2 = pm.cli_main([*base, "--args-json", '{"a": 1}'], clock=lambda: _INTENT)
-    assert rc1 == 0
-    assert rc2 == 1
-    assert len(_read_lines(pm.pending_mutations_path(tmp_path))) == 1
-
-
-def test_cli_append_invalid_op_exit_3(tmp_path: Path) -> None:
-    rc = pm.cli_main(
-        [
-            "--workspace-root",
-            str(tmp_path),
-            "append",
-            "--ticket",
-            "FT-12",
-            "--op",
-            "nope",
-            "--args-json",
-            "{}",
-        ],
-        clock=lambda: _INTENT,
-    )
-    assert rc == 3
-
-
-def test_cli_append_bad_json_exit_3(tmp_path: Path) -> None:
-    rc = pm.cli_main(
-        [
-            "--workspace-root",
-            str(tmp_path),
-            "append",
-            "--ticket",
-            "FT-13",
-            "--op",
-            "comment",
-            "--args-json",
-            "{not json}",
-        ],
-        clock=lambda: _INTENT,
-    )
-    assert rc == 3
-
-
 def test_cli_compact_drop_keys(tmp_path: Path) -> None:
     e = pm.append_mutation(tmp_path, ticket="FT-14", op="comment", args={"a": 1}, intent_at=_INTENT)
     rc = pm.cli_main(
@@ -225,23 +180,3 @@ def test_cli_compact_drop_keys(tmp_path: Path) -> None:
     )
     assert rc == 0
     assert pm.list_mutations(tmp_path) == []
-
-
-def test_cli_clock_supplies_intent_at(tmp_path: Path) -> None:
-    rc = pm.cli_main(
-        [
-            "--workspace-root",
-            str(tmp_path),
-            "append",
-            "--ticket",
-            "FT-15",
-            "--op",
-            "comment",
-            "--args-json",
-            '{"a": 1}',
-        ],
-        clock=lambda: "2099-01-01T00:00:00Z",
-    )
-    assert rc == 0
-    entries = pm.list_mutations(tmp_path)
-    assert entries[0]["intent_at"] == "2099-01-01T00:00:00Z"

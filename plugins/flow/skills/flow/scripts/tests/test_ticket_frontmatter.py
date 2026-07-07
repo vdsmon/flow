@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 import ticket_frontmatter
+from _locking import LockContention, flock_retry
 
 # ─── _split_frontmatter ──────────────────────────────────────────────────────
 
@@ -303,15 +304,16 @@ def test_concurrent_updates_serialize_via_flock(tmp_path: Path) -> None:
 
 
 def test_flock_contention_exhausts_retries(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(ticket_frontmatter, "LOCK_RETRY_DELAY_S", 0.0)
-    lock_path = tmp_path / "FT-15b.md.lock"
-    holder_fd = os.open(str(lock_path), os.O_RDWR | os.O_CREAT, 0o644)
+    monkeypatch.setattr(
+        ticket_frontmatter, "flock_retry", lambda lock_path: flock_retry(lock_path, delay=0.0)
+    )
+    p = tmp_path / "FT-15b.md"
+    p.write_text('+++\nticket = "FT-15b"\n+++\n', encoding="utf-8")
+    holder_fd = os.open(str(ticket_frontmatter._lock_path(p)), os.O_RDWR | os.O_CREAT, 0o644)
     try:
         fcntl.flock(holder_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        flock = ticket_frontmatter._Flock(lock_path)
-        with pytest.raises(ticket_frontmatter._LockContention, match="after 3 attempts"):
-            flock.__enter__()
-        assert flock._fd is None
+        with pytest.raises(LockContention, match="after 3 attempts"):
+            ticket_frontmatter.update(p, {"status": "x"})
     finally:
         os.close(holder_fd)
 

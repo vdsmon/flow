@@ -2,13 +2,12 @@
 
 Library + thin CLI. Stdlib-only. Imports `state` + `validate_workspace`.
 
-Subcommands: `init`, `next`, `advance`, `finish`, `release`, `status`,
-`revise-open`. The dispatcher does NOT invoke handlers itself; it reads/writes
-state.json and emits a handler-descriptor JSON for the SKILL.md prose layer to
-act on.
+Subcommands: `init`, `next`, `advance`, `release`, `revise-open`. The
+dispatcher does NOT invoke handlers itself; it reads/writes state.json and
+emits a handler-descriptor JSON for the SKILL.md prose layer to act on.
 
 Lifecycle: pending → in_progress (via `next`) → completed | failed (via
-`finish`).
+`advance`, which composes the finish step with the next pick).
 
 HARD GATE: validate_workspace.validate() runs on every `init` and every
 `next`. Schema violation = exit 1, stderr lists violations.
@@ -925,20 +924,8 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
 
     p_next = sub.add_parser("next", parents=[common], help="Pick next pending stage.")
     p_next.add_argument("--revision", default=None, help=revision_help)
-    p_status = sub.add_parser("status", parents=[common], help="Emit full state.json.")
-    p_status.add_argument("--revision", default=None, help=revision_help)
     p_release = sub.add_parser("release", parents=[common], help="Release the run lease.")
     p_release.add_argument("--revision", default=None, help=revision_help)
-
-    p_finish = sub.add_parser("finish", parents=[common], help="Mark stage terminal.")
-    p_finish.add_argument("--stage", required=True)
-    p_finish.add_argument(
-        "--status", dest="status_value", choices=("completed", "failed"), required=True
-    )
-    p_finish.add_argument("--output-path", default=None)
-    p_finish.add_argument("--skill-output", default=None)
-    p_finish.add_argument("--failure-detail", default=None)
-    p_finish.add_argument("--revision", default=None, help=revision_help)
 
     p_advance = sub.add_parser(
         "advance", parents=[common], help="Finish current stage AND return next descriptor."
@@ -983,22 +970,6 @@ def cli_main(argv: list[str]) -> int:
         rc, payload = cmd_revise_open(workspace_root, args.ticket, stages=rev_stages)
     elif args.cmd == "next":
         rc, payload = cmd_next(workspace_root, args.ticket, args.session_nonce, args.revision)
-    elif args.cmd == "finish":
-        skill_output, err = _parse_skill_output_arg(args.skill_output)
-        if err:
-            sys.stderr.write(f"dispatch finish: {err}\n")
-            return 1
-        rc, payload = cmd_finish(
-            workspace_root,
-            args.ticket,
-            args.stage,
-            args.status_value,
-            output_path=args.output_path,
-            skill_output=skill_output,
-            failure_detail=args.failure_detail,
-            session_nonce=args.session_nonce,
-            revision=args.revision,
-        )
     elif args.cmd == "advance":
         skill_output, err = _parse_skill_output_arg(args.skill_output)
         if err:
@@ -1015,8 +986,6 @@ def cli_main(argv: list[str]) -> int:
             session_nonce=args.session_nonce,
             revision=args.revision,
         )
-    elif args.cmd == "status":
-        rc, payload = cmd_status(workspace_root, args.ticket, args.revision)
     elif args.cmd == "release":
         rc, payload = cmd_release(workspace_root, args.ticket, args.session_nonce, args.revision)
     else:

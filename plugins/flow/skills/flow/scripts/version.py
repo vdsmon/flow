@@ -12,11 +12,9 @@ the derived version into both version files server-side post-merge on `main` (th
 line-replace that preserves JSON formatting.
 
 CLI:
-  version.py next [--ref origin/main] [--cwd .] [--commit-type <type>]
-  prints JSON {"ref", "current", "next", "bump", "commit_type"} to stdout.
-
   version.py stamp [--ref origin/main] [--cwd .] [--commit-type <type>]
-  computes the next version, writes it into both version files, prints the same JSON.
+  computes the next version, writes it into both version files, prints JSON
+  {"ref", "current", "next", "bump", "commit_type"} to stdout.
 
 Exit codes:
   0 = ok
@@ -181,16 +179,6 @@ def cli_main(argv: list[str]) -> int:
         description="Derive (and optionally stamp) the plugin version."
     )
     sub = parser.add_subparsers(dest="command", required=True)
-    nxt = sub.add_parser("next", help="print the next version from a ref")
-    nxt.add_argument(
-        "--ref", default="origin/main", help="git ref to read the current version from"
-    )
-    nxt.add_argument("--cwd", default=".", help="repo checkout to read in")
-    nxt.add_argument(
-        "--commit-type",
-        default="",
-        help="conventional-commit type (feat → minor bump); empty → HEAD subject fallback",
-    )
     stp = sub.add_parser("stamp", help="write the next version into both version files")
     stp.add_argument(
         "--ref", default="origin/main", help="git ref to read the current version from"
@@ -205,10 +193,7 @@ def cli_main(argv: list[str]) -> int:
 
     cwd = Path(args.cwd).resolve()
     try:
-        if args.command == "stamp":
-            result = stamp(cwd=cwd, ref=args.ref, commit_type=args.commit_type)
-        else:
-            result = compute(cwd=cwd, ref=args.ref, commit_type=args.commit_type)
+        result = stamp(cwd=cwd, ref=args.ref, commit_type=args.commit_type)
     except ToolError as exc:
         print(str(exc), file=sys.stderr)
         return 2

@@ -52,7 +52,6 @@ import glob
 import json
 import os
 import sys
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
@@ -60,7 +59,7 @@ import lease
 from _atomicio import atomic_write_text
 from _locking import flock_blocking
 from _memory_paths import resolve_memory_base
-from _timeutil import parse_iso, utcnow_iso
+from _timeutil import parse_iso, ts_token, utcnow_iso
 from maintainer import resolve_maintainer_repo
 
 # A run that stops refreshing for longer than this ages out of live_keys even if it never
@@ -100,11 +99,6 @@ def _entry_paths(fleet_dir: Path) -> list[Path]:
 # ─── Helpers ─────────────────────────────────────────────────────────────────
 
 
-def _ts_token() -> str:
-    # colon-free so it is usable in a filename (mirrors lease._ts_token).
-    return datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-
-
 def _age_seconds(now: str, ts: object) -> float | None:
     now_dt = parse_iso(now)
     ts_dt = parse_iso(ts)
@@ -136,7 +130,7 @@ def _quarantine_locked(fleet_dir: Path, key: str) -> Path | None:
     src = _entry_path(fleet_dir, key)
     if not src.exists():
         return None
-    dst = fleet_dir / f"{key}.json.quarantine.{_ts_token()}"
+    dst = fleet_dir / f"{key}.json.quarantine.{ts_token()}"
     os.replace(src, dst)
     return dst
 
@@ -325,8 +319,9 @@ def is_live(workspace_root: Path, key: str) -> bool:
     very reap that exists to merge it.
     The lease's per-stage TTL is the accurate signal: a run that went live in the gap has
     a fresh lease and is caught here. (True atomic read+act under one flock is impossible
-    for a prose `gh pr merge`; that is child-4's merge-token. This re-check NARROWS the
-    worst TOCTOU from select-time to act-time, it does not close it.)
+    for a prose `gh pr merge`; the child-4 merge-token that would have closed it was
+    built then reverted, flow-8by2.4. This re-check NARROWS the worst TOCTOU from
+    select-time to act-time, it does not close it.)
 
     Imports `lease` directly + inlines the worktree-pool glob (mirrors
     _evolve_common.run_dir_for, both `feat-`/legacy `feature-` dir prefixes) to

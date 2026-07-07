@@ -40,14 +40,6 @@ def test_non_str_returns_none():
     assert parse_iso(int_value) is None
 
 
-def test_require_z_accepts_z():
-    assert parse_iso("2024-01-01T00:00:00Z", require_z=True) is not None
-
-
-def test_require_z_rejects_non_z():
-    assert parse_iso("2024-01-01T00:00:00", require_z=True) is None
-
-
 def test_naive_utc_equals_z_utc():
     z = parse_iso("2024-01-01T00:00:00Z")
     naive = parse_iso("2024-01-01T00:00:00")
@@ -69,4 +61,4 @@ def test_iso_z_converts_offset_to_utc():
 def test_utcnow_iso_format_and_roundtrip():
     value = utcnow_iso()
     assert re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", value)
-    assert parse_iso(value, require_z=True) is not None
+    assert parse_iso(value) is not None

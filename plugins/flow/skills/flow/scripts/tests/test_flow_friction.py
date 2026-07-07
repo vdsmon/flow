@@ -230,6 +230,6 @@ def test_append_succeeds_when_plugin_version_guarded_empty(
     tmp_path: Path, monkeypatch: Any
 ) -> None:
     _seed_workspace(tmp_path)
-    monkeypatch.setattr(flow_friction, "_plugin_version", lambda: "")
+    monkeypatch.setattr(flow_friction, "plugin_version", lambda: "")
     entry = flow_friction.append(tmp_path, "FT-1", "r", "implement", "RETRY", "x")
     assert entry["plugin_version"] == ""

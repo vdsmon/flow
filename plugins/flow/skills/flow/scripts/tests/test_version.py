@@ -154,31 +154,6 @@ def test_compute_empty_string_commit_type_is_unset(tmp_path):
 # ---- CLI ----
 
 
-def test_cli_next_ok(monkeypatch, capsys):
-    monkeypatch.setattr(
-        version,
-        "compute",
-        lambda **_: {"ref": "origin/main", "current": "0.27.56", "next": "0.27.57"},
-    )
-    rc = version.cli_main(["next", "--ref", "origin/main", "--cwd", "."])
-    assert rc == 0
-    assert json.loads(capsys.readouterr().out) == {
-        "ref": "origin/main",
-        "current": "0.27.56",
-        "next": "0.27.57",
-    }
-
-
-def test_cli_next_tool_error_exit_2(monkeypatch, capsys):
-    def _boom(**_):
-        raise version.ToolError("git show failed")
-
-    monkeypatch.setattr(version, "compute", _boom)
-    rc = version.cli_main(["next", "--cwd", "."])
-    assert rc == 2
-    assert "git show failed" in capsys.readouterr().err
-
-
 # ---- write_version (surgical file write) ----
 
 _PLUGIN_FIXTURE = """\
@@ -351,25 +326,6 @@ def test_cli_stamp_plumbs_commit_type(monkeypatch, capsys):
     assert rc == 0
     assert seen["commit_type"] == "feat"
     assert json.loads(capsys.readouterr().out)["bump"] == "minor"
-
-
-def test_cli_next_plumbs_commit_type(monkeypatch, capsys):
-    seen: dict = {}
-
-    def fake_compute(**kwargs):
-        seen.update(kwargs)
-        return {
-            "ref": "origin/main",
-            "current": "0.27.57",
-            "next": "0.28.0",
-            "bump": "minor",
-            "commit_type": "feat",
-        }
-
-    monkeypatch.setattr(version, "compute", fake_compute)
-    rc = version.cli_main(["next", "--cwd", ".", "--commit-type", "feat"])
-    assert rc == 0
-    assert seen["commit_type"] == "feat"
 
 
 def test_cli_commit_type_defaults_empty(monkeypatch, capsys):

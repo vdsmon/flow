@@ -12,7 +12,10 @@
    - For `backend=jira`: ask for `cloud_id`, `project_key`, and optional `assignee_account_id`.
    - For `backend=beads`: ask for `prefix` (lowercase slug, default derived from current dir name).
 
-3. Write the answers to a tmp JSON file:
+3. Write the answers to a tmp JSON file. Keys are FLAT and mirror init.py's
+   CLI flags (dash or underscore both work; `_merge_config_file` maps top-level
+   keys onto the matching flag — a nested `"jira": {...}` block would be
+   silently ignored and init would fail asking for `--jira-cloud-id`):
    ```bash
    ANSWERS=$(mktemp "${TMPDIR:-/tmp}/flow-init-XXXXXX.json")
    cat > "$ANSWERS" <<EOF
@@ -20,12 +23,14 @@
      "backend": "<backend>",
      "bundle": "<bundle>",
      "workspace_root": "$(pwd)",
-     "jira": {"cloud_id": "...", "project_key": "...", "assignee_account_id": "..."},
-     "beads": {"prefix": "..."}
+     "jira_cloud_id": "...",
+     "jira_project_key": "...",
+     "jira_assignee_account_id": "...",
+     "beads_prefix": "..."
    }
    EOF
    ```
-   Omit the irrelevant block (`jira` or `beads`) based on backend.
+   Omit the irrelevant keys (`jira_*` or `beads_prefix`) based on backend.
 
 4. Run init:
    ```bash

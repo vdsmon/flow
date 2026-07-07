@@ -828,3 +828,37 @@ def test_ttp_legacy_join_still_measures(tmp_path: Path) -> None:
     result = _compute_ttp(tmp_path)
     assert result["n_measured"] == 1
     assert result["median_hours"] == 12.0
+
+
+# ─── percentile() ────────────────────────────────────────────────────────────
+
+
+def test_percentile_median_of_odd_list() -> None:
+    assert metric.percentile([10, 20, 30, 40, 50], 50) == 30.0
+
+
+def test_percentile_p90_interpolated() -> None:
+    # rank = 4 * 0.9 = 3.6 -> 40 + 0.6 * (50 - 40) = 46
+    assert metric.percentile([10, 20, 30, 40, 50], 90) == 46.0
+
+
+def test_percentile_median_of_even_list() -> None:
+    assert metric.percentile([10, 20, 30, 40], 50) == 25.0
+
+
+def test_percentile_empty_returns_zero() -> None:
+    assert metric.percentile([], 50) == 0.0
+
+
+def test_percentile_single_element() -> None:
+    assert metric.percentile([7.5], 90) == 7.5
+
+
+def test_percentile_pct_100_no_index_error() -> None:
+    assert metric.percentile([1.0, 2.0, 3.0], 100) == 3.0
+
+
+def test_percentile_does_not_mutate_caller_list() -> None:
+    values = [30.0, 10.0, 20.0]
+    metric.percentile(values, 50)
+    assert values == [30.0, 10.0, 20.0]

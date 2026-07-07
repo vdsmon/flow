@@ -26,13 +26,14 @@ import argparse
 import json
 import os
 import sys
-import time
 import uuid
 from pathlib import Path
 from typing import Any
 
 import _memory_paths
 from _locking import LockContention, flock_retry
+from _timeutil import utcnow_iso_ms
+from _workspace import plugin_version
 
 VALID_TYPES: tuple[str, ...] = (
     "BLOCKER",
@@ -50,25 +51,6 @@ VALID_SEVERITIES: tuple[str, ...] = ("major", "minor")
 
 class _InvalidType(Exception):
     """Type not in VALID_TYPES, or severity not in VALID_SEVERITIES."""
-
-
-def _utcnow_iso_ms() -> str:
-    """UTC ISO8601 with millisecond precision + Z suffix."""
-    t = time.time()
-    secs = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(t))
-    ms = int((t - int(t)) * 1000)
-    return f"{secs}.{ms:03d}Z"
-
-
-def _plugin_version() -> str:
-    """Self-read flow plugin version; '' on any failure (never raises)."""
-    try:
-        path = Path(__file__).resolve().parents[3] / ".claude-plugin" / "plugin.json"
-        data = json.loads(path.read_text(encoding="utf-8"))
-        v = data.get("version", "")
-        return v if isinstance(v, str) else ""
-    except (OSError, json.JSONDecodeError, IndexError, ValueError):
-        return ""
 
 
 def append(
@@ -99,14 +81,14 @@ def append(
 
     entry: dict[str, Any] = {
         "id": uuid.uuid4().hex,
-        "ts": _utcnow_iso_ms(),
+        "ts": utcnow_iso_ms(),
         "run_id": run_id,
         "ticket": ticket,
         "stage": stage,
         "type": type_,
         "severity": severity,
         "body": body,
-        "plugin_version": _plugin_version(),
+        "plugin_version": plugin_version(),
     }
     if detail:
         entry["detail"] = detail

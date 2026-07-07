@@ -17,13 +17,11 @@ Key invariants:
 - `is_shipped` is a PURE READ. Adapters MUST NOT write under `.flow/`. The writer
   is `observe-ship-event.py` invoked by the reflect stage or `/flow sync
   --observe-ship`.
-- No `extra: dict` escape on `create()` or any mutator. Generic `edit(fields)`
-  is explicitly DROPPED; ticket field mutations go through typed setters
-  (`set_summary`, `set_description`, `set_priority`, `set_labels`,
-  `set_assignee`). Backend-rich operations (sprints, watchers, fix_versions,
-  components, epic_link, board_rank, custom fields, attachments) go through
-  dedicated typed methods that raise `NotSupported` when the corresponding
-  capability is `supported=false`.
+- No `extra: dict` escape on `create()` or any mutator, and no generic
+  `edit(fields)`. The pipeline never mutates ticket fields after create; the
+  write surface is create / transition / comment / link. Backend-rich reads
+  and ops (sprints, attachments) go through dedicated typed methods that raise
+  `NotSupported` when the corresponding capability is `supported=false`.
 """
 
 from __future__ import annotations
@@ -254,15 +252,14 @@ class TrackerConfigError(TrackerError):
 class Tracker(Protocol):
     """Cross-backend ticket interface. Implemented by per-backend adapters.
 
-    Lifecycle methods (`get`, `list_assigned`, `list_linked`, `list_transitions`,
+    Lifecycle methods (`get`, `list_assigned`, `list_transitions`,
     `create`, `transition`, `comment`, `link`, `state`,
     `project_requires_pr`, `is_shipped`) are MANDATORY for all backends.
 
-    Typed Jira-rich methods (`set_sprint`, `list_sprints`, `add_watcher`,
-    `set_fix_versions`, `set_components`, `set_epic_link`, `board_rank`,
-    `set_custom_field`, `get_attachments`, `upload_attachment`) are
-    CAPABILITY-GATED. Each MUST raise `NotSupported` when the corresponding
-    capability advertises `supported=false`.
+    Typed backend-rich methods (`set_sprint`, `list_sprints`,
+    `get_attachments`, `download_attachment`) are CAPABILITY-GATED. Each MUST
+    raise `NotSupported` when the corresponding capability advertises
+    `supported=false`.
     """
 
     backend: str  # "jira" | "beads"
@@ -272,7 +269,6 @@ class Tracker(Protocol):
 
     def get(self, key: str) -> Ticket: ...
     def list_assigned(self, filter: str = "open") -> list[TicketRef]: ...
-    def list_linked(self, key: str) -> list[TicketRef]: ...
     def list_transitions(self, key: str) -> list[Transition]: ...
     def create(
         self,
@@ -283,11 +279,6 @@ class Tracker(Protocol):
         labels: list[str] | None = None,
         assignee: str | None = None,
     ) -> str: ...
-    def set_summary(self, key: str, summary: Content) -> None: ...
-    def set_description(self, key: str, description: Content) -> None: ...
-    def set_priority(self, key: str, priority: str) -> None: ...
-    def set_labels(self, key: str, labels: list[str]) -> None: ...
-    def set_assignee(self, key: str, account_id: str | None) -> None: ...
     def transition(
         self,
         key: str,
@@ -304,20 +295,7 @@ class Tracker(Protocol):
 
     def set_sprint(self, key: str, sprint_id: str) -> None: ...
     def list_sprints(self, project: str) -> list[Sprint]: ...
-    def add_watcher(self, key: str, account_id: str) -> None: ...
-    def set_fix_versions(self, key: str, versions: list[str]) -> None: ...
-    def set_components(self, key: str, components: list[str]) -> None: ...
-    def set_epic_link(self, key: str, epic_key: str) -> None: ...
-    def board_rank(self, key: str, after_key: str | None) -> None: ...
-    def set_custom_field(
-        self,
-        key: str,
-        field_key: str,
-        value: Any,
-        schema: FieldSpec,
-    ) -> None: ...
     def get_attachments(self, key: str) -> list[Attachment]: ...
-    def upload_attachment(self, key: str, path: str) -> str: ...
     def download_attachment(self, attachment: Attachment) -> bytes: ...
 
 

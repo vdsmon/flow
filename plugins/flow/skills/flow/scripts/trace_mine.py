@@ -88,6 +88,7 @@ from typing import Any
 
 import _memory_paths
 import flow_beads_create
+from _jsonl import read_jsonl_lenient
 from _runner import Runner
 from _timeutil import parse_iso
 from friction_recurrence import anchors
@@ -115,27 +116,6 @@ class _NoDispatchActivity(Exception):
 
 
 # ─── lenient reader (transcripts are foreign; never rewritten) ──────────────
-
-
-def _lenient_jsonl(path: Path) -> list[dict[str, Any]]:
-    """Per-line json.loads, skipping blank/malformed lines and non-object rows.
-
-    Modeled on reflect_inputs.py's `_lenient_jsonl`: read-only, no quarantine
-    sidecar. A transcript is foreign input; this never rewrites it. `errors=
-    "replace"` keeps the lenient promise on a stray bad byte (a raised
-    UnicodeDecodeError would escape the caller's OSError-only guard).
-    """
-    out: list[dict[str, Any]] = []
-    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
-        if not line.strip():
-            continue
-        try:
-            obj = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(obj, dict):
-            out.append(obj)
-    return out
 
 
 # ─── self-target guard ───────────────────────────────────────────────────────
@@ -953,7 +933,7 @@ def find_recent_runs(
             try:
                 if transcript.stat().st_mtime < cutoff:
                     continue
-                lines = _lenient_jsonl(transcript)
+                lines = read_jsonl_lenient(transcript, replace_errors=True)
             except OSError:
                 continue
             tickets = {
@@ -1049,7 +1029,7 @@ def _run_extract(args: argparse.Namespace) -> int:
         return 3
 
     try:
-        lines = _lenient_jsonl(transcript)
+        lines = read_jsonl_lenient(transcript, replace_errors=True)
     except OSError as exc:
         sys.stderr.write(f"trace-mine: I/O error reading transcript: {exc}\n")
         return 3
@@ -1110,7 +1090,7 @@ def _run_cluster(args: argparse.Namespace) -> int:
 
     fpath = _memory_paths.friction_path(workspace_root, namespace)
     try:
-        friction = _lenient_jsonl(fpath) if fpath.exists() else []
+        friction = read_jsonl_lenient(fpath, replace_errors=True)
     except OSError as exc:
         sys.stderr.write(f"trace-mine: I/O error reading friction log: {exc}\n")
         return 3

@@ -221,10 +221,10 @@ def _relocate_spilled(
         )
 
 
-def _copy_config(main_root: Path, worktree: Path, extra: list[str]) -> list[str]:
+def _copy_config(main_root: Path, worktree: Path) -> list[str]:
     """Copy gitignored dev config main->worktree. Returns the list copied."""
     copied: list[str] = []
-    for rel in [*_DEFAULT_COPY, *extra]:
+    for rel in _DEFAULT_COPY:
         src = main_root / rel
         if not src.exists():
             continue
@@ -714,7 +714,7 @@ def locate_or_reseed(
     worktree = _worktree_path(main_root, branch, None)
     _git(["fetch", "origin", branch], main_root, run)
     _git(["worktree", "add", str(worktree), branch], main_root, run)
-    _copy_config(main_root, worktree, [])
+    _copy_config(main_root, worktree)
     _ensure_flow_config(main_root, worktree, _memory_paths.resolve_memory_base(main_root))
     if (worktree / "mise.toml").exists() or (worktree / ".mise.toml").exists():
         run(["mise", "trust"], worktree)
@@ -1039,7 +1039,6 @@ def bootstrap(
     branch: str,
     main_root: Path,
     worktree_override: str | None = None,
-    extra_copy: list[str] | None = None,
     planned_files: list[str] | None = None,
     covers: list[str] | None = None,
     commit_type: str | None = None,
@@ -1192,7 +1191,7 @@ def bootstrap(
                         + " (a new file in an existing dir is fine; check the parent path)"
                     )
 
-            copied = _copy_config(main_root, worktree, extra_copy or [])
+            copied = _copy_config(main_root, worktree)
             _ensure_flow_config(main_root, worktree, _memory_paths.resolve_memory_base(main_root))
 
             if mise_trust and (
@@ -1262,7 +1261,6 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument("--branch", required=True, help="new branch name (e.g. feat/FT-1-thing)")
     p.add_argument("--main-root", default=".", help="path to the main checkout (default cwd)")
     p.add_argument("--worktree-path", default=None, help="override the derived worktree path")
-    p.add_argument("--copy", default=None, help="extra comma-separated gitignored paths to copy")
     p.add_argument(
         "--planned-files",
         default=None,
@@ -1380,7 +1378,6 @@ def cli_main(argv: list[str]) -> int:
         return _run_reap(args)
     if args.cmd == "locate-or-reseed":
         return _run_locate_or_reseed(args)
-    extra = [s.strip() for s in args.copy.split(",")] if args.copy else []
     planned = (
         [s.strip() for s in args.planned_files.split(",") if s.strip()]
         if args.planned_files
@@ -1395,7 +1392,6 @@ def cli_main(argv: list[str]) -> int:
             branch=args.branch,
             main_root=Path(args.main_root),
             worktree_override=args.worktree_path,
-            extra_copy=extra,
             planned_files=planned,
             covers=covers,
             commit_type=args.commit_type,

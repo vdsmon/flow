@@ -100,6 +100,7 @@ from pathlib import Path
 from typing import Any
 
 import lease
+from _evolve_common import NotMaintainer, ToolError, bead_status
 from _evolve_common import run_dir_for as _run_dir_for
 from _timeutil import parse_iso, utcnow_iso
 from maintainer import resolve_maintainer_repo
@@ -118,14 +119,6 @@ _STOPPABLE_STATES = {"done", "stopped"}
 
 # A bd-status lookup: key -> status string (or None when unknown/missing).
 BeadStatusLookup = Callable[[str], str | None]
-
-
-class NotMaintainer(Exception):
-    """Raised when the run is not in maintainer mode. Exit 4."""
-
-
-class ToolError(Exception):
-    """Raised when an injected tool (bd) fails. Exit 2."""
 
 
 @dataclass(frozen=True)
@@ -327,19 +320,9 @@ def _bd_status_lookup() -> BeadStatusLookup:
     """
 
     def lookup(key: str) -> str | None:
-        result = subprocess.run(
-            ["bd", "show", key, "--json"], capture_output=True, text=True, check=False
+        return bead_status(
+            lambda args: subprocess.run(args, capture_output=True, text=True, check=False), key
         )
-        if result.returncode != 0:
-            raise ToolError(f"bd show {key} failed: {result.stderr.strip()}")
-        try:
-            data = json.loads(result.stdout or "{}")
-        except json.JSONDecodeError:
-            return None
-        if isinstance(data, list):
-            data = data[0] if data else {}
-        status = data.get("status") if isinstance(data, dict) else None
-        return str(status) if status else None
 
     return lookup
 

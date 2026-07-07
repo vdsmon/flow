@@ -195,61 +195,6 @@ def test_skill_handler_plugin_file_change_drift(tmp_path: Path) -> None:
     assert "handler create_pr" in detail
 
 
-def test_cli_emit_then_verify(tmp_path: Path) -> None:
-    skill_root = _make_skill_root(tmp_path)
-    workspace_root = _make_workspace(tmp_path, _bare_workspace_text())
-
-    rc = snapshot.cli_main(
-        [
-            "emit",
-            "--ticket",
-            "FT-1",
-            "--workspace-root",
-            str(workspace_root),
-            "--skill-root",
-            str(skill_root),
-        ]
-    )
-    assert rc == 0
-
-    rc = snapshot.cli_main(
-        [
-            "verify",
-            "--ticket",
-            "FT-1",
-            "--workspace-root",
-            str(workspace_root),
-            "--skill-root",
-            str(skill_root),
-        ]
-    )
-    assert rc == 0
-
-
-def test_cli_verify_drift_exit_1(tmp_path: Path) -> None:
-    skill_root = _make_skill_root(tmp_path)
-    workspace_root = _make_workspace(tmp_path, _bare_workspace_text())
-    snapshot.write_snapshot(workspace_root, "FT-1", skill_root=skill_root)
-
-    _write(
-        workspace_root / ".flow" / "workspace.toml",
-        _bare_workspace_text() + "\n# edit\n",
-    )
-
-    rc = snapshot.cli_main(
-        [
-            "verify",
-            "--ticket",
-            "FT-1",
-            "--workspace-root",
-            str(workspace_root),
-            "--skill-root",
-            str(skill_root),
-        ]
-    )
-    assert rc == 1
-
-
 # ─── drifted_components / classify_drift ───────────────────────────────────────
 
 

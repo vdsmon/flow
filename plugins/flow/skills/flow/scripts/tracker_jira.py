@@ -278,8 +278,6 @@ class JiraAdapter:
             )
         self._auth_header = _basic_auth_header(email, token)
         self._http: HttpFn = http if http is not None else urllib.request.urlopen
-        # Cached at first set_epic_link call. None = not yet probed.
-        self._project_style: str | None = None
         # Cached at first set_sprint / list_sprints call.
         self._scrum_board_id: int | None = None
 
@@ -515,15 +513,6 @@ class JiraAdapter:
         resp = self._request("POST", "/search/jql", body=body)
         return [self._ticket_ref_from_json(i) for i in (resp.get("issues") or [])]
 
-    def list_linked(self, key: str) -> list[TicketRef]:
-        body = {
-            "jql": f"issue in linkedIssues({key})",
-            "fields": ["summary", "status", "priority"],
-            "maxResults": 50,
-        }
-        resp = self._request("POST", "/search/jql", body=body)
-        return [self._ticket_ref_from_json(i) for i in (resp.get("issues") or [])]
-
     def list_transitions(self, key: str) -> list[Transition]:
         resp = self._request(
             "GET",
@@ -595,37 +584,6 @@ class JiraAdapter:
             fields["assignee"] = {"accountId": assignee}
         resp = self._request("POST", "/issue", body={"fields": fields})
         return resp.get("key", "")
-
-    def set_summary(self, key: str, summary: Content) -> None:
-        text = (
-            summary["body"]
-            if summary["fmt"] == "plain"
-            else _adf_to_plain(_content_to_adf(summary))
-        )
-        self._put_fields(key, {"summary": text})
-
-    def set_description(self, key: str, description: Content) -> None:
-        self._put_fields(key, {"description": _content_to_adf(description)})
-
-    def set_priority(self, key: str, priority: str) -> None:
-        self._put_fields(key, {"priority": {"name": priority}})
-
-    def set_labels(self, key: str, labels: list[str]) -> None:
-        self._put_fields(key, {"labels": list(labels)})
-
-    def set_assignee(self, key: str, account_id: str | None) -> None:
-        self._request(
-            "PUT",
-            f"/issue/{urllib.parse.quote(key)}/assignee",
-            body={"accountId": account_id},
-        )
-
-    def _put_fields(self, key: str, fields: dict[str, Any]) -> None:
-        self._request(
-            "PUT",
-            f"/issue/{urllib.parse.quote(key)}",
-            body={"fields": fields},
-        )
 
     def transition(
         self,
@@ -850,60 +808,6 @@ class JiraAdapter:
             out.append({"key": issue.get("key", ""), "summary": f.get("summary", "")})
         return out
 
-    def add_watcher(self, key: str, account_id: str) -> None:
-        # /watchers endpoint takes a bare JSON-encoded string body (e.g. "abc123"),
-        # not a JSON object. Send via body_bytes with the right Content-Type.
-        self._request(
-            "POST",
-            f"/issue/{urllib.parse.quote(key)}/watchers",
-            body_bytes=json.dumps(account_id).encode("utf-8"),
-            extra_headers={"Content-Type": "application/json"},
-        )
-
-    def set_fix_versions(self, key: str, versions: list[str]) -> None:
-        self._put_fields(key, {"fixVersions": [{"name": v} for v in versions]})
-
-    def set_components(self, key: str, components: list[str]) -> None:
-        self._put_fields(key, {"components": [{"name": c} for c in components]})
-
-    def _detect_project_style(self) -> str:
-        if self._project_style is not None:
-            return self._project_style
-        try:
-            resp = self._request("GET", f"/project/{urllib.parse.quote(self.project_key)}")
-            style = resp.get("style", "next-gen")
-        except TrackerError:
-            style = "next-gen"  # conservative default
-        self._project_style = "classic" if style == "classic" else "next-gen"
-        return self._project_style
-
-    def set_epic_link(self, key: str, epic_key: str) -> None:
-        style = self._detect_project_style()
-        if style == "classic":
-            self._put_fields(key, {"customfield_10014": epic_key})
-        else:
-            self._put_fields(key, {"parent": {"key": epic_key}})
-
-    def board_rank(self, key: str, after_key: str | None) -> None:
-        body: dict[str, Any] = {"issues": [key]}
-        if after_key:
-            body["rankAfterIssue"] = after_key
-        self._request("PUT", "/issue/rank", agile=True, body=body)
-
-    def set_custom_field(
-        self,
-        key: str,
-        field_key: str,
-        value: Any,
-        schema: FieldSpec,
-    ) -> None:
-        # `field_key` may be alias (e.g., 'epic_name') or already-resolved 'customfield_NNNNN'.
-        # Schema-driven alias resolution requires a project metadata fetch; for phase 3
-        # we accept the literal field_key as-is. Callers using aliases should set
-        # field_key='customfield_NNNNN' directly. (Documented in inventory.md.)
-        del schema  # reserved for future alias resolution
-        self._put_fields(key, {field_key: value})
-
     def get_attachments(self, key: str) -> list[Attachment]:
         issue = self._request(
             "GET",
@@ -912,43 +816,6 @@ class JiraAdapter:
         )
         atts = (issue.get("fields") or {}).get("attachment") or []
         return [self._attachment_from_json(a) for a in atts]
-
-    def upload_attachment(self, key: str, path: str) -> str:
-        # Multipart upload built manually so we stay stdlib-only.
-        boundary = "----flowjira" + str(int(time.time() * 1000))
-        with open(path, "rb") as fh:
-            file_bytes = fh.read()
-        filename = (
-            os.path.basename(path)
-            .replace("\\", "\\\\")
-            .replace('"', '\\"')
-            .replace("\r", "_")
-            .replace("\n", "_")
-        )
-        parts = (
-            (
-                f"--{boundary}\r\n"
-                f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'
-                "Content-Type: application/octet-stream\r\n\r\n"
-            ).encode()
-            + file_bytes
-            + f"\r\n--{boundary}--\r\n".encode()
-        )
-
-        resp = self._request(
-            "POST",
-            f"/issue/{urllib.parse.quote(key)}/attachments",
-            agile=False,
-            extra_headers={
-                "Content-Type": f"multipart/form-data; boundary={boundary}",
-                "X-Atlassian-Token": "no-check",
-            },
-            body_bytes=parts,
-        )
-        # Response is a list of attachment metadata; return the id of the first.
-        if isinstance(resp, list) and resp:
-            return str(resp[0].get("id", ""))
-        return ""
 
     def download_attachment(self, attachment: Attachment) -> bytes:
         """Fetch an attachment's raw bytes from its content URL.

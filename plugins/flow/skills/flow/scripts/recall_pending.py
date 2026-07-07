@@ -1,6 +1,6 @@
 """Recall-pending protocol: plan-phase recall appends, dispatcher promotes.
 
-Library + thin CLI. Stdlib-only.
+Library module (no CLI). Stdlib-only.
 
 Two files, two roles:
 - `<workspace_root>/.flow/recall-pending.jsonl`: the plan-phase `recall.py
@@ -39,22 +39,19 @@ Exit codes:
 
 from __future__ import annotations
 
-import argparse
-import contextlib
 import hashlib
 import json
 import os
-import sys
-import tempfile
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from _atomicio import atomic_write_text
 from _jsonl import iter_jsonl
-from _locking import LockContention, flock_retry
+from _locking import flock_retry
 from _runner import Runner
 from _runner import default_runner as _default_runner
-from _timeutil import parse_iso, utcnow_iso
+from _timeutil import parse_iso
 
 _WINDOW = timedelta(hours=24)
 _STALE_CAP = 500  # ring-buffer bound on the write-only .stale forensic sidecar
@@ -108,28 +105,8 @@ def _append_line(path: Path, entry: dict[str, Any]) -> None:
 
 
 def _atomic_rewrite(path: Path, entries: list[dict[str, Any]]) -> None:
-    """Replace `path` with `entries` (one JSON line each) atomically."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    content = "".join(json.dumps(e, sort_keys=True) + "\n" for e in entries)
-    with tempfile.NamedTemporaryFile(
-        mode="w",
-        encoding="utf-8",
-        dir=str(path.parent),
-        prefix=f".{path.name}.",
-        suffix=".tmp",
-        delete=False,
-    ) as tmp:
-        tmp.write(content)
-        tmp.flush()
-        os.fsync(tmp.fileno())
-        tmp_path = Path(tmp.name)
-    os.replace(tmp_path, path)
-    with contextlib.suppress(OSError):
-        dir_fd = os.open(str(path.parent), os.O_RDONLY)
-        try:
-            os.fsync(dir_fd)
-        finally:
-            os.close(dir_fd)
+    """Replace `path` with `entries` (one JSON line each) atomically, mode-preserved."""
+    atomic_write_text(path, "".join(json.dumps(e, sort_keys=True) + "\n" for e in entries))
 
 
 def _append_stale_capped(workspace_root: Path, entries: list[dict[str, Any]]) -> None:
@@ -280,103 +257,9 @@ def promote_matching(
     return promoted
 
 
-# ─── CLI ─────────────────────────────────────────────────────────────────────
-
-
-def _split_csv(value: str) -> list[str]:
-    if not value:
-        return []
-    return value.split(",")
-
-
-def _parse_rank_scores(value: str) -> list[float]:
-    if not value:
-        return []
-    return [float(part) for part in value.split(",")]
-
-
-def _parse_args(argv: list[str]) -> argparse.Namespace:
-    # --workspace-root lives on a parent parser so it is accepted both before
-    # and after the subcommand.
-    common = argparse.ArgumentParser(add_help=False)
-    common.add_argument("--workspace-root", default=".")
-
-    parser = argparse.ArgumentParser(
-        description="Recall-pending append / list / promote.", parents=[common]
-    )
-    sub = parser.add_subparsers(dest="command", required=True)
-
-    p_append = sub.add_parser("append", parents=[common])
-    p_append.add_argument("--branch", required=True)
-    p_append.add_argument("--head-sha", required=True)
-    p_append.add_argument("--cwd", required=True)
-    p_append.add_argument("--resolved-ticket", default="")
-    p_append.add_argument("--query", default="")
-    p_append.add_argument("--returned-ids", default="")
-    p_append.add_argument("--rank-scores", default="")
-    p_append.add_argument("--hook-observed-at", default=None)
-
-    sub.add_parser("list", parents=[common])
-
-    p_promote = sub.add_parser("promote", parents=[common])
-    p_promote.add_argument("--ticket", required=True)
-    p_promote.add_argument("--branch", required=True)
-    p_promote.add_argument("--head-sha", required=True)
-    p_promote.add_argument("--cwd", required=True)
-    p_promote.add_argument("--now", default=None)
-
-    return parser.parse_args(argv)
-
-
-def cli_main(argv: list[str]) -> int:
-    args = _parse_args(argv)
-    workspace_root = Path(args.workspace_root).resolve()
-    try:
-        if args.command == "append":
-            entry = append_pending(
-                workspace_root,
-                hook_observed_at=args.hook_observed_at or utcnow_iso(),
-                branch=args.branch,
-                head_sha=args.head_sha,
-                cwd=args.cwd,
-                hook_time_resolved_ticket=args.resolved_ticket,
-                query=args.query,
-                returned_ids=_split_csv(args.returned_ids),
-                rank_scores=_parse_rank_scores(args.rank_scores),
-            )
-            sys.stdout.write(json.dumps(entry, sort_keys=True) + "\n")
-        elif args.command == "list":
-            sys.stdout.write(json.dumps(list_pending(workspace_root), sort_keys=True) + "\n")
-        else:
-            promoted = promote_matching(
-                workspace_root,
-                ticket=args.ticket,
-                branch=args.branch,
-                head_sha=args.head_sha,
-                cwd=args.cwd,
-                now_iso=args.now or utcnow_iso(),
-            )
-            sys.stdout.write(json.dumps(promoted, sort_keys=True) + "\n")
-    except ValueError as exc:
-        sys.stderr.write(f"recall-pending: invalid args: {exc}\n")
-        return 3
-    except LockContention as exc:
-        sys.stderr.write(f"recall-pending: {exc}\n")
-        return 2
-    except OSError as exc:
-        sys.stderr.write(f"recall-pending: I/O error: {exc}\n")
-        return 4
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(cli_main(sys.argv[1:]))
-
-
 __all__ = [
     "Runner",
     "append_pending",
-    "cli_main",
     "compute_pending_id",
     "list_pending",
     "promote_matching",

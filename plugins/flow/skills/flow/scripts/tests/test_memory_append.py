@@ -100,28 +100,6 @@ def test_duplicate_id_raises(tmp_path: Path) -> None:
         memory_append.append(tmp_path, "LEARNED", "atomic write", "main", "FT-1")
 
 
-def test_id_override_used_when_provided(tmp_path: Path) -> None:
-    _seed_workspace(tmp_path)
-    entry = memory_append.append(
-        tmp_path,
-        "LEARNED",
-        "x",
-        "main",
-        "FT-1",
-        id_override="1234567890abcdef",
-    )
-    assert entry["id"] == "1234567890abcdef"
-
-
-def test_id_override_also_dedupes(tmp_path: Path) -> None:
-    _seed_workspace(tmp_path)
-    memory_append.append(tmp_path, "LEARNED", "x", "main", "FT-1", id_override="aaaa1111bbbb2222")
-    with pytest.raises(memory_append._DuplicateId):
-        memory_append.append(
-            tmp_path, "LEARNED", "different body", "main", "FT-1", id_override="aaaa1111bbbb2222"
-        )
-
-
 def test_distinct_entries_both_appended(tmp_path: Path) -> None:
     _seed_workspace(tmp_path)
     memory_append.append(tmp_path, "LEARNED", "first", "main", "FT-1")

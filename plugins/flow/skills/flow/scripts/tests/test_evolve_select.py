@@ -10,6 +10,7 @@ import pytest
 import evolve_select as es
 import fleet
 import lease
+from _evolve_common import ToolError
 from _timeutil import utcnow_iso
 
 Recorder = list[list[str]]
@@ -383,7 +384,7 @@ def test_select_tool_error(tmp_path):
     def run(args):
         return subprocess.CompletedProcess(args, 1, "", "bd boom")
 
-    with pytest.raises(es.ToolError):
+    with pytest.raises(ToolError):
         es.select(ws, cap=5, concurrency=3, runner=run)
 
 

@@ -56,20 +56,17 @@ from typing import Any
 import lease
 from _evolve_common import BRANCH_PREFIX as _BRANCH_PREFIX
 from _evolve_common import WORKTREE_PREFIXES as _WORKTREE_PREFIXES
-from _evolve_common import bead_labels
+from _evolve_common import NotMaintainer, ToolError, bead_labels
 from _evolve_common import key_from_ref as _key_from_ref
 from _evolve_common import loads as _loads
+from _evolve_common import merged_flow_prs as _merged_flow_prs
 from _evolve_common import ok as _ok
+from _evolve_common import reconcile_launched_pending as _reconcile_launched_pending
 from _evolve_common import run_dir_for as _run_dir_for
 from _runner import CwdRunner as Runner
 from _runner import cwd_default_runner as _default_runner
 from _timeutil import utcnow_iso
-from evolve_select import (
-    NotMaintainer,
-    ToolError,
-    _config_defaults,
-    select,
-)
+from evolve_select import _config_defaults, select
 from maintainer import resolve_maintainer_repo
 
 
@@ -143,32 +140,14 @@ def liveness_map(repo: Path, keys: list[str]) -> dict[str, str]:
 
 
 def _merged_pr_keys(runner: Runner) -> set[str]:
-    """Flow keys with a MERGED PR (the join queue_drain.cli_main uses).
+    """Flow keys with a MERGED PR.
 
     An in_progress bead with a merged PR is a different inconsistency (close, not
     relaunch), so it is excluded from the stranded set.
     """
-    merged = _loads(
-        _ok(
-            runner(
-                [
-                    "gh",
-                    "pr",
-                    "list",
-                    "--state",
-                    "merged",
-                    "--json",
-                    "number,headRefName",
-                    "--limit",
-                    "200",
-                ]
-            ),
-            "gh pr list",
-        )
-    )
     return {
         k
-        for p in merged
+        for p in _merged_flow_prs(runner)
         if isinstance(p, dict) and (k := _key_from_ref(str(p.get("headRefName") or "")))
     }
 
@@ -276,19 +255,8 @@ def cli_main(argv: list[str]) -> int:
 
     try:
         sel = select(ws, cap=cap, concurrency=concurrency, include_proposals=args.include_proposals)
-        open_pr_keys = set(sel.get("open_pr_keys") or [])
-        live_runs = set(sel.get("live_runs") or [])
-        inflight = sorted(set(sel.get("skipped_in_flight") or []) | open_pr_keys | live_runs)
+        open_pr_keys, _live_runs, inflight = _reconcile_launched_pending(sel)
         live = liveness_map(repo, inflight)
-        # a launched key that has registered (live lease OR open PR) leaves the blind
-        # window; drop it from launched_pending so it stays out past any later
-        # merge/teardown (the fleet entry itself needs no removal here -- it ages
-        # out on its own staleness clock). NOT skipped_in_flight: select folds
-        # launched_pending into it, which would falsely mark an unregistered key
-        # registered.
-        pending = set(sel.get("launched_pending") or [])
-        registered = live_runs | open_pr_keys
-        sel["launched_pending"] = sorted(pending - registered)
         # STRANDED pre-PR detection: an in_progress evolve bead whose run died before
         # opening a PR is invisible to every other channel (the loop reads `done`).
         # Gate the done-termination on it + emit a recover list for the prose loop.

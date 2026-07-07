@@ -20,11 +20,10 @@ Quarantine semantics (sidecar, main file untouched):
 - The main file is never rewritten on read (append-only invariant). compact()
   is the sole rewriter, and only it drops entries.
 
-Exit codes:
-  0 = appended (or list/compact ok)
-  1 = duplicate key (no-op, append only)
+CLI is `compact --drop-keys` only; append/list are library calls
+(tracker_cli.py + sync.py). Exit codes:
+  0 = compact ok
   2 = lock contention
-  3 = schema / invalid args
   4 = I/O error
 """
 
@@ -42,7 +41,6 @@ from typing import Any
 from _atomicio import atomic_write_text
 from _jsonl import iter_jsonl
 from _locking import LockContention, flock_retry
-from _timeutil import utcnow_iso
 
 # "edit" is not a valid op: the Tracker protocol dropped generic edit(fields)
 # (see tracker.py), so a queued edit could never be replayed by /flow sync.
@@ -222,76 +220,10 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--workspace-root", default=".")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p_append = sub.add_parser("append", help="append one mutation (idempotent).")
-    p_append.add_argument("--ticket", required=True)
-    p_append.add_argument("--op", required=True)
-    p_append.add_argument("--args-json", required=True, help="mutation args as a JSON object.")
-    p_append.add_argument("--expected-pre", default=None, help="expected_pre_state JSON.")
-    p_append.add_argument("--expected-post", default=None, help="expected_postcondition JSON.")
-    p_append.add_argument("--first-run-id", default=None)
-
-    sub.add_parser("list", help="print all entries as a JSON array.")
-
     p_compact = sub.add_parser("compact", help="drop named keys, rewrite the file.")
     p_compact.add_argument("--drop-keys", default="", help="comma-separated idempotency_keys.")
 
     return parser.parse_args(argv)
-
-
-def _parse_json_object(raw: str, field: str) -> dict[str, Any]:
-    try:
-        value = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise _InvalidArgs(f"{field} is not valid JSON: {exc}") from exc
-    if not isinstance(value, dict):
-        raise _InvalidArgs(f"{field} is not a JSON object")
-    return value
-
-
-def _cmd_append(args: argparse.Namespace, workspace_root: Path, clock: Clock) -> int:
-    try:
-        parsed_args = _parse_json_object(args.args_json, "--args-json")
-        pre = _parse_json_object(args.expected_pre, "--expected-pre") if args.expected_pre else None
-        post = (
-            _parse_json_object(args.expected_post, "--expected-post")
-            if args.expected_post
-            else None
-        )
-    except _InvalidArgs as exc:
-        sys.stderr.write(f"pending-mutations: {exc}\n")
-        return 3
-    try:
-        entry, appended = _do_append(
-            workspace_root,
-            ticket=args.ticket,
-            op=args.op,
-            args=parsed_args,
-            expected_pre_state=pre,
-            expected_postcondition=post,
-            first_run_id=args.first_run_id,
-            intent_at=clock(),
-        )
-    except _InvalidArgs as exc:
-        sys.stderr.write(f"pending-mutations: {exc}\n")
-        return 3
-    except LockContention as exc:
-        sys.stderr.write(f"pending-mutations: {exc}\n")
-        return 2
-    except OSError as exc:
-        sys.stderr.write(f"pending-mutations: I/O error: {exc}\n")
-        return 4
-    sys.stdout.write(json.dumps(entry, sort_keys=True) + "\n")
-    return 0 if appended else 1
-
-
-def _cmd_list(workspace_root: Path) -> int:
-    try:
-        entries = list_mutations(workspace_root)
-    except OSError as exc:
-        sys.stderr.write(f"pending-mutations: I/O error: {exc}\n")
-        return 4
-    sys.stdout.write(json.dumps(entries, sort_keys=True) + "\n")
-    return 0
 
 
 def _cmd_compact(args: argparse.Namespace, workspace_root: Path) -> int:
@@ -308,13 +240,9 @@ def _cmd_compact(args: argparse.Namespace, workspace_root: Path) -> int:
     return 0
 
 
-def cli_main(argv: list[str], clock: Clock = utcnow_iso) -> int:
+def cli_main(argv: list[str]) -> int:
     args = _parse_args(argv)
     workspace_root = Path(args.workspace_root).resolve()
-    if args.command == "append":
-        return _cmd_append(args, workspace_root, clock)
-    if args.command == "list":
-        return _cmd_list(workspace_root)
     if args.command == "compact":
         return _cmd_compact(args, workspace_root)
     return 3  # unreachable: argparse requires a subcommand.

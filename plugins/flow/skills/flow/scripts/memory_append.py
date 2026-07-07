@@ -8,9 +8,7 @@ Idempotency key formula (canonical for cross-run stability):
     normalize(body) = NFKC + lowercase + collapse-whitespace + strip-trailing-punct
 
 The `ts` field is NOT in the formula so `/flow recover` reruns produce the
-same id, letting the dedup scan suppress re-writes. `--id <override>` exists
-for entries bound to specific intents (ship-event anchors) where the
-formula's inputs aren't sufficient.
+same id, letting the dedup scan suppress re-writes.
 
 Quarantine semantics (sidecar, main file untouched):
 - Malformed lines encountered during scan are APPENDED to
@@ -35,7 +33,6 @@ import json
 import os
 import re
 import sys
-import time
 import unicodedata
 from pathlib import Path
 from typing import Any
@@ -43,6 +40,7 @@ from typing import Any
 import _memory_paths
 from _jsonl import iter_jsonl
 from _locking import LockContention, flock_retry
+from _timeutil import ts_token, utcnow_iso_ms
 
 VALID_TYPES: tuple[str, ...] = (
     "LEARNED",
@@ -73,18 +71,6 @@ class _UnknownSupersedeTarget(Exception):
 
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
-
-
-def _utcnow_iso_ms() -> str:
-    """UTC ISO8601 with millisecond precision + Z suffix."""
-    t = time.time()
-    secs = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(t))
-    ms = int((t - int(t)) * 1000)
-    return f"{secs}.{ms:03d}Z"
-
-
-def _ts_token() -> str:
-    return time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
 
 
 def _normalize_body(body: str) -> str:
@@ -124,7 +110,6 @@ def append(
     body: str,
     branch: str,
     ticket: str,
-    id_override: str | None = None,
     supersedes: str | list[str] | None = None,
     labels: list[str] | None = None,
 ) -> dict[str, Any]:
@@ -151,8 +136,8 @@ def append(
     namespace = _memory_paths.resolve_namespace(workspace_root)
     kpath = _memory_paths.knowledge_path(workspace_root, namespace)
     lpath = _memory_paths.knowledge_lock_path(workspace_root, namespace)
-    entry_id = id_override or compute_id(namespace, ticket, type_, body)
-    quarantine_sidecar = kpath.with_name(f"{kpath.name}.quarantine.{_ts_token()}")
+    entry_id = compute_id(namespace, ticket, type_, body)
+    quarantine_sidecar = kpath.with_name(f"{kpath.name}.quarantine.{ts_token()}")
 
     if supersedes is None:
         targets: list[str] = []
@@ -170,7 +155,7 @@ def append(
             raise _UnknownSupersedeTarget(sorted(missing)[0])
         entry: dict[str, Any] = {
             "id": entry_id,
-            "ts": _utcnow_iso_ms(),
+            "ts": utcnow_iso_ms(),
             "type": type_,
             "namespace": namespace,
             "branch": branch,
@@ -203,7 +188,6 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--text", required=True, help="entry body (raw text).")
     parser.add_argument("--branch", required=True)
     parser.add_argument("--ticket", required=True)
-    parser.add_argument("--id", dest="id_override", default=None)
     parser.add_argument("--supersedes", default=None)
     parser.add_argument(
         "--labels", default=None, help="comma-separated labels, e.g. form:iva_2083,area:vat"
@@ -223,7 +207,6 @@ def cli_main(argv: list[str]) -> int:
             body=args.text,
             branch=args.branch,
             ticket=args.ticket,
-            id_override=args.id_override,
             supersedes=args.supersedes,
             labels=labels or None,
         )

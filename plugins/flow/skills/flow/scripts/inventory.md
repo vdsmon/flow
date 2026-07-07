@@ -17,7 +17,7 @@ Anything in the Tracker Protocol not exercised by jira-workflow is marked **NEW*
 | 1 | `getAccessibleAtlassianResources`          | preflight.md:55 (init bootstrap)   | `GET https://api.atlassian.com/oauth/token/accessible-resources`           | constructor-time helper (not a Protocol method) |
 | 2 | `atlassianUserInfo`                        | preflight.md:16 (init bootstrap)   | `GET /rest/api/3/myself`                                                   | constructor-time helper (not a Protocol method) |
 | 3 | `getJiraIssue`                             | ticket.md:52, ticket.md:61         | `GET /rest/api/3/issue/{issueIdOrKey}?fields=...`                          | `get(key) -> Ticket`                          |
-| 4 | `searchJiraIssuesUsingJql`                 | ticket.md:35, ticket.md:53, ticket.md:55 | `POST /rest/api/3/search/jql` (v3 paginated)                         | `list_assigned(filter)`, `list_linked(key)`, subtasks (folded into `get` ticket build) |
+| 4 | `searchJiraIssuesUsingJql`                 | ticket.md:35, ticket.md:53, ticket.md:55 | `POST /rest/api/3/search/jql` (v3 paginated)                         | `list_assigned(filter)`, subtasks (folded into `get` ticket build) |
 | 5 | `getJiraIssueRemoteIssueLinks`             | ticket.md:54                       | `GET /rest/api/3/issue/{issueIdOrKey}/remotelink`                          | folded into `get(key).links` field            |
 | 6 | `getTransitionsForJiraIssue`               | planning.md:11                     | `GET /rest/api/3/issue/{issueIdOrKey}/transitions?expand=transitions.fields` | `list_transitions(key) -> list[Transition]`  |
 | 7 | `transitionJiraIssue`                      | planning.md:11                     | `POST /rest/api/3/issue/{issueIdOrKey}/transitions`                        | `transition(key, transition_id, fields) -> TransitionResult` |
@@ -35,11 +35,6 @@ No reference in jira-workflow — implemented from Atlassian REST API v3 docs + 
 | Protocol method            | REST endpoint                                                                  | Notes |
 |----------------------------|--------------------------------------------------------------------------------|-------|
 | `create`                   | `POST /rest/api/3/issue`                                                        | Body: `fields: {project, issuetype, summary, description (ADF), parent, labels, assignee, priority}`. |
-| `set_summary`              | `PUT /rest/api/3/issue/{key}` `{fields:{summary}}`                              | replaces dropped generic `edit` |
-| `set_description`          | `PUT /rest/api/3/issue/{key}` `{fields:{description: <ADF>}}`                   | ADF when capability `comments_adf=true` |
-| `set_priority`             | `PUT /rest/api/3/issue/{key}` `{fields:{priority:{name}}}`                      | |
-| `set_labels`               | `PUT /rest/api/3/issue/{key}` `{fields:{labels:[...]}}`                         | |
-| `set_assignee`             | `PUT /rest/api/3/issue/{key}/assignee` `{accountId}`                            | |
 | `comment(body)`            | `POST /rest/api/3/issue/{key}/comment` `{body: <ADF>}`                          | ADF v3 required |
 | `link(from,to,kind)`       | `POST /rest/api/3/issueLink` `{type:{name:kind}, inwardIssue, outwardIssue}`    | kind ∈ {`Blocks`, `Relates`, `Depends`, ...} |
 | `state(key)`               | `GET /rest/api/3/issue/{key}?fields=status,resolution`                          | derives `TicketState` with normalized + diagnostic |
@@ -47,14 +42,7 @@ No reference in jira-workflow — implemented from Atlassian REST API v3 docs + 
 | `is_shipped(key)`          | PURE READ: frozen `.flow/<ns>/ship-events/<key>.json` → return shipped; else `state()` + ship predicate | adapter MUST NOT write |
 | `set_sprint(key, sprint_id)` | `POST /rest/agile/1.0/sprint/{sprintId}/issue` `{issues:[key]}`                | capability: `sprints` |
 | `list_sprints(project)`    | `GET /rest/agile/1.0/board/{boardId}/sprint?state=active,future,closed` (needs board lookup) | capability: `sprints` |
-| `add_watcher(key, account_id)` | `POST /rest/api/3/issue/{key}/watchers` `"<accountId>"`                     | capability: `watchers` |
-| `set_fix_versions(key, versions)` | `PUT /rest/api/3/issue/{key}` `{fields:{fixVersions:[{name}...]}}`        | capability: `fix_versions` |
-| `set_components(key, components)` | `PUT /rest/api/3/issue/{key}` `{fields:{components:[{name}...]}}`         | capability: `components` |
-| `set_epic_link(key, epic_key)` | `PUT /rest/api/3/issue/{key}` `{fields:{parent:{key:epic_key}}}` (Jira Cloud unified parent) | capability: `epic_link` |
-| `board_rank(key, after_key)` | `PUT /rest/agile/1.0/issue/rank` `{issues:[key], rankAfterIssue:after_key}`   | capability: `boards` |
-| `set_custom_field(key, field_key, value, schema)` | `PUT /rest/api/3/issue/{key}` `{fields:{<customfield_id>: ...}}` | capability: `custom_fields` — `field_key` is the schema-named alias, adapter resolves to `customfield_NNNNN` |
 | `get_attachments(key)`     | `GET /rest/api/3/issue/{key}?fields=attachment`                                 | capability: `attachments` |
-| `upload_attachment(key,p)` | `POST /rest/api/3/issue/{key}/attachments` (multipart, `X-Atlassian-Token: no-check`) | capability: `attachments` |
 
 ## Capabilities advertised by JiraAdapter
 
@@ -159,23 +147,6 @@ If step 1 returns zero boards → raise `NotSupported("no scrum board configured
 If multiple boards exist → adapter picks first, logs a diagnostic.
 Callers needing deterministic board selection should set `tracker.jira.board_id` in `workspace.toml` (future enhancement; not phase 3).
 
-## Epic link strategy
-
-`set_epic_link` uses the team-managed (next-gen) shape:
-
-```
-PUT /rest/api/3/issue/{key}  body: {"fields": {"parent": {"key": epic_key}}}
-```
-
-If the Jira project is **classic / company-managed**, the field name is `customfield_10014` (legacy Epic Link).
-Adapter probes project style at first `set_epic_link` invocation:
-
-- `GET /rest/api/3/project/{projectKey}` → `style` field: `"next-gen"` vs `"classic"`
-- Cache result on the adapter instance.
-- For classic: emit `customfield_10014` payload instead.
-
-This handles both project styles without forcing users to know which they're on.
-
 ## Forge (PR host) surface
 
 Pluggable PR-host seam (`forge.py` Protocol + `forge_cli.py` + `forge_github.py` + `forge_bitbucket.py`), structural twin of the tracker seam. Selected by `[forge] backend` in `workspace.toml`; the block is OPTIONAL (absent = no forge, `create_pr`/`review_loop` stay `none`).
@@ -188,7 +159,7 @@ Pluggable PR-host seam (`forge.py` Protocol + `forge_cli.py` + `forge_github.py`
 |------|------|------|
 | `detect_pr` / `detect-pr` | `gh pr list --head B --state open --json number,url,isDraft,baseRefName,headRefName,state` | `bkt api 2.0/repositories/WS/RS/pullrequests?state=OPEN` + filter `source.branch.name` |
 | `pr_info` / `pr-info` | `gh pr view PR --json number,url,isDraft,baseRefName,headRefName,state` (PR-number reverse lookup, ANY state — revise reads `head`+`state`/detects MERGED; None on empty/garbage JSON, ForgeError on absent PR) | `bkt api .../pullrequests/PR` → `_pr_from_api` (None on empty body) |
-| `open_pr` / `open-pr` | `gh pr create --base --head --title --body [--draft]` | `bkt api .../pullrequests -X POST -d {title,source,destination,draft,description}` |
+| `open_pr` (lib-only; no forge_cli subcommand — create_pr.py drives it) | `gh pr create --base --head --title --body [--draft]` | `bkt api .../pullrequests -X POST -d {title,source,destination,draft,description}` |
 | `ci_rollup` / `ci-rollup` | `gh pr view PR --json statusCheckRollup` (green = non-empty + every check COMPLETED-SUCCESS) | `bkt pr checks PR` → Pipeline line state (SUCCESSFUL→green, INPROGRESS→pending, FAILED/STOPPED/ERROR→failed) |
 | `review_threads` / `review-threads` | `gh api graphql` — unresolved threads, normalized (drops resolved) | CodeRabbit actionable inline findings via paginated `.../comments`, unresolved only |
 | `bot_review_present` / `review-status` | **NotSupported** (no review bot on the GitHub self-target; degrades to `{"supported": false}`) | `bkt pr checks` CodeRabbit line → true on any terminal state (SUCCESSFUL/FAILED/STOPPED/ERROR = the review bot has finished); the mandatory pre-thread-poll gate in `stage-review_loop.md` §3 |
@@ -325,12 +296,10 @@ Adapter wraps a subprocess runner; tests inject a fake.
 | `bd version`            | —                                                  | ✗      | ✗       | constructor preflight                       |
 | `bd show <key>`         | `--json`                                           | ✓      | ✗       | `get`, `state`, `is_shipped`, post-write verify |
 | `bd list`               | `--status`, `--assignee`, `--json`                 | ✓      | ✗       | `list_assigned`                             |
-| `bd dep list <key>`     | `--json`                                           | ✓      | ✗       | `list_linked`                               |
 | `bd create`             | `--title`, `--description`, `--type`, `--parent`, `--labels`, `--assignee`, `--json` | ✓ | ✓ | `create` |
-| `bd update <key>`       | `--title`, `--description`, `--set-labels`, `--assignee`, `--status` | ✗ | ✓ | setters, `transition` (non-close) |
+| `bd update <key>`       | `--status`                                         | ✗      | ✓       | `transition` (non-close)                    |
 | `bd close <key>`        | —                                                  | ✗      | ✓       | `transition` to closed                      |
 | `bd reopen <key>`       | —                                                  | ✗      | ✓       | `transition` to open from closed            |
-| `bd priority <key> <n>` | —                                                  | ✗      | ✓       | `set_priority`                              |
 | `bd comment <key>`      | `--stdin`                                          | ✗      | ✓       | `comment` (markdown via stdin)              |
 | `bd dep add <a> <b>`    | `--type`                                           | ✗      | ✓       | `link`                                      |
 | `git symbolic-ref`      | `--short refs/remotes/origin/HEAD`                 | ✗      | ✗       | `is_shipped` default-ref resolution         |
@@ -383,7 +352,7 @@ Postcondition: re-read `bd show --json` and assert the normalized state moved to
 ### Capability advertisement
 
 14 entries; only `comments_markdown` (bd accepts markdown via `bd comment --stdin`) and `resolutions` (bd records `closure_reason` on `bd close`) flip true.
-Every other capability is false → `set_sprint`, `add_watcher`, `set_fix_versions`, `set_components`, `set_epic_link`, `board_rank`, `set_custom_field`, `get_attachments`, `upload_attachment` raise `NotSupported`.
+Every other capability is false → `set_sprint`, `list_sprints`, `get_attachments`, `download_attachment` raise `NotSupported`.
 
 ### is_shipped contract (PURE READ; never writes under `.flow/`)
 
@@ -525,7 +494,7 @@ one revision may be live per ticket at a time (exit 4); rev-id allocation + the 
 stage subset = `implement, code_review, e2e, commit, reflect, review_loop` intersected with
 the workspace stages (ws order preserved); `--stages` overrides. Emits
 `{ticket, rev_id, run_id, session_nonce, revision_dir, stages}`. The
-`next`/`advance`/`finish`/`status`/`release` subcommands take `--revision <id>` to drive
+`next`/`advance`/`release` subcommands take `--revision <id>` to drive
 the sub-run (default = the ticket-level run, byte-identical to today).
 
 `flow_worktree.py locate-or-reseed --ticket T --branch B --main-root R` is the revision's
@@ -549,7 +518,7 @@ The canonical-snapshot pattern is live: a content hash is captured once at `init
 |--------------------------------------------------|-----------|
 | Lease-style run.lock (pid + boot_id + ...)       | 7-full    |
 | Background lease refresher thread                | 7-full    |
-| `--emit-canonical-snapshot` content-tree hash    | 7-full    |
+| ~~`--emit-canonical-snapshot` content-tree hash~~ (shipped as snapshot.py + the dispatch-init write; the standalone flag was retired 2026-07) | 7-full ✓ |
 | FS capability probe (flock detection)            | 7-full    |
 | `lint-ticket.py` HARD GATE pre-stage             | 8-mvp ✓   |
 | `branch-ticket.py` ticket resolution             | 8-mvp ✓   |
@@ -625,8 +594,7 @@ Git diff capture for implement / commit / reflect stages.
 
 | Subcommand | Flags | Exits | Output |
 |------------|-------|-------|--------|
-| `since` | `--ref <git-ref> --cwd <dir>` | 0=ok, 2=git-error | `{files_touched, insertions, deletions, binary}` JSON. |
-| `since-stage` | `--stage <name> --ticket <key> --ticket-dir <dir> --cwd <dir>` | 0=ok, 1=missing-state, 2=git-error | Reads `state.json` for `stages.<name>.started_at_sha`, delegates to `since`. |
+| `since-stage` | `--stage <name> --ticket <key> --ticket-dir <dir> --cwd <dir>` | 0=ok, 1=missing-state, 2=git-error | Reads `state.json` for `stages.<name>.started_at_sha`, diffs `<sha>..HEAD` → `{files_touched, insertions, deletions, binary}` JSON. |
 | `record-baseline` | `--stage <name> --ticket <key> --ticket-dir <dir> [--files <csv>] [--capture-blobs] --cwd <dir>` | 0=ok, 2=git-error | Writes `<ticket-dir>/baseline.json` with `{stage, head_sha, planned_files, blobs}`. |
 | `capture-implement-diff` | `--ticket <key> --ticket-dir <dir> --cwd <dir>` | 0=ok, 1=missing-baseline / gitignored planned file, 2=git-error | Writes `<ticket-dir>/implement.diff` via `git diff --binary --raw`. |
 | `check-ownership` | `--ticket <key> --ticket-dir <dir> --cwd <dir>` | 0=ok, 3=ownership violation (unowned paths), 1=missing/malformed baseline, 2=git-error | `{ok, planned_files, changed, unowned_changes}` JSON. Branch-wide: scans the dirty working tree AND the committed delta `baseline.head_sha..HEAD`, so a rogue mid-implement commit is seen too. Wired as stage-commit step 2b. |
@@ -690,9 +658,12 @@ Shared `_memory_paths.py` module handles namespace resolution + path conventions
 ### `_memory_paths.py` (shared helper)
 
 Public API: `resolve_namespace(workspace_root) -> str`,
-`knowledge_path(root, ns) -> Path`,
-`ship_events_dir(root, ns) -> Path`,
-`ship_event_path(root, ns, ticket) -> Path`.
+`resolve_memory_base(root) -> Path` (the `.flow/memory-root` sibling / `[memory].root` redirect),
+`namespace_root(root, ns)`, `knowledge_path(root, ns)`, `knowledge_lock_path(root, ns)`,
+`friction_path(root, ns)`, `friction_lock_path(root, ns)`,
+`ship_events_dir(root, ns)`, `ship_event_path(root, ns, ticket)`,
+`revert_events_dir(root, ns)`, `revert_event_path(root, ns, sha)`,
+`load_semantic_config(root) -> dict` (the one `[memory.semantic]` reader).
 
 ### `memory_append.py`
 
@@ -705,7 +676,6 @@ Idempotency key: `sha256(namespace + ticket + type + normalized_body)[:16]` wher
 | `--text` | Entry body (raw, not normalized — normalize is for id only). |
 | `--branch` | Branch name. |
 | `--ticket` | Ticket key. |
-| `--id` | Override the computed id (for ship-event-derived entries). |
 | `--supersedes` | Optional id of the live entry this one replaces (tombstone pointer, metadata only — never a hash input); the target must exist in `knowledge.jsonl`. |
 | `--labels` | Optional CSV `facet:value` array (e.g. `form:iva_2083,area:vat`), comma-split with empties stripped; metadata only — never a hash input. Written as `entry["labels"]` ONLY when non-empty (mirrors `--supersedes`). |
 | `--workspace-root` | Default `.`. |
@@ -907,27 +877,13 @@ Reader for the `[revise]` block of workspace.toml (revision sub-runs, epic flow-
 
 | Subcommand | Description |
 |------------|-------------|
-| `severity --workspace-root .` | Print `{"plain_comment_severity": <value>}`. Default `"minor"`; validated against `forge.THREAD_SEVERITY`. |
+| `apply-floor --workspace-root .` | Read a threads JSON array on stdin, bump every unresolved `minor` thread to the configured floor, print the floored array. The floor itself (default `"minor"`, validated against `forge.THREAD_SEVERITY`) is read internally. |
 
 `plain_comment_severity(root) -> str` — the configured floor; missing/unparseable workspace.toml or an invalid value → `"minor"` + stderr warning (always exit 0, so the review_loop bash capture stays valid).
 
 `apply_floor(threads, severity) -> list[dict]` — pure helper: bump every UNRESOLVED `minor` thread up to `severity`. Returns new dicts (input never mutated); no-op when `severity == "minor"`. Resolved/major/critical/nit threads pass through unchanged. The review_loop applies this loop-side so `forge_github._severity_from_state` stays pure of `[revise]` config.
 
 Reuses: `_workspace.load_workspace_toml()`, `forge.THREAD_SEVERITY`.
-
-### `queue_reviews.py`
-
-Queue-status enrichment (epic flow-kx17.5): flags which parked PRs carry a NEW unresolved human review (a Major+ thread) so the `/flow queue` render can point the maintainer at `/flow revise <pr#>`. Consumed by `references/verb-queue.md`'s status render after the Parked section.
-
-| Flag | Description |
-|------|-------------|
-| `--workspace-root` | Workspace root (reads the `[forge]` block via `forge.read_forge_config`). Required. |
-| `--keys` | Comma-separated parked keys (the `parked` list from `queue_status`). |
-| `--pr-refs` | Comma-separated EVERY open-PR head ref (the slugged branch names from `gh pr list`); the script joins each key to its exact ref via `key_from_ref`. |
-
-`flag_parked_reviews(keys, pr_refs, adapter) -> list[dict]` — pure core. Resolves each parked key to its EXACT slugged head ref, `adapter.detect_pr(<ref>)` (a reconstructed bare `feature/<key>` would NOT match the real `feature/<key>-<slug>` branch), then `review_threads(pr["id"])` → counts native `severity in {major, critical}` and not `resolved`. Emits `{key, pr_id, pr_url, unresolved_major, threads:[{id, severity, title}]}` only for keys with `unresolved_major > 0`. Surfaces NATIVE Major+ only — no `revise_config` / `apply_floor` import (the plain-comment floor is a revise-time knob; applying it here would false-flag leftover bot minors). Best-effort: a per-key `forge.ForgeError` (incl. `NotSupported`) or a `detect_pr` → None is swallowed (that key skipped, the rest continue). Always exit 0 with a valid JSON array; no `[forge]` block / no keys → `[]`.
-
-Reuses: `_evolve_common.key_from_ref`, `forge.read_forge_config()` / `forge.make_forge()`.
 
 ### `observe_ship_event.py`
 
@@ -1022,7 +978,6 @@ Reads `.flow/workspace.toml` `[tracker]` block, flattens the per-backend sub-blo
 | Subcommand | Flags | Notes |
 |------------|-------|-------|
 | `get` | `--key FT-1` | `tracker.get(key)` → JSON |
-| `list-assigned` | `[--filter open]` | `tracker.list_assigned()` → array |
 | `state` | `--key FT-1` | `tracker.state(key)` → JSON |
 | `transition` | `--key FT-1 --to-state in_progress [--field k=v ...] [--enqueue-on-transient]` | Looks up transition id by `to_normalized_state` / `to_state` / `name` (any match). Fields k=v pairs string-only in mvp. `--enqueue-on-transient`: on a transient failure (exit 1), durably queue the transition to `.flow/pending-mutations.jsonl` for `/flow sync`. |
 | `comment` | `--key FT-1 --text "..."` | Wraps body as `{"body": text, "fmt": "md"}` (Content TypedDict: fmt in {md, adf, plain}). |

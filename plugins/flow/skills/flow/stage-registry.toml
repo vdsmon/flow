@@ -10,10 +10,6 @@
 #   name                          - matches references/stage-<name>.md and pipeline.stages entries
 #   default_handler               - one of: "inline" | "subagent:<type>" | "skill:<name>[:<args>]" | "none"
 #   default_timeout_min           - workspace.toml [pipeline.timeouts] overrides per-stage
-#   default_max_no_progress_min   - INFORMATIONAL ONLY: not read by any engine; no hung-detector
-#                                   exists
-#   required_capabilities         - DEFERRED (phase 7-full): validate-workspace cross-check is
-#                                   out-of-scope today; required_capabilities=[] everywhere, so inert
 #   required_predecessors         - upstream stages that MUST appear earlier in pipeline.stages
 #   required_fields               - ticket-frontmatter keys that MUST be present for this stage;
 #                                   parsed by _registry.py, consumed by lint_ticket.py to gate the
@@ -41,8 +37,6 @@ name = "ticket"
 description = "Resolve ticket key, fetch ticket context via tracker"
 default_handler = "inline"
 default_timeout_min = 5
-default_max_no_progress_min = 5
-required_capabilities = []
 required_predecessors = []
 required = false
 required_when_compounding = false
@@ -54,8 +48,6 @@ name = "plan"
 description = "Architect plan, return for approval"
 default_handler = "subagent:Plan"
 default_timeout_min = 10
-default_max_no_progress_min = 10
-required_capabilities = []
 required_predecessors = ["ticket"]
 required = false
 required_when_compounding = false
@@ -67,8 +59,6 @@ name = "implement"
 description = "Code + unit tests, TDD discipline. Subagent writes code, writes/updates unit tests, runs them, reports only when green."
 default_handler = "subagent:general-purpose"
 default_timeout_min = 30
-default_max_no_progress_min = 10
-required_capabilities = []
 required_predecessors = ["ticket"]
 required_fields = ["planned_files"]
 required = false
@@ -83,8 +73,6 @@ name = "code_review"
 description = "Main agent reviews own diff. Lower quality vs delegating to a code-review skill; opt-in via init wizard."
 default_handler = "inline"
 default_timeout_min = 15
-default_max_no_progress_min = 15
-required_capabilities = []
 required_predecessors = ["implement"]
 required = false
 required_when_compounding = false
@@ -96,8 +84,6 @@ name = "e2e"
 description = "Default-on: the correctness gate that observes the change behaving end-to-end. A workspace disables it only by explicitly wiring e2e = \"none\". Positioned AFTER code_review so cheap review catches issues before a slow e2e run burns time."
 default_handler = "subagent:general-purpose"
 default_timeout_min = 30
-default_max_no_progress_min = 15
-required_capabilities = []
 required_predecessors = ["code_review"]
 required_fields = ["e2e_recipe"]
 required = false
@@ -110,8 +96,6 @@ name = "commit"
 description = "Compose conventional commit (compose_commit.py skeleton, LLM fills body). Applies recorded implement-stage diff via git apply --cached; content-ownership gate refuses unrelated edits."
 default_handler = "inline"
 default_timeout_min = 5
-default_max_no_progress_min = 5
-required_capabilities = []
 required_predecessors = ["implement"]
 required_fields = ["commit_type", "commit_summary"]
 required = false
@@ -124,8 +108,6 @@ name = "create_pr"
 description = "Bare default skips PR creation. Workspaces wire create_pr = \"inline\" (references/stage-create_pr.md → scripts/create_pr.py): git push + open-or-resolve the PR through the forge seam (gh or bkt, per [forge] backend), idempotent. Requires a [forge] block."
 default_handler = "none"
 default_timeout_min = 20
-default_max_no_progress_min = 15
-required_capabilities = []
 required_predecessors = ["commit"]
 required = false
 required_when_compounding = false
@@ -137,8 +119,6 @@ name = "review_loop"
 description = "Bare default skips the CI / review-bot wait loop. Workspaces wire review_loop = \"inline\" (references/stage-review_loop.md → scripts/forge_cli.py): wait for CI green, drive fixes (<=3 cycles), resolve Major+ review threads. Integral on the forge seam; terminal on CI green AND zero unresolved Major+."
 default_handler = "none"
 default_timeout_min = 60
-default_max_no_progress_min = 20
-required_capabilities = []
 required_predecessors = ["create_pr"]
 required = false
 required_when_compounding = false
@@ -150,8 +130,6 @@ name = "reflect"
 description = "Closing-phase compounding extraction. Reads state.json + subagent reports + final diff. Writes durable knowledge entries; conditional CLAUDE.md / MEMORY.md updates. If no novel signal, writes zero entries (not a failure)."
 default_handler = "inline"
 default_timeout_min = 5
-default_max_no_progress_min = 5
-required_capabilities = []
 required_predecessors = []
 required = false
 required_when_compounding = true
@@ -163,8 +141,6 @@ name = "merge"
 description = "Terminal self-merge (evolve self-target only; bare default none = human keystone). Wired merge = \"inline\" (references/stage-merge.md → scripts/evolve_self_merge.py + forge_cli.py): after reflect, a green+clean evolve run self-merges its own PR; a hot bead only after an independent reviewer subagent clears the §6A guard-property check. Worktree teardown stays deferred to the janitor."
 default_handler = "none"
 default_timeout_min = 15
-default_max_no_progress_min = 10
-required_capabilities = []
 required_predecessors = ["reflect"]
 required = false
 required_when_compounding = false

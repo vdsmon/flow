@@ -38,7 +38,6 @@ from tracker import (
     Capability,
     Comment,
     Content,
-    FieldSpec,
     Link,
     NotSupported,
     ShipState,
@@ -372,29 +371,6 @@ class BeadsAdapter:
         )
         return [self._ticket_ref_from_json(i) for i in items if isinstance(i, dict)]
 
-    def list_linked(self, key: str) -> list[TicketRef]:
-        raw = self._run_json(["dep", "list", key])
-        items = (
-            raw
-            if isinstance(raw, list)
-            else (raw.get("dependencies", []) if isinstance(raw, dict) else [])
-        )
-        refs: list[TicketRef] = []
-        for dep in items:
-            if not isinstance(dep, dict):
-                continue
-            target = str(dep.get("target", "")) or str(dep.get("id", ""))
-            if not target:
-                continue
-            try:
-                ref_raw = self._unwrap_show(self._run_json(["show", target]))
-                if ref_raw is not None:
-                    refs.append(self._ticket_ref_from_json(ref_raw))
-            except _BeadsError:
-                # Dangling reference; skip rather than fail the whole listing.
-                continue
-        return refs
-
     def list_transitions(self, key: str) -> list[Transition]:
         cur = self.state(key)["native_status"].lower().replace(" ", "_").replace("-", "_")
         targets = _BD_TRANSITIONS.get(cur, [])
@@ -444,43 +420,6 @@ class BeadsAdapter:
             if new_id:
                 return new_id
         raise TrackerError(f"bd create did not return a top-level id; raw={raw!r}")
-
-    def set_summary(self, key: str, summary: Content) -> None:
-        cp = self._run(["update", key, "--title", summary["body"]])
-        if cp.returncode != 0:
-            raise _BeadsError(cp.returncode, cp.stderr, ["update", key, "--title"])
-        self._verify_field(key, "title", summary["body"])
-
-    def set_description(self, key: str, description: Content) -> None:
-        body = _content_to_markdown(description)
-        cp = self._run(["update", key, "--description", body])
-        if cp.returncode != 0:
-            raise _BeadsError(cp.returncode, cp.stderr, ["update", key, "--description"])
-        self._verify_field(key, "description", body)
-
-    def set_priority(self, key: str, priority: str) -> None:
-        n = _priority_str_to_bd_int(priority)
-        cp = self._run(["priority", key, str(n)])
-        if cp.returncode != 0:
-            raise _BeadsError(cp.returncode, cp.stderr, ["priority", key, str(n)])
-        self._verify_field(key, "priority", n)
-
-    def set_labels(self, key: str, labels: list[str]) -> None:
-        # bd update has --set-labels (replace all), --add-label (append),
-        # --remove-label (subtract). Protocol's "set" semantics need replacement.
-        joined = ",".join(labels)
-        cp = self._run(["update", key, "--set-labels", joined])
-        if cp.returncode != 0:
-            raise _BeadsError(cp.returncode, cp.stderr, ["update", key, "--set-labels"])
-        self._verify_field(key, "labels", labels)
-
-    def set_assignee(self, key: str, account_id: str | None) -> None:
-        # bd uses actor-name strings; account_id is passed through verbatim.
-        new = account_id or ""
-        cp = self._run(["update", key, "--assignee", new])
-        if cp.returncode != 0:
-            raise _BeadsError(cp.returncode, cp.stderr, ["update", key, "--assignee"])
-        self._verify_field(key, "assignee", new or None)
 
     def transition(
         self,
@@ -660,44 +599,8 @@ class BeadsAdapter:
         del project
         raise NotSupported("BeadsAdapter does not support sprints")
 
-    def add_watcher(self, key: str, account_id: str) -> None:
-        del key, account_id
-        raise NotSupported("BeadsAdapter does not support watchers")
-
-    def set_fix_versions(self, key: str, versions: list[str]) -> None:
-        del key, versions
-        raise NotSupported("BeadsAdapter does not support fix_versions")
-
-    def set_components(self, key: str, components: list[str]) -> None:
-        del key, components
-        raise NotSupported("BeadsAdapter does not support components")
-
-    def set_epic_link(self, key: str, epic_key: str) -> None:
-        del key, epic_key
-        raise NotSupported(
-            "BeadsAdapter does not support epic_link; use `parent` via create() instead."
-        )
-
-    def board_rank(self, key: str, after_key: str | None) -> None:
-        del key, after_key
-        raise NotSupported("BeadsAdapter does not support boards")
-
-    def set_custom_field(
-        self,
-        key: str,
-        field_key: str,
-        value: Any,
-        schema: FieldSpec,
-    ) -> None:
-        del key, field_key, value, schema
-        raise NotSupported("BeadsAdapter does not support custom_fields")
-
     def get_attachments(self, key: str) -> list[Attachment]:
         del key
-        raise NotSupported("BeadsAdapter does not support attachments")
-
-    def upload_attachment(self, key: str, path: str) -> str:
-        del key, path
         raise NotSupported("BeadsAdapter does not support attachments")
 
     def download_attachment(self, attachment: Attachment) -> bytes:

@@ -1034,7 +1034,7 @@ def test_copy_config_skips_nested_worktree_pool(tmp_path: Path) -> None:
     worktree = main / ".flow" / "worktrees" / "feat-FT-1-x"
     worktree.mkdir(parents=True)
 
-    copied = fw._copy_config(main, worktree, [])
+    copied = fw._copy_config(main, worktree)
 
     assert ".claude" in copied
     assert (worktree / ".claude" / "settings.json").exists()

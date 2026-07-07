@@ -53,13 +53,13 @@ import json
 import os
 import re
 import sys
-import time
 from pathlib import Path
 from typing import Any
 
 import _memory_paths
 from _locking import LockContention, flock_retry
-from _timeutil import utcnow_iso
+from _timeutil import ts_token, utcnow_iso
+from _workspace import plugin_version
 
 _SHIPPED_AT_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 _RUN_ID_RE = re.compile(r"^[0-9a-f]{16}$")
@@ -76,21 +76,6 @@ class _EvidenceInvalid(Exception):
 
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
-
-
-def _ts_token() -> str:
-    return time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
-
-
-def _plugin_version() -> str:
-    """Self-read flow plugin version; '' on any failure (never raises)."""
-    try:
-        path = Path(__file__).resolve().parents[3] / ".claude-plugin" / "plugin.json"
-        data = json.loads(path.read_text(encoding="utf-8"))
-        v = data.get("version", "")
-        return v if isinstance(v, str) else ""
-    except (OSError, json.JSONDecodeError, IndexError, ValueError):
-        return ""
 
 
 def validate_evidence(payload: Any, ticket: str) -> dict[str, Any]:
@@ -156,7 +141,7 @@ def _next_dupe_path(primary: Path) -> Path:
 
 
 def _intent_log_path(primary: Path) -> Path:
-    return primary.parent / f"{primary.name}.quarantine-intent.{_ts_token()}.json"
+    return primary.parent / f"{primary.name}.quarantine-intent.{ts_token()}.json"
 
 
 def _write_intent_log(primary: Path, record: dict[str, Any], err: str) -> None:
@@ -253,7 +238,7 @@ def observe(
     record["tier"] = tier
     record["acceptance_invariant"] = acceptance_invariant
     record["lane"] = lane
-    record["plugin_version"] = _plugin_version()
+    record["plugin_version"] = plugin_version()
     stamp = _attribution_stamp(workspace_root, ticket, run_id)
     if stamp is not None:
         record["flow_attribution"] = stamp

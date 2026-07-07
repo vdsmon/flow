@@ -36,11 +36,11 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/queue_status.py --workspace-root .
 
 Optional `--cap N` / `--concurrency N` override the `[queue]` section of `workspace.toml` (defaults cap=5, concurrency=3).
 
-- Exit 0 → stdout is one JSON object: `{action, launch, parked, liveness, ready, select}`. Continue to §3.
+- Exit 0 → stdout is one JSON object: `{action, launch, parked, reviews, stranded_pre_pr, liveness, ready, select}`. Continue to §3.
 - Exit 2 → a `bd`/`git`/`gh` call failed; surface stderr and stop.
 - Exit 4 → not a maintainer setup (should not happen after the Gate); print the Gate's maintainer-only message and stop.
 
-Field map: `ready` is the full day-job backlog (`bd ready` minus epics and minus `evolve`/`proposal`/`hot` labels), each `{id, priority, labels, title}`, sorted by (priority, id) — deeper than `launch`, which stops at the budget. `select` is the canonical `queue_select` partition (`launch`, `skipped_in_flight`, `held_backpressure`, `held_anchor`, `open_pr_count`, `open_pr_keys`, `live_runs`, `launched_pending`, `model_per_key`, `cap`, `concurrency`). `liveness` maps each in-flight key to its run's lease state (`live` / `corrupt` block a drain; everything else is settled). `action`/`parked` are the advisory drain decision.
+Field map: `ready` is the full day-job backlog (`bd ready` minus epics and minus `evolve`/`proposal`/`hot` labels), each `{id, priority, labels, title}`, sorted by (priority, id) — deeper than `launch`, which stops at the budget. `select` is the canonical `queue_select` partition (`launch`, `skipped_in_flight`, `held_backpressure`, `held_anchor`, `open_pr_count`, `open_pr_keys`, `live_runs`, `launched_pending`, `model_per_key`, `cap`, `concurrency`). `liveness` maps each in-flight key to its run's lease state (`live` / `corrupt` block a drain; everything else is settled). `action`/`parked` are the advisory drain decision; `reviews` is the parked-PR review enrichment rendered in §3 step 5.
 
 ## 3. Render — bare `/flow queue`
 
@@ -50,14 +50,7 @@ Present, in order:
 2. **Cap usage** — `select.open_pr_count` of `select.cap` open day-job PRs (queue-scoped: open PRs belonging to active evolve beads do NOT count toward this cap). Note `held_backpressure: true` when the cap is full.
 3. **In flight** — each `liveness` key with its lease state.
 4. **Parked** — `parked` keys (in-flight but not live: orphaned PRs/branches a human should look at).
-5. **Parked PRs with new human reviews (→ `/flow revise`)** — for each parked PR, whether it carries an unresolved Major+ review thread (a genuine new human CHANGES_REQUESTED). Gather every open-PR head ref (`gather_refs` returns slugged branch names, so reconstruct nothing) and feed the parked keys plus those refs to `queue_reviews.py`:
-
-   ```bash
-   PR_REFS=$(gh pr list --state open --json headRefName --limit 200 --jq '[.[].headRefName] | join(",")')
-   python3 ${CLAUDE_SKILL_DIR}/scripts/queue_reviews.py --workspace-root . --keys <parked-keys-csv> --pr-refs "$PR_REFS"
-   ```
-
-   `--keys` is the `parked` list (csv); `--pr-refs` is EVERY open-PR head ref (the script joins each parked key to its exact slugged ref via `key_from_ref` and ignores the rest — passing a bare `feat/<key>` would not match the real `feat/<key>-<slug>` branch and silently flag nothing). Output is a JSON array `[{key, pr_id, pr_url, unresolved_major, threads}]` for parked PRs with `unresolved_major > 0`. Render a table of (key, PR# `pr_id`, unresolved Major+ count `unresolved_major`) and, per row, the exact command **`/flow revise <pr#>`** (bind `<pr#>` to `pr_id`). Empty array → omit the section. Read-only + advisory (the status path never mutates). Best-effort: silently skipped when the forge has no review-thread capability (the array stays empty). Surfaces **native Major+ only** — the `[revise] plain_comment_severity` floor is a revise-time knob (what the fix loop chases), NOT applied here, so leftover bot minors never produce false human-review flags.
+5. **Parked PRs with new human reviews (→ `/flow revise`)** — the `reviews` field, already computed by `queue_status.py` (it joins each parked key to its exact slugged open-PR head ref via `key_from_ref` and probes the forge for unresolved Major+ threads — a genuine new human CHANGES_REQUESTED). It is a JSON array `[{key, pr_id, pr_url, unresolved_major, threads}]` for parked PRs with `unresolved_major > 0`. Render a table of (key, PR# `pr_id`, unresolved Major+ count `unresolved_major`) and, per row, the exact command **`/flow revise <pr#>`** (bind `<pr#>` to `pr_id`). Empty array → omit the section. Read-only + advisory (the status path never mutates). Best-effort: silently empty when the workspace has no `[forge]` block or the forge has no review-thread capability. Surfaces **native Major+ only** — the `[revise] plain_comment_severity` floor is a revise-time knob (what the fix loop chases), NOT applied here, so leftover bot minors never produce false human-review flags.
 6. **Launched pending** — `select.launched_pending`: keys fanned out by a drain that have not yet registered a branch/lease (the launch→init blind window).
 7. The advisory `action` line: "a drain run now would: `<action>`".
 
