@@ -29,7 +29,7 @@ jobs:
   stamp:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           # Full history: the guard diffs the whole push range (event.before may
           # be many commits back) and the retry loop rebases onto origin/main.
