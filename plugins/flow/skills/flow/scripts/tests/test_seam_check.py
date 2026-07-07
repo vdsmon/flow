@@ -84,7 +84,7 @@ def test_find_invocations_handles_bare_form() -> None:
 def test_surface_of_real_script_has_subcommands_and_flags() -> None:
     surface = seam_check.surface_of("dispatch_stage.py")
     assert surface is not None
-    assert {"init", "next", "advance", "finish", "release"} <= surface.subcommands
+    assert {"init", "next", "advance", "release"} <= surface.subcommands
     assert "--ticket" in surface.all_sub_flags()
 
 

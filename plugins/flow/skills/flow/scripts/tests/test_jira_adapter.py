@@ -629,7 +629,6 @@ def test_list_sprints_raises_not_supported_when_no_scrum_board(
         adapter.list_sprints("FT")
 
 
-
 # ─── Write / mutation methods ───────────────────────────────────────────────
 
 
@@ -756,7 +755,6 @@ def test_get_attachments_maps_fields(monkeypatch: pytest.MonkeyPatch) -> None:
         "url": "https://x/a.png",
     }
     assert "attachment" in http.calls[0].full_url
-
 
 
 # ─── list_issue_types ───────────────────────────────────────────────────────

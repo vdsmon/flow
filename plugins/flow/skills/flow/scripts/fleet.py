@@ -319,8 +319,9 @@ def is_live(workspace_root: Path, key: str) -> bool:
     very reap that exists to merge it.
     The lease's per-stage TTL is the accurate signal: a run that went live in the gap has
     a fresh lease and is caught here. (True atomic read+act under one flock is impossible
-    for a prose `gh pr merge`; that is child-4's merge-token. This re-check NARROWS the
-    worst TOCTOU from select-time to act-time, it does not close it.)
+    for a prose `gh pr merge`; the child-4 merge-token that would have closed it was
+    built then reverted, flow-8by2.4. This re-check NARROWS the worst TOCTOU from
+    select-time to act-time, it does not close it.)
 
     Imports `lease` directly + inlines the worktree-pool glob (mirrors
     _evolve_common.run_dir_for, both `feat-`/legacy `feature-` dir prefixes) to

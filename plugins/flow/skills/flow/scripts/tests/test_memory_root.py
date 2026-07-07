@@ -152,30 +152,20 @@ def test_validate_rejects_non_string_root() -> None:
     assert any("memory.root" in v for v in result.violations)
 
 
-def _init_config(tmp_path: Path, memory_root: str | None):
+def _init_config(tmp_path: Path):
     return init_mod.InitConfig(
         backend="jira",
         bundle="bare",
         workspace_root=tmp_path,
         jira=init_mod.JiraConfig(cloud_id="x", project_key="FT", assignee_account_id=None),
-        memory_root=memory_root,
     )
 
 
-def test_render_omits_root_when_unset(tmp_path: Path) -> None:
+def test_render_never_writes_root(tmp_path: Path) -> None:
+    # init never writes [memory].root; the worktree share rides the gitignored
+    # .flow/memory-root sibling. The read path (resolve_memory_base) still
+    # honors a hand-set root, covered above.
     toml = init_mod._render_workspace_toml(
-        _init_config(tmp_path, None), "demo", ["ticket"], {"ticket": "inline"}
+        _init_config(tmp_path), "demo", ["ticket"], {"ticket": "inline"}
     )
     assert "root =" not in toml
-
-
-def test_render_writes_root_when_set(tmp_path: Path) -> None:
-    toml = init_mod._render_workspace_toml(
-        _init_config(tmp_path, "/abs/main/.flow"), "demo", ["ticket"], {"ticket": "inline"}
-    )
-    assert 'root = "/abs/main/.flow"' in toml
-    # round-trips: a workspace.toml carrying this root resolves the shared base
-    flow = tmp_path / ".flow"
-    flow.mkdir()
-    (flow / "workspace.toml").write_text(toml, encoding="utf-8")
-    assert _memory_paths.resolve_memory_base(tmp_path) == Path("/abs/main/.flow")

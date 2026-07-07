@@ -63,6 +63,7 @@ import recall_usage
 from _jsonl import append_quarantine, iter_jsonl, read_jsonl_lenient
 from _timeutil import iso_z, parse_iso, ts_token, utcnow_iso
 
+
 def percentile(values: list[float], pct: float) -> float:
     """Linear-interpolation percentile (numpy default, C=1). pct in [0, 100].
 
@@ -1485,7 +1486,7 @@ def _run_arm_compare(args: argparse.Namespace, since_iso: str, until_iso: str) -
 
 def _run_time_to_pr(args: argparse.Namespace, since_iso: str, until_iso: str, now_iso: str) -> int:
     if not args.namespace:
-        sys.stderr.write("metric: --namespace is required when not --checkpoint\n")
+        sys.stderr.write("metric: --namespace is required\n")
         return 1
     workspace_root = Path(args.workspace_root).resolve()
     err = _check_flow_dir(workspace_root)

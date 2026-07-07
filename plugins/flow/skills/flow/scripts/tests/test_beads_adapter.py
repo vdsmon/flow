@@ -312,7 +312,6 @@ def test_list_assigned_passes_through_explicit_status() -> None:
     assert args[args.index("--status") + 1] == "closed"
 
 
-
 # ─── list_transitions ────────────────────────────────────────────────────────
 
 
@@ -382,7 +381,6 @@ def test_create_rejects_adf_description() -> None:
             description={"body": "{}", "fmt": "adf"},
             type="task",
         )
-
 
 
 # ─── Transition ──────────────────────────────────────────────────────────────

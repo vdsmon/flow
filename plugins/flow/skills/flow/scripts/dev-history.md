@@ -17,7 +17,7 @@ The head/tail split was later collapsed into a single background-agnostic sessio
 
 Still pending (deliberately deferred, not blocking):
 - Deep ship-event reconciliation (duplicate / corrupt ship-event files; `/flow recover` flags them via `ship_event_attention` but does not auto-fix).
-- Live `baseline_collect` ingestion from Jira changelog + Bitbucket PR history (the file format + stats ship; collection is manual for now).
+- ~~Live `baseline_collect` ingestion from Jira changelog + Bitbucket PR history~~ (retired 2026-07: the ±30% gate never shipped and nothing read the baseline; `baseline_collect.py` and the `/flow baseline` verb were removed, `percentile` lives in `metric.py`).
 - Cross-project `/flow status --all` dashboard.
 - Hunk-level commit ownership (current gate is filename-level).
 

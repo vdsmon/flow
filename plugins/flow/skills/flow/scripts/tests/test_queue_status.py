@@ -398,6 +398,7 @@ def test_stranded_detection_stays_read_only(tmp_path):
     for args in calls:
         assert any(args[: len(p)] == p for p in _READ_ONLY_PREFIXES), f"mutating call: {args}"
 
+
 # ---- parked-PR review enrichment (absorbed from queue_reviews.py) ----
 
 
@@ -626,4 +627,3 @@ def test_status_no_parked_skips_review_probe(tmp_path):
     run, _ = _dispatch(ready=[_cand("flow-a")])
     out = qst.status(ws, cap=5, concurrency=3, runner=run, forge_factory=boom_factory)
     assert out["reviews"] == []
-

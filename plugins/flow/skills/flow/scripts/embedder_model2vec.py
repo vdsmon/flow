@@ -33,11 +33,14 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
 def main(argv: list[str]) -> int:
     args = _parse_args(argv)
     texts = [line.rstrip("\n") for line in sys.stdin.read().splitlines()]
+    if not texts:
+        sys.stdout.write("[]\n")
+        return 0
     try:
         from model2vec import StaticModel
 
         model = StaticModel.from_pretrained(args.model)
-        embeddings = model.encode(texts) if texts else []
+        embeddings = model.encode(texts)
     except Exception as exc:  # model load / encode is the whole job; report and fail
         sys.stderr.write(f"embedder_model2vec: {type(exc).__name__}: {exc}\n")
         return 1
