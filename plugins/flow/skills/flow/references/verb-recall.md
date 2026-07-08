@@ -2,6 +2,8 @@
 
 `/flow recall <query> [--branch X --top-n N]`. Query the compounding memory layer. Routed from SKILL.md's argument table.
 
+**Sub-verb dispatch:** if the first post-verb token is exactly `prune` (`/flow memory prune`, `/flow recall prune`), this is NOT a query — skip the argv build and follow `## memory prune` below. (To recall the literal word "prune", use a longer query.)
+
 Pass-through to `recall.py`.
 Build the argv from `$ARGUMENTS`:
 
@@ -138,3 +140,48 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/recall.py --metric fix-efficacy \
 ```
 
 Per closed MACHINERY-fix bead (a `.flow/<namespace>/knowledge.jsonl` entry whose body starts with `MACHINERY`, grouped by `ticket`), reports whether the friction anchor(s) it claimed to fix recurred afterward: a `recurred` / `clean` verdict plus evidence (`post_fix_count`, `claimed_anchors`, `recurrence_run_ids`, `stages`, `types`, `recurrences`, `fix_shas`). A bead is `unmeasurable` (still counted `clean`, never a third verdict) when it claims no distinctive anchor or has no usable fix timestamp — it cannot forward-join, so it cannot recur. Default output is a per-bead table; `--json` emits `{beads, totals, resolved_workspace_root}`, where `totals` carries `fix_beads`/`recurred`/`clean`/`unmeasurable`/`recurrence_rate` (recurred / fix_beads, over ALL fix_beads including the unmeasurable ones). `--namespace` is optional (auto-resolves from workspace.toml when omitted). This is a lifetime metric: `--since`/`--until` are accepted for CLI-surface symmetry but IGNORED.
+
+## memory prune
+
+`/flow memory prune` (equivalently `/flow recall prune`). Retire the corpus's dead weight: entries recall keeps surfacing that no run ever uses, and project auto-memory files the repo has since captured or disproved. Repeatable, not exhaustive — each pass works the head of the ranking; run it again when the reflect-stage nudge reappears.
+
+**Step 0 — interactive-only guard.** The flow below gates every write on `AskUserQuestion`, which a headless run cannot answer. Detect an `--auto` context by session context — the same signal the SKILL.md do-loop uses to suppress the PR-ready notification (`references/verb-do.md`). If this is an `--auto` run: print `memory prune is interactive-only; rerun without --auto` and stop.
+
+### Phase 1 — flow knowledge corpus
+
+1. Build the usage-ranked worklist, redirected to a file (never cat the whole corpus into context):
+   ```bash
+   python3 ${CLAUDE_SKILL_DIR}/scripts/sweep_knowledge.py propose \
+     --type all --with-usage --workspace-root . > prune-worklist.json
+   ```
+   Each item carries `{id, ticket, ts, type, body, surfaced_count, used_count, miss_count, last_surfaced, tier}`. Tiers, in worklist order: **0** = surfaced but never used (recall spent context on it; no run leaned on it — most-surfaced first), **1** = never surfaced (dead weight or just young — oldest first), **2** = used at least once (earned its place — prune only if disproved).
+
+2. **Verify (the judgment step).** Walk the worklist top-down, capping the pass at ~30 candidates. Each body asserts something — grep/Read the CURRENT code (and any PR it names) to check the assertion still holds and still matters. `miss_count >= 1` is a KEEP bias: the corpus RE-learned that entry while recall failed to surface it — it is valuable, the recall side is what failed. A young tier-1 entry (recent `ts`) is not dead, just unproven — skip it. Batches of candidates may be delegated to read-only `Explore` agents. Only a CONFIRMED-dead entry enters the manifest, one record each:
+   ```json
+   {"superseded_id": "<id>", "superseding_ticket": "<KEY>", "rationale": "<why moot + what replaced it>"}
+   ```
+   `superseding_ticket` = this session's ticket key if it has one, else `memory-prune-<YYYY-MM-DD>`. Write the records to `prune-manifest.json`.
+
+3. **The gate — ONE `AskUserQuestion` before any write.** Present: total candidates, counts by type and tier, and 3-5 samples (id + first sentence of body + rationale). Options: apply / show the full manifest first / abort. Nothing is written until the user picks apply.
+
+4. Apply (append-only tombstones through the same seam the curate lane uses; idempotent, a re-run is a no-op):
+   ```bash
+   python3 ${CLAUDE_SKILL_DIR}/scripts/sweep_knowledge.py apply \
+     --manifest prune-manifest.json --workspace-root .
+   ```
+   Surface the applied/skipped/error summary. Exit 5 = at least one record errored (unknown id, empty id) — report those records; the rest applied. Recall filters superseded entries from the next run automatically.
+
+5. **Optional consolidation pass.** Offer it after apply: near-duplicate live entries collapse to one canonical body via `cluster` → confirm → `apply-cluster`. The procedure (incl. manifest shape) is `references/verb-evolve.md` §curate → Consolidation — follow it verbatim, with the same one-question confirm discipline as step 3.
+
+### Phase 2 — project auto-memory
+
+The other store: the on-disk project memory directory your harness names in its memory instructions (system context) — the same one the reflect stage's lens C writes. If the harness names none, note that and skip this phase.
+
+1. **Backup FIRST**, outside the memory dir: `tar -czf <parent>/memory-backup-<YYYY-MM-DD>.tar.gz -C <memory-parent> <memory-dirname>`. Print the path and the one-line restore command.
+2. Classify every entry listed in the index (`MEMORY.md`), opening the entry file when the index line is ambiguous:
+   - `metadata.type: feedback` → **NEVER pruned**, unconditional keep, do not even propose it;
+   - obsolete — marked fixed/retired/superseded, or a one-off incident note whose residual lives in the tracker;
+   - captured-in-repo — the fact now lives in a repo doc or check. **Grep the repo and VERIFY the capture before believing this class** — a memory that only claims to be captured stays;
+   - live — keep.
+3. Confirm in batches of ~10 via `AskUserQuestion` (entry name + one-line reason each). On approval: delete those entry files and remove exactly their lines from the index — never delete `MEMORY.md` itself; every unrelated line stays byte-identical. Dangling `[[links]]` in surviving entries are legal in that memory discipline — do not chase them.
+4. Report: counts per class, files deleted, the backup path.

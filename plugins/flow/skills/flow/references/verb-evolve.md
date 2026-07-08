@@ -489,7 +489,7 @@ The distinction matters because the `epic:<track>::child-N-<symptom>` dedup name
 
 ## curate (maintainer one-shot)
 
-A **manual maintainer recipe**, NOT a routed `/flow evolve` sub-verb: a one-shot backlog cleanup that retro-curates stale `DECISION`/`FACT` entries in `.flow/<namespace>/knowledge.jsonl`. It is **propose-only** — the engine never auto-decides supersession; a human (or an agent under maintainer supervision) confirms every entry before anything is written. The standing producer for future rot is the reflect-stage supersession (flow-ufvu.2); this recipe is for draining the pre-existing backlog once.
+A **manual maintainer recipe**, NOT a routed `/flow evolve` sub-verb: a one-shot backlog cleanup that retro-curates stale `DECISION`/`FACT` entries in `.flow/<namespace>/knowledge.jsonl`. It is **propose-only** — the engine never auto-decides supersession; a human (or an agent under maintainer supervision) confirms every entry before anything is written. The standing producer for future rot is the reflect-stage supersession (flow-ufvu.2); this recipe is for draining the pre-existing backlog once. The user-facing interactive lane over this same engine is `/flow memory prune` (`references/verb-recall.md`), which adds a usage-ranked worklist via `propose --type all --with-usage`.
 
 The flow is three steps:
 
