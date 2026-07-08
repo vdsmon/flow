@@ -267,6 +267,13 @@ def _coerce_value(raw: str) -> Any:
                 return []
             return [item.strip() for item in inner.split(",")]
         return parsed
+    if "," in raw:
+        # a bare `a,b,c` silently stores as ONE string, drifting array fields
+        # like planned_files off the shape the bootstrap writes (flow-2wa)
+        sys.stderr.write(
+            f"ticket-frontmatter: value {raw!r} stored as a plain string; "
+            "wrap in [ ] for a TOML array if a list was intended\n"
+        )
     return raw
 
 

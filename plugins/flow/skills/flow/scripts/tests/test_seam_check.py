@@ -367,6 +367,128 @@ def test_module_md_importer_rows_match_imports() -> None:
     assert seam_check.module_md_importer_drift() == []
 
 
+# --- MODULE.md phantom rows ---------------------------------------------------
+
+
+def test_phantom_row_flagged(tmp_path) -> None:
+    (tmp_path / "a.py").write_text("")
+    text = "| `a.py` | live |\n| `gone.py` | deleted script |\n"
+    assert seam_check.phantom_module_md_rows(scripts_dir=tmp_path, module_text=text) == {"gone.py"}
+
+
+def test_phantom_check_ignores_role_cell_mentions(tmp_path) -> None:
+    # A historical mention inside a Role cell is prose, not a row.
+    (tmp_path / "a.py").write_text("")
+    text = "| `a.py` | absorbed from queue_reviews.py (epic) |\n"
+    assert seam_check.phantom_module_md_rows(scripts_dir=tmp_path, module_text=text) == set()
+
+
+def test_phantom_check_resolves_test_files_against_tests_dir(tmp_path) -> None:
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_a.py").write_text("")
+    text = "| `test_a.py` | frozen corpus gate |\n"
+    assert seam_check.phantom_module_md_rows(scripts_dir=tmp_path, module_text=text) == set()
+
+
+def test_module_md_has_no_phantom_rows() -> None:
+    """Every row in the real MODULE.md must document a script that exists."""
+    assert seam_check.phantom_module_md_rows() == set()
+
+
+def test_main_fails_on_phantom_row(monkeypatch) -> None:
+    monkeypatch.setattr(seam_check, "phantom_module_md_rows", lambda *a, **k: {"gone.py"})
+    assert seam_check.main([]) == 1
+
+
+# --- MODULE.md forward "imports x, y" claims ----------------------------------
+
+
+def test_forward_import_claim_clean(tmp_path) -> None:
+    (tmp_path / "a.py").write_text("")
+    (tmp_path / "vp.py").write_text("import a\n")
+    text = "| `vp.py` (lib) | x | imports a |\n"
+    assert seam_check.module_md_forward_import_drift(scripts_dir=tmp_path, module_text=text) == []
+
+
+def test_forward_import_claim_stale(tmp_path) -> None:
+    (tmp_path / "a.py").write_text("")
+    (tmp_path / "b.py").write_text("")
+    (tmp_path / "vp.py").write_text("import a\n")
+    text = "| `vp.py` (lib) | x | imports a, b |\n"
+    drifts = seam_check.module_md_forward_import_drift(scripts_dir=tmp_path, module_text=text)
+    assert drifts == [("vp", "b")]
+
+
+def test_forward_import_prose_claim_skipped(tmp_path) -> None:
+    (tmp_path / "vp.py").write_text("")
+    # `nothing` is not a local stem -> the claim is prose, skipped.
+    text = "| `vp.py` (lib) | x | imports nothing at dispatch time |\n"
+    assert seam_check.module_md_forward_import_drift(scripts_dir=tmp_path, module_text=text) == []
+
+
+def test_module_md_forward_import_rows_match_imports() -> None:
+    """Every enumerable forward 'imports' claim in the real MODULE.md holds."""
+    assert seam_check.module_md_forward_import_drift() == []
+
+
+def test_main_fails_on_forward_import_drift(monkeypatch) -> None:
+    monkeypatch.setattr(seam_check, "module_md_forward_import_drift", lambda *a, **k: [("vp", "b")])
+    assert seam_check.main([]) == 1
+
+
+# --- guard-file list <-> triage._GUARD_FILES ----------------------------------
+
+
+def test_triage_guard_files_parsed_from_source() -> None:
+    parsed = seam_check.triage_guard_files()
+    assert "flow_worktree.py" in parsed
+    assert "SKILL.md" in parsed
+
+
+def test_guard_lists_match_triage() -> None:
+    """Both prose guard-file enumerations must equal triage._GUARD_FILES."""
+    assert seam_check.guard_file_list_drift() == []
+
+
+def test_guard_list_divergence_flagged(tmp_path) -> None:
+    guard = frozenset({"a.py", "b.py", "SKILL.md"})
+    doc1 = tmp_path / "one.md"
+    doc1.write_text("a safety-machinery guard file (`a.py`, `b.py`) is hot\n")
+    doc2 = tmp_path / "two.md"
+    doc2.write_text("a safety-machinery guard file (`a.py`) is hot\n")
+    drifts = seam_check.guard_file_list_drift(docs=[doc1, doc2], guard_files=guard)
+    assert len(drifts) == 1
+    assert drifts[0][0] == "two.md"
+    assert "b.py" in drifts[0][2]
+
+
+def test_guard_list_extra_member_flagged(tmp_path) -> None:
+    guard = frozenset({"a.py", "b.py"})
+    doc1 = tmp_path / "one.md"
+    doc1.write_text("a safety-machinery guard file (`a.py`, `b.py`) is hot\n")
+    doc2 = tmp_path / "two.md"
+    doc2.write_text("a safety-machinery guard file (`a.py`, `b.py`, `c.py`) is hot\n")
+    drifts = seam_check.guard_file_list_drift(docs=[doc1, doc2], guard_files=guard)
+    assert len(drifts) == 1
+    assert "c.py" in drifts[0][2]
+
+
+def test_guard_list_missing_anchors_is_a_drift(tmp_path) -> None:
+    # The phrase moving out of the docs must not silently disarm the gate.
+    doc = tmp_path / "one.md"
+    doc.write_text("no anchor here\n")
+    drifts = seam_check.guard_file_list_drift(docs=[doc], guard_files=frozenset({"a.py"}))
+    assert len(drifts) == 1
+    assert "expected >= 2" in drifts[0][2]
+
+
+def test_main_fails_on_guard_list_drift(monkeypatch) -> None:
+    monkeypatch.setattr(
+        seam_check, "guard_file_list_drift", lambda *a, **k: [("one.md", 3, "missing ['b.py']")]
+    )
+    assert seam_check.main([]) == 1
+
+
 # --- MODULE.md surface-cell completeness ------------------------------------
 
 

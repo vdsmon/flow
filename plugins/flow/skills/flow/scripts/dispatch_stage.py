@@ -126,8 +126,9 @@ def _git_branch(workspace_root: Path) -> str:
 
 
 def _promote_recall_log(workspace_root: Path, ticket: str) -> None:
-    # Best-effort: fold any matching SessionStart recall-pending entries into the
-    # per-ticket recall-log on run start. A promotion failure must never abort init.
+    # Best-effort: fold any matching recall-pending entries (written by the
+    # plan-phase recall --record-pending) into the per-ticket recall-log on run
+    # start. A promotion failure must never abort init.
     with contextlib.suppress(Exception):
         recall_pending.promote_matching(
             workspace_root,

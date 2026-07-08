@@ -32,6 +32,8 @@ The taxonomy is closed:
 
 ## Steps
 
+### Step 1 — bundle the inputs
+
 1. Bundle the reflect inputs:
    ```bash
    ${CLAUDE_SKILL_DIR}/scripts/reflect_inputs.py \
@@ -70,6 +72,8 @@ The taxonomy is closed:
    - **`lane: express`** → **friction-log-only**. Run ONLY: step 2b's drive-every-`friction[]`-entry-to-terminal-action (when `reflect_config.machinery` is on; an empty `friction[]` is the common clean case and finishes immediately) and the ship-event record (steps 5-6, with `--lane`). SKIP lens A novelty mining (steps 2 + 3), lens C project memory (2c), and the 3b supersession sweep. If — against expectation for a behavior-preserving bead — you DID notice a genuinely novel durable fact while handling friction, you may still append it; the collapse removes the mandatory mining, it does not forbid a real insight.
    - **`lane: light`** → **collapse only when `friction[]` is empty** (a clean small run rarely teaches durable knowledge). If `friction[]` is non-empty, run reflect in FULL — the friction is the signal that something is worth learning.
    - **`lane: full` or absent** → full reflect, all steps below, unchanged.
+
+### Step 2 — read the bundle: lens A (domain), 2b lens B (machinery self-edit), 2c lens C (project knowledge)
 
 2. Read the bundle JSON carefully. Look for novel signal:
    - **What** did the ticket teach you that wasn't already documented?
@@ -128,8 +132,8 @@ The taxonomy is closed:
          --dedup-key "<primary-relfile>::<short-symptom>, e.g. references/stage-commit.md::double-transition"
        ```
        When the slung finding carries a CONCRETE `scripts/*.py` edit and `harness_eval.available` is true, run the same scratch-copy corpus score from the APPLY-NOW pre-check above and include the delta summary in the `--description` next to the confidence statement (or `corpus delta: not scored — no concrete edit yet` / `corpus delta: not scored — eval unavailable`), so the downstream evolve consumer sees a regressing proposal before pickup.
-       The `--dedup-key` is anchored on the finding's primary file path (not free wording) and reduced to a deterministic fingerprint, so reflect does not refile the same machinery friction every run (nor re-propose one already closed/rejected). Keep the `::` separator: the file component (basename) now also anchors a fuzzy same-file dedup pass, so a re-discovery worded differently still converges instead of minting a new key. Exit 0 → filed; it prints the bead key — note that key in the `MACHINERY:` entry so the two are linked. Exit 5 → a bead for this finding already exists (prints its key); reference that key in the entry and move on, do NOT refile. Exit 4 → not a maintainer setup: dormant, nothing filed, the knowledge entry stands alone. This is the normal user-mode path, NOT an error. Exit 2 → bd error: log and move on (the knowledge entry already captured the finding). If the finding touches a hot file — `SKILL.md` / `stage-registry.toml` / `CLAUDE.md` / a wired handler, or a safety-machinery guard file (`lease.py`, `snapshot.py`, `_atomicio.py`, `_locking.py`, `state.py`, `dispatch_stage.py`, `diff_extract.py`, `machinery_edit.py`, `flow_friction.py`) — add `hot` to `--labels` (`evolve,machinery,hot`) so the consumer routes the bead through the hot path and its property-check review.
-   <!-- SYNC: this 9-file hot guard list is duplicated by design in references/verb-evolve.md §audit step 2 — keep both in sync (flow-837; not extracted to a constant per maintainer decision) -->
+       The `--dedup-key` is anchored on the finding's primary file path (not free wording) and reduced to a deterministic fingerprint, so reflect does not refile the same machinery friction every run (nor re-propose one already closed/rejected). Keep the `::` separator: the file component (basename) now also anchors a fuzzy same-file dedup pass, so a re-discovery worded differently still converges instead of minting a new key. Exit 0 → filed; it prints the bead key — note that key in the `MACHINERY:` entry so the two are linked. Exit 5 → a bead for this finding already exists (prints its key); reference that key in the entry and move on, do NOT refile. Exit 4 → not a maintainer setup: dormant, nothing filed, the knowledge entry stands alone. This is the normal user-mode path, NOT an error. Exit 2 → bd error: log and move on (the knowledge entry already captured the finding). If the finding touches a hot file — `SKILL.md` / `stage-registry.toml` / `CLAUDE.md` / a wired handler, or a safety-machinery guard file (`lease.py`, `snapshot.py`, `_atomicio.py`, `_locking.py`, `state.py`, `dispatch_stage.py`, `diff_extract.py`, `flow_worktree.py`, `machinery_edit.py`, `flow_friction.py`) — add `hot` to `--labels` (`evolve,machinery,hot`) so the consumer routes the bead through the hot path and its property-check review.
+   <!-- SYNC: this 10-file hot guard list is duplicated by design in references/verb-evolve.md §audit step 2 — keep both in sync with scripts/triage.py _GUARD_FILES (flow-837; not extracted to a constant per maintainer decision; seam_check gates the equality) -->
    - **NEVER at reflect-time:** the repo/PR artifacts (fixtures, docs, code in the ticket's tree). That is the post-PR-churn boundary, and it is the ONLY category reflect must not touch.
 
    The dividing question, asked once per finding: "Am I confident this edit is strictly correct AND cannot break a sibling agent running right now?" Yes -> apply it, and say so in the reflect output. No -> propose + record. One scope gate on top, from the repo-root `VISION.md`: a self-heal stays scoped to the friction it answers — if the clean fix implies a larger structural change (an architecture challenge, a cross-cutting refactor), that part is PROPOSE + RECORD as a proposal bead the maintainer triages, never folded into the APPLY-NOW edit (auto the ground-truth repair; propose the judgment). When you apply, the `MACHINERY:` entry doubles as the changelog (name the file + the fix) so the change is findable and revertible.
@@ -151,6 +155,8 @@ The taxonomy is closed:
    - **Project `CLAUDE.md` / `AGENTS.md` (PROPOSE, do NOT apply).** If the run taught a durable PROJECT RULE worth codifying in the repo's checked-in `AGENTS.md` (a convention, a recurring gotcha, a workflow rule future contributors should follow), SURFACE it as a one-block proposal in the reflect output: `Proposed AGENTS.md addition:` followed by the exact text and the one-line reason. Do NOT edit `AGENTS.md`. It is a repo artifact, and editing it at reflect-time forces a commit that re-triggers the CI + review loop (the same post-PR-churn boundary step 2 enforces). The user applies the proposal on their own schedule. Emit nothing here if the run taught no repo-rule-worthy fact.
 
    "No broadly-useful project fact this run" is a valid outcome; do not manufacture project-memory entries or AGENTS.md proposals to fill the section.
+
+### Step 3 — append entries; 3b supersede, 3c reindex, 3d/3e recall observability, 3f precision
 
 3. For EACH extracted entry (0 or more), append to knowledge.jsonl:
    ```bash
@@ -214,6 +220,8 @@ The taxonomy is closed:
    ```
    `--namespace` is omitted deliberately; the command auto-resolves it from `workspace.toml`. Echo one line from the result: `recall-hit-rate: <hit_rate> (<used>/<surfaced>, <misses> misses)`. SWALLOW any error — this is observability, never a gate.
 
+### Step 4 — zero novel signal path
+
 4. **Zero novel signal path**: if you genuinely have nothing to append, emit exactly:
    ```
    no novel signal
@@ -221,6 +229,8 @@ The taxonomy is closed:
    Skip all writes.
    Do NOT manufacture entries.
    Reflect-empty IS a valid outcome; the compounding rate doesn't need every ticket to add an entry.
+
+### Step 5 — check the ship state
 
 5. Check the ship state:
    ```bash
@@ -241,6 +251,8 @@ The taxonomy is closed:
      Already observed; skip step 6.
    - `state == "not_shipped"` or `"indeterminate"` → not landed (or no confirming evidence yet).
      Skip step 6; reflect completes.
+
+### Step 6 — observe the ship event
 
 6. ONLY when `state == "not_yet_observed"`, observe the ship event:
    - Read `<ticket-dir>/state.json` to get `run_id`:
@@ -288,6 +300,8 @@ The taxonomy is closed:
        Continue normally; this is informational, not an error.
      - Exit 3 → I/O error, lock contention, or workspace memory config missing/invalid (intent log written).
        Surface warning; continue.
+
+### Step 7 — complete
 
 7. Stage completes with status=completed.
 

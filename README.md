@@ -12,7 +12,7 @@ plan mode    the one gate      one session, background anytime (/bg)     the del
 
 - Multi-tracker: Jira (REST) or [beads](https://github.com/steveyegge/beads) (`bd`), one active per workspace.
 - Deterministic engine: a state-machine dispatcher owns `state.json`, a per-ticket run lease, and a canonical-snapshot TOCTOU guard. Stdlib-only Python with atomic writes and quarantine recovery.
-- Compounding memory: the reflect stage extracts durable knowledge per ticket, and SessionStart recall feeds it back into the next plan (BM25).
+- Compounding memory: the reflect stage extracts durable knowledge per ticket, and plan-phase recall feeds it back into the next plan (BM25, optional semantic fusion).
 - Self-evolving: when a run hits friction, the reflect stage repairs flow's *own* harness from inside the run (lens B -> `machinery_edit` -> version bump -> commit). See `plugins/flow/skills/flow/references/self-evolution.md`.
 
 ## Install
@@ -30,16 +30,17 @@ A marketplace-of-one: the repo root is the marketplace, and the plugin lives at 
 
 ```
 .claude-plugin/marketplace.json   # lists the one plugin
+docs/research/                    # experiment records (xqt counterfactual, cognitive-yield, novelty survey)
 plugins/flow/
   .claude-plugin/plugin.json
-  hooks/                          # SessionStart recall hook
+  hooks/                          # SessionStart ops hook (evolve deadman/staleness)
   skills/flow/
     SKILL.md                      # router + the one gate + the do-loop skeleton
     references/                   # per-verb + per-stage detail, loaded on demand
     scripts/                      # the engine (stdlib-only Python) + tests
 ```
 
-The agent reads `SKILL.md` on trigger and loads `references/*.md` just in time. `scripts/MODULE.md` is the live map of the engine.
+The agent reads `SKILL.md` on trigger and loads `references/*.md` just in time. `scripts/MODULE.md` is the live map of the engine (start with its Reader entry-point map). The experiments behind the design bounds are archived in [docs/research/](docs/research/).
 
 ## Why a plugin, not a standalone CLI
 

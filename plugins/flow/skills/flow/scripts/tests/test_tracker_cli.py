@@ -404,6 +404,52 @@ def test_transition_unknown_state_returns_3(
     assert "no transition" in capsys.readouterr().err
 
 
+def test_transition_unavailable_on_beads_names_raw_bd_fallback(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # beads synthesizes only open->[in_progress, blocked, closed]; a target
+    # like deferred is reachable only via raw bd, and the error must say so.
+    _seed_workspace(tmp_path)
+
+    class BeadsAdapter(_FakeTracker):
+        pass
+
+    rc = tracker_cli.cli_main(
+        [
+            "--workspace-root",
+            str(tmp_path),
+            "transition",
+            "--key",
+            "FT-1",
+            "--to-state",
+            "deferred",
+        ],
+        tracker_factory=_factory(BeadsAdapter()),
+    )
+    assert rc == 3
+    assert "bd update FT-1 --status deferred" in capsys.readouterr().err
+
+
+def test_transition_unavailable_non_beads_has_no_bd_hint(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _seed_workspace(tmp_path)
+    rc = tracker_cli.cli_main(
+        [
+            "--workspace-root",
+            str(tmp_path),
+            "transition",
+            "--key",
+            "FT-1",
+            "--to-state",
+            "deferred",
+        ],
+        tracker_factory=_factory(_FakeTracker()),
+    )
+    assert rc == 3
+    assert "bd update" not in capsys.readouterr().err
+
+
 def test_transition_with_fields(tmp_path: Path) -> None:
     _seed_workspace(tmp_path)
     tk = _FakeTracker()

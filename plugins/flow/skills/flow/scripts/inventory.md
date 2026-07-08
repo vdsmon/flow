@@ -2,6 +2,16 @@
 
 > **Navigation.** The CURRENT script map is `MODULE.md`. Build status / release notes are in `dev-history.md`. This file keeps the API/contract tables (Jira REST mapping, beads CLI surface, `.flow-bundle.toml` schema, `state.json` schema) plus the phase-by-phase build narrative. The "Phase X" / "Known holes" sections below are archived history, not current status — read them as the build log, not as a description of how flow works today.
 
+Live contract sections (grep the heading; everything else here is build log):
+
+- §Jira API inventory + §Status normalization mapping + §HTTP error → exception / TransitionResult mapping
+- §Forge (PR host) surface — operation surface, `[forge]` + `[models]` workspace schemas
+- §`.flow-bundle.toml` schema — discovery contract, composition rules, bootstrap markers
+- §Beads CLI surface — subcommands, state normalization, transition synthesis, is_shipped contract
+- §Dispatcher state machine — stage lifecycle, `state.json` schema, atomic-write contract, quarantine, exit codes, handler-descriptor shape, revision sub-run, TOCTOU invariant
+- §Memory cohort — `memory_append` / `recall` / `memory_embed` + `[memory.semantic]` config
+- §Integration layer — `tracker_cli` per-backend contract, descriptor extension, verb router
+
 ## Jira API inventory
 
 Source: `~/.claude/skills/jira-workflow/{SKILL.md,references/*.md}` — the proven 8-stage pipeline that JiraAdapter must replicate as REST calls.
@@ -423,24 +433,23 @@ The handler runs between `next` and `finish`.
 
 ### Atomic-write contract
 
-1. Write via `tempfile.NamedTemporaryFile` in the parent dir.
-2. `fsync()` the temp file.
+The one implementation is `_atomicio.atomic_write_bytes` (state.py delegates to it):
+
+1. `tempfile.mkstemp` in the parent dir, write via `os.fdopen`, `fsync()` the temp file.
+2. Preserve the destination's prior mode on the temp (new file: literal `0o644`, not umask-masked, so a restrictive umask can't reintroduce mkstemp's `0o600`).
 3. `os.replace(tmp, final)`.
-4. Acquire `state.json.lock` via `fcntl.flock(LOCK_EX)` around the
-   read-modify-write sequence.
-5. Before each write, copy old state.json to `state.json.<ts>.bak`.
-6. After each write, trim backups to the last `BACKUP_RETENTION = 5`.
+4. `fsync()` the parent directory, making the rename itself crash-durable.
 
-### Quarantine path (best-effort)
+state.py adds around it: acquire `state.json.lock` via `fcntl.flock(LOCK_EX)` for the read-modify-write sequence; copy old state.json to `state.json.<ts>.bak` before each write; trim backups to the last `BACKUP_RETENTION = 5` after.
 
-Malformed JSON on `state.read()`:
-1. Move corrupt file to `state.json.quarantine.<ts>`.
-2. Try newest `.bak` → if parses, restore + return; exit 1.
-3. If all `.bak` files corrupt → exit 2; library raises
-   `StateUnrecoverable`.
+### Quarantine (repo-wide pattern, best-effort)
 
-Mvp does NOT deeply schema-validate each backup; "parses as JSON with schema_version=1 + required top-level keys" is sufficient.
-Phase 7-full adds per-field structural validation.
+Never-destroy invariant: a corrupt artifact is renamed or copied aside, never deleted. Four sites:
+
+- **state.json** (state.py): malformed JSON on `state.read()` → move to `state.json.quarantine.<ts>` → try newest `.bak` (parses → restore + return, exit 1) → all `.bak` corrupt → exit 2, library raises `StateUnrecoverable`. Backups are checked for "parses as JSON with schema_version=1 + required top-level keys", not deep-schema-validated.
+- **run.lock** (lease.py `_quarantine_locked`): rename to `run.lock.quarantine.<ts>`, inside the caller's flock span (classify + remediate under one lock).
+- **JSONL lines** (`_jsonl.iter_jsonl`): a malformed line is appended as `{reason, raw}` to a quarantine sidecar and skipped; re-quarantine is idempotent; the main file is never rewritten. `read_jsonl_lenient` is the read-only twin (never writes the sidecar).
+- **recall pending** (recall_pending.py): the promoting rewrite moves >24h entries to `.stale` rather than dropping them.
 
 ### Subprocess exit codes
 
@@ -510,14 +519,14 @@ error.
 `validate_workspace.validate()` runs on every `dispatch_stage` invocation (`init` and `next`).
 Cheap (parses 2-3 small TOML files).
 Catches mid-run workspace.toml edits.
-The canonical-snapshot pattern is live: a content hash is captured once at `init` and compared on each `next` call via `snapshot.py`.
+The canonical-snapshot pattern is live: a content hash is captured once at `init` and compared on each `next` call via `snapshot.py`. The hash covers four components (see the snapshot.py module docstring): workspace.toml text, stage-registry.toml text, each `skill:` handler's manifest + plugin tree hash, and — only while the main checkout sits on a protected branch — the engine's own skill tree (the marketplace-tracks-main window where a mid-run checkout advance swaps engine code).
 
 ### Deferred to phase 7-full / 8
 
 | Concern                                          | Phase     |
 |--------------------------------------------------|-----------|
-| Lease-style run.lock (pid + boot_id + ...)       | 7-full    |
-| Background lease refresher thread                | 7-full    |
+| ~~Lease-style run.lock (pid + boot_id + ...)~~ (shipped as lease.py: acquire/refresh/release/expiry + takeover detection) | 7-full ✓ |
+| ~~Background lease refresher thread~~ (deliberately NOT built — mutual exclusion comes from lease identity under flock, refreshed per dispatch call + session nonce; see the lease.py module docstring) | 7-full ✓ |
 | ~~`--emit-canonical-snapshot` content-tree hash~~ (shipped as snapshot.py + the dispatch-init write; the standalone flag was retired 2026-07) | 7-full ✓ |
 | FS capability probe (flock detection)            | 7-full    |
 | `lint-ticket.py` HARD GATE pre-stage             | 8-mvp ✓   |
@@ -553,10 +562,11 @@ Built to be subprocess'd by `dispatch_stage.py` (phase 5 wiring) but shippable a
 
 Pure read.
 Resolves ticket key from current git branch.
+CLI surface: MODULE.md §Bootstrap (seam-checked there; this file keeps only the contract).
 
-| Subcommand | Flags | Exits | Notes |
-|------------|-------|-------|-------|
-| (default)  | `--workspace-root <dir>` `--cwd <dir>` `[--branch <name>]` | 0=match, 1=env-error, 3=no-match | Backend-aware: jira regex `<PROJECT_KEY>-\d+`; beads regex `<prefix>-[0-9a-z]{3,}(\.\d+)*` (dotted child keys resolve too). `--branch` resolves from an explicit branch (no git call), the PR->ticket enabler for `/flow revise <pr#>`; absent = current branch (unchanged). |
+Backend-aware key regexes: jira `<PROJECT_KEY>-\d+`; beads `<prefix>-[0-9a-z]{3,}(\.\d+)*` (dotted child keys resolve too).
+`--branch` resolves from an explicit branch (no git call) — the PR->ticket enabler for `/flow revise <pr#>`; absent = current branch.
+Exit 0=match, 1=env-error, 3=no-match.
 
 ### `ticket_frontmatter.py`
 
@@ -591,26 +601,22 @@ Empty-string / empty-list / missing-key all count as violations.
 ### `diff_extract.py`
 
 Git diff capture for implement / commit / reflect stages.
+Flag surface: MODULE.md §Frontmatter / diff / commit (seam-checked there); this table keeps the exit/output contract.
 
-| Subcommand | Flags | Exits | Output |
-|------------|-------|-------|--------|
-| `since-stage` | `--stage <name> --ticket <key> --ticket-dir <dir> --cwd <dir>` | 0=ok, 1=missing-state, 2=git-error | Reads `state.json` for `stages.<name>.started_at_sha`, diffs `<sha>..HEAD` → `{files_touched, insertions, deletions, binary}` JSON. |
-| `record-baseline` | `--stage <name> --ticket <key> --ticket-dir <dir> [--files <csv>] [--capture-blobs] --cwd <dir>` | 0=ok, 2=git-error | Writes `<ticket-dir>/baseline.json` with `{stage, head_sha, planned_files, blobs}`. |
-| `capture-implement-diff` | `--ticket <key> --ticket-dir <dir> --cwd <dir>` | 0=ok, 1=missing-baseline / gitignored planned file, 2=git-error | Writes `<ticket-dir>/implement.diff` via `git diff --binary --raw`. |
-| `check-ownership` | `--ticket <key> --ticket-dir <dir> --cwd <dir>` | 0=ok, 3=ownership violation (unowned paths), 1=missing/malformed baseline, 2=git-error | `{ok, planned_files, changed, unowned_changes}` JSON. Branch-wide: scans the dirty working tree AND the committed delta `baseline.head_sha..HEAD`, so a rogue mid-implement commit is seen too. Wired as stage-commit step 2b. |
+| Subcommand | Exits | Output |
+|------------|-------|--------|
+| `since-stage` | 0=ok, 1=missing-state, 2=git-error | Reads `state.json` for `stages.<name>.started_at_sha`, diffs `<sha>..HEAD` → `{files_touched, insertions, deletions, binary}` JSON. |
+| `record-baseline` | 0=ok, 2=git-error | Writes `<ticket-dir>/baseline.json` with `{stage, head_sha, planned_files, blobs}`. |
+| `capture-implement-diff` | 0=ok, 1=missing-baseline / gitignored planned file, 2=git-error | Writes `<ticket-dir>/implement.diff` via `git diff --binary --raw`. |
+| `check-ownership` | 0=ok, 3=ownership violation (unowned paths), 1=missing/malformed baseline, 2=git-error | `{ok, planned_files, changed, unowned_changes}` JSON. Branch-wide: scans the dirty working tree AND the committed delta `baseline.head_sha..HEAD`, so a rogue mid-implement commit is seen too. Wired as stage-commit step 2b. THIS is the content-ownership commit gate CLAUDE.md names. |
+
+### `compose_commit.py`
 
 Skeleton conventional-commit emitter.
 Deterministic header; body is a template the LLM fills in.
+Flag surface: MODULE.md §Frontmatter / diff / commit.
 
-| Flag | Description |
-|------|-------------|
-| `--ticket <key>` | Ticket key (non-empty). |
-| `--type <t>` | One of: `feat`, `fix`, `chore`, `docs`, `refactor`, `test`, `perf`, `style`, `build`, `ci`, `revert`. |
-| `--summary <s>` | One-line subject (non-empty). |
-| `--scope <s>` | Optional. With scope: `type(scope): summary`. Without: `type: summary`. |
-| `--files <csv>` | Optional list of files; emits a `files:` block. |
-| `--covers <csv>` | Optional sibling tickets co-delivered by this run; emits one `Closes <KEY>` trailer per cover. |
-
+Contract: `--type` is one of `feat`, `fix`, `chore`, `docs`, `refactor`, `test`, `perf`, `style`, `build`, `ci`, `revert`. With `--scope`: `type(scope): summary`; without: `type: summary`. `--files` emits a `files:` block; `--covers` emits one `Closes <KEY>` trailer per cover.
 Exit 0=ok, 1=empty/whitespace `--summary` or `--ticket`, 2=invalid `--type` or missing required flag (argparse usage error).
 
 ### `machinery_edit.py`
@@ -618,12 +624,8 @@ Exit 0=ok, 1=empty/whitespace `--summary` or `--ticket`, 2=invalid `--type` or m
 Concurrency-safe applier for reflect lens-B machinery fixes to flow's OWN source.
 A fleet runs many `/flow` jobs at once; several can hit reflect together. The raw Edit tool has no cross-process serialization, so two concurrent machinery edits to the same file race (lost update, or a torn read that crashes a third run importing the half-written module). This tool holds a single blocking flock on `<skill-root>/.machinery.lock` across the whole read → replace → `atomic_write_text`, so writers serialize and any concurrent reader sees old-or-new. The flock auto-releases on process exit (no lease to clear). It also refuses `stage-registry.toml` (canonical-snapshot-pinned) and any path outside the skill tree.
 
-| Flag | Description |
-|------|-------------|
-| `apply` | Subcommand (required). |
-| `--skill-root <p>` | Flow skill root (dir containing `scripts/` and `references/`). |
-| `--payload <file>` | Path to JSON `{file, old, new}`; reads stdin if omitted. `file` is rel-to-skill-root or absolute; `old` must be a unique anchor. |
-
+Flag surface: MODULE.md §Self-evolution.
+Payload contract: JSON `{file, old, new}` via `--payload <file>` or stdin; `file` is rel-to-skill-root or absolute; `old` must be a unique anchor.
 Exit 0=applied or already_applied (idempotent), 1=usage/IO error, 2=refused (out-of-tree or snapshot-pinned), 3=anchor_not_found, 4=ambiguous (non-unique anchor).
 
 ## Known phase 8-mvp holes (deferred to 8b/8c/8d)
@@ -890,16 +892,8 @@ Reuses: `_workspace.load_workspace_toml()`, `forge.THREAD_SEVERITY`.
 Sole writer of `<namespace>/ship-events/<ticket>.json`.
 Atomic + crash-safe.
 
-| Flag | Description |
-|------|-------------|
-| `--ticket` | Ticket key (must match the `ticket` field in evidence JSON). |
-| `--evidence-json` | JSON string. Top-level keys allowed: `ticket`, `shipped_at`, `evidence`. Extras rejected. |
-| `--run-id` | 16-hex run_id from caller. Injected as `observed_by_run_id`. |
-| `--arm` | Experiment lane `{flow, control}`. Default `flow`. Stamped as `arm`. |
-| `--tier` | Free-form tier label captured at ship time. Default `""`. Stamped as `tier`. |
-| `--acceptance-invariant` | Acceptance invariant captured at ship time. Default `""`. Stamped as `acceptance_invariant`. |
-| `--lane` | Verification lane the run took (`express`\|`light`\|`full`). Default `""`. Stamped as `lane`. |
-| `--workspace-root` | Default `.`. |
+Flag surface: MODULE.md §Memory / recall.
+Input contract: `--evidence-json` allows top-level keys `ticket`, `shipped_at`, `evidence` only (extras rejected; `--ticket` must match the `ticket` field). `--run-id` is the caller's 16-hex run_id, injected as `observed_by_run_id`. `--arm` is the experiment lane `{flow, control}` (default `flow`); `--tier` / `--acceptance-invariant` / `--lane` are captured at ship time (default `""`).
 
 Two-phase write:
 1. **Primary** via `os.open(O_CREAT | O_EXCL | O_WRONLY)`. Success → write +
@@ -975,19 +969,21 @@ CLI wrapper around the Tracker Protocol.
 Lets reference-doc prose call `tracker.<method>()` from Bash.
 Reads `.flow/workspace.toml` `[tracker]` block, flattens the per-backend sub-block (`tracker.jira` or `tracker.beads`) into the config dict `tracker.make_tracker()` expects.
 
-| Subcommand | Flags | Notes |
-|------------|-------|-------|
-| `get` | `--key FT-1` | `tracker.get(key)` → JSON |
-| `state` | `--key FT-1` | `tracker.state(key)` → JSON |
-| `transition` | `--key FT-1 --to-state in_progress [--field k=v ...] [--enqueue-on-transient]` | Looks up transition id by `to_normalized_state` / `to_state` / `name` (any match). Fields k=v pairs string-only in mvp. `--enqueue-on-transient`: on a transient failure (exit 1), durably queue the transition to `.flow/pending-mutations.jsonl` for `/flow sync`. |
-| `comment` | `--key FT-1 --text "..."` | Wraps body as `{"body": text, "fmt": "md"}` (Content TypedDict: fmt in {md, adf, plain}). |
-| `create` | `--summary "..." --description "..." --type task [--parent K] [--label L ...] [--assignee A]` | `tracker.create(...)` → `{"key": new_key}` JSON. |
-| `is-shipped` | `--key FT-1` | `tracker.is_shipped(key)` → JSON. |
-| `download-attachments` | `--key FT-1 --out <dir> [--max-bytes N]` | Downloads ticket attachments to `<dir>`; skips files over `--max-bytes` (default 25 MiB). |
-| `list-types` | (none) | `tracker.list_issue_types()` → `[{name, hierarchyLevel}]` JSON. Jira = createmeta issuetypes; beads = static `bd` type enum (epic→1). |
-| `list-epics` | (none) | `tracker.list_epics()` → `[{key, summary}]` JSON. Jira = active hierarchy-1 issues (type name resolved, not hardcoded "Epic"); beads = `[]`. |
-| `list-sprints` | `[--project FT]` | `tracker.list_sprints(project)` → JSON array. On `NotSupported` (beads) emits `{"supported": false, "sprints": []}`, exit 0. |
-| `set-sprint` | `--key FT-1 --sprint-id 831` | `tracker.set_sprint(key, sprint_id)` → `{ok, key, sprint_id}`. On `NotSupported` (beads) emits `{"supported": false, "key": ...}`, exit 0. |
+Flag surface: MODULE.md §Tracker (seam-checked there); this table keeps the per-backend contract.
+
+| Subcommand | Notes |
+|------------|-------|
+| `get` | `tracker.get(key)` → JSON |
+| `state` | `tracker.state(key)` → JSON |
+| `transition` | Looks up transition id by `to_normalized_state` / `to_state` / `name` (any match). `--field k=v` pairs string-only in mvp. `--enqueue-on-transient`: on a transient failure (exit 1), durably queue the transition to `.flow/pending-mutations.jsonl` for `/flow sync`. |
+| `comment` | Wraps body as `{"body": text, "fmt": "md"}` (Content TypedDict: fmt in {md, adf, plain}). |
+| `create` | `tracker.create(...)` → `{"key": new_key}` JSON. |
+| `is-shipped` | `tracker.is_shipped(key)` → JSON. |
+| `download-attachments` | Downloads ticket attachments to `--out <dir>`; skips files over `--max-bytes` (default 25 MiB). |
+| `list-types` | `tracker.list_issue_types()` → `[{name, hierarchyLevel}]` JSON. Jira = createmeta issuetypes; beads = static `bd` type enum (epic→1). |
+| `list-epics` | `tracker.list_epics()` → `[{key, summary}]` JSON. Jira = active hierarchy-1 issues (type name resolved, not hardcoded "Epic"); beads = `[]`. |
+| `list-sprints` | `tracker.list_sprints(project)` → JSON array. On `NotSupported` (beads) emits `{"supported": false, "sprints": []}`, exit 0. |
+| `set-sprint` | `tracker.set_sprint(key, sprint_id)` → `{ok, key, sprint_id}`. On `NotSupported` (beads) emits `{"supported": false, "key": ...}`, exit 0. |
 
 Exit codes: 0=ok, 1=transient/unknown tracker error (network/auth/retryable/unknown failure_kind), 2=workspace config invalid, 3=invalid args, 4=hard transition failure (permission_denied / validator_failed / missing_required_field), 5=transition not applicable (wrong_source_state / ambiguous_transition).
 

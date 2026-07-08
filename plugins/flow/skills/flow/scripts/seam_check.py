@@ -416,6 +416,164 @@ def scripts_missing_from_registry_descriptions(
     return {name for name in named if not (scripts_dir / name).is_file()}
 
 
+# A MODULE.md table row's first cell: the script the row documents. Backtick
+# optional so a bare-name row is still owned by the check.
+_MODULE_ROW_RE = re.compile(r"^\|\s*`?([a-z0-9_]+\.py)`?")
+# The forward-direction import claim inside a row ("imports x, y"). \b keeps
+# "imported by" rows out (a different word, gated by module_md_importer_drift).
+_FORWARD_IMPORTS_RE = re.compile(r"\bimports\s")
+
+
+def phantom_module_md_rows(
+    scripts_dir: Path = SCRIPTS_DIR, module_text: str | None = None
+) -> set[str]:
+    """MODULE.md rows documenting a script that no longer exists on disk.
+
+    Reverse direction of scripts_missing_from_module_md, which only computes
+    on_disk - named: without this, `git rm scripts/<x>.py` leaves a dangling
+    live-map row that CI accepts (witnessed twice: validate_postmortem.py,
+    queue_reviews.py). Scoped to the row-defining FIRST CELL: a historical
+    mention inside a Role cell ("absorbed from queue_reviews.py") is
+    deliberate prose, not a row, and stays legal.
+    """
+    if module_text is None:
+        module_text = (scripts_dir / "MODULE.md").read_text(encoding="utf-8")
+    phantoms: set[str] = set()
+    for line in module_text.splitlines():
+        m = _MODULE_ROW_RE.match(line)
+        if m is None:
+            continue
+        name = m.group(1)
+        if not (scripts_dir / name).is_file() and not (scripts_dir / "tests" / name).is_file():
+            phantoms.add(name)
+    return phantoms
+
+
+def module_md_forward_import_drift(
+    scripts_dir: Path = SCRIPTS_DIR, module_text: str | None = None
+) -> list[tuple[str, str]]:
+    """MODULE.md forward "imports x, y" claims that are not true imports.
+
+    module_md_importer_drift skips these rows by design (its anchor is
+    "imported by"), so a stale forward claim had no gate. Same enumerability
+    rule: every token after the anchor must resolve to a local stem or the
+    claim is treated as prose and skipped. Phantom-only direction: a listed
+    module the row's script does not actually import is the drift; an
+    undocumented import is normal.
+    """
+    if module_text is None:
+        module_text = (scripts_dir / "MODULE.md").read_text(encoding="utf-8")
+    stems = _local_stems(scripts_dir)
+    truth = true_importers(scripts_dir)
+    drifts: list[tuple[str, str]] = []
+    for line in module_text.splitlines():
+        row = _MODULE_ROW_RE.match(line)
+        if row is None:
+            continue
+        module_stem = row.group(1)[: -len(".py")]
+        m = _FORWARD_IMPORTS_RE.search(line)
+        if m is None:
+            continue
+        cell = line[m.end() :].split("|", 1)[0].split(";", 1)[0]
+        tokens: list[str] = []
+        for raw_tok in re.split(r"[,+]", cell):
+            tok = raw_tok.split("(", 1)[0]
+            tok = tok.strip().strip("`").strip()
+            tok = tok.removeprefix("the ")
+            tok = tok.strip().strip(".").strip()
+            tok = tok.removesuffix(".py")
+            tok = tok.strip()
+            if tok:
+                tokens.append(tok)
+        if not tokens or any(tok not in stems for tok in tokens):
+            continue
+        drifts.extend(
+            (module_stem, tok) for tok in tokens if module_stem not in truth.get(tok, set())
+        )
+    return drifts
+
+
+def triage_guard_files(scripts_dir: Path = SCRIPTS_DIR) -> frozenset[str]:
+    """triage._GUARD_FILES parsed from source (AST, no import side effects)."""
+    tree = ast.parse((scripts_dir / "triage.py").read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        for tgt in node.targets:
+            if isinstance(tgt, ast.Name) and tgt.id == "_GUARD_FILES":
+                return frozenset(
+                    c.value
+                    for c in ast.walk(node.value)
+                    if isinstance(c, ast.Constant) and isinstance(c.value, str)
+                )
+    return frozenset()
+
+
+_GUARD_LIST_ANCHOR = "safety-machinery guard file"
+_GUARD_LIST_EXPECTED_DOCS = 2  # verb-evolve.md §audit step 2 + stage-reflect.md step 2b
+
+
+def guard_file_list_drift(
+    docs: list[Path] | None = None, guard_files: frozenset[str] | None = None
+) -> list[tuple[str, int, str]]:
+    """Prose hot-guard enumerations diverging from triage._GUARD_FILES.
+
+    The two guard lists are duplicated by design (flow-837: prose stays
+    readable, not extracted to a constant), synced by hand — which is how
+    flow_worktree.py went missing from both for months after PR#174 added it
+    to the code set. Each enumeration is anchored on the literal
+    "safety-machinery guard file" phrase followed by a parenthesized list of
+    backticked *.py names; that set must equal the *.py members of
+    _GUARD_FILES. Finding fewer than the expected anchored enumerations is
+    itself a drift (the phrase moved and the gate would silently check
+    nothing).
+    """
+    if guard_files is None:
+        guard_files = triage_guard_files(SCRIPTS_DIR)
+    expected = {name for name in guard_files if name.endswith(".py")}
+    if not expected:
+        return [("triage.py", 0, "could not parse _GUARD_FILES from triage.py source")]
+    if docs is None:
+        docs = docs_to_check()
+    drifts: list[tuple[str, int, str]] = []
+    anchored = 0
+    for doc in docs:
+        text = doc.read_text(encoding="utf-8")
+        for lineno, logical in _logical_lines(text):
+            idx = logical.find(_GUARD_LIST_ANCHOR)
+            if idx == -1:
+                continue
+            tail = logical[idx + len(_GUARD_LIST_ANCHOR) :]
+            paren = tail.find("(")
+            close = tail.find(")", paren)
+            if paren == -1 or close == -1:
+                continue
+            listed = set(_MODULE_NAME_RE.findall(tail[paren:close]))
+            if not listed:
+                continue
+            anchored += 1
+            missing = expected - listed
+            extra = listed - expected
+            if missing or extra:
+                drifts.append(
+                    (
+                        doc.name,
+                        lineno,
+                        f"missing {sorted(missing)}, extra {sorted(extra)}",
+                    )
+                )
+    if anchored < _GUARD_LIST_EXPECTED_DOCS:
+        drifts.append(
+            (
+                "guard-file lists",
+                0,
+                f"found {anchored} anchored enumeration(s), "
+                f"expected >= {_GUARD_LIST_EXPECTED_DOCS}",
+            )
+        )
+    return drifts
+
+
 def _local_stems(scripts_dir: Path) -> set[str]:
     """Stems of every non-test *.py basename in scripts_dir (the resolvable modules)."""
     return {
@@ -792,6 +950,39 @@ def main(argv: list[str]) -> int:
             raw="",
         )
         for name in sorted(scripts_missing_from_registry_descriptions())
+    )
+
+    problems.extend(
+        Problem(
+            doc="MODULE.md",
+            line=0,
+            level="ERROR",
+            msg=f"row documents a script not on disk: {name}",
+            raw="",
+        )
+        for name in sorted(phantom_module_md_rows())
+    )
+
+    problems.extend(
+        Problem(
+            doc="MODULE.md",
+            line=0,
+            level="ERROR",
+            msg=f"row for {module} claims it imports {imported}, but it does not",
+            raw="",
+        )
+        for module, imported in sorted(module_md_forward_import_drift())
+    )
+
+    problems.extend(
+        Problem(
+            doc=doc_name,
+            line=lineno,
+            level="ERROR",
+            msg=f"guard-file list diverges from triage._GUARD_FILES: {detail}",
+            raw="",
+        )
+        for doc_name, lineno, detail in guard_file_list_drift()
     )
 
     problems.extend(

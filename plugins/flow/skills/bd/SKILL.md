@@ -22,6 +22,26 @@ A dependency-aware issue tracker. Issues live in a **local Dolt database** (`.be
 
 Lifecycle in one line: `bd create` → `bd update <id> --claim` → work → `bd close <id>`.
 
+## `--json` field & flag map
+
+The schema quirks every session re-discovers when parsing bd output. Keys first:
+
+| you expect | bd actually uses |
+| --- | --- |
+| `type` | `issue_type` (`type` is the DEPENDENCY kind, not the issue type) |
+| `closure_reason` | `close_reason` |
+| `summary` (headline) | `title` (`bd list --json`) |
+| `labels: []` | key OMITTED when empty — read `item.get("labels") or []` |
+| comment `body` | `text` — and comments appear only with `bd show --include-comments` |
+
+Flag/visibility quirks:
+
+- `bd list` defaults to **limit 50** and sorts by priority — any join/dedup over the full set needs `--limit 0`.
+- `bd list` **hides closed** issues by default: `--status closed` or `--all` to see them.
+- `bd ready` **excludes deferred** issues — deferring in place is how you drop a bead from a drain loop.
+- A leading-dash title aborts (`bd create "--foo"` parses as a flag): use `--title="--foo"`.
+- Comment ORDER is not guaranteed newest-last; pick "newest" by max timestamp, not last element.
+
 ## Gotcha: `bd edit` is banned
 
 `bd edit` opens `$EDITOR` and blocks an agent forever (waits on stdin). Never run it. Use `bd update <id> --<field> <value>` to change any field non-interactively.

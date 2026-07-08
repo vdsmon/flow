@@ -12,7 +12,7 @@ The standalone home of `flow` — an autonomous, self-evolving ticket→PR pipel
 .claude-plugin/marketplace.json   # the marketplace, lists the one plugin (source ./plugins/flow)
 plugins/flow/
   .claude-plugin/plugin.json      # plugin manifest (name=flow, version)
-  hooks/                          # SessionStart recall hook + tests
+  hooks/                          # SessionStart evolve-deadman/staleness hook + tests (recall lives in plan-phase prose; see references/verb-recall.md)
   skills/flow/
     SKILL.md                      # router + the one gate + the do-loop skeleton (keep lean; ~200 lines)
     references/                   # verb-*.md + stage-*.md + self-evolution.md, loaded on demand
@@ -46,6 +46,8 @@ Runtime is stdlib-only (`python3`); the venv/mise is dev tooling only.
 - **Branch off `origin/main`, never local `main` (lags) or current HEAD.** This repo churns with many `.claude/worktrees`; cutting a feature branch off a stale/feature HEAD pollutes the PR with already-merged commits (→ DIRTY). Autonomous `/flow --auto` runs use `flow_worktree.py --base @default` (fetch + resolve default branch); do the same by hand.
 - **Live-testing plugin changes:** the `vdsmon-flow` marketplace tracks the **local main checkout** (`~/repos/personal/flow`), not `origin`. A launched `/flow` run loads that checkout's code. To exercise merged changes: advance the checkout to `origin/main`, then `claude plugin marketplace update vdsmon-flow` (`claude plugin details flow` shows the version).
 - **`gh pr merge` needs a real branch** — a detached HEAD fails with "could not determine current branch"; merge from a throwaway branch off `origin/main`.
+- **`stage-registry.toml` lives at the skill root** (`plugins/flow/skills/flow/`), never under `scripts/`. A `scripts/stage-registry.toml` entry in `planned_files` reads as unowned drift and aborts the run.
+- **Env/CLI quirks** (gh keyring 401, GraphQL `{owner}`/`{repo}`, mise shim heal, zsh word-split, ty ignore syntax): `plugins/flow/skills/flow/references/troubleshooting.md`.
 
 ## Invariants
 
@@ -59,7 +61,7 @@ Runtime is stdlib-only (`python3`); the venv/mise is dev tooling only.
 
 ## Robustness (do not erode)
 
-Run lease, canonical-snapshot TOCTOU guard, atomic writes + quarantine, content-ownership commit gate, friction logging. These are load-bearing; simplify presentation, never the safety machinery.
+Four correctness guards — run lease, canonical-snapshot TOCTOU guard, atomic writes + quarantine, content-ownership commit gate — on the flock substrate (`_locking.py`), plus friction logging as the self-evolution feedstock. These are load-bearing; simplify presentation, never the safety machinery. Threat → file → witnessed failure per mechanism: `plugins/flow/skills/flow/references/robustness.md`.
 
 
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:7510c1e2 -->

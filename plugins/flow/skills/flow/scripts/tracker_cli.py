@@ -152,9 +152,14 @@ def _cmd_transition(tracker_obj: Any, args: argparse.Namespace) -> int:
     target = args.to_state.lower()
     selected_id = _select_transition_id(transitions, target)
     if selected_id is None:
+        hint = ""
+        if type(tracker_obj).__name__ == "BeadsAdapter":
+            # beads synthesizes only open->[in_progress, blocked, closed]; other
+            # real bd statuses (deferred) are reachable only via the raw CLI
+            hint = f" — for a status bd accepts, use: bd update {args.key} --status {target}"
         sys.stderr.write(
             f"tracker-cli transition: no transition to {args.to_state!r} available "
-            f"(have: {[t.get('name') for t in transitions]})\n"
+            f"(have: {[t.get('name') for t in transitions]}){hint}\n"
         )
         return 3
     fields: dict[str, Any] = {}
