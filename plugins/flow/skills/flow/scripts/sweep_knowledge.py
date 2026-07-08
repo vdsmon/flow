@@ -40,6 +40,7 @@ import _memory_paths
 import memory_append
 import memory_embed
 import recall
+import recall_usage
 from _evolve_common import BRANCH_PREFIX as _BRANCH_PREFIX
 from _jsonl import iter_jsonl
 from _timeutil import ts_token
@@ -64,11 +65,22 @@ def _load_entries(workspace_root: Path) -> list[dict[str, Any]]:
     return list(iter_jsonl(kpath, sidecar))
 
 
-def propose(workspace_root: Path, types: list[str]) -> list[dict[str, Any]]:
-    """Read-only worklist of non-superseded entries matching `types`, in file order."""
+def propose(
+    workspace_root: Path, types: list[str] | None, *, with_usage: bool = False
+) -> list[dict[str, Any]]:
+    """Read-only worklist of non-superseded entries matching `types`, in file order.
+
+    `types=None` means every live type (the CLI value `all`). With `with_usage`,
+    each item gains the lifetime recall-usage rollup (surfaced_count, used_count,
+    miss_count, last_surfaced) plus a prune `tier`, and the list is re-ranked
+    prune-first: tier 0 = surfaced-never-used (recall spent context, no run
+    leaned on it; most-surfaced first), tier 1 = never-surfaced (oldest first),
+    tier 2 = used (earned its place; stalest usage first). Without the flag the
+    output shape and file order are byte-identical to the legacy contract.
+    """
     entries = recall.filter_superseded(_load_entries(workspace_root))
-    type_set = set(types)
-    return [
+    type_set = None if types is None else set(types)
+    worklist = [
         {
             "id": e.get("id"),
             "ticket": e.get("ticket"),
@@ -77,8 +89,40 @@ def propose(workspace_root: Path, types: list[str]) -> list[dict[str, Any]]:
             "body": e.get("body"),
         }
         for e in entries
-        if e.get("type") in type_set
+        if type_set is None or e.get("type") in type_set
     ]
+    if not with_usage:
+        return worklist
+
+    namespace = _memory_paths.resolve_namespace(workspace_root)
+    usage = recall_usage.aggregate_usage(workspace_root, namespace)
+    empty = {"surfaced_count": 0, "used_count": 0, "miss_count": 0, "last_surfaced": None}
+    for item in worklist:
+        agg = usage.get(item["id"], empty)
+        item.update(
+            surfaced_count=agg["surfaced_count"],
+            used_count=agg["used_count"],
+            miss_count=agg["miss_count"],
+            last_surfaced=agg["last_surfaced"],
+        )
+        if agg["used_count"] >= 1:
+            item["tier"] = 2
+        elif agg["surfaced_count"] >= 1:
+            item["tier"] = 0
+        else:
+            item["tier"] = 1
+
+    def rank(item: dict[str, Any]) -> tuple[int, int, str, str]:
+        tier = item["tier"]
+        return (
+            tier,
+            -item["surfaced_count"] if tier == 0 else 0,
+            (item["last_surfaced"] or "") if tier == 2 else "",
+            item["ts"] or "",
+        )
+
+    worklist.sort(key=rank)
+    return worklist
 
 
 def _parse_manifest(text: str) -> list[dict[str, Any]]:
@@ -168,7 +212,7 @@ def apply(workspace_root: Path, records: list[dict[str, Any]]) -> dict[str, Any]
 
 def cluster(
     workspace_root: Path,
-    types: list[str],
+    types: list[str] | None,
     threshold: float = DEFAULT_CLUSTER_THRESHOLD,
 ) -> list[dict[str, Any]]:
     """Deterministic complete-linkage clustering of live, same-type, indexed entries.
@@ -187,6 +231,9 @@ def cluster(
     if not indexed:
         return []
     entries = recall.filter_superseded(_load_entries(workspace_root))
+    if types is None:
+        # `--type all`: the distinct live types, first-seen file order (deterministic)
+        types = list(dict.fromkeys(t for e in entries if isinstance(t := e.get("type"), str) and t))
 
     groups: list[dict[str, Any]] = []
     for type_ in types:
@@ -302,6 +349,13 @@ def apply_cluster(workspace_root: Path, records: list[dict[str, Any]]) -> dict[s
     return {"results": results, "any_error": any_error}
 
 
+def _parse_types(raw: str) -> list[str] | None:
+    """CLI `--type` value: the literal `all` means every live type (None)."""
+    if raw.strip() == "all":
+        return None
+    return [t.strip() for t in raw.split(",") if t.strip()]
+
+
 def cli_main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(
         description="Maintainer-gated retro-curation sweep over knowledge.jsonl (propose-only)."
@@ -313,7 +367,12 @@ def cli_main(argv: list[str]) -> int:
         "--type",
         dest="types",
         default=",".join(DEFAULT_TYPES),
-        help="comma-separated entry types to include (default DECISION,FACT).",
+        help="comma-separated entry types to include (default DECISION,FACT), or `all`.",
+    )
+    p_propose.add_argument(
+        "--with-usage",
+        action="store_true",
+        help="join the lifetime recall-usage rollup and rank prune-first by tier.",
     )
     p_propose.add_argument("--workspace-root", default=".")
 
@@ -344,14 +403,12 @@ def cli_main(argv: list[str]) -> int:
     workspace_root = Path(args.workspace_root).resolve()
 
     if args.cmd == "propose":
-        types = [t.strip() for t in args.types.split(",") if t.strip()]
-        worklist = propose(workspace_root, types)
+        worklist = propose(workspace_root, _parse_types(args.types), with_usage=args.with_usage)
         sys.stdout.write(json.dumps(worklist, indent=2, sort_keys=True) + "\n")
         return 0
 
     if args.cmd == "cluster":
-        types = [t.strip() for t in args.types.split(",") if t.strip()]
-        groups = cluster(workspace_root, types, threshold=args.threshold)
+        groups = cluster(workspace_root, _parse_types(args.types), threshold=args.threshold)
         sys.stdout.write(json.dumps(groups, indent=2, sort_keys=True) + "\n")
         return 0
 

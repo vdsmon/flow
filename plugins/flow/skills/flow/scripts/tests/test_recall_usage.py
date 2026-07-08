@@ -419,3 +419,80 @@ def test_cli_main_record_usage_no_state_returns_3(tmp_path: Path) -> None:
         ]
     )
     assert rc == 3
+
+
+# --- aggregate_usage (lifetime per-id rollup) ---------------------------------
+
+
+def _write_usage_records(root: Path, records: list[dict]) -> None:
+    path = recall_usage.recall_usage_path(root, "demo")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as fh:
+        for rec in records:
+            fh.write(json.dumps(rec, sort_keys=True) + "\n")
+
+
+def test_aggregate_usage_counts_and_last_surfaced(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path, semantic=False)
+    _write_usage_records(
+        tmp_path,
+        [
+            {
+                "kind": "usage",
+                "run_id": "r1",
+                "recalled_id": "aaa",
+                "used": True,
+                "ts": "2026-06-01T00:00:00.000Z",
+            },
+            {
+                "kind": "usage",
+                "run_id": "r2",
+                "recalled_id": "aaa",
+                "used": False,
+                "ts": "2026-06-03T00:00:00.000Z",
+            },
+            {
+                "kind": "usage",
+                "run_id": "r2",
+                "recalled_id": "bbb",
+                "used": False,
+                "ts": "2026-06-02T00:00:00.000Z",
+            },
+        ],
+    )
+    agg = recall_usage.aggregate_usage(tmp_path, "demo")
+    assert agg["aaa"] == {
+        "surfaced_count": 2,
+        "used_count": 1,
+        "miss_count": 0,
+        "last_surfaced": "2026-06-03T00:00:00.000Z",
+    }
+    assert agg["bbb"]["surfaced_count"] == 1
+    assert agg["bbb"]["used_count"] == 0
+
+
+def test_aggregate_usage_miss_buckets_by_missed_id(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path, semantic=False)
+    _write_usage_records(
+        tmp_path,
+        [
+            {
+                "kind": "miss",
+                "type": "RECALL_MISS",
+                "run_id": "r1",
+                "relearned_id": "new1",
+                "missed_id": "old1",
+                "similarity": 0.91,
+                "ts": "2026-06-01T00:00:00.000Z",
+            },
+        ],
+    )
+    agg = recall_usage.aggregate_usage(tmp_path, "demo")
+    assert agg["old1"]["miss_count"] == 1
+    assert agg["old1"]["surfaced_count"] == 0
+    assert "new1" not in agg
+
+
+def test_aggregate_usage_missing_file_is_empty(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path, semantic=False)
+    assert recall_usage.aggregate_usage(tmp_path, "demo") == {}

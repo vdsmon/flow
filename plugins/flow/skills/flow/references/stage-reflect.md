@@ -218,7 +218,7 @@ The taxonomy is closed:
    ```bash
    ${CLAUDE_SKILL_DIR}/scripts/metric.py recall-hit-rate --workspace-root .
    ```
-   `--namespace` is omitted deliberately; the command auto-resolves it from `workspace.toml`. Echo one line from the result: `recall-hit-rate: <hit_rate> (<used>/<surfaced>, <misses> misses)`. SWALLOW any error — this is observability, never a gate.
+   `--namespace` is omitted deliberately; the command auto-resolves it from `workspace.toml`. Echo one line from the result: `recall-hit-rate: <hit_rate> (<used>/<surfaced>, <misses> misses)`. SWALLOW any error — this is observability, never a gate. When the same result shows `surfaced >= 20` AND `hit_rate < 0.30`, echo one more line: `recall precision is low — consider an interactive /flow memory prune (references/verb-recall.md)`. Threshold check only — NEVER run the prune from reflect (reflect runs under `--auto`; prune is interactive-only). Same best-effort discipline: still never a gate.
 
 ### Step 4 — zero novel signal path
 

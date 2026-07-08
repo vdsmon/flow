@@ -137,6 +137,49 @@ def _run_id_started_at(ticket_dir: Path) -> tuple[str, str]:
     return ts.run_id, ts.started_at
 
 
+def aggregate_usage(workspace_root: Path, namespace: str) -> dict[str, dict[str, Any]]:
+    """Lifetime per-entry rollup of recall-usage.jsonl, keyed by knowledge id.
+
+    Deliberately unwindowed: pruning judges an entry's whole service record,
+    not the last 14 days (contrast metric.compute_recall_hit_rate). `usage`
+    records bucket by `recalled_id`; `miss` records bucket by `missed_id` —
+    a missed entry got RE-LEARNED while unrecalled, evidence it is valuable,
+    so the prune lane reads miss_count as a keep signal. last_surfaced is the
+    lexicographic max ts (every writer emits ISO-Z, so string order is time
+    order). Missing file -> {}.
+    """
+    path = recall_usage_path(workspace_root, namespace)
+    out: dict[str, dict[str, Any]] = {}
+
+    def bucket(entry_id: str) -> dict[str, Any]:
+        return out.setdefault(
+            entry_id,
+            {"surfaced_count": 0, "used_count": 0, "miss_count": 0, "last_surfaced": None},
+        )
+
+    if not path.exists():
+        return out
+    sidecar = path.with_name(f"{path.name}.quarantine.{ts_token()}")
+    for rec in iter_jsonl(path, sidecar):
+        kind = rec.get("kind")
+        if kind == "usage":
+            rid = rec.get("recalled_id")
+            if not isinstance(rid, str) or not rid:
+                continue
+            agg = bucket(rid)
+            agg["surfaced_count"] += 1
+            if rec.get("used") is True:
+                agg["used_count"] += 1
+            ts = rec.get("ts")
+            if isinstance(ts, str) and (agg["last_surfaced"] is None or ts > agg["last_surfaced"]):
+                agg["last_surfaced"] = ts
+        elif kind == "miss":
+            mid = rec.get("missed_id")
+            if isinstance(mid, str) and mid:
+                bucket(mid)["miss_count"] += 1
+    return out
+
+
 # ─── Public API ──────────────────────────────────────────────────────────────
 
 
@@ -362,6 +405,7 @@ if __name__ == "__main__":
 
 __all__ = [
     "MISS_SIMILARITY",
+    "aggregate_usage",
     "cli_main",
     "detect_misses",
     "recall_usage_path",

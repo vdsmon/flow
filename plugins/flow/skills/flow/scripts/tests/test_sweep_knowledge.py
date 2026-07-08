@@ -446,3 +446,143 @@ def test_apply_empty_superseded_id_errors_no_append(
     out = json.loads(capsys.readouterr().out)
     assert out["results"][0]["result"] == "error"
     assert len(_read_entries(tmp_path)) == before
+
+
+# --- propose --with-usage + --type all ----------------------------------------
+
+
+def _write_usage(root: Path, records: list[dict], namespace: str = "demo") -> None:
+    import recall_usage
+
+    path = recall_usage.recall_usage_path(root, namespace)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as fh:
+        for rec in records:
+            fh.write(json.dumps(rec, sort_keys=True) + "\n")
+
+
+def _usage(recalled_id: str, used: bool, ts: str) -> dict:
+    return {"kind": "usage", "run_id": "r1", "recalled_id": recalled_id, "used": used, "ts": ts}
+
+
+def test_propose_with_usage_zero_fills_absent_entries(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path)
+    _write_entries(tmp_path, [_entry("a1", "DECISION", "x")])
+    _write_usage(tmp_path, [])
+    worklist = sweep_knowledge.propose(tmp_path, ["DECISION"], with_usage=True)
+    assert worklist[0]["surfaced_count"] == 0
+    assert worklist[0]["used_count"] == 0
+    assert worklist[0]["miss_count"] == 0
+    assert worklist[0]["last_surfaced"] is None
+    assert worklist[0]["tier"] == 1
+
+
+def test_propose_with_usage_tier_assignment(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path)
+    _write_entries(
+        tmp_path,
+        [
+            _entry("unused", "DECISION", "surfaced never used"),
+            _entry("young", "DECISION", "never surfaced"),
+            _entry("earner", "DECISION", "surfaced and used"),
+        ],
+    )
+    _write_usage(
+        tmp_path,
+        [
+            _usage("unused", False, "2026-06-01T00:00:00.000Z"),
+            _usage("earner", True, "2026-06-01T00:00:00.000Z"),
+        ],
+    )
+    tiers = {w["id"]: w["tier"] for w in sweep_knowledge.propose(tmp_path, None, with_usage=True)}
+    assert tiers == {"unused": 0, "young": 1, "earner": 2}
+
+
+def test_propose_with_usage_ranking_is_deterministic(tmp_path: Path) -> None:
+    # tier 0 most-surfaced first, tier 1 oldest first, tier 2 stalest-usage first
+    entries = [
+        _entry("t0_lo", "DECISION", "surfaced once, unused"),
+        _entry("t1_old", "FACT", "never surfaced, old"),
+        _entry("t2_stale", "DECISION", "used long ago"),
+        _entry("t0_hi", "FACT", "surfaced thrice, unused"),
+        _entry("t1_new", "DECISION", "never surfaced, new"),
+        _entry("t2_fresh", "FACT", "used recently"),
+    ]
+    ts_by_id = {"t1_old": "2026-01-01T00:00:00.000Z", "t1_new": "2026-05-01T00:00:00.000Z"}
+    for e in entries:
+        e["ts"] = ts_by_id.get(e["id"], "2026-03-01T00:00:00.000Z")
+    _seed_workspace(tmp_path)
+    _write_entries(tmp_path, entries)
+    _write_usage(
+        tmp_path,
+        [
+            _usage("t0_lo", False, "2026-06-01T00:00:00.000Z"),
+            _usage("t0_hi", False, "2026-06-01T00:00:00.000Z"),
+            _usage("t0_hi", False, "2026-06-02T00:00:00.000Z"),
+            _usage("t0_hi", False, "2026-06-03T00:00:00.000Z"),
+            _usage("t2_stale", True, "2026-04-01T00:00:00.000Z"),
+            _usage("t2_fresh", True, "2026-06-05T00:00:00.000Z"),
+        ],
+    )
+    ids = [w["id"] for w in sweep_knowledge.propose(tmp_path, None, with_usage=True)]
+    assert ids == ["t0_hi", "t0_lo", "t1_old", "t1_new", "t2_stale", "t2_fresh"]
+
+
+def test_propose_without_flag_is_legacy_shape_and_order(tmp_path: Path) -> None:
+    # The verb-evolve §curate contract: {id, ticket, ts, type, body}, file order.
+    _seed_workspace(tmp_path)
+    _write_entries(
+        tmp_path,
+        [_entry("b1", "FACT", "second-ranked by usage"), _entry("a1", "DECISION", "first")],
+    )
+    _write_usage(tmp_path, [_usage("b1", False, "2026-06-01T00:00:00.000Z")])
+    worklist = sweep_knowledge.propose(tmp_path, ["DECISION", "FACT"])
+    assert [w["id"] for w in worklist] == ["b1", "a1"]
+    assert all(set(w.keys()) == {"id", "ticket", "ts", "type", "body"} for w in worklist)
+
+
+def test_propose_type_all_widens_and_default_unchanged(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path)
+    _write_entries(
+        tmp_path,
+        [
+            _entry("d1", "DECISION", "d"),
+            _entry("f1", "FACT", "f"),
+            _entry("l1", "LEARNED", "l"),
+            _entry("p1", "PATTERN", "p"),
+        ],
+    )
+    all_ids = {w["id"] for w in sweep_knowledge.propose(tmp_path, None)}
+    assert all_ids == {"d1", "f1", "l1", "p1"}
+    default_ids = {
+        w["id"] for w in sweep_knowledge.propose(tmp_path, list(sweep_knowledge.DEFAULT_TYPES))
+    }
+    assert default_ids == {"d1", "f1"}
+
+
+def test_cluster_types_none_empty_sidecar(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path)
+    _write_entries(tmp_path, [_entry("a1", "DECISION", "x")])
+    assert sweep_knowledge.cluster(tmp_path, None) == []
+
+
+def test_parse_types_all_and_csv() -> None:
+    assert sweep_knowledge._parse_types("all") is None
+    assert sweep_knowledge._parse_types(" all ") is None
+    assert sweep_knowledge._parse_types("DECISION, FACT") == ["DECISION", "FACT"]
+
+
+def test_cli_propose_type_all_with_usage(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Locks the exact argparse surface verb-recall.md names.
+    _seed_workspace(tmp_path)
+    _write_entries(tmp_path, [_entry("l1", "LEARNED", "x")])
+    _write_usage(tmp_path, [_usage("l1", False, "2026-06-01T00:00:00.000Z")])
+    rc = sweep_knowledge.cli_main(
+        ["propose", "--type", "all", "--with-usage", "--workspace-root", str(tmp_path)]
+    )
+    assert rc == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out[0]["id"] == "l1"
+    assert out[0]["tier"] == 0
