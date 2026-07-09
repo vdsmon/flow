@@ -767,8 +767,8 @@ def test_prose_role_citation_ignores_non_membership_roles_mention() -> None:
 
 def test_prose_role_citation_ignores_later_backticked_token() -> None:
     # a backticked lowercase token AFTER the role literal must not read as a role
-    text = 'when `descriptor.roles` includes `"work"`, pass `model` in the Agent call.\n'
-    assert seam_check.prose_role_citations(text) == [(1, "work")]
+    text = 'when `descriptor.roles` includes `"model_routed"`, pass `model` in the Agent call.\n'
+    assert seam_check.prose_role_citations(text) == [(1, "model_routed")]
 
 
 def test_live_role_citations_recognized() -> None:
@@ -780,7 +780,7 @@ def test_live_role_citations_recognized() -> None:
             (seam_check.SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
         )
     }
-    assert {"records_diff_baseline", "work"} <= roles
+    assert {"records_diff_baseline", "model_routed"} <= roles
 
 
 def test_role_literal_drift_flags_renamed_role(tmp_path) -> None:

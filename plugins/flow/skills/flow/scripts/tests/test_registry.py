@@ -30,8 +30,8 @@ def test_registry_by_name_fields():
     by = registry_by_name(REAL_REGISTRY)
     assert by["commit"].required_fields == ["commit_type", "commit_summary"]
     assert "records_diff_baseline" in by["implement"].roles
-    assert "work" in by["implement"].roles
-    assert "work" in by["e2e"].roles  # routable: gets the per-stage model pin
+    assert "model_routed" in by["implement"].roles
+    assert "model_routed" in by["e2e"].roles  # routable: gets the per-stage model pin
     assert by["implement"].default_timeout_min == 30
 
 

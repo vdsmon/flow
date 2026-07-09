@@ -6,7 +6,7 @@ session model.
 
 The disposition is ON BY DEFAULT: on a full-lane run each routable stage downshifts
 to `sonnet` unless a workspace overrides or disables it. Routable stages (the ones
-that spawn a work subagent) and their built-in default: see _DEFAULT_STAGE_MODELS.
+that spawn a subagent) and their built-in default: see _DEFAULT_STAGE_MODELS.
 A stage NOT in that map (e.g. `plan`) is not routable and always inherits the
 session model.
 
@@ -36,7 +36,7 @@ import ticket_frontmatter
 from _workspace import load_workspace_toml
 
 _SKIP_LANES = ("express", "light")
-# The routable stages (spawn a work subagent) and their built-in default model.
+# The routable stages (spawn a subagent) and their built-in default model.
 # A stage absent here is not routable: it always inherits the session model.
 _DEFAULT_STAGE_MODELS = {
     "implement": "sonnet",
