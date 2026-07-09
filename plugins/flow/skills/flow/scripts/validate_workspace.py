@@ -225,28 +225,40 @@ def _validate_pipeline_block(
     return stages, _parse_handlers(pipeline, stages, result)
 
 
-def _warn_inline_work_model(
+def _warn_inline_stage_model(
     data: dict[str, Any], handlers: dict[str, str], result: ValidationResult
 ) -> None:
-    """Warn (non-fatal) when `[models] work_model` is EXPLICITLY set but implement is inline.
+    """Warn (non-fatal) when a stage has an EXPLICIT model pin but runs inline.
 
     An inline stage runs on the session model and cannot be model-pinned, so an
-    explicit `work_model` would silently not apply to it. Only an explicit, non-opt-out
-    `work_model` warns (a config intent that won't take effect); the on-by-default case
-    (no `[models]` block) does not, to keep validate quiet for the common setup.
+    explicit pin would silently not apply to it. Scoped to `implement` and `e2e` only:
+    those are the stages the do-loop dispatches directly as subagents, so inline there
+    genuinely kills the pin. `code_review`/`review_loop` are inline parents that pin a
+    subagent they spawn in their own prose, so their per-stage model IS honored even
+    while the parent is inline; they never warn. The effective pin per stage is
+    `[models].<stage>` if set, else the deprecated `[models].work_model`; an OFF_VALUE
+    at either level means no intent to apply, so no warning. The on-by-default case
+    (no `[models]` block) never warns, to keep validate quiet for the common setup.
     """
     models = data.get("models")
     if not isinstance(models, dict):
         return
-    work_model = models.get("work_model")
-    if not isinstance(work_model, str) or work_model.strip().lower() in OFF_VALUES:
-        return
-    if handlers.get("implement") == "inline":
-        result.warn(
-            "models.work_model",
-            "implement handler is 'inline'; an inline stage cannot be model-pinned, "
-            "so its code-writing runs on the session model and work_model is ignored for it",
-        )
+    for stage in ("implement", "e2e"):
+        per_stage = models.get(stage)
+        if isinstance(per_stage, str):
+            field, value = f"models.{stage}", per_stage
+        elif isinstance(models.get("work_model"), str):
+            field, value = "models.work_model", models["work_model"]
+        else:
+            continue
+        if value.strip().lower() in OFF_VALUES:
+            continue
+        if handlers.get(stage) == "inline":
+            result.warn(
+                field,
+                f"{stage} handler is 'inline'; an inline stage cannot be model-pinned, "
+                f"so it runs on the session model and its model pin is ignored",
+            )
 
 
 def _validate_memory_block(data: dict[str, Any], result: ValidationResult) -> bool:
@@ -330,7 +342,7 @@ def validate(
     registry = stage_registry or load_registry(_stage_registry_path())
     stages, handlers = _validate_pipeline_block(data, registry, compounding, result)
 
-    _warn_inline_work_model(data, handlers, result)
+    _warn_inline_stage_model(data, handlers, result)
 
     if not result.ok or backend is None:
         return result, None

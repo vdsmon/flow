@@ -29,16 +29,20 @@ worker_model = "opus"
 adjudicate_hot = true
 
 # opus plans, sonnet writes is ON BY DEFAULT (scripts/model_resolve.py): a full-lane
-# run's code-writing subagents (implement, the review_loop fix subagent) drop to sonnet
-# while planning / code_review / the --auto ship gate / inline stages stay on the opus
-# session ([evolve] worker_model). No [models] block needed to get it. To disable or
-# override, add `[models]` with `work_model = "off"` (or another model name).
+# run's routable stages (implement, e2e, code_review, review_loop) drop to sonnet while
+# planning / the --auto ship gate / non-routable stages stay on the opus session
+# ([evolve] worker_model). No [models] block needed to get it. Each key below is a
+# routable stage -> the model to pin (or "off" to inherit the session for that stage).
 
-# Maintainer preference (2026-07-03): code-writing subagents (implement, the
-# review_loop fix subagent) pin to opus instead of the default sonnet downshift.
-# worker_model above stays the session model for spawned runs.
+# Maintainer preference: code-writing / self-editing stages pin to opus instead of the
+# default sonnet downshift (implement here can self-edit the harness, so keep it strong);
+# work_model is the deprecated global fallback covering the routable stages without a
+# per-stage key. e2e only runs and observes the change (it doesn't self-edit), so it
+# rides the cheaper sonnet tier via the per-stage override. worker_model above stays the
+# session model for spawned runs.
 [models]
-work_model = "opus"
+work_model = "opus"   # deprecated global fallback -> implement, code_review, review_loop
+e2e = "sonnet"        # per-stage override wins over work_model
 
 # This repo opens PRs ready for review (maintainer preference). The engine
 # default is draft (create_pr.py returns true when this key is unset), so

@@ -206,12 +206,19 @@ repo_slug = "rs"
 ### `[models]` workspace schema (opus plans, sonnet writes — ON BY DEFAULT)
 
 ```toml
-# The block is OPTIONAL. Omit it entirely for the default (work=sonnet on full-lane runs).
+# The block is OPTIONAL. Omit it entirely for the default (routable stages = sonnet
+# on full-lane runs). Each key is a routable stage; its value is the model to pin, or
+# "off"/"none"/"false"/"" to inherit the session model for THAT stage.
 [models]
-work_model = "sonnet"   # override the model, or "off"/"none"/"" to DISABLE the downshift
+implement   = "opus"     # per-stage pin: e.g. this stage self-edits the harness -> keep it strong
+e2e         = "sonnet"   # run + observe the change -> cheap
+# code_review, review_loop are also routable (default sonnet); unlisted stages inherit.
+
+# work_model = "sonnet"  # DEPRECATED global fallback: one model for every routable
+                         # stage without a per-stage key. A per-stage key always wins.
 ```
 
-The downshift is **on by default** — no `[models]` block needed. It pins the code-writing subagents (`implement`, the `review_loop` fix subagent) to `sonnet` on a full-lane run, while planning, `code_review`, the `--auto` ship gate, and every inline stage stay on the launch/session model (`[evolve] worker_model`). `model_resolve.py --workspace-root . --ticket <KEY>` is the resolver: it prints `sonnet` (the default) when the frontmatter `lane` is absent-or-`full`, prints a workspace's `[models] work_model` override when set, and prints nothing when the run is `express`/`light` (already a cheap session) or the workspace opts out (`work_model` ∈ `{off, none, ""}`). `hot` and normal full-lane runs both downshift (a hot bead follows the split; its opus protection is the session-model judgment layer + CI + the merge keystone). `validate_workspace.py` accepts the block as unknown-but-tolerated and emits a non-fatal WARNING (never a violation) when an EXPLICIT non-opt-out `work_model` is set AND `implement = "inline"` — an inline stage rides the session model and cannot be pinned.
+The downshift is **on by default** — no `[models]` block needed. On a full-lane run each routable stage (`implement`, `e2e`, `code_review`, the `review_loop` fix subagent) pins to `sonnet`, while planning, the `--auto` ship gate, and every non-routable stage stay on the launch/session model (`[evolve] worker_model`). `model_resolve.py --workspace-root . --ticket <KEY> --stage <STAGE>` is the resolver, and it prints the model for `<STAGE>` with this precedence: (1) `[models].<STAGE>` if set, (2) the deprecated `[models].work_model` global fallback if set, (3) the built-in default (`sonnet`). It prints nothing when the run is `express`/`light` (already a cheap session), when the resolved value is an OFF_VALUE (`off`/`none`/`false`/`""`), or when `<STAGE>` is not routable (e.g. `plan`). `hot` and normal full-lane runs both downshift (a hot bead follows the split; its opus protection is the session-model judgment layer + CI + the merge keystone). `validate_workspace.py` accepts the block as unknown-but-tolerated and emits a non-fatal WARNING (never a violation) when an EXPLICIT non-opt-out model applies to `implement` or `e2e` AND that stage's handler is `inline` — an inline stage rides the session model and cannot be pinned. (`code_review`/`review_loop` are inline parents that pin a subagent they spawn, so their per-stage model IS honored and they never warn.)
 
 ## `.flow-bundle.toml` schema
 
