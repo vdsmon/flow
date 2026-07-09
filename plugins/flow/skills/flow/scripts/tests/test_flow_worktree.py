@@ -87,7 +87,9 @@ def _fake_runner(
             if worktree_has_flow:
                 (wt / ".flow").mkdir()
                 (wt / ".flow" / "workspace.toml").write_text(
-                    '[tracker]\nbackend = "jira"\n[pipeline]\nstages = ["ticket", "plan", "implement"]\n[memory]\nnamespace = "FT"\n',
+                    '[tracker]\nbackend = "jira"\n[pipeline]\n'
+                    'stages = ["ticket", "plan", "implement"]\n'
+                    '[memory]\nnamespace = "FT"\n',
                     encoding="utf-8",
                 )
             return subprocess.CompletedProcess(args, 0, "", "")
@@ -233,7 +235,7 @@ def test_no_recovery_without_flag_even_with_dirty_planned_file(tmp_path: Path) -
         planned_files=["src/a.py"],
         runner=_fake_runner(calls=calls, main=main, porcelain="?? src/a.py\n"),
     )
-    assert (main / "src" / "a.py").read_text() == "user wip\n"  # untouched
+    assert (main / "src" / "a.py").read_text() == "user wip\n"
     assert not any("carried uncommitted edits" in w for w in res["warnings"])
     assert not any(c[:3] == ["git", "status", "--porcelain"] for c in calls)  # not even probed
 
@@ -359,7 +361,6 @@ def test_mise_trust_failure_is_warning_not_fatal(tmp_path: Path) -> None:
     main = _main_checkout(tmp_path, with_mise=True)
     res = _run(tmp_path, main, runner=_fake_runner(mise_rc=1, main=main))
     assert any("mise trust failed" in w for w in res["warnings"])
-    # still seeded successfully
     td = Path(res["worktree"]) / ".flow" / "runs" / "FT-1"
     ts, _ = state.read(td)
     assert ts is not None
@@ -777,8 +778,7 @@ def test_bootstrap_rejects_gitignored_planned_file(tmp_path: Path) -> None:
         )
     assert any(c[:3] == ["git", "worktree", "add"] for c in calls)
     assert any(c[:4] == ["git", "worktree", "remove", "--force"] for c in calls)
-    # the -b-created branch is also deleted, so a retry does not hit
-    # "fatal: a branch named <branch> already exists"
+    # the -b-created branch is also deleted, so a retry does not fail on the pre-existing branch
     assert any(c == ["git", "branch", "-D", "feat/FT-1-thing"] for c in calls)
 
 
@@ -1748,8 +1748,8 @@ def test_reap_cli_exits_5_on_recovery_push_failure(tmp_path: Path, monkeypatch, 
 
 
 def test_reap_recovery_skips_push_when_rescue_ref_already_present(tmp_path: Path) -> None:
-    # reap #1's push actually landed before it crashed; recovery must not
-    # issue a duplicate push, just let the normal clean path remove.
+    # reap #1's push actually landed before it crashed; recovery must not issue a duplicate push,
+    # let the normal clean path remove.
     wt = tmp_path / "main" / ".flow" / "worktrees" / "feat-FT-1-thing"
     wt.mkdir(parents=True)
     calls: list = []
@@ -1783,11 +1783,11 @@ def test_rescue_branch_not_inflight() -> None:
     assert not _evolve_common.is_inflight("flow-x1", {"flow-rescue/flow-x1-abc1234"})
 
 
-# ─── hot hard-floor (code-enforced, flow-aen) ───────────────────────────────
-# The is_hot_change floor lives here at the shared bootstrap so every autonomous
-# self-approve path (incl. clean >=90%, which step-5 prose never gated) is caught.
-# triage.decided's own logic is covered in test_triage.py; here we monkeypatch it
-# to isolate the signal detection (--auto / @default) + the beads backend gate.
+# ─── hot hard-floor (code-enforced, flow-aen) ─────────────────────────────────────────────────────
+# The is_hot_change floor lives here at the shared bootstrap so every autonomous self-approve path
+# (incl. clean >=90%, which step-5 prose never gated) is caught. triage.decided's own logic is
+# covered in test_triage.py; these tests monkeypatch it to isolate the signal detection (--auto /
+# @default) + the beads backend gate.
 
 
 def _main_beads(tmp: Path, *, maintainer: bool = True) -> Path:

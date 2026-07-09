@@ -744,7 +744,8 @@ def test_render_table_tags_advisor_rows() -> None:
             "key": "flow-a",
             "status": "blocked",
             "title": "T",
-            "open_question": "flow --auto could not self-approve: advisor ruled X (advisor) blocked auto-ship",
+            "open_question": "flow --auto could not self-approve: "
+            "advisor ruled X (advisor) blocked auto-ship",
         },
         {
             "key": "flow-b",

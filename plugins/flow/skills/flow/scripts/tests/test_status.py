@@ -14,7 +14,8 @@ def _ws(root: Path, pipeline: tuple[str, ...] = ("ticket", "plan", "commit")) ->
     (flow / "runs").mkdir(parents=True)
     stages_toml = ", ".join(f'"{s}"' for s in pipeline)
     (flow / "workspace.toml").write_text(
-        f'[tracker]\nbackend = "jira"\n[pipeline]\nstages = [{stages_toml}]\n[memory]\nnamespace = "FT"\n',
+        f'[tracker]\nbackend = "jira"\n[pipeline]\nstages = [{stages_toml}]\n'
+        '[memory]\nnamespace = "FT"\n',
         encoding="utf-8",
     )
     return root

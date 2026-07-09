@@ -121,8 +121,6 @@ def _select_transition_id(transitions: list[dict[str, Any]], target: str) -> str
     transition" error.
     """
     if target == "in_progress":
-        # Boards can offer several to_normalized_state=="in_progress" transitions
-        # (e.g. 'Testing' and 'In Progress'); break the tie toward the native one.
         for t in transitions:
             if not t.get("available", True):
                 continue

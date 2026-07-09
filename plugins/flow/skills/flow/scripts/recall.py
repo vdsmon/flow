@@ -22,12 +22,11 @@ Quarantine: malformed JSONL lines appended to sidecar
 `<file>.quarantine.<ts>` (per-invocation); main file untouched; scan
 continues with valid entries; never crash.
 
-Semantic fusion (optional, gated by `[memory.semantic]`): when enabled and a
-fresh sidecar index loads, the query is embedded once (via `memory_embed.embed`,
-which shells a uvx subprocess), cosine-scored in pure Python against each indexed
-live vector, threshold pre-filtered, then RRF-fused with the BM25 ranking. ANY
-failure falls through to the unchanged BM25 `rank()` and a backend-status line on
-stderr. Absent/off config → byte-identical pure BM25.
+Semantic fusion (optional, gated by `[memory.semantic]`): when enabled and a fresh sidecar index
+loads, the query is embedded once (via `memory_embed.embed`, which shells a uvx subprocess),
+cosine-scored in pure Python against each indexed live vector, threshold pre-filtered, then
+RRF-fused with the BM25 ranking. ANY failure falls through to the unchanged BM25 `rank()` and a
+backend-status line on stderr. Absent/off config → byte-identical pure BM25.
 
 Exit codes:
   0 = ok (empty result still 0 with `[]`).
@@ -222,16 +221,12 @@ def rank(
                 query_tokens, doc_toks, field_idf[field], field_avgdl[field]
             )
             weighted_sum += weight * field_score
-        # Additive exact-match bonuses so a requested match ranks first even when
-        # its BM25 text score is 0.
         if branch_lower is not None and _doc_field_text(entry, "branch").lower() == branch_lower:
             weighted_sum += BRANCH_EXACT_BONUS
         if ticket_set_lower and _doc_field_text(entry, "ticket").lower() in ticket_set_lower:
             weighted_sum += TICKET_EXACT_BONUS
         scored.append((weighted_sum, entry))
 
-    # Sort by (score DESC, ts DESC). _neg_ts_key gives ts-descending via negated codepoints
-    # (ISO8601 lexical order matches chronological, so negation flips to DESC).
     scored.sort(key=lambda pair: (-pair[0], _neg_ts_key(pair[1].get("ts", ""))))
 
     results: list[dict[str, Any]] = []
@@ -339,9 +334,6 @@ def _semantic_rank(
 
     query_vec = memory_embed.embed([query], model=model, embedder=embedder)[0]
 
-    # cosine over indexed live entries, then RANK-based top-K selection. `threshold`
-    # is only a low floor (drop non-positive cosines); the embedder-coupled absolute
-    # gate is retired (flow-nylh) so a model swap can never starve cosine to 0.
     sims: list[tuple[str, float]] = []
     for entry in entries:
         eid = entry.get("id")

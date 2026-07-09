@@ -609,9 +609,9 @@ def test_tool_use_id_links_to_tool_name(tmp_path: Path, capsys: pytest.CaptureFi
 def test_descriptor_with_prefixed_junk_is_parsed(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    # A descriptor tool_result can carry a stderr prefix with a stray brace
-    # before the real JSON object. The boundary (and its drift marker) must
-    # still be recovered by scanning past the first non-parsing "{".
+    # A descriptor tool_result can carry a stderr prefix with a stray brace before the real JSON
+    # object. The boundary (and its drift marker) must still be recovered by scanning past the first
+    # non-parsing "{".
     workspace_root = tmp_path / "repo"
     transcript = _project_dir(tmp_path, workspace_root) / "t1.jsonl"
     payload_obj = {
@@ -664,7 +664,8 @@ def test_malformed_line_resilience(tmp_path: Path, capsys: pytest.CaptureFixture
     valid_err = json.dumps(_tool_error_line("toolu_1", "2026-06-01T00:00:02.000Z", "boom"))
     transcript.parent.mkdir(parents=True, exist_ok=True)
     transcript.write_text(
-        f'\n{{not json at all\n{valid_desc}\n{valid_use}\nplain text, not even braces\n{{"truncated": \n{valid_err}\n',
+        f"\n{{not json at all\n{valid_desc}\n{valid_use}\n"
+        f'plain text, not even braces\n{{"truncated": \n{valid_err}\n',
         encoding="utf-8",
     )
     rc, payload = _run_extract(

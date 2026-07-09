@@ -169,7 +169,6 @@ class BitbucketAdapter:
             return {"status": "green", "checks": checks, "detail": "pipeline successful"}
         if state in ("FAILED", "STOPPED", "ERROR"):
             return {"status": "failed", "checks": checks, "detail": f"pipeline {state.lower()}"}
-        # INPROGRESS, or no pipeline line yet
         detail = "pipeline in progress" if state else "no pipeline entry yet"
         return {"status": "pending", "checks": checks, "detail": detail}
 

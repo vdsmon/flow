@@ -202,7 +202,7 @@ def cli_main(argv: list[str]) -> int:
             # would miss it.
             try:
                 receipt = reap_worktree(ticket=key, main_root=repo, branch=branch)
-            except Exception as exc:  # one bad worktree must not sink the whole sweep
+            except Exception as exc:
                 result["reap_failed"].append({**entry, "reap_error": str(exc)})
                 continue
             result["reaped"].append({**entry, "receipt": receipt})

@@ -257,9 +257,8 @@ class GitHubAdapter:
         self._ok(["git", "push", "origin", "--delete", branch], "git push --delete")
 
     def set_default_reviewers(self, pr_id: str) -> None:
-        # GitHub has no default-reviewers REST surface for a solo repo; CODEOWNERS
-        # covers review assignment. The first supported=false capability in a live
-        # adapter, so create_pr degrades cleanly.
+        # GitHub has no default-reviewers REST surface for a solo repo; CODEOWNERS covers review
+        # assignment.
         raise NotSupported("github adapter does not set default reviewers")
 
     # ─── review threads (GraphQL) ─────────────────────────────────────────

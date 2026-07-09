@@ -171,11 +171,10 @@ def find_invocations(doc_name: str, text: str) -> list[Invocation]:
     invs: list[Invocation] = []
     for lineno, logical in _logical_lines(text):
         matches = list(_SCRIPT_RE.finditer(logical))
-        # Every match on the logical line yields an Invocation (a `&&`-joined
-        # recipe names two commands, both must lint). Each invocation's args
-        # span runs to the next match's start, then is truncated at a shell
-        # sequencing operator so a second command's flags are not attributed
-        # to this script.
+        # Every match on the logical line yields an Invocation (a `&&`-joined recipe names two
+        # commands, both must lint). Each invocation's args span runs to the next match's start,
+        # then is truncated at a shell sequencing operator so a second command's flags are not
+        # attributed to this script.
         for i, m in enumerate(matches):
             script = m.group(1)
             end = matches[i + 1].start() if i + 1 < len(matches) else len(logical)
@@ -518,15 +517,12 @@ def guard_file_list_drift(
 ) -> list[tuple[str, int, str]]:
     """Prose hot-guard enumerations diverging from triage._GUARD_FILES.
 
-    The two guard lists are duplicated by design (flow-837: prose stays
-    readable, not extracted to a constant), synced by hand — which is how
-    flow_worktree.py went missing from both for months after PR#174 added it
-    to the code set. Each enumeration is anchored on the literal
-    "safety-machinery guard file" phrase followed by a parenthesized list of
-    backticked *.py names; that set must equal the *.py members of
-    _GUARD_FILES. Finding fewer than the expected anchored enumerations is
-    itself a drift (the phrase moved and the gate would silently check
-    nothing).
+    The two guard lists are duplicated by design (flow-837: prose stays readable, not extracted to a
+    constant) and synced by hand, which is how flow_worktree.py went missing from both for months
+    after PR#174 added it to the code set. Each enumeration is anchored on the literal
+    "safety-machinery guard file" phrase followed by a parenthesized list of backticked *.py names;
+    that set must equal the *.py members of _GUARD_FILES. Finding fewer than the expected anchored
+    enumerations is itself a drift (the phrase moved and the gate would silently check nothing).
     """
     if guard_files is None:
         guard_files = triage_guard_files(SCRIPTS_DIR)

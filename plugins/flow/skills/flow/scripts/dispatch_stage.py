@@ -623,16 +623,11 @@ def cmd_next(
     engine_abort = abort_payload is not None and components == ["engine"]
     if abort_payload is not None and not engine_abort:
         return 1, abort_payload
-    # Lease: if one exists it must still be ours (detects a takeover). A run with
-    # no lease (legacy / direct test call) proceeds without one.
     boot, host = lease.boot_id(), socket.gethostname()
     guard = _guard_lease_ownership(td, ts.run_id, session_nonce, current_boot=boot, hostname=host)
     if guard is not None:
         return guard
 
-    # Lease confirmed: settle any deferred drift. An engine-only abort re-verifies
-    # / re-anchors (flow-p9sc); an owned drift reloads the snapshot baseline. The
-    # engine markers ride the descriptor payload like reconciled_drift.
     reconcile_err, engine_markers = _reconcile_post_lease(
         workspace_root,
         ticket,
@@ -660,9 +655,8 @@ def cmd_next(
 
     head_sha = _git_head_sha(workspace_root)
 
-    # Assemble the full descriptor BEFORE mutating state. If descriptor
-    # assembly raises, the stage must stay pending rather than be stuck
-    # in_progress.
+    # Assemble the full descriptor BEFORE mutating state. If descriptor assembly raises, the stage
+    # must stay pending rather than be stuck in_progress.
     registry_path = _skill_root_from_script() / _STAGE_REGISTRY_RELATIVE
     stage_meta = registry_by_name(registry_path).get(next_stage)
     handler_descriptor = _parse_handler(snapshot.handlers[next_stage])

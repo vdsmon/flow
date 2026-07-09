@@ -21,7 +21,8 @@ def _seed_workspace(root: Path, namespace: str = "demo") -> None:
     flow = root / ".flow"
     flow.mkdir(parents=True, exist_ok=True)
     (flow / "workspace.toml").write_text(
-        f'[tracker]\nbackend = "jira"\n[tracker.jira]\ncloud_id = "x"\nproject_key = "FT"\n\n[memory]\nnamespace = "{namespace}"\n',
+        '[tracker]\nbackend = "jira"\n[tracker.jira]\ncloud_id = "x"\nproject_key = "FT"\n'
+        f'\n[memory]\nnamespace = "{namespace}"\n',
         encoding="utf-8",
     )
 

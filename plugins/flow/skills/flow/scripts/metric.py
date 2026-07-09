@@ -2,38 +2,33 @@
 
 Library + thin CLI. Stdlib-only.
 
-Counts ship events whose frozen `shipped_at` falls in a half-open UTC window
-`[since, until)`, and attributes each shipped ticket as either shipped through a
-flow run (`shipped_via_flow`) or observed by the backend without flow
-attribution (`shipped_backend_not_attributed`).
+Counts ship events whose frozen `shipped_at` falls in a half-open UTC window `[since, until)`, and
+attributes each shipped ticket as either shipped through a flow run (`shipped_via_flow`) or observed
+by the backend without flow attribution (`shipped_backend_not_attributed`).
 
-Ship events are one-JSON-object-per-file under `.flow/<namespace>/ship-events/`,
-written by observe_ship_event.py. Each primary file is `<ticket>.json`; dupes,
-corruptions, and intent logs use suffixed names and are skipped here. Files that
-fail to parse or lack `shipped_at` are quarantined-skip (logged to a sidecar,
-never counted) so a single bad file cannot abort the metric.
+Ship events are one-JSON-object-per-file under `.flow/<namespace>/ship-events/`, written by
+observe_ship_event.py. Each primary file is `<ticket>.json`; dupes, corruptions, and intent logs use
+suffixed names and are skipped here. Files that fail to parse or lack `shipped_at` are quarantined-
+skip (logged to a sidecar, never counted) so a single bad file cannot abort the metric.
 
-Attribution is stamp-first. observe_ship_event.py stamps an owned
-`flow_attribution` block (plan_started + create_pr_finished iso timestamps) onto
-the durable ship event at observe time, while the run's state.json is still
-alive. A ship event carrying a well-formed stamp is `shipped_via_flow` directly;
-the run's worktree (and its state.json) is reaped after merge, so the legacy
-join below cannot resolve a recently-shipped ticket. Forward-only: tickets
-shipped before stamping landed have no stamp and a reaped state, so they stay
-`shipped_backend_not_attributed`.
+Attribution is stamp-first. observe_ship_event.py stamps an owned `flow_attribution` block
+(plan_started + create_pr_finished iso timestamps) onto the durable ship event at observe time,
+while the run's state.json is still alive. A ship event carrying a well-formed stamp is
+`shipped_via_flow` directly; the run's worktree (and its state.json) is reaped after merge, so the
+legacy join below cannot resolve a recently-shipped ticket. Forward-only: tickets shipped before
+stamping landed have no stamp and a reaped state, so they stay `shipped_backend_not_attributed`.
 
 Legacy fallback (no stamp): joins each ship event to its per-ticket state.json at
-`.flow/runs/<ticket>/state.json`. A ticket is `shipped_via_flow` iff that state
-exists, its `ticket` matches, its `run_id` matches the ship event's observing
-run id (`observed_by_run_id`), and its `reflect` stage status is `completed`.
+`.flow/runs/<ticket>/state.json`. A ticket is `shipped_via_flow` iff that state exists, its `ticket`
+matches, its `run_id` matches the ship event's observing run id (`observed_by_run_id`), and its
+`reflect` stage status is `completed`.
 
 Window defaults: until = now; since = 14 days before now, floored to 00:00 UTC.
 
-Checkpoint mode aggregates compute() across every checkpoint-manifest
-participant whose `checkpoint_mode` matches `--mode`. Effective-interval
-accounting for a participant that changed mode mid-window is deferred; this phase
-includes a participant iff its mode matches and it was initialized at or before
-`until`.
+Checkpoint mode aggregates compute() across every checkpoint-manifest participant whose
+`checkpoint_mode` matches `--mode`. Effective-interval accounting for a participant that changed
+mode mid-window is deferred; this phase includes a participant iff its mode matches and it was
+initialized at or before `until`.
 
 Exit codes:
   0 = ok

@@ -145,8 +145,8 @@ def select(
     # a still-booting pre-lease run gets evicted from launched_pending a turn early
     # (flow-d4s). The reconciled lease|fleet read is for the in-flight suppression
     # set only.
-    live_keys = live_run_keys(repo)  # lease-only -> result["live_runs"]
-    fleet_keys = fleet_live_keys(repo)  # lease | fleet (reconciled in-flight authority)
+    live_keys = live_run_keys(repo)
+    fleet_keys = fleet_live_keys(repo)
     launched_keys = fleet_keys - live_keys  # pre-lease fleet entries -> result["launched_pending"]
     sessions = fleet_keys
     pr_keys = {k for r in pr_refs if (k := key_from_ref(r))}

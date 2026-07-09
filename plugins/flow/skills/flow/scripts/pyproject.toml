@@ -45,9 +45,11 @@ select = [
     "ISC",  # implicit str concat (ISC001 ignored below)
     "T10",  # flake8-debugger (leftover breakpoint/pdb)
     "YTT",  # flake8-2020
+    "ERA",  # eradicate (commented-out code)
 ]
+# E501 stays enabled: the formatter wraps code but never comment/docstring/string prose, so
+# lint is the only gate on those lines.
 ignore = [
-    "E501",   # line length handled by formatter
     "ISC001", # conflicts with the formatter
 ]
 

@@ -49,9 +49,9 @@ def test_register_upsert_preserves_registered_at_bumps_heartbeat_and_runid(tmp_p
     fleet.register(fd, "flow-x", "rid-1", now=later, hostname="h", boot_id="b")
     e = fleet.read(fd, "flow-x")
     assert e is not None
-    assert e["registered_at"] == T0  # preserved from launch
-    assert e["heartbeat_at"] == later  # bumped
-    assert e["run_id"] == "rid-1"  # claimed
+    assert e["registered_at"] == T0
+    assert e["heartbeat_at"] == later
+    assert e["run_id"] == "rid-1"
     assert e["hostname"] == "h"
 
 

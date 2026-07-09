@@ -132,9 +132,9 @@ class JobRecord:
     handle. The CLI builds these; classify is pure over them.
     """
 
-    job_id: str  # the job dir basename (daemonShort, 8 hex), the `claude stop` handle
-    job_dir: str  # absolute path to ~/.claude/jobs/<job_id>/
-    session_id: str  # full sessionId UUID (transcript handle, NOT a stop handle)
+    job_id: str
+    job_dir: str
+    session_id: str
     state: str
     tempo: str
     cwd: str

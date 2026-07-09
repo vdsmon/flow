@@ -464,10 +464,10 @@ def classify(
 def _quarantine_locked(ticket_dir: Path) -> Path | None:
     """Rename run.lock to run.lock.quarantine.<ts>. Caller MUST hold the flock.
 
-    Extracted so takeover_clear can quarantine inside its own flock span:
-    flock_blocking opens a fresh fd per call and LOCK_EX blocks across fds even
-    within one process, so a nested public quarantine wrapper would
-    self-deadlock (the standalone wrapper was retired as dead code). Returns the quarantine dst Path, or None when absent.
+    Extracted so takeover_clear can quarantine inside its own flock span: flock_blocking opens a
+    fresh fd per call and LOCK_EX blocks across fds even within one process, so a nested public
+    quarantine wrapper would self-deadlock (the standalone wrapper was retired as dead code).
+    Returns the quarantine dst Path, or None when absent.
     """
     src = run_lock_path(ticket_dir)
     if not src.exists():

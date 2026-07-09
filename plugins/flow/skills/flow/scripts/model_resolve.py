@@ -1,29 +1,26 @@
 """Resolve the per-stage subagent model for a run (opus plans, sonnet writes).
 
-Pure, stdlib-only. Prints the model to pin on a given stage's subagent (typically
-BELOW the opus session model), or nothing when the caller should inherit the
-session model.
+Pure, stdlib-only. Prints the model to pin on a given stage's subagent (typically BELOW the opus
+session model), or nothing when the caller should inherit the session model.
 
-The disposition is ON BY DEFAULT: on a full-lane run each routable stage downshifts
-to `sonnet` unless a workspace overrides or disables it. Routable stages (the ones
-that spawn a subagent) and their built-in default: see _DEFAULT_STAGE_MODELS.
-A stage NOT in that map (e.g. `plan`) is not routable and always inherits the
-session model.
+The disposition is ON BY DEFAULT: on a full-lane run each routable stage downshifts to `sonnet`
+unless a workspace overrides or disables it. Routable stages (the ones that spawn a subagent) and
+their built-in default: see _DEFAULT_STAGE_MODELS. A stage NOT in that map (e.g. `plan`) is not
+routable and always inherits the session model.
 
-Lane comes from the ticket frontmatter (a local read, no tracker call): absent or
-"full" -> downshift; "express"/"light" -> the run already launched a cheap session,
-so its work inherits that model and needs no pin. Hot and normal runs are both
-full-lane and both downshift; the `hot` label is deliberately NOT read (a hot bead
-follows the split too: opus plans/reviews, sonnet writes).
+Lane comes from the ticket frontmatter (a local read, no tracker call): absent or "full" ->
+downshift; "express"/"light" -> the run already launched a cheap session, so its work inherits that
+model and needs no pin. Hot and normal runs are both full-lane and both downshift; the `hot` label
+is deliberately NOT read (a hot bead follows the split too: opus plans/reviews, sonnet writes).
 
 `[models]` overrides the built-in defaults, resolved per stage with this precedence:
   1. `[models].<stage>`  -- a per-stage pin (a model name, or an OFF_VALUE to
-     inherit the session for just that stage). Highest priority.
+     inherit the session for that stage only). Highest priority.
   2. `[models].work_model` -- the DEPRECATED global fallback: one model for every
      routable stage that has no per-stage key. Kept for back-compat.
   3. the built-in _DEFAULT_STAGE_MODELS default (`sonnet`).
-An OFF_VALUE ("off"/"none"/"false"/"") at any level opts that stage out (inherit
-the session). Fail-open: an unexpected read error prints nothing.
+An OFF_VALUE ("off"/"none"/"false"/"") at any level opts that stage out (inherit the session).
+Fail-open: an unexpected read error prints nothing.
 """
 
 from __future__ import annotations
@@ -65,9 +62,9 @@ def resolve_stage_model(workspace_root: Path, ticket: str, stage: str) -> str:
             models = load_workspace_toml(workspace_root).get("models")
             if isinstance(models, dict):
                 if isinstance(models.get(stage), str):
-                    model = models[stage]  # per-stage pin wins
+                    model = models[stage]
                 elif isinstance(models.get("work_model"), str):
-                    model = models["work_model"]  # deprecated global fallback
+                    model = models["work_model"]
         except Exception:
             pass  # no/invalid workspace.toml -> keep the built-in default
         if model.strip().lower() in OFF_VALUES:

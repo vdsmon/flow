@@ -5,17 +5,15 @@ Library module (no CLI). Stdlib-only.
 Invariants:
 
 - One state.json per ticket at `.flow/runs/<ticket>/state.json`.
-- All writes go through atomic temp-fsync-rename + flock(EX) on the sibling
-  `state.json.lock` file.
+- All writes go through atomic temp-fsync-rename + flock(EX) on the sibling `state.json.lock` file.
 - Each write rotates a backup at `state.json.<ts>.bak`. Last 5 kept.
 - Malformed JSON on read triggers quarantine path: move corrupt file to
-  `state.json.quarantine.<ts>`, try newest `.bak`, then next-newest, etc.
-  Exit code 1 (warning, loaded from .bak). If no .bak parses → exit 2.
+  `state.json.quarantine.<ts>`, try newest `.bak`, then next-newest, etc. Exit code 1 (warning,
+  loaded from .bak). If no .bak parses → exit 2.
 
-Schema version: 1. Stage lifecycle: `pending → in_progress → (completed |
-failed)`. The `dispatched | timed_out | hung` states from the literal plan
-spec were never adopted: lease lifecycle landed separately (lease.py), and
-hung detection was removed as dead code.
+Schema version: 1. Stage lifecycle: `pending → in_progress → (completed | failed)`.
+The `dispatched | timed_out | hung` states from the literal plan spec were never adopted: lease
+lifecycle landed separately (lease.py), and hung detection was removed as dead code.
 """
 
 from __future__ import annotations

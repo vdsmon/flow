@@ -273,13 +273,7 @@ def test_find_failed_returns_none_when_no_failure(tmp_path: Path) -> None:
 def test_atomic_write_replaces_in_place(tmp_path: Path) -> None:
     _seed(tmp_path)
     path = tmp_path / "state.json"
-    inode_before = path.stat().st_ino
     state.begin_stage(tmp_path, "ticket", "h")
-    # Atomic rename SHOULD produce a different inode (rename target replaces).
-    inode_after = path.stat().st_ino
-    # We can't always assert different inode (depends on FS); only assert file
-    # parses cleanly after the write.
-    del inode_before, inode_after
     assert json.loads(path.read_text(encoding="utf-8"))["ticket"] == "FT-1234"
 
 

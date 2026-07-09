@@ -1,29 +1,26 @@
 """Read-only day-job queue status (the `/flow queue` verb's core).
 
-Wraps `queue_select.select()` (the canonical partition) with the full day-job
-ready backlog, per-key lease liveness (`evolve_drain.liveness_map`), and the
-ADVISORY next action a queue drain would take (`evolve_drain.decide`): the
-`action` field reports what a drain would do next, it is never acted on here.
-The advisory mirrors `queue_drain.cli_main`'s scoping: the active-evolve set is
-subtracted from `live_runs`/`launched_pending` (this loop never waits on a live
-evolve run) and STRANDED pre-PR day-job beads feed `decide` so it reads
-`recover`, not a false `done`. One known approximation remains: the advisory
-`launch` list is not reap-filtered, so a merged-PR key the real drain diverts
-to the close path can still appear in it (the reap classification needs the
-merged-PR + per-key `bd show` gather this status verb skips).
+Wraps `queue_select.select()` (the canonical partition) with the full day-job ready backlog, per-key
+lease liveness (`evolve_drain.liveness_map`), and the ADVISORY next action a queue drain would take
+(`evolve_drain.decide`): the `action` field reports what a drain would do next, it is never acted on
+here. The advisory mirrors `queue_drain.cli_main`'s scoping: the active-evolve set is subtracted
+from `live_runs`/`launched_pending` (this loop never waits on a live evolve run) and STRANDED pre-PR
+day-job beads feed `decide` so it reads `recover`, not a false `done`. One known approximation
+remains: the advisory `launch` list is not reap-filtered, so a merged-PR key the real drain diverts
+to the close path can still appear in it (the reap classification needs the merged-PR + per-key `bd
+show` gather this status verb skips).
 
-Also carries the parked-PR review enrichment (epic flow-kx17.5): each parked
-key's open PR is probed for unresolved NATIVE Major+ review threads (a genuine
-new human CHANGES_REQUESTED -> `/flow revise <pr#>`), surfaced as `reviews`.
-Best-effort: no `[forge]` block, no parked keys, or any per-key forge error ->
-`reviews: []`, never a failure. The `[revise] plain_comment_severity` floor is
-deliberately NOT applied here (a leftover unresolved bot minor must never
-produce a false human-review flag; the floor is a revise-time knob).
+Also carries the parked-PR review enrichment (epic flow-kx17.5): each parked key's open PR is probed
+for unresolved NATIVE Major+ review threads (a genuine new human CHANGES_REQUESTED -> `/flow revise
+<pr#>`), surfaced as `reviews`. Best-effort: no `[forge]` block, no parked keys, or any per-key
+forge error -> `reviews: []`, never a failure. The `[revise] plain_comment_severity` floor is
+deliberately NOT applied here (a leftover unresolved bot minor must never produce a false
+human-review flag; the floor is a revise-time knob).
 
-Read-only by construction: this script touches no file, ever. No launches, no
-bd mutations, no fleet-ledger writes; the launched_pending-minus-registered set
-is computed in memory only (the underlying fleet entry is left untouched -- it
-ages out on its own staleness clock, `fleet.STALE_AFTER_S`).
+Read-only by construction: this script touches no file, ever. No launches, no bd mutations, no
+fleet-ledger writes; the launched_pending-minus-registered set is computed in memory only (the
+underlying fleet entry is left untouched -- it ages out on its own staleness clock,
+`fleet.STALE_AFTER_S`).
 
 CLI:
   queue_status.py --workspace-root <dir> [--cap N] [--concurrency N]
@@ -86,9 +83,8 @@ def flag_parked_reviews(keys: list[str], pr_refs: list[str], adapter: Any) -> li
                 continue
             threads = adapter.review_threads(pr_id)
         except Exception:
-            # not just ForgeError: an unexpected payload shape (KeyError/TypeError)
-            # or a raw parse error surfacing from an adapter must also skip the
-            # key, or the best-effort contract breaks
+            # not only ForgeError: an unexpected payload shape (KeyError/TypeError) or a raw parse
+            # error from an adapter must also skip the key to keep the best-effort contract
             continue
 
         flagged = [t for t in threads if t.get("severity") in _MAJOR_PLUS and not t.get("resolved")]

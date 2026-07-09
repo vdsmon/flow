@@ -7,7 +7,7 @@ The PR body is derived from `git log -1 --format=%b`, which at PR time is the
 `compose_commit.py` skeleton's body section: a contiguous leading trailer block
 (`ticket: KEY`, zero+ `Closes <KEY>`, an optional `files:` list with indented
 `  - ...` children), then a blank line, then the prose the commit stage authored
-(which may still carry the `# body — fill in below this line` skeleton marker if the
+(which may still carry the `# body - fill in below this line` skeleton marker if the
 author appended below it rather than overwriting).
 
 `build_body` strips the trailer noise, keeps the `Closes` lines as a footer, and
@@ -78,9 +78,6 @@ def build_body(raw_commit_body: str) -> str:
 
 def _build_body(raw: str) -> str:
     lines = raw.splitlines()
-    # consume the contiguous leading trailer block ONLY while lines match a trailer
-    # shape; the first blank/non-trailer line ends it. No leading trailer => i stays
-    # 0 and the whole body is prose.
     i, closes = _scan_trailer(lines)
     # skip the single blank line separating the trailer from the prose.
     if i < len(lines) and not lines[i].strip():

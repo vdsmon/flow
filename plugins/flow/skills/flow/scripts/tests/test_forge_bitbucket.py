@@ -23,7 +23,6 @@ def _adapter(handler) -> tuple[BitbucketAdapter, list[list[str]]]:
 
 
 def _api_path(args: list[str]) -> str:
-    # ["bkt","api",PATH, ...]
     return args[2] if args[:2] == ["bkt", "api"] else ""
 
 

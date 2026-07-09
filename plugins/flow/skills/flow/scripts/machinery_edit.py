@@ -204,7 +204,6 @@ def apply_edit(
                 "occurrences": count,
                 "reason": "`old` is not a unique anchor; narrow it",
             }, 4
-        # count == 0
         if new and new in text:
             return {
                 "status": "already_applied",

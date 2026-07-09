@@ -140,13 +140,12 @@ def _run_id_started_at(ticket_dir: Path) -> tuple[str, str]:
 def aggregate_usage(workspace_root: Path, namespace: str) -> dict[str, dict[str, Any]]:
     """Lifetime per-entry rollup of recall-usage.jsonl, keyed by knowledge id.
 
-    Deliberately unwindowed: pruning judges an entry's whole service record,
-    not the last 14 days (contrast metric.compute_recall_hit_rate). `usage`
-    records bucket by `recalled_id`; `miss` records bucket by `missed_id` —
-    a missed entry got RE-LEARNED while unrecalled, evidence it is valuable,
-    so the prune lane reads miss_count as a keep signal. last_surfaced is the
-    lexicographic max ts (every writer emits ISO-Z, so string order is time
-    order). Missing file -> {}.
+    Deliberately unwindowed: pruning judges an entry's whole service record, not the last 14 days
+    (contrast metric.compute_recall_hit_rate). `usage` records bucket by `recalled_id`; `miss`
+    records bucket by `missed_id`: a missed entry got RE-LEARNED while unrecalled, evidence it is
+    valuable, so the prune lane reads miss_count as a keep signal. last_surfaced is the
+    lexicographic max ts (every writer emits ISO-Z, so string order is time order). Missing file ->
+    {}.
     """
     path = recall_usage_path(workspace_root, namespace)
     out: dict[str, dict[str, Any]] = {}

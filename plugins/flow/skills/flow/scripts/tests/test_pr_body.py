@@ -5,9 +5,9 @@ import pr_body
 
 
 def _realistic_raw_b(prose: str, *, covers=("flow-nr8c", "flow-pms6")) -> str:
-    """The `%b` an author leaves at PR time: the compose_commit skeleton body
-    (trailer + surviving `# body — fill in below this line` marker) plus appended
-    prose. Grounds the fixture in the real producer, not a hand-clean string."""
+    """The `%b` an author leaves at PR time: the compose_commit skeleton body (trailer + surviving
+    fill-in-below marker) plus appended prose. Grounds the fixture in the real producer, not a
+    hand-clean string."""
     full = compose_commit.compose(
         "flow-x1yq",
         "chore",
@@ -242,7 +242,8 @@ def test_enforce_cap_summary_lines_survive_all_tiers():
     for i in range(10):
         transcript = "\n".join(f"t{i}-{j}" for j in range(100))
         blocks.append(
-            f"<details>\n<summary>run {i}: 5 passed (2s)</summary>\n\n```\n{transcript}\n```\n\n</details>"
+            f"<details>\n<summary>run {i}: 5 passed (2s)</summary>\n\n"
+            f"```\n{transcript}\n```\n\n</details>"
         )
     body = "## Evidence\n\n" + "\n\n".join(blocks) + "\n"
     out = pr_body.enforce_cap(body, cap=1200)
@@ -286,7 +287,10 @@ def test_enforce_cap_scrub_fence_byte_identical_under_cap():
     # fence-preservation fixture: under cap enforce_cap is passthrough, so a fenced
     # transcript survives scrub(enforce_cap(...)) verbatim (scrub's fence passthrough).
     transcript = "```\ncmd — with an em dash\nline b\n```"
-    body = f"## Evidence\n\n<details>\n<summary>run: 3 passed (1s)</summary>\n\n{transcript}\n\n</details>\n"
+    body = (
+        "## Evidence\n\n<details>\n<summary>run: 3 passed (1s)</summary>\n\n"
+        f"{transcript}\n\n</details>\n"
+    )
     assert pr_body.enforce_cap(body) == body  # default cap, under -> identical
     assert transcript in pr_body.scrub(pr_body.enforce_cap(body))  # fenced content untouched
 

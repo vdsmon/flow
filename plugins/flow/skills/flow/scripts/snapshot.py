@@ -47,7 +47,7 @@ _STAGE_REGISTRY_NAME = "stage-registry.toml"
 
 
 def _skill_root_from_script() -> Path:
-    # __file__ = .../plugins/flow/skills/flow/scripts/snapshot.py
+    # this file lives at <skill root>/scripts/snapshot.py, two levels below the skill root
     return Path(__file__).resolve().parent.parent
 
 

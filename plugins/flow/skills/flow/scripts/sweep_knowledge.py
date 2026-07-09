@@ -14,13 +14,12 @@ idempotent (a record whose target is already dead is skipped), and refuses an
 unknown target id (the record errors; the batch continues; the run exits
 non-zero if any record errored).
 
-Consolidation lane (density, not just staleness): `cluster` deterministically
-groups live, same-type, sidecar-indexed entries into near-duplicate clusters by
-complete-linkage cosine (over the `memory_embed` index; read-only, never writes).
-A maintainer authors ONE canonical body per confirmed cluster into a manifest;
-`apply-cluster --manifest <file>` then collapses each cluster to a single live
-entry via a list-valued `memory_append --supersedes`, mirroring `apply`'s
-idempotency + unknown-id discipline.
+Consolidation lane (density, not only staleness): `cluster` deterministically groups live,
+same-type, sidecar-indexed entries into near-duplicate clusters by complete-linkage cosine (over the
+`memory_embed` index; read-only, never writes). A maintainer authors ONE canonical body per
+confirmed cluster into a manifest; `apply-cluster --manifest <file>` then collapses each cluster to
+a single live entry via a list-valued `memory_append --supersedes`, mirroring `apply`'s idempotency
++ unknown-id discipline.
 
 Exit codes:
   0 = ok.
@@ -217,14 +216,13 @@ def cluster(
 ) -> list[dict[str, Any]]:
     """Deterministic complete-linkage clustering of live, same-type, indexed entries.
 
-    Read-only, never writes. An entry without a sidecar vector never seeds or
-    joins a group; a missing/empty sidecar yields `[]`. Clusters WITHIN a type
-    only (`types` processed in the given order; never mixes e.g. DECISION with
-    FACT). Complete linkage: within one type, entries are walked in file order;
-    each unclustered entry seeds a group, then a later unclustered entry joins
-    ONLY if its cosine similarity is >= `threshold` against EVERY current member
-    (not just the seed) — this rejects an A~B, B~C, A!~C chain ever landing in one
-    group. Only groups of size >= 2 are emitted, sorted by `cluster_id`.
+    Read-only, never writes. An entry without a sidecar vector never seeds or joins a group; a
+    missing/empty sidecar yields `[]`. Clusters WITHIN a type only (`types` processed in the given
+    order; never mixes e.g. DECISION with FACT). Complete linkage: within one type, entries are
+    walked in file order; each unclustered entry seeds a group, then a later unclustered entry joins
+    ONLY if its cosine similarity is >= `threshold` against EVERY current member (not only the
+    seed); this rejects an A~B, B~C, A!~C chain ever landing in one group. Only groups of size >= 2
+    are emitted, sorted by `cluster_id`.
     """
     namespace = _memory_paths.resolve_namespace(workspace_root)
     _, indexed = memory_embed.load_index(workspace_root, namespace)
