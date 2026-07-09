@@ -1,7 +1,9 @@
-"""Contract tests for model_resolve.py: the work-phase model resolver.
+"""Contract tests for model_resolve.py: the per-stage model resolver.
 
-Disposition is ON BY DEFAULT: a full-lane run downshifts to `sonnet` unless the
-workspace overrides `[models] work_model` or opts out (work_model in OFF_VALUES).
+Disposition is ON BY DEFAULT: a full-lane run downshifts each routable stage
+(implement, e2e, code_review, review_loop) to `sonnet` unless the workspace pins a
+per-stage model, sets the deprecated `[models] work_model` fallback, or opts out
+(model in OFF_VALUES). A non-routable stage (e.g. `plan`) always inherits the session.
 "express"/"light" always skip; any read error fails open (prints nothing).
 """
 
@@ -11,23 +13,22 @@ from pathlib import Path
 
 import model_resolve
 
+ROUTABLE = ("implement", "e2e", "code_review", "review_loop")
+
 
 def _make_workspace(
     tmp_path: Path,
     *,
     lane: str | None = None,
-    work_model: str | None = None,
-    models_block: bool = False,
+    models_lines: list[str] | None = None,
     frontmatter: bool = True,
 ) -> Path:
     flow = tmp_path / ".flow"
     (flow / "tickets").mkdir(parents=True)
 
     lines = ["[tracker]", 'backend = "beads"', "", "[tracker.beads]", 'prefix = "test"']
-    if models_block:
-        lines += ["", "[models]"]
-        if work_model is not None:
-            lines.append(f'work_model = "{work_model}"')
+    if models_lines is not None:
+        lines += ["", "[models]", *models_lines]
     (flow / "workspace.toml").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     if frontmatter:
@@ -39,81 +40,114 @@ def _make_workspace(
     return tmp_path
 
 
-def test_default_on_lane_absent(tmp_path: Path) -> None:
-    # no [models] block at all -> the default is on -> sonnet.
-    ws = _make_workspace(tmp_path, lane=None, models_block=False)
-    assert model_resolve.resolve_work_model(ws, "test-1") == "sonnet"
+def _resolve(ws: Path, stage: str) -> str:
+    return model_resolve.resolve_stage_model(ws, "test-1", stage)
 
 
-def test_default_on_lane_full(tmp_path: Path) -> None:
-    ws = _make_workspace(tmp_path, lane="full", models_block=False)
-    assert model_resolve.resolve_work_model(ws, "test-1") == "sonnet"
+def test_default_on_all_routable_stages(tmp_path: Path) -> None:
+    # no [models] block -> the default is on -> every routable stage is sonnet.
+    ws = _make_workspace(tmp_path, models_lines=None)
+    for stage in ROUTABLE:
+        assert _resolve(ws, stage) == "sonnet", stage
+
+
+def test_non_routable_stage_inherits(tmp_path: Path) -> None:
+    # plan is not routable -> always empty (inherit the session), even with work_model set.
+    ws = _make_workspace(tmp_path, models_lines=['work_model = "opus"'])
+    assert _resolve(ws, "plan") == ""
+
+
+def test_lane_full_defaults(tmp_path: Path) -> None:
+    ws = _make_workspace(tmp_path, lane="full", models_lines=None)
+    assert _resolve(ws, "implement") == "sonnet"
 
 
 def test_empty_models_block_defaults(tmp_path: Path) -> None:
-    # [models] present but no work_model key -> still the default.
-    ws = _make_workspace(tmp_path, lane=None, models_block=True, work_model=None)
-    assert model_resolve.resolve_work_model(ws, "test-1") == "sonnet"
+    ws = _make_workspace(tmp_path, models_lines=[])
+    assert _resolve(ws, "e2e") == "sonnet"
 
 
-def test_explicit_sonnet(tmp_path: Path) -> None:
-    ws = _make_workspace(tmp_path, lane=None, models_block=True, work_model="sonnet")
-    assert model_resolve.resolve_work_model(ws, "test-1") == "sonnet"
+def test_work_model_fallback_applies_to_all_routable(tmp_path: Path) -> None:
+    ws = _make_workspace(tmp_path, models_lines=['work_model = "opus"'])
+    for stage in ROUTABLE:
+        assert _resolve(ws, stage) == "opus", stage
 
 
-def test_override_to_a_different_model(tmp_path: Path) -> None:
-    ws = _make_workspace(tmp_path, lane=None, models_block=True, work_model="opus")
-    assert model_resolve.resolve_work_model(ws, "test-1") == "opus"
+def test_per_stage_pin_wins_over_work_model(tmp_path: Path) -> None:
+    ws = _make_workspace(tmp_path, models_lines=['work_model = "opus"', 'e2e = "sonnet"'])
+    assert _resolve(ws, "implement") == "opus"  # falls back to work_model
+    assert _resolve(ws, "e2e") == "sonnet"  # per-stage override wins
 
 
-def test_opt_out_off(tmp_path: Path) -> None:
-    ws = _make_workspace(tmp_path, lane=None, models_block=True, work_model="off")
-    assert model_resolve.resolve_work_model(ws, "test-1") == ""
+def test_per_stage_pin_without_work_model(tmp_path: Path) -> None:
+    ws = _make_workspace(tmp_path, models_lines=['implement = "opus"'])
+    assert _resolve(ws, "implement") == "opus"  # explicit pin
+    assert _resolve(ws, "e2e") == "sonnet"  # unset stage keeps the built-in default
 
 
-def test_opt_out_none(tmp_path: Path) -> None:
-    ws = _make_workspace(tmp_path, lane=None, models_block=True, work_model="none")
-    assert model_resolve.resolve_work_model(ws, "test-1") == ""
+def test_per_stage_opt_out(tmp_path: Path) -> None:
+    # a per-stage OFF_VALUE opts that stage out; others keep the default.
+    ws = _make_workspace(tmp_path, models_lines=['e2e = "off"'])
+    assert _resolve(ws, "e2e") == ""
+    assert _resolve(ws, "implement") == "sonnet"
 
 
-def test_opt_out_empty_string(tmp_path: Path) -> None:
-    ws = _make_workspace(tmp_path, lane=None, models_block=True, work_model="")
-    assert model_resolve.resolve_work_model(ws, "test-1") == ""
+def test_per_stage_opt_out_beats_work_model(tmp_path: Path) -> None:
+    ws = _make_workspace(tmp_path, models_lines=['work_model = "opus"', 'e2e = "none"'])
+    assert _resolve(ws, "e2e") == ""
+    assert _resolve(ws, "implement") == "opus"
+
+
+def test_work_model_opt_out_disables_all_routable(tmp_path: Path) -> None:
+    ws = _make_workspace(tmp_path, models_lines=['work_model = "off"'])
+    for stage in ROUTABLE:
+        assert _resolve(ws, stage) == "", stage
 
 
 def test_lane_express_skips(tmp_path: Path) -> None:
-    ws = _make_workspace(tmp_path, lane="express", models_block=False)
-    assert model_resolve.resolve_work_model(ws, "test-1") == ""
+    ws = _make_workspace(tmp_path, lane="express", models_lines=None)
+    assert _resolve(ws, "implement") == ""
 
 
 def test_lane_light_skips(tmp_path: Path) -> None:
-    ws = _make_workspace(tmp_path, lane="light", models_block=False)
-    assert model_resolve.resolve_work_model(ws, "test-1") == ""
+    ws = _make_workspace(tmp_path, lane="light", models_lines=['work_model = "opus"'])
+    assert _resolve(ws, "e2e") == ""
 
 
 def test_missing_frontmatter_defaults(tmp_path: Path) -> None:
-    # No frontmatter file -> read() returns {} -> lane absent -> default sonnet.
-    ws = _make_workspace(tmp_path, models_block=False, frontmatter=False)
-    assert model_resolve.resolve_work_model(ws, "test-1") == "sonnet"
+    ws = _make_workspace(tmp_path, models_lines=None, frontmatter=False)
+    assert _resolve(ws, "implement") == "sonnet"
 
 
 def test_missing_workspace_toml_keeps_default(tmp_path: Path) -> None:
-    # No .flow/workspace.toml -> load raises -> the default (sonnet) still applies.
     tickets = tmp_path / ".flow" / "tickets"
     tickets.mkdir(parents=True)
     (tickets / "test-1.md").write_text('+++\nlane = "full"\n+++\n', encoding="utf-8")
-    assert model_resolve.resolve_work_model(tmp_path, "test-1") == "sonnet"
+    assert model_resolve.resolve_stage_model(tmp_path, "test-1", "implement") == "sonnet"
 
 
-def test_cli_prints_default(tmp_path: Path, capsys) -> None:
-    ws = _make_workspace(tmp_path, lane=None, models_block=False)
-    rc = model_resolve.cli_main(["--workspace-root", str(ws), "--ticket", "test-1"])
+def test_cli_prints_stage_model(tmp_path: Path, capsys) -> None:
+    ws = _make_workspace(tmp_path, models_lines=None)
+    rc = model_resolve.cli_main(
+        ["--workspace-root", str(ws), "--ticket", "test-1", "--stage", "e2e"]
+    )
     assert rc == 0
     assert capsys.readouterr().out.strip() == "sonnet"
 
 
 def test_cli_prints_nothing_when_opted_out(tmp_path: Path, capsys) -> None:
-    ws = _make_workspace(tmp_path, lane=None, models_block=True, work_model="off")
-    rc = model_resolve.cli_main(["--workspace-root", str(ws), "--ticket", "test-1"])
+    ws = _make_workspace(tmp_path, models_lines=['work_model = "off"'])
+    rc = model_resolve.cli_main(
+        ["--workspace-root", str(ws), "--ticket", "test-1", "--stage", "implement"]
+    )
+    assert rc == 0
+    assert capsys.readouterr().out == ""
+
+
+def test_cli_prints_nothing_for_non_routable_stage(tmp_path: Path, capsys) -> None:
+    ws = _make_workspace(tmp_path, models_lines=['work_model = "opus"'])
+    rc = model_resolve.cli_main(
+        ["--workspace-root", str(ws), "--ticket", "test-1", "--stage", "plan"]
+    )
     assert rc == 0
     assert capsys.readouterr().out == ""

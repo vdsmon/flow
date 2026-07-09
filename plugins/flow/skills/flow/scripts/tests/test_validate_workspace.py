@@ -517,6 +517,44 @@ def test_opt_out_work_model_inline_no_warn(tmp_path: Path) -> None:
     assert result.warnings == []
 
 
+def test_inline_e2e_with_per_stage_pin_warns(tmp_path: Path) -> None:
+    # a per-stage e2e pin + an inline e2e handler -> non-fatal warning (same logic as
+    # implement: an inline stage cannot be model-pinned).
+    stages = ["ticket", "plan", "implement", "e2e", "commit", "reflect"]
+    handlers = dict.fromkeys(stages, "inline")
+    handlers["implement"] = "subagent:general-purpose"  # avoid the implement warning
+    root = _make_workspace(tmp_path, backend="beads", stages=stages, handlers=handlers)
+    _append_forge(root, '[models]\ne2e = "sonnet"\n')
+    result, _ = vw.validate(root)
+    assert result.ok
+    assert any("models.e2e" in w and "inline" in w for w in result.warnings)
+
+
+def test_subagent_e2e_with_per_stage_pin_no_warn(tmp_path: Path) -> None:
+    stages = ["ticket", "plan", "implement", "e2e", "commit", "reflect"]
+    handlers = dict.fromkeys(stages, "inline")
+    handlers["implement"] = "subagent:general-purpose"
+    handlers["e2e"] = "subagent:general-purpose"
+    root = _make_workspace(tmp_path, backend="beads", stages=stages, handlers=handlers)
+    _append_forge(root, '[models]\ne2e = "sonnet"\n')
+    result, _ = vw.validate(root)
+    assert result.ok
+    assert result.warnings == []
+
+
+def test_inline_code_review_with_per_stage_pin_no_warn(tmp_path: Path) -> None:
+    # code_review is an inline parent that pins a subagent it spawns in its own prose, so
+    # its per-stage model IS honored even while the parent is inline -> it must NOT warn.
+    stages = ["ticket", "plan", "implement", "code_review", "commit", "reflect"]
+    handlers = dict.fromkeys(stages, "inline")
+    handlers["implement"] = "subagent:general-purpose"
+    root = _make_workspace(tmp_path, backend="beads", stages=stages, handlers=handlers)
+    _append_forge(root, '[models]\ncode_review = "opus"\n')
+    result, _ = vw.validate(root)
+    assert result.ok
+    assert result.warnings == []
+
+
 # ─── [memory] label_facets (optional; validate-if-present) ──────────────────
 
 

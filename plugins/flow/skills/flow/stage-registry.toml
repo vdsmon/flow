@@ -21,8 +21,9 @@
 #                                   (dispatch_stage.py); the dispatcher does NOT enforce them, a
 #                                   handler or pre-handler hook keys off a role string. Live readers:
 #                                   records_diff_baseline (implement pre-handler hook, SKILL.md) and
-#                                   work (the do-loop's model_resolve.py work-stage model pin,
-#                                   SKILL.md step d). reflect_anchor / ship_observer are declared on
+#                                   work (marks a routable stage: the do-loop's model_resolve.py
+#                                   --stage <name> per-stage model pin, SKILL.md step d — carried by
+#                                   implement + e2e). reflect_anchor / ship_observer are declared on
 #                                   the reflect stage but have no reader yet: reserved, round-tripped
 #                                   unread.
 #
@@ -64,8 +65,9 @@ required_fields = ["planned_files"]
 required = false
 required_when_compounding = false
 reference_doc = "references/stage-implement.md"
-# "work" marks this a code-writing stage: the do-loop consults model_resolve.py and
-# pins the subagent to [models] work_model on a full-lane run (opus plans, sonnet writes).
+# "work" marks this a routable stage: the do-loop consults model_resolve.py --stage
+# implement and pins the subagent to its [models] model on a full-lane run (opus plans,
+# sonnet writes by default).
 roles = ["records_diff_baseline", "work"]
 
 [[stage]]
@@ -89,7 +91,9 @@ required_fields = ["e2e_recipe"]
 required = false
 required_when_compounding = false
 reference_doc = "references/stage-e2e.md"
-roles = []
+# "work" marks this a routable stage: the do-loop consults model_resolve.py --stage e2e
+# and pins the subagent to its [models] model on a full-lane run (default: sonnet).
+roles = ["work"]
 
 [[stage]]
 name = "commit"

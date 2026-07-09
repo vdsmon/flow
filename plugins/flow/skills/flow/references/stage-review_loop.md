@@ -86,7 +86,7 @@ done
 
 ## 2. On CI failed — drive fixes (delegated, bounded)
 
-Do NOT invent inline edit logic. Delegate the fix to a subagent (the same way the `implement` stage uses `subagent:general-purpose`): give it the failing-check logs, have it apply the fix, commit with the existing commit machinery, and `git push`. Then re-arm the CI Monitor (step 1). This fix subagent is a code-writing (work) spawn, so pin it the same way the do-loop pins `implement`: `M=$(python3 ${CLAUDE_SKILL_DIR}/scripts/model_resolve.py --workspace-root . --ticket "$KEY")` and pass `model=$M` to the fix Agent when `$M` is non-empty (else omit — inherit the session).
+Do NOT invent inline edit logic. Delegate the fix to a subagent (the same way the `implement` stage uses `subagent:general-purpose`): give it the failing-check logs, have it apply the fix, commit with the existing commit machinery, and `git push`. Then re-arm the CI Monitor (step 1). This fix subagent is a code-writing (work) spawn, so pin it the same way the do-loop pins `implement`, passing this stage's name: `M=$(python3 ${CLAUDE_SKILL_DIR}/scripts/model_resolve.py --workspace-root . --ticket "$KEY" --stage review_loop)` and pass `model=$M` to the fix Agent when `$M` is non-empty (else omit — inherit the session).
 
 **Hard cap: 3 fix cycles total** across CI + review combined. If CI is still red after 3, set `STATUS=failed` and surface the last failing logs — do not loop forever.
 
