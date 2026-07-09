@@ -1,44 +1,41 @@
 """Decide the next action for the `evolve drain` loop (pure core + thin CLI).
 
-The drain loop reaps finished orphans, then asks this module: given the current
-`evolve_select` result plus the liveness of every in-flight run, should the loop
-LAUNCH the next batch, WAIT for a live run to settle, or is it DONE (nothing
-startable)? The loop itself (reap, fan out `claude --bg`, Monitor-wait) is prose in
-`references/verb-evolve.md` (§drain); this is the pure decision it consumes.
+The drain loop reaps finished orphans, then asks this module: given the current `evolve_select`
+result plus the liveness of every in-flight run, should the loop LAUNCH the next batch, WAIT for a
+live run to settle, or is it DONE (nothing startable)? The loop itself (reap, fan out `claude --bg`,
+Monitor-wait) is prose in `references/verb-evolve.md` (§drain); this is the pure decision it
+consumes.
 
-The in-flight set is derived from the actual OPEN evolve PRs (plus any ready bead
-that is in-flight), NOT from `evolve_select`'s `skipped_in_flight` alone: a run
-that occupies the open-PR cap may have left `bd ready` (its bead is claimed), so
-`skipped_in_flight` can be empty even while runs are in flight. Relying on it would
-make the loop quit the moment backpressure hits. Liveness over the open PRs is the
-authoritative picture.
+The in-flight set is derived from the actual OPEN evolve PRs (plus any ready bead that is
+in-flight), NOT from `evolve_select`'s `skipped_in_flight` alone: a run that occupies the open-PR
+cap may have left `bd ready` (its bead is claimed), so `skipped_in_flight` can be empty even while
+runs are in flight. Relying on it would make the loop quit the moment backpressure hits. Liveness
+over the open PRs is the authoritative picture.
 
-Termination: `action == "done"` iff `launch` is empty AND `launched_pending` is
-empty AND no in-flight run is BLOCKING. A run is blocking when its lease reads
-"live" (still working) OR "corrupt" (run.lock unparseable, ownership cannot be
-confirmed). The third blocking reason is a non-empty `launched_pending`: a run
-fanned out on a prior turn that has not yet registered a branch/lease/PR is still
-in the launch→init blind window (its run dir reads "absent", which would
-otherwise be non-blocking), so it blocks termination until it registers (cli_main
-drops it from launched_pending then) or its fleet entry ages past `STALE_AFTER_S`. Corrupt is treated
-live-equivalent because this decision gates a self-merge: an in-flight run we
-cannot confirm dead must never let the loop drain to done. A withheld hot bead
-(the in-run reviewer raised `held_guard`) leaves a ready PR + a branch but its
-session has ended, so its lease is non-blocking (expired/absent): it never reads
-as "wait," so the loop cannot spin on it. It terminates and reports it `parked`
-for the human. A still-running run reads "live" → the loop waits → it self-merges
-→ the next turn's reap clears the cap / `hot_inflight` → the next batch launches.
+Termination: `action == "done"` iff `launch` is empty AND `launched_pending` is empty AND no
+in-flight run is BLOCKING.
+A run is blocking when its lease reads "live" (still working) OR "corrupt" (run.lock unparseable,
+ownership cannot be confirmed). The third blocking reason is a non-empty `launched_pending`: a run
+fanned out on a prior turn that has not yet registered a branch/lease/PR is still in the launch→init
+blind window (its run dir reads "absent", which would otherwise be non-blocking), so it blocks
+termination until it registers (cli_main drops it from launched_pending then) or its fleet entry
+ages past `STALE_AFTER_S`. Corrupt is treated live-equivalent because this decision gates a
+self-merge: an in-flight run we cannot confirm dead must never let the loop drain to done. A
+withheld hot bead (the in-run reviewer raised `held_guard`) leaves a ready PR + a branch but its
+session has ended, so its lease is non-blocking (expired/absent): it never reads as "wait," so the
+loop cannot spin on it. It terminates and reports it `parked` for the human. A still-running run
+reads "live" → the loop waits → it self-merges → the next turn's reap clears the cap /
+`hot_inflight` → the next batch launches.
 A corrupt lease blocks until a human runs `recover takeover`.
 
-A fourth termination guard is the STRANDED gate: a `/flow <key> --auto` run that
-died PRE-PR (crash/zombie/OOM in plan or implement) strands its bead in_progress
-with a dirty orphan worktree but no lease and no PR, so every other channel reads
-it as gone and the loop would false-positive to "done". cli_main detects it (an
-in_progress evolve-scoped bead whose lease is non-live, that is not in
-`launched_pending`, and has NO PR open or merged) and feeds the key list to
-decide() as `stranded`; a non-empty `stranded` returns action "recover" (never
-"done"), and the loop reaps the dirty worktree + reopens the bead so the next turn
-relaunches it FRESH. See references/verb-evolve.md §drain (the recover branch).
+A fourth termination guard is the STRANDED gate: a `/flow <key> --auto` run that died PRE-PR
+(crash/zombie/OOM in plan or implement) strands its bead in_progress with a dirty orphan worktree
+but no lease and no PR, so every other channel reads it as gone and the loop would false-positive to
+"done". cli_main detects it (an in_progress evolve-scoped bead whose lease is non-live, that is not
+in `launched_pending`, and has NO PR open or merged) and feeds the key list to decide() as
+`stranded`; a non-empty `stranded` returns action "recover" (never "done"), and the loop reaps the
+dirty worktree + reopens the bead so the next turn relaunches it FRESH. See
+references/verb-evolve.md §drain (the recover branch).
 
 Exit codes: 0 ok; 2 = a `bd`/`git`/`gh` call failed; 4 = not a maintainer setup.
 """
@@ -172,7 +169,7 @@ def _inprogress_evolve_keys(runner: Runner, *, include_proposals: bool) -> set[s
 
 
 def _worktree_for(repo: Path, key: str) -> str | None:
-    """The `.flow/worktrees/feat-<key>-*` worktree dir for `key`, if present (legacy `feature-` too)."""
+    """Worktree dir `.flow/worktrees/feat-<key>-*` for `key`, if present (legacy `feature-` too)."""
     base = repo / ".flow" / "worktrees"
     for p in _WORKTREE_PREFIXES:
         for wt in sorted(glob.glob(str(base / f"{p}{key}*"))):
@@ -257,9 +254,6 @@ def cli_main(argv: list[str]) -> int:
         sel = select(ws, cap=cap, concurrency=concurrency, include_proposals=args.include_proposals)
         open_pr_keys, _live_runs, inflight = _reconcile_launched_pending(sel)
         live = liveness_map(repo, inflight)
-        # STRANDED pre-PR detection: an in_progress evolve bead whose run died before
-        # opening a PR is invisible to every other channel (the loop reads `done`).
-        # Gate the done-termination on it + emit a recover list for the prose loop.
         stranded = stranded_pre_pr(
             repo,
             _default_runner(repo),

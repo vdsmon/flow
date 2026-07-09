@@ -53,9 +53,9 @@ def test_make_tracker_jira_without_creds_raises_config_error(
 
 
 def test_make_tracker_beads_constructs_with_runner(monkeypatch: pytest.MonkeyPatch) -> None:
-    # Phase 6: the factory should pass through to BeadsAdapter, which preflights
-    # `bd --version`. With no live bd available it would raise; here we replace
-    # the default runner with one that reports a recent version.
+    # Phase 6: the factory should pass through to BeadsAdapter, which preflights `bd --version`.
+    # With no live bd available it would raise, so the default runner is replaced with one that
+    # reports a recent version.
     import subprocess
 
     import tracker_beads as tb

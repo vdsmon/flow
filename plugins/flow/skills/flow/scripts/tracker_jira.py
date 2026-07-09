@@ -62,7 +62,6 @@ _CANCELLED_RESOLUTIONS = ("won't do", "wont do", "cancelled", "canceled", "dupli
 _RE_WRONG_SOURCE = re.compile(r"(?i)\btransition\b.*\b(not valid|invalid|cannot be applied)\b")
 _RE_VALIDATOR = re.compile(r"(?i)\bvalidat(or|ion)\b.*\b(fail|error|reject)\b")
 
-# Closed-enum capabilities advertised by Jira Cloud. All true.
 _JIRA_CAPABILITIES: list[Capability] = [
     {"name": "comments_adf", "supported": True},
     {"name": "comments_markdown", "supported": False},
@@ -233,13 +232,15 @@ def _normalize_state(
             if hint in native_lc:
                 return (
                     "blocked",
-                    f"category=indeterminate + native={native_status!r} matched blocked hint {hint!r}",
+                    f"category=indeterminate + native={native_status!r} "
+                    f"matched blocked hint {hint!r}",
                 )
         for hint in _REVIEW_HINTS:
             if hint in native_lc:
                 return (
                     "in_review",
-                    f"category=indeterminate + native={native_status!r} matched review hint {hint!r}",
+                    f"category=indeterminate + native={native_status!r} "
+                    f"matched review hint {hint!r}",
                 )
         return (
             "in_progress",

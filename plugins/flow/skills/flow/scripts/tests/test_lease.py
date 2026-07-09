@@ -176,7 +176,7 @@ def test_force_does_not_bypass_live_foreign(tmp_path: Path) -> None:
 
 def test_acquire_mints_nonce_on_free_dir(tmp_path: Path) -> None:
     ls = _acquire(tmp_path, "run-1")
-    assert ls.session_nonce  # non-empty
+    assert ls.session_nonce
     on_disk = lease.read_lease(tmp_path)
     assert on_disk is not None
     assert on_disk.session_nonce == ls.session_nonce

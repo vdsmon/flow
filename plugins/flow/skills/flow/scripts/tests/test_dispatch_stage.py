@@ -229,9 +229,9 @@ def test_init_force_replaces_unrecoverable_state(
 def test_init_second_run_on_live_lease_is_blocked(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # flow-8i6l: a second /flow do reuses run_id from state.json but cannot
-    # present the live owner's nonce, so its init must be blocked (exit 1 +
-    # recover hint) rather than silently re-acquiring the live lease.
+    # flow-8i6l: a second /flow do reuses run_id from state.json but cannot present the live owner's
+    # nonce, so its init must be blocked (exit 1 + recover hint) rather than silently re-acquiring
+    # the live lease.
     _write_workspace(tmp_path, stages=["ticket", "plan"], compounding=False)
     _stub_git_head(monkeypatch)
     rc, first = ds.cmd_init(tmp_path, "FT-1")
@@ -538,7 +538,6 @@ def test_next_with_invalid_workspace_fails(tmp_path: Path, monkeypatch: pytest.M
     _write_workspace(tmp_path)
     _stub_git_head(monkeypatch)
     ds.cmd_init(tmp_path, "FT-1")
-    # Now corrupt the workspace.toml.
     (tmp_path / ".flow" / "workspace.toml").write_text("garbage", encoding="utf-8")
     rc, payload = ds.cmd_next(tmp_path, "FT-1")
     assert rc == 1

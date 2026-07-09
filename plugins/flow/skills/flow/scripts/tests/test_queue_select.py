@@ -120,9 +120,8 @@ def test_hot_label_defensively_never_launched():
 
 
 def test_inflight_evolve_bead_not_reported():
-    # queue-scoped report: an in-flight bead from ANOTHER queue is dropped
-    # entirely, not surfaced in skipped_in_flight (that would couple the
-    # queue drain's liveness wait to the evolve fleet)
+    # queue-scoped report: an in-flight bead from ANOTHER queue is dropped entirely; surfacing it in
+    # skipped_in_flight would couple the queue drain's liveness wait to the evolve fleet
     cands = [_cand("flow-ev", labels=["evolve"]), _cand("flow-a")]
     out = qs.partition(cands, {"flow-ev", "flow-a"}, 0, cap=10, concurrency=5)
     assert out["launch"] == []

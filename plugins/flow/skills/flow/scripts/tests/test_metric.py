@@ -763,7 +763,8 @@ def test_compute_counts_stamped_via_flow(tmp_path: Path) -> None:
 
 
 def test_classify_malformed_stamp_falls_back_not_attributed(tmp_path: Path) -> None:
-    """A stamp with an unparseable iso field falls back to the legacy join (no state -> not attributed)."""
+    """A stamp with an unparseable iso field falls back to the legacy join (no state -> not
+    attributed)."""
     _seed_workspace(tmp_path)
     _write_stamped_ship_event(
         tmp_path,

@@ -116,7 +116,6 @@ def _write_o_excl(path: Path, content: str) -> None:
         os.fsync(fd)
     finally:
         os.close(fd)
-    # fsync parent dir to make the rename visible.
     dir_fd = os.open(str(path.parent), os.O_RDONLY)
     try:
         os.fsync(dir_fd)

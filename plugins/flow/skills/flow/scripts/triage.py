@@ -35,10 +35,10 @@ from tracker_cli import _read_tracker_config, _WorkspaceConfigError
 # share this prefix, so we match on the stem and accept whatever follows.
 _DEFER_STEM = "flow --auto could not self-approve"
 
-# Anchored, case-sensitive match for a recorded decision stem. Tolerates an
-# optional `MAINTAINER ` prefix and a date/text run before the colon, so a
-# freeform `MAINTAINER DECISION <date>:` maintainer comment reads as decided
-# (flow-rvc); case-sensitive so lowercase prose "decision:" never matches.
+# Anchored, case-sensitive match for a recorded decision stem. Tolerates an optional `MAINTAINER `
+# prefix and a date/text run before the colon, so a freeform `MAINTAINER DECISION <date>:`
+# maintainer comment reads as decided (flow-rvc); case-sensitive so lowercase prose "decision:"
+# never matches.
 _DECISION_RE = re.compile(r"^(?:MAINTAINER\s+)?(?:TRIAGE-)?DECISION\b[^:\n]*:")
 
 # Guard set for hot-change classification (self-contained; not shared with

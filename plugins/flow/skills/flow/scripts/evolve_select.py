@@ -213,8 +213,8 @@ def select(
     # from launched_pending a turn early, re-opening the launch->init blind window
     # (flow-d4s). The reconciled lease|fleet read is for the IN-FLIGHT suppression set
     # only (don't re-launch / don't over-budget a fleet-live run); flow-8by2.3.
-    live_keys = _live_run_keys(repo)  # lease-only -> result["live_runs"]
-    fleet_keys = _fleet_live_keys(repo)  # lease | fleet (reconciled in-flight authority)
+    live_keys = _live_run_keys(repo)
+    fleet_keys = _fleet_live_keys(repo)
     launched_keys = fleet_keys - live_keys  # pre-lease fleet entries -> result["launched_pending"]
     inflight_pre = fleet_keys
     inflight_keys = {

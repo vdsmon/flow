@@ -19,7 +19,8 @@ def _write_workspace(root: Path, body: str) -> None:
 def _jira_workspace(root: Path, project_key: str = "FT") -> None:
     _write_workspace(
         root,
-        f'[tracker]\nbackend = "jira"\n\n[tracker.jira]\ncloud_id = "x"\nproject_key = "{project_key}"\n',
+        '[tracker]\nbackend = "jira"\n\n'
+        f'[tracker.jira]\ncloud_id = "x"\nproject_key = "{project_key}"\n',
     )
 
 

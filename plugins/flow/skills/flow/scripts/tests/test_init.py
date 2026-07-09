@@ -781,7 +781,7 @@ def test_resume_does_not_duplicate_checkpoint_line(tmp_path: Path) -> None:
 
     initmod.run_init(_jira_config(tmp_path), resume=True)
     lines = ckpt.read_text(encoding="utf-8").splitlines()
-    assert len(lines) == 1  # not duplicated
+    assert len(lines) == 1
 
 
 class _StatefulBdRunner:
@@ -870,7 +870,7 @@ def test_init_gitignore_idempotent_when_already_seeded(tmp_path: Path) -> None:
     gi_path.write_text("node_modules/\n.flow/*\n", encoding="utf-8")
     initmod.run_init(_jira_config(tmp_path))
     content = gi_path.read_text(encoding="utf-8")
-    assert content.count(".flow/*") == 1  # not re-appended
+    assert content.count(".flow/*") == 1
     assert "node_modules/" in content
 
 

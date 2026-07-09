@@ -15,7 +15,8 @@ def _seed_workspace(root: Path, namespace: str = "demo") -> None:
     flow = root / ".flow"
     flow.mkdir(parents=True, exist_ok=True)
     (flow / "workspace.toml").write_text(
-        f'[tracker]\nbackend = "jira"\n[tracker.jira]\ncloud_id = "x"\nproject_key = "FT"\n\n[memory]\nnamespace = "{namespace}"\n',
+        '[tracker]\nbackend = "jira"\n[tracker.jira]\ncloud_id = "x"\nproject_key = "FT"\n\n'
+        f'[memory]\nnamespace = "{namespace}"\n',
         encoding="utf-8",
     )
 
@@ -429,7 +430,6 @@ def test_cli_branch_filter_applied(tmp_path: Path, capsys: pytest.CaptureFixture
     rc = recall.cli_main(["fsync", "--branch", "main", "--workspace-root", str(tmp_path)])
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
-    # `main`-branch entry should come first due to x2 boost.
     assert payload[0]["id"] == "a" * 16
 
 

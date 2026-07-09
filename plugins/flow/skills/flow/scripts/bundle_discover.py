@@ -1,11 +1,11 @@
 """Bundle discovery: walks installed plugins for `.flow-bundle.toml` manifests.
 
-Library module (stdlib-only, no shebang, no PEP 723 inline deps). Imported by
-`init.py` and `validate-workspace.py`. Also runnable as a CLI for ad-hoc
-inspection / golden tests.
+Library module (stdlib-only, no shebang, no PEP 723 inline deps). Imported by `init.py` and
+`validate-workspace.py`. Also runnable as a CLI for ad-hoc inspection / golden tests.
 
 Schema (`schema_version = 1`):
 
+```
     schema_version = 1
 
     [bundle]
@@ -19,16 +19,17 @@ Schema (`schema_version = 1`):
     required_outputs = ["pr_url"]               # optional, list[str]
     side_effects = ["git push", "gh pr create"] # optional, list[str]
     stage_compatibility = ["create_pr"]         # optional, list[str]
+```
 
 Invariants:
 
-- Invalid UNRELATED manifest = warning (exit 0). One broken third-party plugin
-  must not brick `bare` init.
-- Invalid SELECTED manifest = error (exit 2). The caller passes `--select
-  <bundle-name>` to opt into strict mode for a specific bundle.
-- Duplicate-provider conflict (two valid manifests declare the same stage) is
-  surfaced in `duplicates`. NOT an error here; `validate-workspace.py` decides
-  whether the conflict matters given the workspace's chosen handlers.
+- Invalid UNRELATED manifest = warning (exit 0). One broken third-party plugin must not brick
+  `bare` init.
+- Invalid SELECTED manifest = error (exit 2). The caller passes `--select <bundle-name>` to opt
+  into strict mode for a specific bundle.
+- Duplicate-provider conflict (two valid manifests declare the same stage) is surfaced in
+  `duplicates`. NOT an error here; `validate-workspace.py` decides whether the conflict matters
+  given the workspace's chosen handlers.
 """
 
 from __future__ import annotations
@@ -354,7 +355,6 @@ def cli_main(argv: list[str]) -> int:
     sys.stdout.write(json.dumps(payload, indent=2, sort_keys=True))
     sys.stdout.write("\n")
 
-    # Strict mode for one bundle. Invalid SELECTED bundle = exit 2.
     if args.select and select_bundle(result, args.select) is None:
         for err in result.invalid:
             # Surface the most-likely culprit (path containing the selected name).

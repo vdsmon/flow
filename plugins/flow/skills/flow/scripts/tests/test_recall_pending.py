@@ -193,7 +193,6 @@ def test_stale_entry_moved_to_stale_file(tmp_path: Path) -> None:
     _append(tmp_path, hook_observed_at=_iso(_NOW - timedelta(hours=25)))
     promoted = _promote(tmp_path, _fake_runner(0))
     assert promoted == []
-    # not in pending anymore
     assert recall_pending.list_pending(tmp_path) == []
     stale_path = recall_pending.recall_pending_path(tmp_path).with_name(
         "recall-pending.jsonl.stale"

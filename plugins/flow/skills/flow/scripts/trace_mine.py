@@ -1,59 +1,51 @@
 """Read-only miner for a flow-dogfood run transcript (`~/.claude` session JSONL).
 
-The `extract` subcommand reads one finished transcript and emits a single
-structured-JSON object of per-stage events: tool errors, silent retries, drift
-markers, and stall gaps, bucketed by dispatch-stage boundaries (child-1 of
-flow-eia3). Pure extractor: it never clusters, never reads `friction.jsonl`,
-never files beads, never calls `claude agents --json`. Filesystem-scan only.
+The `extract` subcommand reads one finished transcript and emits a single structured-JSON object of
+per-stage events: tool errors, silent retries, drift markers, and stall gaps, bucketed by
+dispatch-stage boundaries (child-1 of flow-eia3). Pure extractor: it never clusters, never reads
+`friction.jsonl`, never files beads, never calls `claude agents --json`. Filesystem-scan only.
 
-The `cluster` subcommand (child-2, flow-zfpe) groups those extracted events into
-Self-Harness-style failure signatures — one `(stage, kind, primary-anchor)` group
-each, carrying a terminal cause (kind + representative body) and a reusable
-mechanism (stage + anchor) — and dedups them against the already-logged
-`flow_friction.py` entries, surfacing only the friction the in-flight logger
-MISSED. It resolves the friction log through `_memory_paths` (like
-`friction_recurrence`) and reuses that module's `anchors` model, so both sides of
-the dedup are anchored by the same function. Each surfaced signature carries a
-`dedup_key` the child-3 `flow_beads_create` seam partitions on `::`.
+The `cluster` subcommand (child-2, flow-zfpe) groups those extracted events into Self-Harness-style
+failure signatures, one `(stage, kind, primary-anchor)` group each, carrying a terminal cause (kind
++ representative body) and a reusable mechanism (stage + anchor), and dedups them against the
+already-logged `flow_friction.py` entries, surfacing only the friction the in-flight logger MISSED.
+It resolves the friction log through `_memory_paths` (like `friction_recurrence`) and reuses that
+module's `anchors` model, so both sides of the dedup are anchored by the same function. Each
+surfaced signature carries a `dedup_key` the child-3 `flow_beads_create` seam partitions on `::`.
 
-The `file` subcommand (child-3) takes cluster's surfaced signatures and files each
-as a deduped PROPOSAL bead through `flow_beads_create.create_bead`, labelled
-`["evolve", "proposal", "trace-mined"]`: `evolve` makes it a candidate in
-`bd ready -l evolve`; `proposal` makes `evolve_select.active()` exclude it from the
-launchable set, so it never auto-implements. The `dedup_key`'s `::` is stripped to
-a single `:` before filing, so only the exact `evid:` fingerprint net fires, never
-the fuzzy `evidfile:` same-file pass (`fingerprint()` collapses non-alphanumeric
+The `file` subcommand (child-3) takes cluster's surfaced signatures and files each as a deduped
+PROPOSAL bead through `flow_beads_create.create_bead`, labelled `["evolve", "proposal",
+"trace-mined"]`: `evolve` makes it a candidate in `bd ready -l evolve`; `proposal` makes
+`evolve_select.active()` exclude it from the launchable set, so it never auto-implements. The
+`dedup_key`'s `::` is stripped to a single `:` before filing, so only the exact `evid:` fingerprint
+net fires, never the fuzzy `evidfile:` same-file pass (`fingerprint()` collapses non-alphanumeric
 runs identically either way). Auto-dormant outside maintainer mode.
 
-The `runs` subcommand (child-4) enumerates this workspace's own recent finished
-transcripts (mtime-windowed by `--since-hours`, over `_accepted_project_dirs`)
-and resolves each to its distinct ticket set through the same
-`_line_descriptor`/`_descriptor_ticket` pair `extract`'s `_derive_window`
-consumes, emitting one `<transcript>\t<ticket>` line per distinct ticket so a
-scheduler can drive `extract` unattended. Pure read-only enumeration; ungated,
-since self-target is already enforced structurally by `_accepted_project_dirs`.
+The `runs` subcommand (child-4) enumerates this workspace's own recent finished transcripts
+(mtime-windowed by `--since-hours`, over `_accepted_project_dirs`) and resolves each to its distinct
+ticket set through the same `_line_descriptor`/`_descriptor_ticket` pair `extract`'s
+`_derive_window` consumes, emitting one `<transcript>\t<ticket>` line per distinct ticket so a
+scheduler can drive `extract` unattended. Pure read-only enumeration; ungated, since self-target is
+already enforced structurally by `_accepted_project_dirs`.
 
-Run-window scoping: a real session file spans many runs across days. `extract`
-requires a `--ticket` and clips output to that ticket's run window: from the
-run's `/flow` intent invocation (or, headless, the contiguous same-branch
-prefix) through the run's own last activity on its worktree branch (a branchless
-idle tail or a post-run slice on the bootstrap branch is dropped). A relaunched
-ticket scopes to its last run. Events on a foreign git branch inside the window
-are dropped. A transcript carrying no dispatch activity for `--ticket` exits 5
-rather than emitting unattributable events.
+Run-window scoping: a real session file spans many runs across days. `extract` requires a `--ticket`
+and clips output to that ticket's run window: from the run's `/flow` intent invocation (or,
+headless, the contiguous same-branch prefix) through the run's own last activity on its worktree
+branch (a branchless idle tail or a post-run slice on the bootstrap branch is dropped). A relaunched
+ticket scopes to its last run. Events on a foreign git branch inside the window are dropped. A
+transcript carrying no dispatch activity for `--ticket` exits 5 rather than emitting unattributable
+events.
 
-Stall gaps are suppressed when a long tool op spanned the gap or when the gap is
-bounded by session plumbing (a backgrounded run parked on CI emits only
-heartbeat lines); a genuine stall is bounded by model/tool activity.
+Stall gaps are suppressed when a long tool op spanned the gap or when the gap is bounded by session
+plumbing (a backgrounded run parked on CI emits only heartbeat lines); a genuine stall is bounded by
+model/tool activity.
 
-Self-target guard: a `--transcript` is accepted only under the project tree of
-the CLAIMED `--workspace-root` (`~/.claude/projects/<slug>/`, or a worktree
-sibling). That root is caller-controlled, so the guard blocks an accidental
-cross-project read, not a determined one.
+Self-target guard: a `--transcript` is accepted only under the project tree of the CLAIMED
+`--workspace-root` (`~/.claude/projects/<slug>/`, or a worktree sibling). That root is
+caller-controlled, so the guard blocks an accidental cross-project read, not a determined one.
 
-Known limitation: a dispatch descriptor re-emitted inside an `isMeta` text
-block (seen on resumed runs) is not parsed; only tool_result-carried
-descriptors bound stages.
+Known limitation: a dispatch descriptor re-emitted inside an `isMeta` text block (seen on resumed
+runs) is not parsed; only tool_result-carried descriptors bound stages.
 
 Exit codes (extract):
   0 = ok (including a valid eventless run -> events: []).
@@ -113,9 +105,6 @@ class _SelfTargetRejected(Exception):
 
 class _NoDispatchActivity(Exception):
     """No dispatch descriptor for the target ticket appears in the transcript."""
-
-
-# ─── lenient reader (transcripts are foreign; never rewritten) ──────────────
 
 
 # ─── self-target guard ───────────────────────────────────────────────────────
@@ -748,18 +737,16 @@ def _build_signature(
 def _already_logged(
     signature: dict[str, Any], friction: list[tuple[dict[str, Any], set[str]]]
 ) -> bool:
-    """A signature is already-logged (drop it) iff some friction entry shares its
-    run/ticket AND its stage AND at least one distinctive anchor.
+    """A signature is already-logged (drop it) iff some friction entry shares its run/ticket AND its
+    stage AND at least one distinctive anchor.
 
-    Deliberately kind-agnostic: it matches on stage + anchor overlap, not on a
-    friction-type <-> event-kind map (the coupling this producer avoids). The
-    cost is coarseness — a logged friction can suppress a genuinely-missed event
-    of a DIFFERENT kind that shares an incidental anchor in the same stage
-    (likeliest on a hot file such as dispatch_stage.py). Accepted for a
-    maintainer-gated proposal producer: child-3 re-dedups the filed beads, and an
-    anchorless event (a stall_gap, an anchorless silent_retry) never overlaps, so
-    it always surfaces — the friction class the in-flight logger misses by
-    construction.
+    Deliberately kind-agnostic: it matches on stage + anchor overlap, not on a friction-type <->
+    event-kind map (the coupling this producer avoids). The cost is coarseness: a logged friction
+    can suppress a genuinely-missed event of a DIFFERENT kind that shares an incidental anchor in
+    the same stage (likeliest on a hot file such as dispatch_stage.py). Accepted for a
+    maintainer-gated proposal producer: child-3 re-dedups the filed beads, and an anchorless event
+    (a stall_gap, an anchorless silent_retry) never overlaps, so it always surfaces (the friction
+    class the in-flight logger misses by construction).
     """
     sig_anchors = set(signature["anchors"])
     if not sig_anchors:
@@ -857,19 +844,17 @@ def file_signatures(
 ) -> dict[str, Any]:
     """File one deduped PROPOSAL bead per child-2 failure signature.
 
-    Dormant outside maintainer mode, checked BEFORE any per-signature work (a
-    normal user run touches nothing here). The `dedup_key`'s `::` is stripped to
-    a single `:` before it reaches `create_bead`: `fingerprint()` collapses both
-    forms identically, so the exact `evid:` net is unaffected, but the stripped
-    key has no `::` for `create_bead`'s `partition("::")` to find, so the fuzzy
-    `evidfile:` same-file pass never fires. That pass wrongly collapses distinct
-    signatures sharing an anchor (an anchorless stall_gap in two different
-    stages, or two different kinds on the same hot file).
+    Dormant outside maintainer mode, checked BEFORE any per-signature work (a normal user run
+    touches nothing here). The `dedup_key`'s `::` is stripped to a single `:` before it reaches
+    `create_bead`: `fingerprint()` collapses both forms identically, so the exact `evid:` net is
+    unaffected, but the stripped key has no `::` for `create_bead`'s `partition("::")` to find, so
+    the fuzzy `evidfile:` same-file pass never fires. That pass wrongly collapses distinct
+    signatures sharing an anchor (an anchorless stall_gap in two different stages, or two different
+    kinds on the same hot file).
 
-    Under-notification tradeoff (same as friction_escalate): the evid net
-    matches every status, so one bead per signature EVER — a signature
-    recurring after its bead closed routes to `deduped` silently, never a
-    fresh bead. The safe direction for a propose-only producer.
+    Under-notification tradeoff (same as friction_escalate): the evid net matches every status, so
+    one bead per signature EVER: a signature recurring after its bead closed routes to `deduped`
+    silently, never a fresh bead. The safe direction for a propose-only producer.
     """
     result: dict[str, Any] = {
         "maintainer": False,

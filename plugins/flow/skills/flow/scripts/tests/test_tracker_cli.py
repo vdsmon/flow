@@ -205,7 +205,6 @@ def test_transition_finds_by_normalized(tmp_path: Path, capsys: pytest.CaptureFi
         tracker_factory=_factory(tk),
     )
     assert rc == 0
-    # Two calls: list_transitions then transition.
     assert tk.calls[0][0] == "list_transitions"
     assert tk.calls[1] == ("transition", ("FT-1", "31", None), {})
 

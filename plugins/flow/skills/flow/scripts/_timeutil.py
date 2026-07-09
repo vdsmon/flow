@@ -1,8 +1,7 @@
 """Shared UTC ISO8601 timestamp parsing and formatting.
 
-recall_pending.py / lease.py / metric.py each grew a byte-near
-copy of the parser; this is the one copy. The format side (iso_z /
-utcnow_iso) is the matching emitter: second precision, trailing 'Z',
+recall_pending.py / lease.py / metric.py each grew a byte-near copy of the parser; this is the one
+copy. The format side (iso_z / utcnow_iso) is the matching emitter: second precision, trailing 'Z',
 round-trippable through parse_iso.
 """
 

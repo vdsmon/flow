@@ -872,7 +872,6 @@ def run_init(
     initialized = _marker_initialized(root)
     initializing = _marker_initializing(root)
 
-    # Pre-flight
     if initialized.exists() and not reconfigure:
         raise InitPreflightError(f"{initialized} exists; pass --reconfigure to re-initialize")
     if initializing.exists() and not resume and not reconfigure:
@@ -981,7 +980,6 @@ def _run_init_phases(
 
     _run_phase("validate_inputs", _phase_validate_inputs)
 
-    # Phase: bundle_compose
     def _phase_bundle_compose() -> dict[str, Any] | None:
         nonlocal discovery, handlers, warnings
         discovery, handlers, warnings = _discover_and_compose(
@@ -1001,14 +999,11 @@ def _run_init_phases(
             config, registry, pipeline_stages, root, existing_handlers
         )
 
-    # Phase: mkdirs
     def _phase_mkdirs() -> dict[str, Any] | None:
         (flow_dir / "runs").mkdir(parents=True, exist_ok=True)
         (flow_dir / namespace).mkdir(parents=True, exist_ok=True)
         (flow_dir / namespace / "ship-events").mkdir(parents=True, exist_ok=True)
         _write_skill_dir(root)
-        # Opt-in cross-harness entry point; default-off keeps a pure-CC init
-        # byte-identical (no AGENTS.md written). Gate lives in the helper.
         _ensure_agents_md(root, requested=config.agents_md)
         return None
 
@@ -1031,7 +1026,6 @@ def _run_init_phases(
 
     _run_phase("bd_init", _phase_bd_init)
 
-    # Phase: write_workspace_toml
     def _phase_write_workspace_toml() -> dict[str, Any] | None:
         for stage, value in handlers.items():
             if not _legal_handler_string(value):
@@ -1042,7 +1036,6 @@ def _run_init_phases(
 
     _run_phase("write_workspace_toml", _phase_write_workspace_toml)
 
-    # Phase: verify_postconditions
     def _phase_verify_postconditions() -> dict[str, Any] | None:
         _verify_workspace_toml(_workspace_toml_path(root), config.backend, pipeline_stages)
         if config.backend == "beads":
@@ -1051,7 +1044,6 @@ def _run_init_phases(
 
     _run_phase("verify_postconditions", _phase_verify_postconditions)
 
-    # Phase: append_checkpoint
     def _phase_append_checkpoint() -> dict[str, Any] | None:
         _append_checkpoint_manifest(config, namespace, init_run_id)
         return None
