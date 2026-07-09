@@ -36,7 +36,7 @@ That bias is acceptable for personal-mode flow; work-mode users opt in to `skill
    - Obvious bugs (off-by-one, null-deref, missing await, etc.).
    - Regressions in nearby tests not updated by implement stage.
    - Style violations against existing file conventions.
-   - Comment bloat: flag any comment that violates the code-comment bar in `references/stage-implement.md` Step 4 (self-document first; WHY-only plus the workaround / invariant / dense-expression tail; wrapped to the configured line length; no AI tells). That bar overrides local file precedent: a new comment that restates the code or narrates the diff is a violation even if it matches a comment already sitting in the file.
+   - Comment bloat: run `${CLAUDE_SKILL_DIR}/scripts/lint_comments.py --diff-base <started_at_sha>` over the reviewed files first (same sha as step 1's diff range) — each finding is at minimum a Minor auto-fix — then flag any comment that violates the code-comment bar in `references/stage-implement.md` Step 4 (self-document first; WHY-only plus the workaround / invariant / dense-expression tail; wrapped to the configured line length; no AI tells). That bar overrides local file precedent: a new comment that restates the code or narrates the diff is a violation even if it matches a comment already sitting in the file.
    - Security-sensitive patterns (eval, raw SQL, missing escape).
 
 3. **Classify each finding on two axes**, after the step-2 assessment:
