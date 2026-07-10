@@ -101,6 +101,15 @@ _FAILURE_KIND_EXIT: dict[str | None, int] = {
 _IN_PROGRESS_HINTS = ("in progress", "doing", "in development")
 
 
+# Statuses the raw `bd update --status` CLI accepts (bd's built-in enum).
+# The exit-3 hint may only ever suggest one of these.
+# beads synthesizes agnostic transitions for a subset (open->[in_progress, blocked, closed]).
+# The rest are raw-CLI-only.
+_BD_ACCEPTED_STATUSES: frozenset[str] = frozenset(
+    {"open", "in_progress", "blocked", "deferred", "closed", "pinned", "hooked"}
+)
+
+
 # ─── Subcommand dispatch ─────────────────────────────────────────────────────
 
 
@@ -154,9 +163,9 @@ def _cmd_transition(tracker_obj: Any, args: argparse.Namespace) -> int:
     selected_id = _select_transition_id(transitions, target)
     if selected_id is None:
         hint = ""
-        if type(tracker_obj).__name__ == "BeadsAdapter":
-            # beads synthesizes only open->[in_progress, blocked, closed]; other
-            # real bd statuses (deferred) are reachable only via the raw CLI
+        if type(tracker_obj).__name__ == "BeadsAdapter" and target in _BD_ACCEPTED_STATUSES:
+            # Skip the hint for a status bd rejects (e.g. the Jira-normalized
+            # in_review): suggesting it as a raw bd command would fail.
             hint = f" — for a status bd accepts, use: bd update {args.key} --status {target}"
         sys.stderr.write(
             f"tracker-cli transition: no transition to {args.to_state!r} available "

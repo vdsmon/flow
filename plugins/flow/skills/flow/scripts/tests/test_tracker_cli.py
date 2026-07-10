@@ -429,6 +429,32 @@ def test_transition_unavailable_on_beads_names_raw_bd_fallback(
     assert "bd update FT-1 --status deferred" in capsys.readouterr().err
 
 
+def test_transition_unavailable_on_beads_normalized_status_no_bd_hint(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # in_review is a Jira-normalized status, not a bd built-in.
+    # The exit-3 hint must not suggest `bd update --status in_review`.
+    _seed_workspace(tmp_path)
+
+    class BeadsAdapter(_FakeTracker):
+        pass
+
+    rc = tracker_cli.cli_main(
+        [
+            "--workspace-root",
+            str(tmp_path),
+            "transition",
+            "--key",
+            "FT-1",
+            "--to-state",
+            "in_review",
+        ],
+        tracker_factory=_factory(BeadsAdapter()),
+    )
+    assert rc == 3
+    assert "bd update" not in capsys.readouterr().err
+
+
 def test_transition_unavailable_non_beads_has_no_bd_hint(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
