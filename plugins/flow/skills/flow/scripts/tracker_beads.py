@@ -546,6 +546,12 @@ class BeadsAdapter:
         close_reason = raw.get("close_reason")
         if close_reason is None:
             close_reason = raw.get("closure_reason")
+        # A UI squash merge carries no key trailer, so the by-key grep above misses it. Recover via
+        # the `(#N)` PR number named in close_reason.
+        if commit_sha is None:
+            pr_number = self._pr_number_from_reason(close_reason)
+            if pr_number is not None:
+                commit_sha = self._git_log_first_commit(f"(#{pr_number})", ref)
         evidence: dict[str, Any] = {
             "tracker": "beads",
             "tracker_status": status,
@@ -692,6 +698,15 @@ class BeadsAdapter:
             cwd=self._workspace_root,
             check=False,
         )
+
+    @staticmethod
+    def _pr_number_from_reason(reason: str | None) -> str | None:
+        """PR number embedded in a bd close_reason (`Merged in PR#445 (...)`), or None. First
+        `#<digits>` wins."""
+        if not reason:
+            return None
+        m = re.search(r"#(\d+)", reason)
+        return m.group(1) if m else None
 
     def _git_log_first_commit(self, key: str, ref: str = "HEAD") -> str | None:
         """First commit reachable from `ref` whose message names `key` as a

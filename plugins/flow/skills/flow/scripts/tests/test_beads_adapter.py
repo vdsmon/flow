@@ -593,6 +593,7 @@ def test_is_shipped_indeterminate_when_closed_unmerged() -> None:
             _symref_ok(),
             _cp(),  # git fetch
             _cp(stdout=""),  # key not present on the default branch
+            _cp(stdout=""),  # second join for (#259) also misses (PR closed unmerged)
         ]
     )
     result = adapter.is_shipped("bd-a1b2")
@@ -680,6 +681,109 @@ def test_is_shipped_default_ref_falls_back_when_symref_fails() -> None:
     assert result["state"] == "not_yet_observed"
     log_calls = [args for args, _ in runner.calls if args[:2] == ["git", "log"]]
     assert log_calls[0][2] == "origin/main"
+
+
+def test_is_shipped_recovers_merge_sha_from_ui_squash() -> None:
+    # A GitHub UI squash merge writes `fix: ... (#445)` with no key trailer, so the by-key grep
+    # misses. The second join recovers the sha via the PR number named in close_reason.
+    adapter, _ = _build_adapter(
+        [
+            _cp(
+                stdout=json.dumps(
+                    _issue_json(
+                        status="closed",
+                        closed_at="2026-07-01T00:00:00Z",
+                        close_reason="Merged in PR#445 (flatten thing)",
+                    )
+                )
+            ),
+            _symref_ok(),
+            _cp(),  # git fetch
+            _cp(stdout=""),  # by-key grep misses the UI squash
+            _git_log_record("ddc3b3c9", "fix: flatten thing (#445)"),
+        ]
+    )
+    result = adapter.is_shipped("bd-a1b2")
+    assert result["state"] == "not_yet_observed"
+    assert result["source"] == "live_backend_query"
+    assert result["evidence"] is not None
+    assert result["evidence"]["commit_sha"] == "ddc3b3c9"
+
+
+def test_is_shipped_second_join_uses_paren_form() -> None:
+    adapter, runner = _build_adapter(
+        [
+            _cp(
+                stdout=json.dumps(
+                    _issue_json(status="closed", close_reason="Merged in PR#445 (flatten thing)")
+                )
+            ),
+            _symref_ok(),
+            _cp(),  # git fetch
+            _cp(stdout=""),  # by-key grep misses
+            _git_log_record("ddc3b3c9", "fix: flatten thing (#445)"),
+        ]
+    )
+    adapter.is_shipped("bd-a1b2")
+    log_calls = [args for args, _ in runner.calls if args[:2] == ["git", "log"]]
+    assert len(log_calls) == 2
+    grep_arg = next(a for a in log_calls[1] if a.startswith("--grep="))
+    assert grep_arg == "--grep=(#445)"
+
+
+def test_is_shipped_indeterminate_when_both_joins_miss() -> None:
+    adapter, _ = _build_adapter(
+        [
+            _cp(
+                stdout=json.dumps(
+                    _issue_json(status="closed", close_reason="Merged in PR#445 (flatten thing)")
+                )
+            ),
+            _symref_ok(),
+            _cp(),  # git fetch
+            _cp(stdout=""),  # by-key grep misses
+            _cp(stdout=""),  # (#445) grep also misses
+        ]
+    )
+    result = adapter.is_shipped("bd-a1b2")
+    assert result["state"] == "indeterminate"
+    assert result["evidence"] is not None
+    assert result["evidence"]["commit_sha"] is None
+
+
+def test_is_shipped_no_second_join_without_pr_number() -> None:
+    adapter, runner = _build_adapter(
+        [
+            _cp(stdout=json.dumps(_issue_json(status="closed", close_reason="fixed"))),
+            _symref_ok(),
+            _cp(),  # git fetch
+            _cp(stdout=""),  # by-key grep misses; no `#N` in close_reason to recover from
+        ]
+    )
+    result = adapter.is_shipped("bd-a1b2")
+    assert result["state"] == "indeterminate"
+    log_calls = [args for args, _ in runner.calls if args[:2] == ["git", "log"]]
+    assert len(log_calls) == 1
+
+
+def test_is_shipped_paren_form_rejects_superstring_pr() -> None:
+    # close_reason names PR #44, but only a `(#445)` commit exists. The paren form's closing `)` is
+    # a boundary, so `(#44)` does not match `(#445)`.
+    adapter, _ = _build_adapter(
+        [
+            _cp(
+                stdout=json.dumps(_issue_json(status="closed", close_reason="superseded by PR #44"))
+            ),
+            _symref_ok(),
+            _cp(),  # git fetch
+            _cp(stdout=""),  # by-key grep misses
+            _git_log_record("deadbeef", "fix: thing (#445)"),
+        ]
+    )
+    result = adapter.is_shipped("bd-a1b2")
+    assert result["state"] == "indeterminate"
+    assert result["evidence"] is not None
+    assert result["evidence"]["commit_sha"] is None
 
 
 def test_is_shipped_handles_bd_show_failure() -> None:
