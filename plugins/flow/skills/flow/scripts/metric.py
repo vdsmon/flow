@@ -690,15 +690,58 @@ def compute_recall_hit_rate(
 
 # ─── Fix efficacy ────────────────────────────────────────────────────────────
 
+_Anchored = tuple[dict[str, Any], set[str]]
+
+
+def _grounded_tuples(
+    friction_anchored: list[_Anchored], claimed_anchors: set[str], fix_ts: str
+) -> set[tuple[str, str, str]]:
+    """(stage, type, anchor) triples of PRE-fix friction (ts <= fix_ts) sharing a claimed anchor;
+    the classes a recurrence must match. stage/type via .get(..., "") per structural_classes."""
+    tuples: set[tuple[str, str, str]] = set()
+    for f, fa in friction_anchored:
+        f_ts = f.get("ts")
+        shared = fa & claimed_anchors
+        if not (isinstance(f_ts, str) and f_ts and f_ts <= fix_ts) or not shared:
+            continue
+        stage, type_ = f.get("stage", ""), f.get("type", "")
+        tuples |= {(stage, type_, a) for a in shared}
+    return tuples
+
+
+def _post_fix_recurrences(
+    friction_anchored: list[_Anchored], claimed_tuples: set[tuple[str, str, str]], fix_ts: str
+) -> list[dict[str, Any]]:
+    """Friction entries strictly after fix_ts whose own (stage, type, anchor) triple is a claimed
+    tuple. ts == fix_ts grounds the class but never counts as a post-fix recurrence."""
+    recurring: list[dict[str, Any]] = []
+    for f, fa in friction_anchored:
+        f_ts = f.get("ts")
+        if not (isinstance(f_ts, str) and f_ts > fix_ts):
+            continue
+        stage, type_ = f.get("stage", ""), f.get("type", "")
+        if any((stage, type_, a) in claimed_tuples for a in fa):
+            recurring.append(f)
+    return recurring
+
 
 def compute_fix_efficacy(workspace_root: Path, namespace: str) -> dict[str, Any]:
-    """Per closed MACHINERY-fix bead, did the friction class it claimed to fix recur?
+    """Per closed MACHINERY-fix bead, did the (stage, type, anchor) class it claimed to fix recur?
 
-    Mirrors friction_recurrence.analyze()'s read and distinctive-anchor selection,
-    then joins per BEAD (`ticket`) instead of per anchor class: analyze()'s
-    class-level `earliest_fix_ts` would smear one bead's recurrence across every
-    other bead sharing that anchor. Lifetime metric (no time window); "closed" is
-    read as "a MACHINERY entry exists for this ticket", not a live tracker check.
+    Distinctive-anchor SELECTION mirrors friction_recurrence.analyze() exactly (same entry_anchors +
+    document_frequencies + distinctive_anchors, with machinery-claimed anchors ceiling-exempt).
+    The per-BEAD join is structural: claimed_tuples are the (stage, type, anchor) triples of PRE-fix
+    friction (ts <= fix_ts) sharing a claimed anchor, and a later friction entry (ts strictly >
+    fix_ts) recurs when one of its own (stage, type, anchor) triples is in claimed_tuples. A
+    recurrence therefore requires a pre-fix occurrence of the class; a bead whose claimed anchors
+    were never seen in pre-fix friction is unmeasurable (reason no-pre-fix-occurrence), joining the
+    no-distinctive-anchor and no-fix-ts reasons in the single unmeasurable totals bucket.
+
+    This supersedes the any-anchor join of DECISION 8be0001dc55357f2, whose token co-occurrence
+    drove a noise-inflated 0.63 headline against the tuple join's 0.37. analyze()'s
+    signature/structural classes are unchanged; the two paths share SELECTION and diverge only on
+    the JOIN. Lifetime metric (no time window); "closed" is read as "a MACHINERY entry exists for
+    this ticket", not a live tracker check.
     """
     fpath = _memory_paths.friction_path(workspace_root, namespace)
     fsidecar = fpath.with_name(f"{fpath.name}.quarantine.{ts_token()}")
@@ -740,17 +783,28 @@ def compute_fix_efficacy(workspace_root: Path, namespace: str) -> dict[str, Any]
 
         fix_ts_values = [m["ts"] for m, _ in entries if isinstance(m.get("ts"), str) and m["ts"]]
         fix_ts = min(fix_ts_values) if fix_ts_values else None
-        # an empty/missing fix_ts must never forward-join: `ts > None` raises, and
-        # `ts > ""` would be true for every friction entry (false positives).
-        measurable = bool(claimed_anchors) and fix_ts is not None
 
-        recurring: list[dict[str, Any]] = []
-        if measurable:
-            for f, fa in friction_anchored:
-                f_ts = f.get("ts")
-                if isinstance(f_ts, str) and f_ts > fix_ts and (fa & claimed_anchors):
-                    recurring.append(f)
+        # An empty/missing fix_ts cannot anchor a forward join (`ts > None` raises, `ts > ""` flags
+        # every friction entry as post-fix).
+        claimed_tuples: set[tuple[str, str, str]] = set()
+        if fix_ts is not None and claimed_anchors:
+            claimed_tuples = _grounded_tuples(friction_anchored, claimed_anchors, fix_ts)
 
+        if not claimed_anchors:
+            unmeasurable_reason: str | None = "no-distinctive-anchor"
+        elif fix_ts is None:
+            unmeasurable_reason = "no-fix-ts"
+        elif not claimed_tuples:
+            unmeasurable_reason = "no-pre-fix-occurrence"
+        else:
+            unmeasurable_reason = None
+        measurable = unmeasurable_reason is None
+
+        recurring = (
+            _post_fix_recurrences(friction_anchored, claimed_tuples, fix_ts)
+            if measurable and fix_ts is not None
+            else []
+        )
         recurrences = friction_recurrence.recurrence_dicts(recurring)
         fix_shas = sorted(
             {
@@ -764,8 +818,10 @@ def compute_fix_efficacy(workspace_root: Path, namespace: str) -> dict[str, Any]
                 "ticket": ticket,
                 "verdict": "recurred" if recurring else "clean",
                 "measurable": measurable,
+                "unmeasurable_reason": unmeasurable_reason,
                 "fix_ts": fix_ts,
                 "claimed_anchors": sorted(claimed_anchors),
+                "claimed_tuples": [list(t) for t in sorted(claimed_tuples)],
                 "post_fix_count": len(recurring),
                 "recurrence_run_ids": sorted({r["run_id"] for r in recurrences}),
                 "stages": sorted({r["stage"] for r in recurrences}),
@@ -1703,8 +1759,9 @@ def _render_fix_efficacy_table(result: dict[str, Any]) -> str:
     lines.extend(
         f"  {bead['ticket']:<16} {bead['verdict']:<9} "
         f"post_fix_count={bead['post_fix_count']} "
-        f"claimed_anchors={bead['claimed_anchors']} "
+        f"claimed_tuples={bead['claimed_tuples']} "
         f"fix_shas={bead['fix_shas']}"
+        + ("" if bead["measurable"] else f" unmeasurable={bead['unmeasurable_reason']}")
         for bead in result["beads"]
     )
     return "\n".join(lines) + "\n"
