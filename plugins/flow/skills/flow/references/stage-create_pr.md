@@ -84,6 +84,8 @@ mise run test   # scripts + hooks green
 
    Skip silently if the skill is absent; if it errors, log one line and proceed (a polish hiccup never fails the stage). Same mandatory-when-present rule flow applies to authored code comments.
 
+   **Do not end the turn on the rewrite — continue the stage.** `create_pr` is an INLINE handler running in the orchestrator's main conversation, so the humanize Skill executes there and the orchestrator's reply IS the Final rewrite, which by default ends the turn. Do NOT stop there: take the Final rewrite and CONTINUE in the SAME reply — emit step 3's `pr_body.md` heredoc, run step 4's `create_pr.py`, capture step 5's `.out`, and issue the do-loop `advance`. Otherwise the do-loop stalls until the user pokes (witnessed twice: flow-gfz5, flow-qdal; friction `8f22583e41ee443fb6eb104b32bceece`). This is the primary instance of the general inline-skill turn-continuation rule in `references/verb-do.md`.
+
 3. **Write the body worktree-safely.** The orchestrator's own `Write` to a worktree path is rejected in bg mode, so emit the body via a quoted heredoc (the pattern in `references/verb-do.md`) to `$TICKET_DIR/stages/pr_body.md`:
    ```bash
    cat > "$TICKET_DIR/stages/pr_body.md" <<'FLOW_PR_BODY_9f3a'

@@ -42,7 +42,7 @@ Assignee, status, and labels are NOT asked:
 
 ## Step 3: Humanize the description (before create)
 
-IF the `humanize` skill is present in this session, run the description through it now and use the rewritten text. This MUST happen before create: `tracker_cli create` wraps the body as a Content payload that is md→ADF-coerced at the Jira seam (flow-4op4), so a post-create humanize pass would be too late. Skip silently if the skill is not present.
+IF the `humanize` skill is present in this session, run the description through it now and use the rewritten text. This MUST happen before create: `tracker_cli create` wraps the body as a Content payload that is md→ADF-coerced at the Jira seam (flow-4op4), so a post-create humanize pass would be too late. Skip silently if the skill is not present. Because `new` is inline/orchestrator-run, don't end the turn on the rewrite: carry the rewritten text straight into the Step 4 preview in the same reply (the create itself still waits behind that confirm gate); see the inline-skill turn-continuation rule in `references/verb-do.md`.
 
 ## Step 4: Preview and confirm (the single correction gate)
 
