@@ -39,6 +39,26 @@ That bias is acceptable for personal-mode flow; work-mode users opt in to `skill
    - Comment bloat: run `${CLAUDE_SKILL_DIR}/scripts/lint_comments.py --diff-base <started_at_sha>` over the reviewed files first (same sha as step 1's diff range) — each finding is at minimum a Minor auto-fix — then flag any comment that violates the code-comment bar in `references/stage-implement.md` Step 4 (self-document first; WHY-only plus the workaround / invariant / dense-expression tail; wrapped to the configured line length; no AI tells). That bar overrides local file precedent: a new comment that restates the code or narrates the diff is a violation even if it matches a comment already sitting in the file.
    - Security-sensitive patterns (eval, raw SQL, missing escape).
 
+   **Fowler smell baseline (always carried).** This baseline of high-signal refactoring smells rides even when the repo documents no standards; each smell reads what-it-is then how-to-fix, matched against the diff only.
+   - possible Mysterious Name — a name that hides intent; rename to reveal it.
+   - possible Duplicated Code — the same structure in two-plus spots; extract a shared function or pull it up.
+   - possible Feature Envy — a function using another module's data more than its own; move the function to the data (or extract, then move).
+   - possible Data Clumps — the same group of fields or params always travelling together; extract a class or introduce a parameter object.
+   - possible Primitive Obsession — a bare primitive standing in for a domain concept; replace it with a small type or value object.
+   - possible Repeated Switches — the same conditional on a type code in several places; replace the conditional with polymorphism.
+   - possible Shotgun Surgery — one conceptual change forcing many scattered edits; move or combine so it has a single home.
+   - possible Divergent Change — one module edited for many unrelated reasons; split it along its change axes.
+   - possible Speculative Generality — a hook, param, or abstraction for a need that is not here; inline and remove it.
+   - possible Message Chains — long a.b().c().d() navigation; hide the delegate, or extract a function.
+   - possible Middle Man — a unit that only forwards to a delegate; remove it and call the delegate directly.
+   - possible Refused Bequest — a subclass ignoring most of what it inherits; push members down, or replace inheritance with delegation.
+
+   Two binding rules govern the baseline:
+   1. **The repo overrides.** A documented repo standard always wins. Where the repo's own conventions (CLAUDE.md, a style doc, an established in-file pattern) endorse a shape the baseline would flag, suppress the smell; the repo already made that call. flow's own CLAUDE.md documents structural choices the generic baseline would misread: the flat `scripts/` dir reads as Divergent Change or a rejected src-layout, `_libs` forwarding as Middle Man, the deliberate non-reorganization as either. A smell that contradicts a documented repo invariant is suppressed, not filed.
+   2. **Always a judgement call.** Every entry is a labelled heuristic surfaced as `possible <smell>`, never a hard violation, and anything tooling already enforces (ruff, ty) is skipped.
+
+   A smell is a judgement call, so it is Minor by default (rarely Major) and never Critical (it never touches the step-6 gate); its owner is normally ask-user or no-op, and auto-fix only in the trivially confident, `planned_files`-confined case (a pure rename), never an autonomous refactor from this same biased context.
+
 3. **Classify each finding on two axes**, after the step-2 assessment:
    - **Severity** (unchanged) — **Critical** blocks the stage; **Major** should fix but not blocking; **Minor** nitpick / style.
    - **Decision owner** — who disposes of the finding:
