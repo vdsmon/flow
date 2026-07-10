@@ -121,7 +121,7 @@ def _run(tmp: Path, main: Path, **kw):
         ticket="FT-1",
         plan_from=_plan_file(tmp),
         base="main",
-        branch="feat/FT-1-thing",
+        branch=kw.pop("branch", "feat/FT-1-thing"),
         main_root=main,
         worktree_override=str(wt),
         runner=kw.pop("runner", _fake_runner()),
@@ -137,6 +137,22 @@ def test_is_ticket_branch_accepts_both_prefixes() -> None:
     assert fw._is_ticket_branch("feat/FT-1-some-slug", "FT-1")
     assert fw._is_ticket_branch("feature/FT-1-some-slug", "FT-1")  # legacy
     assert not fw._is_ticket_branch("feat/FT-10-other", "FT-1")  # no prefix-bleed
+
+
+def test_bootstrap_refuses_non_feat_branch(tmp_path: Path) -> None:
+    # flow-t0vv: a fix/<key> branch minted a worktree invisible to reap/drain;
+    # the contract is enforced at the one mint site instead of widening parsers.
+    main = _main_checkout(tmp_path)
+    with pytest.raises(fw._ConfigError, match="feat/<ticket>-<slug> contract"):
+        _run(tmp_path, main, branch="fix/FT-1-thing")
+    assert not (tmp_path / "wt").exists()
+
+
+def test_bootstrap_refuses_other_tickets_feat_branch(tmp_path: Path) -> None:
+    main = _main_checkout(tmp_path)
+    with pytest.raises(fw._ConfigError, match="feat/<ticket>-<slug> contract"):
+        _run(tmp_path, main, branch="feat/FT-2-thing")
+    assert not (tmp_path / "wt").exists()
 
 
 def test_seeds_plan_completed_with_output_path(tmp_path: Path) -> None:
@@ -1041,11 +1057,13 @@ def test_parse_worktree_list_porcelain() -> None:
     ]
 
 
-def test_worktree_path_derives_under_dot_flow_pool(tmp_path: Path) -> None:
+def test_worktree_path_derives_under_claude_pool(tmp_path: Path) -> None:
+    # flow-gh1u: minted inside .claude/worktrees so CC >= 2.1.206's unattended
+    # EnterWorktree confirm never fires.
     main = tmp_path / "repo"
     main.mkdir()
     assert fw._worktree_path(main, "feat/FT-1-x", None) == (
-        main.resolve() / ".flow" / "worktrees" / "feat-FT-1-x"
+        main.resolve() / ".claude" / "worktrees" / "feat-FT-1-x"
     )
 
 
@@ -2368,7 +2386,7 @@ def test_concurrent_bootstraps_exactly_one_wins(tmp_path: Path) -> None:
     p1.join(timeout=60)
     p2.join(timeout=60)
     assert sorted([p1.exitcode, p2.exitcode]) == [0, 4]
-    pool = main.resolve() / ".flow" / "worktrees"
+    pool = main.resolve() / ".claude" / "worktrees"
     made = [d for d in (pool / "feat-FT-1-a", pool / "feat-FT-1-b") if d.exists()]
     assert len(made) == 1
 
@@ -2433,7 +2451,7 @@ def test_reseed_when_externally_removed(tmp_path: Path) -> None:
     )
     assert result["reseeded"] is True
     wt = Path(result["worktree"])
-    assert wt == main.resolve() / ".flow" / "worktrees" / "feat-FT-1-thing"
+    assert wt == main.resolve() / ".claude" / "worktrees" / "feat-FT-1-thing"
     assert wt.exists()
     # fetched the existing remote branch, then checked it out WITHOUT -b
     assert ["git", "fetch", "origin", "feat/FT-1-thing"] in calls

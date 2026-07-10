@@ -50,8 +50,8 @@ classifier fails safe toward NOT stopping):
     this replaces an unreliable proxy with direct evidence, not an erosion of the
     fail-safe.
   - lease (PRIMARY guard): resolve the worktree run dir for `<key>`
-    (`<repo>/.flow/worktrees/feat-<key>-<slug>/.flow/runs/<key>/`, the pool glob
-    reap/drain use) and call `lease.classify(run_dir, now)`; `live` or `corrupt`
+    (`<repo>/<base>/feat-<key>-<slug>/.flow/runs/<key>/` across both pool bases,
+    the same glob reap/drain use) and call `lease.classify(run_dir, now)`; `live` or `corrupt`
     → skip. This is the same mechanism reap uses to skip a mid-reflect session, so
     the catastrophic kill-mid-reflect failure is inherited-guarded. An ABSENT run
     dir (the worktree was already reaped, the COMMON post-reap cleanup case) reads

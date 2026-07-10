@@ -325,10 +325,20 @@ def _e2e_enabled(main_root: Path) -> bool:
 
 
 def _worktree_path(main_root: Path, branch: str, override: str | None) -> Path:
+    """Mint the worktree path inside `.claude/worktrees/` (flow-gh1u).
+
+    Claude Code >= 2.1.206 asks an interactive confirmation before EnterWorktree
+    enters any worktree OUTSIDE `<repo>/.claude/worktrees/`, and the confirmation
+    is not permission-mediated (no allow rule or headless bypass exists), so an
+    unattended run seeded anywhere else blocks forever at the spec->do
+    transition. Read sites glob both this base and the legacy
+    `.flow/worktrees/` (`_evolve_common.WORKTREE_BASES`) so pre-relocation
+    worktrees stay discoverable until reaped.
+    """
     if override:
         return Path(override).expanduser().resolve()
     main = main_root.resolve()
-    return main / ".flow" / "worktrees" / branch.replace("/", "-")
+    return main / ".claude" / "worktrees" / branch.replace("/", "-")
 
 
 def _parse_worktree_list(porcelain: str) -> list[tuple[str, str | None]]:
@@ -1031,6 +1041,22 @@ def _stamp_run_frontmatter(
         ticket_frontmatter.update(worktree / ".flow" / "tickets" / f"{ticket}.md", fm_updates)
 
 
+def _refuse_offcontract_branch(*, ticket: str, branch: str) -> None:
+    """Branch contract (flow-t0vv): every downstream matcher — _is_ticket_branch,
+    the pool-dir prefixes in _evolve_common, evolve_select's in-flight refs,
+    evolve_reap eligibility, the janitor's PR join, branch_ticket's parse —
+    assumes `feat/<key>-<slug>`. A run that minted `fix/<key>-...` produced a
+    worktree invisible to reap and the drain (witnessed 2026-07-09). Refuse the
+    deviation here, at the one mint site, instead of widening every parser.
+    """
+    if not branch.startswith(f"feat/{ticket}"):
+        raise _ConfigError(
+            f"branch {branch!r} violates the feat/<ticket>-<slug> contract "
+            f"(expected a 'feat/{ticket}' prefix); the reap/drain/select "
+            f"machinery only tracks feat/ branches"
+        )
+
+
 def bootstrap(
     *,
     ticket: str,
@@ -1052,6 +1078,8 @@ def bootstrap(
 ) -> dict[str, Any]:
     run = runner or _default_runner()
     main_root = main_root.expanduser().resolve()
+
+    _refuse_offcontract_branch(ticket=ticket, branch=branch)
 
     # e2e is default-on; unless a workspace explicitly disabled it, the approved
     # plan must declare what the e2e stage runs. Refuse here, while the user is

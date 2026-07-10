@@ -332,8 +332,16 @@ def is_live(workspace_root: Path, key: str) -> bool:
     `.flow/worktrees/` is always empty, so a call from inside a worktree would
     read a possibly-live run as provably-not-live and invert the fail-safe.
     """
-    base = resolve_memory_base(workspace_root) / "worktrees"
-    matches = glob.glob(str(base / f"feat-{key}*")) + glob.glob(str(base / f"feature-{key}*"))
+    # memory base is `<main>/.flow`; its parent is the main root, off which both
+    # pool bases hang (`.claude/worktrees` mint + `.flow/worktrees` legacy).
+    main = resolve_memory_base(workspace_root).parent
+    bases = (main / ".claude" / "worktrees", main / ".flow" / "worktrees")
+    matches = [
+        m
+        for base in bases
+        for pat in (f"feat-{key}*", f"feature-{key}*")
+        for m in glob.glob(str(base / pat))
+    ]
     try:
         for wt in sorted(matches):
             run_dir = Path(wt) / ".flow" / "runs" / key

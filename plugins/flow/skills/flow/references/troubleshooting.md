@@ -24,6 +24,7 @@ Machine/tool sharp edges that repeatedly burn fresh sessions. None of these are 
 
 ## launchd / background jobs
 
+- **Unattended run stalls right after "Bootstrap clean", `tempo=blocked`, no `EnterWorktree` call in the transcript.** Claude Code >= 2.1.206 asks an interactive confirmation before `EnterWorktree` enters any worktree OUTSIDE `<repo>/.claude/worktrees/`, and the confirmation is NOT permission-mediated (the tool is "Permission required: No", so no `permissions.allow` rule, auto-mode vouch, or env var suppresses it). flow >= the pool relocation (flow-gh1u) mints worktrees inside `.claude/worktrees/`, which never confirms. On an older flow, the only unattended remedy is upgrading; attended, `claude attach <job>` and approve the prompt.
 - **launchd jobs can't find user-installed CLIs.** launchd's minimal PATH omits `~/.local/bin`; export it in the job definition. Test with `launchctl start`, not by running the script in your shell.
 - **`claude stop` needs the 8-hex job id**, not the session UUID — and must run BEFORE `rm -rf`ing the job dir, or the bg job zombies. Job→ticket mapping lives in the job's `state.json` under `intent`.
 - **`claude agents` hangs in a background shell** (blocks on a TTY). Monitor via transcript mtime + `bd`/`gh` state instead.

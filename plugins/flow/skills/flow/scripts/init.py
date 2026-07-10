@@ -79,19 +79,29 @@ _GITIGNORE_BLOCK = (
     "!.flow/workspace.toml\n"
     "!.flow/.initialized\n"
 )
+# The worktree pool lives under .claude/worktrees (flow-gh1u). Probed as its own
+# line, independent of _GITIGNORE_MARKER, so repos seeded before the relocation
+# still gain it on re-init instead of being skipped by the .flow marker.
+_GITIGNORE_POOL_LINE = ".claude/worktrees/"
 
 
 def _ensure_gitignore(root: Path) -> dict[str, Any] | None:
-    """Append the `.flow/` ignore block to `<root>/.gitignore` unless already
-    seeded. Marker-guarded + append-only, so `--resume` / re-init never duplicate
-    the block or clobber the user's existing `.gitignore`."""
+    """Append the `.flow/` ignore block and the `.claude/worktrees/` pool line
+    to `<root>/.gitignore` unless already present. Marker-guarded + append-only,
+    so `--resume` / re-init never duplicate the block or clobber the user's
+    existing `.gitignore`."""
     gitignore = root / ".gitignore"
     existing = gitignore.read_text(encoding="utf-8") if gitignore.exists() else ""
-    if _GITIGNORE_MARKER in existing.splitlines():
-        return {"skipped": True, "reason": ".flow/ already gitignored"}
+    lines = existing.splitlines()
+    wants_block = _GITIGNORE_MARKER not in lines
+    wants_pool = _GITIGNORE_POOL_LINE not in lines
+    if not wants_block and not wants_pool:
+        return {"skipped": True, "reason": ".flow/ and the worktree pool already gitignored"}
     if existing and not existing.endswith("\n"):
         existing += "\n"
-    block = ("\n" if existing else "") + _GITIGNORE_BLOCK
+    block = ("\n" if existing else "") + (_GITIGNORE_BLOCK if wants_block else "")
+    if wants_pool:
+        block += _GITIGNORE_POOL_LINE + "\n"
     atomic_write_text(gitignore, existing + block)
     return None
 
@@ -1009,8 +1019,8 @@ def _run_init_phases(
 
     _run_phase("mkdirs", _phase_mkdirs)
 
-    # Phase: ensure_gitignore, keep transient .flow/ state out of the project's
-    # git status (the worktree pool lives at .flow/worktrees/).
+    # Phase: ensure_gitignore, keep transient .flow/ state and the worktree
+    # pool (.claude/worktrees/) out of the project's git status.
     _run_phase("ensure_gitignore", lambda: _ensure_gitignore(root))
 
     # Phase: bd_init (beads only; jira records a skip)

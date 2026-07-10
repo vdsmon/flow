@@ -863,15 +863,28 @@ def test_init_seeds_flow_gitignore_when_absent(tmp_path: Path) -> None:
     assert ".flow/*" in gi.splitlines()
     assert "!.flow/workspace.toml" in gi.splitlines()
     assert "!.flow/.initialized" in gi.splitlines()
+    assert ".claude/worktrees/" in gi.splitlines()  # flow-gh1u: the pool
 
 
 def test_init_gitignore_idempotent_when_already_seeded(tmp_path: Path) -> None:
     gi_path = tmp_path / ".gitignore"
-    gi_path.write_text("node_modules/\n.flow/*\n", encoding="utf-8")
+    gi_path.write_text("node_modules/\n.flow/*\n.claude/worktrees/\n", encoding="utf-8")
     initmod.run_init(_jira_config(tmp_path))
     content = gi_path.read_text(encoding="utf-8")
     assert content.count(".flow/*") == 1
+    assert content.count(".claude/worktrees/") == 1
     assert "node_modules/" in content
+
+
+def test_init_gitignore_adds_pool_line_to_pre_relocation_repo(tmp_path: Path) -> None:
+    # A repo seeded before flow-gh1u has the .flow block but not the pool line;
+    # re-init converges it instead of skipping on the .flow marker.
+    gi_path = tmp_path / ".gitignore"
+    gi_path.write_text(".flow/*\n!.flow/workspace.toml\n!.flow/.initialized\n", encoding="utf-8")
+    initmod.run_init(_jira_config(tmp_path))
+    content = gi_path.read_text(encoding="utf-8")
+    assert ".claude/worktrees/" in content.splitlines()
+    assert content.count(".flow/*") == 1
 
 
 def test_init_gitignore_appends_preserving_existing(tmp_path: Path) -> None:
