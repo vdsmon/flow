@@ -140,6 +140,29 @@ def test_unknown_extension_skipped(tmp_path):
     assert _lint(tmp_path, "a.xyz", f"weird {EM} content, simply ignored\n") == []
 
 
+@pytest.mark.parametrize("name", ["doc.md", "doc.markdown"])
+def test_markdown_em_dash_flagged(tmp_path, name):
+    assert _categories(_lint(tmp_path, name, f"A prose line {EM} with a dash.\n")) == {"em-dash"}
+
+
+def test_markdown_fenced_em_dash_skipped(tmp_path):
+    content = f"prose before\n```\ncode {EM} in fence\n```\nprose after\n"
+    assert _lint(tmp_path, "doc.md", content) == []
+
+
+def test_markdown_banned_word_and_long_line_not_flagged(tmp_path):
+    long_prose = "word " * 40
+    content = f"We simply just leverage this comprehensively.\n{long_prose}\n"
+    assert _lint(tmp_path, "doc.md", content, limit=40) == []
+
+
+def test_cli_markdown_em_dash_exit_one(tmp_path, capsys):
+    path = tmp_path / "doc.md"
+    path.write_text(f"A prose line {EM} here.\n", encoding="utf-8")
+    assert cli_main([str(path)]) == 1
+    assert "em-dash" in capsys.readouterr().out
+
+
 def test_discovery_reads_pyproject_ruff(tmp_path):
     (tmp_path / "pyproject.toml").write_text("[tool.ruff]\nline-length = 60\n", encoding="utf-8")
     target = tmp_path / "pkg" / "a.py"
