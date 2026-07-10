@@ -89,7 +89,7 @@ DEFAULT_STALL_THRESHOLD_SECS = 300
 _PRE_DISPATCH = "<pre-dispatch>"
 _DESCRIPTOR_KEYS = frozenset({"stage", "done", "head_sha", "handler_type"})
 _DRIFT_MARKERS = ("reconciled_drift", "state_recovered_from_backup", "engine_reanchored")
-_WORKTREE_MARKER = "/.flow/worktrees/"
+_WORKTREE_MARKERS = ("/.claude/worktrees/", "/.flow/worktrees/")
 _BODY_SNIPPET_LEN = 500
 _JSON_OBJECT_SCAN_LIMIT = 10
 _FLOW_COMMAND_RE = re.compile(r"<command-name>[^<]*flow", re.IGNORECASE)
@@ -118,21 +118,26 @@ def _slugify(path: Path) -> str:
 def _accepted_project_dirs(projects_root: Path, workspace_root: Path) -> list[Path]:
     """Project dirs a self-target transcript for workspace_root may live under.
 
-    Own slug dir, plus a `<slug>--flow-worktrees-*` sibling (covers a worktree
-    run's transcript when workspace_root is the repo root). When workspace_root
-    is itself a worktree (`<repo>/.flow/worktrees/<name>`), also accept the
-    parent repo's slug dir and its sibling pattern: an in-worktree /flow session
-    often keeps its transcript filed under the main repo's project dir.
+    Own slug dir, plus `<slug>--claude-worktrees-*` / `<slug>--flow-worktrees-*`
+    siblings (covers a worktree run's transcript when workspace_root is the repo
+    root; one pattern per pool base). When workspace_root is itself a worktree
+    (`<repo>/.claude/worktrees/<name>`, legacy `<repo>/.flow/worktrees/<name>`),
+    also accept the parent repo's slug dir and its sibling patterns: an
+    in-worktree /flow session often keeps its transcript filed under the main
+    repo's project dir.
     """
     roots = [workspace_root]
-    idx = str(workspace_root).find(_WORKTREE_MARKER)
-    if idx != -1:
-        roots.append(Path(str(workspace_root)[:idx]))
+    for marker in _WORKTREE_MARKERS:
+        idx = str(workspace_root).find(marker)
+        if idx != -1:
+            roots.append(Path(str(workspace_root)[:idx]))
+            break
 
     dirs: list[Path] = []
     for root in roots:
         slug = _slugify(root)
         dirs.append(projects_root / slug)
+        dirs.extend(sorted(projects_root.glob(f"{slug}--claude-worktrees-*")))
         dirs.extend(sorted(projects_root.glob(f"{slug}--flow-worktrees-*")))
     return dirs
 

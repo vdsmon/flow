@@ -52,6 +52,7 @@ from typing import Any
 
 import lease
 from _evolve_common import BRANCH_PREFIX as _BRANCH_PREFIX
+from _evolve_common import WORKTREE_BASES as _WORKTREE_BASES
 from _evolve_common import WORKTREE_PREFIXES as _WORKTREE_PREFIXES
 from _evolve_common import NotMaintainer, ToolError, bead_labels
 from _evolve_common import key_from_ref as _key_from_ref
@@ -169,12 +170,13 @@ def _inprogress_evolve_keys(runner: Runner, *, include_proposals: bool) -> set[s
 
 
 def _worktree_for(repo: Path, key: str) -> str | None:
-    """Worktree dir `.flow/worktrees/feat-<key>-*` for `key`, if present (legacy `feature-` too)."""
-    base = repo / ".flow" / "worktrees"
-    for p in _WORKTREE_PREFIXES:
-        for wt in sorted(glob.glob(str(base / f"{p}{key}*"))):
-            if (Path(wt) / ".flow" / "runs" / key).exists():
-                return wt
+    """Worktree dir `<base>/feat-<key>-*` for `key`, if present (both pool
+    bases, legacy `feature-` prefix too)."""
+    for b in _WORKTREE_BASES:
+        for p in _WORKTREE_PREFIXES:
+            for wt in sorted(glob.glob(str(repo / b / f"{p}{key}*"))):
+                if (Path(wt) / ".flow" / "runs" / key).exists():
+                    return wt
     return None
 
 

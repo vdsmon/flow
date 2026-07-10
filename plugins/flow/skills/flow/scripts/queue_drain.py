@@ -46,6 +46,7 @@ from typing import Any
 
 from _evolve_common import (
     ACTIVE_STATUSES,
+    WORKTREE_BASES,
     WORKTREE_PREFIXES,
     NotMaintainer,
     ToolError,
@@ -109,11 +110,11 @@ def _worktree_keys(repo: Path) -> set[str]:
     Same pool layout `_evolve_common.run_dir_for` documents; unlike `live_run_keys` this keeps
     expired/exited runs. They are exactly the teardown targets.
     """
-    base = repo / ".flow" / "worktrees"
     return {
         Path(p).name
+        for base in WORKTREE_BASES
         for prefix in WORKTREE_PREFIXES
-        for p in glob.glob(str(base / f"{prefix}*" / ".flow" / "runs" / "*"))
+        for p in glob.glob(str(repo / base / f"{prefix}*" / ".flow" / "runs" / "*"))
     }
 
 

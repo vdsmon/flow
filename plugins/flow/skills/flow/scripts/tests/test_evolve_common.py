@@ -68,6 +68,23 @@ def test_run_dir_for_finds_legacy_feature_dir(tmp_path):
     assert ec.run_dir_for(repo, "flow-abc") == run_dir
 
 
+def test_run_dir_for_finds_claude_pool_worktree(tmp_path):
+    # flow-gh1u: new worktrees mint under .claude/worktrees
+    repo = tmp_path / "flow"
+    run_dir = repo / ".claude" / "worktrees" / "feat-flow-abc-slug" / ".flow" / "runs" / "flow-abc"
+    run_dir.mkdir(parents=True)
+    assert ec.run_dir_for(repo, "flow-abc") == run_dir
+
+
+def test_run_dir_for_prefers_claude_pool_over_legacy(tmp_path):
+    repo = tmp_path / "flow"
+    new = repo / ".claude" / "worktrees" / "feat-flow-abc-new" / ".flow" / "runs" / "flow-abc"
+    old = repo / ".flow" / "worktrees" / "feat-flow-abc-old" / ".flow" / "runs" / "flow-abc"
+    new.mkdir(parents=True)
+    old.mkdir(parents=True)
+    assert ec.run_dir_for(repo, "flow-abc") == new
+
+
 # ---- extracted selector helpers (shared by evolve_select + queue_select) ----
 
 

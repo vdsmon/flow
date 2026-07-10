@@ -29,6 +29,11 @@ BRANCH_PREFIX = "feat/"
 BRANCH_PREFIXES = ("feat/", "feature/")
 # worktree-dir form (branch `/` becomes `-`); both accepted while legacy dirs survive
 WORKTREE_PREFIXES = ("feat-", "feature-")
+# pool bases relative to the repo root, newest first. New worktrees mint under
+# .claude/worktrees (flow-gh1u: CC >= 2.1.206 blocks unattended EnterWorktree
+# outside it, with no permission-rule bypass); the .flow base keeps
+# pre-relocation worktrees discoverable/reapable until they drain out.
+WORKTREE_BASES = (Path(".claude") / "worktrees", Path(".flow") / "worktrees")
 # a CLOSED or DEFERRED bead is never in flight regardless of a leaked feat/<key>-* branch
 ACTIVE_STATUSES = "open,in_progress,blocked"
 _BLAST_RE = re.compile(r"^\s*BLAST[ _]RADIUS:\s*(.+?)\s*$", re.IGNORECASE | re.MULTILINE)
@@ -202,19 +207,20 @@ def gather_refs(runner: Runner) -> tuple[set[str], set[str]]:
 def live_run_keys(repo: Path) -> set[str]:
     """Ticket keys with a LIVE (unexpired) pre-PR lease in the worktree pool.
 
-    Globs `<repo>/.flow/worktrees/feat-*/.flow/runs/*` (legacy `feature-*` too;
-    mirrors run_dir_for's layout) and keeps only run dirs whose lease classifies
-    `live`. Live-only by design: an expired/absent lease contributes nothing,
-    so an orphan still reads `done`/parked exactly as before.
+    Globs `<repo>/<base>/feat-*/.flow/runs/*` across WORKTREE_BASES (legacy
+    `feature-*` too; mirrors run_dir_for's layout) and keeps only run dirs whose
+    lease classifies `live`. Live-only by design: an expired/absent lease
+    contributes nothing, so an orphan still reads `done`/parked exactly as
+    before.
     """
-    base = repo / ".flow" / "worktrees"
     now = utcnow_iso()
     live: set[str] = set()
-    for p in WORKTREE_PREFIXES:
-        for run_dir in glob.glob(str(base / f"{p}*" / ".flow" / "runs" / "*")):
-            key = Path(run_dir).name
-            if lease.classify(Path(run_dir), now).get("state") == "live":
-                live.add(key)
+    for b in WORKTREE_BASES:
+        for p in WORKTREE_PREFIXES:
+            for run_dir in glob.glob(str(repo / b / f"{p}*" / ".flow" / "runs" / "*")):
+                key = Path(run_dir).name
+                if lease.classify(Path(run_dir), now).get("state") == "live":
+                    live.add(key)
     return live
 
 
@@ -241,18 +247,19 @@ def fleet_live_keys(repo: Path) -> set[str]:
 def run_dir_for(repo: Path, key: str) -> Path | None:
     """The in-flight run's ticket dir under the worktree pool for `key`.
 
-    Worktrees live at `<repo>/.flow/worktrees/feat-<key>-<slug>/` (legacy
-    `feature-<key>-<slug>/` too; see flow_worktree._worktree_path); the run state
-    is `.flow/runs/<key>/`. Absent = no lease to read (a leaked branch with no
-    worktree, or the common post-reap case), so the caller treats it as non-live
-    rather than waiting on it forever.
+    Worktrees live at `<repo>/<base>/feat-<key>-<slug>/` for base in
+    WORKTREE_BASES (`.claude/worktrees` mint, `.flow/worktrees` legacy; legacy
+    `feature-<key>-<slug>/` dirs too; see flow_worktree._worktree_path); the run
+    state is `.flow/runs/<key>/`. Absent = no lease to read (a leaked branch
+    with no worktree, or the common post-reap case), so the caller treats it as
+    non-live rather than waiting on it forever.
     """
-    base = repo / ".flow" / "worktrees"
-    for p in WORKTREE_PREFIXES:
-        for wt in sorted(glob.glob(str(base / f"{p}{key}*"))):
-            run_dir = Path(wt) / ".flow" / "runs" / key
-            if run_dir.exists():
-                return run_dir
+    for b in WORKTREE_BASES:
+        for p in WORKTREE_PREFIXES:
+            for wt in sorted(glob.glob(str(repo / b / f"{p}{key}*"))):
+                run_dir = Path(wt) / ".flow" / "runs" / key
+                if run_dir.exists():
+                    return run_dir
     return None
 
 
