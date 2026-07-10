@@ -150,22 +150,28 @@ def decided(
     *,
     runner: Any = None,
 ) -> dict[str, Any]:
-    """Probe a bead for a recorded triage decision + hot classification.
+    """Probe a bead for a recorded triage decision + hot + hitl classification.
 
     Does its own raw `bd show <key> --include-comments --json` (the
     `_run_json` pattern appends `--json`), reading `labels` + `comments`
     straight off the raw dict. Never raises: any bd-read failure returns a
-    block-by-default result.
+    block-by-default result. `hitl` mirrors the label (human-in-the-loop);
+    the block-by-default fallback reads `hitl:false`, since an indeterminate
+    read already blocks via the hot half, and a spurious hitl-defer would be
+    the wrong disposition for a read the gate cannot trust. Where
+    `adjudicate_hot` lifts that hot half, the residual pass-through on a
+    failed read is the same narrow fail-open the terminal/epic refusals
+    accept: a flaky read never strands a legit run.
     """
     try:
         adapter = BeadsAdapter(config, runner=runner)
         raw = adapter._run_json(["show", key, "--include-comments"])
     except Exception:
-        return {"decided": False, "answer": None, "is_hot": True}
+        return {"decided": False, "answer": None, "is_hot": True, "hitl": False}
 
     issue = raw[0] if isinstance(raw, list) and raw else raw
     if not isinstance(issue, dict):
-        return {"decided": False, "answer": None, "is_hot": True}
+        return {"decided": False, "answer": None, "is_hot": True, "hitl": False}
 
     labels = issue.get("labels") or []
     comments = issue.get("comments") or []
@@ -175,7 +181,12 @@ def decided(
     # decided but hotness indeterminate (no --files, no hot label) -> block.
     if is_decided and not files and "hot" not in labels:
         is_hot = True
-    return {"decided": is_decided, "answer": answer, "is_hot": is_hot}
+    return {
+        "decided": is_decided,
+        "answer": answer,
+        "is_hot": is_hot,
+        "hitl": "hitl" in labels,
+    }
 
 
 def lane(config: dict[str, Any], key: str, *, runner: Any = None) -> str:
