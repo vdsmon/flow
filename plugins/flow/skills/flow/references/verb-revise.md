@@ -4,7 +4,7 @@
 
 Two feedback sources feed it: the PR's review threads (the host's review-bot/human comments), and an optional trailing free-text **instruction** — a change-request without the host round-trip (`/flow revise 325 "batch the N+1 query"`). This file plumbs the instruction (persists it) and drives the loop.
 
-> **Scope (flow-kx17.3 vs .4).** This verb is the USER ENTRY + plumbing: resolve the target through the forge seam, open the revision sub-run, persist the instruction, enter the worktree, drive the generic do-loop, release. The revision EXECUTION semantics — how the `implement`/`review_loop` stages CONSUME the persisted instruction or the PR's human threads as the Major+ fix set, the severity mapping, the fix-cycle cap — are sibling **flow-kx17.4**. Until .4 lands, this loop runs the stage subset generically; an end-to-end revise round is exercised once .4 wires the execution.
+> **Scope.** This verb is the USER ENTRY + plumbing: resolve the target through the forge seam, open the revision sub-run, persist the instruction, enter the worktree, drive the generic do-loop, release. The revision EXECUTION semantics — how the `implement` / `review_loop` stages CONSUME the persisted instruction or the PR's human threads as the fix set, the severity floor, the fix-cycle cap — have SHIPPED (flow-kx17.4); their reference docs carry the rules. On an interactive run the step-5a triage board below supplies that fix set as an explicit disposition set (`$REVISION_DIR/dispositions.json`) in place of the inferred severity floor — the board is the surface, the shipped revision mode is the consumer, and the two compose rather than fork.
 
 ## Procedure
 
@@ -68,9 +68,27 @@ Read `worktree` and `reseeded`. `reseeded: true` means the original worktree was
 
 (In a backgrounded run whose cwd is pinned at the repo root, `EnterWorktree` refuses; `cd` the Bash cwd into the worktree once instead, exactly as the backgrounded-`--auto` note in `references/verb-do.md` describes. The same worktree-isolation caveats for `Write`/`Edit` and `.out` capture apply.)
 
+### 5a. Lavish revise triage board (interactive runs)
+
+An interactive `revise` renders the PR's unresolved threads as a triage board (fix now / defer / dismiss) whose batched dispositions become the durable fix set the do-loop consumes, instead of feeding the threads to the severity floor blind. Gate, two legs; a failed gate skips and never blocks. Leg (a) is structural — `revise` is human-initiated, so a human is on the other end. Leg (b) is the presence check, run with a real command as the first action, never a judgment call:
+```bash
+command -v node && command -v npx   # leg (b): both must resolve
+```
+Fetch the threads capture-then-check through the forge seam (read `$?` first — piping `review-threads` past its exit code reads a flake as zero threads):
+```bash
+RAW=$(python3 ${CLAUDE_SKILL_DIR}/scripts/forge_cli.py --workspace-root . review-threads --pr "$PR_ID"); rc=$?
+```
+`rc != 0`, a `{"supported": false}` (a host with no thread support), or zero unresolved threads with no `instruction.md` → `Lavish: skipped — <reason>`, and step 6 runs as today (no `dispositions.json` is written, so the floor applies). Otherwise open the board per the `## Revision triage board (/flow revise)` section of `references/review-packet.md` and WAIT for the first poll return — the first batch is what seeds the fix set. Persist each triage batch whole (the step-4 persistence precedent):
+```bash
+printf '%s\n' "$DISPOSITIONS_JSON" > "$REVISION_DIR/dispositions.json"
+```
+A post-open failure → `Lavish: degraded mid-loop — <reason>`; the remainder of the run is today's flow (an already-persisted `dispositions.json` stays authoritative). Do NOT issue a dispatcher heartbeat during this wait — a `next` on an all-pending sub-run begins the first pending stage before any triage exists (the board section explains the two-regime rule and the 10-min init-TTL residual).
+
 ### 6. Drive the revision do-loop
 
 Drive the dispatcher state machine exactly as the do-loop skeleton in `SKILL.md`, with ONE difference: pass `--revision "$REV_ID"` on every `next` / `advance` / `release` call (alongside `--session-nonce "$NONCE"`), so the dispatcher redirects to the revision sub-run's state, not the original terminal run's.
+
+When `$REVISION_DIR/dispositions.json` exists (a step-5a board opened), the implement and review_loop stages consume it as the fix set — their reference docs carry the rules — and the board stays open across the loop: never re-open it or re-arm the poll, it live-reloads in place per round.
 
 ```bash
 DESCRIPTOR=$(python3 ${CLAUDE_SKILL_DIR}/scripts/dispatch_stage.py next \
