@@ -48,14 +48,15 @@ BRANCH=$(git rev-parse --abbrev-ref HEAD)   # the worktree is on the run's featu
 ```
 Monitor(
   description="CI for PR #$PR_ID",
-  command='budget=3; errs=0; n=0; cap=25; prev=""; while :; do
+  command='budget=3; errs=0; n=0; cap=25; prev=""; nock=0; while :; do
       n=$((n+1)); [ "$n" -gt "$cap" ] && { echo "[$(date +%T)] cap $cap hit — leave for next pass"; break; }
       pr=$(python3 ${CLAUDE_SKILL_DIR}/scripts/forge_cli.py --workspace-root . detect-pr --branch "$BRANCH"); drc=$?
       if [ "$drc" -eq 0 ] && [ "$(printf %s "$pr" | tr -d " \t\n")" = "null" ]; then echo "[$(date +%T)] PR #$PR_ID no longer open (merged/closed)"; break; fi
       out=$(python3 ${CLAUDE_SKILL_DIR}/scripts/forge_cli.py --workspace-root . ci-rollup --pr "$PR_ID"); crc=$?
-      s=""; [ "$crc" -eq 0 ] && s=$(printf %s "$out" | python3 -c "import sys,json;print(json.load(sys.stdin).get(\"status\",\"\"))" 2>/dev/null)
+      s=""; nc=0; if [ "$crc" -eq 0 ]; then sc=$(printf %s "$out" | python3 -c "import sys,json;d=json.load(sys.stdin);print((d.get(\"status\",\"\") or \"\")+\"|\"+(\"1\" if not d.get(\"checks\") else \"0\"))" 2>/dev/null); [ -n "$sc" ] && { s=${sc%%|*}; nc=${sc##*|}; }; fi
       if [ "$crc" -ne 0 ] || [ -z "$s" ]; then errs=$((errs+1)); echo "[$(date +%T)] ci-rollup probe error ($errs/$budget)"; [ "$errs" -ge "$budget" ] && { echo "error budget exhausted — leave for next pass"; break; }; sleep 60; continue; fi
       errs=0; [ "$s" != "$prev" ] && { echo "[$(date +%T)] CI: $s"; prev=$s; }
+      if [ "$s" = pending ] && [ "$nc" = 1 ]; then nock=$((nock+1)); [ "$nock" -ge 3 ] && { echo "[$(date +%T)] no checks registered x3 — probe mergeable (CONFLICTING?)"; break; }; else nock=0; fi
       case "$s" in green|failed) break;; esac
       sleep 60
     done',
@@ -69,21 +70,53 @@ Run exactly ONE CI Monitor at a time (stop the prior one before re-arming after 
 **Headless fallback — bounded foreground poll.** In a headless/turn-bounded session (a detached `--auto` run relaunched per turn, or a run interrupted at a turn boundary, e.g. by a rate limit) a Monitor or background task dies at turn end and its completion notification never arrives (observed in the flow-aod run: the bounded poll reached CI green in ~30s after the Monitor path silently died). There, poll in ONE Bash call with an explicit iteration cap and `timeout: 600000` (the Bash max):
 
 ```bash
-i=0; errs=0; while [ $i -lt 8 ]; do
+i=0; errs=0; nock=0; while [ $i -lt 8 ]; do
   out=$(python3 ${CLAUDE_SKILL_DIR}/scripts/forge_cli.py --workspace-root . ci-rollup --pr "$PR_ID"); crc=$?
-  s=""; [ "$crc" -eq 0 ] && s=$(printf %s "$out" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("status",""))' 2>/dev/null)
+  s=""; nc=0; if [ "$crc" -eq 0 ]; then sc=$(printf %s "$out" | python3 -c 'import sys,json;d=json.load(sys.stdin);print((d.get("status","") or "")+"|"+("1" if not d.get("checks") else "0"))' 2>/dev/null); [ -n "$sc" ] && { s=${sc%%|*}; nc=${sc##*|}; }; fi
   if [ "$crc" -ne 0 ] || [ -z "$s" ]; then
     errs=$((errs+1)); echo "[$(date +%T)] ci-rollup probe error ($errs/3)"
     [ "$errs" -ge 3 ] && { echo "error budget exhausted — leave for next pass"; break; }
     sleep 60; i=$((i+1)); continue
   fi
   errs=0; echo "[$(date +%T)] CI: $s"
+  if [ "$s" = pending ] && [ "$nc" = 1 ]; then nock=$((nock+1)); [ "$nock" -ge 3 ] && { echo "[$(date +%T)] no checks registered x3 — probe mergeable (CONFLICTING?)"; break; }; else nock=0; fi
   if [ "$s" = "green" ] || [ "$s" = "failed" ]; then break; fi
   sleep 60; i=$((i+1))
 done
 ```
 
 8 × 60s = 480s keeps one call comfortably under the 600s Bash ceiling even with slow rollup calls. The probe reads `$?` before parsing, same as the Monitor — an erroring `gh` trips the 3-error budget instead of reading as `pending` forever (the §1 anti-pattern). If still `pending` at the cap, re-issue the same call — each call is one turn-safe unit. Break on `green`/`failed` exactly like the Monitor; the §2 fix-cycle cap is unchanged. This is a fallback, not a coequal default — attached/long-lived sessions keep using the Monitor.
+
+**CONFLICTING short-circuit — no merge ref, checks can never register.** Both polls above break early with `no checks registered x3` when they see `pending` with an EMPTY `checks` array (`ci-rollup` `detail: "no checks registered yet"`) three times. That signal is GitHub-specific: a PR whose `mergeable` state is `CONFLICTING` has no merge ref, so `pull_request` workflows never start and `ci-rollup` reads `pending` forever, never `failed` (witnessed flow-09bg.2/PR#468: a mid-run merge to `main` conflicted the branch and the poll burned 24+ min). The empty-`checks` test is the precise discriminator — a slow-but-registered queue and the superseded verdicts (`CANCELLED`/`STALE`/`NEUTRAL`/`SKIPPED`, flow-5wr) both fold into `pending` with a NON-EMPTY `checks` array, so neither trips the counter. On that break, do NOT re-arm the poll blindly (it just re-burns the cap); probe mergeability and, on a real conflict, clear it with a base-merge:
+
+```bash
+mg=$(gh pr view "$PR_ID" --json mergeable -q .mergeable 2>/dev/null)   # GitHub-only; the forge PullRequest carries no mergeable field
+case "$mg" in
+  CONFLICTING)
+    # base-merge fix cycle (counts as ONE of §2's 3 fix cycles)
+    git fetch origin
+    DEFAULT=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null)
+    [ -n "$DEFAULT" ] || DEFAULT=origin/main   # origin/HEAD may be unset in a fresh worktree
+    if git merge --no-edit "$DEFAULT"; then    # PLAIN merge; never rebase, never force-push mid-run
+      git push                                 # clean merge: plain push, so checks register on the new head
+    else
+      # merge left conflicts (the witnessed case): delegate to §2's pinned fix subagent, which resolves,
+      # `git add`, commits the merge, and pushes. NEVER push the half-merged tree, and never `git merge --abort`.
+      :
+    fi
+    ;;                                         # then re-arm the CI poll (step 1)
+  MERGEABLE)
+    # not a conflict, just slow registration: re-arm the poll (step 1). Bound it: if a re-armed poll STILL sees
+    # empty checks, CI is likely not wired for this PR, so stop after one re-arm and leave for the next pass.
+    : ;;
+  *)                                       # UNKNOWN (mergeability is recomputed async), or gh absent / errored
+    # UNKNOWN: re-probe 2-3x a few seconds apart; if it resolves, branch on CONFLICTING/MERGEABLE above.
+    # Still UNKNOWN, or gh unavailable (Bitbucket / any gh-less host): re-arm the poll unchanged (today's behavior).
+    : ;;
+esac
+```
+
+The base-merge commit legitimately pulls in `origin/<default>` content; it is a post-`commit`-stage push (like §2's CI-fix commits), so the content-ownership gate — which runs only at the `commit` stage (`references/stage-commit.md` §2b) — does NOT re-fire on it. Surface a one-line note in `review_loop.out` (e.g. `base-merged origin/<default> to clear CONFLICTING; CI re-armed`). This counts against §2's 3-fix-cycle cap. Bitbucket conflict detection (its own conflict signal) is a follow-up; the raw `gh` probe here is GitHub-specific, and the degrade path leaves gh-less hosts behaving exactly as before.
 
 ## 2. On CI failed — drive fixes (delegated, bounded)
 
