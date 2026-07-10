@@ -10,7 +10,7 @@ Every other stage reasons about the diff. The e2e stage is the only one that run
 
 A recipe is a single string, self-contained enough that the e2e stage can execute it unattended with no reinterpretation. It has four required parts plus an optional fifth:
 
-- **Runner + exact command** — the tool and the literal invocation (`pytest tests/e2e/test_checkout.py -k full_flow`, `npm run e2e -- --grep smoke`, a `docker compose run e2e-suite`). Not "run the e2e tests" — the actual command.
+- **Runner + exact command** — the tool and the literal invocation (`pytest tests/e2e/test_checkout.py -k full_flow`, `npm run e2e -- --grep smoke`, a `docker compose run e2e-suite`). Not "run the e2e tests" — the actual command. If a module is too heavy to run in one Bash call and must be chunked, author it to partition by node-id (`--collect-only -q`, then run each shard by explicit nodeids), never by `-k` class-name substrings which silently under-cover; `stage-e2e.md` Step 3 carries the operative protocol.
 - **Env-prep** — anything the command needs before it runs: an auth refresh, a container/service bring-up, resource tuning. Must be non-interactive; a step that blocks on a prompt strands an unattended run. If credentials expire, name the refresh command, not "log in again."
 - **Fixture** — the concrete input under test: a sample id, an account, a dataset. "Run the suite" without a fixture leaves the executor guessing which of many code paths actually gets exercised.
 - **Expected pass signal** — how the executor tells green from red without judgment calls: an unambiguous token (`E2E_OK` / `E2E_FAIL`), a suite's green summary line, or an exit code. Red means the stage failed; a recipe with a fuzzy signal risks masking a real regression as a pass.

@@ -58,6 +58,30 @@ Your job is to run it exactly, not to reinterpret it.
    command the recipe specifies. Only when a genuinely interactive step cannot
    complete unattended do you stop and report the blocker.
 
+   **Chunking a heavy module.** When a single module cannot finish in one Bash
+   call — it exceeds the ~600s ceiling (`timeout` <= 600000ms) or risks the ~360s
+   idle watchdog (flow-rbr) — and must be split across calls, do NOT chunk it by
+   `pytest -k <class-name>` substrings: `-k` matching is not a partition, so any
+   class named in neither shard's `-k` is silently dropped with no error (FT-1363:
+   an 8+7-class split ran only 49 of the module's 84 tests). Partition by node-id
+   instead. Run `pytest <module> --collect-only -q` once, bare, and confirm it
+   reports N > 0 collected before you trust the count — a broken collect prints 0,
+   so a naive equality check passes falsely at 0 == 0 (flow-aod). Split the emitted
+   node-id lines (drop the trailing "N tests collected" summary line pytest appends
+   under `-q`) into shards, and run each shard by explicit nodeids (quote each — parametrized ids carry `[`, `]`, and spaces). A node-id
+   partition is disjoint and exhaustive by construction, which is the actual fix.
+   Run each shard as one foreground Bash call with an explicit `timeout`
+   <= 600000ms, never `run_in_background` or `Monitor` (this stage is a spawned
+   `subagent:general-purpose`, so a backgrounded command strands the turn — the
+   FT-1328 rule from `references/stage-implement.md` Step 5); short shards also
+   dodge the ~360s idle watchdog. Then backstop the partition: the summed per-shard
+   **collected-item count** MUST equal the collect-only total N. Sum the "collected
+   K items" each shard reports, not the passed count — a green run can legitimately
+   skip or xfail, so passed < N is normal, but collected < N is under-coverage. If
+   the sum is short, a shard is missing tests; widen the partition until they match,
+   and fold N and the per-shard aggregate into the rung-1 evidence transcript
+   (step 4).
+
 4. Produce a **structured evidence report**. This report is your stage output and
    the create_pr stage machine-reads it (the `## Evidence` PR section), so its shape
    is a contract, not free prose.
