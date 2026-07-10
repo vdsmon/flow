@@ -972,3 +972,146 @@ def test_concurrent_acquire_exactly_one_wins(tmp_path: Path) -> None:
     winner = lease.read_lease(tmp_path)
     assert winner is not None
     assert winner.run_id in ("run-1", "run-2")
+
+
+# ─── session_pid ancestry walk (flow-z4f5) ─────────────────────────────────────
+
+
+def _ps_tree_runner(tree: dict[int, tuple[str, str]]) -> lease.Runner:
+    """Fake ps: maps a queried pid to its (ppid, comm), mirroring `ps -o ppid=,comm=`."""
+
+    def runner(args: list[str]) -> str:
+        ppid, comm = tree[int(args[-1])]
+        return f"  {ppid} {comm}\n"
+
+    return runner
+
+
+def test_session_pid_returns_nearest_claude_ancestor() -> None:
+    # the verified dispatch shape: python -> zsh -> claude bg-spare -> claude bg-pty-host; the FIRST
+    # (nearest) claude ancestor wins.
+    tree = {
+        100: ("200", "python3.13"),
+        200: ("300", "-zsh"),
+        300: ("400", "claude bg-spare"),
+        400: ("1", "claude bg-pty-host"),
+    }
+    assert lease.session_pid(_ps_tree_runner(tree), start_pid=100) == 300
+
+
+@pytest.mark.parametrize("comm", ["claude", "claude bg-spare", "/opt/homebrew/bin/claude"])
+def test_session_pid_matches_each_comm_form(comm: str) -> None:
+    tree = {100: ("200", "python3"), 200: ("1", comm)}
+    assert lease.session_pid(_ps_tree_runner(tree), start_pid=100) == 200
+
+
+def test_session_pid_returns_zero_when_no_claude_ancestor() -> None:
+    tree = {100: ("200", "python3"), 200: ("1", "-zsh")}
+    assert lease.session_pid(_ps_tree_runner(tree), start_pid=100) == 0
+
+
+def test_session_pid_returns_zero_on_oserror() -> None:
+    def runner(args: list[str]) -> str:
+        raise OSError("ps missing")
+
+    assert lease.session_pid(runner, start_pid=100) == 0
+
+
+def test_session_pid_returns_zero_on_subprocess_error() -> None:
+    def runner(args: list[str]) -> str:
+        raise subprocess.CalledProcessError(1, ["ps"])
+
+    assert lease.session_pid(runner, start_pid=100) == 0
+
+
+def test_session_pid_returns_zero_on_empty_output() -> None:
+    assert lease.session_pid(lambda args: "", start_pid=100) == 0
+
+
+def test_session_pid_returns_zero_on_single_token_output() -> None:
+    assert lease.session_pid(lambda args: "onlyoneword\n", start_pid=100) == 0
+
+
+def test_session_pid_returns_zero_on_nonnumeric_ppid() -> None:
+    assert lease.session_pid(lambda args: "xxx python3\n", start_pid=100) == 0
+
+
+def test_session_pid_self_referential_ppid_stops_at_max_hops() -> None:
+    calls: list[str] = []
+
+    def runner(args: list[str]) -> str:
+        calls.append(args[-1])
+        return "500 python3\n"  # ppid == the queried pid: a cycle the hop cap breaks
+
+    assert lease.session_pid(runner, start_pid=500, max_hops=4) == 0
+    assert len(calls) == 4
+
+
+# ─── session_id / session_pid stamping + deserialize compat (flow-z4f5) ─────────
+
+
+def test_acquire_stamps_session_id_and_pid(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "sess-uuid-123")
+    monkeypatch.setattr(lease, "_SESSION_PID_CACHE", [4242])
+    ls = _acquire(tmp_path, "run-1")
+    assert ls.session_id == "sess-uuid-123"
+    assert ls.session_pid == 4242
+    on_disk = lease.read_lease(tmp_path)
+    assert on_disk is not None
+    assert on_disk.session_id == "sess-uuid-123"
+    assert on_disk.session_pid == 4242
+
+
+def test_acquire_session_id_empty_when_env_absent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
+    monkeypatch.setattr(lease, "_SESSION_PID_CACHE", [0])
+    ls = _acquire(tmp_path, "run-1")
+    assert ls.session_id == ""
+    assert ls.session_pid == 0
+
+
+def test_deserialize_pre_upgrade_lease_defaults_session_fields(tmp_path: Path) -> None:
+    # a lease written before these fields existed must default cleanly, not KeyError.
+    lease.run_lock_path(tmp_path).write_text(
+        json.dumps(
+            {
+                "run_id": "run-1",
+                "boot_id": "boot-A",
+                "hostname": "host-1",
+                "cwd": "/work",
+                "acquired_at": NOW,
+                "lease_expires_at": "2026-05-28T12:05:00Z",
+            }
+        ),
+        encoding="utf-8",
+    )
+    ls = lease.read_lease(tmp_path)
+    assert ls is not None
+    assert ls.session_id == ""
+    assert ls.session_pid == 0
+
+
+def test_live_foreign_lease_with_dead_session_pid_still_blocks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # informational-only invariant: no lease decision reads session_pid. A LIVE foreign lease whose
+    # recorded session_pid is a guaranteed-dead pid still raises LeaseHeld; reclaim goes through
+    # takeover --force.
+    monkeypatch.setattr(lease, "_SESSION_PID_CACHE", [999999])
+    _acquire(tmp_path, "run-1")
+    on_disk = lease.read_lease(tmp_path)
+    assert on_disk is not None
+    assert on_disk.session_pid == 999999
+    with pytest.raises(lease.LeaseHeld) as exc:
+        _acquire(tmp_path, "run-2", now=NOW)
+    assert exc.value.holder.run_id == "run-1"
+
+
+def test_classify_holder_includes_session_fields(tmp_path: Path) -> None:
+    _acquire(tmp_path, "run-1", boot="boot-A")
+    result = lease.classify(tmp_path, NOW, current_boot="boot-A")
+    holder = cast(dict[str, Any], result["holder"])
+    assert "session_id" in holder
+    assert "session_pid" in holder

@@ -10,6 +10,14 @@ compared under a flock, not from pid liveness. The lease expiry is refreshed on
 the dispatch calls the agent already makes; its TTL is tied to the current stage
 timeout so it survives a multi-minute stage.
 
+The recorded `pid` is the transient dispatch subprocess, dead the instant the
+lock is written, so a manual `ps` on it always misleads. For a durable handle,
+each write also records `session_id` (the CLAUDE_CODE_SESSION_ID env UUID) and
+`session_pid` (the nearest `claude`-comm ancestor process), naming the
+long-lived owning session for a human manual check and for recover detect's
+advisory liveness hint. Both are informational: no
+acquire/refresh/release/classify decision reads them.
+
 The session_nonce is the per-session component run_id alone cannot provide:
 run_id is reused from state.json on resume, so a second /flow do on the same
 ticket reads the same run_id and would otherwise re-acquire a LIVE lease as if it
@@ -70,6 +78,8 @@ class Lease:
     lease_expires_at: str
     stage: str | None = None
     pid: int = 0  # informational only; never used for liveness gating
+    session_id: str = ""  # informational; the owning Claude session UUID
+    session_pid: int = 0  # informational; nearest claude-comm ancestor pid
     session_nonce: str = ""  # per-acquire; "" only for a pre-upgrade lease
 
 
@@ -138,6 +148,47 @@ def boot_id(runner: Runner | None = None) -> str:
     return ""
 
 
+def session_pid(
+    runner: Runner | None = None, *, start_pid: int | None = None, max_hops: int = 15
+) -> int:
+    """The nearest ancestor pid whose command basename is `claude`, or 0.
+
+    Walks parents from start_pid (default this process) via `ps -o ppid=,comm= -p <pid>`. comm may
+    be a bare name, an absolute path, or a `claude bg-*` title, so the match is on the basename of
+    its first token (Linux truncates comm at 15 chars; `claude` fits). Stops at ppid <= 1 or the hop
+    cap, which also breaks a cyclic ppid. Any exec or parse failure returns 0, mirroring boot_id's
+    swallow-to-sentinel. Informational only: like the recorded pid, no lease decision consults it.
+    """
+    runner = runner or _default_runner()
+    pid = start_pid or os.getpid()
+    try:
+        for _ in range(max_hops):
+            fields = runner(["ps", "-o", "ppid=,comm=", "-p", str(pid)]).split(None, 1)
+            if len(fields) < 2:
+                return 0
+            ppid = int(fields[0])
+            if os.path.basename(fields[1].split()[0]) == "claude":
+                return pid
+            if ppid <= 1:
+                return 0
+            pid = ppid
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return 0
+    return 0
+
+
+# One-shot cache for _write_lease: the ancestry walk runs at most once per dispatch process (and
+# once per pytest process). A 1-element list holds it so no module rebinding is needed; tests set
+# lease._SESSION_PID_CACHE = [value].
+_SESSION_PID_CACHE: list[int] = []
+
+
+def _cached_session_pid() -> int:
+    if not _SESSION_PID_CACHE:
+        _SESSION_PID_CACHE.append(session_pid())
+    return _SESSION_PID_CACHE[0]
+
+
 def hostname() -> str:
     """The current host name, mirroring socket.gethostname()."""
     return socket.gethostname()
@@ -174,6 +225,8 @@ def _deserialize(raw: str) -> Lease:
         lease_expires_at=str(data["lease_expires_at"]),
         stage=data.get("stage"),
         pid=int(data.get("pid", 0)),
+        session_id=str(data.get("session_id", "")),
+        session_pid=int(data.get("session_pid", 0)),
         session_nonce=str(data.get("session_nonce", "")),
     )
 
@@ -595,6 +648,8 @@ def _write_lease(
         lease_expires_at=lease_expires_at,
         stage=stage,
         pid=os.getpid(),
+        session_id=os.environ.get("CLAUDE_CODE_SESSION_ID", ""),
+        session_pid=_cached_session_pid(),
         session_nonce=session_nonce,
     )
     atomic_write_text(run_lock_path(ticket_dir), _serialize(lease))
@@ -713,5 +768,6 @@ __all__ = [
     "refresh",
     "release",
     "run_lock_path",
+    "session_pid",
     "takeover_clear",
 ]

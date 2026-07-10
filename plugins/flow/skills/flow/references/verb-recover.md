@@ -18,6 +18,7 @@ It does not run stages; after a successful fix it hands back to `/flow do`.
    ```
    Surface the report.
    It carries (at minimum) `lease.state`, the failed stage if any, `snapshot.ok`, and `ship_event_attention`.
+   It also carries `holder_liveness`, an advisory best-effort probe of the recorded session process: `alive` is true/false, or null when the holder is cross-host, unrecorded, or the probe failed. Treat it as a hint only, a live result can be a reused pid, and it never gates reclaim; `takeover --force` stays the only reclaim path.
 
 3. Drive remediation from the report + the user's intent.
    When a step is destructive, confirm with AskUserQuestion first.

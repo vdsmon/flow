@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import contextlib
 import json
+import os
 import socket
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -316,3 +318,99 @@ def test_reload_snapshot_fails_loud_on_write_failure(
     assert payload["snapshot_reloaded"] is False
     assert "error" in payload
     assert not (td / "snapshot.sha").exists()
+
+
+# ─── holder_liveness advisory hint (flow-z4f5) ─────────────────────────────────
+
+
+def _fake_run(returncode: int):
+    def run(*args: object, **kwargs: object) -> SimpleNamespace:
+        return SimpleNamespace(returncode=returncode)
+
+    return run
+
+
+def test_holder_liveness_none_when_no_holder() -> None:
+    assert recover._holder_liveness(None) is None
+
+
+def test_holder_liveness_cross_host_is_skipped() -> None:
+    holder = {"hostname": "a-different-host-9e3f", "session_pid": 4242}
+    assert recover._holder_liveness(holder) == {"probe": "skipped_cross_host", "alive": None}
+
+
+def test_holder_liveness_unrecorded_when_session_pid_zero() -> None:
+    holder = {"hostname": socket.gethostname(), "session_pid": 0}
+    assert recover._holder_liveness(holder) == {"probe": "unrecorded", "alive": None}
+
+
+def test_holder_liveness_alive_true(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(recover.subprocess, "run", _fake_run(0))
+    holder = {"hostname": socket.gethostname(), "session_pid": 4242}
+    assert recover._holder_liveness(holder) == {"probe": "ps", "alive": True, "session_pid": 4242}
+
+
+def test_holder_liveness_alive_false(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(recover.subprocess, "run", _fake_run(1))
+    holder = {"hostname": socket.gethostname(), "session_pid": 4242}
+    assert recover._holder_liveness(holder) == {"probe": "ps", "alive": False, "session_pid": 4242}
+
+
+def test_holder_liveness_probe_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    def _boom(*args: object, **kwargs: object) -> object:
+        raise OSError("ps gone")
+
+    monkeypatch.setattr(recover.subprocess, "run", _boom)
+    holder = {"hostname": socket.gethostname(), "session_pid": 4242}
+    assert recover._holder_liveness(holder) == {"probe": "error", "alive": None}
+
+
+def test_detect_holder_liveness_alive_end_to_end(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    td = _ws(tmp_path)
+    boot, host = _identity()
+    monkeypatch.setattr(lease, "_SESSION_PID_CACHE", [os.getpid()])  # this process is alive
+    lease.acquire(td, "live-run", 600, _now(), current_boot=boot, hostname=host, cwd=str(td))
+    rep = recover.detect(tmp_path, "T-1", now_iso=_now())
+    assert rep["lease"]["state"] == "live"
+    hl = rep["holder_liveness"]
+    assert hl["probe"] == "ps"
+    assert hl["alive"] is True
+    assert hl["session_pid"] == os.getpid()
+
+
+def test_detect_holder_liveness_none_when_free(tmp_path: Path) -> None:
+    _ws(tmp_path)
+    rep = recover.detect(tmp_path, "T-1", now_iso=_now())
+    assert rep["lease"]["state"] == "free"
+    assert rep["holder_liveness"] is None
+
+
+def test_detect_never_raises_when_probe_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    td = _ws(tmp_path)
+    boot, host = _identity()
+    monkeypatch.setattr(lease, "_SESSION_PID_CACHE", [4242])
+    lease.acquire(td, "live-run", 600, _now(), current_boot=boot, hostname=host, cwd=str(td))
+    monkeypatch.setattr(recover, "verify_snapshot", lambda *a, **k: (True, ""))
+
+    def _boom(*args: object, **kwargs: object) -> object:
+        raise OSError("ps gone")
+
+    monkeypatch.setattr(recover.subprocess, "run", _boom)
+    rep = recover.detect(tmp_path, "T-1", now_iso=_now())
+    assert rep["holder_liveness"] == {"probe": "error", "alive": None}
+    assert rep["lease"]["state"] == "live"  # the full payload is still returned
+    assert "snapshot" in rep
+
+
+def test_detect_does_not_mutate_run_lock(tmp_path: Path) -> None:
+    td = _ws(tmp_path)
+    boot, host = _identity()
+    lease.acquire(td, "live-run", 600, _now(), current_boot=boot, hostname=host, cwd=str(td))
+    lock = lease.run_lock_path(td)
+    before = lock.read_bytes()
+    recover.detect(tmp_path, "T-1", now_iso=_now())
+    assert lock.read_bytes() == before
