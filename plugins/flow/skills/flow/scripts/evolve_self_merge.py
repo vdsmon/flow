@@ -13,6 +13,9 @@ directly. The CLI wires the I/O: read the bead's labels (`bd show`), the
 Gates (mirrors the drain reap's classify, but evaluated in-run):
 - not maintainer self-target / not an `evolve` bead / CI not green -> skip (leave the
   PR for the human; never an error).
+- the label read itself failing (a transient `bd show` error that outlived the retry)
+  -> skip: "labels unreadable" stays distinct from a genuinely unlabeled bead, so a
+  read flake is never mistaken for "not an evolve bead".
 - harness eval not "pass" (the stage runs `harness_eval.py score` when the PR touches
   scripts and feeds the verdict via `--eval-status`) -> skip: "regressed" names the
   Self-Harness no-degradation rule; anything else blocks conservatively. Omitted ->
@@ -28,6 +31,7 @@ import argparse
 import json
 import subprocess
 import sys
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Literal
@@ -41,6 +45,8 @@ Runner = Callable[[list[str]], subprocess.CompletedProcess[str]]
 
 Action = Literal["merge", "skip"]
 
+_READ_BACKOFFS = (0.5, 1.0)
+
 
 def decide(
     labels: list[str],
@@ -52,8 +58,13 @@ def decide(
     eval_status: str | None = None,
     main_ci_status: str | None = None,
     changed_files: list[str] | None = None,
+    labels_readable: bool = True,
 ) -> dict[str, Any]:
     """Pure self-merge gate. Returns {action, is_hot, reason}.
+
+    `labels_readable` is False when the label read itself failed (a transient `bd show` error that
+    outlived the retry): skip with "labels unreadable" (the transient-read-failure case, distinct
+    from a genuinely empty label list).
 
     `action` is "skip" (leave the PR for the human) or "merge". `is_hot` is the
     `hot` label OR a guard-file hit in `planned_files` OR one in `changed_files`
@@ -74,6 +85,8 @@ def decide(
     )
     if not is_maintainer:
         return {"action": "skip", "is_hot": is_hot, "reason": "not maintainer self-target"}
+    if not labels_readable:
+        return {"action": "skip", "is_hot": is_hot, "reason": "labels unreadable — bd show failed"}
     if "evolve" not in labels:
         return {"action": "skip", "is_hot": is_hot, "reason": "not an evolve bead"}
     if "proposal" in labels:
@@ -108,16 +121,27 @@ def _default_runner() -> Runner:
     return run
 
 
-def _bead_labels(key: str, runner: Runner) -> list[str]:
+def _bead_labels(
+    key: str, runner: Runner, *, sleep: Callable[[float], None] = time.sleep
+) -> list[str] | None:
     """The bead's labels via `_evolve_common.bead_show` (authoritative; labels
-    live in the tracker, not in ticket.json). Empty list on any error.
+    live in the tracker, not in ticket.json). A transient `bd show` failure
+    survives a bounded retry (mirrors main_ci_health._ok_read). Returns None
+    when the read still fails after retries (unreadable), distinct from [] (a
+    genuinely unlabeled bead); malformed JSON stays [] (bead_show returns {}
+    without raising).
     """
-    try:
-        data = bead_show(runner, key)
-    except ToolError:
-        return []
-    labels = data.get("labels")
-    return [str(x) for x in labels] if isinstance(labels, list) else []
+    for backoff in (*_READ_BACKOFFS, None):
+        try:
+            data = bead_show(runner, key)
+        except ToolError:
+            if backoff is None:
+                return None
+            sleep(backoff)
+            continue
+        labels = data.get("labels")
+        return [str(x) for x in labels] if isinstance(labels, list) else []
+    return None
 
 
 def cli_main(argv: list[str], runner: Runner | None = None) -> int:
@@ -160,7 +184,7 @@ def cli_main(argv: list[str], runner: Runner | None = None) -> int:
         else None
     )
     result = decide(
-        labels,
+        labels or [],
         is_maintainer=is_maintainer(workspace_root),
         auto_merge_hot=_auto_merge_hot(workspace_root),
         ci_status=args.ci_status,
@@ -168,6 +192,7 @@ def cli_main(argv: list[str], runner: Runner | None = None) -> int:
         eval_status=args.eval_status,
         main_ci_status=args.main_ci_status,
         changed_files=changed_files,
+        labels_readable=labels is not None,
     )
     sys.stdout.write(json.dumps(result, indent=2, sort_keys=True) + "\n")
     return 0

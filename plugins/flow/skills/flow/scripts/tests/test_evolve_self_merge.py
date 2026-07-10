@@ -22,6 +22,24 @@ def test_skip_when_not_evolve_bead():
     assert "evolve" in d["reason"]
 
 
+def test_decide_labels_unreadable_skips():
+    d = esm.decide(
+        [], is_maintainer=True, auto_merge_hot=True, ci_status="green", labels_readable=False
+    )
+    assert d["action"] == "skip"
+    assert "unreadable" in d["reason"]
+
+
+def test_decide_unreadable_after_maintainer_gate():
+    # the unreadable gate sits after the maintainer gate: a non-maintainer still reads "maintainer",
+    # proving the ordering.
+    d = esm.decide(
+        [], is_maintainer=False, auto_merge_hot=True, ci_status="green", labels_readable=False
+    )
+    assert d["action"] == "skip"
+    assert "maintainer" in d["reason"]
+
+
 def test_skip_when_ci_not_green():
     d = esm.decide(["evolve"], is_maintainer=True, auto_merge_hot=True, ci_status="pending")
     assert d["action"] == "skip"
@@ -441,6 +459,28 @@ def test_cli_main_ci_status_flows_to_decide(tmp_path, capsys):
     assert "main CI red" in out["reason"]
 
 
+def test_cli_labels_unreadable_skips(tmp_path, capsys, monkeypatch):
+    # threading guard, sibling of test_cli_main_ci_status_flows_to_decide: an unreadable bd show
+    # must surface the distinct "labels unreadable" skip, not a false "not an evolve bead". Empty
+    # _READ_BACKOFFS keeps the retry sleepless.
+    monkeypatch.setattr(esm, "_READ_BACKOFFS", ())
+    ws = _ws(tmp_path, self_target=True, auto_merge_hot=True)
+
+    def runner(args):
+        if args[:2] == ["bd", "show"]:
+            return subprocess.CompletedProcess(args, 1, "", "bd error")
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    rc = esm.cli_main(
+        ["--workspace-root", str(ws), "--key", "flow-x", "--ci-status", "green"],
+        runner=runner,
+    )
+    assert rc == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["action"] == "skip"
+    assert "unreadable" in out["reason"]
+
+
 def test_cli_changed_files_flows_to_decide(tmp_path, capsys):
     # observed-diff threading: a guard file in --changed-files raises is_hot even
     # though the ticket frontmatter's planned_files are clean.
@@ -518,11 +558,28 @@ def test_cli_rejects_unknown_eval_status(tmp_path):
 # ─── _bead_labels error branches ─────────────────────────────────────────────
 
 
-def test_bead_labels_nonzero_returncode():
+def test_bead_labels_read_error_returns_none():
     def runner(args):
         return subprocess.CompletedProcess(args, 1, "", "bd error")
 
-    assert esm._bead_labels("flow-x", runner) == []
+    assert esm._bead_labels("flow-x", runner, sleep=lambda _: None) is None
+
+
+def test_bead_labels_retries_then_succeeds():
+    calls = []
+    sleeps = []
+
+    def runner(args):
+        calls.append(args)
+        if len(calls) == 1:
+            return subprocess.CompletedProcess(args, 1, "", "bd error")
+        return subprocess.CompletedProcess(args, 0, json.dumps([{"labels": ["evolve"]}]), "")
+
+    result = esm._bead_labels("flow-x", runner, sleep=sleeps.append)
+    assert result == ["evolve"]
+    assert len(calls) == 2
+    assert all(a[:2] == ["bd", "show"] for a in calls)
+    assert sleeps == [esm._READ_BACKOFFS[0]]
 
 
 def test_bead_labels_malformed_json():
