@@ -40,6 +40,8 @@ The runner never disturbs the working tree: it advances + updates the plugin **o
 
 Alongside the `evolve audit` producer, the same nightly fire runs a second, deterministic post-hoc miner: `trace_mine.py runs → extract | cluster | file` sweeps recent finished dogfood-run transcripts for friction the in-flight logger missed. It is NOT an LLM `--bg` run — plain `python3` piped through the shipped pipeline — and it only files propose-only beads, never auto-drained.
 
+The same fire also runs `senses_deadman.py`, a deterministic sensor over the ship-event store: it joins the window's closed beads to their frozen ship events, files ONE deduped `P0` when the sense diverges (merged-and-closed beads with no event), and tees a folded health digest into the nightly log. Like the miner it is plain `python3`, not an LLM `--bg` run. Its `P0` carries no `evolve` label, so the drain never auto-runs it. It is the SENSES twin of the run-record deadman, which watches the RUNS.
+
 ## The producer-altitude axis
 
 The loop is only as ambitious as its producer. flow has three producer altitudes, plus a discovery/mining producer that runs alongside them:
@@ -50,6 +52,7 @@ The loop is only as ambitious as its producer. flow has three producer altitudes
 | **judgment** | `evolve propose` | one feature/refactor, one PR | `proposal` bead → maintainer runs `/flow <key>` | on demand |
 | **theme** | `evolve epic` | a capability track → a tree of PRs | `epic` bead + `proposal` children → maintainer accepts | **weekly** |
 | **discovery/mining** | `trace_mine runs → extract\|cluster\|file` | one missed-friction signature | `trace-mined` proposal bead → maintainer runs `/flow <key>` (never auto-drained) | nightly |
+| **sensing** | `senses_deadman` | one ship-event divergence | `P0` alert bead → maintainer (no `evolve` label, never auto-drained) + a nightly health digest | nightly |
 
 `audit` and `propose` are biased small by construction ("prefer small, isolated, high-evidence items"). The **theme** altitude — `evolve epic` — is the high-altitude producer: web-grounded, audacious, conviction-gated (not track-record-gated), spike-capable. It discovers at theme altitude and **decomposes** the chosen epic into do-loop-sized children the existing per-ticket consumer can run. See `verb-evolve.md` §epic. It runs weekly, not nightly: at theme altitude a daily cadence has weak signal.
 

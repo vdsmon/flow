@@ -10,7 +10,8 @@ This is the **outer loop** in flow's nested-loop architecture (see `plugins/flow
 2. **producer** — `claude --bg "/flow evolve audit"` (cold scan → files `evolve` beads)
 3. **wait** — `wait_for_session` blocks until the producer finishes filing
 4. **producer** — `trace_mine.py runs → extract | cluster | file` (deterministic, read-only transcript mining; not `--bg`; files deduped `trace-mined` proposal beads, never auto-drained)
-5. **consumer** — `claude --bg "/flow evolve drain"` (reap green orphans + launch the fleet)
+5. **producer** — `senses_deadman.py` (deterministic; joins the window's closed beads to the ship-event store, files ONE deduped P0 on divergence, prints the folded health digest into the log; read-only consumer of `is_shipped`, never auto-drained)
+6. **consumer** — `claude --bg "/flow evolve drain"` (reap green orphans + launch the fleet)
 
 On any feature branch it audits the current checkout and skips advancing — it never disturbs the working tree.
 
@@ -44,6 +45,8 @@ The cold audit goes silent for minutes mid-scoring. `claude -p` trips a stream-i
 6. **loopctl helper** (optional but recommended): same copy-and-replace pattern for `loopctl.sh.template` → `~/.flow-evolve/loopctl.sh`; replace only `{{USER}}` (your macOS username). Then `chmod +x ~/.flow-evolve/loopctl.sh`. Usage: `loopctl.sh arm|disarm|status [nightly|weekly]`.
 
 ## Deadman (staleness surface)
+
+Two deadmen watch different failures. This run-record surface covers the **RUNS**: did the nightly loop fire at all. `senses_deadman.py` (What runs, step 5) covers the loop's **SENSES**: did the ship-event sense go dark while the loop kept firing (merged-and-closed beads accumulating with no frozen ship event). A healthy run-record with a dark sense looks fine here and is exactly what the senses deadman catches.
 
 A dead loop used to be discovered only by noticing PRs stopped appearing. Each runner appends one JSON line per event to `~/.flow-evolve/run-record.jsonl` — `{schedule, phase, ts, outcome}`, where `phase` is `start` or `end`, `ts` is UTC ISO-8601, and `outcome` is `ok`/`fail` on an `end` (empty on a `start`).
 
