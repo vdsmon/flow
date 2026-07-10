@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import json
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -49,6 +50,28 @@ def _ship_event_attention(workspace_root: Path) -> int:
     return count
 
 
+def _holder_liveness(holder: Any) -> dict[str, Any] | None:
+    """Advisory liveness hint for a lease holder, or None when there is no holder.
+
+    Best-effort and wrapped so it can never raise out of detect: it probes the recorded session_pid
+    with a read-only `ps -p`. A live result can be a reused pid and a cross-host holder is not
+    locally probeable, so this never gates reclaim; `takeover --force` stays the only reclaim path.
+    """
+    if holder is None:
+        return None
+    try:
+        host = str(holder.get("hostname", ""))
+        if host and host != lease.hostname():
+            return {"probe": "skipped_cross_host", "alive": None}
+        spid = int(holder.get("session_pid", 0))
+        if spid <= 0:
+            return {"probe": "unrecorded", "alive": None}
+        probe = subprocess.run(["ps", "-p", str(spid)], capture_output=True, check=False)
+        return {"probe": "ps", "alive": probe.returncode == 0, "session_pid": spid}
+    except Exception:
+        return {"probe": "error", "alive": None}
+
+
 def detect(workspace_root: Path, ticket: str, *, now_iso: str | None = None) -> dict[str, Any]:
     now_iso = now_iso or utcnow_iso()
     td = _ticket_dir(workspace_root, ticket)
@@ -63,6 +86,7 @@ def detect(workspace_root: Path, ticket: str, *, now_iso: str | None = None) -> 
         "state_exit": state_exit,
         "stages": stages,
         "lease": lease_info,
+        "holder_liveness": _holder_liveness(lease_info.get("holder")),
         "snapshot": {"ok": ok, "detail": detail},
         "ship_event_attention": _ship_event_attention(workspace_root),
     }
