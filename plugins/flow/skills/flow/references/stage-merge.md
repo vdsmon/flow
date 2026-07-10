@@ -24,7 +24,7 @@ IS_HOT=$(printf '%s' "$PROBE" | python3 -c 'import sys,json;print(json.load(sys.
 Branch on the verdict:
 
 - **`already_merged` true** → nothing to do. Run `execute --already-merged` (§3 below) to close the bead + any covers, then `STATUS=completed`. STOP — skip everything else in this doc.
-- **`action` `"skip"`** → leave the PR as-is for the human (the normal outcome on a user project, and for a held hot bead), `STATUS=completed`. Done. On an eval-driven skip (`eval_status` is `regressed`/`error`), first post a PR comment naming `regressed_cases` from the verdict (mirrors §2's `held_guard` pattern) so the maintainer sees WHICH frozen cases moved.
+- **`action` `"skip"`** → leave the PR as-is for the human (the normal outcome on a user project, and for a held hot bead), `STATUS=completed`. Done. On a `--auto` run this skip plus the self-teardown makes the completed session vanish from the jobs panel while its PR stays open+green, a parked PR by design that a later drain scan can misread as an orphan death (see the parked-vs-orphan taxonomy in `references/verb-evolve.md` §drain step A). On an eval-driven skip (`eval_status` is `regressed`/`error`), first post a PR comment naming `regressed_cases` from the verdict (mirrors §2's `held_guard` pattern) so the maintainer sees WHICH frozen cases moved.
 - **`action` `"merge"`, `is_hot` false** → skip straight to §3 (Execute).
 - **`action` `"merge"`, `is_hot` true** → run §2 first; only a clean review proceeds to §3.
 
