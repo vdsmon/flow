@@ -15,14 +15,15 @@ Write or update the tests that pin the new behavior, watch them fail, make them 
 
 When `<ticket-dir>` contains `/revisions/`, this is a **revision** (see `references/verb-revise.md`): there is no `plan.out` (a revision has no plan stage). The fix SOURCE is, in order:
 
-1. `<ticket-dir>/instruction.md` if it exists — a free-text change-request the maintainer gave to `/flow revise`. Its text IS the work to do; treat it as the plan.
-2. else the PR's unresolved human review threads as the Major+ fix set. Resolve the PR from the branch and fetch its threads through the forge seam:
+1. `<ticket-dir>/dispositions.json`'s **fix pile** if the file exists — the `threads[]` entries with `"disposition": "fix"`, each carrying `file` / `line` / `title` / `body` (the same work-list shape as the review threads in source 3 below). This is the durable disposition set an interactive `revise` persists (`references/verb-revise.md` step 5a; the schema and the fix-pile definition live in `references/review-packet.md`). When the file exists it is AUTHORITATIVE — an explicit empty fix pile means "nothing to fix here", NOT a fall-through to source 3. Union it with `instruction.md` (source 2) when BOTH exist.
+2. `<ticket-dir>/instruction.md` if it exists — a free-text change-request the maintainer gave to `/flow revise`. Its text IS the work to do; treat it as the plan.
+3. else the PR's unresolved human review threads as the Major+ fix set. Resolve the PR from the branch and fetch its threads through the forge seam:
    ```bash
    PR_ID=$(python3 ${CLAUDE_SKILL_DIR}/scripts/forge_cli.py --workspace-root . detect-pr --branch "$(git rev-parse --abbrev-ref HEAD)" | python3 -c 'import sys,json;d=json.load(sys.stdin);print(d.get("id","") if d else "")')
    python3 ${CLAUDE_SKILL_DIR}/scripts/forge_cli.py --workspace-root . review-threads --pr "$PR_ID"
    ```
    The unresolved Major+ threads (each carries `file` / `line` / `title` / `body`) are the work list.
-3. if BOTH are absent (no instruction, no unresolved Major+ thread) → there is nothing to revise. Finish this stage `completed` with a one-line "no actionable revision input" note; the review_loop terminal then passes on the already-green PR.
+4. if none of the above yields work → there is nothing to revise. That is: an authoritative `dispositions.json` whose fix pile is empty with no `instruction.md` (the explicit empty triage — sources 2/3 do NOT apply, even if unresolved threads still exist), OR no `dispositions.json` at all and no `instruction.md` and no unresolved Major+ thread. Finish this stage `completed` with a one-line "no actionable revision input" note; the review_loop terminal then passes on the already-green PR.
 
 Apply the fix with the same TDD discipline where a behavior change is involved (add or adjust the test that pins it). The implement subagent's "plan" is the instruction text / the thread list.
 

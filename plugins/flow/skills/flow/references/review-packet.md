@@ -2,7 +2,7 @@
 
 Gate 1 (plan approval) renders the plan as a lavish-axi HTML surface (`references/verb-spec.md` step 4, the `## Lavish plan-review surface` block). This is the gate-2 analogue: when an interactive run reaches ready-to-review, render the change as a local interactive HTML review packet, loop on batched human feedback (fix commits + interdiff per round), and hand off to the forge PR only when the user ends the session. All binding discipline — the pinned npx, the TMPDIR heredoc HTML, the degradation contract, the additive-only boundary, forge-neutrality — is inherited from the plan surface. `references/verb-spec.md` step 4's boundary sentence sanctions this doc plus its two pointer sites (`references/stage-review_loop.md`, `references/verb-do.md`) as the gate-2 reference set; nothing here makes lavish a dependency.
 
-**Attachment point.** This protocol is read from `references/stage-review_loop.md`'s packet-attachment section, at the tail of the review_loop stage: AFTER §5's terminal condition is met (CI green AND zero unresolved Major+ threads, the bot-gate satisfied per §3) and BEFORE `STATUS=completed` is recorded via `advance`. A revision sub-run (`<ticket-dir>` contains `/revisions/`) is explicitly excluded — that is a companion ticket's scope.
+**Attachment point.** This protocol is read from `references/stage-review_loop.md`'s packet-attachment section, at the tail of the review_loop stage: AFTER §5's terminal condition is met (CI green AND zero unresolved Major+ threads, the bot-gate satisfied per §3) and BEFORE `STATUS=completed` is recorded via `advance`. A revision sub-run (`<ticket-dir>` contains `/revisions/`) is excluded from THIS gate-2 packet — it attaches its own surface instead, the `## Revision triage board (/flow revise)` section below, opened from `references/verb-revise.md` step 5a rather than from this tail.
 
 **Gate (mirrors the plan surface exactly).** Two legs; a failed gate skips the packet and delivers today (the skip line + the PR-link block), never blocking. Leg (a): an interactive run — NOT `--auto` (detected by session context, the same signal the PR-ready notification's `--auto` skip uses), NOT a revision sub-run, and review_loop must have actually run (its handler is wired, not `none`). Leg (b): the presence check, run with a real command as the first action, never a judgment call:
 ```bash
@@ -87,3 +87,57 @@ A user-initiated end is terminal on every branch — never reopen without `--reo
 **Degradation contract.** ANY failure at ANY point — npx absent, offline, a non-zero lavish-axi exit, a heredoc refusal — falls back to today's delivery plus exactly one visible line, never silent, never blocking, and never a friction entry (parity with the plan surface). Before the packet opens: `Lavish: skipped — <reason>`, and the PR-ready notification fires at do-loop step e exactly as today. After the packet has opened (the notification already fired at packet-open): `Lavish: degraded mid-loop — <reason>` plus the PR-link block, with no second notification. The packet is an ADD-ON: no verb, stage, or script may require it, and lavish-absent IS today's delivery plus that one line.
 
 **Curtain / live-reload fragility (lavish-axi 0.1.35).** Observed in flow-qdal: a wide horizontal overflow can keep lavish's open-time curtain (loading overlay) up across opens (the user sees "nothing loads"), and live-reload churn can kill the iframe SDK send path (**Send & end session** triggers nothing). The mandated layout-safety snippet above is the primary prevention; if a surface still hangs, recover by restarting the lavish server and re-opening with `--no-gate`: `npx -y lavish-axi@0.1.35 --no-gate <html>`. A degradation-recovery path, not a normal step.
+
+## Revision triage board (/flow revise)
+
+Opened from `references/verb-revise.md` step 5a — NOT from the §6 tail attachment above (a revision sub-run stays excluded from the gate-2 packet). Inherited verbatim from the packet above: the pinned `npx -y lavish-axi@0.1.35` for open / `poll` / `end`, the TMPDIR heredoc authoring (here at `${TMPDIR:-/tmp}/flow-lavish-$KEY/revise.html`), the layout-safety snippet pasted into `<head>`, the ONE persistent poll (live-reload in place, never killed / re-armed), batch-one-send, the degradation contract, and the additive-only boundary. Only the deltas below are new; every discipline not restated here is inherited by reference.
+
+**Board content.** Every unresolved thread renders as a triage card — `id` / `file` / `line` / `severity` / `title` / `body` / `author` — against the merge-base diff (the `pr-info` recipe above). The `input`-playbook controls are per-thread: fix now / defer / dismiss, with a reason REQUIRED for defer and dismiss (a `fix` needs none). A thread whose anchor cannot be pinned to the current diff (`file: null` / `line: null`, or a stale anchor) renders in a visible **Unanchored threads** section — never silently dropped. An instruction-driven revise with zero unresolved threads still opens the board (verb-revise step 5a skips only when both are absent): the card list is empty and the board serves as the interdiff + convergence surface for the instruction's fix rounds.
+
+**Durable artifact.** Each triage batch persists to `$REVISION_DIR/dispositions.json`, written whole per batch with the step-4 `printf '%s\n'` precedent (the same durable-source pattern verb-revise step 4 uses for `instruction.md`). `$REVISION_DIR` IS the revision sub-run's `<ticket-dir>`, so the consuming stages read this same file as `<ticket-dir>/dispositions.json`. One JSON object:
+
+```json
+{
+  "version": 1,
+  "pr_id": "325",
+  "round": 1,
+  "round_sha": "4f2c9e1a0b3d5f6a7c8e9d0b1a2c3d4e5f6a7b8c",
+  "generated_at": "2026-07-10T14:03:22Z",
+  "threads": [
+    {
+      "id": "PRRT_kwDOabc123",
+      "file": "src/query.py",
+      "line": 118,
+      "severity": "major",
+      "title": "N+1 query in loop",
+      "body": "This re-queries per row; batch it.",
+      "resolved": false,
+      "author": "coderabbitai",
+      "parent_id": null,
+      "disposition": "fix",
+      "reason": ""
+    }
+  ]
+}
+```
+
+Field contract:
+- `version` — int, schema version, starts at 1.
+- `pr_id` — str, the `--pr` id the threads were fetched with.
+- `round` — int, 1-based triage round that produced this file.
+- `round_sha` — str (40-hex), `git rev-parse HEAD` at persist time, i.e. before this batch's fixes land; the base for the re-render after those fixes (`git diff "$ROUND_SHA"..HEAD`).
+- `generated_at` — str, ISO-8601 UTC.
+- `threads[]` — every triaged thread, full self-contained snapshot: the nine keys of forge.py's `ReviewThread` TypedDict, verbatim — `id` str, `file` str|null, `line` int|null, `severity` one of `"critical"|"major"|"minor"|"nit"|"unknown"` (forge.py's `THREAD_SEVERITY`; stored RAW, pre-floor — dispositions supersede the floor so the bump is irrelevant here), `title` str, `body` str, `resolved` bool, `author` str, `parent_id` str|null — plus two disposition keys: `disposition` enum `"fix"|"defer"|"dismiss"`, and `reason` str (MUST be non-empty for defer/dismiss; `""` allowed for fix).
+- Fix pile (the one definition): `threads[]` entries with `"disposition": "fix"`. stage-implement source #1 reads it as the work list; stage-review_loop's supersede branch computes the Major+-replacement fix set and the §5 terminal check from it. An explicit empty triage — file exists, fix pile empty (all defer/dismiss, or `"threads": []`) — supersedes the floor: no floor-bumped thread enters the fix set, so the terminal check has nothing left to chase. Termination timing stays with the convergence rules below — a mid-session all-defer/dismiss batch (**Send to Agent**) keeps the loop alive; only a user-ended session closes it. No file → floor applies (the empty-vs-absent distinction).
+- Unanchored threads (`file: null` / `line: null` / unpinnable anchor) live in the SAME array; the board renders them in a visible section; the schema needs no split.
+
+**Rounds.** Round 1: the queued fix dispositions seed the fix-only stage subset — WAIT for the first poll return before dispatching, so the first batch is in hand before implement runs. Rounds 2+: at review_loop's revision tail — each mid-session batch applied as ONE fix round via `references/stage-review_loop.md` §2's delegated-fix recipe verbatim (the fix subagent pinned with `model_resolve.py --stage review_loop`; human rounds cap-exempt per §2's carve-out), followed by a bounded CI re-probe, then a re-render showing only the interdiff `git diff "$ROUND_SHA"..HEAD` — LOCAL git only, never a forge review-round API.
+
+**Lease heartbeat (two regimes).** Inside the review_loop tail (rounds 2+): the packet's heartbeat block above applies, with `--revision "$REV_ID"` appended to the `next` call — review_loop is in_progress there, so `next` is state-idempotent (`pick_next_pending` resumes the in_progress stage rather than beginning a new one). During the step-5a board wait (before the do-loop): do NOT heartbeat — a `next` on an all-pending sub-run begins the first pending stage (implement) before any triage exists. Documented residual: the `revise-open` lease carries a 10-min init TTL, and a long triage can outlive it; refresh-past-expiry is legal for the owner (`lease.assert_lease_still_mine` skips the expiry check) and the do-loop's first real `next --revision` re-covers it — the same residual class the packet's heartbeat block documents.
+
+**Convergence (post-gpo7, inherited).** The user's built-in end-session signal is the verdict, keyed on the same discriminator the packet uses. **Send to Agent** mid-session = a batched disposition set, loop alive (another fix round, re-render, poll again). **Send & end session** is terminal, and its batch is read for an unresolved change request:
+- the ended batch carries an unresolved change request (any queued fix disposition) → apply that batch as one last fix round, push, post the replies / resolves, deliver the interdiff summary in-thread with the PR link — no re-render, no reopen, NO `mark-ready`; `STATUS=completed`, today's step-7 delivery.
+- the ended batch carries none (only defer / dismiss, or nothing queued) → THIS end IS convergence: persist the (possibly empty) disposition set — an explicit empty triage supersedes the floor — then `STATUS=completed` and today's step-7 delivery; capability-gated `forge_cli.py mark-ready --pr "$PR_ID"` only when `pr-info` still reports `draft: true` (a non-draft PR is already promoted; a `{"supported": false}` return renders as advisory text). Merge stays human on the forge.
+- a malformed / unparseable ended batch, or lavish degraded at the moment of end → the degradation contract (`Lavish: degraded mid-loop — <reason>`, today's delivery, NO `mark-ready`), never a guessed verdict.
+
+**Audit trail.** A fixed thread → `post-reply` ("Fixed in $FIX_SHA. <one line>") + host-verified `resolve-thread` (the bkt adapter re-reads `.resolution != null`); a deferred or dismissed thread → `post-reply` carrying the human's reason, thread stays open. Reply-posting is independent of fix-pile emptiness — an all-defer/dismiss batch still posts every reason. The single-fire rule in `references/verb-do.md` is untouched: no verb-do edit rides this section.

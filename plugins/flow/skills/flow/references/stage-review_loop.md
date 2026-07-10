@@ -13,15 +13,16 @@ When `<ticket-dir>` contains `/revisions/` this is a revision sub-run (see `refe
 PR_ID=$(python3 ${CLAUDE_SKILL_DIR}/scripts/forge_cli.py --workspace-root . detect-pr --branch "$(git rev-parse --abbrev-ref HEAD)" | python3 -c 'import sys,json;d=json.load(sys.stdin);print(d.get("id","") if d else "")')
 ```
 
-Two deltas from the normal loop:
+Deltas from the normal loop:
 
+- **Explicit dispositions supersede the floor.** When `<ticket-dir>/dispositions.json` exists (an interactive `revise` opened the step-5a triage board — `references/review-packet.md`'s `## Revision triage board (/flow revise)` section carries the schema), the human's explicit dispositions SUPERSEDE inferred severity: the fix set is the **fix pile** (`threads[]` entries with `"disposition": "fix"`) regardless of severity, and `apply-floor` is NOT consulted. §5's terminal "zero unresolved Major+" check then evaluates over that fix pile, not the raw thread severities — a dismissed major must NOT deadlock terminal, and an explicit empty triage (file exists, fix pile empty: all defer/dismiss, or `"threads": []`) leaves the terminal check nothing to chase, no floor-bumped threads. While the board session is live, completion still waits on the user's end-session verdict (the board section's convergence rules) — a mid-session all-defer/dismiss batch does NOT complete the stage. Only when NO `dispositions.json` exists does the plain-comment floor below apply (the empty-vs-absent distinction).
 - **Plain-comment floor.** Before the §4 address+resolve, fetch the threads capture-then-check (the §1 discipline: read `$?` first — piping `review-threads` straight into `apply-floor` swallows a non-zero exit, and `apply-floor` turns the empty stdin into `[]`, so a gh flake reads as ZERO maintainer threads, a false review-clean), then pipe the captured output through the floor so an unresolved `minor` (a plain human comment) is bumped to the configured severity:
   ```bash
   RAW=$(python3 ${CLAUDE_SKILL_DIR}/scripts/forge_cli.py --workspace-root . review-threads --pr "$PR_ID"); rc=$?
   [ "$rc" -eq 0 ] && THREADS=$(printf '%s' "$RAW" | python3 ${CLAUDE_SKILL_DIR}/scripts/revise_config.py apply-floor --workspace-root .)
   ```
   On `rc != 0` that is a PROBE ERROR, not an empty thread list: retry on a bounded budget (§1's pattern), and if it persists set `STATUS=failed` surfacing the stderr — never proceed to §4/§5 as review-clean. A RAW of `{"supported": false}` (a host without thread support) is §3's degrade: skip the floor and thread handling. `apply-floor` reads the threads array on stdin and returns it with every unresolved `minor` bumped to `[revise] plain_comment_severity`. When that floor is `major`, an unresolved minor thread enters the Major+ fix set; the default `minor` leaves the set unchanged (today's behavior). The bump is loop-side only — the forge adapter stays pure of `[revise]` config. Use `$THREADS` (not the raw `review-threads` output) for the §4 Major+ selection.
-- **Reply + resolve a human thread.** After a fix commit is pushed for a human thread, `post-reply` then `resolve-thread` exactly as §4 (the .1 capabilities); a reasoned-skip thread gets a reply and stays open, documented.
+- **Reply + resolve, or reply + leave open.** After a fix commit is pushed for a fixed thread, `post-reply` (with the rationale) then a host-verified `resolve-thread` exactly as §4 (the .1 capabilities; the bkt adapter re-reads `.resolution != null`). A deferred or dismissed thread — a `dispositions.json` defer/dismiss, or a reasoned-skip on the floor path — gets a `post-reply` carrying the human's reason and stays OPEN, documented. Reply-posting is independent of fix-pile emptiness: an all-defer/dismiss batch still posts every reason.
 
 The 3-fix-cycle cap is PER-REVISION (the revision seeded its own `state.json`, fresh counter) — no change. An instruction-sourced revision (no threads) just re-greens CI.
 
@@ -88,7 +89,7 @@ done
 
 Do NOT invent inline edit logic. Delegate the fix to a subagent (the same way the `implement` stage uses `subagent:general-purpose`): give it the failing-check logs, have it apply the fix, commit with the existing commit machinery, and `git push`. Then re-arm the CI Monitor (step 1). This fix subagent is a code-writing spawn on a model_routed stage, so pin it the same way the do-loop pins `implement`, passing this stage's name: `M=$(python3 ${CLAUDE_SKILL_DIR}/scripts/model_resolve.py --workspace-root . --ticket "$KEY" --stage review_loop)` and pass `model=$M` to the fix Agent when `$M` is non-empty (else omit — inherit the session).
 
-**Hard cap: 3 fix cycles total** across CI + review combined (human-requested review-packet rounds do NOT count — a present human is the judgment the cap substitutes for, so the cap bounds unattended loops only; see `references/review-packet.md`). If CI is still red after 3, set `STATUS=failed` and surface the last failing logs — do not loop forever.
+**Hard cap: 3 fix cycles total** across CI + review combined (human-requested review-packet rounds AND revision triage-board rounds do NOT count — a present human is the judgment the cap substitutes for, so the cap bounds unattended loops only; see `references/review-packet.md`). If CI is still red after 3, set `STATUS=failed` and surface the last failing logs — do not loop forever.
 
 ## 3. Poll review threads
 
@@ -156,7 +157,7 @@ This stage MAY write a short report (cycles run, threads resolved/skipped, final
 
 When §5's terminal condition is met (CI green AND zero unresolved Major+ threads, the bot-gate satisfied per §3) and BEFORE `STATUS=completed` is recorded via `advance`, an interactive run offers a local HTML review packet — the gate-2 analogue of the plan surface (`references/verb-spec.md` step 4). The full protocol (gate, data assembly, authoring, the fix-round loop, the lease heartbeat, the verdict, the degradation contract) lives in `references/review-packet.md`; this is the one-line handoff. The fix rounds ARE review_loop semantics — §2's delegated-fix recipe reused verbatim, human-requested rounds exempt from §2's 3-cycle cap — so the round log lands in this stage's `review_loop.out`, no orphan stage file.
 
-A **revision sub-run** (`<ticket-dir>` contains `/revisions/`) is explicitly excluded — the maintainer-thread review board is a companion ticket's scope.
+A **revision sub-run** (`<ticket-dir>` contains `/revisions/`) does NOT attach this gate-2 packet — its interactive surface is the revision triage board, opened earlier from `references/verb-revise.md` step 5a and specified in `references/review-packet.md`'s `## Revision triage board (/flow revise)` section. When that board persisted a `dispositions.json`, this stage's fix set and terminal check follow the revision-mode deltas above.
 
 The PR-ready notification fires exactly once per run. On a packet-gated run it fires at packet-open — this satisfies the do-loop step-e firing point (no duplicate ping), and the packet loop then runs inside `review_loop`'s tail (see `references/review-packet.md`). On a gate-failed run (the packet never opens) it fires at step e exactly as today. The packet never attaches at the `create_pr` fallback firing point (`review_loop` handler `none` → skip line, no packet).
 
