@@ -22,7 +22,26 @@ command -v node && command -v npx   # leg (b): both must resolve
 - Chapters from `plan.out` (per-file rationale + plan steps); adopt / dismiss / discuss triage items from `code_review.out`'s taxonomy sentinel sections (`flow:code_review-taxonomy v1`); evidence from `e2e.out`'s `flow:e2e-evidence` sentinel; the CI chip from `forge_cli.py ci-rollup --pr "$PR_ID"`; the bot-loop summary from review_loop's own `stage-review_loop.md` §1-§4 results.
 - `stage-review_loop.md` §3's not-reviewed caveat ("proceeding on CI-green only — automated review did not happen") renders as a packet banner when present.
 
-**Authoring.** The branch / PR is ground truth; the HTML is a disposable render at `${TMPDIR:-/tmp}/flow-lavish-$KEY/review.html`, authored via a Bash heredoc (`cat > "$TMPDIR/..." <<'HTML' ... HTML`), regenerated per round, NEVER edited as source. Pinned `npx -y lavish-axi@0.1.35` for open / `poll` / `end` — the same version-pin the plan surface uses, closing the npx supply-chain exposure the unpinned `/lavish` skill leaves open. Open the `code` (diff rendering) and `input` (triage / verdict controls) playbooks via `npx -y lavish-axi@0.1.35 playbook <id>` BEFORE authoring the HTML. Design source follows lavish's documented priority, never hand-rolled ad-hoc CSS: the user-requested look first, else the subject project's design system, else the `npx -y lavish-axi@0.1.35 design` DaisyUI fallback.
+**Authoring.** The branch / PR is ground truth; the HTML is a disposable render at `${TMPDIR:-/tmp}/flow-lavish-$KEY/review.html`, authored via a Bash heredoc (`cat > "$TMPDIR/..." <<'HTML' ... HTML`), regenerated per round, NEVER edited as source. Pinned `npx -y lavish-axi@0.1.35` for open / `poll` / `end` — the same version-pin the plan surface uses, closing the npx supply-chain exposure the unpinned `/lavish` skill leaves open. Open the `code` (diff rendering) and `input` (triage controls) playbooks via `npx -y lavish-axi@0.1.35 playbook <id>` BEFORE authoring the HTML. Design source follows lavish's documented priority, never hand-rolled ad-hoc CSS: the user-requested look first, else the subject project's design system, else the `npx -y lavish-axi@0.1.35 design` DaisyUI fallback.
+
+Independent of which design source you pick, MANDATORY in every authored artifact: paste lavish's layout-safety CSS snippet verbatim into the HTML `<head>` (the `layout_safety_snippet` that `npx -y lavish-axi@0.1.35 design` prints). `lavish-axi design` frames it as optional; for flow's dense authored surfaces — diffs, badges, code, tables, the overflow-prone case — it is REQUIRED. DaisyUI's `.label` does NOT wrap long text by default; the snippet's `overflow-wrap: anywhere` set already INCLUDES `.label`, so mandating it verbatim IS the fix (a verdict-form helper line went 1113px wide at an 833px viewport and kept lavish's open-time curtain up across opens — flow-qdal). Verbatim, for the pinned 0.1.35:
+```
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  :where(.grid, .flex, .layout-grid, .layout-flex) > *,
+  :where([style*="display: grid"], [style*="display:grid"], [style*="display: flex"], [style*="display:flex"]) > * {
+    min-width: 0;
+  }
+  :where(p, h1, h2, h3, h4, h5, h6, li, dd, blockquote, figcaption, td, th, .badge, .label) {
+    overflow-wrap: anywhere;
+  }
+  :where(img, svg, video, canvas, iframe) {
+    max-width: 100%;
+    height: auto;
+  }
+</style>
+```
+
 - Chapter the walkthrough by PLAN STEP — core change first, consequences next, glue last — never repo file order. Per-chapter reviewed checkmarks.
 - Plan-step→hunk traceability, with a flag on any hunk that traces to no plan step (an orphan hunk).
 - Render each piece of evidence INSIDE the chapter whose claim it supports (e2e output, the CI chip), not in a trailing appendix.
@@ -53,15 +72,18 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/dispatch_stage.py next \
 ```
 `next` refreshes the lease and re-verifies the snapshot (SKILL.md step-a semantics; `pick_next_pending` returns the in_progress review_loop again, never skips ahead). Exit 1 / 7 routes to the standard `/flow recover` path. Documented residual: an IDLE long-poll returns nothing, so a review idle past ~120 min expires the lease before any heartbeat fires — refresh-past-expiry is legal for the owner (`lease.assert_lease_still_mine` deliberately skips the expiry check) and re-entry is idempotent, but on the self-target repo the expired-lease + green-PR window is briefly reapable.
 
-**Verdict — rides lavish's built-in end-session semantics, never a competing control.** The only QUEUED verdict is **approve**: an `input`-playbook question whose answer is queued locally in the artifact; the user's **Send & end session** submits the queued prompts + user-ended attribution together (the CLI's designed convergence signal), so the final poll batch carries both the verdict and `status: ended`. A change request is NOT a verdict answer — it is ordinary batched feedback sent mid-session via **Send to Agent**, which keeps the loop alive (another fix round, re-render, poll again).
-- **approve** → capability-gated `forge_cli.py mark-ready` (the `ready_toggle` capability; a `{"supported": false}` return renders as advisory text — the user flips the draft manually):
+**Verdict — convergence is the USER's built-in end-session signal, not an agent decision, never a competing control.** Saving and closing IS the approval: there is NO queued approve control — no `input`-playbook approve question, no custom in-page approve button. The user's built-in **Send & end session** submits the final feedback batch (if any — queued triage dispositions and/or change requests) + user-ended attribution together (the CLI's designed convergence signal), so the final poll batch carries `status: ended`. A change request is ordinary batched feedback sent mid-session via **Send to Agent**, which keeps the loop alive (another fix round, re-render, poll again); only the end is terminal. On the ended batch:
+- **the ended batch carries no unresolved change request** (only dismissed triage items, or nothing queued) → THIS end IS the approval → capability-gated `forge_cli.py mark-ready` (the `ready_toggle` capability; a `{"supported": false}` return renders as advisory text — the user flips the draft manually):
   ```bash
   python3 ${CLAUDE_SKILL_DIR}/scripts/forge_cli.py --workspace-root . mark-ready --pr "$PR_ID"
   ```
   If the last round's CI is not green at approve time, surface that one line in-thread BEFORE mark-ready. Then `STATUS=completed`, the round log into `review_loop.out`, `advance` — the normal step-e / step-5 delivery (the PR-link block, `references/verb-do.md`) runs unchanged. Merge stays human on the forge.
-- **the final batch carries feedback AND `status: ended`** (the user requested changes and left) → apply that batch as one last fix round, push, then deliver the interdiff summary in-thread with the PR link — no re-render, no reopen. `STATUS=completed`, today's delivery.
-- **user ends with no verdict and no feedback** → degrade: one visible `Lavish: ended without verdict` line, `STATUS=completed`, today's delivery.
+- **the ended batch carries an unresolved change request AND `status: ended`** (a queued change request, or an adopted triage item — the user asked for changes and left) → apply that batch as one last fix round, push, then deliver the interdiff summary in-thread with the PR link — no re-render, no reopen, NO `mark-ready`. `STATUS=completed`, today's delivery.
+
+A genuinely unusable end signal — a malformed / unparseable ended batch, or lavish degraded at the moment of end — is a lavish failure, not a verdict: it falls through to the degradation contract below (`Lavish: degraded mid-loop — <reason>`, today's delivery, NO `mark-ready`), never presumed to be either verdict.
 
 A user-initiated end is terminal on every branch — never reopen without `--reopen` and an explicit ask; deliver everything remaining in-thread. Agent-side `npx -y lavish-axi@0.1.35 end` is used ONLY when the AGENT terminates the loop (a mid-loop degradation).
 
 **Degradation contract.** ANY failure at ANY point — npx absent, offline, a non-zero lavish-axi exit, a heredoc refusal — falls back to today's delivery plus exactly one visible line, never silent, never blocking, and never a friction entry (parity with the plan surface). Before the packet opens: `Lavish: skipped — <reason>`, and the PR-ready notification fires at do-loop step e exactly as today. After the packet has opened (the notification already fired at packet-open): `Lavish: degraded mid-loop — <reason>` plus the PR-link block, with no second notification. The packet is an ADD-ON: no verb, stage, or script may require it, and lavish-absent IS today's delivery plus that one line.
+
+**Curtain / live-reload fragility (lavish-axi 0.1.35).** Observed in flow-qdal: a wide horizontal overflow can keep lavish's open-time curtain (loading overlay) up across opens (the user sees "nothing loads"), and live-reload churn can kill the iframe SDK send path (**Send & end session** triggers nothing). The mandated layout-safety snippet above is the primary prevention; if a surface still hangs, recover by restarting the lavish server and re-opening with `--no-gate`: `npx -y lavish-axi@0.1.35 --no-gate <html>`. A degradation-recovery path, not a normal step.
