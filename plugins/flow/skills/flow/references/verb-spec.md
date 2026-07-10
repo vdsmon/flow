@@ -42,6 +42,8 @@ Everything from the bootstrap onward is shared by the self-approve branch; the d
 4. Iterate the implementation plan with the user: goal, files to change, approach, test strategy, risks.
    This is the same depth a `subagent:Plan` handler would produce — but interactive, so the user shapes it.
 
+   **When the files-to-change mapping is a wide mechanical refactor that cannot land as one green PR** — a rename / API change / column migration whose call sites span many packages, where the tree goes red partway through — do NOT force it into this one run. Stop spec and recommend `/flow slice <KEY>` instead: it maps the blast radius and mints an expand→migrate→contract ladder of children that each land green alone (`references/verb-slice.md`). A refactor that DOES fit one green PR stays here.
+
    **Lavish plan-review surface — the DEFAULT presentation for this loop.** Render this iterate loop as an interactive HTML review surface via the `lavish-axi` CLI whenever the gate below holds. Plain prose is the FALLBACK for a failed gate, never a coequal choice: "the user probably prefers prose" is not part of the gate, and skipping on a passing gate is a defect. Anti-pattern this wording directly fixes: under the earlier "consider rendering (optional)" phrasing, interactive spec runs read this block and rendered plain prose anyway, every time, with nothing in the transcript to show the gate was ever evaluated. The gate has two legs; check leg (b) NOW, as the first action of this step, with a real command rather than a judgment call:
    ```bash
    command -v node && command -v npx   # leg (b): both must resolve
@@ -301,7 +303,7 @@ It replaces interactive steps 1-5. The self-approve branch then runs shared step
          ```bash
          python3 ${CLAUDE_SKILL_DIR}/scripts/tracker_cli.py --workspace-root . comment \
            --key "$KEY" \
-           --text "flow --auto could not self-approve: advisor ruled <which option> but blocked auto-ship — <why unsafe: blast radius / irreversibility / hot>. Judgment settled, this is a safety hold. To unstick: answer here, reopen (status->open) and re-run WITHOUT --auto, or merge by hand."
+           --text "flow --auto could not self-approve: advisor ruled <which option> but blocked auto-ship — <why unsafe: blast radius / irreversibility / hot>. Judgment settled, this is a safety hold. To unstick: answer here, reopen (status->open) and re-run WITHOUT --auto, or slice it: /flow slice <KEY> (when the block is broad blast radius), or merge by hand."
          bd update "$KEY" --status blocked
          ```
          Then emit a terse `blocked <KEY>: <reason>` line and STOP. **Critical: a `block` MUST NOT write a `DECISION:` comment.** If it did, a relaunch's probe would read `decided` and — for a non-hot change — route straight to the Decided sub-branch's `proceed`, silently defeating the block. The whole reason the verdict is three-way (not "proceed unless hot") is to catch the non-hot-but-unsafe case (the broad-blast helper); writing a decision for it throws that away.

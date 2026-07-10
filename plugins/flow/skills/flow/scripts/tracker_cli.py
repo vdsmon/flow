@@ -11,6 +11,9 @@ Subcommands:
   state --key FT-1                       tracker.state(key) -> JSON
   transition --key FT-1 --to-state in_progress [--field k=v ...]
   comment --key FT-1 --text "..."        tracker.comment(key, body)
+  link --from-key FT-2 --to-key FT-1 [--kind blocks]   tracker.link(from, to, kind)
+                                         from-key = the blocked/dependent ticket;
+                                         to-key = the blocker that lands first
   create --summary "..." --type task [--description "..." --parent K --label L --assignee A]
                                          tracker.create(...) -> {"key": new_key}
   is-shipped --key FT-1                  tracker.is_shipped(key) -> JSON
@@ -207,6 +210,17 @@ def _cmd_comment(tracker_obj: Any, args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_link(tracker_obj: Any, args: argparse.Namespace) -> int:
+    tracker_obj.link(args.from_key, args.to_key, args.kind)
+    sys.stdout.write(
+        json.dumps(
+            {"ok": True, "from_key": args.from_key, "to_key": args.to_key, "kind": args.kind}
+        )
+        + "\n"
+    )
+    return 0
+
+
 def _cmd_create(tracker_obj: Any, args: argparse.Namespace) -> int:
     summary = {"body": args.summary, "fmt": "md"}
     description = {"body": args.description, "fmt": "md"}
@@ -333,6 +347,23 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     p_comment.add_argument("--key", required=True)
     p_comment.add_argument("--text", required=True)
 
+    p_link = sub.add_parser("link", help="tracker.link(from_key, to_key, kind)")
+    p_link.add_argument(
+        "--from-key",
+        required=True,
+        help="the blocked/dependent ticket (Jira inwardIssue; beads dep source).",
+    )
+    p_link.add_argument(
+        "--to-key",
+        required=True,
+        help="the blocker that must land first (Jira outwardIssue; beads dep target).",
+    )
+    p_link.add_argument(
+        "--kind",
+        default="blocks",
+        help="edge kind, normalized per backend (default blocks; also depends_on, relates).",
+    )
+
     p_create = sub.add_parser("create", help="tracker.create(summary, description, type, ...)")
     p_create.add_argument("--summary", required=True)
     p_create.add_argument("--description", default="")
@@ -375,6 +406,7 @@ _DISPATCH: dict[str, Any] = {
     "state": _cmd_state,
     "transition": _cmd_transition,
     "comment": _cmd_comment,
+    "link": _cmd_link,
     "create": _cmd_create,
     "is-shipped": _cmd_is_shipped,
     "download-attachments": _cmd_download_attachments,

@@ -46,7 +46,7 @@ No reference in jira-workflow — implemented from Atlassian REST API v3 docs + 
 |----------------------------|--------------------------------------------------------------------------------|-------|
 | `create`                   | `POST /rest/api/3/issue`                                                        | Body: `fields: {project, issuetype, summary, description (ADF), parent, labels, assignee, priority}`. |
 | `comment(body)`            | `POST /rest/api/3/issue/{key}/comment` `{body: <ADF>}`                          | ADF v3 required |
-| `link(from,to,kind)`       | `POST /rest/api/3/issueLink` `{type:{name:kind}, inwardIssue, outwardIssue}`    | kind ∈ {`Blocks`, `Relates`, `Depends`, ...} |
+| `link(from,to,kind)`       | `POST /rest/api/3/issueLink` `{type:{name:<mapped>}, inwardIssue:from, outwardIssue:to}` | seam kind→Jira name: `blocks`/`depends_on`→`Blocks`, `relates`→`Relates`; unknown passes raw. Direction: `inwardIssue`=from=the blocked/dependent issue, `outwardIssue`=to=the blocker. |
 | `state(key)`               | `GET /rest/api/3/issue/{key}?fields=status,resolution`                          | derives `TicketState` with normalized + diagnostic |
 | `project_requires_pr()`    | `GET /rest/api/3/workflow/search?projectKey=<P>&expand=transitions.rules` (workflow scheme) | flag iff any transition to Done category has linked-PR validator. **Conservative default = False** if endpoint unauthorized. |
 | `is_shipped(key)`          | PURE READ: frozen `.flow/<ns>/ship-events/<key>.json` → return shipped; else `state()` + ship predicate | adapter MUST NOT write |
@@ -318,7 +318,7 @@ Adapter wraps a subprocess runner; tests inject a fake.
 | `bd close <key>`        | —                                                  | ✗      | ✓       | `transition` to closed                      |
 | `bd reopen <key>`       | —                                                  | ✗      | ✓       | `transition` to open from closed            |
 | `bd comment <key>`      | `--stdin`                                          | ✗      | ✓       | `comment` (markdown via stdin)              |
-| `bd dep add <a> <b>`    | `--type`                                           | ✗      | ✓       | `link`                                      |
+| `bd dep add <from> <to>` | `--type`                                          | ✗      | ✓       | `link`; seam kind→bd type: `depends_on`→`blocks`, `relates`→`related`, `blocks` native, unknown raw. `from` depends on / is blocked by `to`. |
 | `git symbolic-ref`      | `--short refs/remotes/origin/HEAD`                 | ✗      | ✗       | `is_shipped` default-ref resolution         |
 | `git fetch`             | `--quiet origin <branch>`                          | ✗      | (.git)  | `is_shipped` best-effort ref refresh        |
 | `git log`               | `<origin/default> --grep=<key> --format=%H%x00%B%x1e -n 50` | ✗      | ✗       | `is_shipped` default-branch ship probe (word-boundary re-checked) |

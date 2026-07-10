@@ -52,6 +52,11 @@ implementation wall UNLESS `[evolve] adjudicate_hot` is on (then it proceeds,
 merge-time-guard-gated), a clean one proceeds — see verb-spec.md's decided-mode
 branch.)
 
+When the block cites **broad blast radius**, a third unstick path beats
+reopen-and-answer or hand-merge: `/flow slice <KEY>` maps the blast radius and
+splits the change into an expand→migrate→contract ladder of independently-
+mergeable batches (`references/verb-slice.md`).
+
 Note: the already-reopened beads carry legacy `DECISION:` comments; detection
 accepts that stem too, so no backfill is needed.
 
@@ -82,7 +87,10 @@ two outcomes a maintainer sees here:
   defeating it — so block deliberately reuses the defer-stem, not a decision.
   The bar is raised (flow-5fp): a closeable hole is never block-grounds — block
   is reserved for uncloseable/unsafe walls (user-only information, true
-  irreversibility, broad blast, hot).
+  irreversibility, broad blast, hot). A block citing **broad blast radius** has a
+  third unstick path beyond reopen-and-answer or hand-merge: `/flow slice <KEY>`
+  splits the wide change into an expand→migrate→contract ladder of
+  independently-mergeable batches (`references/verb-slice.md`).
 
 Note: the defer-comment pick is coupled to verb-spec.md's wording
 (`flow --auto could not self-approve`). If that stem changes, triage degrades to
