@@ -106,6 +106,11 @@ wait_for_session() {
       | python3 "$SCRIPTS/trace_mine.py" file --workspace-root "$REPO" || true
   done
 
+  echo "--- producer: senses-deadman (deterministic; files ONE deduped P0 on ship-event divergence + prints the health digest) ---"
+  # Read-only consumer of is_shipped. The digest tee's into this log as the nightly
+  # evidence trail, and `|| true` keeps a divergence exit (1) from blocking the drain.
+  python3 "$SCRIPTS/senses_deadman.py" --workspace-root "$REPO" || true
+
   echo "--- consumer: claude --bg /flow evolve drain ---"
   claude --bg "/flow evolve drain"
   if [ -n "$PSID" ]; then _RUN_OUTCOME=ok; fi
