@@ -99,6 +99,10 @@ class _EpicBead(Exception):
     """the bead is an epic (a container, not a single-PR unit). Exit code 7."""
 
 
+class _HitlBead(Exception):
+    """the bead is marked hitl (human-in-the-loop) with no recorded decision. Exit code 8."""
+
+
 def _git(args: list[str], cwd: Path, runner: Runner) -> str:
     result = runner(["git", *args], cwd)
     if result.returncode != 0:
@@ -790,7 +794,7 @@ def _resolve_base(base: str, main_root: Path, runner: Runner) -> str:
     return base
 
 
-def _enforce_hot_floor(
+def _enforce_autonomy_floors(
     *,
     ticket: str,
     base: str,
@@ -798,21 +802,29 @@ def _enforce_hot_floor(
     planned_files: list[str] | None,
     main_root: Path,
 ) -> None:
-    """Code-enforced hot hard-floor (flow-aen).
+    """Code-enforced autonomy floors at the shared bootstrap chokepoint.
 
     An autonomous run, signaled by `--auto` OR a `@default` base (the load-bearing autonomous
     base; the drain launches from the main checkout, so `--base` alone is not a sufficient signal,
-    hence both), may NOT self-ship a hot change (a guard/safety file, or a `hot`-labelled bead)
-    with no maintainer decision on file. This lives at the single shared bootstrap every
-    self-approve path funnels through, so it holds for the clean >=90% path too. verb-spec.md step
-    5 only carried the floor in the adjudication/decided sub-branches, so a clean re-plan could
-    slip a hot change past it. Beads-only: `triage.decided` reads a `DECISION:`/`TRIAGE-DECISION:`
-    comment, a beads-native seam (a non-beads tracker has no such record, so gating it would
-    permanently block). Caller invokes this BEFORE `git worktree add`, so a refusal leaves no
-    orphan. The `[evolve] adjudicate_hot` flag (default off) skips this floor for a maintainer
-    self-target workspace. The floor runs even with an EMPTY planned set: the `hot` label is
-    independent evidence of hotness (`triage.decided` reads it), so omitting `--planned-files`
-    must not disable the label half of the floor.
+    hence both), must clear two refusals before `git worktree add`, both read off a SINGLE
+    `triage.decided` probe (one `bd show`). Beads-only: `triage.decided` reads a
+    `DECISION:`/`TRIAGE-DECISION:` comment, a beads-native seam (a non-beads tracker has no such
+    record, so gating it would permanently block). A refusal here leaves no orphan.
+
+    HITL floor (flow-blh2, exit 8 via `_HitlBead`): a bead marked `hitl` (human-in-the-loop,
+    resolves only through a live exchange) with no recorded decision defers, never bootstraps
+    unattended. Checked FIRST and NOT lifted by `[evolve] adjudicate_hot` (that flag lifts only the
+    hot half): a decision-bound bead needs a person regardless of the maintainer's hot-ship
+    preference. A recorded decision means the human already weighed in, so it clears the floor.
+
+    HOT floor (flow-aen, exit 2 via `_ConfigError`): a hot change (a guard/safety file, or a
+    `hot`-labelled bead) with no maintainer decision on file may NOT self-ship. This lives at the
+    single shared bootstrap every self-approve path funnels through, so it holds for the clean
+    >=90% path too. verb-spec.md step 5 only carried the floor in the adjudication/decided
+    sub-branches, so a clean re-plan could slip a hot change past it. The `[evolve] adjudicate_hot`
+    flag (default off) lifts this floor for a maintainer self-target workspace. The floor runs even
+    with an EMPTY planned set: the `hot` label is independent evidence of hotness (`triage.decided`
+    reads it), so omitting `--planned-files` must not disable the label half of the floor.
     """
     if not (auto or base.strip() == "@default"):
         return
@@ -821,17 +833,28 @@ def _enforce_hot_floor(
     config, _code = triage._resolve_config(main_root)
     if config is None or config.get("backend") != "beads":
         return
-    # adjudicate_hot lifts the floor for this (maintainer self-target) workspace:
-    # the advisor's proceed ruling stands for hot changes too, gated by the
-    # merge-time guard-property review + CI instead of this pre-bootstrap refusal.
-    if triage.adjudicate_hot(main_root):
-        return
     # No runner threaded: BeadsAdapter (via decided) needs the keyword-only
     # KwRunner protocol, not flow_worktree's positional Runner. Passing `run`
     # here throws inside decided's try/except and silently returns block-by-default,
     # which would make the gate unable to read a recorded decision (the triage
     # bypass would never clear). Let decided build its own kw_default_runner.
+    # Computed before the adjudicate_hot early-return so the hitl half always reads it.
     probe = triage.decided(config, ticket, planned_files or [])
+
+    if probe.get("hitl") and not probe.get("decided"):
+        raise _HitlBead(
+            f"autonomous run refuses to bootstrap {ticket}: it is marked hitl "
+            "(human-in-the-loop) and resolves only through a live exchange, with no "
+            "recorded DECISION:/TRIAGE-DECISION: comment. Run it interactively WITHOUT "
+            f'--auto, or /flow triage {ticket} "<answer>" to record the decision and '
+            "clear the label, then re-run."
+        )
+
+    # adjudicate_hot lifts the HOT floor for this (maintainer self-target) workspace: the advisor's
+    # proceed ruling stands for hot changes too, gated by the merge-time guard-property review + CI
+    # instead of this pre-bootstrap refusal. It does not lift the hitl floor above.
+    if triage.adjudicate_hot(main_root):
+        return
     if probe.get("is_hot") and not probe.get("decided"):
         tripped = ", ".join(planned_files) if planned_files else "the bead's 'hot' label"
         raise _ConfigError(
@@ -1101,7 +1124,7 @@ def bootstrap(
     covers = [c for c in (covers or []) if c.strip()]
     _refuse_invalid_covers(ticket=ticket, covers=covers, main_root=main_root)
 
-    _enforce_hot_floor(
+    _enforce_autonomy_floors(
         ticket=ticket,
         base=base,
         auto=auto,
@@ -1451,6 +1474,9 @@ def cli_main(argv: list[str]) -> int:
     except _EpicBead as exc:
         sys.stderr.write(f"flow-worktree: {exc}\n")
         return 7
+    except _HitlBead as exc:
+        sys.stderr.write(f"flow-worktree: {exc}\n")
+        return 8
     except OSError as exc:
         sys.stderr.write(f"flow-worktree: I/O error: {exc}\n")
         return 3

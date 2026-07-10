@@ -40,7 +40,15 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/tracker_cli.py --workspace-root . \
   comment --key <KEY> --text "TRIAGE-DECISION: <answer>"
 python3 ${CLAUDE_SKILL_DIR}/scripts/tracker_cli.py --workspace-root . \
   transition --key <KEY> --to-state open
+bd update <KEY> --remove-label hitl
 ```
+
+The `bd update <KEY> --remove-label hitl` clears the human-in-the-loop mark so
+the reopened bead is auto-pickable again — the recorded `TRIAGE-DECISION:` IS the
+live-exchange input the label demanded, so the ticket is AFK once more. It is a
+no-op on a bead that was never marked (a plain triage answer on an unlabelled
+bead), so it is safe to run unconditionally. Beads instance; on Jira the
+maintainer removes the label by hand.
 
 This works identically for a `blocked` bead (a decided-mode hot block): comment
 the answer + transition to open, same as a deferred one.

@@ -74,6 +74,10 @@ def partition(
     guard so judgment beads auto-launch alongside audit work, bypassing the human
     spec-plan accept gate. The caller also has to feed the proposal candidates in
     (see `select`); flipping this alone over an evolve-only candidate set is a no-op.
+
+    A `hitl` bead (human-in-the-loop, resolves only through a live exchange) is
+    excluded UNCONDITIONALLY: `include_proposals` does not lift it, because a
+    decision-bound bead needs a person regardless of the proposal opt-in.
     """
     skipped_in_flight = [c["id"] for c in candidates if c.get("id") in inflight_keys]
 
@@ -82,6 +86,7 @@ def partition(
         for c in candidates
         if c.get("id")
         and c.get("issue_type") != "epic"
+        and "hitl" not in (c.get("labels") or [])
         and (include_proposals or "proposal" not in (c.get("labels") or []))
         and c["id"] not in inflight_keys
     ]

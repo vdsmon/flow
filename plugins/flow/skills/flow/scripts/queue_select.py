@@ -7,9 +7,11 @@ day-job queue-drain loop (flow-hw1.3) consumes this and does the launching.
 
 Day-job = `bd ready --json` (unlabelled) minus epics and minus beads labelled
 `evolve` (the evolve drain's queue), `proposal` (judgment work never
-auto-launches; no opt-in exists here), or `hot` (a hot non-evolve bead would be
-invisible to evolve's one-hot gate, so it never auto-launches either). No
-hot-serialization layer. Hotness is evolve-machinery-only.
+auto-launches; no opt-in exists here), `hot` (a hot non-evolve bead would be
+invisible to evolve's one-hot gate, so it never auto-launches either), or `hitl`
+(human-in-the-loop: resolves only through a live exchange, so unattended pickup
+is structurally wrong). No hot-serialization layer. Hotness is
+evolve-machinery-only.
 
 Backpressure is queue-scoped: only open `feat/flow-*` PRs whose key is NOT
 an active evolve bead count toward the `[queue]` cap, and the concurrency
@@ -58,7 +60,7 @@ from maintainer import resolve_maintainer_repo
 
 DEFAULT_CAP = 5
 DEFAULT_CONCURRENCY = 3
-_EXCLUDED_LABELS = {"evolve", "proposal", "hot"}
+_EXCLUDED_LABELS = {"evolve", "proposal", "hot", "hitl"}
 
 
 def _day_job(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
