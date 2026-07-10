@@ -6,7 +6,10 @@ Lints comments and docstrings only, never code. Python files get exact extractio
 comments, ast for module/class/function docstrings); other languages get full-line comments
 recognized by a line-start marker (`#`, `//`, `--` by extension), so a trailing marker inside a
 string literal cannot false-positive (a marker-shaped line inside a multi-line string or heredoc
-still can; accepted, those languages have no stdlib tokenizer here). Unknown extensions are skipped.
+still can; accepted, those languages have no stdlib tokenizer here).
+Markdown (`.md`/`.markdown`) is documentation prose rather than code, so only the em-dash check runs
+on it, outside fenced code blocks; the banned-word and width checks are the code-comment bar and
+stay off documentation prose. Other unknown extensions are skipped.
 `--diff-base <ref>` keeps only findings on lines changed vs that ref, the mode the stages use so a
 legacy file's pre-existing comments do not flood a run's gate.
 
@@ -123,6 +126,8 @@ _EXT_MARKER: dict[str, str] = (
     )
     | dict.fromkeys((".sql", ".lua", ".hs"), "--")
 )
+
+_MARKDOWN_SUFFIXES = frozenset({".md", ".markdown"})
 
 _DEFAULT_LIMIT = 88
 # Prose shorter than this reads as a label or fragment; fill checks skip it.
@@ -332,6 +337,27 @@ def _lint_python(path: str, text: str, limit: int) -> list[Finding]:
     return out
 
 
+def _lint_markdown(path: str, text: str) -> list[Finding]:
+    """Em-dash check only, outside fenced code blocks.
+
+    Markdown is documentation prose, so the banned-word / narration list and the width checks (the
+    code-comment bar) stay off it; the em-dash is the one signal that transfers. Fenced blocks are
+    skipped so an em-dash inside an emitted template string (a DECISION / defer / commit heredoc) is
+    not flagged.
+    """
+    out: list[Finding] = []
+    open_fence = False
+    for lineno, raw in enumerate(text.splitlines(), start=1):
+        if raw.strip().startswith("```"):
+            open_fence = not open_fence
+            continue
+        if open_fence:
+            continue
+        if _EM_DASH in raw:
+            out.append(Finding(path, lineno, "em-dash", "em-dash in markdown prose"))
+    return out
+
+
 def _lint_generic(path: str, text: str, limit: int, marker: str) -> list[Finding]:
     out: list[Finding] = []
     cur: list[_ProseLine] = []
@@ -440,6 +466,8 @@ def lint_file(path: Path, line_length: int = 0) -> list[Finding]:
     name = str(path)
     if path.suffix == ".py":
         return _lint_python(name, text, limit)
+    if path.suffix in _MARKDOWN_SUFFIXES:
+        return _lint_markdown(name, text)
     marker = _EXT_MARKER.get(path.suffix)
     if marker is None:
         return []
