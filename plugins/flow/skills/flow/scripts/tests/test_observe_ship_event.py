@@ -263,6 +263,70 @@ def test_stamp_present_in_dupe_write(tmp_path: Path) -> None:
     }
 
 
+# ─── state_path override (reap-seam attribution from an external state.json) ──
+
+
+def test_state_path_override_stamps_from_external_path(tmp_path: Path) -> None:
+    """The reap seam stamps attribution from the doomed worktree's state.json."""
+    _seed_workspace(tmp_path)
+    # The default derivation would read tmp_path/.flow/runs/FT-1/state.json; leave it ABSENT so a
+    # present flow_attribution can only have come from the override.
+    external = tmp_path / "elsewhere" / "state.json"
+    external.parent.mkdir(parents=True)
+    external.write_text(
+        json.dumps(
+            {
+                "ticket": "FT-1",
+                "run_id": "abcdef0123456789",
+                "stages": {
+                    "plan": {"started_at_iso": "2026-05-28T00:00:00Z"},
+                    "create_pr": {"finished_at_iso": "2026-05-28T12:00:00Z"},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    path, _ = observe_ship_event.observe(
+        tmp_path, "FT-1", _payload(), "abcdef0123456789", state_path=external
+    )
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert data["flow_attribution"] == {
+        "plan_started_at_iso": "2026-05-28T00:00:00Z",
+        "create_pr_finished_at_iso": "2026-05-28T12:00:00Z",
+    }
+
+
+def test_state_path_omitted_preserves_workspace_derivation(tmp_path: Path) -> None:
+    """Omitting the override reads the workspace-derived path, not any external."""
+    _seed_workspace(tmp_path)
+    _seed_state(
+        tmp_path,
+        "FT-1",
+        run_id="abcdef0123456789",
+        plan_started_at_iso="2026-01-01T00:00:00Z",
+        create_pr_finished_at_iso="2026-01-01T06:00:00Z",
+    )
+    # A coherent state exists elsewhere too; with no override it must be ignored.
+    external = tmp_path / "elsewhere" / "state.json"
+    external.parent.mkdir(parents=True)
+    external.write_text(
+        json.dumps(
+            {
+                "ticket": "FT-1",
+                "run_id": "abcdef0123456789",
+                "stages": {
+                    "plan": {"started_at_iso": "2099-12-31T00:00:00Z"},
+                    "create_pr": {"finished_at_iso": "2099-12-31T06:00:00Z"},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    path, _ = observe_ship_event.observe(tmp_path, "FT-1", _payload(), "abcdef0123456789")
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert data["flow_attribution"]["plan_started_at_iso"] == "2026-01-01T00:00:00Z"
+
+
 # ─── CLI ─────────────────────────────────────────────────────────────────────
 
 
@@ -283,6 +347,45 @@ def test_cli_happy_path(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> N
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["is_dupe"] is False
+
+
+def test_cli_state_json_flag_stamps_attribution(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _seed_workspace(tmp_path)
+    external = tmp_path / "elsewhere" / "state.json"
+    external.parent.mkdir(parents=True)
+    external.write_text(
+        json.dumps(
+            {
+                "ticket": "FT-1",
+                "run_id": "abcdef0123456789",
+                "stages": {
+                    "plan": {"started_at_iso": "2026-05-28T00:00:00Z"},
+                    "create_pr": {"finished_at_iso": "2026-05-28T12:00:00Z"},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    rc = observe_ship_event.cli_main(
+        [
+            "--ticket",
+            "FT-1",
+            "--evidence-json",
+            json.dumps(_payload()),
+            "--run-id",
+            "abcdef0123456789",
+            "--workspace-root",
+            str(tmp_path),
+            "--state-json",
+            str(external),
+        ]
+    )
+    assert rc == 0
+    out = json.loads(capsys.readouterr().out)
+    data = json.loads(Path(out["path"]).read_text(encoding="utf-8"))
+    assert data["flow_attribution"]["plan_started_at_iso"] == "2026-05-28T00:00:00Z"
 
 
 def test_cli_dupe_returns_2(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

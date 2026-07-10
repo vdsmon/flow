@@ -145,6 +145,9 @@ else
   # remote branch — both gated on the merge succeeding, neither on the other.
   if gh pr merge <pr> --squash; then
     bd close <key> --reason "merged via PR #<pr>"
+    # Freeze the ship event BEFORE the reap below destroys the run's state.json
+    # (flow-09bg.1). Best-effort: a failed observation never blocks the teardown.
+    python3 ${CLAUDE_SKILL_DIR}/scripts/observe_at_close.py --workspace-root . --key <key> || true
     # close any covered beads this folded lead co-delivered. <covers> is the merge
     # entry's `covers` list (the lead's `Closes <COVER>` commit trailers, lead key
     # filtered out). Best-effort, mirroring the lead close; never block the reap.
@@ -383,7 +386,7 @@ It enumerates registered worktrees (`git worktree list --porcelain`), joins each
 2. the bead is **terminal** (raw `bd show` status not in `open`/`in_progress`/`blocked`); an active bead defers to the drain's close-then-reap and lands in `skipped_active_bead` (this sweep never runs `bd close`);
 3. the run is **not live** (lease-only `is-live`, fail-safe toward live → `skipped_live`).
 
-Every teardown funnels through the same lease-flock + checkpoint `flow_worktree.py reap` the drain uses, so a dirty worktree is checkpointed to a `flow-rescue/*` ref before removal and left intact on capture failure.
+Every teardown funnels through the same lease-flock + checkpoint `flow_worktree.py reap` the drain uses, so a dirty worktree is checkpointed to a `flow-rescue/*` ref before removal and left intact on capture failure. Before each reap the sweep observes the ship event from the worktree's `state.json` (via `observe_at_close.py`, gated on `is_shipped` reading `not_yet_observed`) and reports the outcome as `ship_event` on the reaped entry. A failed observation never blocks the teardown.
 
 ```bash
 python3 ${CLAUDE_SKILL_DIR}/scripts/worktree_janitor.py sweep --workspace-root .

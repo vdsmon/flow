@@ -14,6 +14,7 @@ CLI:
                         --run-id <16-hex> [--workspace-root <dir>]
                         [--arm {flow,control}] [--tier <str>]
                         [--acceptance-invariant <str>] [--lane <str>]
+                        [--state-json <path>]
 
 Evidence JSON validation rejects with exit 1 if:
 - not a JSON object at top level
@@ -163,7 +164,9 @@ def _write_intent_log(primary: Path, record: dict[str, Any], err: str) -> None:
 # ─── Attribution stamp ───────────────────────────────────────────────────────
 
 
-def _attribution_stamp(workspace_root: Path, ticket: str, run_id: str) -> dict[str, str] | None:
+def _attribution_stamp(
+    workspace_root: Path, ticket: str, run_id: str, state_path: Path | None = None
+) -> dict[str, str] | None:
     """Read the live run state.json and return durable attribution timestamps.
 
     Returns `{"plan_started_at_iso": ..., "create_pr_finished_at_iso": ...}` ONLY
@@ -171,11 +174,17 @@ def _attribution_stamp(workspace_root: Path, ticket: str, run_id: str) -> dict[s
     `stages.plan.started_at_iso` and `stages.create_pr.finished_at_iso` are
     non-empty strings. Otherwise None.
 
+    `state_path` overrides the default `workspace_root/.flow/runs/<ticket>/state.json`
+    derivation. The post-merge reap seam passes the doomed worktree's state.json here
+    while the event itself writes against the main root's store; None preserves the
+    workspace-derived path byte-for-byte.
+
     Fully guarded: any OSError / json.JSONDecodeError / non-dict shape yields None,
     never raises. This stamps the durable ship-event while state.json is alive
     (pre-reap), since metric.py can no longer join to the reaped worktree path.
     """
-    state_path = workspace_root / ".flow" / "runs" / ticket / "state.json"
+    if state_path is None:
+        state_path = workspace_root / ".flow" / "runs" / ticket / "state.json"
     try:
         state = json.loads(state_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
@@ -213,6 +222,7 @@ def observe(
     tier: str = "",
     acceptance_invariant: str = "",
     lane: str = "",
+    state_path: Path | None = None,
 ) -> tuple[Path, bool]:
     """Write a ship-event evidence file.
 
@@ -238,7 +248,7 @@ def observe(
     record["acceptance_invariant"] = acceptance_invariant
     record["lane"] = lane
     record["plugin_version"] = plugin_version()
-    stamp = _attribution_stamp(workspace_root, ticket, run_id)
+    stamp = _attribution_stamp(workspace_root, ticket, run_id, state_path=state_path)
     if stamp is not None:
         record["flow_attribution"] = stamp
     content = _serialize(record)
@@ -312,6 +322,11 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument(
         "--lane", default="", help="verification lane the run took (express|light|full)"
     )
+    parser.add_argument(
+        "--state-json",
+        default=None,
+        help="state.json to stamp attribution from (defaults to the workspace-derived path).",
+    )
     return parser.parse_args(argv)
 
 
@@ -333,6 +348,7 @@ def cli_main(argv: list[str]) -> int:
             args.tier,
             args.acceptance_invariant,
             args.lane,
+            state_path=Path(args.state_json) if args.state_json else None,
         )
     except _EvidenceInvalid as exc:
         sys.stderr.write(f"observe-ship-event: {exc}\n")

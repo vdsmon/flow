@@ -251,6 +251,7 @@ The taxonomy is closed:
      Already observed; skip step 6.
    - `state == "not_shipped"` or `"indeterminate"` → not landed (or no confirming evidence yet).
      Skip step 6; reflect completes.
+     For a run whose PR merges AFTER reflect this is the EXPECTED post-PR#277 outcome (the bead is still open, or the merge has not landed): the post-merge reap seam (the `worktree_janitor` sweep or evolve drain step A, via `observe_at_close.py`) then owns the observation, reading `not_yet_observed` and freezing the event before it tears the worktree down. Reflect's own step-6 observation still fires when a close races ahead of it: a HOT leaf PR can auto-merge mid-run before reflect, so at reflect the bead is already closed+merged and `is_shipped` reads `not_yet_observed`.
 
 ### Step 6 — observe the ship event
 
