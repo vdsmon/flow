@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any
 
 import fleet
+import observe_at_close
 from _evolve_common import ACTIVE_STATUSES, ToolError, bead_show, key_from_ref, loads, ok
 from _runner import CwdRunner as Runner
 from _runner import cwd_default_runner as _default_runner
@@ -196,6 +197,15 @@ def cli_main(argv: list[str]) -> int:
             if args.dry_run:
                 result["reaped"].append({**entry, "receipt": None})
                 continue
+            # Freeze the ship event from the worktree's state.json BEFORE the reap below destroys it
+            # (flow-09bg.1). observe_at_close never raises; the try/except is belt-and-suspenders so
+            # a bug there can never make a worktree immortal. The teardown ALWAYS proceeds.
+            try:
+                entry["ship_event"] = observe_at_close.observe_at_close(
+                    repo, key, Path(entry["worktree"])
+                )
+            except Exception as exc:
+                entry["ship_event"] = {"action": "failed", "reason": str(exc)}
             # Isolate each teardown: a mid-sweep reap failure must not abort the
             # loop and lose the JSON audit trail of the reaps already done.
             # reap_worktree raises _GitError, not ToolError, so the outer handler
