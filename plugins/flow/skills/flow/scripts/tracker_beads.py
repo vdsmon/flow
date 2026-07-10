@@ -78,6 +78,10 @@ _BD_TRANSITIONS: dict[str, list[str]] = {
     "closed": ["open"],
 }
 
+# Seam kind vocabulary -> bd dep type. "blocks" is bd-native (not remapped);
+# unknown kinds pass through raw.
+_LINK_KIND_TYPES: dict[str, str] = {"depends_on": "blocks", "relates": "related"}
+
 # Closed-enum capability advertisement (14 entries), exactly the
 # CAPABILITY_ENUM from tracker.py. Only comments_markdown + resolutions are
 # True; beads is local-only and intentionally narrow.
@@ -479,7 +483,8 @@ class BeadsAdapter:
             raise _BeadsError(cp.returncode, cp.stderr, ["comment", key, "--stdin"])
 
     def link(self, from_key: str, to_key: str, kind: str) -> None:
-        cp = self._run(["dep", "add", from_key, to_key, "--type", kind])
+        dep_type = _LINK_KIND_TYPES.get(kind, kind)
+        cp = self._run(["dep", "add", from_key, to_key, "--type", dep_type])
         if cp.returncode != 0:
             raise _BeadsError(cp.returncode, cp.stderr, ["dep", "add"])
 

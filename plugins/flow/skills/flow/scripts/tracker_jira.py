@@ -95,6 +95,14 @@ _GET_FIELDS = [
     "issuelinks",
 ]
 
+# Seam kind vocabulary -> Jira link-type name. blocks/depends_on both map to the Blocks type;
+# relates -> Relates. Unknown kinds pass through raw so a workspace can name a custom type.
+_LINK_KIND_NAMES: dict[str, str] = {
+    "blocks": "Blocks",
+    "depends_on": "Blocks",
+    "relates": "Relates",
+}
+
 # `HttpFn` signature: receives a urllib.request.Request, returns a response object
 # exposing `.read()` (bytes) and `.status` (int) and `.headers` (Mapping).
 HttpFn = Callable[[urllib.request.Request], Any]
@@ -625,11 +633,12 @@ class JiraAdapter:
         )
 
     def link(self, from_key: str, to_key: str, kind: str) -> None:
+        name = _LINK_KIND_NAMES.get(kind, kind)
         self._request(
             "POST",
             "/issueLink",
             body={
-                "type": {"name": kind},
+                "type": {"name": name},
                 "inwardIssue": {"key": from_key},
                 "outwardIssue": {"key": to_key},
             },

@@ -556,7 +556,7 @@ def test_decided_bd_read_fail_blocks(tmp_path: Path) -> None:
     runner = _FakeRunner([_version_ok(), _cp(returncode=1, stderr="boom")])
     code, result = _run_decided(tmp_path, ["--key", "flow-x"], runner)
     assert code == 0
-    assert result == {"decided": False, "answer": None, "is_hot": True}
+    assert result == {"decided": False, "answer": None, "is_hot": True, "hitl": False}
 
 
 def test_decided_hotness_indeterminate_blocks(tmp_path: Path) -> None:

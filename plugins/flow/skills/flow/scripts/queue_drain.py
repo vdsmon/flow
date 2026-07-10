@@ -121,9 +121,9 @@ def _worktree_keys(repo: Path) -> set[str]:
 def _inprogress_dayjob_keys(runner: Runner) -> set[str]:
     """Keys of IN_PROGRESS day-job beads (the inverse of the evolve scope).
 
-    Day-job = all in_progress beads minus epics minus the `{evolve, proposal, hot}` labels, the same
-    filter `queue_select._day_job` applies to `bd ready`, re-run over `--status in_progress`
-    (stranded beads have left `bd ready`).
+    Day-job = all in_progress beads minus epics minus the `{evolve, proposal, hot, hitl}` labels,
+    the same filter `queue_select._day_job` applies to `bd ready`, re-run over `--status
+    in_progress` (stranded beads have left `bd ready`).
     Unscoped on purpose (NO `-l`): the day-job queue is everything NOT evolve's, so it cannot be
     expressed as a label union. `--limit 0` because bd list defaults to 50 and would silently
     truncate.

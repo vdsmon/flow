@@ -1,6 +1,6 @@
 ---
 name: flow
-argument-hint: <ticket> | spec <ticket> | do | revise | status | recall | triage | recover | group | sync | init
+argument-hint: <ticket> | spec <ticket> | do | revise | status | recall | triage | recover | group | slice <ticket> | sync | init
 description: Ticket pipeline. /flow <ticket> plans in plan mode (ExitPlanMode = the one gate), then enters a worktree and runs the autonomous implement→PR tail in the same session; background it (/bg) anytime to run unattended. You spec and review the draft PR. Multi-tracker engine (Jira | beads), pluggable handlers, compounding memory.
 when_to_use: User runs /flow <ticket> or /flow spec <ticket> to spec a ticket and run it to a draft PR, /flow do <ticket> to run/resume the pipeline standalone, or /flow init, recall, status, triage, recover, sync. A bare ticket key with no verb defaults to spec.
 allowed-tools: Bash(python3:*), Bash(git:*), Bash(bd:*), Bash(jq:*), Bash(cat:*), Bash(mkdir:*), Bash(mktemp:*), Bash(rm:*), Bash(gh:*), Bash(claude:*), Read, Write, Edit, Agent, Skill, AskUserQuestion, PushNotification, EnterWorktree
@@ -27,6 +27,7 @@ See `references/background-pipeline.md`.
 `spec` enters the seeded worktree and flows into it in the same session; `do` also runs standalone to resume a run.
 `/flow revise <ticket|pr> ["instruction"]` turns a delivered run's OPEN PR into a revision sub-run that ingests review feedback (or a free-text change-request) and updates the SAME PR (`references/verb-revise.md`).
 `group` proposes run-level groupings (lead + covers) for the multi-ticket fold — the read-only front half that feeds `spec --covers` (`references/verb-group.md`).
+`slice` splits a wide refactor into an expand→migrate→contract ladder of independently-landable children — group's inverse (`references/verb-slice.md`).
 Everything else (`recall`, `status`, `triage`, `recover`, `sync`) is a work-state verb around the same pipeline.
 
 Built on a multi-tracker engine: the tracker is pluggable (Jira | beads); stages, handlers, and the memory namespace come from `.flow/workspace.toml` + `stage-registry.toml`.
@@ -54,6 +55,7 @@ Spec is the default because fire-and-forget is the primary path.
 | `revise <ticket\|pr> [<instruction>]` | revise | `references/verb-revise.md` |
 | **— multi-ticket —** | | |
 | `group` (optionally `<key> ...`, `--mine`, `--filter open`) | group | `references/verb-group.md` |
+| `slice <ticket>` | slice | `references/verb-slice.md` |
 | **— work state —** | | |
 | `status` (optionally `<ticket>`) | status | `references/verb-status.md` |
 | `recall` (aliases `mem`, `memory`) `<query> [--branch X --top-n N]` | recall | `references/verb-recall.md` |
