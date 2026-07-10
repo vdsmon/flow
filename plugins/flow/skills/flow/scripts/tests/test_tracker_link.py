@@ -265,6 +265,44 @@ def test_cross_backend_blocks_direction_agrees(monkeypatch: pytest.MonkeyPatch) 
     assert body["outwardIssue"] == {"key": "B"}
 
 
+def test_cross_backend_read_direction_agrees(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Cross-backend read direction: from_key=dependent/blocked, to_key=blocker.
+    beads_issue = {
+        "id": "A",
+        "title": "sample",
+        "status": "open",
+        "issue_type": "task",
+        "priority": 2,
+        "dependencies": [{"type": "blocks", "target": "B"}],
+        "comments": [],
+    }
+    beads, _ = _build_beads([_cp(stdout=json.dumps([beads_issue]))])
+    beads_ticket = beads.get("A")
+    assert {"kind": "blocks", "from_key": "A", "to_key": "B"} in beads_ticket["links"]
+
+    jira_payload = {
+        "key": "A",
+        "fields": {
+            "summary": "sample",
+            "description": {"type": "doc", "content": []},
+            "status": {"name": "Open", "statusCategory": {"key": "new", "name": "To Do"}},
+            "issuetype": {"name": "Task"},
+            "priority": {"name": "Medium"},
+            "assignee": None,
+            "comment": {"comments": []},
+            "parent": None,
+            "attachment": [],
+            "labels": [],
+            "resolution": None,
+            "issuelinks": [{"type": {"name": "Blocks"}, "inwardIssue": {"key": "B"}}],
+        },
+    }
+    http = _FakeHttp([_Response(jira_payload), _Response([])])
+    jira = _make_jira(monkeypatch, http)
+    jira_ticket = jira.get("A")
+    assert {"kind": "blocks", "from_key": "A", "to_key": "B"} in jira_ticket["links"]
+
+
 def test_structural_import_ok() -> None:
     # Guards against an accidental import break across the three modules.
     assert callable(tracker_cli.cli_main)

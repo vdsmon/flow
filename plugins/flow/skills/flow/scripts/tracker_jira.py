@@ -502,9 +502,9 @@ class JiraAdapter:
             inward = lnk.get("inwardIssue") or {}
             outward = lnk.get("outwardIssue") or {}
             if inward.get("key"):
-                links.append({"kind": kind, "from_key": inward["key"], "to_key": key})
+                links.append({"kind": kind, "from_key": key, "to_key": inward["key"]})
             if outward.get("key"):
-                links.append({"kind": kind, "from_key": key, "to_key": outward["key"]})
+                links.append({"kind": kind, "from_key": outward["key"], "to_key": key})
         return self._ticket_from_json(issue, links=links)
 
     def list_assigned(self, filter: str = "open") -> list[TicketRef]:

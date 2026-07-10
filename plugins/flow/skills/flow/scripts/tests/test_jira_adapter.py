@@ -339,8 +339,8 @@ def test_get_issue_populates_links_from_issuelinks(monkeypatch: pytest.MonkeyPat
     adapter = _make_adapter(monkeypatch, http)
     ticket = adapter.get("FT-1")
     links = ticket["links"]
-    assert {"kind": "blocks", "from_key": "FT-1", "to_key": "FT-2"} in links
-    assert {"kind": "relates", "from_key": "FT-3", "to_key": "FT-1"} in links
+    assert {"kind": "blocks", "from_key": "FT-2", "to_key": "FT-1"} in links
+    assert {"kind": "relates", "from_key": "FT-1", "to_key": "FT-3"} in links
     # `issuelinks` must be in the requested field set so the payload carries it.
     requested = http.calls[0].full_url
     assert "issuelinks" in requested
