@@ -12,7 +12,7 @@ consumes it. It is the front half of the arc:
 
 1. Resolve candidates + duplicate hints:
    ```bash
-   python3 ${CLAUDE_SKILL_DIR}/scripts/group_candidates.py [<key> ...] [--mine] --workspace-root .
+   .flow/flow group-candidates [<key> ...] [--mine] --workspace-root .
    ```
    - explicit keys → exactly those tickets.
    - `--mine` (no keys) → your assigned tickets matching `--filter` (default `open`).
@@ -79,7 +79,7 @@ consumes it. It is the front half of the arc:
    lost by next session. Record the cover set durably on the lead so `spec` picks
    it up later:
    ```bash
-   python3 ${CLAUDE_SKILL_DIR}/scripts/group_persist.py persist \
+   .flow/flow group-persist persist \
      --lead <LEAD> --covers <c1>,<c2>,... --workspace-root .
    ```
    This writes a `flow-group covers:` marker comment on the lead (idempotent —

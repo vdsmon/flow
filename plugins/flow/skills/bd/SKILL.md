@@ -1,7 +1,6 @@
 ---
 name: bd
-description: Core bd (beads) CLI surface for issue tracking — the six verbs you re-discover each session (ready, show, create, dep, update, sync), the local-Dolt + refs/dolt/data sync model, and the .beads/issues.jsonl passive-export caveat. A lean reference, not the full bd command set.
-when_to_use: Reach for this whenever you run a bd command — finding ready work, showing/creating/updating an issue, wiring a dependency, or syncing issue state (bd dolt push/pull, bd export to .beads/issues.jsonl). Fires on bd usage only, not on unrelated git or shell work.
+description: Core bd (beads) CLI surface for issue tracking. Use whenever running a bd command to find ready work, show/create/update an issue, wire a dependency, or sync issue state. Covers the six recurring verbs (ready, show, create, dep, update, sync), the local-Dolt plus refs/dolt/data sync model, and the .beads/issues.jsonl passive-export caveat. A lean reference, not the full bd command set; do not trigger on unrelated git or shell work.
 allowed-tools: Bash(bd:*)
 ---
 
@@ -78,7 +77,7 @@ beads-specific behaviors flow has hit and worked around.
 
 ### bd init is invasive
 
-Bare `bd init --prefix <prefix>` generates an AGENTS.md plus a `.claude/settings.json` (a bd-prime SessionStart/PreCompact hook) and **auto-commits** them — unwanted in a shared, Claude-Code-only repo.
+Bare `bd init --prefix <prefix>` generates an AGENTS.md plus a `.claude/settings.json` (a bd-prime SessionStart/PreCompact hook) and **auto-commits** them. Those changes are unwanted in a shared repository and irrelevant to non-Claude harnesses.
 
 flow invokes it headless instead:
 

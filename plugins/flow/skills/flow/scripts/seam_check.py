@@ -1,19 +1,17 @@
-"""Prose<->CLI seam checker for /flow.
+"""Prose-to-runtime seam checker for Flow.
 
-Parses every `${CLAUDE_SKILL_DIR}/scripts/<x>.py` invocation out of SKILL.md +
-references/*.md and validates each against the script's REAL argparse surface
-(subcommands + flags), discovered by running each script with `--help`. Catches
-the #1 drift bug class: prose naming a flag or subcommand the script does not
-define. Unit tests bypass argparse, so they never catch this; the seam checker
-is the net that lets the prose be restructured without silently breaking the
-executable contract.
+Parses workspace-facade recipes and the narrow direct-bootstrap calls from SKILL.md plus
+references/*.md. It validates them against flowctl's allowlist and each script's real argparse
+surface, checks the generated managed AGENTS block, and retains the existing
+module/registry/descriptor drift gates. Facade command shape is strict: missing or misspelled
+subcommands and misplaced flags fail.
 
 Run from anywhere:
     python3 seam_check.py            # check the live SKILL.md + references/
     python3 seam_check.py --verbose  # also print every invocation it resolved
 
-Exit 0 = every invocation resolves. Exit 1 = at least one ERROR (unknown flag,
-unknown subcommand, or missing script). WARN lines never fail the build.
+Exit 0 = every contract resolves. Exit 1 = at least one ERROR. WARN lines are
+reserved for intentionally partial direct-bootstrap prose and do not fail.
 """
 
 from __future__ import annotations
@@ -21,6 +19,7 @@ from __future__ import annotations
 import argparse
 import ast
 import re
+import shlex
 import subprocess
 import sys
 import tomllib
@@ -28,14 +27,49 @@ from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
 
+import flowctl
+
 SCRIPTS_DIR = Path(__file__).resolve().parent
 SKILL_ROOT = SCRIPTS_DIR.parent
 
-# A script reference inside prose, e.g. `${CLAUDE_SKILL_DIR}/scripts/init.py`.
+# A direct script reference inside prose, using a legacy child environment alias or the
+# harness-neutral loaded-root placeholder.
 # Char class is [a-z0-9_]+ (NOT [a-z_]+): omitting the digit silently skips a
 # digit-bearing basename like embedder_model2vec.py, same lesson _MODULE_NAME_RE
 # and _STAGE_DOC_RE carry.
-_SCRIPT_RE = re.compile(r"\$\{CLAUDE_SKILL_DIR\}/scripts/([a-z0-9_]+\.py)")
+_SCRIPT_RE = re.compile(
+    r"(?P<direct_quote>[\"'])?"
+    r"(?:\$\{(?:CLAUDE_SKILL_DIR|FLOW_SKILL_DIR)\}|<skill-root>)/scripts/"
+    r"(?P<script>[a-z0-9_]+\.py)(?P=direct_quote)?"
+)
+# The canonical post-init command form accepts a workspace-relative executable, an unquoted absolute
+# path, or a quoted absolute path (including spaces). The first token after it resolves through
+# flowctl's single-source allowlist. The token is deliberately broad and optional: validation must
+# see and reject a missing token, path traversal, or wrong-case command instead of letting the regex
+# silently ignore the malformed recipe.
+_FACADE_RE = re.compile(
+    r"""
+    (?<![A-Za-z0-9_])
+    (?:
+        (?P<quote>["'])(?P<quoted_path>[^"'\n]*\.flow/flow)(?P=quote)
+        |
+        (?P<bare_path>(?:[^\s"'`|;&()]+/)?(?:\./)?\.flow/flow)
+    )
+    (?:\s+(?P<command>[^\s`|;&()]+))?
+    """,
+    re.VERBOSE,
+)
+# A command-like bare script citation becomes an invocation only when the next token is a real
+# subcommand of that script or a leading long option. This avoids treating narrative ``foo.py owns
+# ...`` prose as executable while catching post-init escapes such as ``recover.py retry --stage
+# implement``.
+# A slash immediately before the basename excludes intentional ``scripts/foo.py`` source-path
+# citations and the direct-bootstrap parser's rooted paths.
+_BARE_SCRIPT_CANDIDATE_RE = re.compile(
+    r"(?<![/A-Za-z0-9_])(?P<script>[a-z0-9_]+\.py)\s+"
+    r"(?P<token>--[A-Za-z][A-Za-z0-9-]*|[a-z][a-z0-9-]*)"
+)
+_DIRECT_BOOTSTRAP_ALLOWLIST = frozenset({"init.py", "flow_launcher.py"})
 # A long-option token. Matches the flag name and stops before `=`.
 _FLAG_RE = re.compile(r"--[a-zA-Z][a-zA-Z0-9-]*")
 # Quoted strings and command substitutions hold VALUES, not flags of this
@@ -48,6 +82,18 @@ _VALUE_SPAN_RE = re.compile(r"\"[^\"]*\"|'[^']*'|`[^`]*`|\$\([^)]*\)")
 _USAGE_SUBCMD_RE = re.compile(r"\{([^}]+)\}\s*\.\.\.")
 # Tokens that are obviously argument VALUES / placeholders, never subcommands.
 _PLACEHOLDER_RE = re.compile(r"""^[<"'$.]|^-""")
+# An argparse option declaration whose long flag consumes a value. Restrict the metavar to
+# uppercase/braced shapes so the first word of help prose is not mistaken for a metavar (``--help
+# show ...``).
+_VALUE_OPTION_RE = re.compile(
+    r"^\s*(?:-[A-Za-z0-9],\s*)?(--[A-Za-z][A-Za-z0-9-]*)"
+    r"(?:[ =]+(\{[^}]+\}|[A-Z][A-Z0-9_=-]*))?"
+)
+_MASKED_VALUE = "__FLOW_ARGUMENT_VALUE__"
+
+_AGENTS_STANZA_NAME = "_AGENTS_STANZA"
+_AGENTS_BEGIN_MARKER = "<!-- flow:begin -->"
+_AGENTS_END_MARKER = "<!-- flow:end -->"
 
 # Sentinel flags that one script detects in raw argv and forwards (minus the
 # sentinel) to another script's CLI. recall.py --metric <...> dispatches to
@@ -96,7 +142,6 @@ _BACKTICK_IDENT_RE = re.compile(r"`([a-z_][a-z0-9_]*)`")
 _ROLE_MEMBERSHIP_RE = re.compile(r"roles[`\s]*(?:includes?|contains?|has)\b")
 # quotes-only: a later backticked prose token must not over-capture as a role
 _ROLE_LITERAL_RE = re.compile(r"[\"']+([a-z][a-z0-9_]+)[\"']+")
-
 # An inline-code span: text between a pair of backticks on one line.
 _INLINE_SPAN_RE = re.compile(r"`([^`]*)`")
 # A fenced-code block delimiter (``` or ~~~), ignoring leading whitespace.
@@ -129,6 +174,10 @@ class Invocation:
     subcommand: str | None
     flags: list[str]
     raw: str
+    facade_command: str | None = None
+    # Arguments after the facade command, with quoted / command-substitution values masked. Only
+    # facade invocations populate this structural argv.
+    argv: tuple[str, ...] | None = None
 
 
 @dataclass
@@ -176,7 +225,7 @@ def find_invocations(doc_name: str, text: str) -> list[Invocation]:
         # then is truncated at a shell sequencing operator so a second command's flags are not
         # attributed to this script.
         for i, m in enumerate(matches):
-            script = m.group(1)
+            script = m.group("script")
             end = matches[i + 1].start() if i + 1 < len(matches) else len(logical)
             args = logical[m.end() : end]
             # Strip quoted value-spans FIRST so a sequencing char inside a quoted
@@ -199,6 +248,142 @@ def find_invocations(doc_name: str, text: str) -> list[Invocation]:
                 )
             )
     return invs
+
+
+def find_facade_invocations(doc_name: str, text: str) -> list[Invocation]:
+    """Parse workspace facade calls through flowctl's allowlist.
+
+    Keep a structural argv rather than searching the whole prose span for a known subcommand token.
+    Otherwise ``dispatch typo --stage next`` falsely resolves as ``next`` because the option value
+    happens to be a valid token.
+    """
+    invs: list[Invocation] = []
+    for lineno, logical in _logical_lines(text):
+        matches = list(_FACADE_RE.finditer(logical))
+        for index, match in enumerate(matches):
+            command = match.group("command") or ""
+            if not command:
+                # A prose citation such as "the `.flow/flow` executable" is not a command recipe. A
+                # line whose entire executable content is the facade is, and must fail as a
+                # missing-command shape.
+                prefix = logical[: match.start()].strip()
+                suffix = logical[match.end() :].strip()
+                if prefix or suffix:
+                    continue
+            end = matches[index + 1].start() if index + 1 < len(matches) else len(logical)
+            if logical[: match.start()].count("`") % 2 == 1:
+                closing_tick = logical.find("`", match.end())
+                if closing_tick != -1:
+                    end = min(end, closing_tick)
+            command_end = match.end("command") if command else match.end()
+            raw_args = logical[command_end:end]
+            args = _VALUE_SPAN_RE.sub(f" {_MASKED_VALUE} ", raw_args)
+            for separator in ("&&", "||", "|", ";"):
+                operator = args.find(separator)
+                if operator != -1:
+                    args = args[:operator]
+            try:
+                argv = tuple(shlex.split(args, posix=True))
+            except ValueError:
+                # Malformed illustrative shell still gets linted. Validation will report its
+                # structural command problem where applicable.
+                argv = tuple(args.split())
+            script = flowctl.COMMANDS.get(command, "")
+            invs.append(
+                Invocation(
+                    doc=doc_name,
+                    line=lineno,
+                    script=script,
+                    subcommand=None,
+                    flags=_FLAG_RE.findall(args),
+                    raw=logical[match.start() : end].strip(),
+                    facade_command=command,
+                    argv=argv,
+                )
+            )
+    return invs
+
+
+def find_bare_script_invocations(doc_name: str, text: str) -> list[Invocation]:
+    """Parse executable bare ``*.py`` recipes that bypass the facade.
+
+    Fenced lines are commands by construction. In ordinary prose, scope the check to an inline-code
+    span that carries at least one long option; a short citation such as ``flow_worktree.py create``
+    names an implementation surface but is not an executable recipe. Keeping the span boundary also
+    prevents flags from a later code span on the same line leaking into this invocation.
+    """
+    invocations: list[Invocation] = []
+    spans: list[tuple[int, str, bool]] = []
+    in_fence = False
+    shell_fence = False
+    for lineno, line in enumerate(text.splitlines(), start=1):
+        if _FENCE_RE.match(line):
+            if not in_fence:
+                marker = _FENCE_RE.match(line)
+                assert marker is not None
+                language = line[marker.end() :].strip().lower()
+                shell_fence = language in {"bash", "sh", "shell", "zsh"}
+                in_fence = True
+            else:
+                in_fence = False
+                shell_fence = False
+            continue
+        if in_fence and shell_fence:
+            spans.append((lineno, line.strip(), True))
+        elif not in_fence:
+            spans.extend(
+                (lineno, match.group(1).strip(), False) for match in _INLINE_SPAN_RE.finditer(line)
+            )
+
+    for lineno, span, fenced in spans:
+        matches = list(_BARE_SCRIPT_CANDIDATE_RE.finditer(span))
+        for index, match in enumerate(matches):
+            script = match.group("script")
+            token = match.group("token")
+            end = matches[index + 1].start() if index + 1 < len(matches) else len(span)
+            raw = span[match.start() : end].strip()
+            if not fenced and _FLAG_RE.search(raw) is None:
+                continue
+            surface = surface_of(script)
+            if not token.startswith("--") and (surface is None or token not in surface.subcommands):
+                continue
+            args = span[match.end("script") : end]
+            args = _VALUE_SPAN_RE.sub(" ", args)
+            for separator in ("&&", "||", "|", ";"):
+                operator = args.find(separator)
+                if operator != -1:
+                    args = args[:operator]
+            invocations.append(
+                Invocation(
+                    doc=doc_name,
+                    line=lineno,
+                    script=script,
+                    subcommand=token
+                    if surface is not None and token in surface.subcommands
+                    else None,
+                    flags=_FLAG_RE.findall(args),
+                    raw=raw,
+                )
+            )
+    return invocations
+
+
+def stale_direct_invocation_problems(invocations: list[Invocation]) -> list[Problem]:
+    """Reject direct skill-script calls outside init and launcher repair."""
+    return [
+        Problem(
+            doc=inv.doc,
+            line=inv.line,
+            level="ERROR",
+            msg=(
+                f"stale direct script invocation: {inv.script}; use .flow/flow "
+                "outside init and launcher repair"
+            ),
+            raw=inv.raw,
+        )
+        for inv in invocations
+        if inv.script not in _DIRECT_BOOTSTRAP_ALLOWLIST
+    ]
 
 
 def _slash_spans(text: str) -> list[tuple[int, str]]:
@@ -291,9 +476,55 @@ def surface_of(script_name: str) -> Surface | None:
     return Surface(subcommands=subs, global_flags=global_flags, sub_flags=sub_flags)
 
 
+@cache
+def value_flags_of(script_name: str, subcommand: str | None = None) -> frozenset[str]:
+    """Long flags that consume the following token on one argparse surface."""
+    help_text = _run_help(SCRIPTS_DIR / script_name, subcommand)
+    if help_text is None:
+        return frozenset()
+    flags: set[str] = set()
+    for line in help_text.splitlines():
+        match = _VALUE_OPTION_RE.match(line)
+        if match is not None and match.group(2) is not None:
+            flags.add(match.group(1))
+    return frozenset(flags)
+
+
+def _facade_shape(inv: Invocation, surface: Surface) -> tuple[str | None, list[str]]:
+    """Return the first positional subcommand and flags that precede it.
+
+    Global options may legally precede a subcommand. Their values are skipped using the real
+    argparse help surface. A subcommand-only option in that slot is returned for a placement error
+    instead of being allowed to disguise its value as the command token.
+    """
+    tokens = list(inv.argv or ())
+    all_value_flags = set(value_flags_of(inv.script))
+    for subcommand in surface.subcommands:
+        all_value_flags.update(value_flags_of(inv.script, subcommand))
+
+    before: list[str] = []
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        if token == "--":
+            index += 1
+            return (_clean(tokens[index]), before) if index < len(tokens) else (None, before)
+        if token.startswith("-"):
+            flag = token.split("=", 1)[0]
+            before.append(flag)
+            consumes_next = "=" not in token and flag in all_value_flags
+            index += 2 if consumes_next else 1
+            continue
+        return _clean(token), before
+    return None, before
+
+
 def _resolve_subcommand(inv: Invocation, surface: Surface) -> str | None:
     if not surface.subcommands:
         return None
+    if inv.facade_command is not None:
+        candidate, _ = _facade_shape(inv, surface)
+        return candidate if candidate in surface.subcommands else None
     args = inv.raw.split(inv.script, 1)[-1]
     for tok in (_clean(t) for t in args.split()):
         if tok in surface.subcommands:
@@ -304,7 +535,68 @@ def _resolve_subcommand(inv: Invocation, surface: Surface) -> str | None:
 # --- validation --------------------------------------------------------------
 
 
+def _validate_facade_shape(inv: Invocation, surface: Surface) -> tuple[str | None, list[Problem]]:
+    """Validate the structural subcommand slot of one facade invocation."""
+    candidate, before_flags = _facade_shape(inv, surface)
+    subcommand = candidate if candidate in surface.subcommands else None
+    problems: list[Problem] = []
+    if candidate is None:
+        if "--help" not in before_flags:
+            problems.append(
+                Problem(
+                    inv.doc,
+                    inv.line,
+                    "ERROR",
+                    f"{inv.script}: facade invocation is missing a subcommand",
+                    inv.raw,
+                )
+            )
+    elif subcommand is None:
+        problems.append(
+            Problem(
+                inv.doc,
+                inv.line,
+                "ERROR",
+                f"{inv.script}: unknown subcommand {candidate} "
+                f"(known: {sorted(surface.subcommands)})",
+                inv.raw,
+            )
+        )
+    problems.extend(
+        Problem(
+            inv.doc,
+            inv.line,
+            "ERROR",
+            f"{inv.script}: flag {flag} is not valid before subcommand",
+            inv.raw,
+        )
+        for flag in before_flags
+        if flag not in surface.global_flags and flag != "--help"
+    )
+    return subcommand, problems
+
+
 def validate(inv: Invocation) -> list[Problem]:
+    if inv.facade_command == "":
+        return [
+            Problem(
+                inv.doc,
+                inv.line,
+                "ERROR",
+                "facade invocation is missing a command",
+                inv.raw,
+            )
+        ]
+    if inv.facade_command is not None and not inv.script:
+        return [
+            Problem(
+                inv.doc,
+                inv.line,
+                "ERROR",
+                f"facade command is not allowlisted: {inv.facade_command}",
+                inv.raw,
+            )
+        ]
     surface = surface_of(inv.script)
     if surface is None:
         return [
@@ -317,12 +609,16 @@ def validate(inv: Invocation) -> list[Problem]:
             )
         ]
     problems: list[Problem] = []
-    sub = _resolve_subcommand(inv, surface)
+    if inv.facade_command is not None and surface.subcommands:
+        sub, shape_problems = _validate_facade_shape(inv, surface)
+        problems.extend(shape_problems)
+    else:
+        sub = _resolve_subcommand(inv, surface)
     inv.subcommand = sub
 
     # A script with subcommands invoked without one we recognize: WARN only
     # (prose sometimes shows a partial / illustrative call).
-    if surface.subcommands and sub is None:
+    if surface.subcommands and sub is None and inv.facade_command is None:
         barewords = [
             _clean(t)
             for t in inv.raw.split(inv.script, 1)[-1].split()
@@ -372,12 +668,112 @@ def validate(inv: Invocation) -> list[Problem]:
                 Problem(
                     inv.doc,
                     inv.line,
-                    "WARN",
+                    "ERROR" if inv.facade_command is not None else "WARN",
                     f"{inv.script} {sub}: flag {flag} valid elsewhere but not for this subcommand",
                     inv.raw,
                 )
             )
     return problems
+
+
+def _literal_assignment(source: str, name: str) -> str | None:
+    """Read one top-level literal string assignment without importing its module."""
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return None
+    for node in tree.body:
+        if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+            continue
+        target = node.targets[0]
+        if not isinstance(target, ast.Name) or target.id != name:
+            continue
+        if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
+            return node.value.value
+    return None
+
+
+def managed_agents_guidance_drift(
+    init_path: Path = SCRIPTS_DIR / "init.py",
+) -> list[str]:
+    """Validate the generated managed AGENTS block by stable semantic contracts.
+
+    Incidental comments or prose that merely mention AGENTS.md do not count. The source of truth is
+    the literal ``_AGENTS_STANZA`` assignment bracketed by the stable managed markers. Wording may
+    evolve while these load/facade/gate/isolation contracts remain true.
+    """
+    try:
+        source = init_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        return [f"cannot read generated guidance source: {exc}"]
+    stanza = _literal_assignment(source, _AGENTS_STANZA_NAME)
+    if stanza is None:
+        return [f"missing literal {_AGENTS_STANZA_NAME} assignment"]
+
+    if stanza.count(_AGENTS_BEGIN_MARKER) != 1 or stanza.count(_AGENTS_END_MARKER) != 1:
+        return ["generated guidance must contain exactly one pair of managed markers"]
+    begin = stanza.index(_AGENTS_BEGIN_MARKER) + len(_AGENTS_BEGIN_MARKER)
+    end = stanza.index(_AGENTS_END_MARKER)
+    if begin > end:
+        return ["generated guidance managed markers are out of order"]
+    guidance = stanza[begin:end]
+
+    contracts: tuple[tuple[str, bool], ...] = (
+        (
+            "adapter-supplied absolute installation guidance",
+            "FLOW_SKILL_DIR" in guidance
+            and "absolute" in guidance.lower()
+            and re.search(r"do not search", guidance, re.IGNORECASE) is not None,
+        ),
+        (
+            "router and harness guidance",
+            "SKILL.md" in guidance and "references/harness.md" in guidance,
+        ),
+        (
+            "request argument mapping",
+            "arguments" in guidance and "/flow" in guidance,
+        ),
+        (
+            "call-local harness selector guidance",
+            "FLOW_HARNESS" in guidance
+            and all(value in guidance for value in ("codex", "claude-code", "generic"))
+            and "same" in guidance.lower()
+            and "export" in guidance.lower(),
+        ),
+        (
+            "approval-before-coding guidance",
+            re.search(r"approv", guidance, re.IGNORECASE) is not None
+            and "read-only" in guidance.lower()
+            and re.search(r"\bstop\b", guidance, re.IGNORECASE) is not None,
+        ),
+        (
+            "absolute rooted facade guidance",
+            ".flow/flow" in guidance
+            and "absolute" in guidance.lower()
+            and "run root" in guidance.lower(),
+        ),
+        (
+            "non-persistent call rooting guidance",
+            "explicit workdir" in guidance.lower()
+            and re.search(r"prior(?: standalone)? `cd`", guidance, re.IGNORECASE) is not None
+            and "never persistent" in guidance.lower(),
+        ),
+        (
+            "dirty main-checkout protection",
+            "never relocate dirty" in guidance.lower()
+            and "provenance" in guidance.lower()
+            and "recovery" in guidance.lower(),
+        ),
+    )
+    drift: list[str] = [f"missing {label}" for label, satisfied in contracts if not satisfied]
+
+    direct = find_invocations("generated AGENTS guidance", guidance) + find_bare_script_invocations(
+        "generated AGENTS guidance", guidance
+    )
+    drift.extend(problem.msg for problem in stale_direct_invocation_problems(direct))
+    for invocation in find_facade_invocations("generated AGENTS guidance", guidance):
+        drift.extend(problem.msg for problem in validate(invocation) if problem.level == "ERROR")
+    return drift
 
 
 # --- driver ------------------------------------------------------------------
@@ -865,18 +1261,20 @@ def registry_roles(registry_path: Path = SKILL_ROOT / "stage-registry.toml") -> 
 
 
 def prose_role_citations(text: str) -> list[tuple[int, str]]:
-    """Role literals the prose tests against `descriptor.roles`, by the membership idiom.
+    """Role literals prose uses to branch on registry metadata.
 
-    Anchored on `roles ... includes/contains/has`; the quoted lower_snake tokens
-    after the anchor on that logical line are role literals. Returns (line, role).
+    Accept only the explicit ``roles ... includes/contains/has`` idiom. Stage names and role
+    literals are different descriptor fields, so prose saying ``the stage is `<role>` `` must not
+    satisfy this gate. Returns (line, role).
     """
-    out: list[tuple[int, str]] = []
+    out: set[tuple[int, str]] = set()
     for lineno, logical in _logical_lines(text):
+        found: set[str] = set()
         m = _ROLE_MEMBERSHIP_RE.search(logical)
-        if not m:
-            continue
-        out.extend((lineno, lm.group(1)) for lm in _ROLE_LITERAL_RE.finditer(logical[m.end() :]))
-    return out
+        if m is not None:
+            found.update(lm.group(1) for lm in _ROLE_LITERAL_RE.finditer(logical[m.end() :]))
+        out.update((lineno, role) for role in found)
+    return sorted(out)
 
 
 def role_literal_drift(
@@ -917,12 +1315,15 @@ def main(argv: list[str]) -> int:
 
     docs = docs_to_check()
     all_invs: list[Invocation] = []
+    problems: list[Problem] = []
     for doc in docs:
         text = doc.read_text(encoding="utf-8")
-        all_invs.extend(find_invocations(doc.name, text))
+        direct = find_invocations(doc.name, text) + find_bare_script_invocations(doc.name, text)
+        all_invs.extend(direct)
+        all_invs.extend(find_facade_invocations(doc.name, text))
         all_invs.extend(find_slash_invocations(doc.name, text))
+        problems.extend(stale_direct_invocation_problems(direct))
 
-    problems: list[Problem] = []
     for inv in all_invs:
         problems.extend(validate(inv))
 
@@ -1047,6 +1448,17 @@ def main(argv: list[str]) -> int:
                 raw="",
             )
         )
+
+    problems.extend(
+        Problem(
+            doc="init.py",
+            line=0,
+            level="ERROR",
+            msg=f"generated managed AGENTS guidance: {detail}",
+            raw="",
+        )
+        for detail in managed_agents_guidance_drift()
+    )
 
     if args.verbose:
         for inv in all_invs:

@@ -54,6 +54,8 @@ _GUARD_FILES = frozenset(
         "state.py",
         "dispatch_stage.py",
         "diff_extract.py",
+        "flow_launcher.py",
+        "flowctl.py",
         "flow_worktree.py",
         "machinery_edit.py",
         "flow_friction.py",

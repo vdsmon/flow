@@ -5,10 +5,10 @@
 **Sub-verb dispatch:** if the first post-verb token is exactly `prune` (`/flow memory prune`, `/flow recall prune`), this is NOT a query — skip the argv build and follow `## memory prune` below. (To recall the literal word "prune", use a longer query.)
 
 Pass-through to `recall.py`.
-Build the argv from `$ARGUMENTS`:
+Build the argv from adapter-supplied `arguments`:
 
 ```bash
-python3 ${CLAUDE_SKILL_DIR}/scripts/recall.py "<query>" \
+.flow/flow recall "<query>" \
   [--branch <name>] \
   [--tickets <csv>] \
   [--top-n <n>] \
@@ -20,11 +20,11 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/recall.py "<query>" \
 
 ## Label-scoped recall (faceted memory)
 
-`recall.py --label <facet:value>` (e.g. `--label form:iva_2083`) hard-filters to entries carrying that label BEFORE ranking and returns the WHOLE cluster (the `--top-n` cap is lifted to the corpus size — exhaustive retrieval, not top-n truncation). The query becomes optional: a label-only invocation returns the full live cluster ordered newest-first, and never reads stdin (safe in any harness Bash call). A label miss is `[]` exit 0, not an error. Facet vocabulary comes from `[memory] label_facets` in workspace.toml (ships empty here; a workspace with a natural facet opts in).
+`.flow/flow recall --label <facet:value>` (e.g. `--label form:iva_2083`) hard-filters to entries carrying that label BEFORE ranking and returns the WHOLE cluster (the `--top-n` cap is lifted to the corpus size for exhaustive retrieval, not top-n truncation). The query becomes optional: a label-only invocation returns the full live cluster ordered newest-first, and never reads stdin (safe in any harness Bash call). A label miss is `[]` exit 0, not an error. Facet vocabulary comes from `[memory] label_facets` in workspace.toml (ships empty here; a workspace with a natural facet opts in).
 
 ### `--digest` (markdown card over the label cluster)
 
-`recall.py --label <facet:value> --digest` renders the exhaustive label cluster as a
+`.flow/flow recall --label <facet:value> --digest` renders the exhaustive label cluster as a
 human-readable markdown card instead of the raw JSON array: one section per entry
 `type` (canonical order DECISION, FACT, LEARNED, PATTERN, INVESTIGATION, DEVIATION,
 any other type sorted alphabetically after; only non-empty sections render), entries
@@ -40,7 +40,7 @@ When the workspace opts into `[memory.semantic] enabled = true`, recall fuses BM
 Extra flags (all optional; the plain `recall <query>` form above is unchanged):
 
 ```bash
-python3 ${CLAUDE_SKILL_DIR}/scripts/recall.py \
+.flow/flow recall \
   --query-file <path> \
   --semantic --threshold <τ> --top-n <n> \
   [--branch <name>] [--tickets <csv>] \
@@ -54,15 +54,17 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/recall.py \
 **Refresh the index** (incremental; embeds only new entries):
 
 ```bash
-python3 ${CLAUDE_SKILL_DIR}/scripts/recall.py --reindex --workspace-root .
+.flow/flow recall --reindex --workspace-root .
 ```
 
 Add `--full` to force a full rebuild. **First-enable requires one bulk reindex** — flipping `enabled = true` on an existing workspace starts with an empty index, so recall is BM25-only until this runs once.
 
-**Record-pending** (the post-gate producer that replaces the old SessionStart recall; a WRITE, so legal only after `ExitPlanMode`):
+**Record-pending** (the post-gate producer that replaces the old SessionStart recall;
+a WRITE, so legal only after the selected adapter's approval boundary; Claude Code's
+`ExitPlanMode` is one implementation):
 
 ```bash
-python3 ${CLAUDE_SKILL_DIR}/scripts/recall.py --query-file <path> \
+.flow/flow recall --query-file <path> \
   --semantic --top-n 30 --record-pending \
   --branch "feat/$KEY-<slug>" --ticket "$KEY" \
   --workspace-root "<the worktree path the bootstrap printed>"
@@ -75,7 +77,7 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/recall.py --query-file <path> \
 `/flow recall --metric tickets-per-week [...]` is a pass-through to the metric calculator (recall.py forwards `--metric` to `metric.py`):
 
 ```bash
-python3 ${CLAUDE_SKILL_DIR}/scripts/recall.py --metric tickets-per-week \
+.flow/flow recall --metric tickets-per-week \
   --namespace <ns> --workspace-root . \
   [--since YYYY-MM-DD] [--until YYYY-MM-DD] \
   [--checkpoint --mode personal|work --manifest-path <p>]
@@ -86,7 +88,7 @@ It counts shipped tickets in the window from the immutable ship-event evidence a
 Surface the JSON report.
 
 ```bash
-python3 ${CLAUDE_SKILL_DIR}/scripts/recall.py --metric time-to-pr \
+.flow/flow recall --metric time-to-pr \
   --namespace <ns> --workspace-root . \
   [--since YYYY-MM-DD] [--until YYYY-MM-DD]
 ```
@@ -94,7 +96,7 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/recall.py --metric time-to-pr \
 It counts flow-attributed shipped tickets in-window and reports observed time-to-PR (plan-start → create_pr-finish) as median_hours / p90_hours, the trio's third leg.
 
 ```bash
-python3 ${CLAUDE_SKILL_DIR}/scripts/recall.py --metric friction-per-run \
+.flow/flow recall --metric friction-per-run \
   --namespace <ns> --workspace-root . \
   [--since YYYY-MM-DD] [--until YYYY-MM-DD]
 ```
@@ -102,7 +104,7 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/recall.py --metric friction-per-run \
 Reads `.flow/<namespace>/friction.jsonl`, counts entries in the time window, and reports `total_events`, `runs`, `events_per_run`, `by_type`, and `by_severity`. `--namespace` is required. No `--checkpoint` option (friction-per-run has no checkpoint aggregation path).
 
 ```bash
-python3 ${CLAUDE_SKILL_DIR}/scripts/recall.py --metric corpus-health \
+.flow/flow recall --metric corpus-health \
   --namespace <ns> --workspace-root . \
   [--since YYYY-MM-DD] [--until YYYY-MM-DD]
 ```
@@ -110,7 +112,7 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/recall.py --metric corpus-health \
 Reads `.flow/<namespace>/knowledge.jsonl` and reports `total_entries`, `live_entries`, `superseded_entries` (entries whose `id` is named by another entry's `supersedes`), `supersession_rate`, `supersedes_in_window` (supersede records whose `ts` is in the window — the over-time axis), `decisions_total`, `decisions_live`, and `oldest_live_decision` (`{id, ts, age_days}` or null — the oldest LIVE, i.e. non-superseded, DECISION). `--namespace` is required. No `--checkpoint` option. An empty/missing knowledge.jsonl returns zeros (the h8s7 cwd guard only fires when there is no `.flow/.initialized`).
 
 ```bash
-python3 ${CLAUDE_SKILL_DIR}/scripts/recall.py --metric revert-rate \
+.flow/flow recall --metric revert-rate \
   --namespace <ns> --workspace-root . \
   [--since YYYY-MM-DD] [--until YYYY-MM-DD]
 ```
@@ -118,7 +120,7 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/recall.py --metric revert-rate \
 Joins each in-window ship-event to its tracker status history (`bd history <key> --json`): a revert is a shipped bead reopened and re-closed AFTER its `shipped_at`. Reports `shipped`, `n_reverts`, `revert_rate`, and the attribution split `reverts_via_flow` / `reverts_not_attributed`, plus per-ticket detail and a `skipped` list (`history_unavailable`, `tracker_unsupported` on non-beads, `reopened_not_yet_reclosed`). `--namespace` is required. No `--checkpoint` option. Dual-source: the tracker join is beads-only (on a non-beads backend every ship-event lands in `skipped` as `tracker_unsupported`), while a git-log scan counts revert commits naming in-window keys on ANY backend — reported as `reverts_by_source` `{tracker, git}` plus per-revert `git_reverts` detail, with a durable revert event emitted per reverting commit. A git-scan failure (e.g. not a git repo) fails loud with exit 1 rather than under-reporting.
 
 ```bash
-python3 ${CLAUDE_SKILL_DIR}/scripts/recall.py --metric recall-hit-rate \
+.flow/flow recall --metric recall-hit-rate \
   --namespace <ns> --workspace-root . \
   [--since YYYY-MM-DD] [--until YYYY-MM-DD]
 ```
@@ -126,7 +128,7 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/recall.py --metric recall-hit-rate \
 Reads `.flow/<namespace>/recall-usage.jsonl` (the usage + miss records written at reflect) and reports `surfaced`, `used`, `hit_rate` (used / surfaced, 0.0 when nothing surfaced), `misses` (near-duplicate re-learns recall failed to surface, the false-negative proxy), and `runs` (distinct run_ids across both kinds). `--namespace` is required. No `--checkpoint` option.
 
 ```bash
-python3 ${CLAUDE_SKILL_DIR}/scripts/recall.py --metric trend \
+.flow/flow recall --metric trend \
   --namespace <ns> --workspace-root . \
   [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--json]
 ```
@@ -134,7 +136,7 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/recall.py --metric trend \
 Rolls up all five window measures (tickets-per-week, time-to-pr, friction-per-run, revert-rate, recall-hit-rate) over one `[since, until)` window. Default output is a human-readable table, one row per measure with its headline numbers; `--json` emits a JSON object keyed by the five measure names (each carrying that measure's full report) plus top-level `since`, `until`, and `resolved_workspace_root`. The revert row surfaces the `reverts_by_source` `{tracker, git}` split. `--namespace` is required. No `--checkpoint` option. Inherits revert-rate's git-repo requirement, so it fails loud on a git-scan error rather than emitting an empty roll-up.
 
 ```bash
-python3 ${CLAUDE_SKILL_DIR}/scripts/recall.py --metric fix-efficacy \
+.flow/flow recall --metric fix-efficacy \
   --namespace <ns> --workspace-root . \
   [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--json]
 ```
@@ -145,13 +147,17 @@ Per closed MACHINERY-fix bead (a `.flow/<namespace>/knowledge.jsonl` entry whose
 
 `/flow memory prune` (equivalently `/flow recall prune`). Retire the corpus's dead weight: entries recall keeps surfacing that no run ever uses, and project auto-memory files the repo has since captured or disproved. Repeatable, not exhaustive — each pass works the head of the ranking; run it again when the reflect-stage nudge reappears.
 
-**Step 0 — interactive-only guard.** The flow below gates every write on `AskUserQuestion`, which a headless run cannot answer. Detect an `--auto` context by session context — the same signal the SKILL.md do-loop uses to suppress the PR-ready notification (`references/verb-do.md`). If this is an `--auto` run: print `memory prune is interactive-only; rerun without --auto` and stop.
+**Step 0: interactive-only guard.** The flow below gates every write on the adapter's
+user-input capability, which a headless run cannot answer. Detect an `--auto` context
+by session context, the same signal the SKILL.md do-loop uses to suppress the PR-ready
+notification (`references/verb-do.md`). If this is an `--auto` run: print
+`memory prune is interactive-only; rerun without --auto` and stop.
 
 ### Phase 1 — flow knowledge corpus
 
 1. Build the usage-ranked worklist, redirected to a file (never cat the whole corpus into context):
    ```bash
-   python3 ${CLAUDE_SKILL_DIR}/scripts/sweep_knowledge.py propose \
+   .flow/flow sweep-knowledge propose \
      --type all --with-usage --workspace-root . > prune-worklist.json
    ```
    Each item carries `{id, ticket, ts, type, body, surfaced_count, used_count, miss_count, last_surfaced, tier}`. Tiers, in worklist order: **0** = surfaced but never used (recall spent context on it; no run leaned on it — most-surfaced first), **1** = never surfaced (dead weight or just young — oldest first), **2** = used at least once (earned its place — prune only if disproved).
@@ -162,11 +168,14 @@ Per closed MACHINERY-fix bead (a `.flow/<namespace>/knowledge.jsonl` entry whose
    ```
    `superseding_ticket` = this session's ticket key if it has one, else `memory-prune-<YYYY-MM-DD>`. Write the records to `prune-manifest.json`.
 
-3. **The gate — ONE `AskUserQuestion` before any write.** Present: total candidates, counts by type and tier, and 3-5 samples (id + first sentence of body + rationale). Options: apply / show the full manifest first / abort. Nothing is written until the user picks apply.
+3. **The gate: one adapter user-input boundary before any write.** Present: total
+   candidates, counts by type and tier, and 3-5 samples (id + first sentence of body +
+   rationale). Options: apply / show the full manifest first / abort. Nothing is written
+   until the user picks apply.
 
 4. Apply (append-only tombstones through the same seam the curate lane uses; idempotent, a re-run is a no-op):
    ```bash
-   python3 ${CLAUDE_SKILL_DIR}/scripts/sweep_knowledge.py apply \
+   .flow/flow sweep-knowledge apply \
      --manifest prune-manifest.json --workspace-root .
    ```
    Surface the applied/skipped/error summary. Exit 5 = at least one record errored (unknown id, empty id) — report those records; the rest applied. Recall filters superseded entries from the next run automatically.
@@ -183,5 +192,9 @@ The other store: the on-disk project memory directory your harness names in its 
    - obsolete — marked fixed/retired/superseded, or a one-off incident note whose residual lives in the tracker;
    - captured-in-repo — the fact now lives in a repo doc or check. **Grep the repo and VERIFY the capture before believing this class** — a memory that only claims to be captured stays;
    - live — keep.
-3. Confirm in batches of ~10 via `AskUserQuestion` (entry name + one-line reason each). On approval: delete those entry files and remove exactly their lines from the index — never delete `MEMORY.md` itself; every unrelated line stays byte-identical. Dangling `[[links]]` in surviving entries are legal in that memory discipline — do not chase them.
+3. Confirm in batches of ~10 through the adapter's user-input capability (entry name +
+   one-line reason each). On approval: delete those entry files and remove exactly their
+   lines from the index; never delete `MEMORY.md` itself. Every unrelated line stays
+   byte-identical. Dangling `[[links]]` in surviving entries are legal in that memory
+   discipline; do not chase them.
 4. Report: counts per class, files deleted, the backup path.

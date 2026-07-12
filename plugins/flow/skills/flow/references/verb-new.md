@@ -9,8 +9,8 @@ All tracker calls go through the tracker CLI seam (the `tracker_cli.py` subcomma
 Run these two reads (Jira returns real data; beads degrades to the bead type enum + empty epics):
 
 ```bash
-python3 ${CLAUDE_SKILL_DIR}/scripts/tracker_cli.py --workspace-root . list-types
-python3 ${CLAUDE_SKILL_DIR}/scripts/tracker_cli.py --workspace-root . list-epics
+.flow/flow tracker --workspace-root . list-types
+.flow/flow tracker --workspace-root . list-epics
 ```
 
 - `list-types` → JSON `[{name, hierarchyLevel}]`. The hierarchy-1 entry is the epic/parent type; the hierarchy-0 entries are the type vocab.
@@ -26,9 +26,11 @@ git branch --show-current
 
 Default to the first hierarchy-0 type whose name matches `task` (case-insensitive), else the first hierarchy-0 type returned. Bump to a `bug`-like type if the summary signals a defect (`fix`, `bug`, `broken`, `crash`, `error`, `regression`), or to a `feature`/`story`-like type on a clear feature signal (`add`, `implement`, `support`, `new`) — but ONLY pick a type whose `name` is actually in the fetched `list-types` set (beads has `feature`, not `story`; never invent a name). When in doubt, stay on the default. Do NOT ask. The chosen type shows in the Step 3 preview, and Edit is the correction gate.
 
-## Step 2: Ask the author (one AskUserQuestion call, ≤4 questions)
+## Step 2: Ask the author through the adapter
 
-Use `AskUserQuestion` with exactly these (fits the 4-question tool limit):
+Use the adapter's user-input capability for exactly these fields. Claude Code may batch
+them in its structured question tool (at most four); Codex and generic adapters ask
+plainly and wait. Preserve the answers in orchestration context, not shell variables:
 
 1. **Summary** — free-text (user picks "Other" to type). Offer 2 contextual suggestions: derive one from the branch name when on a feature branch (e.g. `fix/FT-500-login` → "Fix login bug"); derive the other from what was just being discussed in the conversation. Always include a placeholder so the user is prompted to type.
 2. **Description** — free-text. Offer "Include git branch reference" (auto: ``Branch: `<branch-name>` ``), "Write custom description", "No description".
@@ -65,10 +67,12 @@ Show:
 
 Ask: "Create this ticket?" — Create (recommended) / Edit / Cancel. On Edit, go back to Step 1. On Cancel, stop.
 
-Resolve the self assignee account id from config (omit `--assignee` entirely when the key is absent — covers Jira-without-config AND beads):
+Resolve the self assignee account id from config before the preview (omit `--assignee`
+entirely when the key is absent; this covers Jira-without-config AND beads). Capture stdout
+as the logical `assignee_account_id`; it must survive the preview's user-input boundary:
 
 ```bash
-SELF=$(python3 -c 'import tomllib,sys
+python3 -c 'import tomllib,sys
 d=tomllib.load(open(".flow/workspace.toml","rb"))
 tk=d.get("tracker",{}); b=tk.get("backend")
 print((tk.get(b,{}) or {}).get("assignee_account_id","") or "")')
@@ -76,13 +80,19 @@ print((tk.get(b,{}) or {}).get("assignee_account_id","") or "")')
 
 ## Step 5: Create + post-create ops
 
-Create (pass `--parent` only if an epic was chosen; pass `--assignee` only if `$SELF` is non-empty). Build the optional flags as an array — the conditional-expansion form `${VAR:+--flag "$VAR"}` expands to ONE token under zsh, and argparse rejects the fused `--flag value` word:
+Create (pass `--parent` only if an epic was chosen; pass `--assignee` only if the
+logical `assignee_account_id` is non-empty). Materialize the approved values as
+same-call shell variables, then build the optional flags as an array. The
+assignments below are literal materializations of the approved logical values, not
+state inherited from an earlier shell call:
 
 ```bash
+EPIC="<approved epic key, or empty>"
+ASSIGNEE_ACCOUNT_ID="<logical assignee_account_id, or empty>"
 _create_args=(--summary "<summary>" --description "<description>" --type "<type>")
 [ -n "$EPIC" ] && _create_args+=(--parent "$EPIC")
-[ -n "$SELF" ] && _create_args+=(--assignee "$SELF")
-python3 ${CLAUDE_SKILL_DIR}/scripts/tracker_cli.py --workspace-root . create "${_create_args[@]}"
+[ -n "$ASSIGNEE_ACCOUNT_ID" ] && _create_args+=(--assignee "$ASSIGNEE_ACCOUNT_ID")
+.flow/flow tracker --workspace-root . create "${_create_args[@]}"
 ```
 
 `create` writes JSON `{"key": "<newkey>"}` to stdout; parse `.key`. Non-zero exit → surface stderr and stop.
@@ -91,18 +101,18 @@ Then, in order (each best-effort; a degraded backend must not abort the run):
 
 1. **Status → To Do** (best-effort):
    ```bash
-   python3 ${CLAUDE_SKILL_DIR}/scripts/tracker_cli.py --workspace-root . transition \
+   .flow/flow tracker --workspace-root . transition \
      --key "<newkey>" --to-state "To Do"
    ```
    The `transition` subcommand resolves the name→id itself. Tolerate exit 3 (no such transition / already there — e.g. beads, or a project already defaulting to To Do): log and continue.
 
 2. **Sprint** (only if the author chose Yes):
    ```bash
-   python3 ${CLAUDE_SKILL_DIR}/scripts/tracker_cli.py --workspace-root . list-sprints
+   .flow/flow tracker --workspace-root . list-sprints
    ```
    Pick the entry with `state == "active"`. Then:
    ```bash
-   python3 ${CLAUDE_SKILL_DIR}/scripts/tracker_cli.py --workspace-root . set-sprint \
+   .flow/flow tracker --workspace-root . set-sprint \
      --key "<newkey>" --sprint-id "<active sprint id>"
    ```
    On beads both calls return `{"supported": false, ...}` (exit 0) — nothing to do, continue.
@@ -122,9 +132,16 @@ If the description contains plan-like headings (case-insensitive line-anchored r
 Ticket body has a fix plan — /flow <KEY> will offer to use it as the spec-stage plan (skip PLANNING).
 ```
 
-Then **offer to start the pipeline now** — authoring a ticket is usually a prelude to running it, so make the common next step one keystroke. One `AskUserQuestion`: "Start the pipeline for `<KEY>` now?" — **Start now** (recommended) / **Not yet**.
+Then **offer to start the pipeline now** through the adapter's user-input capability;
+authoring a ticket is usually a prelude to running it, so make the common next step one
+keystroke: "Start the pipeline for `<KEY>` now?" Options: **Start now** (recommended) /
+**Not yet**.
 
-- **Start now** → route into the `spec` verb for `<KEY>` in this SAME session, exactly as if the user had typed `/flow <KEY>`: follow SKILL.md's spec procedure from its step 1 (`EnterPlanMode`, fetch the ticket, design the plan WITH the user, the `ExitPlanMode` gate, then the tail). The ticket you just created is the spec input.
-- **Not yet** → stop. The user starts it later with `/flow <KEY>`.
+- **Start now** → route into the `spec` verb for `<KEY>` in this SAME session, exactly
+  as if the user had made the host-appropriate Flow request: follow SKILL.md's adapter
+  plan boundary, fetch the ticket, design the plan WITH the user, wait for explicit
+  approval, then run the tail. The ticket you just created is the spec input.
+- **Not yet** → stop. Surface the host-appropriate invocation (`/flow <KEY>` on Claude
+  Code, `$flow:flow <KEY>` on Codex) for later.
 
 Planning still happens in `spec`, never in `new` — the offer only chains into spec; it does not plan, write code, or invoke the pipeline without the user's yes.

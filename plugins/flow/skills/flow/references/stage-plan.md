@@ -43,12 +43,12 @@ You cannot wait for or solicit that approval yourself — just return a plan goo
    ```bash
    QF="${TMPDIR:-/tmp}/flow-recall-$KEY.txt"   # intent preamble + ticket title + body
    B=$(git branch --show-current)
-   python3 ${CLAUDE_SKILL_DIR}/scripts/recall.py --query-file "$QF" \
+   .flow/flow recall --query-file "$QF" \
      --semantic --top-n 30 --branch "$B" --workspace-root .
    ```
    Use `--query-file` (not a shell positional — avoids the `"`/`\`/newline hazard). The intent preamble AUGMENTS the raw ticket text, it never replaces it — the identifier-rich ticket body stays the BM25 signal, while the preamble names the domain so the semantic side clusters prior work on the same form / component (e.g. "Working on the IVA form's validation; risk: rounding in the F.20 line totals"). `--semantic` is inert when the workspace has not opted into `[memory.semantic]` (recall stays pure BM25). Weave any relevant returned entries into the plan's Approach/Risks.
 
-   **Verify any content/drift finding against the default base, not the working checkout.** General orientation reads stay on the working checkout via the Read tool (that is the normal way to explore, and you do NOT need to `git show` every file you look at). But the moment you would CITE a content/drift finding in the plan, or STAMP a file into `planned_files` BECAUSE OF its current content, re-read that specific file at the freshly-fetched default base before committing the finding. The `--auto` tail branches its worktree off `@default` (`origin/<default>`, fetched fresh), while the launcher checkout this exploration runs in can lag `origin/main`, so a drift a file shows here may already be fixed upstream, and the planned fix would land as a no-op (flow-749). Resolve the base the same way `flow_worktree.py create --base @default` does and read the base version:
+   **Verify any content/drift finding against the default base, not the working checkout.** General orientation reads stay on the working checkout via the Read tool (that is the normal way to explore, and you do NOT need to `git show` every file you look at). But the moment you would CITE a content/drift finding in the plan, or STAMP a file into `planned_files` BECAUSE OF its current content, re-read that specific file at the freshly-fetched default base before committing the finding. The `--auto` tail branches its worktree off `@default` (`origin/<default>`, fetched fresh), while the launcher checkout this exploration runs in can lag `origin/main`, so a drift a file shows here may already be fixed upstream, and the planned fix would land as a no-op (flow-749). Resolve the base the same way `.flow/flow worktree create --base @default` does and read the base version:
    ```bash
    git fetch --quiet origin
    DEFAULT=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD)   # e.g. origin/main
@@ -80,10 +80,11 @@ You cannot wait for or solicit that approval yourself — just return a plan goo
      Proven — you cannot run the orchestrator's hotness probe, so a model's
      own read is unreliable (flow-94l6: the plan and the advisor both
      asserted non-hot on a guard-file change); leave hotness to the main
-     loop's `triage.py decided --files` probe rather than asserting it. This
-     is only a first pass: the main loop re-rates your plan
-     INDEPENDENTLY (via the `advisor` tool, or a `general-purpose` agent — on a
-     Fable model the agent directly, advisor is absent by design) before
+     loop's `.flow/flow triage decided --files` probe rather than asserting it. This
+     is only a first pass: the main loop re-rates your plan INDEPENDENTLY through
+     the adapter mapping in `references/harness.md` (Claude Code may use its advisor;
+     Codex uses a fresh collaboration agent or second model call without a Claude
+     model parameter; generic uses its declared independent-call/defer behavior) before
      the human gate, because a plan's author is the worst judge of its own
      confidence.
    - **Lane** *(interactive runs only)* — propose the verification lane (`express` |

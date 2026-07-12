@@ -5,7 +5,7 @@
 Execute the **e2e recipe the plan declared** and surface any failure.
 This stage runs BY DEFAULT (`stage-registry.toml` default handler is `subagent:general-purpose`): it is the ONE stage that observes the change actually behaving end-to-end, and it significantly improves end-to-end correctness — no other stage exercises the change running.
 A workspace disables it only by explicitly setting `e2e = "none"` in `workspace.toml [pipeline.handlers]`; that is a deliberate opt-out, never the convenient default.
-When it runs, the spec/plan gate requires an `e2e_recipe` frontmatter field (see `flow_worktree.py create --e2e-recipe`), so by the time you run there is a recipe to execute — you do NOT detect or guess a suite.
+When it runs, the spec/plan gate requires an `e2e_recipe` frontmatter field (see `.flow/flow worktree create --e2e-recipe`), so by the time you run there is a recipe to execute. You do NOT detect or guess a suite.
 
 e2e sits AFTER `code_review` so cheap inline review catches obvious issues before a slow end-to-end run burns time.
 By the time you run, the implement diff has already passed review.
@@ -28,16 +28,15 @@ Your job is to run it exactly, not to reinterpret it.
 
 1. HARD GATE the recipe is present:
    ```bash
-   ${CLAUDE_SKILL_DIR}/scripts/lint_ticket.py \
+   .flow/flow lint-ticket \
      --stage e2e \
      --ticket-path .flow/tickets/<KEY>.md
    ```
    Exit 0 → continue.
    Exit 1 → `e2e_recipe` is missing/empty. The bootstrap gate should have caught
    this; report it as a failed stage (e2e is running but the plan never settled a
-   recipe) and stop. (If `CLAUDE_SKILL_DIR` is unset in your environment, read the
-   `e2e_recipe` field directly from the frontmatter instead; same outcome — an
-   absent/empty recipe is a failed stage.)
+   recipe) and stop. If the facade command itself errors, surface that command
+   failure rather than treating it as a missing recipe.
 
 2. Read the `e2e_recipe` value. Handle the two sentinel forms first:
    - `skip: <reason>` → the plan consciously declared no e2e for this ticket.

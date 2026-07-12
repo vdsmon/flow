@@ -1,0 +1,39 @@
+{
+  "name": "flow",
+  "version": "0.103.9",
+  "description": "Ticket-to-PR pipeline for planning, implementing, verifying, and delivering work in Flow-managed repositories.",
+  "author": {
+    "name": "Victor De Simone",
+    "email": "victorsmoliveira@gmail.com",
+    "url": "https://github.com/vdsmon"
+  },
+  "homepage": "https://github.com/vdsmon/flow",
+  "repository": "https://github.com/vdsmon/flow",
+  "license": "MIT",
+  "keywords": [
+    "flow",
+    "ticket",
+    "pull-request",
+    "workflow",
+    "git"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Flow",
+    "shortDescription": "Run tickets from plan to reviewed draft PR",
+    "longDescription": "Plan tracker tickets, implement and verify changes in a Flow-managed worktree, and prepare a draft pull request using the repository's configured tracker, forge, stage handlers, and memory.",
+    "developerName": "Victor De Simone",
+    "category": "Productivity",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://github.com/vdsmon/flow",
+    "defaultPrompt": [
+      "Run a Flow ticket from plan to draft PR.",
+      "Resume the Flow pipeline for the ticket on this branch.",
+      "Show the status of the current Flow run."
+    ]
+  }
+}

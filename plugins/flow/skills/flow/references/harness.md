@@ -1,81 +1,221 @@
-# harness portability — running /flow off Claude Code
+# Harness adapters
 
-flow is **Claude-Code-first**. The Python engine (`scripts/*.py`) is harness-agnostic stdlib that shells out only to `git`/`bd`/`gh`/`bkt`/`mise`; it never invokes a Claude-Code tool. **Every** Claude-Code coupling lives in this prose layer plus a handful of environment variables. This file is the single source of truth for what each Claude-Code primitive does and how a harness that lacks it (Codex, Cursor, a bare SDK loop) degrades. Nothing here changes the Claude-Code path — each fallback is an additive branch taken only when the primitive is absent.
+Flow's Python engine is harness-independent. The prose router is responsible for
+mapping a small set of host capabilities onto the same ticket pipeline. Claude Code
+and Codex are first-class adapters. Other harnesses use the generic fallback and must
+state any capability loss instead of pretending a weaker operation is equivalent.
 
-The self-evolution / maintainer machinery (`evolve`, `queue`) stays Claude-Code-only and is out of scope here. Recall, by contrast, now lives in the plan-phase skill prose (`verb-spec.md` / `stage-plan.md` run `recall.py --query-file ...`), NOT a SessionStart hook — so it ports cleanly to any agent that runs the skill (the hook was Claude-Code-only; the de-hooking removed that coupling). The SessionStart hook that remains is the evolve-loop deadman only.
+The self-evolution and maintainer verbs (`evolve`, `queue`) remain Claude-Code-only.
+The ordinary ticket pipeline, including plan-time recall, does not depend on the
+Claude Code SessionStart hook.
 
-## Detecting what the current harness offers
+## Bind the execution context once
 
-Off Claude Code, the adapter author already knows the harness's toolset, so "detect" mostly means "wire the right fallback once." The probes below matter inside a Claude Code session running a different model (e.g. Fable lacks `advisor`):
+At entry, bind these logical values in the orchestration context:
 
-- **Tool present?** `ToolSearch` for the tool name; an empty result means absent. `ToolSearch` is itself a Claude Code primitive — off-CC, just use what your harness exposes.
-- **Model?** the session model string — Fable (`claude-fable-*`) has no `advisor` by design.
-- **Env var present?** `${CLAUDE_SKILL_DIR}` set ⇒ Claude Code; `${CLAUDE_JOB_DIR}` set ⇒ a backgrounded job.
-
-## Script path resolution — `${CLAUDE_SKILL_DIR}` (load-bearing)
-
-Every call-site in SKILL.md + `references/*.md` runs `python3 ${CLAUDE_SKILL_DIR}/scripts/<x>.py`. Claude Code injects `${CLAUDE_SKILL_DIR}`; no other harness does, so off-CC every call-site breaks unless the var is set.
-
-A non-CC harness exports the var once per session in its bootstrap. **Primary (prerequisite-free):** set it to your clone's skill dir directly — whoever wires the adapter already knows where they cloned the repo:
-
-```bash
-export CLAUDE_SKILL_DIR=/path/to/your-clone/plugins/flow/skills/flow
+```text
+arguments      text supplied after the skill trigger, or the equivalent request text
+skill_root     absolute directory containing this loaded SKILL.md
+task_root      absolute checkout where the request started
+run_root       absolute checkout that currently owns the run
+facade         <run_root>/.flow/flow
+harness        claude-code | codex | generic
+capabilities   supported operation profile selected from the matrix below
 ```
 
-**Convenience when present:** `init` persists that absolute path to **`.flow/skill_dir`** (a gitignored, machine-local sibling — same pattern as `.flow/memory-root`; written in `init.py` `_write_skill_dir`), so on a freshly-initialized workspace you can read it instead of hardcoding:
+These are conversation state, not shell environment variables. Never expect an
+`export`, `cd`, or prior command's cwd to survive into another tool call or subagent.
 
-```bash
-export CLAUDE_SKILL_DIR="${CLAUDE_SKILL_DIR:-$(cat .flow/skill_dir 2>/dev/null)}"
+`harness` is explicit adapter selection, not environment-based host detection. Codex
+sets `FLOW_HARNESS=codex` on every direct init, repair, and facade invocation in that
+same command. Claude Code may set `FLOW_HARNESS=claude-code`; leaving it unset retains
+the backward-compatible Claude bundle roots. A generic adapter sets
+`FLOW_HARNESS=generic` and supplies `FLOW_BUNDLE_SEARCH_ROOTS` when it wants bundle
+discovery. The only accepted non-empty values are `codex`, `claude-code`, and
+`generic`; never persist the choice with a shell export.
+
+Before worktree bootstrap, `run_root` is the initialized checkout. After `worktree
+create` succeeds, parse its absolute `result.worktree`, assign that value to
+`run_root`, and set `facade` to the absolute `<run_root>/.flow/flow` path. From then
+on:
+
+- run every command with explicit workdir `run_root`;
+- invoke `facade` by its absolute path;
+- resolve every read, edit, test, git operation, and artifact beneath `run_root`;
+- give every subagent the absolute workspace, skill, ticket, reference, and artifact
+  paths plus the `harness` identity, and tell it to apply the same call-local
+  `FLOW_HARNESS` selector to every facade invocation;
+- refuse to fall back to `task_root` if the workspace binding is lost.
+
+If a host command tool has no workdir field, make that individual call
+self-rooting, for example `git -C "<run_root>" ...` or
+`cd "<run_root>" && <command>` within the same call. A standalone `cd` whose effect
+must survive the call is never valid state.
+
+Throughout Flow's other documents, a recipe beginning with `.flow/flow` is shorthand
+for the absolute logical `facade`, and `--workspace-root .` means `run_root` supplied
+as that command call's explicit workdir. On Codex it also includes the call-local
+`FLOW_HARNESS=codex` prefix; generic uses `generic`, while Claude Code may use
+`claude-code` or its compatibility default. Do not execute the shorthand from an
+inherited or assumed cwd, and do not rely on a prior export.
+
+`EnterWorktree` is a Claude Code convenience. It does not relax any of these rooting
+rules. A harness that exposes writable roots must verify that a new or adopted
+worktree is writable before dispatcher `init` acquires the lease. If it is outside
+Codex's writable roots, stop with a reopen/authorization instruction; never bypass
+the sandbox with shell indirection.
+
+## Capability matrix
+
+| Capability | Claude Code | Codex | Generic fallback |
+|---|---|---|---|
+| Discovery | Claude plugin and `/flow` | Codex plugin/skill and `$flow:flow` | Installed skill path plus managed `AGENTS.md` |
+| Arguments | `$ARGUMENTS` | Text after the skill mention or equivalent request | Adapter-supplied request text |
+| Plan gate | Native plan mode and `ExitPlanMode` | Native Plan mode when active; otherwise soft turn boundary | Soft turn boundary |
+| Workspace | `EnterWorktree`, then verify rooted context | Explicit `run_root` on every operation | Native switch if real; otherwise explicit root |
+| Subagent | `Agent`, with supported model routing | Codex collaboration agent; no Claude model parameter | Independent model call or allowed inline fallback |
+| Exact artifact write | `Write` | Rooted safe file edit/write | Exact write primitive or collision-safe fallback |
+| Wait | `Monitor` when available | Owning-session wait/poll or bounded foreground poll | Bounded foreground poll |
+| User input | `AskUserQuestion` | Plain question and wait | Plain question and wait |
+| Notification | `PushNotification`, then durable fallback | In-thread plus durable forge fallback | In-thread plus durable fallback |
+| Backgrounding | User-owned `/bg` and `claude agents` | Host-owned task/background surface | Host-owned or foreground only |
+
+Do not detect a harness from environment variables. The host already knows which
+adapter it is running. Probe optional Claude Code tools only where that adapter needs
+to distinguish model or tool availability.
+
+## Discovery, init, and repair
+
+Both native plugins expose the same `skills/` tree:
+
+```text
+plugins/flow/.claude-plugin/plugin.json
+plugins/flow/.codex-plugin/plugin.json
 ```
 
-Caveat: `.flow/skill_dir` only exists after a `/flow init` (or `--reconfigure` on an already-initialized workspace). On an existing checkout that predates this file the `$(cat …)` yields empty and every call-site breaks — so prefer the explicit form unless you know init wrote the file. The `:-` default is inert when Claude Code already set the var, so either line is safe to carry on every harness. It must be a pure-shell read, never "run a script to find the scripts dir" (the chicken-and-egg this avoids). Carry it in the off-CC entry point (below).
+Codex should load Flow through its plugin/skill discovery. `AGENTS.md` is durable
+repository guidance and the generic fallback, not Codex's primary loader.
 
-## Entry point — loading the skill without a plugin manifest
+Before a workspace facade exists, invoke init directly from the loaded absolute
+`skill_root`:
 
-Claude Code discovers flow via `.claude-plugin/` and loads SKILL.md on the skill router. Off-CC there is no plugin manifest or `Skill` tool, so nothing loads the skill — that absence is the root cause of a non-CC run that freelances past the pipeline (it never read SKILL.md). The fix is **`AGENTS.md`**, the cross-harness convention Cursor, Windsurf, opencode and a bare loop all read from the repo root.
+```bash
+FLOW_HARNESS="<codex|claude-code|generic>" \
+  python3 "<skill-root>/scripts/init.py" --config "<absolute answers_path>"
+```
 
-`/flow init --agents-md` writes (or append-only-extends) a marker-guarded stanza into `<repo>/AGENTS.md` that (a) carries the `CLAUDE_SKILL_DIR` export above, (b) tells the harness to read `SKILL.md` + this file as context on `/flow`, and (c) restates the approval-is-not-coding soft gate below. The flag is **opt-in**: Claude Code loads via the plugin and never reads AGENTS.md, so a default `init` writes no tracked file (zero change to the CC path). One artifact covers every harness — no per-harness adapter (`.cursor/rules`, a Windsurf rule, …) to maintain. A harness that wants a hard write-block on top can still add its own pre-edit hook; that is opt-in hardening, not a flow requirement.
+Every successful init or reconfigure installs `.flow/skill_dir` and executable
+`.flow/flow`. Each file is atomically replaced; the two replacements are not one
+filesystem transaction. Worktree create and reload stamp the Flow installation that
+is actually executing the operation.
 
-## The one gate — `ExitPlanMode` + plan mode
+For an initialized workspace, prefer its absolute facade. If launcher metadata is
+missing in a legacy workspace or paused worktree, repair it from the currently loaded
+`skill_root`. If metadata exists but points to a stale installation, report the stale
+binding and repair only from a known loaded installation. Never search arbitrary
+plugin caches or marketplace directories.
 
-The gate does two things: it **presents** the plan for approval, and it **enforces** no-edits-before-approval (the harness blocks writes while in plan mode).
+The facade derives its workspace from its own location, reads the sibling
+`.flow/skill_dir`, changes the child process cwd to the owning workspace, and `exec`s
+only an allowlisted command. It exports both `FLOW_SKILL_DIR` and the legacy
+`CLAUDE_SKILL_DIR` to child scripts. Those child variables are implementation details;
+the parent router still uses logical `skill_root` and `facade` values.
 
-- **Presenting** is universal: end the turn on the plan + the `## Confidence` rating, and treat the user's next affirmative as approval.
-- **Enforcing** is Claude-Code-only. Off-CC nothing stops the model from proceeding early, so the fallback is a **soft gate (model self-restraint), not an equivalent**: after presenting the plan, STOP and wait for explicit user approval before seeding the worktree or making any edit. Treat it as a discipline, and a degradation — a careless run can break it where Claude Code could not.
-  - **Engine backstop (no model discipline required).** Portable code cannot intercept a harness's own edit tool, so it cannot *prevent* a pre-bootstrap edit, but `flow_worktree.py create --recover-spill` *detects and recovers* one: an uncommitted planned file on the main checkout is carried into the seeded worktree (and reverted on main) at bootstrap. **The flag is the discriminator, not the symptom or the harness identity** — a dirty planned file on main is equally produced by a soft-gate spill *and* by a CC user's own pre-existing WIP, so flow cannot tell them apart from the file alone. Only the off-CC AGENTS.md entry point passes `--recover-spill`; SKILL.md's CC bootstrap omits it, so the CC path is byte-identical even when main is dirty (plan mode means any dirty planned file there is the user's WIP, which must not be moved). On the off-CC path this turns the soft-gate slip from "work lands on the wrong branch" into "work lands in the run, with a warning." Note `CLAUDE_SKILL_DIR`-set is no longer a CC signal once this stanza ships (it exports the var off-CC too), which is *why* the discriminator is an explicit flag, not env detection.
+The call-local `FLOW_HARNESS` selector prevents a machine with both hosts installed
+from resolving a bundle out of the wrong plugin tree. `codex` searches only Codex
+layouts beneath `${CODEX_HOME:-~/.codex}/plugins` (including the CLI cache); it never
+searches `~/plugins`, repository plugin trees, or `.claude/plugins`.
+`claude-code` and the unset compatibility default search Claude roots and never Codex
+roots. Explicit `generic` searches only `FLOW_BUNDLE_SEARCH_ROOTS`; when that override
+is absent it discovers no bundle roots, so it cannot configure a skill handler its
+loader may not support. An unknown non-empty selector fails clearly.
+The same selector governs both handler-bundle discovery and version-stable cache-source
+resolution; neither may cross into another host's roots.
 
-`EnterPlanMode` (entering the gate) is the same family: on CC, call it; off-CC, simply do the read-only front half and present the plan at the end of the turn.
+## The one plan gate
 
-This only matters for the interactive `spec` path. The `--auto` headless path never parks on the gate anyway (it defers-and-exits when it cannot self-approve), so it is unaffected.
+The gate presents the plan and prevents implementation from starting before explicit
+approval.
 
-## `EnterWorktree`
+- Claude Code uses native plan mode and `ExitPlanMode`.
+- Codex uses native Plan mode when the session is in that mode. Otherwise, present
+  the complete plan and confidence rating, end the turn, and wait for explicit
+  approval.
+- A generic harness uses the same soft turn boundary.
 
-CC switches the session into the seeded worktree via `EnterWorktree(path=<worktree>)`. Off-CC (and on a backgrounded CC `--auto` run, whose cwd is pinned at the repo root) there is no such tool: `cd` into the worktree dir in the persistent shell before the `do` loop runs. That is all `EnterWorktree` does that the loop depends on.
+The soft boundary is an honest degradation: the model must exercise restraint because
+the host does not enforce read-only access. It is still a real stop. Do not seed a
+worktree, edit a repository file, or continue into `do` in the same turn.
 
-## `advisor` — independent confidence rating
+Do not pass `--recover-spill` automatically on any adapter. A dirty planned file may
+be user-owned work that predates Flow, and the engine cannot infer provenance from
+the dirty state. Use spill recovery only after confirming that the exact paths were
+created by this Flow attempt after its initial status snapshot and do not overlap
+pre-existing WIP. If provenance is ambiguous, stop and ask instead of moving or
+reverting the file.
 
-Canonical fallback chain (used by `spec` step 4's rating and the adjudication step):
+The `--auto` path has no interactive gate. It remains read-only until its documented
+self-approval bootstrap or defer/block transition.
 
-1. **Fable** (`claude-fable-*`): `advisor` is absent by design — skip the `ToolSearch` probe, go straight to step 3.
-2. Other models: prefer `advisor()` (it auto-forwards the transcript). Fall back only after a `ToolSearch` for `advisor` returns nothing, or if it errors / is rate-limited.
-3. **Fallback:** spawn a `general-purpose` `Agent` (strong tier, fresh context) with the ticket context + drafted plan + the same rubric. Any harness with a sub-agent / second-pass call works; a bare loop can issue a second independent model call.
+## Independent reasoning and model routing
 
-## `Agent` / subagent (`subagent:<type>` handlers)
+For confidence rating and adjudication, use this order:
 
-Registry default handlers `subagent:Plan` and `subagent:general-purpose` spawn a sub-agent. Codex has sub-agent spawning; Cursor is weaker. Map `subagent:<type>` to whatever the harness offers; where no sub-agent exists, run the stage's reference-doc protocol inline in the main loop (the work is the same, only the isolation is lost).
+1. On Claude Code, prefer `advisor` when available. Fable models have no advisor, so
+   skip the probe there.
+2. Otherwise use a fresh independent subagent or second model call with the same
+   ticket context, plan, and rubric.
+3. If no independent call is available, follow the stage's documented defer behavior
+   when independence is required. Inline fallback is allowed only for protocols that
+   explicitly tolerate loss of isolation.
 
-## `Skill` tool (`skill:<name>` handlers)
+`model` resolution returns Claude model names for Claude Code. Pass that value only
+when the host's subagent API accepts it. Codex collaboration agents do not accept
+Claude model pins, so omit the model parameter and inherit the active model. Never
+invent a host parameter to preserve a hint.
 
-**No default stage uses a `skill:` handler** — `stage-registry.toml` defaults are `inline` / `subagent` / `none`. `skill:` is opt-in only (e.g. a work repo wiring `ship-it` for `create_pr`/`review_loop`). A harness without a skill-loader therefore loses nothing on the default pipeline; only an explicitly-wired `skill:` handler is unavailable — replace it with an `inline` handler whose reference doc carries the equivalent steps, or a `subagent:` one.
+## Stage agents and artifacts
 
-## `PushNotification` — PR-ready ping
+Every stage-agent prompt must include values in this shape:
 
-Canonical fallback (the `do` loop fires this when `review_loop` finishes `completed`): if `ToolSearch` for `PushNotification` returns nothing, do BOTH (a) surface the message in-thread and (b) post it durably as a PR comment via the workspace forge — GitHub `gh pr comment <url> --body "..."`, Bitbucket `bkt api ".../pullrequests/<id>/comments" -X POST ...`. The PR comment is what a detached run can see later; the in-thread echo alone is invisible to it. Best-effort always — `state.json` is the source of truth.
+```text
+Workspace root: /absolute/run/worktree
+Skill root: /absolute/loaded/flow/skill
+Harness: claude-code | codex | generic
+Ticket dir: /absolute/run/worktree/.flow/runs/<KEY>
+Reference path: /absolute/loaded/flow/skill/references/<stage>.md
+Artifact path: /absolute/run/worktree/.flow/runs/<KEY>/stages/<STAGE>.out
+```
 
-## `AskUserQuestion` — blockers and missing input
+Tell the agent that its inherited cwd is non-authoritative, all commands use the
+workspace root explicitly, the absolute `<Workspace root>/.flow/flow` is its Flow
+facade, and all repository writes stay beneath the workspace root. This is required
+even when the host currently appears to inherit cwd. Tell it to prefix every Flow
+facade invocation with `FLOW_HARNESS=<Harness>` in that same command; a shell export is
+not continuation state.
 
-CC renders it natively (inline when attached, "needs input" in `claude agents` when backgrounded). Off-CC fallback: ask the user in plain text and wait for the reply — every interactive harness can pause for input. On a detached / `--auto` run there is no user to ask, so the run defers-and-exits with the open questions recorded (unchanged from the CC `--auto` behavior).
+Capture the complete returned report at the absolute artifact path before calling
+`dispatch advance`. Prefer the host's exact file-write primitive. When that primitive
+is unavailable, use the documented collision-safe quoted-heredoc fallback; never put
+model output in a shell argument or an unquoted redirect.
 
-## `${CLAUDE_JOB_DIR}` — backgrounded self-teardown
+For `skill:<name>` handlers, use the host's native skill loader. No default stage uses
+a skill handler. If a configured skill is unavailable, fail that stage or replace the
+workspace configuration with an equivalent inline/subagent handler; do not silently
+pretend it ran.
 
-The `--auto` self-teardown keys on `${CLAUDE_JOB_DIR}` (a CC backgrounded-job dir). Unset ⇒ the guard silently skips, which is correct for any foreground or non-CC run. No fallback needed.
+## Waits, questions, and notifications
+
+- A Claude Code review loop may use `Monitor`. Codex keeps waits in the owning session
+  with its wait/poll mechanism. A generic adapter uses the documented bounded poll.
+  A child agent must not own continuation after it returns.
+- When input is required, Claude Code may use `AskUserQuestion`; Codex and generic
+  adapters ask plainly and wait. Detached and `--auto` runs follow the existing
+  defer/block protocol instead of waiting for an absent user.
+- PR-ready notification is best-effort. Claude Code may send `PushNotification`.
+  Every adapter also surfaces the result in-thread and uses the forge's durable PR
+  comment fallback where the stage protocol requests it. Pipeline state remains
+  authoritative if notification fails.
+- `${CLAUDE_JOB_DIR}` and self-teardown are Claude Code background-job details. When
+  absent, skip that branch. Codex backgrounding is owned by the host, not toggled by
+  Flow prose.

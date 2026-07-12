@@ -8,6 +8,7 @@ bootstrap must copy config in).
 from __future__ import annotations
 
 import fcntl
+import json
 import multiprocessing
 import os
 import subprocess
@@ -178,6 +179,30 @@ def test_copies_gitignored_config(tmp_path: Path) -> None:
     assert (wt / ".claude" / "settings.json").exists()
     assert ".env" in res["copied"]
     assert ".claude" in res["copied"]
+    assert (wt / ".flow" / "flow").stat().st_mode & 0o111
+    expected_skill = str(Path(fw.__file__).resolve().parent.parent)
+    assert (wt / ".flow" / "skill_dir").read_text(encoding="utf-8").strip() == expected_skill
+
+    # Invoke from the main checkout: the shim must still bind the child to the worktree that owns
+    # `.flow/flow`, where this bootstrap seeded FT-1.
+    launched = subprocess.run(
+        [str(wt / ".flow" / "flow"), "status", "--json"],
+        cwd=main,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert launched.returncode == 0
+    assert [row["ticket"] for row in json.loads(launched.stdout)] == ["FT-1"]
+
+
+def test_bootstrap_replaces_stale_main_skill_path_with_executing_install(tmp_path: Path) -> None:
+    main = _main_checkout(tmp_path)
+    (main / ".flow" / "skill_dir").write_text("/stale/flow/install\n", encoding="utf-8")
+    res = _run(tmp_path, main)
+    wt = Path(res["worktree"])
+    expected_skill = str(Path(fw.__file__).resolve().parent.parent)
+    assert (wt / ".flow" / "skill_dir").read_text(encoding="utf-8").strip() == expected_skill
 
 
 def test_redirects_memory_via_sibling_not_workspace_toml(tmp_path: Path) -> None:
@@ -239,8 +264,8 @@ def test_seeds_planned_files_as_list(tmp_path: Path) -> None:
 
 
 def test_no_recovery_without_flag_even_with_dirty_planned_file(tmp_path: Path) -> None:
-    # The CC-first guarantee: WITHOUT --recover-spill (the CC path never passes it),
-    # a dirty planned file on main (the user's own pre-existing WIP) is NOT touched.
+    # Every adapter defaults recovery off. Dirty main state may be user-owned WIP, so it is not even
+    # probed without an explicit recovery action.
     main = _main_checkout(tmp_path)
     (main / "src").mkdir()
     (main / "src" / "a.py").write_text("user wip\n", encoding="utf-8")
@@ -257,7 +282,7 @@ def test_no_recovery_without_flag_even_with_dirty_planned_file(tmp_path: Path) -
 
 
 def test_clean_main_does_not_relocate(tmp_path: Path) -> None:
-    # Recovery on, but plan-mode-clean main → porcelain empty → no carry, no checkout.
+    # Explicit recovery with a clean main is a no-op.
     main = _main_checkout(tmp_path)
     calls: list = []
     res = _run(
@@ -287,7 +312,7 @@ def test_unrelated_main_wip_is_not_relocated(tmp_path: Path) -> None:
 
 
 def test_spilled_untracked_planned_file_relocated(tmp_path: Path) -> None:
-    # A soft-gate harness created a NEW planned file on main before bootstrap.
+    # After provenance is confirmed, explicit recovery carries the new planned file.
     main = _main_checkout(tmp_path)
     (main / "src").mkdir()
     (main / "src" / "a.py").write_text("agent work\n", encoding="utf-8")
@@ -2431,6 +2456,10 @@ def test_locate_existing_worktree(tmp_path: Path) -> None:
         ticket="FT-1", branch="feat/FT-1-thing", main_root=main, runner=runner
     )
     assert result == {"worktree": str(wt), "reseeded": False}
+    assert (wt / ".flow" / "flow").stat().st_mode & 0o111
+    assert (wt / ".flow" / "skill_dir").read_text(encoding="utf-8").strip() == str(
+        Path(fw.__file__).resolve().parent.parent
+    )
     # LOCATE never adds a worktree
     assert not any(c[:3] == ["git", "worktree", "add"] for c in calls)
 
@@ -2466,6 +2495,29 @@ def test_reseed_when_externally_removed(tmp_path: Path) -> None:
     assert (wt / ".flow" / "memory-root").read_text(encoding="utf-8").strip() == str(
         main.resolve() / ".flow"
     )
+
+
+def test_reseed_removes_new_worktree_when_launcher_install_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    main = _main_checkout(tmp_path)
+    calls: list[list[str]] = []
+    runner = _locate_runner(
+        worktree_list=_porcelain([(str(main), "main")]),
+        calls=calls,
+        main=main,
+    )
+
+    def fail_install(*_args, **_kwargs):
+        raise OSError("injected launcher failure")
+
+    monkeypatch.setattr(fw.flow_launcher, "install", fail_install)
+
+    with pytest.raises(OSError, match="launcher failure"):
+        fw.locate_or_reseed(ticket="FT-1", branch="feat/FT-1-thing", main_root=main, runner=runner)
+
+    wt = main.resolve() / ".claude" / "worktrees" / "feat-FT-1-thing"
+    assert ["git", "worktree", "remove", "--force", str(wt)] in calls
 
 
 def test_reseed_memory_redirect_honors_main_memory_root(tmp_path: Path) -> None:

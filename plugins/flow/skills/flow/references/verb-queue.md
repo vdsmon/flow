@@ -22,7 +22,7 @@ Every sub-verb runs the **Gate** below first.
 ## 1. Gate — maintainer only
 
 ```bash
-python3 ${CLAUDE_SKILL_DIR}/scripts/maintainer.py --workspace-root .
+.flow/flow maintainer --workspace-root .
 ```
 
 - Exit 0 → prints the flow repo root; you are the maintainer, continue with the dispatched sub-verb. Run against that repo.
@@ -31,7 +31,7 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/maintainer.py --workspace-root .
 ## 2. Gather — status path
 
 ```bash
-python3 ${CLAUDE_SKILL_DIR}/scripts/queue_status.py --workspace-root .
+.flow/flow queue-status --workspace-root .
 ```
 
 Optional `--cap N` / `--concurrency N` override the `[queue]` section of `workspace.toml` (defaults cap=5, concurrency=3).
@@ -77,7 +77,7 @@ Repeat the turn below until step **C** returns `done`.
 **A. Decide.**
 
 ```bash
-python3 ${CLAUDE_SKILL_DIR}/scripts/queue_drain.py --workspace-root .
+.flow/flow queue-drain --workspace-root .
 ```
 
 `queue_drain.py` runs `queue_select` (day-job ready beads: unlabelled `bd ready` minus epics and minus `evolve`/`proposal`/`hot`/`hitl`, in-flight dropped, backpressure ≥ `[queue] cap` open day-job PRs), annotates each in-flight day-job run with its lease liveness, and classifies merged PRs for reaping. It returns JSON `{action: "launch"|"recover"|"wait"|"done", launch:[keys], parked:[keys], reap:[entries], stranded:[keys], stranded_pre_pr:[{key,branch,worktree}], liveness:{}, select:{...}}` (the top-level `stranded` key rides only the `recover` action; `stranded_pre_pr` is always present, empty when nothing is stranded). The wait gate is queue-scoped: the worktree pool and the fleet ledger are shared with the evolve drain, so active-evolve keys are subtracted before liveness — this loop never blocks on (and never unmarks) a live evolve run. `select.launched_pending` lists the day-job keys still in the launch→init blind window; after `select` returns, the CLI drops a registered key from `launched_pending`, an unregistered one blocks termination until it registers or its fleet entry ages past `STALE_AFTER_S`.
@@ -89,7 +89,7 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/queue_drain.py --workspace-root .
 # key from bd ready, so the teardown below is GATED on it succeeding.
 bd close <key> --reason "merged via PR #<pr>"   # only when bead_active is true
 git push origin --delete <branch> || true
-python3 ${CLAUDE_SKILL_DIR}/scripts/flow_worktree.py reap --ticket <key> --branch <branch> --main-root .
+.flow/flow worktree reap --ticket <key> --branch <branch> --main-root .
 ```
 
 When `bead_active` is true and the `bd close` FAILS, skip the branch delete + worktree reap for that entry and report it — tearing down without closing reopens the relaunch window. When `bead_active` is false (bead already closed, or `deferred` — a deferred bead stays the human's triage call, never auto-closed here) proceed straight to the teardown lines. The `reap` step is lease-gated + idempotent: a worktree whose bg session is still running is SKIPPED and reaped on a later turn once the session ends. `reap` is also fallible now (flow-vpg1): it checkpoints any uncommitted work in the worktree to a pushed `flow-rescue/<key>-<sha>` ref before the destructive remove, and leaves the worktree intact + exits non-zero if that capture fails — this merged-PR path is normally clean (nothing to capture), so it matters for the §Recover pre-PR case below, not here.
@@ -101,7 +101,7 @@ When `bead_active` is true and the `bd close` FAILS, skip the branch delete + wo
   ```bash
   # register the launch FIRST so the very next turn's select sees this key as in-flight
   # even before it registers a branch/lease (closes the re-launch window).
-  python3 ${CLAUDE_SKILL_DIR}/scripts/fleet.py register --key <key> --workspace-root .
+  .flow/flow fleet register --key <key> --workspace-root .
   claude --bg [--model sonnet] "/flow <key> --auto"
   ```
 
@@ -120,7 +120,7 @@ When `bead_active` is true and the `bd close` FAILS, skip the branch delete + wo
 # lease in the classify->recover gap must NOT have its worktree reaped from under a now-live
 # run. is-live is lease-only, fail-safe (exit 0 = live = SKIP). fleet.py is tracker-agnostic
 # (keys, not evolve labels), so it works for a day-job key.
-if python3 ${CLAUDE_SKILL_DIR}/scripts/fleet.py is-live --key <key> --workspace-root .; then
+if .flow/flow fleet is-live --key <key> --workspace-root .; then
   echo "fleet: <key> went live after classify — not recovering this turn"
 else
   # ATTEMPT-N BOUND (bd-comment marker, distinct STRANDED-RECOVERY: stem; persists across
@@ -130,17 +130,17 @@ else
   if [ "$MARK" = "attempt-2" ]; then
     # two recovery relaunches both re-stranded -> give up to the human. Reap (cleanup),
     # do NOT reopen; block + triage stem (surfaces in /flow triage). REAP BEFORE BLOCK.
-    python3 ${CLAUDE_SKILL_DIR}/scripts/flow_worktree.py reap --ticket <key> --main-root . \
+    .flow/flow worktree reap --ticket <key> --main-root . \
       && { bd update <key> --status blocked
-           python3 ${CLAUDE_SKILL_DIR}/scripts/tracker_cli.py --workspace-root . comment --key <key> \
+           .flow/flow tracker --workspace-root . comment --key <key> \
              --text "flow --auto could not self-approve: STRANDED-RECOVERY exhausted — <key> re-stranded pre-PR after two fresh relaunches (deterministic mid-pipeline crash). Needs a human: reopen (status->open) and run WITHOUT --auto, or fix the crash cause first."; }
   else
     # no marker (first strand) or attempt-1 (first recovery re-stranded) -> reap + reopen
     # so the next turn relaunches FRESH, and stamp the next rung. REAP BEFORE REOPEN.
-    python3 ${CLAUDE_SKILL_DIR}/scripts/flow_worktree.py reap --ticket <key> --main-root . \
+    .flow/flow worktree reap --ticket <key> --main-root . \
       && { bd update <key> --status open
            NEXT=$([ "$MARK" = "attempt-1" ] && echo attempt-2 || echo attempt-1)
-           python3 ${CLAUDE_SKILL_DIR}/scripts/tracker_cli.py --workspace-root . comment --key <key> \
+           .flow/flow tracker --workspace-root . comment --key <key> \
              --text "STRANDED-RECOVERY: $NEXT"; }
   fi
 fi
@@ -151,7 +151,7 @@ fi
 Optional session hygiene before reporting (same classification the evolve drain uses; it is key/intent-based, not evolve-label-gated, so finished day-job sessions classify too — follow `references/verb-evolve.md` step A2 for the stop + tombstone handling of each `stoppable` entry):
 
 ```bash
-python3 ${CLAUDE_SKILL_DIR}/scripts/evolve_session_cleanup.py --workspace-root . --self-job "$(basename "$CLAUDE_JOB_DIR")"
+.flow/flow evolve-session-cleanup --workspace-root . --self-job "$(basename "$CLAUDE_JOB_DIR")"
 ```
 
 ### Report

@@ -60,6 +60,7 @@ import _atomicio
 import _locking
 import _memory_paths
 import _workspace
+import flow_launcher
 import lease
 import state
 import ticket_frontmatter
@@ -286,6 +287,9 @@ def _ensure_flow_config(main_root: Path, worktree: Path, shared_flow: Path) -> N
         else:
             marker.touch()
     (wt_flow / "memory-root").write_text(str(shared_flow) + "\n", encoding="utf-8")
+    # Stamp the currently executing Flow installation. Copying the main checkout's machine-local
+    # skill path would make new worktrees stale.
+    flow_launcher.install(worktree, skill_dir=Path(__file__).resolve().parent.parent)
 
 
 def _seed_state(worktree: Path, ticket: str, plan_text: str, head_sha: str) -> str:
@@ -723,15 +727,22 @@ def locate_or_reseed(
 
     siblings = _ticket_siblings(ticket, main_root, run)
     if siblings:
+        flow_launcher.install(siblings[0][0], skill_dir=Path(__file__).resolve().parent.parent)
         return {"worktree": str(siblings[0][0]), "reseeded": False}
 
     worktree = _worktree_path(main_root, branch, None)
     _git(["fetch", "origin", branch], main_root, run)
     _git(["worktree", "add", str(worktree), branch], main_root, run)
-    _copy_config(main_root, worktree)
-    _ensure_flow_config(main_root, worktree, _memory_paths.resolve_memory_base(main_root))
-    if (worktree / "mise.toml").exists() or (worktree / ".mise.toml").exists():
-        run(["mise", "trust"], worktree)
+    try:
+        _copy_config(main_root, worktree)
+        _ensure_flow_config(main_root, worktree, _memory_paths.resolve_memory_base(main_root))
+        if (worktree / "mise.toml").exists() or (worktree / ".mise.toml").exists():
+            run(["mise", "trust"], worktree)
+    except Exception:
+        # This path checks out an existing PR branch, so remove only the new worktree registration.
+        # The branch predates this operation and is kept.
+        run(["git", "worktree", "remove", "--force", str(worktree)], main_root)
+        raise
     return {"worktree": str(worktree), "reseeded": True}
 
 
@@ -1136,13 +1147,10 @@ def bootstrap(
     worktree = _worktree_path(main_root, branch, worktree_override)
     warnings: list[str] = []
 
-    # Detect (read-only) edits a weaker harness spilled onto the main checkout
-    # before bootstrap; relocated into the worktree at the end of the try, once the
-    # run is fully seeded (so a refusal/crash never deletes work from main first).
-    # Opt-in via recover_spill, which ONLY the non-CC AGENTS.md entry point passes:
-    # on Claude Code plan mode already blocks the pre-bootstrap edit, so the CC path
-    # never sets this and stays byte-identical (a dirty planned file there is the
-    # user's own pre-existing WIP, which must not be touched). See references/harness.md.
+    # Spill recovery is an explicit operator action after the caller confirms that these paths were
+    # created by this Flow attempt and did not predate it. Dirty state alone cannot distinguish an
+    # agent spill from user-owned WIP. Relocation happens only after the run is fully seeded, so a
+    # refusal or crash never removes work from main first. See references/harness.md.
     spilled = (
         _spilled_planned(planned_files, main_root, run) if recover_spill and planned_files else []
     )

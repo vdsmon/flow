@@ -26,7 +26,7 @@ Every sub-verb runs the **Gate** below first.
 ## Gate — maintainer only
 
 ```bash
-python3 ${CLAUDE_SKILL_DIR}/scripts/maintainer.py --workspace-root .
+.flow/flow maintainer --workspace-root .
 ```
 
 - Exit 0 → prints the flow repo root; you are the maintainer, continue with the dispatched sub-verb. Run against that repo.
@@ -52,7 +52,17 @@ Spawn parallel read-only audit agents (`subagent_type: Explore` via the `Agent` 
 
 ### 2. Synthesize, rank, assign stable ids
 
-Dedup the raw findings (merge ones about the same root issue), drop the vague / unevidenced. Rank by evidence strength × value × blast-radius-safety × reviewability, then score each survivor against the repo-root `VISION.md` (serves the thesis / on the right side of the auto-vs-propose line / does not erode the floor — a candidate that cannot be anchored there is slop: drop it or escalate it as a question). Prefer small, isolated, high-evidence items. Give each survivor a **stable identity anchored on its primary file path** plus a short symptom — `<primary-relfile>::<short-symptom>`, e.g. `scripts/diff_extract.py::quotepath-parsing`. Anchor on the file, NOT free wording: the file path is the invariant a re-run will rediscover, so it is what makes the same defect dedup across runs (the seam fingerprints it, so exact formatting does not matter). Keep the `::` separator: for a key whose left part is a real file path (any separator-carrying relpath, or a tracked top-level name), the file component (its basename) also anchors a fuzzy same-file dedup pass, so a re-discovery phrased differently still converges; a non-file left part (a machine-formulaic key) rides the exact `evid:` net only. Flag `hot` if it touches `SKILL.md` / `stage-registry.toml` / `CLAUDE.md` / a wired handler, OR a safety-machinery guard file (`lease.py`, `snapshot.py`, `_atomicio.py`, `_locking.py`, `state.py`, `dispatch_stage.py`, `diff_extract.py`, `flow_worktree.py`, `machinery_edit.py`, `flow_friction.py`): a guard change must ride the hot path so the guard-property review gates it (the in-run merge reviewer when the run self-merges, or the §drain reap guard-property-check for an orphan). Parallel to `hot`, flag **`tier:trivial`** when the finding is mechanical, tightly bounded, behavior-preserving, and non-`hot` — work a capable cheaper model handles safely (a one-line doc-drift fix, a proven-dead-code deletion). Flag the weaker **`tier:light`** when the finding is non-`hot` AND small-footprint — at most 2 planned files, no touched file over ~500 lines, and no guard/cross-file seam work — AND it is behavior-**preserving** OR behavior-changing with NO checkable spec invariant. Read SIZE is the first cheap-model-failure axis (the 2x2 findings put read size, not task difficulty, as the predictor); a behavior change carrying a **checkable spec invariant** is the second, orthogonal one. **Exclude** from `tier:light` any **behavior-changing** finding that carries a **checkable spec invariant** — a DoD assertion verifiable against actual output/fixtures: a sign, unit, rounding, ordering, count, or stated bound ("all amounts positive"). Such a finding omits the tier label entirely, so per-key model resolution (`evolve_select.py`) falls through to `[evolve] worker_model` / the launcher default (opus) rather than `sonnet`. The witness: PR #2809 (silent-wrong) vs #2813 (correct) — small footprint, sonnet-eligible by size, but a sign invariant the cheap model got wrong and a self-confirming snapshot test masked. **Premise (stated, not circular):** this exclusion is applied by the strong-model producer (audit/propose runs at opus), so its efficacy is bounded by producer invariant-detection — that is the intended bound (an opus producer reading FT-1191 would not have stamped it cheap), not a hidden assumption. `tier:trivial` SUBSUMES `tier:light`: a mechanical behavior-preserving change has no behavior invariant to violate, so trivial is the stronger claim. Keep both labels available but never double-stamp one bead — pick the strongest claim that holds. Both are mutually exclusive with `hot`: a finding is either harness-risky (`hot`) or cheap-and-safe (`tier:trivial`/`tier:light`), never both. Producers re-check the file-size bound at the freshness gate (step 3) — sizes drift as the repo churns. A `tier:trivial` OR `tier:light` stamp lets drain run that bead's whole run at a cheaper worker model (§drain step C); per-key model resolves hot-first: a `hot` bead inherits the launcher default; a non-`hot` `tier:trivial` OR `tier:light` bead maps to `sonnet`; otherwise the run takes `[evolve] worker_model` when set, else inherits the launcher default.
+Dedup findings about the same root issue and drop vague or unevidenced items. Rank by evidence strength × value × blast-radius-safety × reviewability, then score each survivor against the repo-root `VISION.md`. A candidate that cannot be anchored to the thesis, the auto-vs-propose boundary, and the safety floor is slop: drop it or escalate it as a question. Prefer small, isolated, high-evidence items.
+
+Give each survivor a **stable identity anchored on its primary file path** plus a short symptom: `<primary-relfile>::<short-symptom>`, for example `scripts/diff_extract.py::quotepath-parsing`. Anchor on the file, not free wording. The file path is what a rerun rediscovers, so it makes the same defect deduplicate across runs. Keep the `::` separator. For a real relative file path or tracked top-level file, its basename also anchors the fuzzy same-file pass; a non-file left part rides only the exact `evid:` net.
+
+Flag `hot` if the finding touches `SKILL.md`, `stage-registry.toml`, `CLAUDE.md`, a wired handler, or a safety-machinery guard file (`lease.py`, `snapshot.py`, `_atomicio.py`, `_locking.py`, `state.py`, `dispatch_stage.py`, `diff_extract.py`, `flow_launcher.py`, `flowctl.py`, `flow_worktree.py`, `machinery_edit.py`, `flow_friction.py`). A guard change must ride the hot path so either the in-run merge reviewer or the drain reap reviewer checks the guard property.
+
+Parallel to `hot`, flag **`tier:trivial`** when the finding is mechanical, tightly bounded, behavior-preserving, and safe for a capable cheaper model, such as one-line doc drift or proven dead code. Flag the weaker **`tier:light`** only when the finding is non-`hot`, touches at most two planned files, touches no file over about 500 lines, requires no guard/cross-file seam work, and is behavior-preserving or has no checkable behavior invariant. Read size is one cheap-model-failure axis; a checkable behavior invariant is the other.
+
+**Exclude** from `tier:light` any behavior-changing finding with a checkable DoD invariant such as sign, unit, rounding, ordering, count, or a stated bound ("all amounts positive"). Omit the tier label so per-key model resolution falls through to `[evolve] worker_model` or the launcher default. PR #2809 versus #2813 is the witness: the footprint was small, but a sign invariant was implemented incorrectly and a self-confirming snapshot masked it. This exclusion is applied by the strong-model producer, so efficacy is intentionally bounded by that producer's ability to detect the invariant.
+
+`tier:trivial` subsumes `tier:light`; never double-stamp a bead. Both are mutually exclusive with `hot`. Re-check file sizes at the freshness gate because they drift. A trivial/light stamp lets drain use the cheaper worker model. Resolution remains hot-first: hot inherits the configured worker/default, trivial or light maps to `sonnet`, and everything else takes `[evolve] worker_model` when set or inherits the launcher default.
 
 The SAME tier stamp also scales the run's **verification depth**, not just its model (`scripts/tier_policy.py` maps labels → a `lane`: `tier:trivial` → `express`, `tier:light` → `light`, everything incl. `hot` → `full`). The lane operationalizes the xqt verdict ("bound the machinery to high-complexity/hot work"): because a tier stamp is a vetted producer judgment, a tier run does NOT re-run that judgment. `express` skips the spec-time confidence probe + the plan-revision round (verb-spec.md `--auto` step 4-5), relaxes the implement stage's mandatory-new-test for behavior-preserving work, and collapses the reflect stage to friction-log-only; `light` skips the confidence probe and collapses reflect only when the run hit no friction, but keeps TDD (it can be behavior-changing). The independent review (CI + the review bot) and the deterministic safety machinery (lease / snapshot / content-ownership / push-state) run on every lane — the lane drops re-judgment, never the net. `flow_worktree.py` stamps the resolved lane into the run frontmatter at bootstrap so the stages read one field; the spec-time gates resolve it directly via `triage.py lane`.
 <!-- SYNC: this 10-file hot guard list is duplicated by design in references/stage-reflect.md step 2b — keep both in sync with scripts/triage.py _GUARD_FILES (flow-837; not extracted to a constant per maintainer decision; seam_check gates the equality) -->
@@ -61,7 +71,7 @@ The SAME tier stamp also scales the run's **verification depth**, not just its m
 
 For each candidate, file it into flow's beads. The `--dedup-key` is the stable `id`; it stops refiling open work AND re-proposing findings already closed or rejected, so the loop converges:
 
-**Freshness gate — before any `bd create`.** The miners read the maintainer checkout, which can lag `origin/<default>`; a finding can ship upstream between mining and filing. Once per filing batch, fetch and resolve the default branch the same way `flow_worktree.py create --base @default` does, including the unset-`origin/HEAD` fallback:
+**Freshness gate before any `bd create`.** The miners read the maintainer checkout, which can lag `origin/<default>`; a finding can ship upstream between mining and filing. Once per filing batch, fetch and resolve the default branch the same way `.flow/flow worktree create --base @default` does, including the unset-`origin/HEAD` fallback:
 
 ```bash
 git fetch --quiet origin
@@ -72,7 +82,7 @@ DEFAULT=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD) \
 Then re-verify each candidate's evidence AT that ref, not the working checkout: a `file:line` cite → `git show "$DEFAULT:<path>"` and confirm the cited content is still there; a claimed-missing artifact (a test, a flag, a doc section) → `git grep <symbol-or-name> "$DEFAULT" -- <scope>` and confirm it is genuinely absent at the ref. A candidate whose ask already exists on `origin/<default>` is dropped before filing (count it in the step-4 report), not filed-then-caught at plan time. Prior art: flow-5ba (the audit filed a bead asking for a test PR#189 had already merged — the evidence snapshot predated the merge), flow-cam (a claimed-missing test was a grep miss — the at-ref `git grep` is what re-verifies a "missing" claim by command, not memory); the plan stage's drift-vs-@default discipline (flow-749) is the downstream net this gate front-runs. `flow_beads_create.py` stays dedup-only (the `evid:`/`evidfile:` fingerprints); it cannot verify a semantic claim like "test X is absent", so freshness is the filer's duty here.
 
 ```bash
-python3 ${CLAUDE_SKILL_DIR}/scripts/flow_beads_create.py \
+.flow/flow flow-beads-create \
   --workspace-root . \
   --summary "<finding title>" \
   --description "<evidence (file:line / repro) + value + blast radius>" \
@@ -85,7 +95,7 @@ When the candidate was flagged `tier:trivial` (step 2), add it to the `--labels`
 A `tier:light` finding is, by the step-2 rule, behavior-preserving OR behavior-changing-with-no-checkable-invariant; the behavior-changing-with-a-checkable-invariant class is excluded (it goes to opus, untiered). But a `tier:light` finding that IS behavior-changing (just without a sign/unit/rounding/ordering bound the cheap model could miss) still has a stated definition of done — record it so a green-but-wrong PR is correlatable to what it was supposed to satisfy. Pass the DoD assertion as `--acceptance-invariant "<the assertion>"`; it is appended to the bead description as a single-line `ACCEPTANCE-INVARIANT:` stem (the established marker pattern), which the ship-event reader (`references/stage-reflect.md`) pulls back out and records on the durable ship event:
 
 ```bash
-python3 ${CLAUDE_SKILL_DIR}/scripts/flow_beads_create.py \
+.flow/flow flow-beads-create \
   --workspace-root . \
   --summary "<finding title>" \
   --description "<evidence + value + blast radius>" \
@@ -124,8 +134,8 @@ A launched run self-merges its own green PR, so this only ever finds a green evo
 **Main-CI health gate (per turn).** Before any promotion, the reap probes main's OWN CI health for the sha at the tip of the default branch (`main_ci_health.py`, reusing `forge_github._classify_rollup`). When main is genuinely **red** (`failed`), every would-be-merge — the promoted hot and every non-hot leaf — routes into `held_main_red` instead of `merge` (held, not merged), no hot promotes this turn, and the reap files ONE deduped P0 naming the failing sha + check(s) (at most one open at a time; it refiles after a human closes it). Green, pending, and a transient probe `error` (a gh 401 / network flake) all resume normally — only a genuine red pauses. The Report (§Report) names the `held_main_red` set + the P0 bead key.
 
 ```bash
-python3 ${CLAUDE_SKILL_DIR}/scripts/fleet.py prune --workspace-root .  # hygiene: unlink stale fleet entries (logically aged-out of live_keys already; this drops the files)
-python3 ${CLAUDE_SKILL_DIR}/scripts/evolve_reap.py --workspace-root .
+.flow/flow fleet prune --workspace-root .  # hygiene: unlink stale fleet entries (logically aged-out of live_keys already; this drops the files)
+.flow/flow evolve-reap --workspace-root .
 ```
 
 The `fleet.py prune` is hygiene only (a stale entry is already excluded from `live_keys` by the heartbeat-staleness filter; without the sweep the never-deregistered files accumulate and every fleet scan re-reads them); SKIP it under `--dry-run` like every other side effect, since it deletes files. Returns JSON `{merge:[{pr,key,is_draft,is_hot,covers}], not_green, skipped_hot, skipped_live, blocked, held_main_red}`. Each `merge` (and `held_main_red`) entry carries `covers`: the cover keys this PR co-delivers, parsed from the lead's `Closes <COVER>` commit trailers (the lead's own key filtered out), empty `[]` for an un-folded PR. The reap closes each cover after the lead close (below), so an ORPHANED folded lead (its run died before self-merging, §B2) still closes its covers — the common path closes them in the lead's own merge stage (`references/stage-merge.md` §Cover-close). The reap is lease-liveness-gated in code: a green PR whose run lease still reads live/corrupt is held in `skipped_live` (not merged) — the live run self-merges its own PR in its merge stage, so the reap only touches genuinely non-live (orphan) runs. For each `merge` entry (skip all of this under `--dry-run`):
@@ -140,7 +150,7 @@ gh pr ready <pr>        # only when is_draft is true
 # from under it (the worst TOCTOU, flow-72d9). is-live is lease-only (a dead orphan's
 # fleet entry outlives its lease, so an OR would skip a reapable orphan) and fail-safe
 # (exit 0 = live = SKIP). On skip, leave it: next pass re-classifies.
-if python3 ${CLAUDE_SKILL_DIR}/scripts/fleet.py is-live --key <key> --workspace-root .; then
+if .flow/flow fleet is-live --key <key> --workspace-root .; then
   echo "fleet: <key> went live after classify — not merging this turn"
 else
   # squash-merge WITHOUT --delete-branch, then close the bead and delete the
@@ -149,14 +159,14 @@ else
     bd close <key> --reason "merged via PR #<pr>"
     # Freeze the ship event BEFORE the reap below destroys the run's state.json
     # (flow-09bg.1). Best-effort: a failed observation never blocks the teardown.
-    python3 ${CLAUDE_SKILL_DIR}/scripts/observe_at_close.py --workspace-root . --key <key> || true
+    .flow/flow observe-at-close --workspace-root . --key <key> || true
     # close any covered beads this folded lead co-delivered. <covers> is the merge
     # entry's `covers` list (the lead's `Closes <COVER>` commit trailers, lead key
     # filtered out). Best-effort, mirroring the lead close; never block the reap.
     for COVER in <covers>; do
-      python3 ${CLAUDE_SKILL_DIR}/scripts/tracker_cli.py --workspace-root . \
+      .flow/flow tracker --workspace-root . \
         comment --key "$COVER" --text "co-delivered by <key> via PR #<pr>" || true
-      python3 ${CLAUDE_SKILL_DIR}/scripts/tracker_cli.py --workspace-root . \
+      .flow/flow tracker --workspace-root . \
         transition --key "$COVER" --to-state closed || true
       bd dep remove "$COVER" <key> || true   # drop the §B2 suppression dep (beads-only; harmless if absent)
     done
@@ -164,7 +174,7 @@ else
   fi
 fi
 # reap owns the LOCAL worktree + local branch (lease-gated; also re-checks the lease)
-python3 ${CLAUDE_SKILL_DIR}/scripts/flow_worktree.py reap --ticket <key> --branch <branch> --main-root .
+.flow/flow worktree reap --ticket <key> --branch <branch> --main-root .
 ```
 
 `<key>`, `<pr>`, and `<branch>` (== `headRefName`) all come from the `merge` entry. `--delete-branch` is dropped: gh's branch-delete step fails because the still-registered worktree under the pool (`.claude/worktrees/`, legacy `.flow/worktrees/`) holds the local `feat/<key>-*` branch checked out, and that failure makes an otherwise-successful `gh pr merge` exit 1 — which short-circuited the old `&& bd close`, so the bead never closed and the remote branch was left undeleted. Now `gh pr merge --squash` alone exits 0 on a clean merge, so `bd close` runs; the remote branch is deleted explicitly with `git push origin --delete <branch>` (which also drops the local `refs/remotes/origin/<branch>` tracking ref that feeds `evolve_select._gather_refs`). Deleting the REMOTE ref is unaffected by the worktree holding the LOCAL branch. `bd close` and the remote delete are each gated on the merge succeeding and are independent of each other (separate statements inside the `if`, never chained behind one another), so a `bd close` hiccup never skips the remote delete. `gh pr merge` refuses a not-actually-mergeable PR, so it is a safe backstop if state changed since the classify; if it refuses, the `if` body is skipped and the bead stays open. Closing a bead whose PR never merged would mint the exact PR↔bead state-inconsistency this step exists to prevent. The `reap` step still owns the LOCAL worktree + local branch teardown. It is lease-gated: a worktree whose bg session is still running (typically the reflect stage, which runs after the PR is green) is SKIPPED and reaped on a later turn once the session ends. `reap` is now fallible (flow-vpg1): before the destructive remove it checkpoints any uncommitted work in the worktree as a WIP commit pushed to a `flow-rescue/<key>-<sha>` ref; if that capture fails it leaves the worktree INTACT and exits non-zero rather than destroy the work (this orphan path is a merged, already-PR'd worktree, so the tree is normally clean and the checkpoint is a no-op — the fallible path matters for the §Recover pre-PR case below, not here).
@@ -176,7 +186,7 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/flow_worktree.py reap --ticket <key> --branc
 **A2. Cleanup finished sessions — stop + tombstone the idle done ones.** A launched `claude --bg /flow <key> --auto` run does not exit when its work finishes: after the PR merges + the reflect stage runs, the session goes idle but lingers as a job dir under `~/.claude/jobs/<id>/`, so a multi-bead drain leaves a pile of idle sessions in the agents panel for the maintainer to `claude stop` + Ctrl+X by hand. This step clears them. It is read-only classification + reviewable prose side effects (mirrors step A reap).
 
 ```bash
-python3 ${CLAUDE_SKILL_DIR}/scripts/evolve_session_cleanup.py --workspace-root . --self-job "$(basename "$CLAUDE_JOB_DIR")"
+.flow/flow evolve-session-cleanup --workspace-root . --self-job "$(basename "$CLAUDE_JOB_DIR")"
 ```
 
 Enumeration + liveness are filesystem-only — the script scans `~/.claude/jobs/*/state.json` directly and NEVER calls `claude agents --json` (it blocks on a TTY and the drain can run headless). Flags: `--workspace-root` (required; non-maintainer → exit 4, skip this step), `--self-job` (the orchestrator's own `$CLAUDE_JOB_DIR` basename, skipped outright), `--idle-threshold-secs` (default 300; a transcript with a fresher mtime is treated as still writing → not stopped), `--stale-idle-threshold-secs` (default 600; the longer idle bar applied when `state` is not a clean terminal — see below). It returns JSON `{stoppable:[{session_id, job_id, key, cwd, job_dir, reason}], skipped:[{session_id, reason}]}` — the `job_id` (the 8-hex dir basename) is the `claude stop` handle, NOT the session UUID. The session→bead map is the job's `intent` (`/flow <key> --auto`), which also filters out foreign / non-flow jobs; the bg orchestrator records `cwd == repo root` (not the worktree), so a job is eligible only when its cwd is this repo's root. A session reaches `stoppable` only when its `<key>`'s bead is terminal (closed/blocked/deferred), `tempo ∈ {idle, blocked}` (a bg run that DIED blocked — rate limit, permission ask, auth outage — rests at `tempo == blocked` forever, and the terminal-bead gate separates that dead zombie from a genuine needs-input run whose bead is still open; any other non-idle tempo like `active` is real work → skipped), its run lease is non-live (`live`/`corrupt` → skipped, the same mid-reflect guard reap uses; an already-reaped worktree reads `absent` → non-live → proceeds), and its transcript mtime is idle — any busy or unprovable signal skips it (fail-safe toward NOT stopping). `state` is deliberately NOT gated: a finished bg run rests at `state == working` (or `blocked`) indefinitely — a `session_cron` keepalive task, or a daemon that never flips the field — so gating on `done`/`stopped` skipped the COMMON case and leaked every drained run as a zombie. Doneness rests on the three independent signals (lease ∧ transcript ∧ bead) instead; when `state` is not a clean terminal, the transcript must be idle past the longer `--stale-idle-threshold-secs` before the stale field is overridden.
@@ -189,7 +199,7 @@ For each `stoppable` entry (skip ALL of this under `--dry-run` — print the sto
 # lease in the classify->stop gap must NOT be stopped + tombstoned mid-work (the
 # central lock-free classify->mutate gap, the one destructive path with no under-flock
 # re-check today). is-live is lease-only, fail-safe (exit 0 = live = SKIP).
-if python3 ${CLAUDE_SKILL_DIR}/scripts/fleet.py is-live --key <key> --workspace-root .; then
+if .flow/flow fleet is-live --key <key> --workspace-root .; then
   echo "fleet: <key> went live after classify — not stopping this session"
 else
   timeout 90 claude stop <job_id> </dev/null || true     # the 8-hex JOB id is the stop handle; `claude stop <session_uuid>` fails "No job matching". stdin detached + bounded
@@ -215,7 +225,7 @@ Once reopened, the bead is a normal open bead and the existing §C machinery own
 **B. Decide the next action.**
 
 ```bash
-python3 ${CLAUDE_SKILL_DIR}/scripts/evolve_drain.py --workspace-root .
+.flow/flow evolve-drain --workspace-root .
 ```
 
 This runs `evolve_select` (which is DAG-aware via `bd ready`, drops in-flight beads, enforces backpressure ≥ `cap` open PRs, partitions ≤1 hot per batch / no shared primary-file anchor) and annotates each in-flight bead with its run's lease liveness. It returns JSON `{action: "launch"|"recover"|"wait"|"done", launch:[keys], stranded:[keys], stranded_pre_pr:[{key,branch,worktree}], parked:[keys], liveness:{}, select:{...}}` (the top-level `stranded` key rides only the `recover` action; `stranded_pre_pr` is always present, empty when nothing is stranded). Inside `select`, `launched_pending` lists the keys registered in the fleet ledger but not yet holding a lease — runs fanned out on a prior turn that have not yet registered a branch/lease (the launch→init window); the selector already counts them as in-flight, so they are neither re-launched nor allowed to break hot isolation.
@@ -234,7 +244,7 @@ The termination is blocking-gated on purpose: a **withheld** hot bead (its in-ru
 # turns ago; a bead that re-acquired a lease in the classify->recover gap must NOT have
 # its worktree reaped + bead reopened from under a now-live run. is-live is lease-only,
 # fail-safe (exit 0 = live = SKIP both destructive acts).
-if python3 ${CLAUDE_SKILL_DIR}/scripts/fleet.py is-live --key <key> --workspace-root .; then
+if .flow/flow fleet is-live --key <key> --workspace-root .; then
   echo "fleet: <key> went live after classify — not recovering this turn"
 else
   # ATTEMPT-N BOUND: read the newest `STRANDED-RECOVERY:` marker (a bd comment, so
@@ -247,21 +257,21 @@ else
     # second recovery relaunch ALSO re-stranded -> give up to the human. Reap the
     # dirty worktree (cleanup), do NOT reopen; block + a triage stem so it surfaces
     # in /flow triage. REAP BEFORE BLOCK (order load-bearing, see below).
-    python3 ${CLAUDE_SKILL_DIR}/scripts/flow_worktree.py reap --ticket <key> --main-root . \
+    .flow/flow worktree reap --ticket <key> --main-root . \
       && { bd update <key> --status blocked
-           python3 ${CLAUDE_SKILL_DIR}/scripts/tracker_cli.py --workspace-root . comment --key <key> \
+           .flow/flow tracker --workspace-root . comment --key <key> \
              --text "flow --auto could not self-approve: STRANDED-RECOVERY exhausted — <key> re-stranded pre-PR after two fresh relaunches (deterministic mid-pipeline crash). Needs a human: reopen (status->open) and run WITHOUT --auto, or fix the crash cause first."; }
   else
     # no marker (first strand) or attempt-1 (first recovery re-stranded) -> reap +
     # reopen so the next turn relaunches FRESH, and stamp the next rung.
     # REAP BEFORE REOPEN (order load-bearing). Reap clears the dirty non-terminal
-    # state.json that would make the next turn's `flow_worktree.py create` exit 4
+    # state.json that would make the next turn's `.flow/flow worktree create` exit 4
     # (dup-claim). reap derives the branch from --ticket (no --branch needed); it is
     # idempotent (an already-gone worktree is a no-op) and lease-gated internally.
-    python3 ${CLAUDE_SKILL_DIR}/scripts/flow_worktree.py reap --ticket <key> --main-root . \
+    .flow/flow worktree reap --ticket <key> --main-root . \
       && { bd update <key> --status open
            NEXT=$([ "$MARK" = "attempt-1" ] && echo attempt-2 || echo attempt-1)
-           python3 ${CLAUDE_SKILL_DIR}/scripts/tracker_cli.py --workspace-root . comment --key <key> \
+           .flow/flow tracker --workspace-root . comment --key <key> \
              --text "STRANDED-RECOVERY: $NEXT"; }
   fi
 fi
@@ -292,7 +302,7 @@ Clustering stays prose (judgment, like `/flow group`): default to the determinis
 **Pre-launch staleness check (per key, judgment).** Before applying any staleness judgment, run the decision probe for each key:
 
 ```bash
-python3 ${CLAUDE_SKILL_DIR}/scripts/triage.py decided --workspace-root . --key <key>
+.flow/flow triage decided --workspace-root . --key <key>
 ```
 
 If `decided=true` AND the bead is open: the maintainer has already adjudicated this work — do NOT re-defer, do NOT close as stale, do NOT apply any hold judgment. Launch it immediately (this is the orchestrator-side guard that prevents the staleness check from silently killing a decided-open bead before the `--auto` run ever sees it; the run-side decision ingest at the end of this section is a separate, complementary step that runs inside the launched session). "Launch it immediately" applies only to beads that reached this batch: `evolve_select`'s unconditional `hitl` filter drops a decided-open bead that still carries a stale `hitl` label BEFORE this guard iterates (the guard only sees keys that survived partition), so such a bead is not launched until a `/flow triage` reopen removes the label — the filter wins, and the two stay consistent by design. A decided bead that re-appears open after the orchestrator itself previously deferred it is maintainer intent — honor it and launch. Hot-bead safety checks still apply: a decided hot bead must respect the one-hot-per-batch isolation limit and the merge-time guard review; "honor" means launch the run, not skip safety checks.
@@ -304,7 +314,7 @@ For each key in the **effective plan** (the §B2 rewrite: singletons + one lead 
 ```bash
 # register the launch FIRST so the very next turn's select sees this key as in-flight
 # even before it registers a branch/lease (closes the re-launch + 2nd-hot-isolation window).
-python3 ${CLAUDE_SKILL_DIR}/scripts/fleet.py register --key <key> --workspace-root .
+.flow/flow fleet register --key <key> --workspace-root .
 claude --bg [--model sonnet] "/flow <key> --auto [--covers <c1>,<c2>]"
 ```
 
@@ -334,7 +344,7 @@ Each spawns a detached run that auto-plans and either drives its PR to green-and
 
 `/flow evolve drain --include-proposals` widens the loop from the `evolve` backlog to **also auto-launch + reap plain `proposal` beads** — the judgment-side work (features, real refactors, reorgs) that §propose deliberately routes to the maintainer's own backlog so a human accepts it at the spec-plan gate. With this flag, each ready `proposal` bead is fanned out as a `/flow <key> --auto` run that self-plans and self-merges at ≥90% confidence, **bypassing that human accept**. This is the one place drain ships taste-and-fit work with no human in the loop; use it only when you genuinely want the proposal backlog drained autonomously.
 
-Mechanically it threads through the whole turn: `evolve_select` pulls a second `bd ready -l proposal` candidate set (merged by id) and drops its proposal-exclusion guard; `evolve_drain.py --include-proposals` carries the flag into select and echoes `include_proposals: true` in its JSON; `evolve_reap.py --include-proposals` widens its label index so proposal **orphans** (runs that died before self-merging) reap too — pass it on the step **A** invocation or those PRs never merge. Hot proposals serialize on the same single hot slot as hot evolve beads. Composable with `--dry-run` to preview what the dangerous mode would launch. The Report (below) names `include_proposals: true` so a run that auto-drained judgment work says so.
+Mechanically it threads through the whole turn: `evolve_select` pulls a second `bd ready -l proposal` candidate set (merged by id) and drops its proposal-exclusion guard; `.flow/flow evolve-drain --include-proposals` carries the flag into select and echoes `include_proposals: true` in its JSON; `.flow/flow evolve-reap --include-proposals` widens its label index so proposal **orphans** (runs that died before self-merging) reap too. Pass it on the step **A** invocation or those PRs never merge. Hot proposals serialize on the same single hot slot as hot evolve beads. Composable with `--dry-run` to preview what the dangerous mode would launch. The Report (below) names `include_proposals: true` so a run that auto-drained judgment work says so.
 
 ### Post-drain: final session sweep (A2 tail)
 
@@ -344,7 +354,7 @@ At `done` EVERY lease is freed by definition, so the conservative per-turn A2 ba
 
 - Repeat up to 3 passes, ~45s apart (one self-contained bash loop with an internal `sleep 45`, ~3 min cap). Each pass classifies with BOTH bars short:
   ```bash
-  python3 ${CLAUDE_SKILL_DIR}/scripts/evolve_session_cleanup.py --workspace-root . \
+  .flow/flow evolve-session-cleanup --workspace-root . \
     --self-job "$(basename "$CLAUDE_JOB_DIR")" \
     --idle-threshold-secs 45 --stale-idle-threshold-secs 45
   ```
@@ -391,8 +401,8 @@ It enumerates registered worktrees (`git worktree list --porcelain`), joins each
 Every teardown funnels through the same lease-flock + checkpoint `flow_worktree.py reap` the drain uses, so a dirty worktree is checkpointed to a `flow-rescue/*` ref before removal and left intact on capture failure. Before each reap the sweep observes the ship event from the worktree's `state.json` (via `observe_at_close.py`, gated on `is_shipped` reading `not_yet_observed`) and reports the outcome as `ship_event` on the reaped entry. A failed observation never blocks the teardown.
 
 ```bash
-python3 ${CLAUDE_SKILL_DIR}/scripts/worktree_janitor.py sweep --workspace-root .
-python3 ${CLAUDE_SKILL_DIR}/scripts/worktree_janitor.py sweep --workspace-root . --dry-run   # preview: reap nothing
+.flow/flow worktree-janitor sweep --workspace-root .
+.flow/flow worktree-janitor sweep --workspace-root . --dry-run   # preview: reap nothing
 ```
 
 `--dry-run` reports the plan (the `reaped` would-reap set plus the `skipped_live` / `skipped_active_bead` / `skipped_ahead` / `no_merged_pr` buckets) and acts on nothing. Exit 0 ok; 2 = a bd/git/gh call failed; 4 = not a maintainer setup.
@@ -485,7 +495,7 @@ Present the ranked epic set. Each entry: title + capability-track slug, disposit
 ### E. Expand an accepted epic (maintainer-run)
 
 When the maintainer accepts a lazily-filed epic, materialize its children: read the decomposition preview from the epic's description and process each child by its §C marker:
-- **net-new child** (preview `(NET-NEW ...)`) → file fresh via `flow_beads_create.py --type task --parent <epic> --labels proposal --dedup-key "epic:<track>::child-<n>-<symptom>"`.
+- **net-new child** (preview `(NET-NEW ...)`) → file fresh via `.flow/flow flow-beads-create --type task --parent <epic> --labels proposal --dedup-key "epic:<track>::child-<n>-<symptom>"`.
 - **pre-existing child** (preview `PRE-EXISTING CHILD to RE-PARENT (do NOT re-file): <key>`) → reparent in place with a bare `bd update <key> --parent <epic>`. NEVER re-file it, and do NOT relabel it — the existing bead keeps its own identity, status, and labels.
 
 The distinction matters because the `epic:<track>::child-N-<symptom>` dedup namespace is disjoint from a pre-existing bead's `<relfile>::<symptom>` key, so a naive re-file does NOT dedup-collide and WOULD mint a duplicate. Each child is then a normal ticket run via `/flow <key>` — do-loop-sized, gated at its own spec-plan accept. Children are deliberately NOT epic-aware; the altitude lives in the parent, the work lives in the leaves.
@@ -501,7 +511,7 @@ The flow is three steps:
 1. **Propose (read-only).** Emit a worklist of curatable, non-superseded entries:
 
 ```bash
-python3 ${CLAUDE_SKILL_DIR}/scripts/sweep_knowledge.py propose [--type DECISION,FACT] > worklist.json
+.flow/flow sweep-knowledge propose [--type DECISION,FACT] > worklist.json
 ```
 
 Each worklist item is `{id, ticket, ts, type, body}`, in file order. `--type` is a comma-separated filter (default `DECISION,FACT`); already-superseded entries are excluded. This step touches nothing.
@@ -511,7 +521,7 @@ Each worklist item is `{id, ticket, ts, type, body}`, in file order. `--type` is
 3. **Apply (write).** Apply each confirmed supersession:
 
 ```bash
-python3 ${CLAUDE_SKILL_DIR}/scripts/sweep_knowledge.py apply --manifest worklist-confirmed.json
+.flow/flow sweep-knowledge apply --manifest worklist-confirmed.json
 ```
 
 Each record is applied through the `memory_append --supersedes` seam: an append-only tombstone `DECISION` entry whose `supersedes` points at the dead id (the target is never rewritten or removed). It is **idempotent** — a record whose target is already superseded is reported `skipped` and re-running the same manifest appends nothing. It **refuses an unknown id**: that record is reported `error`, the rest of the batch still processes, and the command exits non-zero if any record errored. The output is a per-record results summary (`applied` / `skipped` / `error`).
@@ -523,7 +533,7 @@ Each record is applied through the `memory_append --supersedes` seam: an append-
 1. **Cluster (read-only).** Group live, same-type, indexed entries by cosine similarity over the `memory_embed` sidecar:
 
 ```bash
-python3 ${CLAUDE_SKILL_DIR}/scripts/sweep_knowledge.py cluster [--type DECISION,FACT] [--threshold 0.90] > clusters.json
+.flow/flow sweep-knowledge cluster [--type DECISION,FACT] [--threshold 0.90] > clusters.json
 ```
 
 Clustering is WITHIN-type only (never mixes a DECISION with a FACT) and complete-linkage: a candidate joins a group only if its cosine is above the threshold against EVERY current member, not just the seed, so an A~B, B~C, A!~C chain never lands in one group. An entry with no vector in the sidecar index (never embedded, or semantic indexing off) is excluded — it can neither seed nor join a group. A missing or empty sidecar yields `[]`. Each emitted group is `{cluster_id, type, min_cosine, members: [{id, ticket, ts, type, body}]}`; only groups of size >= 2 are emitted. The default threshold (0.90) was calibrated against this repo's own corpus — conservative on purpose, so it surfaces genuinely redundant pairs without proposing junk a maintainer would reject; re-tune per-corpus if the default over- or under-merges.
@@ -533,7 +543,7 @@ Clustering is WITHIN-type only (never mixes a DECISION with a FACT) and complete
 3. **Apply (write).** Collapse each confirmed cluster to one canonical entry:
 
 ```bash
-python3 ${CLAUDE_SKILL_DIR}/scripts/sweep_knowledge.py apply-cluster --manifest clusters-confirmed.json
+.flow/flow sweep-knowledge apply-cluster --manifest clusters-confirmed.json
 ```
 
 Each record is applied through the `memory_append --supersedes` seam with a LIST-valued `supersedes` (one canonical entry pointing at every member id at once — the mechanism that actually reduces corpus density; N single-target tombstones would collide on the same canonical body/id instead). Same discipline as `apply`: idempotent (a record whose members are ALL already dead is `skipped`), refuses an unknown member id (`error`, batch continues, non-zero exit). The output is a per-record results summary (`applied` / `skipped` / `error`), each `applied` record naming the new canonical id and the member count merged.

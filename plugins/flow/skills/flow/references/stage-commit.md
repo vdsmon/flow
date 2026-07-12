@@ -24,7 +24,7 @@ The applied patch comes from the recorded `implement.diff` — NOT from `git add
 1. HARD GATE: validate ticket frontmatter has `commit_type` + `commit_summary`
    (the fields `compose_commit.py` consumes in step 3):
    ```bash
-   ${CLAUDE_SKILL_DIR}/scripts/lint_ticket.py \
+   .flow/flow lint-ticket \
      --stage commit \
      --ticket-path .flow/tickets/<KEY>.md
    ```
@@ -35,7 +35,7 @@ The applied patch comes from the recorded `implement.diff` — NOT from `git add
 
 2. Capture the implement-stage diff (idempotent if already captured):
    ```bash
-   ${CLAUDE_SKILL_DIR}/scripts/diff_extract.py capture-implement-diff \
+   .flow/flow diff capture-implement-diff \
      --ticket <KEY> \
      --ticket-dir <ticket-dir> \
      --cwd .
@@ -48,7 +48,7 @@ The applied patch comes from the recorded `implement.diff` — NOT from `git add
 
 2b. Content-ownership gate. Verify the branch carries only planned changes before the commit is composed — a PR must hold only what was planned. The scan covers the full delta against the recorded baseline: commits made since `baseline.head_sha` AND the dirty working tree, so a change already committed on the branch is flagged the same as an uncommitted edit (committing a stray file does not hide it). `planned_files` has already been widened by the post-implement reconcile, so a legitimately-touched file is owned by now; anything still outside it is unplanned and must not ride along.
    ```bash
-   ${CLAUDE_SKILL_DIR}/scripts/diff_extract.py check-ownership \
+   .flow/flow diff check-ownership \
      --ticket <KEY> \
      --ticket-dir <ticket-dir> \
      --cwd .
@@ -62,7 +62,7 @@ The applied patch comes from the recorded `implement.diff` — NOT from `git add
    Read `commit_type` + `commit_summary` from the ticket frontmatter (or ask the user if missing).
    Grouped runs: also read `covers` from the same frontmatter (the step-8 read); when non-empty, pass it as `--covers <c1>,<c2>` so the commit trailer carries one `Closes <KEY>` per cover — `create_pr` builds the PR's Closes footer solely from these trailers (the agent must not write the footer itself), and the orphan reap closes covers from them too. Omitting the flag on a grouped run breaks the SKILL.md per-cover Closes promise.
    ```bash
-   ${CLAUDE_SKILL_DIR}/scripts/compose_commit.py \
+   .flow/flow compose-commit \
      --ticket <KEY> \
      --type <feat|fix|chore|...> \
      --summary "<short summary>" \
@@ -77,17 +77,18 @@ The applied patch comes from the recorded `implement.diff` — NOT from `git add
      required flag (argparse usage error). Abort and fix the invocation.
 
 4. Fill in the body.
-   Step 3 created the commit skeleton via a shell redirect, so the file lives OUTSIDE the harness Read/Write tool tracking. The Write tool refuses to overwrite a path it has not Read in-session ("File has not been read yet"), which otherwise leaves the literal `# body - fill in below this line` skeleton in the commit.
-   Use the **Read tool** on the resolved skeleton path FIRST to register the path with the harness.
+   Step 3 created the commit skeleton via a shell redirect. Read the resolved absolute
+   skeleton path first; this also satisfies hosts that require a file to be read before
+   their exact writer may replace it.
    Then append a body section describing *why* (not what — the diff shows what), referencing any failing-tests-now-green progress from implement stage.
    When the body needs to MENTION a CI-skip marker, spell it out WITHOUT brackets (write `skip ci`, never the bracketed form): GitHub honors a bracketed CI-skip token anywhere in the commit message and would suppress all CI for the push.
-   Then use the **Write tool** to write the completed message back to that same path.
+   Then use the adapter's exact file-write primitive to replace that same path.
 
 4b. Neutralize any stray bracketed CI-skip token in the message file (belt-and-suspenders for the step-4 caution):
    ```bash
-   ${CLAUDE_SKILL_DIR}/scripts/scrub_ci_skip.py "${TMPDIR:-/tmp}/flow-commit-<KEY>.txt"
+   .flow/flow scrub-ci-skip "${TMPDIR:-/tmp}/flow-commit-<KEY>.txt"
    ```
-   Run via Bash so the rewrite lands on disk regardless of the harness Read/Write tracking. It exits 0 always, scrubbing in place: it strips the brackets from `[skip ci]` / `[ci skip]` / `[no ci]` / `[skip actions]` / `[actions skip]` (any case), keeping the words, and drops the colon from a whole-line `skip-checks: true` trailer (GitHub's unbracketed CI-skip form). If its stderr reports neutralized tokens, that is the step-4 caution being caught after the fact; continue.
+   It exits 0 always, scrubbing in place: it strips the brackets from `[skip ci]` / `[ci skip]` / `[no ci]` / `[skip actions]` / `[actions skip]` (any case), keeping the words, and drops the colon from a whole-line `skip-checks: true` trailer (GitHub's unbracketed CI-skip form). If its stderr reports neutralized tokens, that is the step-4 caution being caught after the fact; continue.
 
 5. Reset the index to HEAD, then apply the recorded patch:
    ```bash
@@ -107,7 +108,7 @@ The applied patch comes from the recorded `implement.diff` — NOT from `git add
 7. Transition the tracker ticket to `in_review`.
    **MCP-first:** when the Atlassian MCP is available, transition via it (`transitionJiraIssue`) — auth-fresh, no env creds needed, the primary path in an attached run (what production already does). **REST fallback** when the MCP is absent (a backgrounded / headless run) or for beads:
    ```bash
-   ${CLAUDE_SKILL_DIR}/scripts/tracker_cli.py \
+   .flow/flow tracker \
      --workspace-root . \
      transition --key <KEY> --to-state in_review --enqueue-on-transient
    ```
@@ -137,9 +138,9 @@ The applied patch comes from the recorded `implement.diff` — NOT from `git add
 
 8. **Covers fan-out (grouped runs only).** Read `covers` from `.flow/tickets/<KEY>.md` frontmatter. If absent/empty, skip this step. Otherwise, for EACH cover key, transition it to `in_review` the same way as the lead (MCP-first, REST fallback), then leave a back-reference comment:
    ```bash
-   ${CLAUDE_SKILL_DIR}/scripts/tracker_cli.py --workspace-root . \
+   .flow/flow tracker --workspace-root . \
      transition --key <COVER> --to-state in_review --enqueue-on-transient
-   ${CLAUDE_SKILL_DIR}/scripts/tracker_cli.py --workspace-root . \
+   .flow/flow tracker --workspace-root . \
      comment --key <COVER> --text "Co-delivered by <KEY> (same PR)."
    ```
    Covers are co-delivered, not independent runs: a cover transition that hits exit 1/3 is **best-effort** (warn + continue, same as the lead's transient/no-transition handling) and must **NOT** fail the lead's commit stage — the diff is already in git and the lead is the source of truth. Treat exit 2/4/5 on a cover as a loud warning, not a stage failure, for the same reason. This fan-out is agent-followed prose, not dispatcher-enforced (a v1 non-goal); under `--auto`/background it is best-effort.

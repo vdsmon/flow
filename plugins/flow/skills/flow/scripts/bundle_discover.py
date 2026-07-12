@@ -44,6 +44,27 @@ from pathlib import Path
 from typing import Any
 
 SCHEMA_VERSION = 1
+_FLOW_HARNESSES = ("codex", "claude-code", "generic")
+
+
+class HarnessError(ValueError):
+    """The adapter supplied an unsupported Flow harness name."""
+
+
+def flow_harness() -> str:
+    """Return the selected adapter, preserving the legacy unset behavior.
+
+    Before Flow exposed adapters, bundle discovery searched Claude Code's install locations. An
+    unset (or empty) selector therefore continues to mean ``claude-code``. ``generic`` is
+    deliberately different: it has no native install layout and discovers only explicitly supplied
+    roots.
+    """
+    harness = os.environ.get("FLOW_HARNESS") or "claude-code"
+    if harness not in _FLOW_HARNESSES:
+        allowed = ", ".join(_FLOW_HARNESSES)
+        raise HarnessError(f"FLOW_HARNESS must be one of: {allowed}; got {harness!r}")
+    return harness
+
 
 # Stage names that the flow stage-registry advertises. A manifest that declares
 # a skill for a stage NOT in this set is rejected. This is the closed-vocabulary
@@ -111,19 +132,34 @@ class DiscoveryResult:
 def default_search_roots(repo_root: Path | None = None) -> list[Path]:
     """Default plugin search locations.
 
-    Order: env override (if set) > user-global plugins > repo-local plugins.
+    An explicit roots override wins after validating the adapter name. Codex searches only its
+    installed-plugin tree, Claude Code searches its native user/repo layouts, and generic has no
+    implicit roots.
 
     `FLOW_BUNDLE_SEARCH_ROOTS` is a `:`-separated list of dirs. When set, it
     REPLACES the defaults entirely so tests + power-users can sandbox discovery.
     """
+    harness = flow_harness()
     env_override = os.environ.get("FLOW_BUNDLE_SEARCH_ROOTS")
     if env_override:
         return [Path(p).expanduser() for p in env_override.split(":") if p]
 
-    roots = [Path.home() / ".claude" / "plugins"]
-    if repo_root is not None:
-        roots.append(repo_root / ".claude" / "plugins")
-    return roots
+    if harness == "codex":
+        codex_home = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex").expanduser()
+        roots = [codex_home / "plugins"]
+    elif harness == "claude-code":
+        claude_config = Path(
+            os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude"
+        ).expanduser()
+        roots = [claude_config / "plugins"]
+        if repo_root is not None:
+            roots.append(repo_root / ".claude" / "plugins")
+    else:
+        roots = []
+
+    # A repo-local Claude root can equal the configured user root. Preserve order while preventing
+    # duplicate walks and duplicate manifest records.
+    return list(dict.fromkeys(roots))
 
 
 # ─── Loader ──────────────────────────────────────────────────────────────────
@@ -272,6 +308,9 @@ def discover(
     individual manifest failures. Callers decide whether a failure blocks them
     based on the bundle name they care about.
     """
+    # Validate even when a caller supplied roots. Otherwise a typo can appear to work during init
+    # and fail later when a command performs native lookup.
+    flow_harness()
     if roots is None:
         roots = default_search_roots(repo_root=repo_root)
 
@@ -344,13 +383,21 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
 def cli_main(argv: list[str]) -> int:
     args = _parse_args(argv)
 
-    if args.roots is not None:
-        roots = [Path(p).expanduser() for p in args.roots.split(":") if p]
-    else:
-        repo_root = Path(args.repo_root).expanduser() if args.repo_root else Path.cwd()
-        roots = default_search_roots(repo_root=repo_root)
+    try:
+        if args.roots is not None:
+            roots = [Path(p).expanduser() for p in args.roots.split(":") if p]
+        else:
+            repo_root = Path(args.repo_root).expanduser() if args.repo_root else Path.cwd()
+            roots = default_search_roots(repo_root=repo_root)
+    except HarnessError as exc:
+        sys.stderr.write(f"bundle-discover: {exc}\n")
+        return 2
 
-    result = discover(roots=roots)
+    try:
+        result = discover(roots=roots)
+    except HarnessError as exc:
+        sys.stderr.write(f"bundle-discover: {exc}\n")
+        return 2
     payload = to_json_dict(result)
     sys.stdout.write(json.dumps(payload, indent=2, sort_keys=True))
     sys.stdout.write("\n")
@@ -377,12 +424,14 @@ __all__ = [
     "SCHEMA_VERSION",
     "DiscoveryResult",
     "DuplicateProvider",
+    "HarnessError",
     "Manifest",
     "ManifestError",
     "ManifestSkill",
     "cli_main",
     "default_search_roots",
     "discover",
+    "flow_harness",
     "select_bundle",
     "to_json_dict",
 ]

@@ -2,8 +2,8 @@
 #
 # Part of epic flow-3w71: move the version bump off the self-merge path onto a
 # server-side Action. Reuses version.py's stamp math: read the current version
-# from HEAD, bump MINOR on a feat squash subject else PATCH, write BOTH version
-# files, commit, push back to main.
+# from HEAD, bump MINOR on a feat squash subject else PATCH, write the Claude
+# manifest/marketplace and Codex manifest versions, commit, push back to main.
 #
 # Push auth: the default GITHUB_TOKEN with `permissions: contents: write`. This
 # works because main is NOT protected on this repo (branch protection is a
@@ -35,7 +35,7 @@ jobs:
           # be many commits back) and the retry loop rebases onto origin/main.
           fetch-depth: 0
 
-      - name: Skip if this push already changed the version files
+      - name: Skip if this push already changed the plugin version
         id: guard
         run: |
           # Guard the whole push range, not just the tip commit: a multi-commit
@@ -48,10 +48,16 @@ jobs:
           fi
           if [ -z "$base" ]; then
             echo "no base commit, proceeding"
-          elif ! git diff --quiet "$base" HEAD -- \
-            plugins/flow/.claude-plugin/plugin.json .claude-plugin/marketplace.json; then
-            echo "version files already changed in this push, skipping stamp"
-            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            base_version=$(git show "$base:plugins/flow/.claude-plugin/plugin.json" 2>/dev/null \
+              | python3 -c 'import json,sys; print(json.load(sys.stdin).get("version", ""))' \
+              2>/dev/null || true)
+            head_version=$(python3 -c 'import json; print(json.load(open("plugins/flow/.claude-plugin/plugin.json")).get("version", ""))')
+            if [ -n "$base_version" ] && [ -n "$head_version" ] && \
+              [ "$base_version" != "$head_version" ]; then
+              echo "plugin version already changed in this push, skipping stamp"
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+            fi
           fi
 
       - name: Stamp and push
@@ -62,11 +68,15 @@ jobs:
             # fails the whole step.
             python3 plugins/flow/skills/flow/scripts/version.py stamp --ref HEAD --cwd . || exit 1
             if git diff --quiet -- \
-              plugins/flow/.claude-plugin/plugin.json .claude-plugin/marketplace.json; then
+              plugins/flow/.claude-plugin/plugin.json \
+              .claude-plugin/marketplace.json \
+              plugins/flow/.codex-plugin/plugin.json; then
               return 1
             fi
             git commit -m "chore: stamp plugin version [skip ci]" -- \
-              plugins/flow/.claude-plugin/plugin.json .claude-plugin/marketplace.json || exit 1
+              plugins/flow/.claude-plugin/plugin.json \
+              .claude-plugin/marketplace.json \
+              plugins/flow/.codex-plugin/plugin.json || exit 1
           }
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"

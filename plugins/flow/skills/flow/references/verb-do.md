@@ -4,10 +4,18 @@ The do-loop **skeleton** lives in SKILL.md (it is the hot path, run every iterat
 
 ## PR-ready notification (best-effort; non-`--auto` runs)
 
-When the PR becomes genuinely review-ready, ping the user via the PushNotification tool: fire after the `review_loop` stage finishes `completed` (CI green AND every actionable reviewer thread resolved — the true ready-to-review point, NOT at `create_pr`, which only opens the draft; when `review_loop`'s handler is `none` so no CI/review loop is wired, fall back to after `create_pr` completes), with the PR URL (`"flow <KEY>: PR ready for review — <url>"`). On a packet-gated interactive run the ping fires earlier — at packet-open inside `review_loop`'s tail (`references/review-packet.md`) — which satisfies this same firing point (the single-fire rule below).
-**Skip this whole block on an `--auto` run — the PushNotification ping AND its no-`PushNotification` fallbacks below.** A drain-launched `--auto` run's completion is already surfaced by the drain orchestrator report + the bead close, and its PR link still lands in `create_pr.out`, so a phone ping there is pure noise — and the ping's stall-detection value does not apply either, since the drain orchestrator watches a drained run's lifecycle via lease/fleet. Detect `--auto` by session context, exactly as the self-teardown section below does ("## Self-teardown at run completion (--auto only)"): this session ran the spec `--auto` path, or was launched `/flow <key> --auto`; never infer it from state files — `--auto` is stamped nowhere. On every OTHER run — attended, or backgrounded via `/bg` — fire it: PushNotification is harness-local (your terminal, plus your phone if Remote Control is on), so it renders harmlessly in-terminal when you are attached and reaches your phone when you have backgrounded a non-auto session; either way it does not ride MCP/claude.ai auth, so it fires even if the tail's tracker calls have 401'd — which is how you learn an unattended `/bg` run stalled.
-If the PushNotification tool is NOT available in the current harness (some surfaces do not expose it — a `ToolSearch` for it returns nothing), do not abort and do not treat its absence as a blocker. Fall back to BOTH: (a) surface the message in-thread, and (b) a DURABLE channel a detached console can see later — post it as a PR comment via the workspace's forge backend (`[forge] backend`): for a GitHub forge, `gh pr comment <PR_URL> --body "flow <KEY>: <message>"`; for a Bitbucket forge, `bkt api "2.0/repositories/<ws>/<repo>/pullrequests/<id>/comments" -X POST -d "$(jq -n --arg b "flow <KEY>: <message>" '{content:{raw:$b}}')" --json`. The in-thread echo alone is invisible to a truly detached run; the PR comment is what makes the fallback real. The notification is best-effort; the pipeline state in `state.json` is the source of truth.
-A blocker needs no special ping: an `AskUserQuestion` surfaces natively as "needs input" in `claude agents` when the session is backgrounded, and inline when it is attached. (Off Claude Code, `references/harness.md` is the canonical matrix for the `PushNotification` and `AskUserQuestion` fallbacks.)
+When the PR becomes genuinely review-ready, use the adapter's notification capability
+after `review_loop` completes (or after `create_pr` when no review loop is wired), with
+`"flow <KEY>: PR ready for review - <url>"`. Claude Code may use
+`PushNotification`; Codex and generic adapters surface it in-thread. Also use the
+durable forge fallback required by `references/harness.md`. Packet-gated runs keep the
+existing single-fire point inside `review_loop`.
+
+Skip the whole notification block on `--auto`: the drain report, ticket close, and
+`create_pr.out` already carry completion. Detect `--auto` from invocation/session
+context, never from state files where it is not stamped. Notification remains
+best-effort; `state.json` is authoritative. A blocker uses the adapter's user-input
+capability and follows the detached/auto defer behavior in the harness matrix.
 
 **Firing point (do-loop step e):** on a non-`--auto` run, fire only when `$STAGE` is `review_loop` with `$STATUS` completed (CI green and every actionable reviewer thread resolved), reading the PR URL from the captured `create_pr.out`. Only when `review_loop`'s handler is `none` (no CI/review loop wired) do you fall back to firing at `create_pr` completed. On an `--auto` run, skip the notification at both points (the block above).
 
@@ -17,7 +25,7 @@ A blocker needs no special ping: an `AskUserQuestion` surfaces natively as "need
 
 When `create_pr` completes, read `covers` from `.flow/tickets/<KEY>.md` frontmatter. For each cover key, post the PR URL as a comment so every co-delivered ticket links to the PR that closes it:
 ```bash
-python3 ${CLAUDE_SKILL_DIR}/scripts/tracker_cli.py --workspace-root . \
+.flow/flow tracker --workspace-root . \
   comment --key <COVER> --text "Covered by <KEY> — PR: <PR_URL>"
 ```
 Best-effort (a failed cover comment never blocks the run); agent-followed, not dispatcher-enforced (v1 non-goal). The lead's own PR-link presentation is unchanged.
@@ -105,7 +113,7 @@ A `--status failed` advance returns `{blocked_by}`, which the skeleton's descrip
 
 Whenever a step hits a snag the run has to work around, append one friction entry before you act on it. This is the high-fidelity evidence the `reflect` stage synthesizes into machinery findings (a backgrounded reflect agent cannot reconstruct it from `state.json` alone). See `references/self-evolution.md` for how this feeds the self-modification loop. Trigger → `--type`: `next`/`advance` drift exit 1 → `DRIFT`; lost-lease exit 7 → `LEASE_LOSS`; the records_diff_baseline post-implement reconcile OR a dispatch owned-drift reconcile (`next`/`advance` returns a `reconciled_drift` marker) → `RECONCILE`; a skill handler not installed → `MISSING_TOOL`; an `AskUserQuestion` blocker → `BLOCKER`; a stage finished `failed` → `STAGE_FAILED`; a retried stage → `RETRY`; a `next`/`advance` payload carrying a `state_recovered_from_backup` marker → `STATE_ROLLBACK`. The call (best-effort — never let a logging failure abort the run):
 ```bash
-python3 ${CLAUDE_SKILL_DIR}/scripts/flow_friction.py \
+.flow/flow friction \
   --ticket "$KEY" --run-id "$RUN_ID" --stage "$STAGE" \
   --type <TYPE> --body "<one line: what snagged>" [--detail "<context>"] \
   --workspace-root . || true
@@ -113,9 +121,20 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/flow_friction.py \
 
 ## Work-stage opus retry (one-shot)
 
-When the `implement` stage returns `failed` on a run whose work subagents were sonnet-pinned — i.e. `model_resolve.py --workspace-root . --ticket "$KEY" --stage implement` prints a non-empty model (a full-lane run with the downshift active, which is the default) — re-dispatch `implement` EXACTLY ONCE with NO `model` pin (inherit the opus session) before recording the failure. Under per-subagent pinning a sonnet work-DNF returns control to the still-live opus session and marks the bead `blocked`/`in_progress` (not `open`), so the drain reappearance-trigger that feeds the whole-run sonnet→opus ladder never fires; this in-run retry closes that gap.
+When the `implement` stage returns `failed` and the orchestration context records
+`model_pin_applied=true`, re-dispatch `implement` EXACTLY ONCE with no model pin before
+recording the failure. That boolean means the adapter actually passed the non-empty
+value from `.flow/flow model --workspace-root . --ticket "$KEY" --stage implement` to
+the first spawn; a non-empty resolver result alone is insufficient. Under Claude Code
+per-subagent pinning, a sonnet work-DNF returns control to the still-live opus session
+and marks the bead `blocked`/`in_progress` (not `open`), so the drain
+reappearance-trigger that feeds the whole-run sonnet→opus ladder never fires; this
+in-run retry closes that gap. Codex never accepts the Claude pin, leaves
+`model_pin_applied=false`, and does not retry this branch with the same active model.
 
-- **Trigger:** `STATUS=failed` from the `implement` dispatch AND `model_resolve.py --stage implement` returns non-empty for this ticket AND no prior opus retry has run for `implement` this run (one-shot).
+- **Trigger:** `STATUS=failed` from the `implement` dispatch AND
+  `model_pin_applied=true` for that spawn AND no prior opus retry has run for
+  `implement` this run (one-shot).
 - **Action:** append a `RETRY` friction entry (`flow_friction.py ... --type RETRY --stage implement`), then re-run the implement subagent spawn (the SKILL.md `subagent:<type>` branch) OMITTING the `model=` argument so it inherits the opus session. Re-evaluate `STATUS` from the retry's report.
 - **Bound:** exactly one opus retry. It does NOT distinguish a sonnet-capacity DNF from a genuine code failure — any `implement` failure on a downshifted run buys one opus re-run of a stage that would otherwise dead-end. If the opus retry also returns `failed`, advance `implement --status failed` as normal (the dispatcher then blocks the run for `/flow recover`).
 - **Scope:** `implement` ONLY. The inline `review_loop` fix subagent is NOT retried this way — re-running it would restart the whole CI-wait+fix loop and its interaction with the §2 3-fix-cycle cap is undefined; a `review_loop` capacity failure rides its own cap.
@@ -125,23 +144,29 @@ When the `implement` stage returns `failed` on a run whose work subagents were s
 
 After the implement stage returns, if its report flags files it created/modified OUTSIDE the recorded `planned_files` (a package `__init__.py`, a `.gitignore` negation, etc.) that genuinely must ship, expand the set BEFORE `finish`. The commit stage reads `planned_files` from `baseline.json`, so a needed file missing there is silently dropped from the commit. To widen it, rewrite the `planned_files` array in `.flow/tickets/<KEY>.md` frontmatter with the full set — pass a bracketed TOML array literal, NOT a bare comma list (a bare `a,b,c` is stored as the string `"a,b,c"`, not an array):
 ```bash
-python3 ${CLAUDE_SKILL_DIR}/scripts/ticket_frontmatter.py update \
+.flow/flow frontmatter update \
   .flow/tickets/<KEY>.md \
   --set 'planned_files=["a/b.py", "c/d.py"]'
 ```
-then re-run the `record-baseline` command (do-loop step c) with the full comma-separated `--files` list. HEAD is unchanged (no commit has landed), so this only widens ownership and re-captures any modified tracked file's original blob. Confirm with `diff_extract.py capture-implement-diff --ticket <KEY> --ticket-dir <ticket-dir> --cwd .` + `git apply --cached --check --binary <ticket-dir>/implement.diff` that the patch carries every file and applies cleanly. (`capture-implement-diff` takes ONLY `--ticket`/`--ticket-dir`/`--cwd` — NOT `--stage`; passing `--stage` errors with `unrecognized arguments`.) Run the apply-check with a clean index: if anything is staged (e.g. via `git rm`), `git reset` first — the check validates against the index, and a pre-staged deletion fails with `does not exist in index` even though the patch is fine.
+then re-run the `record-baseline` command (do-loop step c) with the full comma-separated `--files` list. HEAD is unchanged (no commit has landed), so this only widens ownership and re-captures any modified tracked file's original blob. Confirm with `.flow/flow diff capture-implement-diff --ticket <KEY> --ticket-dir <ticket-dir> --cwd .` + `git apply --cached --check --binary <ticket-dir>/implement.diff` that the patch carries every file and applies cleanly. (`capture-implement-diff` takes ONLY `--ticket`/`--ticket-dir`/`--cwd`, NOT `--stage`; passing `--stage` errors with `unrecognized arguments`.) Run the apply-check with a clean index: if anything is staged (e.g. via `git rm`), `git reset` first. The check validates against the index, and a pre-staged deletion fails with `does not exist in index` even though the patch is fine.
 
 **Binary `planned_files` are orchestrator-copied here.** The implement subagent emits text only (`Write`/`Edit` produce UTF-8), so a binary deliverable in `planned_files` (an `.xlsx` template, an image, a compiled fixture) is one it flags but cannot produce — see the binary-deliverable callout in `references/stage-implement.md`. After implement returns, copy each flagged binary into the worktree from its source, post-implement and BEFORE the commit gate's `capture-implement-diff`. This is NOT the widening reconcile above: a planned binary is already in-set, so it needs no `planned_files` change — it is just a missing addition. Do NOT `git add` the copied file; `capture-implement-diff` runs `git add --intent-to-add` on untracked planned paths, so an untracked copy surfaces as an addition in `implement.diff`. (Copy order is otherwise unconstrained: the baseline blob comes from `git ls-files -s` over the index, which never holds an untracked copy, so a copied binary is never baked into the baseline even if a re-record runs.) Confirm with the same `capture-implement-diff` + `git apply --cached --check --binary` pre-flight that the binary lands in the patch.
 
 ## Timeout note (mvp hole)
 
 The descriptor's `timeout_min` is informational only.
-Agent tool does not accept a timeout argument; nothing in the prose enforces it.
-The prose-driven model has no live poller, so hung detection is post-hoc: `/flow recover` reads the lease state (after a stage returns, or on demand) to surface and take over a stalled run.
+Flow has no cross-harness subagent deadline API, so the prose does not enforce it.
+Hung detection is post-hoc: Flow recover reads lease state after a stage returns or on
+demand to surface and take over a stalled run.
 
 ### Spawned stage subagents run long commands in the foreground
 
-Because `timeout_min` is unenforceable and the Agent tool takes no timeout, a spawned stage subagent's own Bash-level `timeout` is the only remaining lever. A subagent dispatched for a `work`-role stage (the `implement` stage, and any `subagent:<type>` handler SKILL.md step d spawns) MUST run its tests and other long commands in the FOREGROUND, each a single `Bash` call with an explicit `timeout` <= 600000ms (the Bash ceiling), and MUST NEVER use `run_in_background` or `Monitor`. A spawned subagent does not receive background-task completions once its turn ends — those route to the top-level orchestrator session — so a backgrounded command leaves the subagent's turn hung "waiting for the notification" and the stage stalls until the orchestrator `SendMessage`-resumes it (FT-1328, observed twice). This is unconditional, not the headless turn-boundary fallback of `references/stage-review_loop.md` §1. Chunk any suite that would run long into per-path / per-module foreground calls (for this repo, the `scripts/tests` + `hooks/tests` split), which also keeps each call under the ~360s harness idle-watchdog (a distinct kill below the 600000ms ceiling — flow-rbr). `references/stage-implement.md` Step 5 carries the operative wording; `references/stage-review_loop.md` §1 is the mirrored bounded-foreground style.
+A work-role subagent MUST run tests and other long commands in the foreground with an
+explicit host-supported timeout, and MUST NOT start a background task or monitor it
+cannot own after returning. Completion routes to the top-level orchestration session
+on the supported adapters, so child-owned continuation can strand the stage. Chunk
+long suites by path/module to fit the host's command limit. `stage-implement.md` step 5
+has the operative wording; `stage-review_loop.md` section 1 mirrors the bounded style.
 
 ## Working-tree drift
 
@@ -151,7 +176,11 @@ Do not silently overwrite or `--force`.
 
 ## Inline-edit path discipline (not bg-only)
 
-Every inline write the orchestrator makes itself must target a worktree-absolute (or worktree-relative) path, never a main-checkout-absolute one. This is NOT a bg-only concern: a main-checkout-absolute path escapes the active worktree even in an ATTENDED run. The session cwd is inside the worktree, so a relative path is safe, but an absolute repo-root path still resolves to the main checkout's working tree and silently writes there, invisible until a later step (pytest) cannot find the file. The spots this governs are the inline-implement stage's `Edit`/`Write` (handler `inline`), the review_loop fix edits, the post-implement reconcile binary copies, and the orchestrator's own `.out` capture. Nothing catches the escaping write: the bg-isolation guard is satisfied the moment cwd sits inside the worktree and never validates the write TARGET (that gap is the bug), so the discipline rests on the author, not on a check. The **Backgrounded `--auto` run** section below states the same rule for the bg case (where the guard additionally forces the subagent fallback); this subsection generalizes it to attended inline edits rather than restating the mechanism (flow-cjgy).
+Every inline write targets a worktree-absolute path, or a relative path only on an
+operation whose explicit workdir is `run_root`; never rely on the session cwd. A
+main-checkout-absolute path escapes the run even when attended. This governs inline
+implement edits, review-loop fixes, binary copies, and `.out` capture. The host may not
+validate the target, so verify containment beneath `run_root` before writing.
 
 ## Inline-skill turn-continuation (never end the turn on a skill's output)
 
@@ -161,13 +190,22 @@ This governs INLINE handlers only. A `subagent:<type>` handler's skill runs insi
 
 Primary instance: the `create_pr` stage's step 2 — the mandatory-when-present humanize pass over the authored PR body. Witnessed twice: flow-gfz5, flow-qdal (friction `8f22583e41ee443fb6eb104b32bceece`). The `new` verb's Step 3 description-humanize is the same rule under a confirm gate.
 
-## Backgrounded `--auto` run (cwd pinned at repo root)
+## Rooted execution when cwd is reset or pinned
 
-A `claude --bg /flow <key> --auto` run has its session cwd pinned at the repository root, so `EnterWorktree(path=<worktree>)` refuses. Before the loop runs, `cd` the persistent Bash cwd into the seeded worktree once; then `--workspace-root .` resolves against the worktree for every dispatch call. The bg-isolation guard keys on cwd: spawned subagents keep their cwd pinned at the repo root, so the guard blocks their `Edit`/`Write` inside the linked worktree and they fall back to Bash/Python string-replace edits against absolute worktree paths (worktree-absolute only — a main-checkout-absolute path bypasses the guard and silently writes main). The orchestrator's own `Edit`/`Write` has been observed to work on absolute worktree paths once the `cd` moves its Bash cwd inside (flow-kykn/PR#296) — a single observation, possibly harness-version-specific; Bash/heredoc remains the documented safe-superset fallback. See `references/verb-spec.md` step 7 for the canonical explanation.
+Backgrounded Claude Code tasks, Codex command calls, and subagents may all begin from
+the original checkout regardless of a prior `cd`. Do not repair that with another
+stateful `cd`. The orchestration context's absolute `run_root` and `facade` remain
+authoritative: every command gets workdir `run_root`, every Flow invocation uses the
+absolute facade, and every read/edit/artifact path is under `run_root`. Every subagent
+prompt repeats those absolute paths and treats its inherited cwd as non-authoritative.
 
-### Orchestrator `.out` capture when Write is blocked
+### Orchestrator `.out` capture when the native writer is blocked
 
-The same guard blocks the orchestrator's own step-d capture of a subagent/skill response: `$TICKET_DIR/stages/<STAGE>.out` lives inside the worktree, so the Write tool SKILL.md step d prescribes is rejected. The orchestrator holds the response only as in-context text it must emit into a shell command — a heredoc is the mechanism, and the robustness lever is the delimiter, not the transport. Write the `.out` with a quoted heredoc using a long collision-safe sentinel:
+Prefer the adapter's exact file-write primitive at the absolute descriptor
+`output_path`. Some Claude Code background guards may reject that writer inside a
+linked worktree. In that narrow case, use a quoted heredoc from a command whose
+explicit workdir is `run_root`, writing the absolute artifact path with a long
+collision-safe sentinel:
 
 ```bash
 mkdir -p "$TICKET_DIR/stages"
@@ -176,6 +214,10 @@ cat > "$TICKET_DIR/stages/<STAGE>.out" <<'FLOW_OUT_SENTINEL_9f3a'
 FLOW_OUT_SENTINEL_9f3a
 ```
 
-then pass `--output-path "$TICKET_DIR/stages/<STAGE>.out"` to `advance` in step (e) exactly as the Write path would have. Two properties make this safe: the sentinel `FLOW_OUT_SENTINEL_9f3a` is long and random so it will not appear on a line by itself in the body (if it ever does, extend both sentinels and retry); and because the delimiter is **quoted** (`<<'...'`), the shell expands nothing inside the body — `$`, backticks, and `\` pass through literally, which is the exact safety the SKILL.md "NOT shell redirect — `"`/`\` would break it" parenthetical protects. `cat >` is the default writer; `python3 <<'FLOW_OUT_SENTINEL_9f3a' ...` is interchangeable (the delimiter and quoting are what matter, not the writer binary). This is the orchestrator analogue of the subagent string-replace fallback above; observed first on flow-495l/PR#233, where all four stage `.out` files were written via heredoc.
+then verify the file and pass its absolute path to `advance`. The sentinel must not
+occur on a line by itself in the body; extend it and retry if needed. Quoting the
+delimiter prevents shell expansion of `$`, backticks, and backslashes. Never use an
+unquoted heredoc, interpolate the response into a shell argument, or target a path
+outside `run_root`.
 
 **`code_review`'s taxonomy `.out`.** `code_review` is an inline stage that AUTHORS a finding-taxonomy `.out` — the `pr_body.md` analogue: inline-authored by the orchestrator, not a subagent/skill response capture — so the later `create_pr` stage can read its ask-user items. It uses the same quoted-heredoc mechanism above; see the code_review stage's reference doc for the section contract.

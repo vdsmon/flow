@@ -14,12 +14,12 @@ Two feedback sources feed it: the PR's review threads (the host's review-bot/hum
 
 **Numeric arg → a PR number.** Look the PR up by id, then derive the ticket from its branch:
 ```bash
-PR_JSON=$(python3 ${CLAUDE_SKILL_DIR}/scripts/forge_cli.py pr-info \
+PR_JSON=$(.flow/flow forge pr-info \
   --workspace-root . --pr "$ARG")
 ```
 `pr-info` reads the PR in ANY state (so a MERGED PR is detectable). `null` / exit 1 → no such PR; surface the resolution hint and stop. Read `head` (the PR's feature branch), `state`, and `number` from the JSON. Resolve the ticket key from that branch (the run is NOT checked out on it, so pass `--branch`, which skips the git call):
 ```bash
-KEY=$(python3 ${CLAUDE_SKILL_DIR}/scripts/branch_ticket.py \
+KEY=$(.flow/flow branch-ticket \
   --workspace-root . --branch "$HEAD_BRANCH")
 ```
 Exit 0 → `$KEY`. Exit 3 → the branch name carries no ticket key; surface + stop.
@@ -28,7 +28,7 @@ Exit 0 → `$KEY`. Exit 3 → the branch name carries no ticket key; surface + s
 ```bash
 BRANCH=$(git worktree list --porcelain | awk '/^branch /{print $2}' \
   | sed 's,^refs/heads/,,' | grep -E "^feat(ure)?/${KEY}([-/]|$)" | head -1)
-PR_JSON=$(python3 ${CLAUDE_SKILL_DIR}/scripts/forge_cli.py detect-pr \
+PR_JSON=$(.flow/flow forge detect-pr \
   --workspace-root . --branch "$BRANCH")
 ```
 `detect-pr` returns the OPEN PR for that branch (or `null`). Read `id` and `state`.
@@ -42,7 +42,7 @@ PR_JSON=$(python3 ${CLAUDE_SKILL_DIR}/scripts/forge_cli.py detect-pr \
 ### 3. Open the revision sub-run
 
 ```bash
-REV_JSON=$(python3 ${CLAUDE_SKILL_DIR}/scripts/dispatch_stage.py revise-open \
+REV_JSON=$(.flow/flow dispatch revise-open \
   --workspace-root . --ticket "$KEY")
 ```
 Capture from the stdout JSON: `rev_id`, `run_id`, `session_nonce` (→ `$NONCE`), `revision_dir`, `stages` (the fix-only subset). Exit codes:
@@ -58,15 +58,19 @@ printf '%s\n' "$INSTRUCTION" > "$REVISION_DIR/instruction.md"
 ```
 If no instruction was given, the revision's fix source is the PR's review threads (read by `.1`/`.4` via `forge_cli review-threads`), so write nothing here.
 
-### 5. Locate or re-materialize the worktree, then enter it
+### 5. Locate or re-materialize the worktree, then bind it
 
 ```bash
-WT_JSON=$(python3 ${CLAUDE_SKILL_DIR}/scripts/flow_worktree.py locate-or-reseed \
+WT_JSON=$(.flow/flow worktree locate-or-reseed \
   --ticket "$KEY" --branch "$BRANCH" --main-root .)
 ```
-Read `worktree` and `reseeded`. `reseeded: true` means the original worktree was externally lost and got re-materialized from the PR branch (note it for the user — the revision applies its fixes on a fresh checkout of the PR head). Then `EnterWorktree(path=<worktree>)` to switch this session in.
-
-(In a backgrounded run whose cwd is pinned at the repo root, `EnterWorktree` refuses; `cd` the Bash cwd into the worktree once instead, exactly as the backgrounded-`--auto` note in `references/verb-do.md` describes. The same worktree-isolation caveats for `Write`/`Edit` and `.out` capture apply.)
+Read the absolute `worktree` and `reseeded`. `reseeded: true` means the original
+worktree was externally lost and re-materialized from the PR branch; note that for
+the user. Immediately set `run_root` to `worktree` and `facade` to the absolute
+`<run_root>/.flow/flow`. Every later command uses explicit workdir `run_root`, and
+every read/edit/artifact uses rooted paths. Claude Code may additionally call
+`EnterWorktree(path=<run_root>)`, but a failed or unavailable native switch is not
+repaired with `cd`; the absolute binding is authoritative.
 
 ### 5a. Lavish revise triage board (interactive runs)
 
@@ -76,7 +80,7 @@ command -v node && command -v npx   # leg (b): both must resolve
 ```
 Fetch the threads capture-then-check through the forge seam (read `$?` first — piping `review-threads` past its exit code reads a flake as zero threads):
 ```bash
-RAW=$(python3 ${CLAUDE_SKILL_DIR}/scripts/forge_cli.py --workspace-root . review-threads --pr "$PR_ID"); rc=$?
+RAW=$(.flow/flow forge --workspace-root . review-threads --pr "$PR_ID"); rc=$?
 ```
 `rc != 0`, a `{"supported": false}` (a host with no thread support), or zero unresolved threads with no `instruction.md` → `Lavish: skipped — <reason>`, and step 6 runs as today (no `dispositions.json` is written, so the floor applies). Otherwise open the board per the `## Revision triage board (/flow revise)` section of `references/review-packet.md` and WAIT for the first poll return — the first batch is what seeds the fix set. Persist each triage batch whole (the step-4 persistence precedent):
 ```bash
@@ -91,12 +95,12 @@ Drive the dispatcher state machine exactly as the do-loop skeleton in `SKILL.md`
 When `$REVISION_DIR/dispositions.json` exists (a step-5a board opened), the implement and review_loop stages consume it as the fix set — their reference docs carry the rules — and the board stays open across the loop: never re-open it or re-arm the poll, it live-reloads in place per round.
 
 ```bash
-DESCRIPTOR=$(python3 ${CLAUDE_SKILL_DIR}/scripts/dispatch_stage.py next \
+DESCRIPTOR=$(.flow/flow dispatch next \
   --workspace-root . --ticket "$KEY" --revision "$REV_ID" --session-nonce "$NONCE")
 ```
 Then per descriptor: run the `records_diff_baseline` pre-hook when the role calls for it, dispatch the stage by `handler_type` (inline / subagent / skill / none), capture the `.out`, and advance:
 ```bash
-DESCRIPTOR=$(python3 ${CLAUDE_SKILL_DIR}/scripts/dispatch_stage.py advance \
+DESCRIPTOR=$(.flow/flow dispatch advance \
   --workspace-root . --ticket "$KEY" --revision "$REV_ID" --session-nonce "$NONCE" \
   --stage "$STAGE" --status "$STATUS" [--output-path "$OUTPUT_PATH"])
 ```
@@ -108,7 +112,7 @@ Friction during the loop logs against the revision the same way (`flow_friction.
 
 When the loop exits — clean done (`{"done": true}`), blocked, drift, or lost lease — release the revision lease:
 ```bash
-python3 ${CLAUDE_SKILL_DIR}/scripts/dispatch_stage.py release \
+.flow/flow dispatch release \
   --workspace-root . --ticket "$KEY" --revision "$REV_ID" --session-nonce "$NONCE"
 ```
 `release` is a no-op when the lease is not ours, so it is safe to call unconditionally (do not call it on the step-3 exit-3/exit-4 abort paths — nothing was acquired). Then surface the updated PR's URL as the highlighted closing block, same rendering rules as `references/verb-do.md` (the PR is the deliverable, updated in place).

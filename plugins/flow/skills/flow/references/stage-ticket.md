@@ -20,7 +20,7 @@ Subsequent stages depend on `<ticket-dir>/ticket.json` being present.
    The dispatcher already passed it in its descriptor, but verify it is non-empty.
    If empty:
    ```bash
-   ${CLAUDE_SKILL_DIR}/scripts/branch_ticket.py --workspace-root .
+   .flow/flow branch-ticket --workspace-root .
    ```
    Exit 3 (no match) → abort stage with status=failed;
    the user must rerun with an explicit `--ticket` arg.
@@ -31,7 +31,7 @@ Subsequent stages depend on `<ticket-dir>/ticket.json` being present.
 
    **REST fallback** — when the MCP is absent (a backgrounded / headless run), or for any workspace where it is unavailable:
    ```bash
-   ${CLAUDE_SKILL_DIR}/scripts/tracker_cli.py \
+   .flow/flow tracker \
      --workspace-root . \
      get --key <KEY> > <ticket-dir>/ticket.json
    ```
@@ -41,7 +41,7 @@ Subsequent stages depend on `<ticket-dir>/ticket.json` being present.
 
 2b. **Download ticket attachments** so the plan / implement stages can see screenshots, specs, and sample files. When `ticket.json` lists any under `attachments` (Jira; beads has none):
    ```bash
-   ${CLAUDE_SKILL_DIR}/scripts/tracker_cli.py \
+   .flow/flow tracker \
      --workspace-root . \
      download-attachments --key <KEY> --out <ticket-dir>/attachments
    ```
@@ -50,7 +50,7 @@ Subsequent stages depend on `<ticket-dir>/ticket.json` being present.
 
 3. Stamp ticket frontmatter `status` + `started_at`:
    ```bash
-   ${CLAUDE_SKILL_DIR}/scripts/ticket_frontmatter.py update \
+   .flow/flow frontmatter update \
      .flow/tickets/<KEY>.md \
      --set ticket=<KEY> \
      --set status=in_progress \
@@ -70,7 +70,7 @@ Subsequent stages depend on `<ticket-dir>/ticket.json` being present.
 
    **MCP-first:** when the Atlassian MCP is available, transition via it (`transitionJiraIssue`) — auth-fresh, the primary path in an attached run. **REST fallback** (a backgrounded / headless run, or beads):
    ```bash
-   ${CLAUDE_SKILL_DIR}/scripts/tracker_cli.py \
+   .flow/flow tracker \
      --workspace-root . \
      transition --key <KEY> --to-state in_progress
    ```
@@ -78,14 +78,14 @@ Subsequent stages depend on `<ticket-dir>/ticket.json` being present.
    - Exit 0 → claimed; continue.
    - Exit 3 → no transition to `in_progress` available. This is **ambiguous**: the ticket is already `in_progress` (a resumed run) or the tracker has no such state (benign), OR the bead is **terminal** (closed/done/cancelled) and the only transition left is `to open`. The benign case continues silently; a terminal bead must NOT — that is the flow-d6gq leak (an `--auto` run bootstrapped a CLOSED bead, the close having landed between spec-fetch and here, and this exit-3 swallowed it). Disambiguate by reading the authoritative status:
      ```bash
-     ${CLAUDE_SKILL_DIR}/scripts/tracker_cli.py \
+     .flow/flow tracker \
        --workspace-root . \
        state --key <KEY>
      ```
      Read the printed `normalized`. If it is `done` or `cancelled` → the bead is terminal; **abort the stage with status=failed** (the bead is closed — there is nothing to implement; it likely closed mid-run, e.g. a parent epic merged). Surface it + the `/flow recover <KEY>` hint. Otherwise (`in_progress` / `open` / no-such-state, or the `state` read itself errors) → the desired end state or a no-op tracker; continue silently.
    - Exit 1 / 2 / 4 / 5 → log a one-line warning naming `failure_kind` + `failure_detail` (from the printed JSON, else the stderr message), append one friction entry, and continue. Do **NOT** mark the stage failed.
      ```bash
-     ${CLAUDE_SKILL_DIR}/scripts/flow_friction.py \
+     .flow/flow friction \
        --ticket <KEY> --run-id <run_id> --stage ticket \
        --type RECONCILE --severity minor \
        --body "ticket-stage backend claim to in_progress did not apply" \
@@ -107,7 +107,7 @@ Subsequent stages depend on `<ticket-dir>/ticket.json` being present.
   cause is fixed, `/flow recover <KEY>` → `retry --stage ticket`.
 - Exit 2/3 from `ticket_frontmatter.py` → abort status=failed; once the
   frontmatter input is fixed, `/flow recover <KEY>` → `retry --stage ticket`.
-- `tracker_cli.py transition` exit 3 in step 3b → ambiguous: read `tracker_cli.py state --key <KEY>` and check `normalized`. `done`/`cancelled` → terminal bead, abort status=failed (`/flow recover <KEY>`). Otherwise (`in_progress` / no such state) → continue silently (not an error).
+- `.flow/flow tracker transition` exit 3 in step 3b → ambiguous: read `.flow/flow tracker state --key <KEY>` and check `normalized`. `done`/`cancelled` → terminal bead, abort status=failed (`/flow recover <KEY>`). Otherwise (`in_progress` / no such state) → continue silently (not an error).
 - `tracker_cli.py transition` exit 1 / 2 / 4 / 5 in step 3b → best-effort claim; warn + append a `RECONCILE` friction entry + continue. Never fails the stage.
 
 ## Skip conditions
@@ -117,7 +117,7 @@ This stage always runs in the bare workspace pipeline.
 
 ## Note: no `lint_ticket` HARD GATE
 
-Other stages call `${CLAUDE_SKILL_DIR}/scripts/lint_ticket.py --stage <name> --ticket-path .flow/tickets/<KEY>.md` as a HARD GATE before doing any work.
+Other stages call `.flow/flow lint-ticket --stage <name> --ticket-path .flow/tickets/<KEY>.md` as a HARD GATE before doing any work.
 The `ticket` stage is the exception: this stage CREATES the ticket frontmatter file.
 Running `lint_ticket` here would always fail (universal `ticket` + `status` fields don't exist yet because step 3 is what writes them).
 Future stages can safely lint because step 3 leaves a valid frontmatter behind.
