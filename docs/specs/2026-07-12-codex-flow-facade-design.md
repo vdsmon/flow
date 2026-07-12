@@ -1,6 +1,6 @@
 # Codex-first Flow facade hardening
 
-Status: approved direction, written specification pending final review
+Status: approved
 Date: 2026-07-12
 
 ## Context
@@ -78,7 +78,8 @@ FlowExecutionContext
   task_root       absolute checkout where the Flow request began
   run_root        absolute checkout that currently owns the run
   facade          <run_root>/.flow/flow
-  capabilities    selected harness capability profile
+  harness         claude-code | codex | generic
+  capabilities    supported operation profile selected from the matrix below
 ```
 
 These are logical values, not shell variables. A one-shot `export` or `cd` is never
@@ -96,7 +97,8 @@ From that point onward:
   `run_root`;
 - every raw git, test, build, and forge command receives `run_root` as cwd;
 - every subagent prompt includes `Workspace root`, `Skill root`, `Ticket dir`,
-  `Reference path`, and `Artifact path` as absolute values.
+  `Reference path`, and `Artifact path` as absolute values, plus its `Harness`
+  identity and the same-call selector rule.
 
 `EnterWorktree` remains a Claude Code ergonomic optimization. Correctness cannot
 depend on it or on any persistent shell cwd.
@@ -128,6 +130,22 @@ Capability loss is explicit. Unsupported model pinning means inherit the current
 model; it never emits a malformed Codex spawn. A missing subagent may fall back inline
 only where the stage protocol allows loss of isolation. The review loop uses its
 existing bounded poll when no monitor primitive exists.
+
+Harness selection is explicit per invocation, never host auto-detection or a
+persistent export. Codex prefixes every direct init, repair, and facade call with
+`FLOW_HARNESS=codex`; Claude Code may prefix `FLOW_HARNESS=claude-code` or leave it
+unset for backward-compatible Claude roots; a generic adapter prefixes
+`FLOW_HARNESS=generic`. The only accepted non-empty values are `codex`, `claude-code`,
+and `generic`; any other value fails clearly.
+
+This selector also isolates bundle discovery on machines with both hosts installed.
+`codex` searches only `${CODEX_HOME:-~/.codex}/plugins` (including its cache) and never
+Claude, `~/plugins`, or repository plugin roots. `claude-code` and the unset default
+search only Claude roots. `generic` searches only `FLOW_BUNDLE_SEARCH_ROOTS`, and no
+bundle roots when that override is absent. Thus a dual-host installation cannot
+silently load a handler bundle from the wrong harness.
+The same selector governs version-stable cache-source resolution, so cache stabilization
+cannot cross into another host's roots either.
 
 ### 4. Native Codex packaging
 
@@ -260,6 +278,9 @@ it does not scan.
 - Verify Codex native-Plan and soft-gate paths both stop before bootstrap until the
   matching approval.
 - Verify unsupported model routing inherits without a malformed tool call.
+- Verify each explicit harness selector searches only its own bundle roots, the unset
+  selector preserves Claude compatibility, generic has no implicit roots, and an
+  unknown selector fails.
 - Exercise bounded CI polling without `Monitor`.
 - Verify a candidate worktree outside writable roots refuses before lease acquisition.
 

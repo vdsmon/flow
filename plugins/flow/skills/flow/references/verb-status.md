@@ -5,10 +5,10 @@ Reports run state, stage progress, the lease, and any drift / attention flags.
 
 1. Run:
    ```bash
-   python3 ${CLAUDE_SKILL_DIR}/scripts/status.py [--ticket <KEY>] \
+   .flow/flow status [--ticket <KEY>] \
      --workspace-root .
    ```
-   Pass `--ticket <KEY>` when `$ARGUMENTS` had a positional; otherwise run bare (it lists every run in the workspace).
+   Pass `--ticket <KEY>` when adapter-supplied `arguments` had a positional; otherwise run bare (it lists every run in the workspace).
    Add `--json` only when a machine consumer needs the raw payload; default is the human table.
 
 2. Handle the exit:

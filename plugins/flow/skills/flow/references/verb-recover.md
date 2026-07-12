@@ -3,17 +3,17 @@
 `/flow recover [<ticket>]` inspects a run for stuck leases, failed stages, and config drift, then drives the matching remediation. Routed from SKILL.md's argument table.
 It does not run stages; after a successful fix it hands back to `/flow do`.
 
-1. Resolve the ticket. If `$ARGUMENTS` had a positional, use it. Else:
+1. Resolve the ticket. If adapter-supplied `arguments` had a positional, use it. Else:
    ```bash
-   KEY=$(python3 ${CLAUDE_SKILL_DIR}/scripts/branch_ticket.py --workspace-root .)
+   KEY=$(.flow/flow branch-ticket --workspace-root .)
    ```
    Exit 0 → use `$KEY`.
-   Exit 3 → no key on branch; ask via AskUserQuestion.
+   Exit 3 → no key on branch; use the adapter's user-input capability.
    Exit 1 → workspace not initialized; abort with the `/flow init` hint.
 
 2. Detect:
    ```bash
-   python3 ${CLAUDE_SKILL_DIR}/scripts/recover.py detect \
+   .flow/flow recover detect \
      --ticket "$KEY" --workspace-root .
    ```
    Surface the report.
@@ -21,12 +21,12 @@ It does not run stages; after a successful fix it hands back to `/flow do`.
    It also carries `holder_liveness`, an advisory best-effort probe of the recorded session process: `alive` is true/false, or null when the holder is cross-host, unrecorded, or the probe failed. Treat it as a hint only, a live result can be a reused pid, and it never gates reclaim; `takeover --force` stays the only reclaim path.
 
 3. Drive remediation from the report + the user's intent.
-   When a step is destructive, confirm with AskUserQuestion first.
+   When a step is destructive, confirm through the adapter's user-input capability first.
 
    - **Stale / expired lease** — `lease.state` is `expired_foreign` or
      `expired_reboot_clearable` (or the user explicitly wants the ticket):
      ```bash
-     python3 ${CLAUDE_SKILL_DIR}/scripts/recover.py takeover \
+     .flow/flow recover takeover \
        --ticket "$KEY" --workspace-root .
      ```
      Confirm first: takeover clears the run lock and resets `in_progress` stages back to `pending`.
@@ -37,10 +37,10 @@ It does not run stages; after a successful fix it hands back to `/flow do`.
      `lease.classify` is unchanged: no automatic pid-liveness, the force is the only bypass.
 
    - **Failed stage** — the report names a stage in `failed`.
-     Offer the three choices via AskUserQuestion:
-     - retry: `recover.py retry --stage <S> --ticket "$KEY" --workspace-root .`
-     - skip: `recover.py skip --stage <S> --ticket "$KEY" --workspace-root .`
-     - abort: `recover.py abort --ticket "$KEY" --workspace-root .`
+     Offer the three choices through the adapter's user-input capability:
+     - retry: `.flow/flow recover retry --stage <S> --ticket "$KEY" --workspace-root .`
+     - skip: `.flow/flow recover skip --stage <S> --ticket "$KEY" --workspace-root .`
+     - abort: `.flow/flow recover abort --ticket "$KEY" --workspace-root .`
        abort classifies the lease under the run flock and refuses (exit 1) when it is `live` — releasing a live lease would de-mutex a sibling run that re-acquired the ticket. To release a lease that still looks live anyway (the run is genuinely wedged), add `--force`; this is operator-explicit, so confirm first.
 
    - **Config / version drift** — `snapshot.ok` is false (workspace.toml,
@@ -50,8 +50,8 @@ It does not run stages; after a successful fix it hands back to `/flow do`.
      code; the run aborts fail-closed rather than silently executing swapped
      machinery. Recovery is the same for every component:
      - accept the current config:
-       `recover.py reload-snapshot --ticket "$KEY" --workspace-root .`
-     - abort: `recover.py abort --ticket "$KEY" --workspace-root .`
+       `.flow/flow recover reload-snapshot --ticket "$KEY" --workspace-root .`
+     - abort: `.flow/flow recover abort --ticket "$KEY" --workspace-root .`
 
 4. After a successful recover action, tell the user to rerun
    `/flow do <KEY>`.

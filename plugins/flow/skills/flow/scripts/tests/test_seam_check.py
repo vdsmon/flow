@@ -81,6 +81,174 @@ def test_find_invocations_handles_bare_form() -> None:
     assert "--key" in invs[0].flags
 
 
+def test_find_invocations_handles_harness_neutral_skill_root_placeholder() -> None:
+    text = 'python3 "<skill-root>/scripts/init.py" --config "$ANSWERS"'
+    invs = seam_check.find_invocations("t.md", text)
+    assert len(invs) == 1
+    assert invs[0].script == "init.py"
+    assert invs[0].flags == ["--config"]
+
+
+def test_find_facade_invocation_resolves_allowlisted_command() -> None:
+    text = ".flow/flow dispatch advance --ticket X --status completed"
+    invs = seam_check.find_facade_invocations("t.md", text)
+    assert len(invs) == 1
+    assert invs[0].facade_command == "dispatch"
+    assert invs[0].script == "dispatch_stage.py"
+    assert [p for p in seam_check.validate(invs[0]) if p.level == "ERROR"] == []
+
+
+def test_find_facade_invocation_rejects_command_outside_allowlist() -> None:
+    inv = seam_check.find_facade_invocations("t.md", ".flow/flow arbitrary-script --foo")[0]
+    problems = seam_check.validate(inv)
+    assert len(problems) == 1
+    assert problems[0].level == "ERROR"
+    assert "not allowlisted" in problems[0].msg
+
+
+def test_facade_missing_command_is_error() -> None:
+    invocations = seam_check.find_facade_invocations("t.md", ".flow/flow")
+    assert len(invocations) == 1
+    errors = [
+        problem for problem in seam_check.validate(invocations[0]) if problem.level == "ERROR"
+    ]
+    assert len(errors) == 1
+    assert "missing a command" in errors[0].msg
+
+
+def test_facade_path_traversal_command_is_error() -> None:
+    invocations = seam_check.find_facade_invocations("t.md", ".flow/flow ../../arbitrary.py")
+    assert len(invocations) == 1
+    errors = [
+        problem for problem in seam_check.validate(invocations[0]) if problem.level == "ERROR"
+    ]
+    assert len(errors) == 1
+    assert "not allowlisted" in errors[0].msg
+    assert "../../arbitrary.py" in errors[0].msg
+
+
+def test_facade_uppercase_command_is_error() -> None:
+    invocations = seam_check.find_facade_invocations("t.md", ".flow/flow Dispatch next")
+    assert len(invocations) == 1
+    errors = [
+        problem for problem in seam_check.validate(invocations[0]) if problem.level == "ERROR"
+    ]
+    assert len(errors) == 1
+    assert "not allowlisted" in errors[0].msg
+    assert "Dispatch" in errors[0].msg
+
+
+def test_facade_narrative_name_is_not_a_missing_command() -> None:
+    text = "The `.flow/flow` executable is the post-init command seam."
+    assert seam_check.find_facade_invocations("t.md", text) == []
+
+
+def test_facade_inline_span_does_not_absorb_later_command_flags() -> None:
+    text = (
+        "Run `.flow/flow diff capture-implement-diff --ticket FT-1 --cwd .` "
+        "then `git apply --cached --check patch.diff`."
+    )
+    invocation = seam_check.find_facade_invocations("t.md", text)[0]
+    assert "--ticket" in invocation.flags
+    assert "--cwd" in invocation.flags
+    assert "--cached" not in invocation.flags
+    assert "--check" not in invocation.flags
+
+
+def test_facade_unknown_nested_subcommand_is_error() -> None:
+    inv = seam_check.find_facade_invocations(
+        "t.md", ".flow/flow dispatch nxt --workspace-root . --ticket FT-1"
+    )[0]
+    errors = [problem for problem in seam_check.validate(inv) if problem.level == "ERROR"]
+    assert len(errors) == 1
+    assert "unknown subcommand nxt" in errors[0].msg
+
+
+def test_facade_flag_valid_on_another_subcommand_is_error() -> None:
+    inv = seam_check.find_facade_invocations(
+        "t.md", ".flow/flow dispatch next --ticket FT-1 --status completed"
+    )[0]
+    errors = [problem for problem in seam_check.validate(inv) if problem.level == "ERROR"]
+    assert len(errors) == 1
+    assert "--status" in errors[0].msg
+    assert "not for this subcommand" in errors[0].msg
+
+
+def test_facade_valid_subcommand_token_in_argument_value_cannot_mask_typo() -> None:
+    inv = seam_check.find_facade_invocations(
+        "t.md", ".flow/flow dispatch nxt --stage next --ticket FT-1"
+    )[0]
+    errors = [problem for problem in seam_check.validate(inv) if problem.level == "ERROR"]
+    assert len(errors) == 1
+    assert "unknown subcommand nxt" in errors[0].msg
+    assert inv.subcommand is None
+
+
+def test_facade_subcommand_flag_before_subcommand_is_error() -> None:
+    inv = seam_check.find_facade_invocations(
+        "t.md", ".flow/flow dispatch --workspace-root . next --ticket FT-1"
+    )[0]
+    errors = [problem for problem in seam_check.validate(inv) if problem.level == "ERROR"]
+    assert any(
+        "--workspace-root" in problem.msg and "before subcommand" in problem.msg
+        for problem in errors
+    )
+
+
+def test_find_facade_invocation_recognizes_quoted_absolute_path() -> None:
+    text = '"/tmp/work tree/.flow/flow" dispatch next --ticket FT-1'
+    invs = seam_check.find_facade_invocations("t.md", text)
+    assert len(invs) == 1
+    assert invs[0].facade_command == "dispatch"
+    assert invs[0].script == "dispatch_stage.py"
+    assert [problem for problem in seam_check.validate(invs[0]) if problem.level == "ERROR"] == []
+
+
+def test_facade_global_flag_before_subcommand_remains_valid() -> None:
+    inv = seam_check.find_facade_invocations(
+        "t.md", ".flow/flow tracker --workspace-root . get --key FT-1"
+    )[0]
+    assert [problem for problem in seam_check.validate(inv) if problem.level == "ERROR"] == []
+    assert inv.subcommand == "get"
+
+
+def test_direct_launcher_repair_is_parsed_from_flow_skill_variable() -> None:
+    text = 'python3 "${FLOW_SKILL_DIR}/scripts/flow_launcher.py" --workspace-root .'
+    invs = seam_check.find_invocations("t.md", text)
+    assert len(invs) == 1
+    assert invs[0].script == "flow_launcher.py"
+
+
+def test_stale_direct_invocation_rejected_outside_bootstrap_allowlist() -> None:
+    stale = seam_check.find_invocations(
+        "t.md", "${CLAUDE_SKILL_DIR}/scripts/dispatch_stage.py next --ticket X"
+    )
+    allowed = seam_check.find_invocations(
+        "t.md",
+        "${CLAUDE_SKILL_DIR}/scripts/init.py --reconfigure\n"
+        "${FLOW_SKILL_DIR}/scripts/flow_launcher.py --workspace-root .",
+    )
+    assert len(seam_check.stale_direct_invocation_problems(stale)) == 1
+    assert seam_check.stale_direct_invocation_problems(allowed) == []
+
+
+def test_bare_script_invocation_is_rejected_as_a_facade_escape() -> None:
+    invocations = seam_check.find_bare_script_invocations(
+        "t.md",
+        "Retry with `recover.py retry --stage implement --ticket FT-1`.",
+    )
+    assert len(invocations) == 1
+    assert invocations[0].script == "recover.py"
+    problems = seam_check.stale_direct_invocation_problems(invocations)
+    assert len(problems) == 1
+    assert "use .flow/flow" in problems[0].msg
+
+
+def test_bare_script_filename_without_an_executable_surface_is_ignored() -> None:
+    text = "The dispatcher (`dispatch_stage.py`) owns state; `recover.py` is its recovery peer."
+    assert seam_check.find_bare_script_invocations("t.md", text) == []
+
+
 def test_surface_of_real_script_has_subcommands_and_flags() -> None:
     surface = seam_check.surface_of("dispatch_stage.py")
     assert surface is not None
@@ -204,6 +372,184 @@ def test_slash_phantom_flag_in_fenced_block_is_error() -> None:
 def test_live_docs_are_green() -> None:
     """The real SKILL.md + references/ must have zero prose<->CLI seam errors."""
     assert seam_check.main([]) == 0
+
+
+def test_live_router_carries_rooted_cross_harness_context() -> None:
+    skill = (seam_check.SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
+    harness = (seam_check.SKILL_ROOT / "references" / "harness.md").read_text(encoding="utf-8")
+    spec = (seam_check.SKILL_ROOT / "references" / "verb-spec.md").read_text(encoding="utf-8")
+
+    for field in ("arguments", "skill_root", "task_root", "run_root", "facade", "capabilities"):
+        assert field in skill
+    for adapter in ("Claude Code", "Codex", "Generic fallback"):
+        assert adapter in harness
+    for prompt_field in (
+        "Workspace root:",
+        "Skill root:",
+        "Ticket dir:",
+        "Reference path:",
+        "Artifact path:",
+    ):
+        assert prompt_field in skill
+    assert "result.worktree" in spec
+    assert "native switch is not repaired with `cd`" in spec
+
+
+def test_live_portable_references_use_adapter_capabilities_not_claude_tool_calls() -> None:
+    portable = [
+        seam_check.SKILL_ROOT / "references" / "verb-new.md",
+        seam_check.SKILL_ROOT / "references" / "verb-recall.md",
+        seam_check.SKILL_ROOT / "references" / "verb-slice.md",
+        seam_check.SKILL_ROOT / "references" / "verb-spec.md",
+        seam_check.SKILL_ROOT / "references" / "stage-plan.md",
+    ]
+    text = "\n".join(path.read_text(encoding="utf-8") for path in portable)
+    for claude_only_instruction in (
+        "Use `AskUserQuestion`",
+        "one `AskUserQuestion`",
+        "via `AskUserQuestion`",
+        "then call `advisor()`",
+        "a `ToolSearch` for `advisor`",
+        "a `general-purpose` `Agent`",
+    ):
+        assert claude_only_instruction not in text
+    assert "adapter's user-input capability" in text
+    assert "fresh independent agent" in text
+
+
+def test_live_post_init_prose_has_no_bare_script_invocation() -> None:
+    escaped = []
+    for doc in seam_check.docs_to_check():
+        text = doc.read_text(encoding="utf-8")
+        escaped.extend(seam_check.find_bare_script_invocations(doc.name, text))
+    assert escaped == []
+
+
+def test_live_codex_retry_requires_a_model_pin_that_was_actually_applied() -> None:
+    skill = (seam_check.SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
+    do_ref = (seam_check.SKILL_ROOT / "references" / "verb-do.md").read_text(encoding="utf-8")
+    assert "model_pin_applied" in skill
+    assert "model_pin_applied" in do_ref
+    assert "Codex" in do_ref
+    assert "does not retry" in do_ref
+
+
+def test_live_init_carries_an_absolute_answers_path_across_calls() -> None:
+    init_ref = (seam_check.SKILL_ROOT / "references" / "verb-init.md").read_text(encoding="utf-8")
+    assert "answers_path" in init_ref
+    assert "<absolute task_root>" in init_ref
+    assert "ANSWERS=$(mktemp" not in init_ref
+    assert '"$(pwd)"' not in init_ref
+
+
+def test_live_harness_selector_is_call_local_and_explicit() -> None:
+    paths = [
+        seam_check.SKILL_ROOT / "SKILL.md",
+        seam_check.SKILL_ROOT / "references" / "harness.md",
+        seam_check.SKILL_ROOT / "references" / "verb-init.md",
+    ]
+    text = "\n".join(path.read_text(encoding="utf-8") for path in paths)
+    assert "FLOW_HARNESS" in text
+    for value in ("codex", "claude-code", "generic"):
+        assert value in text
+    assert "export FLOW_HARNESS" not in text
+    assert "same command" in text or "call-local" in text
+
+
+def test_live_portable_path_never_depends_on_persistent_cd_or_automatic_spill_recovery() -> None:
+    portable_docs = [
+        seam_check.SKILL_ROOT / "SKILL.md",
+        seam_check.SKILL_ROOT / "references" / "harness.md",
+        seam_check.SKILL_ROOT / "references" / "verb-spec.md",
+        seam_check.SKILL_ROOT / "references" / "verb-do.md",
+        seam_check.SKILL_ROOT / "references" / "verb-revise.md",
+    ]
+    text = "\n".join(path.read_text(encoding="utf-8") for path in portable_docs)
+    assert "cd the persistent Bash cwd" not in text
+    assert "cd into the worktree dir in the persistent shell" not in text
+    assert "Only the off-CC AGENTS.md entry point passes `--recover-spill`" not in text
+    assert "Do not pass `--recover-spill` automatically" in text
+
+
+# --- generated managed AGENTS guidance --------------------------------------
+
+
+_VALID_AGENTS_STANZA = '''
+_AGENTS_STANZA = """<!-- flow:begin -->
+A generic adapter supplies the absolute `FLOW_SKILL_DIR`; do not search for it.
+Read `$FLOW_SKILL_DIR/SKILL.md` and `$FLOW_SKILL_DIR/references/harness.md`.
+Map text after `/flow` to request `arguments`.
+Select `codex`, `claude-code`, or `generic`; set `FLOW_HARNESS=<identity>` in the same
+call as each Flow command, never as an export.
+Perform a read-only spec, then stop until the user approves.
+After approval, adopt the absolute worktree as the run root and its `.flow/flow` facade.
+Harness calls need an explicit workdir because a prior `cd` is never persistent state.
+Never relocate dirty main-checkout files; recovery requires proven agent provenance.
+<!-- flow:end -->
+"""
+'''
+
+
+def test_managed_agents_guidance_accepts_semantic_contract(tmp_path) -> None:
+    init_path = tmp_path / "init.py"
+    init_path.write_text(_VALID_AGENTS_STANZA, encoding="utf-8")
+    assert seam_check.managed_agents_guidance_drift(init_path) == []
+
+
+def test_managed_agents_guidance_is_not_satisfied_by_any_agents_mention(tmp_path) -> None:
+    init_path = tmp_path / "init.py"
+    init_path.write_text(
+        "# AGENTS.md should mention FLOW_SKILL_DIR, SKILL.md, "
+        "references/harness.md, and .flow/flow\n",
+        encoding="utf-8",
+    )
+    drift = seam_check.managed_agents_guidance_drift(init_path)
+    assert any("_AGENTS_STANZA" in detail for detail in drift)
+
+
+def test_managed_agents_guidance_requires_stable_markers(tmp_path) -> None:
+    init_path = tmp_path / "init.py"
+    init_path.write_text(
+        _VALID_AGENTS_STANZA.replace("<!-- flow:end -->", "<!-- flow:done -->"),
+        encoding="utf-8",
+    )
+    drift = seam_check.managed_agents_guidance_drift(init_path)
+    assert any("managed markers" in detail for detail in drift)
+
+
+def test_managed_agents_guidance_reports_missing_contract(tmp_path) -> None:
+    init_path = tmp_path / "init.py"
+    init_path.write_text(
+        _VALID_AGENTS_STANZA.replace(
+            "Read `$FLOW_SKILL_DIR/SKILL.md` and `$FLOW_SKILL_DIR/references/harness.md`.\n", ""
+        ),
+        encoding="utf-8",
+    )
+    drift = seam_check.managed_agents_guidance_drift(init_path)
+    assert any("router and harness guidance" in detail for detail in drift)
+
+
+def test_managed_agents_guidance_requires_call_local_harness_selection(tmp_path) -> None:
+    init_path = tmp_path / "init.py"
+    init_path.write_text(
+        _VALID_AGENTS_STANZA.replace(
+            "Select `codex`, `claude-code`, or `generic`; set `FLOW_HARNESS=<identity>` "
+            "in the same\ncall as each Flow command, never as an export.\n",
+            "",
+        ),
+        encoding="utf-8",
+    )
+    drift = seam_check.managed_agents_guidance_drift(init_path)
+    assert any("harness selector" in detail for detail in drift)
+
+
+def test_main_fails_on_managed_agents_guidance_drift(monkeypatch) -> None:
+    monkeypatch.setattr(
+        seam_check,
+        "managed_agents_guidance_drift",
+        lambda *args, **kwargs: ["missing facade guidance"],
+    )
+    assert seam_check.main([]) == 1
 
 
 def test_module_md_covers_all_live_scripts() -> None:
@@ -757,6 +1103,11 @@ def test_registry_roles_unions_arrays(tmp_path) -> None:
 def test_prose_role_citation_membership_idiom() -> None:
     text = 'if `descriptor.roles` includes `"records_diff_baseline"`:\n'
     assert seam_check.prose_role_citations(text) == [(1, "records_diff_baseline")]
+
+
+def test_prose_role_citation_rejects_stage_name_as_role_membership() -> None:
+    text = "If the stage is `model_routed`, resolve the adapter model.\n"
+    assert seam_check.prose_role_citations(text) == []
 
 
 def test_prose_role_citation_ignores_non_membership_roles_mention() -> None:

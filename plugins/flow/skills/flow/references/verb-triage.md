@@ -8,7 +8,7 @@ concept; on a non-beads backend the list step prints "nothing to triage".
 
 1. Run:
    ```bash
-   python3 ${CLAUDE_SKILL_DIR}/scripts/triage.py list --workspace-root .
+   .flow/flow triage list --workspace-root .
    ```
    Lists every `deferred` bead PLUS every `blocked` bead carrying the defer stem
    (decided-mode hot blocks — a `--auto` run that hit a post-decision
@@ -17,9 +17,9 @@ concept; on a non-beads backend the list step prints "nothing to triage".
    a `QUEUE` column: `evolve` when the bead has the `evolve` label, else
    `day-job`. Add `--ready` to also surface the ready queues (one extra
    `bd ready` call, partitioned by the same label; ready rows have no
-   open-question comment) — the default output without it is unchanged. A bare
-   `triage.py --workspace-root .` still works (defaults to `list`). Add `--json`
-   for a machine consumer; default is the human table.
+   open-question comment); the default output without it is unchanged. Use the
+   explicit `list` subcommand; the facade intentionally rejects a missing mapped
+   command. Add `--json` for a machine consumer; default is the human table.
 
 2. Handle the exit:
    - Exit 0 → surface the table verbatim.
@@ -36,9 +36,9 @@ detects it as a recorded decision (decided mode) and does not re-defer on the
 answered question:
 
 ```bash
-python3 ${CLAUDE_SKILL_DIR}/scripts/tracker_cli.py --workspace-root . \
+.flow/flow tracker --workspace-root . \
   comment --key <KEY> --text "TRIAGE-DECISION: <answer>"
-python3 ${CLAUDE_SKILL_DIR}/scripts/tracker_cli.py --workspace-root . \
+.flow/flow tracker --workspace-root . \
   transition --key <KEY> --to-state open
 bd update <KEY> --remove-label hitl
 ```
@@ -114,4 +114,4 @@ and the decided short-circuit stops blocking — a hot, already-decided bead
 proceeds (merge-time-guard-gated) on relaunch instead of re-blocking on the
 residual implementation wall.
 The merge-time guard-property review + CI are the retained gate. Read the flag via
-`python3 ${CLAUDE_SKILL_DIR}/scripts/triage.py adjudicate-hot-enabled --workspace-root .`.
+`.flow/flow triage adjudicate-hot-enabled --workspace-root .`.

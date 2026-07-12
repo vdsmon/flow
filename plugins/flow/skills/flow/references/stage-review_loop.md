@@ -10,7 +10,7 @@ When `<ticket-dir>` contains `/revisions/` this is a revision sub-run (see `refe
 
 **No `create_pr.out`** — skip the `## Inputs` read below; resolve the (OPEN, guaranteed by verb-revise's step-2 guard) PR from the branch instead, and use this `$PR_ID` for §1 / §3 / §4:
 ```bash
-PR_ID=$(python3 ${CLAUDE_SKILL_DIR}/scripts/forge_cli.py --workspace-root . detect-pr --branch "$(git rev-parse --abbrev-ref HEAD)" | python3 -c 'import sys,json;d=json.load(sys.stdin);print(d.get("id","") if d else "")')
+PR_ID=$(.flow/flow forge --workspace-root . detect-pr --branch "$(git rev-parse --abbrev-ref HEAD)" | python3 -c 'import sys,json;d=json.load(sys.stdin);print(d.get("id","") if d else "")')
 ```
 
 Deltas from the normal loop:
@@ -18,8 +18,8 @@ Deltas from the normal loop:
 - **Explicit dispositions supersede the floor.** When `<ticket-dir>/dispositions.json` exists (an interactive `revise` opened the step-5a triage board — `references/review-packet.md`'s `## Revision triage board (/flow revise)` section carries the schema), the human's explicit dispositions SUPERSEDE inferred severity: the fix set is the **fix pile** (`threads[]` entries with `"disposition": "fix"`) regardless of severity, and `apply-floor` is NOT consulted. §5's terminal "zero unresolved Major+" check then evaluates over that fix pile, not the raw thread severities — a dismissed major must NOT deadlock terminal, and an explicit empty triage (file exists, fix pile empty: all defer/dismiss, or `"threads": []`) leaves the terminal check nothing to chase, no floor-bumped threads. While the board session is live, completion still waits on the user's end-session verdict (the board section's convergence rules) — a mid-session all-defer/dismiss batch does NOT complete the stage. Only when NO `dispositions.json` exists does the plain-comment floor below apply (the empty-vs-absent distinction).
 - **Plain-comment floor.** Before the §4 address+resolve, fetch the threads capture-then-check (the §1 discipline: read `$?` first — piping `review-threads` straight into `apply-floor` swallows a non-zero exit, and `apply-floor` turns the empty stdin into `[]`, so a gh flake reads as ZERO maintainer threads, a false review-clean), then pipe the captured output through the floor so an unresolved `minor` (a plain human comment) is bumped to the configured severity:
   ```bash
-  RAW=$(python3 ${CLAUDE_SKILL_DIR}/scripts/forge_cli.py --workspace-root . review-threads --pr "$PR_ID"); rc=$?
-  [ "$rc" -eq 0 ] && THREADS=$(printf '%s' "$RAW" | python3 ${CLAUDE_SKILL_DIR}/scripts/revise_config.py apply-floor --workspace-root .)
+  RAW=$(.flow/flow forge --workspace-root . review-threads --pr "$PR_ID"); rc=$?
+  [ "$rc" -eq 0 ] && THREADS=$(printf '%s' "$RAW" | .flow/flow revise-config apply-floor --workspace-root .)
   ```
   On `rc != 0` that is a PROBE ERROR, not an empty thread list: retry on a bounded budget (§1's pattern), and if it persists set `STATUS=failed` surfacing the stderr — never proceed to §4/§5 as review-clean. A RAW of `{"supported": false}` (a host without thread support) is §3's degrade: skip the floor and thread handling. `apply-floor` reads the threads array on stdin and returns it with every unresolved `minor` bumped to `[revise] plain_comment_severity`. When that floor is `major`, an unresolved minor thread enters the Major+ fix set; the default `minor` leaves the set unchanged (today's behavior). The bump is loop-side only — the forge adapter stays pure of `[revise]` config. Use `$THREADS` (not the raw `review-threads` output) for the §4 Major+ selection.
 - **Reply + resolve, or reply + leave open.** After a fix commit is pushed for a fixed thread, `post-reply` (with the rationale) then a host-verified `resolve-thread` exactly as §4 (the .1 capabilities; the bkt adapter re-reads `.resolution != null`). A deferred or dismissed thread — a `dispositions.json` defer/dismiss, or a reasoned-skip on the floor path — gets a `post-reply` carrying the human's reason and stays OPEN, documented. Reply-posting is independent of fix-pile emptiness: an all-defer/dismiss batch still posts every reason.
@@ -37,9 +37,18 @@ PR_ID=$(printf '%s' "$PR_URL" | grep -oE '[0-9]+$')   # trailing number: gh /pul
 
 `PR_ID` is the host handle both adapters accept (`forge_cli --pr "$PR_ID"`).
 
-## 1. Wait for CI (Monitor, not a foreground sleep)
+## 1. Wait for CI through the adapter
 
-A *bare* foreground `sleep` is blocked (`sleep` inside a single bounded Bash call is fine — that is the fallback's mechanism, below). Primary recipe: launch a **Monitor** that polls the one-shot rollup and emits only on state change (every emitted line is a notification; CI phases span minutes). It reads the `forge_cli ci-rollup` PROCESS EXIT CODE (not a piped status string), so an intermittently-erroring `gh` trips a consecutive-error budget and breaks instead of spinning; it short-circuits when the PR leaves the OPEN state (`detect-pr` returns `null`); and the iteration cap is the guaranteed terminal exit. The probe needs `$BRANCH` for the `detect-pr` short-circuit — bind it from HEAD (a flow worktree is always checked out on the run's feature branch):
+Keep the wait in the owning orchestration session. Claude Code may launch the
+**Monitor** recipe below. Codex uses its session wait/poll mechanism or the bounded
+foreground recipe; a generic adapter uses the bounded recipe. Do not hand continuation
+to a child agent. Every probe uses explicit workdir `run_root` and the absolute
+`facade`, per `references/harness.md`.
+
+The poll reads the `ci-rollup` process exit code before parsing output, so an
+intermittently-erroring forge trips a consecutive-error budget instead of spinning.
+It short-circuits when the PR leaves OPEN state and always has an iteration cap. Bind
+`$BRANCH` from the rooted worktree HEAD:
 
 ```bash
 BRANCH=$(git rev-parse --abbrev-ref HEAD)   # the worktree is on the run's feature branch
@@ -50,9 +59,9 @@ Monitor(
   description="CI for PR #$PR_ID",
   command='budget=3; errs=0; n=0; cap=25; prev=""; nock=0; while :; do
       n=$((n+1)); [ "$n" -gt "$cap" ] && { echo "[$(date +%T)] cap $cap hit — leave for next pass"; break; }
-      pr=$(python3 ${CLAUDE_SKILL_DIR}/scripts/forge_cli.py --workspace-root . detect-pr --branch "$BRANCH"); drc=$?
+      pr=$(.flow/flow forge --workspace-root . detect-pr --branch "$BRANCH"); drc=$?
       if [ "$drc" -eq 0 ] && [ "$(printf %s "$pr" | tr -d " \t\n")" = "null" ]; then echo "[$(date +%T)] PR #$PR_ID no longer open (merged/closed)"; break; fi
-      out=$(python3 ${CLAUDE_SKILL_DIR}/scripts/forge_cli.py --workspace-root . ci-rollup --pr "$PR_ID"); crc=$?
+      out=$(.flow/flow forge --workspace-root . ci-rollup --pr "$PR_ID"); crc=$?
       s=""; nc=0; if [ "$crc" -eq 0 ]; then sc=$(printf %s "$out" | python3 -c "import sys,json;d=json.load(sys.stdin);print((d.get(\"status\",\"\") or \"\")+\"|\"+(\"1\" if not d.get(\"checks\") else \"0\"))" 2>/dev/null); [ -n "$sc" ] && { s=${sc%%|*}; nc=${sc##*|}; }; fi
       if [ "$crc" -ne 0 ] || [ -z "$s" ]; then errs=$((errs+1)); echo "[$(date +%T)] ci-rollup probe error ($errs/$budget)"; [ "$errs" -ge "$budget" ] && { echo "error budget exhausted — leave for next pass"; break; }; sleep 60; continue; fi
       errs=0; [ "$s" != "$prev" ] && { echo "[$(date +%T)] CI: $s"; prev=$s; }
@@ -67,11 +76,14 @@ Monitor(
 
 Run exactly ONE CI Monitor at a time (stop the prior one before re-arming after a fix). Break on `green` or `failed` — the terminal `CI_STATUS` enum is `green` / `failed` (NOT `success` / `failure`, NOT `red`); `ci_rollup` folds the superseded `CANCELLED`/`STALE`/`NEUTRAL`/`SKIPPED` entries into `pending`, so those re-poll rather than trip a false `failed`. **Anti-pattern:** never `ci-rollup ... 2>/dev/null | python -c '...get("status","pending")'` — piping past the exit code makes an errored `gh` read as `pending` forever (a silent infinite spin); the probe reads `$?` first, which is the fix.
 
-**Headless fallback — bounded foreground poll.** In a headless/turn-bounded session (a detached `--auto` run relaunched per turn, or a run interrupted at a turn boundary, e.g. by a rate limit) a Monitor or background task dies at turn end and its completion notification never arrives (observed in the flow-aod run: the bounded poll reached CI green in ~30s after the Monitor path silently died). There, poll in ONE Bash call with an explicit iteration cap and `timeout: 600000` (the Bash max):
+**Portable bounded foreground poll.** Use this on Codex, a generic adapter, or any
+headless/turn-bounded Claude Code session where a Monitor/background task would die at
+the turn boundary. Poll in one command call with an explicit iteration cap and the
+host's bounded timeout:
 
 ```bash
 i=0; errs=0; nock=0; while [ $i -lt 8 ]; do
-  out=$(python3 ${CLAUDE_SKILL_DIR}/scripts/forge_cli.py --workspace-root . ci-rollup --pr "$PR_ID"); crc=$?
+  out=$(.flow/flow forge --workspace-root . ci-rollup --pr "$PR_ID"); crc=$?
   s=""; nc=0; if [ "$crc" -eq 0 ]; then sc=$(printf %s "$out" | python3 -c 'import sys,json;d=json.load(sys.stdin);print((d.get("status","") or "")+"|"+("1" if not d.get("checks") else "0"))' 2>/dev/null); [ -n "$sc" ] && { s=${sc%%|*}; nc=${sc##*|}; }; fi
   if [ "$crc" -ne 0 ] || [ -z "$s" ]; then
     errs=$((errs+1)); echo "[$(date +%T)] ci-rollup probe error ($errs/3)"
@@ -120,7 +132,16 @@ The base-merge commit legitimately pulls in `origin/<default>` content; it is a 
 
 ## 2. On CI failed — drive fixes (delegated, bounded)
 
-Do NOT invent inline edit logic. Delegate the fix to a subagent (the same way the `implement` stage uses `subagent:general-purpose`): give it the failing-check logs, have it apply the fix, commit with the existing commit machinery, and `git push`. Then re-arm the CI Monitor (step 1). This fix subagent is a code-writing spawn on a model_routed stage, so pin it the same way the do-loop pins `implement`, passing this stage's name: `M=$(python3 ${CLAUDE_SKILL_DIR}/scripts/model_resolve.py --workspace-root . --ticket "$KEY" --stage review_loop)` and pass `model=$M` to the fix Agent when `$M` is non-empty (else omit — inherit the session).
+Do NOT invent inline edit logic. Delegate the fix to a rooted subagent (the same way
+the `implement` stage uses `subagent:general-purpose`): include absolute `Workspace
+root`, `Skill root`, `Ticket dir`, this `Reference path`, the review-loop `Artifact
+path`, and `Harness`, plus the failing-check logs. State that inherited cwd is
+non-authoritative and every facade command carries the call-local
+`FLOW_HARNESS=<Harness>` prefix. Have
+it apply the fix, commit with the existing commit machinery, and `git push`. Then
+re-arm the adapter's CI wait (step 1).
+This is a `model_routed` stage: resolve `M` through the facade, pass it only when the
+adapter accepts Claude model names, and omit it on Codex or any incompatible spawn API.
 
 **Hard cap: 3 fix cycles total** across CI + review combined (human-requested review-packet rounds AND revision triage-board rounds do NOT count — a present human is the judgment the cap substitutes for, so the cap bounds unattended loops only; see `references/review-packet.md`). If CI is still red after 3, set `STATUS=failed` and surface the last failing logs — do not loop forever.
 
@@ -129,7 +150,7 @@ Do NOT invent inline edit logic. Delegate the fix to a subagent (the same way th
 **First, wait for the review bot to finish (flow-arva).** CI green does NOT mean the bot has reviewed — CodeRabbit reviews asynchronously and routinely posts its findings *after* CI is green. Fetching threads once at CI-green races that review: an empty list reads as "clean" when the bot simply has not run yet, and a late Major+ finding would be merged past under a false "review-clean". Gate on the bot's completion signal before trusting the thread list:
 
 ```bash
-python3 ${CLAUDE_SKILL_DIR}/scripts/forge_cli.py --workspace-root . review-status --pr "$PR_ID"
+.flow/flow forge --workspace-root . review-status --pr "$PR_ID"
 ```
 
 - `{"supported": false}` → this host exposes no review-bot completion signal (e.g. the GitHub self-target runs no bot). **Do not wait** — go straight to the thread poll below. An empty list is legitimately clean here *only when no bot runs on this host at all*; when the org is known to run a review bot and the adapter merely lacks a completion probe, an empty list is the same ambiguity as the cap-expiry case below — record the not-reviewed caveat (flow-enr8) instead of asserting review-clean.
@@ -137,7 +158,7 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/forge_cli.py --workspace-root . review-statu
 - `{"reviewed": false}` → the bot has not finished. Read `.draft` for context (it shapes the cap-expiry wording below; the `2>/dev/null` guards keep a transient/empty `pr-info` from dumping a traceback — `$DRAFT` degrades to empty, not `True`):
 
 ```bash
-DRAFT=$(python3 ${CLAUDE_SKILL_DIR}/scripts/forge_cli.py --workspace-root . pr-info --pr "$PR_ID" 2>/dev/null \
+DRAFT=$(.flow/flow forge --workspace-root . pr-info --pr "$PR_ID" 2>/dev/null \
   | python3 -c 'import sys,json;d=json.load(sys.stdin);print(d.get("draft") if d else False)' 2>/dev/null)
 ```
 
@@ -145,7 +166,7 @@ DRAFT=$(python3 ${CLAUDE_SKILL_DIR}/scripts/forge_cli.py --workspace-root . pr-i
 
 ```bash
 i=0; while [ $i -lt 10 ]; do
-  r=$(python3 ${CLAUDE_SKILL_DIR}/scripts/forge_cli.py --workspace-root . review-status --pr "$PR_ID" \
+  r=$(.flow/flow forge --workspace-root . review-status --pr "$PR_ID" \
     | python3 -c 'import sys,json;print(json.load(sys.stdin).get("reviewed"))')
   echo "[$(date +%T)] review bot finished: $r"
   [ "$r" = "True" ] && break
@@ -158,7 +179,7 @@ done
 Then poll the threads:
 
 ```bash
-python3 ${CLAUDE_SKILL_DIR}/scripts/forge_cli.py --workspace-root . review-threads --pr "$PR_ID"
+.flow/flow forge --workspace-root . review-threads --pr "$PR_ID"
 ```
 
 - Output `{"supported": false}` (a host with no review-bot/forge wired): **skip thread handling**, report "review threads not wired for this host", and proceed to the terminal check on CI-green alone.
@@ -172,9 +193,9 @@ For each Major+ thread you addressed in a pushed commit:
 
 ```bash
 FIX_SHA=$(git rev-parse --short HEAD)
-python3 ${CLAUDE_SKILL_DIR}/scripts/forge_cli.py --workspace-root . post-reply \
+.flow/flow forge --workspace-root . post-reply \
   --pr "$PR_ID" --thread "<CID>" --text "Fixed in $FIX_SHA. <one line: what changed and why>."
-python3 ${CLAUDE_SKILL_DIR}/scripts/forge_cli.py --workspace-root . resolve-thread \
+.flow/flow forge --workspace-root . resolve-thread \
   --pr "$PR_ID" --thread "<CID>"
 ```
 

@@ -71,7 +71,9 @@ def _resolve_skill(
     args: str,
     search_roots: list[Path] | None,
 ) -> HandlerResolution:
-    result = bd.discover(roots=search_roots)
+    # flowctl binds cwd to the owning workspace before exec. Supplying it here lets each harness
+    # include its repo-local plugin layout without weakening explicit --search-roots overrides.
+    result = bd.discover(roots=search_roots, repo_root=Path.cwd())
 
     manifest = bd.select_bundle(result, name)
     if manifest is None:
@@ -182,7 +184,11 @@ def cli_main(argv: list[str]) -> int:
     if args.search_roots is not None:
         search_roots = [Path(p).expanduser() for p in args.search_roots.split(":") if p]
 
-    resolution = resolve(args.handler, search_roots=search_roots)
+    try:
+        resolution = resolve(args.handler, search_roots=search_roots)
+    except bd.HarnessError as exc:
+        sys.stderr.write(f"resolve-handler: {exc}\n")
+        return 3
     sys.stdout.write(json.dumps(asdict(resolution), indent=2, sort_keys=True))
     sys.stdout.write("\n")
     return _exit_code(resolution)

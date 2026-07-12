@@ -125,6 +125,55 @@ def test_skill_absent_not_installed_exit_1(tmp_path: Path) -> None:
     assert rh._exit_code(res) == 1
 
 
+def test_codex_handler_resolution_uses_codex_home_and_not_source_or_claude_roots(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "home"
+    codex_home = tmp_path / "codex"
+    repo = tmp_path / "repo"
+    _write_manifest(
+        home / ".claude" / "plugins" / "claude-only",
+        _full_manifest_text("claude-only"),
+    )
+    _write_manifest(
+        codex_home / "plugins" / "cache" / "team" / "codex-installed" / "1.0.0",
+        _full_manifest_text("codex-installed"),
+    )
+    _write_manifest(repo / "plugins" / "source-only", _full_manifest_text("source-only"))
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    monkeypatch.setenv("FLOW_HARNESS", "codex")
+    monkeypatch.delenv("FLOW_BUNDLE_SEARCH_ROOTS", raising=False)
+    monkeypatch.chdir(repo)
+
+    codex = rh.resolve("skill:codex-installed")
+    source = rh.resolve("skill:source-only")
+    claude = rh.resolve("skill:claude-only")
+
+    assert codex.installed is True
+    assert codex.plugin_root == str(
+        codex_home / "plugins" / "cache" / "team" / "codex-installed" / "1.0.0"
+    )
+    assert source.installed is False
+    assert claude.installed is False
+
+
+def test_claude_handler_resolution_uses_cwd_repo_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = tmp_path / "repo"
+    plugin = repo / ".claude" / "plugins" / "repo-local"
+    _write_manifest(plugin, _full_manifest_text("repo-local"))
+    monkeypatch.setenv("FLOW_HARNESS", "claude-code")
+    monkeypatch.delenv("FLOW_BUNDLE_SEARCH_ROOTS", raising=False)
+    monkeypatch.chdir(repo)
+
+    result = rh.resolve("skill:repo-local")
+
+    assert result.installed is True
+    assert result.plugin_root == str(plugin)
+
+
 def test_skill_present_but_manifest_invalid_exit_2(tmp_path: Path) -> None:
     _write_manifest(tmp_path / "ship-it", _invalid_manifest_text())
     res = rh.resolve("skill:ship-it", search_roots=[tmp_path])

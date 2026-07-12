@@ -179,29 +179,45 @@ _MARKETPLACE_FIXTURE = """\
 }
 """
 
+_CODEX_PLUGIN_FIXTURE = """\
+{
+  "name": "flow",
+  "version": "0.27.57",
+  "description": "ticket pipeline",
+  "skills": "./skills/"
+}
+"""
+
 
 def _seed_version_files(tmp_path):
     plugin = tmp_path / version.PLUGIN_JSON
     market = tmp_path / version.MARKETPLACE_JSON
+    codex_plugin = tmp_path / version.CODEX_PLUGIN_JSON
     plugin.parent.mkdir(parents=True, exist_ok=True)
     market.parent.mkdir(parents=True, exist_ok=True)
+    codex_plugin.parent.mkdir(parents=True, exist_ok=True)
     plugin.write_text(_PLUGIN_FIXTURE, encoding="utf-8")
     market.write_text(_MARKETPLACE_FIXTURE, encoding="utf-8")
-    return plugin, market
+    codex_plugin.write_text(_CODEX_PLUGIN_FIXTURE, encoding="utf-8")
+    return plugin, market, codex_plugin
 
 
-def test_write_version_bumps_both_files(tmp_path):
-    plugin, market = _seed_version_files(tmp_path)
+def test_write_version_bumps_all_version_files(tmp_path):
+    plugin, market, codex_plugin = _seed_version_files(tmp_path)
     version.write_version(cwd=tmp_path, version="0.27.58")
     assert '"version": "0.27.58"' in plugin.read_text(encoding="utf-8")
     assert '"version": "0.27.58"' in market.read_text(encoding="utf-8")
+    assert '"version": "0.27.58"' in codex_plugin.read_text(encoding="utf-8")
 
 
 def test_write_version_preserves_surrounding_bytes(tmp_path):
-    plugin, market = _seed_version_files(tmp_path)
+    plugin, market, codex_plugin = _seed_version_files(tmp_path)
     version.write_version(cwd=tmp_path, version="0.27.58")
     assert plugin.read_text(encoding="utf-8") == _PLUGIN_FIXTURE.replace("0.27.57", "0.27.58")
     assert market.read_text(encoding="utf-8") == _MARKETPLACE_FIXTURE.replace("0.27.57", "0.27.58")
+    assert codex_plugin.read_text(encoding="utf-8") == _CODEX_PLUGIN_FIXTURE.replace(
+        "0.27.57", "0.27.58"
+    )
 
 
 def test_set_version_already_at_target_is_noop_success(tmp_path):
@@ -222,11 +238,14 @@ def test_set_version_no_version_line_raises(tmp_path):
 
 
 def test_write_version_idempotent_same_version(tmp_path):
-    plugin, market = _seed_version_files(tmp_path)
+    plugin, market, codex_plugin = _seed_version_files(tmp_path)
     version.write_version(cwd=tmp_path, version="0.27.58")
     version.write_version(cwd=tmp_path, version="0.27.58")
     assert plugin.read_text(encoding="utf-8") == _PLUGIN_FIXTURE.replace("0.27.57", "0.27.58")
     assert market.read_text(encoding="utf-8") == _MARKETPLACE_FIXTURE.replace("0.27.57", "0.27.58")
+    assert codex_plugin.read_text(encoding="utf-8") == _CODEX_PLUGIN_FIXTURE.replace(
+        "0.27.57", "0.27.58"
+    )
 
 
 def test_set_version_replaces_only_first(tmp_path):
@@ -258,6 +277,9 @@ def test_stamp_writes_and_returns_compute(tmp_path):
     assert '"version": "0.27.58"' in (tmp_path / version.MARKETPLACE_JSON).read_text(
         encoding="utf-8"
     )
+    assert '"version": "0.27.58"' in (tmp_path / version.CODEX_PLUGIN_JSON).read_text(
+        encoding="utf-8"
+    )
 
 
 def test_stamp_feat_writes_minor(tmp_path):
@@ -268,6 +290,9 @@ def test_stamp_feat_writes_minor(tmp_path):
     assert result["bump"] == "minor"
     assert '"version": "0.28.0"' in (tmp_path / version.PLUGIN_JSON).read_text(encoding="utf-8")
     assert '"version": "0.28.0"' in (tmp_path / version.MARKETPLACE_JSON).read_text(
+        encoding="utf-8"
+    )
+    assert '"version": "0.28.0"' in (tmp_path / version.CODEX_PLUGIN_JSON).read_text(
         encoding="utf-8"
     )
 

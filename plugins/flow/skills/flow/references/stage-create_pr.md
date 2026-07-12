@@ -86,7 +86,10 @@ mise run test   # scripts + hooks green
 
    **Do not end the turn on the rewrite — continue the stage.** `create_pr` is an INLINE handler running in the orchestrator's main conversation, so the humanize Skill executes there and the orchestrator's reply IS the Final rewrite, which by default ends the turn. Do NOT stop there: take the Final rewrite and CONTINUE in the SAME reply — emit step 3's `pr_body.md` heredoc, run step 4's `create_pr.py`, capture step 5's `.out`, and issue the do-loop `advance`. Otherwise the do-loop stalls until the user pokes (witnessed twice: flow-gfz5, flow-qdal; friction `8f22583e41ee443fb6eb104b32bceece`). This is the primary instance of the general inline-skill turn-continuation rule in `references/verb-do.md`.
 
-3. **Write the body worktree-safely.** The orchestrator's own `Write` to a worktree path is rejected in bg mode, so emit the body via a quoted heredoc (the pattern in `references/verb-do.md`) to `$TICKET_DIR/stages/pr_body.md`:
+3. **Write the body worktree-safely.** Prefer the adapter's exact file writer at the
+   absolute `$TICKET_DIR/stages/pr_body.md`. If the host rejects its native writer in
+   a backgrounded linked worktree, use the collision-safe quoted-heredoc fallback in
+   `references/verb-do.md` from explicit workdir `run_root`:
    ```bash
    cat > "$TICKET_DIR/stages/pr_body.md" <<'FLOW_PR_BODY_9f3a'
    <the authored + humanized body, verbatim>
@@ -95,7 +98,7 @@ mise run test   # scripts + hooks green
 
 4. **Open or resolve the PR:**
    ```bash
-   python3 ${CLAUDE_SKILL_DIR}/scripts/create_pr.py \
+   .flow/flow create-pr \
      --workspace-root . --ticket "$KEY" --body-file "$TICKET_DIR/stages/pr_body.md"
    ```
    The base branch resolves from `[create_pr] base` in `workspace.toml`, default `main`; an explicit `--base` overrides both.

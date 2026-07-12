@@ -1,0 +1,238 @@
+"""Install and repair the workspace-local ``.flow/flow`` command facade."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+import tomllib
+from pathlib import Path
+
+from _atomicio import atomic_write_text
+from bundle_discover import HarnessError, flow_harness
+
+SKILL_ROOT = Path(__file__).resolve().parent.parent
+
+_SHIM = r'''#!/usr/bin/env python3
+"""Generated Flow workspace launcher. Re-run /flow init --reconfigure to replace."""
+
+from __future__ import annotations
+
+import os
+import sys
+from pathlib import Path
+
+
+def _fail(message: str) -> int:
+    sys.stderr.write(f"flow: {message}\n")
+    return 1
+
+
+def main() -> int:
+    flow_dir = Path(__file__).resolve().parent
+    workspace_root = flow_dir.parent.resolve()
+    workspace_toml = flow_dir / "workspace.toml"
+    if not workspace_toml.is_file():
+        return _fail(
+            f"workspace config is missing at {workspace_toml}; run /flow init --reconfigure"
+        )
+
+    skill_file = flow_dir / "skill_dir"
+    if not skill_file.is_file():
+        return _fail(
+            "this legacy workspace has no .flow/skill_dir; run /flow init --reconfigure"
+        )
+    try:
+        # ``skill_dir`` is a one-line machine path. Remove only the record
+        # terminator: spaces are legal POSIX path characters and must survive.
+        raw_skill_dir = skill_file.read_text(encoding="utf-8").strip("\r\n")
+    except (OSError, UnicodeError) as exc:
+        return _fail(f"cannot read {skill_file}: {exc}; run /flow init --reconfigure")
+    if not raw_skill_dir:
+        return _fail(f"{skill_file} is empty; run /flow init --reconfigure")
+    if "\x00" in raw_skill_dir:
+        return _fail(
+            f"{skill_file} contains an invalid path (NUL byte); run /flow init --reconfigure"
+        )
+
+    try:
+        skill_dir = Path(raw_skill_dir).expanduser()
+    except (OSError, RuntimeError, ValueError) as exc:
+        return _fail(f"{skill_file} contains an invalid path: {exc}; run /flow init --reconfigure")
+    if not skill_dir.is_absolute():
+        return _fail(f"{skill_file} must contain an absolute path; run /flow init --reconfigure")
+    if not skill_dir.is_dir():
+        return _fail(
+            f"Flow skill directory from {skill_file} does not exist: {skill_dir}; "
+            "run /flow init --reconfigure"
+        )
+
+    flowctl = skill_dir / "scripts" / "flowctl.py"
+    if not flowctl.is_file():
+        return _fail(
+            f"Flow installation is missing {flowctl}; update Flow and run /flow init --reconfigure"
+        )
+
+    os.environ["FLOW_SKILL_DIR"] = str(skill_dir)
+    os.environ["CLAUDE_SKILL_DIR"] = str(skill_dir)
+    os.execv(
+        sys.executable,
+        [sys.executable, str(flowctl), "--workspace-root", str(workspace_root), *sys.argv[1:]],
+    )
+    return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+'''
+
+
+def _plugin_source(manifest: Path, plugin: str) -> str | None:
+    """Return one marketplace entry's local source path, if declared."""
+    try:
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return None
+    entries = data.get("plugins") if isinstance(data, dict) else None
+    if not isinstance(entries, list):
+        return None
+    for entry in entries:
+        if not isinstance(entry, dict) or entry.get("name") != plugin:
+            continue
+        source = entry.get("source")
+        if isinstance(source, str) and source:
+            return source
+        if isinstance(source, dict):
+            path = source.get("path")
+            return path if isinstance(path, str) and path else None
+    return None
+
+
+def _codex_marketplace_roots(codex_home: Path, marketplace: str) -> list[Path]:
+    """Known local roots for one Codex marketplace cache namespace."""
+    roots: list[Path] = []
+    try:
+        config = tomllib.loads((codex_home / "config.toml").read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, tomllib.TOMLDecodeError):
+        config = {}
+    marketplaces = config.get("marketplaces") if isinstance(config, dict) else None
+    entry = marketplaces.get(marketplace) if isinstance(marketplaces, dict) else None
+    source = entry.get("source") if isinstance(entry, dict) else None
+    if isinstance(source, str) and source:
+        configured = Path(source).expanduser()
+        roots.append(configured if configured.is_absolute() else codex_home / configured)
+
+    # Git marketplace snapshots use an internal checkout; local marketplaces
+    # normally resolve through config.toml above. Keep both known CLI layouts.
+    roots.extend(
+        [
+            codex_home / ".tmp" / "marketplaces" / marketplace,
+            codex_home / "plugins" / "marketplaces" / marketplace,
+        ]
+    )
+
+    # The implicit personal marketplace lives under ~/.agents, while its source
+    # paths are relative to the user's home directory.
+    personal_manifest = Path.home() / ".agents" / "plugins" / "marketplace.json"
+    try:
+        personal = json.loads(personal_manifest.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        personal = None
+    if isinstance(personal, dict) and personal.get("name") == marketplace:
+        roots.append(Path.home())
+
+    return roots
+
+
+def stabilize_skill_dir(skill_dir: str) -> str:
+    """Prefer this harness's stable marketplace source over a versioned cache."""
+    harness = flow_harness()
+    parts = Path(skill_dir).parts
+    cache_index = next(
+        (
+            index
+            for index in range(len(parts) - 1)
+            if parts[index] == "plugins" and parts[index + 1] == "cache"
+        ),
+        None,
+    )
+    if cache_index is None or len(parts) < cache_index + 6:
+        return skill_dir
+    if harness == "generic":
+        # Generic adapters have no native marketplace contract. Guessing from
+        # another host's cache namespace can bind an uninstalled handler.
+        return skill_dir
+
+    base = Path(*parts[:cache_index])
+    marketplace = parts[cache_index + 2]
+    plugin = parts[cache_index + 3]
+    suffix = parts[cache_index + 5 :]
+    if harness == "claude-code":
+        claude_root = base / "plugins" / "marketplaces" / marketplace
+        claude_source = _plugin_source(claude_root / ".claude-plugin" / "marketplace.json", plugin)
+        if claude_source is not None:
+            candidate = claude_root / Path(claude_source) / Path(*suffix)
+            if candidate.is_dir():
+                return str(candidate)
+        return skill_dir
+
+    # `flow_harness()` closed-validates the selector, so the remaining adapter
+    # is Codex. Never fall through from one native host's resolver to the other.
+    for root in _codex_marketplace_roots(base, marketplace):
+        source = _plugin_source(root / ".agents" / "plugins" / "marketplace.json", plugin)
+        if source is None:
+            continue
+        candidate = root / Path(source) / Path(*suffix)
+        if candidate.is_dir():
+            return str(candidate)
+    return skill_dir
+
+
+def executing_skill_dir() -> Path:
+    """Resolve the installation that is executing this installer."""
+    return Path(stabilize_skill_dir(str(SKILL_ROOT))).expanduser().resolve()
+
+
+def install(workspace_root: Path, *, skill_dir: Path | None = None) -> tuple[Path, Path]:
+    """Install ``skill_dir`` and the shim, atomically replacing each file."""
+    root = workspace_root.expanduser().resolve()
+    resolved_skill = Path(stabilize_skill_dir(str(skill_dir or executing_skill_dir()))).resolve()
+    if not resolved_skill.is_dir():
+        raise FileNotFoundError(f"Flow skill directory does not exist: {resolved_skill}")
+    flowctl = resolved_skill / "scripts" / "flowctl.py"
+    if not flowctl.is_file():
+        raise FileNotFoundError(f"Flow installation is missing {flowctl}")
+    flow_dir = root / ".flow"
+    flow_dir.mkdir(parents=True, exist_ok=True)
+    skill_path = flow_dir / "skill_dir"
+    shim_path = flow_dir / "flow"
+    atomic_write_text(skill_path, str(resolved_skill) + "\n")
+    atomic_write_text(shim_path, _SHIM, mode=0o755)
+    return skill_path, shim_path
+
+
+def _parse_args(argv: list[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Install or repair the workspace-local Flow shim.")
+    parser.add_argument("--workspace-root", required=True)
+    return parser.parse_args(argv)
+
+
+def cli_main(argv: list[str]) -> int:
+    args = _parse_args(argv)
+    root = Path(args.workspace_root).expanduser().resolve()
+    if not (root / ".flow" / "workspace.toml").is_file():
+        sys.stderr.write(
+            f"flow-launcher: no workspace.toml at {root / '.flow' / 'workspace.toml'}; "
+            "run /flow init --reconfigure\n"
+        )
+        return 1
+    try:
+        install(root)
+    except (OSError, HarnessError) as exc:
+        sys.stderr.write(f"flow-launcher: install failed: {exc}\n")
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(cli_main(sys.argv[1:]))

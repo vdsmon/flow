@@ -5,9 +5,8 @@ single small workspace.toml output).
 
 Contract:
 
-- Pure CLI. NO stdin. Caller (the /flow SKILL.md prose) collects user answers
-  via AskUserQuestion, then invokes init.py with everything as flags or via
-  `--config <answers.json>`.
+- Pure CLI. NO stdin. The Flow adapter collects user answers, then invokes
+  init.py with everything as flags or via `--config <answers.json>`.
 - Transactional. Writes `.flow/.initializing` BEFORE any mutation. Atomically
   renames to `.flow/.initialized` ONLY after all postconditions pass. Any
   failure leaves `.initializing` in place; re-run with `--resume`.
@@ -43,12 +42,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
-from _atomicio import atomic_write_text
+import flow_launcher
+from _atomicio import atomic_write_bytes, atomic_write_text
 from _registry import StageEntry, load_registry, parse_handler
 from _runner import KwRunner as Runner
 from _runner import kw_default_runner as _default_runner
 from _timeutil import utcnow_iso
-from bundle_discover import DiscoveryResult
+from bundle_discover import DiscoveryResult, HarnessError, flow_harness
 from bundle_discover import discover as bundle_discover_run
 
 # ─── Types ───────────────────────────────────────────────────────────────────
@@ -106,110 +106,74 @@ def _ensure_gitignore(root: Path) -> dict[str, Any] | None:
     return None
 
 
-# AGENTS.md is the cross-harness entry point (Cursor, Windsurf, opencode, a bare loop all
-# read it; Claude Code does not, it loads flow via the plugin manifest, so this file is
-# invisible to CC). Opt-in via `--agents-md`: a tracked root file, so default-off keeps a
-# pure-CC init byte-identical. Marker-guarded + append-only like the gitignore block, so
-# re-init / a pre-existing AGENTS.md is never clobbered.
+# AGENTS.md is durable generic-harness guidance. Claude Code and Codex can load Flow natively;
+# other harnesses may use this managed block as their entry point. Opt-in via
+# `--agents-md`: a tracked root file, so default-off keeps native-only init byte-identical.
+# Once present, the marker pair records durable opt-in and later reconfigures upgrade it.
 _AGENTS_MARKER = "<!-- flow:begin -->"
+_AGENTS_END_MARKER = "<!-- flow:end -->"
 _AGENTS_STANZA = """<!-- flow:begin -->
-## /flow — ticket→PR pipeline (harness portability)
+## Flow ticket→PR pipeline
 
-This repo is wired for `flow`. Claude Code loads it automatically via the plugin;
-**other harnesses load it from here.** When the user invokes `/flow <ticket>` (or
-asks to spec or run a ticket through flow):
+This repository is initialized for Flow. Codex should prefer the installed
+`$flow:flow` skill; Claude Code should use the Flow plugin. A generic harness must be
+given the absolute Flow skill root (`FLOW_SKILL_DIR`) by its adapter, then read `SKILL.md` and
+`references/harness.md` there. Do not search the machine for an installation.
 
-1. Resolve the engine path once. Claude Code injects `CLAUDE_SKILL_DIR`; off-CC the
-   `init` that wrote this stanza also wrote it to the gitignored `.flow/skill_dir`
-   (so on a fresh clone, run `/flow init` first — without it this is empty and the
-   call-sites below cannot resolve):
-   ```bash
-   export CLAUDE_SKILL_DIR="${CLAUDE_SKILL_DIR:-$(cat .flow/skill_dir 2>/dev/null)}"
-   ```
-2. Read `$CLAUDE_SKILL_DIR/SKILL.md` (the router) and
-   `$CLAUDE_SKILL_DIR/references/harness.md` (maps every Claude-Code primitive to its
-   fallback on your harness) as context before acting.
-3. **Approval is not coding.** Do the read-only spec, present the plan and a
-   `## Confidence` rating, then STOP. Do not edit any file until the user approves.
-   After approval, seed the worktree with `flow_worktree.py create … --recover-spill`,
-   `cd` into it, then run the do-loop — never implement on the main checkout. Claude
-   Code enforces this with plan mode; your harness does not, so it is a discipline.
-   `--recover-spill` backstops a slip: a planned file edited on main before bootstrap
-   is carried into the worktree at `create` time (pass it only from this off-CC entry
-   point — Claude Code omits it so its clean-main behavior never changes).
-<!-- flow:end -->
-"""
+1. Map the text after the Flow skill mention or `/flow` trigger to Flow's request
+   arguments. Keep the starting checkout as an absolute task root.
+2. Bind the harness identity (`codex`, `claude-code`, or `generic`). Prefix every
+   direct init, repair, and facade command with `FLOW_HARNESS=<identity>` in that same
+   call; a shell export is never persistent state.
+3. **Approval is not coding.** Perform the read-only spec, present the plan and its
+   `## Confidence`, then stop until the user explicitly approves. Use native Plan mode
+   when available; otherwise this turn boundary is the gate.
+4. After approval, create or adopt the Flow worktree. Set the returned absolute path as
+   the run root and its `.flow/flow` executable as the absolute facade path.
+5. Harness calls do not share shell state. Give every command an explicit workdir of
+   the run root, or self-root that individual call when no workdir field exists. Invoke
+   the facade absolutely, and root every read, edit, artifact, and subagent prompt
+   there. A prior standalone `cd` or shell export is never persistent state.
+6. Never relocate dirty main-checkout files automatically. Spill recovery requires
+   confirmed agent-created provenance and an explicit recovery action.
+<!-- flow:end -->"""
 
 
 def _ensure_agents_md(root: Path, *, requested: bool) -> dict[str, Any] | None:
-    """Ensure `<root>/AGENTS.md` carries the flow stanza (opt-in, `--agents-md`).
-
-    `requested=False` is a no-op so the call site stays unconditional (the opt-in
-    gate lives here, not in the orchestrator). Append-only + marker-guarded: a
-    pre-existing AGENTS.md keeps its content and gains the stanza once; re-init is
-    idempotent."""
-    if not requested:
-        return {"skipped": True, "reason": "agents_md not requested"}
+    """Add or upgrade the managed Flow block without touching surrounding text."""
     agents = root / "AGENTS.md"
     existing = agents.read_text(encoding="utf-8") if agents.exists() else ""
-    if _AGENTS_MARKER in existing:
-        return {"skipped": True, "reason": "AGENTS.md already carries the flow stanza"}
-    if existing and not existing.endswith("\n"):
-        existing += "\n"
-    block = ("\n" if existing else "") + _AGENTS_STANZA
-    atomic_write_text(agents, existing + block)
+    begin_count = existing.count(_AGENTS_MARKER)
+    end_count = existing.count(_AGENTS_END_MARKER)
+    if begin_count != end_count or begin_count > 1:
+        raise InitError(
+            "AGENTS.md must contain either no Flow markers or exactly one ordered "
+            f"{_AGENTS_MARKER} / {_AGENTS_END_MARKER} pair"
+        )
+
+    if begin_count == 0:
+        if not requested:
+            return {"skipped": True, "reason": "agents_md not requested"}
+        prefix = existing
+        if prefix and not prefix.endswith("\n"):
+            prefix += "\n"
+        if prefix:
+            prefix += "\n"
+        updated = prefix + _AGENTS_STANZA + "\n"
+    else:
+        begin = existing.index(_AGENTS_MARKER)
+        end = existing.index(_AGENTS_END_MARKER)
+        if end < begin:
+            raise InitError(
+                f"AGENTS.md has {_AGENTS_END_MARKER} before {_AGENTS_MARKER}; fix the markers"
+            )
+        end += len(_AGENTS_END_MARKER)
+        updated = existing[:begin] + _AGENTS_STANZA + existing[end:]
+
+    if updated == existing:
+        return {"skipped": True, "reason": "AGENTS.md Flow stanza is current"}
+    atomic_write_text(agents, updated)
     return None
-
-
-def _stabilize_skill_dir(skill_dir: str) -> str:
-    """Rewrite a versioned plugin-cache skill dir to the version-stable
-    marketplace-checkout path, so `.flow/skill_dir` stops rotting on every plugin
-    bump. Fail-safe: a non-cache path, a missing/unparseable marketplace.json, an
-    unresolved plugin source, or a non-existent target returns the input
-    unchanged, so a working path is never made worse."""
-    parts = Path(skill_dir).parts
-    i = next(
-        (
-            idx
-            for idx in range(len(parts) - 1)
-            if parts[idx] == "plugins" and parts[idx + 1] == "cache"
-        ),
-        None,
-    )
-    if i is None or len(parts) < i + 6:
-        return skill_dir
-    base = Path(*parts[:i])
-    mp = parts[i + 2]
-    plugin = parts[i + 3]
-    suffix = parts[i + 5 :]
-    manifest = base / "plugins" / "marketplaces" / mp / ".claude-plugin" / "marketplace.json"
-    try:
-        data = json.loads(manifest.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return skill_dir
-    entries = data.get("plugins") if isinstance(data, dict) else None
-    source = None
-    if isinstance(entries, list):
-        for entry in entries:
-            if isinstance(entry, dict) and entry.get("name") == plugin:
-                source = entry.get("source")
-                break
-    if not isinstance(source, str) or not source:
-        return skill_dir
-    candidate = base / "plugins" / "marketplaces" / mp / Path(source) / Path(*suffix)
-    return str(candidate) if candidate.is_dir() else skill_dir
-
-
-def _write_skill_dir(root: Path) -> None:
-    """Persist the absolute skill dir to `.flow/skill_dir` (a gitignored,
-    machine-local sibling, like `.flow/memory-root`). A harness that does not
-    inject `${CLAUDE_SKILL_DIR}` (anything other than Claude Code) reads this to
-    resolve the `python3 ${CLAUDE_SKILL_DIR}/scripts/*.py` prose call-sites; see
-    references/harness.md. Prefer the live env var (most accurate at init time),
-    fall back to the script's own location (scripts/init.py -> skill root)."""
-    skill_dir = os.environ.get("CLAUDE_SKILL_DIR") or str(Path(__file__).resolve().parent.parent)
-    skill_dir = _stabilize_skill_dir(skill_dir)
-    atomic_write_text(root / ".flow" / "skill_dir", skill_dir + "\n")
 
 
 # Phases run in order. Phases skipped by backend (e.g. bd_init for jira) are
@@ -250,8 +214,8 @@ class InitConfig:
     checkpoint_mode: str | None = None
     # Override default search roots for bundle discovery (tests).
     bundle_search_roots: list[Path] | None = None
-    # Opt-in: write the cross-harness AGENTS.md entry point (off by default so a
-    # pure Claude-Code init adds no tracked file). See _ensure_agents_md.
+    # Opt-in: add the managed AGENTS.md fallback. Once present, reconfigure keeps
+    # it current without requiring the flag again. See _ensure_agents_md.
     agents_md: bool = False
 
 
@@ -273,6 +237,13 @@ class InitPreflightError(InitError):
 
 class BundleConflictError(InitError):
     """Exit code 3: recommended bundle has a stage-provider conflict."""
+
+
+def _install_launcher(root: Path) -> None:
+    try:
+        flow_launcher.install(root)
+    except OSError as exc:
+        raise InitError(f"could not install .flow/flow launcher: {exc}") from exc
 
 
 # ─── Stage-registry parsing ─────────────────────────────────────────────────
@@ -781,35 +752,79 @@ def _validate_config(config: InitConfig) -> None:
 
 
 @dataclass
+class _FileBackup:
+    """Prior state of one generated or managed file."""
+
+    existed: bool
+    content: bytes = b""
+    mode: int | None = None
+
+
+def _backup_file(path: Path) -> _FileBackup:
+    if not path.exists():
+        return _FileBackup(existed=False)
+    return _FileBackup(
+        existed=True,
+        content=path.read_bytes(),
+        mode=path.stat().st_mode & 0o7777,
+    )
+
+
+def _restore_file(path: Path, backup: _FileBackup) -> None:
+    if backup.existed:
+        assert backup.mode is not None
+        if (
+            path.exists()
+            and path.read_bytes() == backup.content
+            and path.stat().st_mode & 0o7777 == backup.mode
+        ):
+            return
+        atomic_write_bytes(path, backup.content, mode=backup.mode)
+    elif path.exists():
+        path.unlink()
+
+
+@dataclass
 class _ReconfigureBackup:
     """Snapshot of the prior valid workspace so a failed reconfigure restores it.
 
     `.initialized` is intentionally NOT unlinked up front; finalize swaps it
-    atomically. On failure the prior `workspace.toml` content is restored and
-    any stray `.initializing` marker we created is removed.
+    atomically. On failure the prior config, launcher metadata, executable modes,
+    managed guidance, and any pre-existing transient markers are restored.
     """
 
     workspace_toml: str | None
+    launcher: _FileBackup
+    skill_dir: _FileBackup
+    agents_md: _FileBackup
+    initializing: _FileBackup
+    progress: _FileBackup
 
 
 def _backup_for_reconfigure(root: Path) -> _ReconfigureBackup:
     toml_path = _workspace_toml_path(root)
     return _ReconfigureBackup(
         workspace_toml=(toml_path.read_text(encoding="utf-8") if toml_path.exists() else None),
+        launcher=_backup_file(root / ".flow" / "flow"),
+        skill_dir=_backup_file(root / ".flow" / "skill_dir"),
+        agents_md=_backup_file(root / "AGENTS.md"),
+        initializing=_backup_file(_marker_initializing(root)),
+        progress=_backup_file(_progress_path(root)),
     )
 
 
 def _restore_reconfigure_backup(root: Path, backup: _ReconfigureBackup) -> None:
     """Roll the workspace back to its pre-reconfigure state on failure."""
-    initializing = _marker_initializing(root)
-    if initializing.exists():
-        initializing.unlink()
     toml_path = _workspace_toml_path(root)
     if backup.workspace_toml is not None:
         atomic_write_text(toml_path, backup.workspace_toml)
-    progress = _progress_path(root)
-    if progress.exists():
-        progress.unlink()
+    elif toml_path.exists():
+        toml_path.unlink()
+    _restore_file(root / ".flow" / "flow", backup.launcher)
+    _restore_file(root / ".flow" / "skill_dir", backup.skill_dir)
+    _restore_file(root / "AGENTS.md", backup.agents_md)
+    _restore_file(_marker_initializing(root), backup.initializing)
+    _restore_file(_progress_path(root), backup.progress)
 
 
 # ─── Idempotency helpers (resume) ────────────────────────────────────────────
@@ -873,9 +888,8 @@ def run_init(
 
     On failure, raises InitError (or subclass). For a plain or `--resume` run,
     `.flow/.initializing` and `.flow/.init-progress` remain on disk for a later
-    `--resume`. For a failed `--reconfigure`, the prior `workspace.toml` is
-    restored and the stray `.initializing`/`.init-progress` are removed so the
-    workspace stays in its prior valid state.
+    `--resume`. For a failed `--reconfigure`, the prior config, launcher files,
+    managed guidance, and any pre-existing transient markers are restored.
     """
     root = config.workspace_root.resolve()
     flow_dir = _flow_dir(root)
@@ -894,42 +908,50 @@ def run_init(
     # validation must not leave a `.initializing` marker that would then refuse
     # a plain re-run with the corrected config.
     _validate_config(config)
+    try:
+        flow_harness()
+    except HarnessError as exc:
+        raise InitError(str(exc)) from exc
 
-    # For reconfigure, back up the prior `.initialized` + workspace.toml so a
-    # failed reconfigure can restore the workspace to its prior valid state.
-    # `.initialized` stays in place until finalize swaps it; on failure the
-    # backups are restored.
+    # Back up every file this run may replace. `.initialized` stays in place until finalize swaps
+    # it; on failure the other prior files are restored.
     reconfigure_backup: _ReconfigureBackup | None = None
     if reconfigure:
         reconfigure_backup = _backup_for_reconfigure(root)
-        progress = _progress_path(root)
-        if progress.exists():
-            progress.unlink()
-    existing_handlers = (
-        _parse_existing_handlers(reconfigure_backup.workspace_toml) if reconfigure_backup else {}
-    )
-
-    completed = _read_progress(root) if resume else set()
-
-    flow_dir.mkdir(parents=True, exist_ok=True)
-    init_run_id = _ensure_init_run_id(initializing)
-
-    runner = runner or _default_runner()
-    registry = _load_stage_registry()
-    namespace = _derive_default_namespace(config)
-    pipeline_stages = _default_pipeline_stages(registry, config.memory_compounding)
-
-    def _run_phase(name: PhaseLiteral, fn: Callable[[], dict[str, Any] | None]) -> None:
-        if name in completed:
-            return
-        extra = fn() or {}
-        _append_progress(root, name, extra=extra)
-        if name == "finalize":
-            progress_path = _progress_path(root)
-            if progress_path.exists():
-                progress_path.unlink()
 
     try:
+        if reconfigure:
+            progress = _progress_path(root)
+            if progress.exists():
+                progress.unlink()
+            if initializing.exists():
+                initializing.unlink()
+        existing_handlers = (
+            _parse_existing_handlers(reconfigure_backup.workspace_toml)
+            if reconfigure_backup
+            else {}
+        )
+
+        completed = _read_progress(root) if resume else set()
+
+        flow_dir.mkdir(parents=True, exist_ok=True)
+        init_run_id = _ensure_init_run_id(initializing)
+
+        runner = runner or _default_runner()
+        registry = _load_stage_registry()
+        namespace = _derive_default_namespace(config)
+        pipeline_stages = _default_pipeline_stages(registry, config.memory_compounding)
+
+        def _run_phase(name: PhaseLiteral, fn: Callable[[], dict[str, Any] | None]) -> None:
+            if name in completed:
+                return
+            extra = fn() or {}
+            _append_progress(root, name, extra=extra)
+            if name == "finalize":
+                progress_path = _progress_path(root)
+                if progress_path.exists():
+                    progress_path.unlink()
+
         return _run_init_phases(
             config=config,
             runner=runner,
@@ -957,7 +979,10 @@ def _discover_and_compose(
     root: Path,
     existing_handlers: dict[str, str],
 ) -> tuple[DiscoveryResult, dict[str, str], list[str]]:
-    d = bundle_discover_run(roots=config.bundle_search_roots, repo_root=root)
+    try:
+        d = bundle_discover_run(roots=config.bundle_search_roots, repo_root=root)
+    except HarnessError as exc:
+        raise InitError(str(exc)) from exc
     h, w = _compose_handlers(config, registry, pipeline_stages, d, existing_handlers)
     return d, h, w
 
@@ -1013,7 +1038,6 @@ def _run_init_phases(
         (flow_dir / "runs").mkdir(parents=True, exist_ok=True)
         (flow_dir / namespace).mkdir(parents=True, exist_ok=True)
         (flow_dir / namespace / "ship-events").mkdir(parents=True, exist_ok=True)
-        _write_skill_dir(root)
         _ensure_agents_md(root, requested=config.agents_md)
         return None
 
@@ -1053,6 +1077,12 @@ def _run_init_phases(
         return None
 
     _run_phase("verify_postconditions", _phase_verify_postconditions)
+
+    # This intentionally sits outside the resumable phase ledger. A resumed init must repair
+    # launcher files even when its recorded mkdirs phase is skipped. Install before the durable
+    # checkpoint: a broken facade is not a completed initialization and must not create an auditable
+    # success record.
+    _install_launcher(root)
 
     def _phase_append_checkpoint() -> dict[str, Any] | None:
         _append_checkpoint_manifest(config, namespace, init_run_id)

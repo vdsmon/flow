@@ -25,6 +25,7 @@ from pathlib import Path
 
 import pytest
 
+import flow_launcher
 import init as initmod
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -140,6 +141,7 @@ def test_reconfigure_clears_prior_markers(tmp_path: Path) -> None:
     assert (tmp_path / ".flow" / ".initialized").exists()
     assert not (tmp_path / ".flow" / ".initializing").exists()
     assert not (tmp_path / ".flow" / ".init-progress").exists()
+    assert (tmp_path / ".flow" / "flow").stat().st_mode & 0o111
     assert result.namespace == "FT"
 
 
@@ -170,18 +172,25 @@ def test_bare_jira_init_writes_workspace_toml(tmp_path: Path) -> None:
     assert handlers["e2e"] == "subagent:general-purpose"
 
 
-def test_init_writes_skill_dir_from_env(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setenv("CLAUDE_SKILL_DIR", "/opt/flow/skills/flow")
+def test_init_uses_executing_skill_dir_not_ambient_env(tmp_path: Path, monkeypatch) -> None:
+    installed = tmp_path / "installed-flow"
+    (installed / "scripts").mkdir(parents=True)
+    (installed / "scripts" / "flowctl.py").touch()
+    monkeypatch.setenv("FLOW_SKILL_DIR", str(installed))
+    monkeypatch.setenv("CLAUDE_SKILL_DIR", str(installed))
     initmod.run_init(_jira_config(tmp_path))
     skill_dir = tmp_path / ".flow" / "skill_dir"
-    assert skill_dir.read_text(encoding="utf-8").strip() == "/opt/flow/skills/flow"
+    assert skill_dir.read_text(encoding="utf-8").strip() == str(
+        Path(initmod.__file__).resolve().parent.parent
+    )
+    assert (tmp_path / ".flow" / "flow").stat().st_mode & 0o111
 
 
 # ─── L1: AGENTS.md cross-harness entry point (opt-in, CC-neutral by default) ──
 
 
 def test_init_does_not_write_agents_md_by_default(tmp_path: Path) -> None:
-    # The CC-first guarantee: a pure init adds no tracked AGENTS.md.
+    # Native Claude Code and Codex discovery need no tracked AGENTS.md by default.
     initmod.run_init(_jira_config(tmp_path))
     assert not (tmp_path / "AGENTS.md").exists()
 
@@ -192,7 +201,8 @@ def test_agents_md_flag_writes_entry_point(tmp_path: Path) -> None:
     agents = tmp_path / "AGENTS.md"
     body = agents.read_text(encoding="utf-8")
     assert initmod._AGENTS_MARKER in body
-    assert "CLAUDE_SKILL_DIR" in body
+    assert ".flow/flow" in body
+    assert "FLOW_SKILL_DIR" in body
     assert "Approval is not coding" in body
 
 
@@ -211,6 +221,63 @@ def test_ensure_agents_md_is_idempotent(tmp_path: Path) -> None:
     assert skipped is not None
     assert skipped.get("skipped") is True
     assert (tmp_path / "AGENTS.md").read_text(encoding="utf-8").count(initmod._AGENTS_MARKER) == 1
+
+
+def test_existing_agents_block_is_upgraded_without_repeating_opt_in(tmp_path: Path) -> None:
+    agents = tmp_path / "AGENTS.md"
+    prefix = "# House rules\n\n"
+    suffix = "\n\n## Local notes\nKeep this byte-for-byte.\n"
+    agents.write_text(
+        prefix + "<!-- flow:begin -->\nold flow instructions\n<!-- flow:end -->" + suffix,
+        encoding="utf-8",
+    )
+
+    assert initmod._ensure_agents_md(tmp_path, requested=False) is None
+
+    body = agents.read_text(encoding="utf-8")
+    assert body.startswith(prefix)
+    assert body.endswith(suffix)
+    assert "old flow instructions" not in body
+    assert "$flow:flow" in body
+    assert "explicit workdir" in body
+    assert "--recover-spill" not in body
+
+
+def test_reconfigure_upgrades_persisted_agents_opt_in(tmp_path: Path) -> None:
+    initmod.run_init(dataclasses.replace(_jira_config(tmp_path), agents_md=True))
+    agents = tmp_path / "AGENTS.md"
+    agents.write_text(
+        "before\n<!-- flow:begin -->\nold flow instructions\n<!-- flow:end -->\nafter\n",
+        encoding="utf-8",
+    )
+
+    initmod.run_init(_jira_config(tmp_path), reconfigure=True)
+
+    body = agents.read_text(encoding="utf-8")
+    assert body.startswith("before\n")
+    assert body.endswith("\nafter\n")
+    assert "old flow instructions" not in body
+    assert "$flow:flow" in body
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "before\n<!-- flow:begin -->\nunclosed\n",
+        "before\n<!-- flow:end -->\n",
+        "<!-- flow:begin -->\na\n<!-- flow:begin -->\nb\n<!-- flow:end -->\n",
+        "<!-- flow:begin -->\na\n<!-- flow:end -->\n<!-- flow:end -->\n",
+        "<!-- flow:end -->\nbackwards\n<!-- flow:begin -->\n",
+    ],
+)
+def test_malformed_agents_markers_fail_without_rewriting(tmp_path: Path, body: str) -> None:
+    agents = tmp_path / "AGENTS.md"
+    agents.write_text(body, encoding="utf-8")
+
+    with pytest.raises(initmod.InitError, match=r"flow:begin|flow:end"):
+        initmod._ensure_agents_md(tmp_path, requested=False)
+
+    assert agents.read_text(encoding="utf-8") == body
 
 
 def test_ensure_agents_md_not_requested_is_noop(tmp_path: Path) -> None:
@@ -395,6 +462,8 @@ def test_resume_skips_completed_phases(tmp_path: Path) -> None:
     result = initmod.run_init(_jira_config(tmp_path), resume=True)
     assert (tmp_path / ".flow" / ".initialized").exists()
     assert not (tmp_path / ".flow" / ".initializing").exists()
+    assert (tmp_path / ".flow" / "skill_dir").is_file()
+    assert (tmp_path / ".flow" / "flow").stat().st_mode & 0o111
     assert result.handlers["plan"] == "subagent:Plan"
 
 
@@ -650,6 +719,18 @@ def test_invalid_input_leaves_no_initializing_marker(tmp_path: Path) -> None:
     assert result.namespace == "FT"
 
 
+def test_invalid_harness_leaves_no_init_markers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("FLOW_HARNESS", "mystery-host")
+
+    with pytest.raises(initmod.InitError, match="FLOW_HARNESS"):
+        initmod.run_init(_jira_config(tmp_path))
+
+    assert not (tmp_path / ".flow" / ".initializing").exists()
+    assert not (tmp_path / ".flow" / ".init-progress").exists()
+
+
 # ─── [W] reconfigure rollback ─────────────────────────────────────────────────
 
 
@@ -709,6 +790,157 @@ def test_failed_reconfigure_restores_prior_workspace(tmp_path: Path) -> None:
     assert restored["memory"]["namespace"] == "orig"
 
 
+def test_failed_reconfigure_restores_launcher_metadata_and_agents(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    first = dataclasses.replace(_jira_config(tmp_path), agents_md=True)
+    initmod.run_init(first)
+
+    flow_path = tmp_path / ".flow" / "flow"
+    skill_path = tmp_path / ".flow" / "skill_dir"
+    agents_path = tmp_path / "AGENTS.md"
+    old_agents = (
+        "# User-owned preface\n"
+        "<!-- flow:begin -->\nold managed guidance\n<!-- flow:end -->\n"
+        "User-owned suffix\n"
+    )
+    flow_path.write_bytes(b"prior launcher\n")
+    skill_path.write_bytes(b"/prior/skill path\n")
+    agents_path.write_text(old_agents, encoding="utf-8")
+    flow_path.chmod(0o701)
+    skill_path.chmod(0o604)
+    agents_path.chmod(0o640)
+    before = {
+        path: (path.read_bytes(), path.stat().st_mode & 0o777)
+        for path in (flow_path, skill_path, agents_path)
+    }
+
+    def partially_install_then_fail(
+        workspace_root: Path, *, skill_dir: Path | None = None
+    ) -> tuple[Path, Path]:
+        del skill_dir
+        flow = workspace_root / ".flow" / "flow"
+        skill = workspace_root / ".flow" / "skill_dir"
+        flow.write_bytes(b"partial new launcher\n")
+        skill.write_bytes(b"/partial/new/skill\n")
+        flow.chmod(0o755)
+        skill.chmod(0o644)
+        raise OSError("injected launcher failure")
+
+    monkeypatch.setattr(initmod.flow_launcher, "install", partially_install_then_fail)
+
+    with pytest.raises(initmod.InitError, match="launcher failure"):
+        initmod.run_init(_jira_config(tmp_path), reconfigure=True)
+
+    for path, (content, mode) in before.items():
+        assert path.read_bytes() == content
+        assert path.stat().st_mode & 0o777 == mode
+
+
+def test_launcher_failure_does_not_append_checkpoint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    checkpoint = tmp_path / "_ckpt.jsonl"
+
+    def fail_install(workspace_root: Path, *, skill_dir: Path | None = None) -> tuple[Path, Path]:
+        del workspace_root, skill_dir
+        raise OSError("injected launcher failure")
+
+    monkeypatch.setattr(initmod.flow_launcher, "install", fail_install)
+
+    with pytest.raises(initmod.InitError, match="launcher failure"):
+        initmod.run_init(_jira_config(tmp_path))
+
+    assert not checkpoint.exists()
+
+
+def test_failed_reconfigure_removes_files_absent_before_attempt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    initmod.run_init(_jira_config(tmp_path))
+    generated = (
+        tmp_path / ".flow" / "flow",
+        tmp_path / ".flow" / "skill_dir",
+        tmp_path / "AGENTS.md",
+    )
+    generated[0].unlink()
+    generated[1].unlink()
+
+    def partially_install_then_fail(
+        workspace_root: Path, *, skill_dir: Path | None = None
+    ) -> tuple[Path, Path]:
+        del skill_dir
+        flow = workspace_root / ".flow" / "flow"
+        skill = workspace_root / ".flow" / "skill_dir"
+        flow.write_text("partial launcher\n", encoding="utf-8")
+        skill.write_text("/partial/skill\n", encoding="utf-8")
+        raise OSError("injected launcher failure")
+
+    monkeypatch.setattr(initmod.flow_launcher, "install", partially_install_then_fail)
+
+    with pytest.raises(initmod.InitError, match="launcher failure"):
+        initmod.run_init(
+            dataclasses.replace(_jira_config(tmp_path), agents_md=True), reconfigure=True
+        )
+
+    assert all(not path.exists() for path in generated)
+
+
+def test_reconfigure_setup_failure_restores_before_phase_driver(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    initmod.run_init(_jira_config(tmp_path))
+    flow_dir = tmp_path / ".flow"
+    prior = {
+        path: (path.read_bytes(), path.stat().st_mode & 0o777)
+        for path in (flow_dir / "workspace.toml", flow_dir / "flow", flow_dir / "skill_dir")
+    }
+
+    def fail_registry_load(*_args, **_kwargs):
+        raise initmod.InitError("injected registry failure")
+
+    monkeypatch.setattr(initmod, "_load_stage_registry", fail_registry_load)
+
+    with pytest.raises(initmod.InitError, match="registry failure"):
+        initmod.run_init(_jira_config(tmp_path), reconfigure=True)
+
+    assert (flow_dir / ".initialized").exists()
+    assert not (flow_dir / ".initializing").exists()
+    assert not (flow_dir / ".init-progress").exists()
+    for path, (content, mode) in prior.items():
+        assert path.read_bytes() == content
+        assert path.stat().st_mode & 0o777 == mode
+
+
+def test_failed_reconfigure_restores_preexisting_transient_markers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    initmod.run_init(_jira_config(tmp_path))
+    flow_dir = tmp_path / ".flow"
+    initializing = flow_dir / ".initializing"
+    progress = flow_dir / ".init-progress"
+    initializing.write_bytes(b"prior-run-id\n")
+    progress.write_bytes(b'{"phase":"write_workspace"}\n')
+    initializing.chmod(0o640)
+    progress.chmod(0o600)
+    before = {
+        path: (path.read_bytes(), path.stat().st_mode & 0o777) for path in (initializing, progress)
+    }
+
+    monkeypatch.setattr(
+        initmod,
+        "_load_stage_registry",
+        lambda: (_ for _ in ()).throw(initmod.InitError("injected registry failure")),
+    )
+
+    with pytest.raises(initmod.InitError, match="registry failure"):
+        initmod.run_init(_jira_config(tmp_path), reconfigure=True)
+
+    for path, (content, mode) in before.items():
+        assert path.read_bytes() == content
+        assert path.stat().st_mode & 0o777 == mode
+
+
 def test_successful_reconfigure_swaps_workspace(tmp_path: Path) -> None:
     # The other half of the atomic-swap contract: a reconfigure that passes all
     # postconditions overwrites the toml and leaves no .initializing marker.
@@ -738,6 +970,24 @@ def test_successful_reconfigure_swaps_workspace(tmp_path: Path) -> None:
     assert tomllib.loads(toml_path.read_text(encoding="utf-8"))["memory"]["namespace"] == "changed"
     assert (tmp_path / ".flow" / ".initialized").exists()
     assert not (tmp_path / ".flow" / ".initializing").exists()
+
+
+def test_successful_reconfigure_starts_with_a_fresh_run_id(tmp_path: Path) -> None:
+    config = _jira_config(tmp_path)
+    initmod.run_init(config)
+    flow_dir = tmp_path / ".flow"
+    stale_run_id = "interrupted-prior-reconfigure"
+    (flow_dir / ".initializing").write_text(stale_run_id + "\n", encoding="utf-8")
+    (flow_dir / ".init-progress").write_text('{"phase":"write_workspace_toml"}\n', encoding="utf-8")
+
+    initmod.run_init(config, reconfigure=True)
+
+    checkpoint = config.checkpoint_manifest_path
+    assert checkpoint is not None
+    entries = [json.loads(line) for line in checkpoint.read_text(encoding="utf-8").splitlines()]
+    assert entries[-1]["init_run_id"] != stale_run_id
+    assert not (flow_dir / ".initializing").exists()
+    assert not (flow_dir / ".init-progress").exists()
 
 
 # ─── [X] resume idempotency ───────────────────────────────────────────────────
@@ -894,6 +1144,14 @@ def test_init_gitignore_appends_preserving_existing(tmp_path: Path) -> None:
     content = gi_path.read_text(encoding="utf-8")
     assert "node_modules/" in content  # original preserved
     assert ".flow/*" in content.splitlines()  # block appended
+
+
+def test_generated_launcher_files_are_gitignored(tmp_path: Path) -> None:
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    initmod.run_init(_jira_config(tmp_path))
+    for relative in (".flow/flow", ".flow/skill_dir"):
+        result = subprocess.run(["git", "check-ignore", "-q", relative], cwd=tmp_path, check=False)
+        assert result.returncode == 0
 
 
 # ─── [Y-init] recommended no-coverage + handler validation ────────────────────
@@ -1106,14 +1364,14 @@ def test_stabilize_skill_dir_rewrites_cache_to_marketplace(tmp_path: Path) -> No
     target = mp_dir / "plugins" / "flow" / "skills" / "flow"
     target.mkdir(parents=True)
     cache = tmp_path / "plugins" / "cache" / "vdsmon-flow" / "flow" / "0.92.1" / "skills" / "flow"
-    assert initmod._stabilize_skill_dir(str(cache)) == str(target)
+    assert flow_launcher.stabilize_skill_dir(str(cache)) == str(target)
 
 
 def test_stabilize_skill_dir_non_cache_unchanged() -> None:
-    assert initmod._stabilize_skill_dir("/opt/flow/skills/flow") == "/opt/flow/skills/flow"
+    assert flow_launcher.stabilize_skill_dir("/opt/flow/skills/flow") == "/opt/flow/skills/flow"
 
 
 def test_stabilize_skill_dir_cache_but_marketplace_missing_unchanged(tmp_path: Path) -> None:
     # Cache-shaped input but no marketplace target on disk -> returned unchanged.
     cache = tmp_path / "plugins" / "cache" / "vdsmon-flow" / "flow" / "0.92.1" / "skills" / "flow"
-    assert initmod._stabilize_skill_dir(str(cache)) == str(cache)
+    assert flow_launcher.stabilize_skill_dir(str(cache)) == str(cache)

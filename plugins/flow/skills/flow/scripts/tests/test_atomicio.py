@@ -52,3 +52,12 @@ def test_atomic_write_new_file_is_0o644(tmp_path):
     p = tmp_path / "f.txt"
     atomic_write_text(p, "hello")
     assert stat.S_IMODE(p.stat().st_mode) == 0o644
+
+
+@posix_only
+def test_atomic_write_explicit_mode_replaces_existing_mode(tmp_path):
+    p = tmp_path / "tool"
+    atomic_write_text(p, "old", mode=0o600)
+    atomic_write_text(p, "new", mode=0o755)
+    assert p.read_text(encoding="utf-8") == "new"
+    assert stat.S_IMODE(p.stat().st_mode) == 0o755

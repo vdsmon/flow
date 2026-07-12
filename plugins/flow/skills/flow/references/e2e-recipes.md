@@ -41,4 +41,4 @@ Skeleton example:
 
 Real rows carry real commands and real fixtures for the repo they live in — the table above is a shape, not a template to paste verbatim.
 
-`flow_worktree.py create --e2e-recipe` is what seeds the settled recipe into frontmatter; it is the only flag this doc names.
+`.flow/flow worktree create --e2e-recipe` is what seeds the settled recipe into frontmatter; it is the only flag this doc names.

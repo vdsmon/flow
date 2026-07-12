@@ -9,7 +9,7 @@ The mechanical plumbing (eligibility probe, CI re-read, harness eval, main-CI he
 ## 1. Probe
 
 ```bash
-PROBE=$(python3 ${CLAUDE_SKILL_DIR}/scripts/stage_merge.py probe \
+PROBE=$(.flow/flow merge probe \
   --workspace-root . --ticket-dir "$TICKET_DIR" --key "$KEY")
 ALREADY_MERGED=$(printf '%s' "$PROBE" | python3 -c 'import sys,json;print(json.load(sys.stdin)["already_merged"])')
 PR_ID=$(printf '%s' "$PROBE" | python3 -c 'import sys,json;print(json.load(sys.stdin)["pr_id"])')
@@ -42,7 +42,7 @@ If the reviewer reports `property_removed: true` → **do NOT merge.** Post a PR
 ## 3. Execute
 
 ```bash
-python3 ${CLAUDE_SKILL_DIR}/scripts/stage_merge.py execute \
+.flow/flow merge execute \
   --workspace-root . --pr "$PR_ID" --key "$KEY"
 ```
 

@@ -1,26 +1,27 @@
 ---
 name: flow
-argument-hint: <ticket> | spec <ticket> | do | revise | status | recall | triage | recover | group | slice <ticket> | sync | init
-description: Ticket pipeline. /flow <ticket> plans in plan mode (ExitPlanMode = the one gate), then enters a worktree and runs the autonomous implement→PR tail in the same session; background it (/bg) anytime to run unattended. You spec and review the draft PR. Multi-tracker engine (Jira | beads), pluggable handlers, compounding memory.
-when_to_use: User runs /flow <ticket> or /flow spec <ticket> to spec a ticket and run it to a draft PR, /flow do <ticket> to run/resume the pipeline standalone, or /flow init, recall, status, triage, recover, sync. A bare ticket key with no verb defaults to spec.
-allowed-tools: Bash(python3:*), Bash(git:*), Bash(bd:*), Bash(jq:*), Bash(cat:*), Bash(mkdir:*), Bash(mktemp:*), Bash(rm:*), Bash(gh:*), Bash(claude:*), Read, Write, Edit, Agent, Skill, AskUserQuestion, PushNotification, EnterWorktree
+description: Ticket-to-draft-PR pipeline for Claude Code and Codex. Use when the user invokes /flow or $flow:flow with a ticket, asks to spec and deliver a ticket, resumes a Flow run, or requests Flow init, recall, status, triage, recover, or sync. Plans with one explicit approval gate, binds an isolated worktree, then runs implementation, review, verification, commit, and PR stages. Jira or beads tracker, pluggable handlers, and compounding memory. A bare ticket key defaults to spec.
+allowed-tools: Bash(.flow/flow:*), Bash(*/.flow/flow:*), Bash(python3:*), Bash(git:*), Bash(bd:*), Bash(jq:*), Bash(cat:*), Bash(mkdir:*), Bash(mktemp:*), Bash(rm:*), Bash(gh:*), Bash(claude:*), Read, Write, Edit, Agent, Skill, AskUserQuestion, PushNotification, EnterWorktree
 ---
 
-# /flow
+# Flow
 
 One continuous ticket pipeline.
 You spec the work and review the PR; the machine owns everything in between.
 
 ```
 ME                       MACHINE                          ME
-spec ──→ ExitPlanMode ──→ worktree → implement → … → draft PR ──→ PR review
-plan mode    the one gate    one session, background anytime (/bg)   the deliverable
+spec ──→ plan approval ──→ worktree → implement → … → draft PR ──→ PR review
+          the one gate          one rooted session            the deliverable
 ```
 
-`/flow <ticket>` (or `/flow spec <ticket>`) runs the read-only front half — fetch the ticket, design the plan WITH you, in plan mode.
-`ExitPlanMode` is the single human gate.
-On approval it seeds a git worktree, enters it (`EnterWorktree`), and runs the autonomous tail (implement → code_review → e2e → commit → draft PR) in this same conversation — the planning context carries straight through, no handoff.
-The pipeline is background-agnostic: it never asks whether it is attached. Running it unattended is your separate call — `/bg` (or `←`) backgrounds the session at any point, and `claude agents` is the cockpit (attach to peek, answer a needs-input blocker, detach). Background several tickets that way to run them in parallel. The deliverable is a draft PR you review.
+`/flow <ticket>` in Claude Code, `$flow:flow <ticket>` in Codex, or the equivalent
+natural-language skill request runs the same read-only front half: fetch the ticket and
+design the plan WITH the user. Explicit plan approval is the single human gate.
+On approval Flow seeds a git worktree, binds this conversation to its absolute root,
+and runs the autonomous tail (implement → code_review → e2e → commit → draft PR) with
+the planning context intact. Backgrounding is a separate, host-owned choice; Flow does
+not assume `/bg`, a persistent terminal, or any particular task UI.
 See `references/background-pipeline.md`.
 
 `/flow do` is the **executor primitive** — the full pipeline, resuming at the next pending stage.
@@ -35,15 +36,56 @@ The memory layer compounds across tickets (reflect-stage extraction, plan-phase 
 
 This file is the router plus the two things that stay on the hot path: the **spec gate** and the **do-loop skeleton**. Every verb's step-by-step detail lives in a `references/verb-*.md` the agent loads on demand (pointers in the table below).
 
+## Harness and rooted execution contract
+
+Read `references/harness.md` before running any Flow command. Bind its logical
+`arguments`, `skill_root`, `task_root`, `run_root`, `facade`, `harness`, and
+`capabilities` values.
+Do not store them only in shell variables: an export, `cd`, or command cwd may not
+persist across host calls or into subagents.
+
+Every `.flow/flow` recipe in this skill is notation for the absolute `facade` value.
+On Codex, the notation also means prefix that same command invocation with
+`FLOW_HARNESS=codex`; never depend on a persistent export. Claude Code may use the
+explicit `FLOW_HARNESS=claude-code` selector or its compatibility default; a generic
+adapter uses `FLOW_HARNESS=generic`. Run it with explicit workdir `run_root`;
+`--workspace-root .` therefore resolves to that same root. Reads, edits, git/test/forge
+commands, artifacts, and subagent paths must be absolute or explicitly rooted there.
+After worktree bootstrap, immediately replace `run_root` with the returned absolute
+worktree path and replace `facade` with `<run_root>/.flow/flow`. Never fall back to the
+checkout where the request started.
+If a command tool has no workdir field, root each individual call with `git -C`, an
+absolute path, or `cd "<run_root>" && ...` in that same call. Never issue a standalone
+`cd` and depend on it later.
+
+## Post-init command gate
+
+For every verb except `init`, use the workspace-local facade. Resolve the initialized
+workspace from `task_root`, then inspect `.flow/skill_dir` and `.flow/flow`. If either
+launcher file is absent in a legacy workspace, repair it from the currently loaded
+absolute `skill_root`. If metadata exists but its installation is stale, the loaded
+skill is also the only valid repair source:
+
+```bash
+FLOW_HARNESS="<codex|claude-code|generic>" \
+  python3 "<skill-root>/scripts/flow_launcher.py" --workspace-root "<task-root>"
+```
+
+Do not search arbitrary plugin caches or marketplace directories. A successful init,
+reconfigure, worktree create, or worktree reload writes both files. After repair, set
+`run_root` to the absolute workspace and `facade` to its absolute launcher.
+
 ## Argument parsing
 
-Match the **first whitespace-delimited token** of `$ARGUMENTS` against the verb set below by exact string equality.
+Call the adapter-supplied request text `arguments` (Claude Code supplies `$ARGUMENTS`;
+Codex supplies the text after the skill mention or the equivalent user request). Match
+its **first whitespace-delimited token** against the verb set below by exact equality.
 If it equals a verb, route there.
 An **alias** is matched by the same exact-equality rule and resolves to its canonical verb BEFORE routing: `resume`→`do`, `mem`/`memory`→`recall`. Aliases are additive — the canonical names always route, and matching stays exact (so `sync-42` still ≠ any verb or alias).
-If `$ARGUMENTS` is empty, print the verb listing, grouped by the sections in the table below.
+If `arguments` is empty, print the verb listing, grouped by the sections in the table below.
 Otherwise — a first token that is not any verb (a bare ticket key like `FT-123`, or a beads key like `sync-42`) — route to **spec**, taking that positional token as the ticket key (same key-resolution as spec step 2).
 Spec is the default because fire-and-forget is the primary path.
-**Multiple positional ticket keys** (e.g. `/flow FT-1 FT-2 FT-3`) — spec handles ONE ticket per run. Do not silently consume only the first: surface all the keys you were given and ask (via `AskUserQuestion`) whether to spec them sequentially (one plan + tail each) or **fold related ones into a single piece of work**, then proceed on that answer. **Fold = run-level grouping (`covers`):** pick a LEAD key that owns the run (lease / state / branch / memory stay lead-keyed) and pass the rest as `--covers FT-2,FT-3`. The lead's spec gate covers all of them, the PR carries one `Closes <KEY>` per cover, and the commit/PR/reflect steps fan out to close each (`references/verb-spec.md`). Group only tickets that are one coherent change (same files / shared deps); independent tickets stay sequential. A cover must be a distinct, live, non-epic ticket — the bootstrap refuses otherwise.
+**Multiple positional ticket keys** (e.g. `/flow FT-1 FT-2 FT-3`): spec handles ONE ticket per run. Do not silently consume only the first: surface all the keys and use the adapter's user-input capability to ask whether to spec them sequentially (one plan + tail each) or **fold related ones into a single piece of work**, then proceed on that answer. **Fold = run-level grouping (`covers`):** pick a LEAD key that owns the run (lease / state / branch / memory stay lead-keyed) and pass the rest as `--covers FT-2,FT-3`. The lead's spec gate covers all of them, the PR carries one `Closes <KEY>` per cover, and the commit/PR/reflect steps fan out to close each (`references/verb-spec.md`). Group only tickets that are one coherent change (same files / shared deps); independent tickets stay sequential. A cover must be a distinct, live, non-epic ticket; the bootstrap refuses otherwise.
 (Exact-token match is what keeps this unambiguous: `sync-42` ≠ the verb `sync`, so a ticket key never collides with a verb.)
 `spec` also accepts the optional flags `--auto` (aliases `--aa`, `--yolo`), `--e2e-recipe "<recipe>"`, `--covers FT-2,FT-3` (sibling keys this run co-delivers), and `--lane express|light|full` (the verification lane this run takes — interactive-only, also read from natural language; `--auto` ignores it and derives the lane from the bead's tier labels) anywhere after the verb; they are ignored when reading the positional ticket key. A bare ticket key carries these flags through to spec too: `/flow --auto FT-123` routes to spec with `--auto` set, `/flow --lane express FT-123` with that lane preset.
 
@@ -75,17 +117,38 @@ Spec is the default because fire-and-forget is the primary path.
 
 ## spec verb — the one gate
 
-The read-only front half: fetch the ticket, design the plan WITH you in plan mode, then seed a worktree, enter it, and flow into the `do` pipeline in this SAME session. This is the human/machine boundary — you own the spec and the PR review; the machine owns everything between. Backgrounding the tail (`/bg`) to run unattended is your call at any point.
+The read-only front half: fetch the ticket, design the plan WITH the user, then seed a
+worktree, bind the rooted execution context, and flow into the `do` pipeline in this
+SAME session. This is the human/machine boundary: the user owns the spec and PR
+review; the machine owns everything between. Backgrounding the tail is a host-level
+choice.
 
-**`ExitPlanMode` with the plan = Gate 1, the only human gate.** Gate on an INDEPENDENT confidence rating (the `advisor` tool — it auto-forwards the transcript; or a `general-purpose` `Agent` if advisor is absent — on Fable models it always is, by design: skip the probe), never self-scored. **On any lane, dissolve forks before you ask:** before surfacing a clarifying question to the user, classify it — a *fact* (its answer is reachable by read-only investigation: Read/Grep/Glob, an `Explore` agent, recall, Context7, web) is yours to look up and fold in, never to surface, while a *decision* (it needs user-only input the repo does not encode) is the only thing that reaches the user — so resolve every fact yourself and surface only the decisions (`references/verb-spec.md` step 4). This is suppression-only and lane-independent; it never adds a gate. The confidence rating is the separate `full`-lane gate: **< 90% → do NOT `ExitPlanMode` yet:** first exhaust every reachable read-only artefact (Read/Grep/Glob, an `Explore` agent, WebSearch/WebFetch, read-only MCPs), then for a gap that needs user action ask via `AskUserQuestion` with specifics, then re-assess. Library-API claims must be Context7-verified. The rating is part of the plan, surfaced unprompted, every time — present only at >=90%, or when every reachable source is exhausted and the residual is documented as a risk. Unless the workspace explicitly disabled e2e, the plan also settles the **e2e recipe** here (while live auth is present). The plan also PROPOSES a verification **lane** (a `## Lane` section, conservative — `express` only for behavior-preserving, tightly-bounded work; else `full`); approve it with the plan or override at the gate (`--lane …`, or in words). An effective `express`/`light` lane makes the human `ExitPlanMode` approval the vetting and SKIPS the confidence probe — the <90% rule above is for the `full` lane. A hot change (a guard file in `planned_files`) clamps to `full` regardless, computed before the probe-skip, so a forced `--lane express` on a guard-file change still runs the full probe. Detail: `references/verb-spec.md`.
+**Plan approval = Gate 1, the only human gate.** Claude Code presents it with
+`ExitPlanMode`. Codex uses its native Plan boundary when active; otherwise it presents
+the complete plan, ends the turn, and waits for explicit approval. The generic adapter
+uses the same soft turn boundary. Gate on an INDEPENDENT confidence rating (`advisor`
+where available, otherwise a fresh independent subagent or second model call), never
+self-scored. **On any lane, dissolve forks before asking:** a *fact* reachable by
+read-only investigation is yours to resolve; only a *decision* requiring user-only
+input reaches the user (`references/verb-spec.md` step 4). On the `full` lane, a rating
+below 90% means keep investigating before presenting the gate. The plan always carries
+its confidence evidence, verification lane, and (unless disabled) settled e2e recipe.
+An effective `express`/`light` lane skips the confidence probe because approval is its
+vetting; a hot change still clamps to `full`. Detail: `references/verb-spec.md` and
+`references/harness.md`.
 
-On approval (normal mode): the bootstrap (`flow_worktree.py create`) persists the plan, seeds the worktree, and stamps `planned_files` + `commit_type` + `commit_summary` (+ `e2e_recipe`) into frontmatter so the tail never pauses to ask — then `EnterWorktree(path="<worktree>")` switches this session in and you **continue straight into the `do` loop below** (its `init` resumes the spec-seeded run at `implement`).
+On approval (normal mode), bootstrap persists the plan, seeds the worktree, and stamps
+`planned_files`, commit metadata, and the e2e recipe into frontmatter. Parse the
+absolute returned worktree, update `run_root` and `facade`, optionally call
+`EnterWorktree` on Claude Code, verify the binding, and **continue straight into the
+`do` loop below**. Correctness never depends on the native switch or a preceding `cd`.
 
 In `--auto` mode the gate never parks: if the headless planner cannot self-approve (a clarifying question, sub-90% confidence, or a `BAIL`), the run defers the ticket in place (status → `deferred`, open questions commented) and exits, rather than asking via `AskUserQuestion` or `ExitPlanMode`.
 
 **Full procedure — interactive steps 1-7, the `--auto` headless path (incl. the defer-and-exit recipe), and the exact `flow_worktree.py create` command: `references/verb-spec.md`.**
 
-flow is Claude-Code-first. Running it under another harness (Codex, Cursor) — how each Claude-Code primitive used here (`ExitPlanMode`, `EnterWorktree`, `advisor`, `Skill`/`Agent`, `PushNotification`, `AskUserQuestion`, `${CLAUDE_SKILL_DIR}`) degrades when absent — is in `references/harness.md`.
+The complete Claude Code, Codex, and generic capability mapping is in
+`references/harness.md`.
 
 ## do verb — the loop
 
@@ -95,21 +158,23 @@ The verbose detail — full exit-code matrices, the PR-ready notification protoc
 
 **Friction logging (in-flight):** whenever a step hits a snag the run works around (drift, lost lease, reconcile, missing tool, blocker, failed/retried stage), append one `flow_friction.py` entry before acting on it — it is the evidence the `reflect` stage turns into harness fixes (`references/self-evolution.md`). The trigger→type table + the command are in `references/verb-do.md`.
 
-1. Resolve the ticket key. If `$ARGUMENTS` had a positional, use it. Else:
+1. Resolve the ticket key. If `arguments` had a positional, use it. Else:
    ```bash
-   KEY=$(python3 ${CLAUDE_SKILL_DIR}/scripts/branch_ticket.py --workspace-root .)
+   KEY=$(.flow/flow branch-ticket --workspace-root .)
    ```
-   Exit 0 → use `$KEY`. Exit 3 → no key on branch; ask via `AskUserQuestion`. Exit 1 → workspace not initialized; abort with the `/flow init` hint.
+   Exit 0 → use `$KEY`. Exit 3 → no key on branch; ask through the adapter's
+   user-input capability. Exit 1 → workspace not initialized; abort with the Flow
+   init hint.
 
 2. HARD GATE the workspace:
    ```bash
-   python3 ${CLAUDE_SKILL_DIR}/scripts/validate_workspace.py --workspace-root .
+   .flow/flow validate --workspace-root .
    ```
    Non-zero → surface stderr violations; abort.
 
 3. Initialize the run (acquires the per-ticket lease + writes the canonical snapshot):
    ```bash
-   python3 ${CLAUDE_SKILL_DIR}/scripts/dispatch_stage.py init \
+   .flow/flow dispatch init \
      --workspace-root . --ticket "$KEY"
    ```
    Capture the `run_id` AND the `session_nonce` from stdout JSON; carry that nonce (`$NONCE`) verbatim on every later `next`/`advance`/`release` call below — it is the per-session lease component that blocks a second `/flow do` from re-acquiring this live lease. Exit 0 → proceed to the loop. Exit 1 (with a `holder` block) or Exit 5 (stale lease) → surface the holder + `/flow recover <ticket>`, abort; do NOT call `release` (nothing was acquired). Full matrix: `references/verb-do.md`.
@@ -118,7 +183,7 @@ The verbose detail — full exit-code matrices, the PR-ready notification protoc
 
    a. Obtain the next `DESCRIPTOR`. On the FIRST iteration (right after `init`), call `next`; on every later iteration, reuse the payload `advance` already returned in step (e) and skip this standalone `next`:
       ```bash
-      DESCRIPTOR=$(python3 ${CLAUDE_SKILL_DIR}/scripts/dispatch_stage.py next \
+      DESCRIPTOR=$(.flow/flow dispatch next \
         --workspace-root . --ticket "$KEY" --session-nonce "$NONCE")
       ```
       `next` refreshes the lease + verifies the snapshot. Exit 0 → continue to (b) (a self-inflicted *owned* drift — a planned `workspace.toml`/`stage-registry.toml` edit — auto-reconciles upstream in dispatch and returns exit 0 with a `reconciled_drift` marker, so it never trips this exit-1 path). Exit 1 (drift/violations/corrupt) or Exit 7 (lost lease) → surface + `/flow recover <ticket>`, break the loop. Full matrix: `references/verb-do.md`.
@@ -130,51 +195,72 @@ The verbose detail — full exit-code matrices, the PR-ready notification protoc
 
    c. **Pre-handler hook (records_diff_baseline):** if `descriptor.roles` includes `"records_diff_baseline"`:
       ```bash
-      python3 ${CLAUDE_SKILL_DIR}/scripts/diff_extract.py record-baseline \
+      .flow/flow diff record-baseline \
         --stage "$STAGE" --ticket "$KEY" \
         --ticket-dir "$TICKET_DIR" \
         --files "$PLANNED_FILES" \
         --capture-blobs --cwd .
       ```
-      `PLANNED_FILES` comes from `.flow/tickets/<KEY>.md` frontmatter (`planned_files = [...]`); if absent, ask via `AskUserQuestion`. Exit non-zero aborts the stage with status=failed. After implement returns, widen `planned_files` if it touched needed files outside the set — the **post-implement reconcile** in `references/verb-do.md`.
+      `PLANNED_FILES` comes from `.flow/tickets/<KEY>.md` frontmatter (`planned_files = [...]`); if absent, use the adapter's user-input capability. Exit non-zero aborts the stage with status=failed. After implement returns, widen `planned_files` if it touched needed files outside the set; see the **post-implement reconcile** in `references/verb-do.md`.
 
    d. Dispatch by `handler_type`:
 
-      - **`inline`** — Read `${CLAUDE_SKILL_DIR}/${descriptor.reference_doc}` and follow its prose (explicit script invocations + exit handling). Determine `status = completed | failed`. An inline stage MAY write a captured report to `$TICKET_DIR/stages/<STAGE>.out`; if it does, pass `--output-path` on `advance`. If not, omit it (an absent inline `.out` is normal).
+      - **`inline`:** Resolve `REFERENCE_PATH` as the absolute
+        `<skill_root>/<descriptor.reference_doc>`, Read it, and follow its prose.
+        Determine `status = completed | failed`. An inline stage MAY write a captured
+        report to the descriptor's absolute `output_path`; if it does, pass that path
+        on `advance`. If not, omit it (an absent inline `.out` is normal).
 
-      - **`subagent:<type>`** — If `descriptor.reference_doc` is present, Read `${CLAUDE_SKILL_DIR}/${descriptor.reference_doc}` first (e.g. `references/stage-plan.md`, `references/stage-implement.md`) — it carries the per-stage protocol. **Stage model pin:** when `descriptor.roles` includes `"model_routed"`, resolve this stage's model first — `M=$(python3 ${CLAUDE_SKILL_DIR}/scripts/model_resolve.py --workspace-root . --ticket "$KEY" --stage "$STAGE")` — and pass `model=$M` in the Agent call below only when `$M` is non-empty (the downshift is on by default on a full-lane run; `$M` is empty on express/light lanes or when the workspace opts that stage out); omit the `model=` line otherwise, inheriting the session (opus plans, sonnet writes). Then spawn an Agent embedding that protocol:
+      - **`subagent:<type>`:** Resolve and Read the absolute `REFERENCE_PATH` first
+        when present; it carries the per-stage protocol. If `descriptor.roles` includes `"model_routed"`,
+        resolve `M` through the facade. Bind
+        `model_pin_applied=false` before spawning. The Claude Code adapter passes
+        `model=$M` only when non-empty and then sets `model_pin_applied=true`. Codex and
+        any adapter whose spawn API does not accept Claude model names omit the
+        parameter, inherit the active model, and leave `model_pin_applied=false`.
+        Spawn the adapter's independent agent with this rooted prompt:
         ```
-        Agent(
-          subagent_type=descriptor.subagent_type,
-          description="<stage> for <ticket>",
-          model=<$M when non-empty; omit this line otherwise>,
-          prompt="""
-          Ticket: <KEY>
-          Stage: <STAGE>
-          Ticket dir: <TICKET_DIR>
+        Workspace root: <absolute run_root>
+        Skill root: <absolute skill_root>
+        Harness: <claude-code|codex|generic>
+        Ticket: <KEY>
+        Stage: <STAGE>
+        Ticket dir: <absolute descriptor.ticket_dir>
+        Reference path: <absolute REFERENCE_PATH, or none>
+        Artifact path: <absolute descriptor.output_path>
 
-          You are the <subagent_type> agent for the <STAGE> stage of /flow.
-          Read .flow/runs/<KEY>/ticket.json for ticket context. Read
-          .flow/tickets/<KEY>.md for ticket frontmatter.
+        You are the <subagent_type> agent for this Flow stage. Your inherited cwd is
+        non-authoritative. Use Workspace root as the explicit workdir for every
+        command and invoke Flow through the absolute `<Workspace root>/.flow/flow`.
+        Prefix every Flow facade call with `FLOW_HARNESS=<Harness>` in that same
+        command; never rely on an export. If the command tool has no workdir field,
+        self-root every individual call.
+        Read ticket.json beneath Ticket dir and the ticket frontmatter at
+        <Workspace root>/.flow/tickets/<KEY>.md. Keep every repository read and write
+        beneath Workspace root. Follow the embedded per-stage protocol and return the
+        complete report; the orchestrator owns Artifact path.
 
-          Per-stage protocol (from <reference_doc>):
-          <contents of the reference doc, or its path if it is large>
-
-          Do the stage's work and return your report.
-          """
-        )
+        Per-stage protocol:
+        <contents read from REFERENCE_PATH>
         ```
-        **Capture the Agent's response** with the Write tool (NOT shell redirect — `"`/`\` would break it): `mkdir -p "$TICKET_DIR/stages"`, then Write `file_path = <TICKET_DIR>/stages/<STAGE>.out`, `content = <the Agent's full response>`. Remember that path for `--output-path` on `advance`. (In a backgrounded `--auto` run the worktree-isolation guard blocks the Write tool here — fall back to a Bash heredoc to the same path; see the "Backgrounded `--auto` run" section of `references/verb-do.md` for the collision-safe recipe.)
+        Capture the complete response with the adapter's exact file-write primitive at
+        the absolute `descriptor.output_path`. If that primitive is unavailable, use
+        the collision-safe artifact fallback in `references/verb-do.md`; never embed
+        model output in a shell command. Verify the file exists before `advance`.
 
       - **`skill:<name>[:<args>]`** — The descriptor carries `skill_name` + `skill_args` (no raw handler string), and usually NO `reference_doc` (a skill stage's own SKILL.md is the protocol; do not read `reference_doc` for it, and never treat a missing one as an error). Reconstruct the handler string `skill:<skill_name>[:<skill_args>]`, then:
         1. Verify the handler is installed:
            ```bash
-           python3 ${CLAUDE_SKILL_DIR}/scripts/resolve_handler.py \
+           .flow/flow handler \
              --handler "<handler_string>"
            ```
            Exit 1 (not installed) or Exit 2 (manifest invalid) → surface the error, set `STATUS=failed`, fall through to (e) to record it (do NOT bare-break). Exit 0 → the stdout JSON gives authoritative `skill_name` / `skill_args` / `invocation`.
-        2. Invoke the skill via the Skill tool using `skill_name`, passing `skill_args` verbatim. Wait for it to finish.
-        3. Capture its final response: `mkdir -p "$TICKET_DIR/stages"`, then Write to `<TICKET_DIR>/stages/<STAGE>.out` (same as the subagent branch, including the bg `--auto` Write-blocked heredoc fallback in `references/verb-do.md`). Set `STATUS=completed` (or `failed` if the skill reported failure).
+        2. Invoke the skill through the adapter's native skill loader using
+           `skill_name`, passing `skill_args` verbatim. If no loader exists, fail this
+           configured stage rather than claiming it ran.
+        3. Capture its final response at the absolute `descriptor.output_path` with the
+           same exact-write contract as the subagent branch. Set `STATUS=completed`
+           (or `failed` if the skill reported failure).
 
       - **`none`** — Skip; transition to (e) with status=completed.
 
@@ -182,19 +268,23 @@ The verbose detail — full exit-code matrices, the PR-ready notification protoc
 
    e. Advance the stage — finish it AND fetch the next descriptor in one call:
       ```bash
-      DESCRIPTOR=$(python3 ${CLAUDE_SKILL_DIR}/scripts/dispatch_stage.py advance \
+      DESCRIPTOR=$(.flow/flow dispatch advance \
         --workspace-root . --ticket "$KEY" --session-nonce "$NONCE" \
         --stage "$STAGE" --status "$STATUS" \
         [--output-path "$OUTPUT_PATH"])
       ```
       `advance` is `finish` + `next` in one round-trip: it records HEAD itself (do not pass it), finishes `$STAGE` with `$STATUS`, and returns the NEXT descriptor (parses EXACTLY like `next` in (b), plus a `finished` object). `--output-path` is for subagent/skill stages (and any inline stage that captured output); omit otherwise. It must name an existing, already-written file — `advance` exits 1 without finishing the stage if it is missing; write the file, then re-run the same `advance`. Handle its exit codes exactly as `next` in (a).
-      **PR-ready notification (non-`--auto` runs):** when `$STAGE` is `review_loop` finishing `completed`, fire the best-effort PushNotification with the PR URL — UNLESS this is an `--auto` run, which skips the notification entirely (its PR link still lands in `create_pr.out`; the drain report + bead close surface completion). Detect `--auto` by session context, same as the self-teardown case (full protocol + the `create_pr` fallback + the no-PushNotification fallback: `references/verb-do.md`).
+      **PR-ready notification (non-`--auto` runs):** when `$STAGE` is
+      `review_loop` finishing `completed`, use the adapter's best-effort notification
+      capability with the PR URL. Claude Code may use `PushNotification`; Codex and
+      generic adapters surface it in-thread, with the durable forge fallback described
+      in `references/verb-do.md`. `--auto` skips the host notification.
 
    f. Loop back to (b) with the `DESCRIPTOR` that `advance` just returned. The standalone `next` in (a) runs only once, for the first stage.
 
 5. After the loop exits — on **every** path (clean done, blocked, drift, or lost lease) — release the lease:
    ```bash
-   python3 ${CLAUDE_SKILL_DIR}/scripts/dispatch_stage.py release \
+   .flow/flow dispatch release \
      --workspace-root . --ticket "$KEY" --session-nonce "$NONCE"
    ```
    `release` is a no-op when the lease is not ours — the exit-7 takeover case, now including a rotated `session_nonce` — so it is safe to call unconditionally here. Do not call it on the init-abort paths of step 3.

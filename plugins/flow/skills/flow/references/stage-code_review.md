@@ -18,7 +18,7 @@ That bias is acceptable for personal-mode flow; work-mode users opt in to `skill
 
 1. Pull the implement-stage diff:
    ```bash
-   ${CLAUDE_SKILL_DIR}/scripts/diff_extract.py since-stage \
+   .flow/flow diff since-stage \
      --stage implement \
      --ticket <KEY> \
      --ticket-dir <ticket-dir> \
@@ -36,7 +36,7 @@ That bias is acceptable for personal-mode flow; work-mode users opt in to `skill
    - Obvious bugs (off-by-one, null-deref, missing await, etc.).
    - Regressions in nearby tests not updated by implement stage.
    - Style violations against existing file conventions.
-   - Comment bloat: run `${CLAUDE_SKILL_DIR}/scripts/lint_comments.py --diff-base <started_at_sha>` over the reviewed files first (same sha as step 1's diff range) — each finding is at minimum a Minor auto-fix — then flag any comment that violates the code-comment bar in `references/stage-implement.md` Step 4 (self-document first; WHY-only plus the workaround / invariant / dense-expression tail; wrapped to the configured line length; no AI tells). That bar overrides local file precedent: a new comment that restates the code or narrates the diff is a violation even if it matches a comment already sitting in the file.
+   - Comment bloat: run `.flow/flow lint-comments --diff-base <started_at_sha>` over the reviewed files first (same sha as step 1's diff range). Each finding is at minimum a Minor auto-fix; then flag any comment that violates the code-comment bar in `references/stage-implement.md` Step 4 (self-document first; WHY-only plus the workaround / invariant / dense-expression tail; wrapped to the configured line length; no AI tells). That bar overrides local file precedent: a new comment that restates the code or narrates the diff is a violation even if it matches a comment already sitting in the file.
    - Security-sensitive patterns (eval, raw SQL, missing escape).
 
    **Fowler smell baseline (always carried).** This baseline of high-signal refactoring smells rides even when the repo documents no standards; each smell reads what-it-is then how-to-fix, matched against the diff only.
@@ -82,18 +82,20 @@ That bias is acceptable for personal-mode flow; work-mode users opt in to `skill
 
    **Gate on the lane — full only.** Read the run's lane from frontmatter and SKIP this entire step on the cheap lanes (`express` / `light`), which already traded away this depth:
    ```bash
-   LANE=$(${CLAUDE_SKILL_DIR}/scripts/ticket_frontmatter.py read .flow/tickets/<KEY>.md \
+   LANE=$(.flow/flow frontmatter read .flow/tickets/<KEY>.md \
      | python3 -c "import json,sys; print(json.load(sys.stdin).get('lane') or 'full')")
    ```
    Run the reader only when `LANE` is `full` (absent frontmatter reads as `full`). Gate on the LANE, never on `model_resolve.py`'s output: a full-lane run whose `code_review` model is opted out returns an empty model yet still carries the full planner-bias window, so it still gets a reader. Every full-lane run gets one; the model is a separate question.
 
    **Model — cheap by default, the `model_resolve.py` idiom.** Resolve the reader's model exactly as the implement stage pins its worker (`references/verb-do.md`), passing this stage's name:
    ```bash
-   M=$(${CLAUDE_SKILL_DIR}/scripts/model_resolve.py --workspace-root . --ticket <KEY> --stage code_review)
+   M=$(.flow/flow model --workspace-root . --ticket <KEY> --stage code_review)
    ```
-   Pass `model=$M` on the spawn when `$M` is non-empty (`sonnet` on a default full-lane run — one cheap spawn), omit it otherwise to inherit the session model (a `[models] code_review = "off"` opt-out — a stronger reader, not a bug).
+   Pass `model=$M` only when it is non-empty and the adapter accepts Claude model
+   names. Codex omits it and inherits the active model. A configured `off` also omits
+   it and inherits the session.
 
-   **Spawn — the diff, and only the diff.** Capture the post-auto-fix working-tree diff (`git diff <started_at_sha>`, no `..HEAD`, so it includes the uncommitted implement work and any step-4 auto-fixes — the diff that will actually ship), then spawn ONE fresh `Agent` (`subagent_type: general-purpose`, `model=$M` per above) whose prompt carries ONLY that diff embedded verbatim plus the fixed question: *what does this change do; what looks wrong or surprising*. Instruct it to review ONLY the shown diff and NOT read any file, open the ticket or plan, or run any command — its value is that it is blind to the intent. Embedding the diff rather than telling it to run `git` is load-bearing: a fresh subagent still shares the cwd and could otherwise wander into `.flow/tickets/` or `plan.out` and lose the plan-blindness that is the whole point.
+   **Spawn: the diff, and only the diff.** Capture the post-auto-fix working-tree diff (`git diff <started_at_sha>`, no `..HEAD`, so it includes the uncommitted implement work and any step-4 auto-fixes; this is the diff that will actually ship), then spawn ONE fresh independent agent with the compatible model behavior above. Include `Harness: <claude-code|codex|generic>` in its prompt, then carry ONLY that diff embedded verbatim plus the fixed question: *what does this change do; what looks wrong or surprising*. Instruct it to review ONLY the shown diff and NOT read any file, open the ticket or plan, or run any command; its value is that it is blind to the intent. If the protocol ever permits a Flow command later, the harness identity requires the same-call `FLOW_HARNESS=<Harness>` prefix. Embedding the diff rather than telling it to run `git` is load-bearing: a fresh subagent could otherwise wander into `.flow/tickets/` or `plan.out` and lose the plan-blindness that is the whole point.
 
    **Triage — advisory only, no blocking power.** The reader's observations are candidates, not findings. Classify each through step 3's two-axis taxonomy, plus one reader-only disposition:
    - **dismissed** — a hallucinated or irrelevant observation, one the inline pass already recorded (any owner — do not render the same decision twice), or one an auto-fix already resolved: drop it, or record it as a `## no-op` with a verbatim `plan.out` citation when it names a choice the plan made deliberately AND you have independently confirmed the choice is correct. Deliberate is not correct — the reader exists because plan-faithful can be plan-flawed, so a reader observation contradicting a deliberate plan choice that you can NOT independently confirm fails safe: ask-user for a Major/Minor, and for a Critical the step-6 gate (ask-user is banned for Criticals). A fourth disposition, NOT a new `.out` section.

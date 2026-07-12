@@ -10,7 +10,8 @@ Transition reconciliation is read-before-replay (idempotent on target state).
 For comment/link/create the probe-based dedup is deferred; those are replayed
 best-effort and a successful replay drops the entry. An entry whose op no
 adapter can replay (anything outside VALID_OPS, e.g. the retired generic edit)
-is parked with a warning; drop it via `pending_mutations.py compact`.
+is parked with a warning; drop it through the workspace facade's
+`pending-mutations compact` command.
 """
 
 from __future__ import annotations
@@ -115,7 +116,8 @@ def reconcile(workspace_root: Path, tracker: _Tracker) -> dict[str, Any]:
             # excluded from the exit code) instead of dropping it silently.
             sys.stderr.write(
                 f"sync: parked {key} (op={op} is not replayable; remove via "
-                f"pending_mutations.py compact --drop-keys {key})\n"
+                f".flow/flow pending-mutations --workspace-root . compact "
+                f"--drop-keys {key})\n"
             )
             parked.append(key)
             continue

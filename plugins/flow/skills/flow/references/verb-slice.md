@@ -2,25 +2,29 @@
 
 `/flow slice <ticket>`. Interactive-only. Maps a wide refactor's blast radius,
 designs an expand → migrate → contract ladder of independently-green child
-tickets, and — after `ExitPlanMode` approval — mints the children through the
+tickets and, after the adapter's explicit plan approval, mints the children through the
 tracker seam, wires the dependency edges, prints the frontier, and stops. It is
 `group`'s inverse: `group` folds sibling tickets into one PR, `slice` unfolds one
 oversized refactor into a chain of PRs that each land green alone.
 
 There is no `--auto` route to `slice`. A slice is a judgment call about how a
 refactor decomposes, and the refusal gate (step 5) needs a human. The whole verb
-is read-only until `ExitPlanMode`; only the post-approval mint (step 7) writes.
+is read-only until the plan gate; only the post-approval mint (step 7) writes.
+Claude Code may use native plan mode and `ExitPlanMode`; Codex uses its native Plan
+boundary when active and otherwise presents the full ladder, ends the turn, and waits
+for explicit approval. A generic adapter uses the same soft turn boundary.
 
 The arc: `slice` → `/flow <expand>` → `/flow <migrate-1>` → … → `/flow <contract>`
 (one PR per rung, each closing its child; the contract PR also closes the parent
 umbrella).
 
-1. **Be in plan mode.** The front half performs no writes.
+1. **Select the adapter plan boundary.** Enter native plan mode when the host provides
+   it; otherwise use the soft turn boundary. The front half performs no writes.
 
-2. **Resolve the key and fetch context.** Key is the positional `$ARGUMENTS`
-   (else `branch_ticket.py --workspace-root .`). Read the ticket:
+2. **Resolve the key and fetch context.** Key is the positional adapter-supplied `arguments`
+   (else `.flow/flow branch-ticket --workspace-root .`). Read the ticket:
    ```bash
-   python3 ${CLAUDE_SKILL_DIR}/scripts/tracker_cli.py --workspace-root . get --key "$KEY"
+   .flow/flow tracker --workspace-root . get --key "$KEY"
    ```
    Run the plan-phase READ recall exactly as verb-spec step 3 does (keyed on the
    ticket text plus a short intent preamble, no `--record-pending`), and weave the
@@ -69,7 +73,9 @@ umbrella).
 
 6. **Present the ladder and gate.** Show it as a table: child (expand / migrate-N /
    contract), scope (the sites or surface it owns), dependency edges, and why it is
-   independently green. This is the plan; `ExitPlanMode` is the one gate.
+   independently green. This is the plan; explicit approval at the selected adapter
+   boundary is the one gate. On a soft boundary, end the turn here and do not mint
+   anything until the user approves.
 
 7. **Mint (post-approval only).** Write in this order so a partial mint is
    resumable; the parent marker (written before the edges) doubles as the re-run
@@ -82,7 +88,7 @@ umbrella).
 
    1. **Children first.** Per rung:
       ```bash
-      python3 ${CLAUDE_SKILL_DIR}/scripts/tracker_cli.py --workspace-root . create \
+      .flow/flow tracker --workspace-root . create \
         --summary "<rung summary>" --description "<scope + green rationale>" --type task
       ```
       Infer `--type` the way `verb-new.md` does (a task-like leaf under this
@@ -90,15 +96,15 @@ umbrella).
    2. **Parent marker.** Record the child set on the parent for discoverability and
       the re-run guard:
       ```bash
-      python3 ${CLAUDE_SKILL_DIR}/scripts/tracker_cli.py --workspace-root . comment \
+      .flow/flow tracker --workspace-root . comment \
         --key "$PARENT" --text "flow-slice children: <expand>, <migrate-1>, …, <contract>"
       ```
    3. **Edges.** `from-key` is the blocked/dependent child, `to-key` is the blocker
       that lands first:
       ```bash
-      python3 ${CLAUDE_SKILL_DIR}/scripts/tracker_cli.py --workspace-root . link \
+      .flow/flow tracker --workspace-root . link \
         --from-key "<migrate-1>" --to-key "<expand>"
-      python3 ${CLAUDE_SKILL_DIR}/scripts/tracker_cli.py --workspace-root . link \
+      .flow/flow tracker --workspace-root . link \
         --from-key "<contract>" --to-key "<migrate-1>"
       ```
       On a re-run these are resumable warnings, not failures: `bd dep add` tolerates
@@ -107,7 +113,7 @@ umbrella).
       parent umbrella through the existing covers fan-out (verb-spec step 6
       auto-derives `--covers` from the marker):
       ```bash
-      python3 ${CLAUDE_SKILL_DIR}/scripts/group_persist.py persist \
+      .flow/flow group-persist persist \
         --lead "<contract>" --covers "$PARENT" --workspace-root .
       ```
       **Epic parent → skip this step and say so.** `_refuse_invalid_covers` rejects

@@ -14,12 +14,12 @@ command -v node && command -v npx   # leg (b): both must resolve
 - `PR_URL` / `PR_ID` from `$TICKET_DIR/stages/create_pr.out` (review_loop's existing `## Inputs` read).
 - The base branch from `forge_cli.py pr-info` (the normalized `base` field), feeding the full merge-base diff. Mirror `stage-review_loop.md` §3's capture-then-parse shape so a transient `pr-info` never dumps a traceback:
   ```bash
-  BASE=$(python3 ${CLAUDE_SKILL_DIR}/scripts/forge_cli.py --workspace-root . pr-info --pr "$PR_ID" 2>/dev/null \
+  BASE=$(.flow/flow forge --workspace-root . pr-info --pr "$PR_ID" 2>/dev/null \
     | python3 -c 'import sys,json;d=json.load(sys.stdin);print(d.get("base","") if d else "")' 2>/dev/null)
   git diff "$(git merge-base "origin/$BASE" HEAD)"..HEAD
   ```
   An empty `$BASE` (a failed `pr-info`) is a degradation trigger like any other failure — the merge-base substitution would error and the diff silently collapse to empty, so never render a packet around a silently-empty core diff; take the skip line instead.
-- Chapters from `plan.out` (per-file rationale + plan steps); adopt / dismiss / discuss triage items from `code_review.out`'s taxonomy sentinel sections (`flow:code_review-taxonomy v1`); evidence from `e2e.out`'s `flow:e2e-evidence` sentinel; the CI chip from `forge_cli.py ci-rollup --pr "$PR_ID"`; the bot-loop summary from review_loop's own `stage-review_loop.md` §1-§4 results.
+- Chapters from `plan.out` (per-file rationale + plan steps); adopt / dismiss / discuss triage items from `code_review.out`'s taxonomy sentinel sections (`flow:code_review-taxonomy v1`); evidence from `e2e.out`'s `flow:e2e-evidence` sentinel; the CI chip from `.flow/flow forge ci-rollup --pr "$PR_ID"`; the bot-loop summary from review_loop's own `stage-review_loop.md` §1-§4 results.
 - `stage-review_loop.md` §3's not-reviewed caveat ("proceeding on CI-green only — automated review did not happen") renders as a packet banner when present.
 
 **Authoring.** The branch / PR is ground truth; the HTML is a disposable render at `${TMPDIR:-/tmp}/flow-lavish-$KEY/review.html`, authored via a Bash heredoc (`cat > "$TMPDIR/..." <<'HTML' ... HTML`), regenerated per round, NEVER edited as source. Pinned `npx -y lavish-axi@0.1.35` for open / `poll` / `end` — the same version-pin the plan surface uses, closing the npx supply-chain exposure the unpinned `/lavish` skill leaves open. Open the `code` (diff rendering) and `input` (triage controls) playbooks via `npx -y lavish-axi@0.1.35 playbook <id>` BEFORE authoring the HTML. Design source follows lavish's documented priority, never hand-rolled ad-hoc CSS: the user-requested look first, else the subject project's design system, else the `npx -y lavish-axi@0.1.35 design` DaisyUI fallback.
@@ -51,14 +51,26 @@ Independent of which design source you pick, MANDATORY in every authored artifac
 
 The PR-ready notification fires exactly once per run. On a packet-gated run it fires at packet-open — this satisfies the do-loop step-e firing point (no duplicate ping), and the packet loop then runs inside `review_loop`'s tail (see `references/review-packet.md`). On a gate-failed run (the packet never opens) it fires at step e exactly as today. The packet never attaches at the `create_pr` fallback firing point (`review_loop` handler `none` → skip line, no packet).
 
-Run ONE persistent poll as a background task for the whole loop: lavish watches the artifact file and live-reloads a re-render in place (scroll preserved), so NEVER kill / re-arm the poll or re-run the open command around a re-render — killing it shows the user "no agent listening". Strip the redundant `dom_snapshot` from every poll read exactly as the plan surface does (`references/verb-spec.md` step 4's poll bullet): pipe each poll invocation through `| python3 -c 'import sys; sys.stdout.writelines(l for l in sys.stdin if not l.startswith("dom_snapshot:"))'` so the ~19KB/turn snapshot never enters context (flow-xypg). Annotations batch into ONE send — a review round costs implement-verify-commit-push, so never fire per-comment. On send, record the round SHA:
+Run ONE persistent poll owned by the orchestration session for the whole loop. Claude
+Code may keep it as a background task; Codex keeps the long-running command session
+and waits/polls it. Do not give continuation to a child agent. Lavish watches the
+artifact and live-reloads re-renders in place, so never kill/re-arm the poll or rerun
+the open command around a render. Strip `dom_snapshot` from every poll read exactly as
+the plan surface does. Batch annotations into one send. On send, record the round SHA:
 ```bash
 ROUND_SHA=$(git rev-parse HEAD)
 ```
-Then apply the batch as ONE fix round via `references/stage-review_loop.md` §2's delegated-fix recipe verbatim — a `subagent:general-purpose` spawn pinned with `model_resolve.py --stage review_loop`, the existing commit machinery, `git push` — followed by a bounded `references/stage-review_loop.md` §1-style CI re-probe (an advisory refresh). Pin the fix subagent the same way §2 does:
+Then apply the batch as ONE fix round via `references/stage-review_loop.md` §2's
+delegated-fix recipe: give the subagent the six rooted prompt fields from
+`references/harness.md`, including `Harness`, and require the call-local
+`FLOW_HARNESS` prefix on any facade command. Use the existing commit machinery and
+`git push`, followed
+by a bounded CI re-probe. Resolve the model hint as §2 does:
 ```bash
-M=$(python3 ${CLAUDE_SKILL_DIR}/scripts/model_resolve.py --workspace-root . --ticket "$KEY" --stage review_loop)
+M=$(.flow/flow model --workspace-root . --ticket "$KEY" --stage review_loop)
 ```
+Pass `M` only when non-empty and the adapter accepts Claude model names. Codex omits
+the model parameter and inherits the active model.
 Then re-render, showing only the interdiff since the last reviewed round:
 ```bash
 git diff "$ROUND_SHA"..HEAD
@@ -67,7 +79,7 @@ The interdiff is LOCAL git only — never a forge review-round API (Bitbucket ha
 
 **Lease heartbeat.** Before each render, on every poll return, and whenever control returns to the orchestrator, re-issue and discard the descriptor:
 ```bash
-python3 ${CLAUDE_SKILL_DIR}/scripts/dispatch_stage.py next \
+.flow/flow dispatch next \
   --workspace-root . --ticket "$KEY" --session-nonce "$NONCE"
 ```
 `next` refreshes the lease and re-verifies the snapshot (SKILL.md step-a semantics; `pick_next_pending` returns the in_progress review_loop again, never skips ahead). Exit 1 / 7 routes to the standard `/flow recover` path. Documented residual: an IDLE long-poll returns nothing, so a review idle past ~120 min expires the lease before any heartbeat fires — refresh-past-expiry is legal for the owner (`lease.assert_lease_still_mine` deliberately skips the expiry check) and re-entry is idempotent, but on the self-target repo the expired-lease + green-PR window is briefly reapable.
@@ -75,7 +87,7 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/dispatch_stage.py next \
 **Verdict — convergence is the USER's built-in end-session signal, not an agent decision, never a competing control.** Saving and closing IS the approval: there is NO queued approve control — no `input`-playbook approve question, no custom in-page approve button. The user's built-in **Send & end session** submits the final feedback batch (if any — queued triage dispositions and/or change requests) + user-ended attribution together (the CLI's designed convergence signal), so the final poll batch carries `status: ended`. A change request is ordinary batched feedback sent mid-session via **Send to Agent**, which keeps the loop alive (another fix round, re-render, poll again); only the end is terminal. On the ended batch:
 - **the ended batch carries no unresolved change request** (only dismissed triage items, or nothing queued) → THIS end IS the approval → capability-gated `forge_cli.py mark-ready` (the `ready_toggle` capability; a `{"supported": false}` return renders as advisory text — the user flips the draft manually):
   ```bash
-  python3 ${CLAUDE_SKILL_DIR}/scripts/forge_cli.py --workspace-root . mark-ready --pr "$PR_ID"
+  .flow/flow forge --workspace-root . mark-ready --pr "$PR_ID"
   ```
   If the last round's CI is not green at approve time, surface that one line in-thread BEFORE mark-ready. Then `STATUS=completed`, the round log into `review_loop.out`, `advance` — the normal step-e / step-5 delivery (the PR-link block, `references/verb-do.md`) runs unchanged. Merge stays human on the forge.
 - **the ended batch carries an unresolved change request AND `status: ended`** (a queued change request, or an adopted triage item — the user asked for changes and left) → apply that batch as one last fix round, push, then deliver the interdiff summary in-thread with the PR link — no re-render, no reopen, NO `mark-ready`. `STATUS=completed`, today's delivery.
@@ -131,13 +143,13 @@ Field contract:
 - Fix pile (the one definition): `threads[]` entries with `"disposition": "fix"`. stage-implement source #1 reads it as the work list; stage-review_loop's supersede branch computes the Major+-replacement fix set and the §5 terminal check from it. An explicit empty triage — file exists, fix pile empty (all defer/dismiss, or `"threads": []`) — supersedes the floor: no floor-bumped thread enters the fix set, so the terminal check has nothing left to chase. Termination timing stays with the convergence rules below — a mid-session all-defer/dismiss batch (**Send to Agent**) keeps the loop alive; only a user-ended session closes it. No file → floor applies (the empty-vs-absent distinction).
 - Unanchored threads (`file: null` / `line: null` / unpinnable anchor) live in the SAME array; the board renders them in a visible section; the schema needs no split.
 
-**Rounds.** Round 1: the queued fix dispositions seed the fix-only stage subset — WAIT for the first poll return before dispatching, so the first batch is in hand before implement runs. Rounds 2+: at review_loop's revision tail — each mid-session batch applied as ONE fix round via `references/stage-review_loop.md` §2's delegated-fix recipe verbatim (the fix subagent pinned with `model_resolve.py --stage review_loop`; human rounds cap-exempt per §2's carve-out), followed by a bounded CI re-probe, then a re-render showing only the interdiff `git diff "$ROUND_SHA"..HEAD` — LOCAL git only, never a forge review-round API.
+**Rounds.** Round 1: the queued fix dispositions seed the fix-only stage subset. WAIT for the first poll return before dispatching, so the first batch is in hand before implement runs. Rounds 2+: at review_loop's revision tail, each mid-session batch is applied as ONE fix round via `references/stage-review_loop.md` §2's delegated-fix recipe verbatim (the fix subagent's hint resolves through `.flow/flow model --stage review_loop`; human rounds cap-exempt per §2's carve-out), followed by a bounded CI re-probe, then a re-render showing only the LOCAL-git interdiff `git diff "$ROUND_SHA"..HEAD`, never a forge review-round API.
 
 **Lease heartbeat (two regimes).** Inside the review_loop tail (rounds 2+): the packet's heartbeat block above applies, with `--revision "$REV_ID"` appended to the `next` call — review_loop is in_progress there, so `next` is state-idempotent (`pick_next_pending` resumes the in_progress stage rather than beginning a new one). During the step-5a board wait (before the do-loop): do NOT heartbeat — a `next` on an all-pending sub-run begins the first pending stage (implement) before any triage exists. Documented residual: the `revise-open` lease carries a 10-min init TTL, and a long triage can outlive it; refresh-past-expiry is legal for the owner (`lease.assert_lease_still_mine` skips the expiry check) and the do-loop's first real `next --revision` re-covers it — the same residual class the packet's heartbeat block documents.
 
 **Convergence (post-gpo7, inherited).** The user's built-in end-session signal is the verdict, keyed on the same discriminator the packet uses. **Send to Agent** mid-session = a batched disposition set, loop alive (another fix round, re-render, poll again). **Send & end session** is terminal, and its batch is read for an unresolved change request:
 - the ended batch carries an unresolved change request (any queued fix disposition) → apply that batch as one last fix round, push, post the replies / resolves, deliver the interdiff summary in-thread with the PR link — no re-render, no reopen, NO `mark-ready`; `STATUS=completed`, today's step-7 delivery.
-- the ended batch carries none (only defer / dismiss, or nothing queued) → THIS end IS convergence: persist the (possibly empty) disposition set — an explicit empty triage supersedes the floor — then `STATUS=completed` and today's step-7 delivery; capability-gated `forge_cli.py mark-ready --pr "$PR_ID"` only when `pr-info` still reports `draft: true` (a non-draft PR is already promoted; a `{"supported": false}` return renders as advisory text). Merge stays human on the forge.
+- the ended batch carries none (only defer / dismiss, or nothing queued) → THIS end IS convergence: persist the (possibly empty) disposition set; an explicit empty triage supersedes the floor. Then `STATUS=completed` and today's step-7 delivery; capability-gated `.flow/flow forge mark-ready --pr "$PR_ID"` only when `pr-info` still reports `draft: true` (a non-draft PR is already promoted; a `{"supported": false}` return renders as advisory text). Merge stays human on the forge.
 - a malformed / unparseable ended batch, or lavish degraded at the moment of end → the degradation contract (`Lavish: degraded mid-loop — <reason>`, today's delivery, NO `mark-ready`), never a guessed verdict.
 
 **Audit trail.** A fixed thread → `post-reply` ("Fixed in $FIX_SHA. <one line>") + host-verified `resolve-thread` (the bkt adapter re-reads `.resolution != null`); a deferred or dismissed thread → `post-reply` carrying the human's reason, thread stays open. Reply-posting is independent of fix-pile emptiness — an all-defer/dismiss batch still posts every reason. The single-fire rule in `references/verb-do.md` is untouched: no verb-do edit rides this section.

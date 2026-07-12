@@ -7,13 +7,13 @@ commit subject's conventional-commit prefix, falling back to patch. Single sourc
 lift the same number to merge time instead of hand-bumping it per PR.
 
 Keystone seam of epic flow-6gx: the per-PR version bump is gone, and `stamp` writes
-the derived version into both version files server-side post-merge on `main` (the
-`.github/workflows/version-stamp.yml` Action). `write_version` does the surgical
-line-replace that preserves JSON formatting.
+the derived version into the Claude manifest, Claude marketplace entry, and Codex
+manifest server-side post-merge on `main` (the `.github/workflows/version-stamp.yml`
+Action). `write_version` does the surgical line-replace that preserves JSON formatting.
 
 CLI:
   version.py stamp [--ref origin/main] [--cwd .] [--commit-type <type>]
-  computes the next version, writes it into both version files, prints JSON
+  computes the next version, writes it into all three version files, prints JSON
   {"ref", "current", "next", "bump", "commit_type"} to stdout.
 
 Exit codes:
@@ -35,6 +35,7 @@ from _runner import cwd_default_runner as _default_runner
 
 PLUGIN_JSON = "plugins/flow/.claude-plugin/plugin.json"
 MARKETPLACE_JSON = ".claude-plugin/marketplace.json"
+CODEX_PLUGIN_JSON = "plugins/flow/.codex-plugin/plugin.json"
 
 VERSION_RE = re.compile(r'"version"\s*:\s*"(\d+)\.(\d+)\.(\d+)"')
 
@@ -153,11 +154,14 @@ def _set_version_in_file(path: Path, version: str) -> None:
 
 
 def write_version(*, cwd: Path, version: str) -> None:
-    """Surgically set `version` in both version files (plugin.json top-level + the
-    marketplace flow entry), preserving surrounding JSON formatting. Each file has
-    exactly one `"version":` line; a regex line-replace keeps the rest intact."""
+    """Surgically set `version` in both manifests and the Claude marketplace entry.
+
+    Each file has exactly one `"version":` line; a regex line-replace preserves the surrounding JSON
+    formatting.
+    """
     _set_version_in_file(cwd / PLUGIN_JSON, version)
     _set_version_in_file(cwd / MARKETPLACE_JSON, version)
+    _set_version_in_file(cwd / CODEX_PLUGIN_JSON, version)
 
 
 def stamp(
@@ -167,7 +171,7 @@ def stamp(
     runner: Runner | None = None,
     commit_type: str | None = None,
 ) -> dict[str, Any]:
-    """Compute the next version from `ref` and write it into both version files.
+    """Compute the next version from `ref` and write it into all three version files.
     Returns the compute dict {"ref", "current", "next", "bump", "commit_type"}."""
     result = compute(cwd=cwd, ref=ref, runner=runner, commit_type=commit_type)
     write_version(cwd=cwd, version=result["next"])
@@ -179,7 +183,7 @@ def cli_main(argv: list[str]) -> int:
         description="Derive (and optionally stamp) the plugin version."
     )
     sub = parser.add_subparsers(dest="command", required=True)
-    stp = sub.add_parser("stamp", help="write the next version into both version files")
+    stp = sub.add_parser("stamp", help="write the next version into all version files")
     stp.add_argument(
         "--ref", default="origin/main", help="git ref to read the current version from"
     )

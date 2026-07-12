@@ -36,7 +36,7 @@ The taxonomy is closed:
 
 1. Bundle the reflect inputs:
    ```bash
-   ${CLAUDE_SKILL_DIR}/scripts/reflect_inputs.py \
+   .flow/flow reflect-inputs \
      --ticket <KEY> \
      --ticket-dir <ticket-dir> \
      --ticket-frontmatter .flow/tickets/<KEY>.md \
@@ -88,7 +88,7 @@ The taxonomy is closed:
    "We added a feature" is not novel.
    "The X system's caching layer breaks when Y conditions hold" IS novel.
 
-   **Surface missing REPO-artifact gaps, do NOT act on them.** Reflect runs AFTER `create_pr` and the review loop. If you notice the change shipped without something it should carry (a fixture with no provenance note, an absent doc stub, an un-added file IN THE TICKET REPO), record it as a one-line note to the user and, where it generalizes, a knowledge entry — but do NOT add the file here. Adding a repo file at reflect-time forces a new commit that re-triggers the entire CI + review loop, the exact churn the implement stage's definition-of-done exists to prevent. Reflect names the gap so it lands earlier next time; it does not close it. (This restraint is about repo / PR artifacts ONLY. For the HARNESS itself — the skill's own files — step 2b is the opposite: there you are empowered to fix on the spot, because skill files are not PR artifacts and carry no re-review cost. Caveat: that churn-free property holds only when the skill checkout is a distinct tree from the run's worktree, the normal case; in the self-target dogfood case where `${CLAUDE_SKILL_DIR}` coincides with the run's own worktree (`skill_root==worktree`, flow-alz/PR#111) a machinery edit lands IN the open PR and re-triggers CI + review, so it is not churn-free there.)
+   **Surface missing REPO-artifact gaps, do NOT act on them.** Reflect runs AFTER `create_pr` and the review loop. If you notice the change shipped without something it should carry (a fixture with no provenance note, an absent doc stub, an un-added file IN THE TICKET REPO), record it as a one-line note to the user and, where it generalizes, a knowledge entry, but do NOT add the file here. Adding a repo file at reflect-time forces a new commit that re-triggers the entire CI + review loop, the exact churn the implement stage's definition-of-done exists to prevent. Reflect names the gap so it lands earlier next time; it does not close it. (This restraint is about repo / PR artifacts ONLY. For the HARNESS itself, the skill's own files, step 2b is the opposite: there you are empowered to fix on the spot, because skill files are not PR artifacts and carry no re-review cost. Caveat: that churn-free property holds only when logical `skill_root` is a distinct tree from `run_root`, the normal case; in the self-target dogfood case where those roots coincide (flow-alz/PR#111) a machinery edit lands IN the open PR and re-triggers CI + review, so it is not churn-free there.)
 
 2b. **Machinery reflection (lens B — gated; mandatory when ON and the run hit any friction).** SKIP this entire step unless `reflect_config.machinery` is true. It is false by default: a stranger running flow neither wants flow editing its own source nor cares about flow-internal findings. When the flag is off, do not record `MACHINERY:` entries and do not apply harness fixes; go straight to step 2c. When it is on (the skill developer's workspace), run it in full. The steps above point the lens DOWN at the ticket's domain (the code, the tax rules, the library). This step points it UP at the harness that produced the work: did `/flow`'s own scripts, stages, exit codes, handler dispatch, and orchestration loop serve the run, or fight it? This is the feedstock `/skill-polish` consumes — produce it whether or not a human asked, at the depth of an engineering review, not a vibe check.
 
@@ -106,17 +106,17 @@ The taxonomy is closed:
      - **Corpus-delta advisory pre-check — run BEFORE the apply (after it there is no pristine baseline).** Applies only when the fix touches a flow engine script (`scripts/*.py`) AND the bundle's `harness_eval.available` is true; a prose-only `references/*.md` edit cannot move the deciders — skip. Score the intended edit against a scratch copy:
        ```bash
        SCRATCH=$(mktemp -d)
-       cp -R "${CLAUDE_SKILL_DIR}/scripts/." "$SCRATCH/"
+       cp -R "<absolute skill_root>/scripts/." "$SCRATCH/"
        # apply the intended fix to the COPY (raw edit is fine here, the scratch
        # dir is private; machinery_edit would refuse an out-of-tree path anyway)
-       python3 ${CLAUDE_SKILL_DIR}/scripts/harness_eval.py score --candidate "$SCRATCH"
+       .flow/flow harness-eval score --candidate "$SCRATCH"
        rm -rf "$SCRATCH"
        ```
        `--baseline` defaults to the live, still-unedited checkout the invoked script lives in — which is exactly why this runs before the apply. The outcome is advisory and feeds the dividing question below; there is no new gate: exit 0 → proceed to the `machinery_edit.py` apply and note `non_regression: true` in the `MACHINERY:` entry. Exit 3 → the delta is direct evidence the edit is NOT strictly correct: answer the dividing question No, route to PROPOSE + RECORD, and paste the per-split `regressed`/`detail` JSON into both the human-facing reflect output and the entry. Exit 1/2 → eval unavailable or errored: say so and proceed on judgment alone; the pre-check never blocks reflect. Caveats: replays are not atomic — a sibling agent or an earlier APPLY-NOW edit in the SAME reflect pass can mutate the baseline mid-score, so treat a surprising delta as a re-check prompt, not a verdict; the corpus exercises only the four pure deciders, so exit 0 on a non-decider file is absence-of-regression, NOT positive evidence of correctness; a fix to `harness_eval.py`/`harness_corpus.py` itself is scored by the live scorer against the candidate's deciders only.
      - **Apply the edit through `scripts/machinery_edit.py`, NOT the raw Edit tool.** `machinery_edit.py` holds a single global flock across the whole read -> replace -> atomic-write, so concurrent machinery writers serialize and any concurrent reader sees old-or-new, never a torn file; it also refuses `stage-registry.toml` and any path outside the skill tree (rationale: self-evolution.md §Guardrails — machinery_edit flock). Invoke it per fix:
        ```bash
        PAYLOAD=$(mktemp); printf '%s' "$(jq -n --arg f "<rel-or-abs path>" --arg old "<unique anchor>" --arg new "<replacement>" '{file:$f,old:$old,new:$new}')" > "$PAYLOAD"
-       python3 ${CLAUDE_SKILL_DIR}/scripts/machinery_edit.py apply --skill-root ${CLAUDE_SKILL_DIR} --payload "$PAYLOAD"
+       .flow/flow machinery-edit apply --skill-root "<absolute skill_root>" --payload "$PAYLOAD"
        ```
        Exit 0 `applied` → done. Exit 0 `already_applied` → a sibling beat you to it, treat as done. Exit 3 `anchor_not_found` → re-derive the anchor (re-Read; it may already be fixed differently). Exit 4 `ambiguous` → narrow the anchor and retry. Exit 2 `refused` → snapshot-pinned, out-of-tree, OR skill-root on a protected branch (main/master/dev/develop), route to PROPOSE + RECORD.
      - **A machinery fix NEVER commits onto a protected branch.** `machinery_edit.py` refuses an apply (exit 2 `refused`) when skill-root is on a protected branch (main/master/dev/develop), so the finding routes to PROPOSE + RECORD → the evolve-bead sling instead (rationale: self-evolution.md §Guardrails — never commit machinery to `main`). Do NOT bump-and-commit a machinery fix onto a protected branch from inside a run. Only when the skill checkout is itself on a feature branch does the apply succeed; there, capture it: commit the touched skill files on that feature branch (NO version bump — the version stamps at merge) (do NOT push — publishing is a human call), recording the commit sha in the `MACHINERY:` entry as provenance. A dirty skill checkout with unrelated work also falls back to PROPOSE + RECORD.
@@ -124,7 +124,7 @@ The taxonomy is closed:
    - **PROPOSE + RECORD, do not self-apply unattended.** Structural changes (the orchestration driver, the dispatch loop, a script rewrite), anything touching a file the fleet is actively mid-stage on, or anything you are not high-confidence is strictly correct. The blast radius across concurrent runs is too large to self-apply. Here the `MACHINERY:` entry + the human note ARE the deliverable, and recording them IS acting on the finding: it is durable, it survives the run, it is findable later. That is the requirement. If a skill-polishing or refactor capability happens to be installed (e.g. `/skill-polish`), you MAY invoke it here to carry the recorded finding into a reviewed edit while the context is fresh, but that is a loose best-effort dependency, not a mandate, and the run does not block on it: the record stands on its own when no such skill exists. A human gate sits on anything that would be pushed.
      - **Sling it to the backlog (Producer A, maintainer mode).** A `MACHINERY:` entry in `knowledge.jsonl` dead-ends unless someone greps it. So for a PROPOSE+RECORD finding, ALSO file it as a bead in flow's OWN beads, where it becomes triaged, shippable work the `/flow evolve` loop can pick up. File once per finding:
        ```bash
-       python3 ${CLAUDE_SKILL_DIR}/scripts/flow_beads_create.py \
+       .flow/flow flow-beads-create \
          --workspace-root . \
          --summary "<the finding title>" \
          --description "<the MACHINERY entry body + the file:line evidence that motivated it>" \
@@ -132,7 +132,7 @@ The taxonomy is closed:
          --dedup-key "<primary-relfile>::<short-symptom>, e.g. references/stage-commit.md::double-transition"
        ```
        When the slung finding carries a CONCRETE `scripts/*.py` edit and `harness_eval.available` is true, run the same scratch-copy corpus score from the APPLY-NOW pre-check above and include the delta summary in the `--description` next to the confidence statement (or `corpus delta: not scored — no concrete edit yet` / `corpus delta: not scored — eval unavailable`), so the downstream evolve consumer sees a regressing proposal before pickup.
-       The `--dedup-key` is anchored on the finding's primary file path (not free wording) and reduced to a deterministic fingerprint, so reflect does not refile the same machinery friction every run (nor re-propose one already closed/rejected). Keep the `::` separator: the file component (basename) now also anchors a fuzzy same-file dedup pass, so a re-discovery worded differently still converges instead of minting a new key. Exit 0 → filed; it prints the bead key — note that key in the `MACHINERY:` entry so the two are linked. Exit 5 → a bead for this finding already exists (prints its key); reference that key in the entry and move on, do NOT refile. Exit 4 → not a maintainer setup: dormant, nothing filed, the knowledge entry stands alone. This is the normal user-mode path, NOT an error. Exit 2 → bd error: log and move on (the knowledge entry already captured the finding). If the finding touches a hot file — `SKILL.md` / `stage-registry.toml` / `CLAUDE.md` / a wired handler, or a safety-machinery guard file (`lease.py`, `snapshot.py`, `_atomicio.py`, `_locking.py`, `state.py`, `dispatch_stage.py`, `diff_extract.py`, `flow_worktree.py`, `machinery_edit.py`, `flow_friction.py`) — add `hot` to `--labels` (`evolve,machinery,hot`) so the consumer routes the bead through the hot path and its property-check review.
+       The `--dedup-key` is anchored on the finding's primary file path (not free wording) and reduced to a deterministic fingerprint, so reflect does not refile the same machinery friction every run (nor re-propose one already closed/rejected). Keep the `::` separator: the file component (basename) now also anchors a fuzzy same-file dedup pass, so a re-discovery worded differently still converges instead of minting a new key. Exit 0 → filed; it prints the bead key, which must be noted in the `MACHINERY:` entry so the two are linked. Exit 5 → a bead for this finding already exists (prints its key); reference that key in the entry and move on, do NOT refile. Exit 4 → not a maintainer setup: dormant, nothing filed, the knowledge entry stands alone. This is the normal user-mode path, NOT an error. Exit 2 → bd error: log and move on (the knowledge entry already captured the finding). If the finding touches a hot file, such as `SKILL.md` / `stage-registry.toml` / `CLAUDE.md` / a wired handler, or a safety-machinery guard file (`lease.py`, `snapshot.py`, `_atomicio.py`, `_locking.py`, `state.py`, `dispatch_stage.py`, `diff_extract.py`, `flow_launcher.py`, `flowctl.py`, `flow_worktree.py`, `machinery_edit.py`, `flow_friction.py`), add `hot` to `--labels` (`evolve,machinery,hot`) so the consumer routes the bead through the hot path and its property-check review.
    <!-- SYNC: this 10-file hot guard list is duplicated by design in references/verb-evolve.md §audit step 2 — keep both in sync with scripts/triage.py _GUARD_FILES (flow-837; not extracted to a constant per maintainer decision; seam_check gates the equality) -->
    - **NEVER at reflect-time:** the repo/PR artifacts (fixtures, docs, code in the ticket's tree). That is the post-PR-churn boundary, and it is the ONLY category reflect must not touch.
 
@@ -144,7 +144,7 @@ The taxonomy is closed:
 
    **Deterministic closing sub-step: recurrence escalation.** MANDATORY, best-effort, no judgment involved — run the fixed command:
    ```bash
-   python3 ${CLAUDE_SKILL_DIR}/scripts/friction_escalate.py escalate --workspace-root .
+   .flow/flow friction-escalate escalate --workspace-root .
    ```
    Propose-only: it consumes the same `friction_recurrence` block already in the bundle (step 1) and files a `recurrent`-labelled bead per friction class that recurred `>=K` times since its LATEST claimed fix (not the aggregate since-earliest count), where `K` and the exempt-anchor set are `[evolve]` workspace.toml knobs (`recurrence_escalation_k` default 3, `recurrence_exempt_anchors` default `[planned_files]`). It never gates, reopens, or launches anything — the bead carries no `evolve` label, so `/flow evolve`'s drain never picks it up; it exists to surface a fix that did not hold to the maintainer. Idempotent: dedup is keyed on the bare anchor, so re-running it every reflect files at most one bead per anchor ever. Best-effort: a non-zero exit logs one line and reflect continues, it never fails the stage. Auto-dormant outside maintainer mode (no `[maintainer]` marker) — nothing is filed, this is the normal user-mode path, not an error.
 
@@ -160,7 +160,7 @@ The taxonomy is closed:
 
 3. For EACH extracted entry (0 or more), append to knowledge.jsonl:
    ```bash
-   ${CLAUDE_SKILL_DIR}/scripts/memory_append.py \
+   .flow/flow memory-append \
      --type <LEARNED|DECISION|FACT|PATTERN|INVESTIGATION|DEVIATION> \
      --text "<entry body>" \
      --branch "$(git rev-parse --abbrev-ref HEAD)" \
@@ -176,13 +176,13 @@ The taxonomy is closed:
 
    **Grouped runs (`covers` in frontmatter):** append the entry ONCE, attributed to the lead `--ticket <KEY>` (the run's identity), and name the covered keys in the entry body (e.g. "co-delivered FT-1207/1208"). Do NOT loop `memory_append` over the covers — the dedup id is `sha256(namespace + ticket + type + body)`, so per-cover appends create near-duplicate entries that recall later surfaces as dupes. One attributed entry that cites the covers keeps `knowledge.jsonl` clean and traceable.
 
-   **Faceted tagging.** If the bundle's `label_facets` is non-empty and this run's knowledge belongs to a facet value from that list (e.g. `label_facets: ["form"]` and this run's subject is form `iva_2083`), add `--labels <facet>:<value>` to the invocation above (e.g. `--labels form:iva_2083`) so the entry joins that facet's exhaustive `recall.py --label` cluster. Comma-separate multiple facets. Skip this when `label_facets` is empty (the default; no facet convention configured for this workspace).
+   **Faceted tagging.** If the bundle's `label_facets` is non-empty and this run's knowledge belongs to a facet value from that list (e.g. `label_facets: ["form"]` and this run's subject is form `iva_2083`), add `--labels <facet>:<value>` to the invocation above (e.g. `--labels form:iva_2083`) so the entry joins that facet's exhaustive `.flow/flow recall --label` cluster. Comma-separate multiple facets. Skip this when `label_facets` is empty (the default; no facet convention configured for this workspace).
 
 3b. **Supersede recalled entries this run disproved (lens A — always on).** For each `recalled_entries` item from the bundle, judge whether THIS run's `final_diff` disproves the behavior the entry asserts. The recalled entry was live context for this run; if your own change made it false, the dead entry must be retired so the next recall does not surface stale truth.
 
    - **AUTO-supersede ONLY when the disproof is ground truth** — the contradicting change is PRESENT in `final_diff` (this run itself changed the behavior the entry describes, not merely a guess that it looks stale). Append a NEW entry that cites this run / PR and states what is now true, supersedes-targeting the dead entry by its exact id:
      ```bash
-     ${CLAUDE_SKILL_DIR}/scripts/memory_append.py        --type <FACT|LEARNED|DEVIATION>        --text "<what is now true; cite this run/PR>"        --branch "$(git rev-parse --abbrev-ref HEAD)"        --ticket <KEY>        --supersedes <recalled_entries[i].id>        --workspace-root .
+     .flow/flow memory-append        --type <FACT|LEARNED|DEVIATION>        --text "<what is now true; cite this run/PR>"        --branch "$(git rev-parse --abbrev-ref HEAD)"        --ticket <KEY>        --supersedes <recalled_entries[i].id>        --workspace-root .
      ```
      Use the exact `recalled_entries[i].id` for `--supersedes`. The `--type` respects the closed taxonomy — typically `FACT`/`LEARNED` for the corrected truth, or `DEVIATION` when the point is that the old entry was disproven.
    - **Anything ambiguous, indirect, or inference-based** — the entry merely looks stale, or the contradiction is NOT in `final_diff` — do NOT auto-supersede. Surface a one-line proposal note in the human-facing reflect output instead (`Proposed supersede: <id> — <why it may be stale>`), a binding skeptic correction the maintainer adjudicates. The auto path is reserved for diff-grounded disproof.
@@ -191,13 +191,13 @@ The taxonomy is closed:
 
 3c. **Refresh the semantic index (best-effort, non-blocking).** If any entry was appended (or superseded) this stage and the workspace opts into `[memory.semantic]`, refresh the derived embedding sidecar so plan-phase recall on the NEXT ticket sees this run's knowledge:
    ```bash
-   python3 ${CLAUDE_SKILL_DIR}/scripts/recall.py --reindex --workspace-root .
+   .flow/flow recall --reindex --workspace-root .
    ```
    Incremental (embeds only the new entries). SWALLOW any error — the append already succeeded and the index is derived (it self-heals on the next reindex); this never gates the run. A no-op when semantic is off (the index just stays absent and recall stays BM25).
 
 3d. **Record recall usage (precision signal — best-effort).** SKIP when `recalled_entries` was empty (nothing was surfaced). Otherwise record which of the surfaced entries this run actually leaned on, so the `recall-hit-rate` metric (`metric.py recall-hit-rate`) can measure precision instead of guessing. `--used-ids` is the subset of `recalled_entries[].id` that informed a decision, a diagnosis, or the diff — INCLUDING any you superseded in 3b (acting on an entry is using it). The surfaced denominator is read from the recall-log, so you only name the used subset; an entry you ignored is simply omitted:
    ```bash
-   ${CLAUDE_SKILL_DIR}/scripts/recall_usage.py record-usage \
+   .flow/flow recall-usage record-usage \
      --ticket <KEY> \
      --ticket-dir <ticket-dir> \
      --used-ids <comma-separated recalled ids you leaned on> \
@@ -207,7 +207,7 @@ The taxonomy is closed:
 
 3e. **Detect recall misses (false-negative signal — best-effort).** After the reindex, scan THIS run's newly-written entries for a near-duplicate of an existing live entry that was NOT recalled into the run — the run re-learned a fact the corpus already held but recall failed to surface. It embeds only the new entries (no hot-path cost) and writes a `RECALL_MISS` record the metric folds in:
    ```bash
-   ${CLAUDE_SKILL_DIR}/scripts/recall_usage.py detect-misses \
+   .flow/flow recall-usage detect-misses \
      --ticket <KEY> \
      --ticket-dir <ticket-dir> \
      --workspace-root .
@@ -216,7 +216,7 @@ The taxonomy is closed:
 
 3f. **Surface recall precision (best-effort).** Print the running recall-hit-rate so the human-facing reflect output carries the compounding-memory signal, not just this run's writes:
    ```bash
-   ${CLAUDE_SKILL_DIR}/scripts/metric.py recall-hit-rate --workspace-root .
+   .flow/flow metric recall-hit-rate --workspace-root .
    ```
    `--namespace` is omitted deliberately; the command auto-resolves it from `workspace.toml`. Echo one line from the result: `recall-hit-rate: <hit_rate> (<used>/<surfaced>, <misses> misses)`. SWALLOW any error — this is observability, never a gate. When the same result shows `surfaced >= 20` AND `hit_rate < 0.30`, echo one more line: `recall precision is low — consider an interactive /flow memory prune (references/verb-recall.md)`. Threshold check only — NEVER run the prune from reflect (reflect runs under `--auto`; prune is interactive-only). Same best-effort discipline: still never a gate.
 
@@ -234,7 +234,7 @@ The taxonomy is closed:
 
 5. Check the ship state:
    ```bash
-   ${CLAUDE_SKILL_DIR}/scripts/tracker_cli.py \
+   .flow/flow tracker \
      --workspace-root . \
      is-shipped --key <KEY>
    ```
@@ -285,7 +285,7 @@ The taxonomy is closed:
    - Read the verification `lane` this run took from the bundle's `ticket_frontmatter.lane` into `$LANE` (the value `flow_worktree` stamped at bootstrap: `express` / `light` / `full`; absent → empty). Stamping it on the ship event is what lets the express-lane defect/revert rate be measured against the full-lane `tier:trivial` baseline (the whole point of de-gating under a metric).
    - Observe the ship event:
      ```bash
-     ${CLAUDE_SKILL_DIR}/scripts/observe_ship_event.py \
+     .flow/flow observe-ship-event \
        --ticket <KEY> \
        --evidence-json '<json>' \
        --run-id "$RUN_ID" \
