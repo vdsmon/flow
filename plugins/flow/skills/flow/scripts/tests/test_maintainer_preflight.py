@@ -1,35 +1,18 @@
-"""Tests for the /flow SessionStart hook (staleness deadman only).
-
-The hook file is hyphenated (`session-start.py`), not an importable module name,
-so it is loaded via importlib from its path. Recall moved to the plan phase; the
-hook is now staleness-only.
-"""
+"""Tests for the host-neutral maintainer preflight deadman."""
 
 from __future__ import annotations
 
-import importlib.util
 import json
+import socket
+import subprocess
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from types import ModuleType
 from typing import Any
 
 import pytest
 
-HOOK_PATH = Path(__file__).resolve().parent.parent / "session-start.py"
-
-
-def _load_hook() -> ModuleType:
-    spec = importlib.util.spec_from_file_location("flow_session_start", HOOK_PATH)
-    assert spec is not None
-    assert spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-hook = _load_hook()
-
+import lease
+import maintainer_preflight as preflight
 
 # ─── evolve-loop staleness (deadman) ───────────────────────────────────────────
 
@@ -42,12 +25,36 @@ def _write_record(path: Path, *rows: dict[str, Any]) -> None:
     path.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
 
 
+def _git(repo: Path, *args: str) -> None:
+    subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True, text=True)
+
+
+def _repo(tmp_path: Path) -> Path:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init")
+    _git(repo, "config", "user.email", "flow@example.invalid")
+    _git(repo, "config", "user.name", "Flow Test")
+    (repo / "tracked.txt").write_text("base\n", encoding="utf-8")
+    _git(repo, "add", "tracked.txt")
+    _git(repo, "commit", "-m", "base")
+    return repo
+
+
 def _ts(now: datetime, **delta: float) -> str:
     return (now - timedelta(**delta)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def test_staleness_absent_file_is_silent(tmp_path: Path) -> None:
-    assert hook.staleness_block(tmp_path / "missing.jsonl", _now()) == ""
+    assert preflight.staleness_block(tmp_path / "missing.jsonl", _now()) == ""
+
+
+def test_staleness_unreadable_ledger_is_unavailable_not_healthy(tmp_path: Path) -> None:
+    report = preflight.evaluate_run_records(tmp_path, _now())
+
+    assert report.configured is True
+    assert report.attention_required is True
+    assert report.issues[0].state == "unavailable"
 
 
 def test_staleness_fresh_runs_are_silent(tmp_path: Path) -> None:
@@ -58,7 +65,7 @@ def test_staleness_fresh_runs_are_silent(tmp_path: Path) -> None:
         {"schedule": "nightly", "phase": "end", "ts": _ts(now, hours=10), "outcome": "ok"},
         {"schedule": "weekly", "phase": "end", "ts": _ts(now, days=3), "outcome": "ok"},
     )
-    assert hook.staleness_block(rec, now) == ""
+    assert preflight.staleness_block(rec, now) == ""
 
 
 def test_staleness_nightly_stale_warns(tmp_path: Path) -> None:
@@ -67,8 +74,8 @@ def test_staleness_nightly_stale_warns(tmp_path: Path) -> None:
     _write_record(
         rec, {"schedule": "nightly", "phase": "end", "ts": _ts(now, hours=40), "outcome": "ok"}
     )
-    block = hook.staleness_block(rec, now)
-    assert block.startswith("## /flow ops")
+    block = preflight.staleness_block(rec, now)
+    assert block.startswith("Flow maintainer preflight")
     assert "nightly evolve loop stale" in block
     assert ">36h" in block
 
@@ -79,7 +86,7 @@ def test_staleness_weekly_stale_warns(tmp_path: Path) -> None:
     _write_record(
         rec, {"schedule": "weekly", "phase": "end", "ts": _ts(now, days=9), "outcome": "ok"}
     )
-    block = hook.staleness_block(rec, now)
+    block = preflight.staleness_block(rec, now)
     assert "weekly epic loop stale" in block
     assert ">8d" in block
 
@@ -93,7 +100,7 @@ def test_staleness_uses_latest_record_per_schedule(tmp_path: Path) -> None:
         {"schedule": "nightly", "phase": "start", "ts": _ts(now, hours=50), "outcome": ""},
         {"schedule": "nightly", "phase": "end", "ts": _ts(now, hours=2), "outcome": "ok"},
     )
-    assert hook.staleness_block(rec, now) == ""
+    assert preflight.staleness_block(rec, now) == ""
 
 
 def test_staleness_tolerates_garbage_lines(tmp_path: Path) -> None:
@@ -107,7 +114,7 @@ def test_staleness_tolerates_garbage_lines(tmp_path: Path) -> None:
         + "\n",
         encoding="utf-8",
     )
-    block = hook.staleness_block(rec, now)
+    block = preflight.staleness_block(rec, now)
     assert "nightly evolve loop stale" in block
 
 
@@ -120,8 +127,8 @@ def test_staleness_fail_outcome_warns(tmp_path: Path) -> None:
         {"schedule": "nightly", "phase": "start", "ts": _ts(now, hours=2), "outcome": ""},
         {"schedule": "nightly", "phase": "end", "ts": _ts(now, hours=1), "outcome": "fail"},
     )
-    block = hook.staleness_block(rec, now)
-    assert block.startswith("## /flow ops")
+    block = preflight.staleness_block(rec, now)
+    assert block.startswith("Flow maintainer preflight")
     assert "nightly evolve" in block
     assert "fail" in block
 
@@ -133,8 +140,8 @@ def test_staleness_hung_start_no_end_warns(tmp_path: Path) -> None:
     _write_record(
         rec, {"schedule": "nightly", "phase": "start", "ts": _ts(now, hours=4), "outcome": ""}
     )
-    block = hook.staleness_block(rec, now)
-    assert block.startswith("## /flow ops")
+    block = preflight.staleness_block(rec, now)
+    assert block.startswith("Flow maintainer preflight")
     assert "nightly evolve" in block
     assert "hung" in block
 
@@ -146,7 +153,7 @@ def test_staleness_hung_within_grace_is_silent(tmp_path: Path) -> None:
     _write_record(
         rec, {"schedule": "nightly", "phase": "start", "ts": _ts(now, hours=1), "outcome": ""}
     )
-    assert hook.staleness_block(rec, now) == ""
+    assert preflight.staleness_block(rec, now) == ""
 
 
 def test_staleness_hung_discriminates_from_pr266_dead_branch(tmp_path: Path) -> None:
@@ -165,7 +172,7 @@ def test_staleness_hung_discriminates_from_pr266_dead_branch(tmp_path: Path) -> 
         {"schedule": "nightly", "phase": "end", "ts": _ts(now, hours=49), "outcome": "ok"},
         {"schedule": "nightly", "phase": "start", "ts": _ts(now, hours=4), "outcome": ""},
     )
-    block = hook.staleness_block(rec, now)
+    block = preflight.staleness_block(rec, now)
     assert "hung" in block
     assert "stale" not in block
 
@@ -177,7 +184,7 @@ def test_staleness_weekly_hung_grace_is_separate(tmp_path: Path) -> None:
     _write_record(
         rec, {"schedule": "weekly", "phase": "start", "ts": _ts(now, hours=7), "outcome": ""}
     )
-    block = hook.staleness_block(rec, now)
+    block = preflight.staleness_block(rec, now)
     assert "weekly epic" in block
     assert "hung" in block
 
@@ -188,7 +195,7 @@ def test_staleness_weekly_hung_within_grace_is_silent(tmp_path: Path) -> None:
     _write_record(
         rec, {"schedule": "weekly", "phase": "start", "ts": _ts(now, hours=5), "outcome": ""}
     )
-    assert hook.staleness_block(rec, now) == ""
+    assert preflight.staleness_block(rec, now) == ""
 
 
 def test_staleness_disarmed_suppresses_stale(tmp_path: Path) -> None:
@@ -198,7 +205,7 @@ def test_staleness_disarmed_suppresses_stale(tmp_path: Path) -> None:
         rec, {"schedule": "nightly", "phase": "end", "ts": _ts(now, hours=40), "outcome": "ok"}
     )
     (tmp_path / "disarmed-nightly").touch()
-    block = hook.staleness_block(rec, now)
+    block = preflight.staleness_block(rec, now)
     assert "nightly evolve loop disarmed" in block
     assert "⚠️" not in block
 
@@ -211,7 +218,7 @@ def test_staleness_disarmed_suppresses_hung(tmp_path: Path) -> None:
         {"schedule": "nightly", "phase": "start", "ts": _ts(now, hours=5), "outcome": ""},
     )
     (tmp_path / "disarmed-nightly").touch()
-    block = hook.staleness_block(rec, now)
+    block = preflight.staleness_block(rec, now)
     assert "nightly evolve loop disarmed" in block
     assert "⚠️" not in block
 
@@ -223,7 +230,7 @@ def test_staleness_disarmed_suppresses_fail(tmp_path: Path) -> None:
         rec, {"schedule": "nightly", "phase": "end", "ts": _ts(now, hours=5), "outcome": "fail"}
     )
     (tmp_path / "disarmed-nightly").touch()
-    block = hook.staleness_block(rec, now)
+    block = preflight.staleness_block(rec, now)
     assert "nightly evolve loop disarmed" in block
     assert "⚠️" not in block
 
@@ -237,7 +244,7 @@ def test_staleness_disarmed_per_schedule_independent(tmp_path: Path) -> None:
         {"schedule": "weekly", "phase": "end", "ts": _ts(now, days=9), "outcome": "ok"},
     )
     (tmp_path / "disarmed-nightly").touch()
-    block = hook.staleness_block(rec, now)
+    block = preflight.staleness_block(rec, now)
     assert "nightly evolve loop disarmed" in block
     assert "weekly epic loop stale" in block
     assert "nightly evolve loop stale" not in block
@@ -248,11 +255,11 @@ def test_staleness_disarmed_no_record_silent(tmp_path: Path) -> None:
     rec = tmp_path / "run-record.jsonl"
     rec.write_text("", encoding="utf-8")
     (tmp_path / "disarmed-nightly").touch()
-    block = hook.staleness_block(rec, now)
+    block = preflight.staleness_block(rec, now)
     assert "nightly evolve loop disarmed" in block
 
 
-# ─── cli_main (staleness-only) ─────────────────────────────────────────────────
+# ─── cli_main ─────────────────────────────────────────────────────────────────
 
 
 def test_cli_main_silent_with_no_record(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
@@ -260,7 +267,7 @@ def test_cli_main_silent_with_no_record(tmp_path: Path, capsys: pytest.CaptureFi
     # armed maintainer machine (without injection cli_main reads the real
     # ~/.flow-evolve/run-record.jsonl and would flake).
     missing = tmp_path / "missing.jsonl"
-    assert hook.cli_main(run_record_path=missing) == 0
+    assert preflight.cli_main(["--run-record", str(missing)]) == 0
     assert capsys.readouterr().out == ""
 
 
@@ -276,15 +283,100 @@ def test_cli_main_renders_staleness(tmp_path: Path, capsys: pytest.CaptureFixtur
         {"schedule": "nightly", "phase": "end", "ts": "2020-01-01T00:00:00Z", "outcome": "ok"},
     )
 
-    assert hook.cli_main(run_record_path=stale_record) == 0
+    assert preflight.cli_main(["--run-record", str(stale_record)]) == 0
     out = capsys.readouterr().out
-    assert "## /flow ops" in out
+    assert "Flow maintainer preflight" in out
     assert "nightly evolve loop stale" in out
 
 
-def test_cli_main_never_raises(monkeypatch: pytest.MonkeyPatch) -> None:
-    def boom(*_a, **_k):
-        raise RuntimeError("staleness blew up")
+def test_cli_main_json_is_structured_for_cockpit(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    stale_record = tmp_path / "run-record.jsonl"
+    _write_record(
+        stale_record,
+        {"schedule": "nightly", "phase": "end", "ts": "2020-01-01T00:00:00Z", "outcome": "ok"},
+    )
 
-    monkeypatch.setattr(hook, "staleness_block", boom)
-    assert hook.cli_main() == 0
+    assert (
+        preflight.cli_main(
+            [
+                "--run-record",
+                str(stale_record),
+                "--now",
+                "2026-06-11T12:00:00Z",
+                "--json",
+            ]
+        )
+        == 0
+    )
+    data = json.loads(capsys.readouterr().out)
+    assert data["configured"] is True
+    assert data["attention_required"] is True
+    assert data["issues"][0]["state"] == "stale"
+
+
+def test_absent_record_json_is_unconfigured(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+    missing = tmp_path / "missing.jsonl"
+    assert preflight.cli_main(["--run-record", str(missing), "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data == {
+        "attention_required": False,
+        "configured": False,
+        "issues": [],
+        "record_path": str(missing),
+    }
+
+
+def test_maintenance_boundary_accepts_clean_repo_without_live_leases(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+
+    report = preflight.evaluate_maintenance_boundary(repo, _now())
+
+    assert report.clear is True
+    assert report.checkout_clean is True
+    assert report.live_leases == ()
+
+
+def test_maintenance_boundary_rejects_dirt_and_live_revision_lease(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    revision = repo / ".flow" / "runs" / "FT-1" / "revisions" / "rev-1"
+    lease.acquire(
+        revision,
+        "run-1",
+        3600,
+        _now().isoformat(),
+        current_boot=lease.boot_id(),
+        hostname=socket.gethostname(),
+        cwd=str(repo),
+    )
+    (repo / "dirty.txt").write_text("dirty\n", encoding="utf-8")
+
+    report = preflight.evaluate_maintenance_boundary(repo, _now())
+
+    assert report.clear is False
+    assert report.checkout_clean is False
+    assert report.live_leases == ("FT-1/revisions/rev-1",)
+
+
+def test_cli_requires_clean_boundary_before_mutation(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    repo = _repo(tmp_path)
+    (repo / "dirty.txt").write_text("dirty\n", encoding="utf-8")
+    missing_record = tmp_path / "missing.jsonl"
+
+    assert (
+        preflight.cli_main(
+            [
+                "--run-record",
+                str(missing_record),
+                "--workspace-root",
+                str(repo),
+                "--require-clean-boundary",
+                "--json",
+            ]
+        )
+        == 3
+    )
+    assert json.loads(capsys.readouterr().out)["boundary"]["clear"] is False

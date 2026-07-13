@@ -25,6 +25,12 @@ def test_hot_path_command_resolution() -> None:
         "pending-mutations": "pending_mutations.py",
         "handler": "resolve_handler.py",
         "merge": "stage_merge.py",
+        "commands": "public_commands_cli.py",
+        "lifecycle": "lifecycle_cli.py",
+        "cockpit": "cockpit_cli.py",
+        "maintainer-preflight": "maintainer_preflight.py",
+        "worker-pool": "worker_pool.py",
+        "maintainer-senses": "senses_deadman.py",
     }
     assert {name: flowctl.COMMANDS[name] for name in expected} == expected
 
@@ -34,6 +40,7 @@ def test_default_commands_use_kebab_case() -> None:
     assert flowctl.COMMANDS["memory-append"] == "memory_append.py"
     assert flowctl.COMMANDS["recall-usage"] == "recall_usage.py"
     assert "init" not in flowctl.COMMANDS
+    assert "evolve-session-cleanup" not in flowctl.COMMANDS
 
 
 def test_unknown_command_refused_with_exit_2(tmp_path: Path, capsys) -> None:
