@@ -32,7 +32,7 @@ Key invariants:
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Literal, Protocol, TypedDict, runtime_checkable
+from typing import Any, Literal, NotRequired, Protocol, TypedDict, runtime_checkable
 
 # ─── Closed enums ────────────────────────────────────────────────────────────
 
@@ -51,6 +51,8 @@ CI_STATUS = Literal["green", "pending", "failed"]
 
 THREAD_SEVERITY = Literal["critical", "major", "minor", "nit", "unknown"]
 
+PR_STATE = Literal["open", "merged"]
+
 
 # ─── Normalized result shapes ────────────────────────────────────────────────
 
@@ -66,6 +68,7 @@ class PullRequest(TypedDict):
     base: str
     head: str
     state: str  # backend-native ("OPEN"/"open"/"MERGED"/...)
+    head_sha: NotRequired[str | None]
 
 
 class CICheck(TypedDict):
@@ -139,7 +142,7 @@ class Forge(Protocol):
     backend: str  # "github" | "bitbucket"
     capabilities: list[Capability]
 
-    def detect_pr(self, branch: str) -> PullRequest | None: ...
+    def detect_pr(self, branch: str, state: PR_STATE = "open") -> PullRequest | None: ...
     def pr_info(self, pr_id: str) -> PullRequest | None: ...  # PR-number reverse lookup, ANY state
     def open_pr(self, base: str, head: str, title: str, body: str, draft: bool) -> PullRequest: ...
     def ci_rollup(self, pr_id: str) -> CIStatus: ...
@@ -228,6 +231,7 @@ __all__ = [
     "CI_STATUS",
     "FORGE_CAPABILITY_ENUM",
     "KNOWN_BACKENDS",
+    "PR_STATE",
     "THREAD_SEVERITY",
     "CICheck",
     "CIStatus",

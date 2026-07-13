@@ -55,7 +55,7 @@ def _emit(obj: Any) -> int:
 
 
 def _cmd_detect_pr(forge: Any, args: argparse.Namespace) -> int:
-    return _emit(forge.detect_pr(args.branch))
+    return _emit(forge.detect_pr(args.branch, state=args.state))
 
 
 def _cmd_pr_info(forge: Any, args: argparse.Namespace) -> int:
@@ -108,6 +108,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
 
     p = sub.add_parser("detect-pr", help="forge.detect_pr(branch)")
     p.add_argument("--branch", required=True)
+    p.add_argument("--state", choices=("open", "merged"), default="open")
 
     p = sub.add_parser("pr-info", help="forge.pr_info(pr) — reverse lookup, ANY state")
     p.add_argument("--pr", required=True)

@@ -18,6 +18,7 @@ from public_commands import (
 )
 
 REGISTRY = Path(__file__).resolve().parents[2] / "public-commands.toml"
+MAINTAIN_REFERENCE = Path(__file__).resolve().parents[2] / "references" / "command-maintain.md"
 TRACKER_PATTERNS = (r"FT-\d+", r"flow-[a-z0-9]+")
 
 
@@ -32,6 +33,19 @@ def test_real_registry_is_complete_and_has_no_legacy_root_verbs() -> None:
         "maintain",
         "help",
     )
+
+
+def test_worktree_cleanup_is_documented_as_workspace_local_two_pass() -> None:
+    registry = load_registry(REGISTRY)
+    command = registry.by_id["maintain.worktrees.clean"]
+    reference = MAINTAIN_REFERENCE.read_text(encoding="utf-8")
+
+    assert "invoking workspace" in command.summary.lower()
+    assert "maintainer --workspace-root . --require-current" in reference
+    assert "worktree-janitor sweep --workspace-root . --dry-run" in reference
+    assert "absolute `target_root`" in reference
+    assert '--confirmed-target "<target_root>"' in reference
+    assert '--confirmed-candidate "<confirmation_id>"' in reference
     assert {command.id for command in registry.commands} >= {
         "cockpit",
         "target",

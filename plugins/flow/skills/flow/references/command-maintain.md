@@ -1,17 +1,19 @@
 # Maintain commands
 
-Maintenance is restricted to workspaces whose configuration identifies the current
-repository as Flow's maintainer target:
+Except for workspace-local worktree cleanup, maintenance is restricted to workspaces
+whose configuration identifies the current repository as Flow's maintainer target:
 
 ```bash
-FLOW_HARNESS="<harness>" "<facade>" maintainer --workspace-root .
+FLOW_HARNESS="<harness>" "<facade>" maintainer --workspace-root . --require-current
 ```
 
-A refusal stops the command. Maintenance never assumes a particular host process,
-terminal, or background-job implementation.
+A refusal stops the command and names any configured target outside the invoking
+repository. Internal scheduling code may still resolve that target, but no public
+maintenance command follows the pointer implicitly. Maintenance never assumes a
+particular host process, terminal, or background-job implementation.
 
-Before every maintenance operation, collect the host-neutral schedule and ship-event
-senses diagnostics:
+Before every maintenance operation except `FLOW maintain worktrees clean`, collect
+the host-neutral schedule and ship-event senses diagnostics:
 
 ```bash
 FLOW_HARNESS="<harness>" "<facade>" maintainer-preflight --json
@@ -235,16 +237,43 @@ diverged state is reported and left untouched.
 
 ## `FLOW maintain worktrees clean [--dry-run]`
 
-Sweep Flow-managed worktrees only. A candidate is removable when its tracker work is
-terminal, no base or revision lease is live, its PR/ship evidence is settled, and it
-is not the current or maintainer checkout. Re-check the lease immediately before the
-destructive operation.
+Sweep worktrees owned by the invoking workspace only. Resolve the absolute primary
+checkout from the first `git worktree list --porcelain` stanza and recognize only
+registered worktrees beneath its `.claude/worktrees` or legacy `.flow/worktrees`
+directory. Never consider the invoking checkout itself.
+
+A candidate is removable only when its normalized tracker state is `done` or
+`cancelled`, its exact run lease is not live or corrupt, and one of these PR proofs
+holds:
+
+- a merged PR has a head SHA equal to the local worktree tip;
+- no open or merged PR exists, the local `origin/HEAD` SHA matches a read-only
+  `git ls-remote` result, and the branch has zero commits unique from that default.
+
+An open PR always preserves its worktree. Missing ticket ownership, a stale remote
+default, a merged-head mismatch, unique commits, or any candidate probe failure also
+preserves it.
 
 ```bash
-FLOW_HARNESS="<harness>" "<facade>" worktree-janitor sweep --workspace-root . [--dry-run]
+FLOW_HARNESS="<harness>" "<facade>" worktree-janitor sweep --workspace-root . --dry-run
 ```
 
+First show the absolute `target_root`, every reapable candidate and its `confirmation_id`, and every
+preserved candidate with its reason. If the public invocation included `--dry-run`, stop there.
+Otherwise obtain confirmation for that exact target and candidate set. Then bind the destructive
+invocation to the preview values:
+
+```bash
+FLOW_HARNESS="<harness>" "<facade>" worktree-janitor sweep --workspace-root . \
+  --confirmed-target "<target_root>" \
+  --confirmed-candidate "<confirmation_id>" [...]
+```
+
+The second invocation re-probes ownership, tracker, forge, remote-default, unique-commit, and exact
+base/revision-lease evidence before it removes anything. A candidate absent from the preview or
+whose path, branch, or tip changed has a different confirmation ID and is preserved.
+
 A dirty candidate is checkpointed to a rescue ref before removal. Capture failure
-leaves the worktree intact. Show the candidate and receipt set and confirm before a
-real sweep; `--dry-run` is read-only. Never remove an unrecognized worktree merely
-because its branch name resembles Flow.
+leaves the worktree intact. `observe_at_close` runs inside the guarded teardown after checkpointing
+and immediately before each removal attempt; the preview never observes or reaps. Never remove an
+unrecognized worktree merely because its branch name resembles Flow.

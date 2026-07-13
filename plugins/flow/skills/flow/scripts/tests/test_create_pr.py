@@ -7,7 +7,7 @@ import pytest
 
 import create_pr as cp
 import pr_body
-from forge import ForgeError, NotSupported, PullRequest
+from forge import PR_STATE, ForgeError, NotSupported, PullRequest
 
 Recorder = list[list[str]]
 
@@ -69,7 +69,7 @@ class _FakeForge:
         self.reviewers_set: list[str] = []
         self.raise_on_reviewers: Exception | None = None
 
-    def detect_pr(self, branch: str) -> PullRequest | None:
+    def detect_pr(self, branch: str, state: PR_STATE = "open") -> PullRequest | None:
         return _pr(self._existing, branch) if self._existing else None
 
     def pr_info(self, pr_id: str) -> PullRequest | None:

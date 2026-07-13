@@ -53,6 +53,7 @@ import argparse
 import secrets
 import shutil
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
 
@@ -387,7 +388,7 @@ def _parse_worktree_list(porcelain: str) -> list[tuple[str, str | None]]:
     return pairs
 
 
-def _is_ticket_branch(short_branch: str, ticket: str) -> bool:
+def is_ticket_branch(short_branch: str, ticket: str) -> bool:
     """True when `short_branch` is this ticket's feature branch (exact or slugged).
 
     Accepts both the current `feat/` prefix and the legacy `feature/` so worktrees
@@ -405,7 +406,7 @@ def _ticket_siblings(ticket: str, main_root: Path, runner: Runner) -> list[tuple
     return [
         (Path(path), sb)
         for path, sb in _parse_worktree_list(listing)
-        if sb is not None and _is_ticket_branch(sb, ticket)
+        if sb is not None and is_ticket_branch(sb, ticket)
     ]
 
 
@@ -504,7 +505,7 @@ def _checkpoint_dirty_worktree(ticket: str, worktree: Path, run: Runner) -> dict
     merged-orphan worktree would misfire as dirty (`.flow/tickets/<key>.md` always differs slightly
     from main's copy), and a dirty one could push a bootstrap-copied `.env` secret to a PUBLIC
     `flow-rescue/*` ref. `flow-rescue/*` is deliberately outside the `feat/`/`feature/`
-    ticket-branch namespace (`_is_ticket_branch`, `_evolve_common.FLOW_KEY_RE`, `is_inflight` all
+    ticket-branch namespace (`is_ticket_branch`, `_evolve_common.FLOW_KEY_RE`, `is_inflight` all
     miss it), so it can never mark the ticket in-flight or block a fresh relaunch.
 
     DEVIATION from the literal maintainer decision text: the decision said push to
@@ -581,7 +582,13 @@ def _checkpoint_dirty_worktree(ticket: str, worktree: Path, run: Runner) -> dict
 
 
 def _checkpoint_then_remove(
-    ticket: str, worktree: Path, run: Runner, main_root: Path
+    ticket: str,
+    worktree: Path,
+    run: Runner,
+    main_root: Path,
+    *,
+    expected_tip: str | None = None,
+    before_remove: Callable[[Path], object] | None = None,
 ) -> dict[str, Any]:
     """Checkpoint, then remove `worktree` (the `lease.classify_then` teardown callback).
 
@@ -590,23 +597,80 @@ def _checkpoint_then_remove(
     --force`. Runs a git subprocess only (no lease re-entry), matching classify_then's
     non-reentrant-flock contract.
     """
+    if expected_tip is not None:
+        current = run(["git", "rev-parse", "HEAD"], worktree)
+        if current.returncode != 0:
+            return {
+                "removed": False,
+                "remove_error": None,
+                "checkpoint": {"status": "not_run"},
+                "skipped": f"current tip probe failed: {current.stderr.strip()}",
+            }
+        current_tip = current.stdout.strip()
+        if current_tip != expected_tip:
+            return {
+                "removed": False,
+                "remove_error": None,
+                "checkpoint": {"status": "not_run"},
+                "skipped": f"worktree tip changed from {expected_tip} to {current_tip}",
+            }
+
     checkpoint = _checkpoint_dirty_worktree(ticket, worktree, run)
     if checkpoint["status"] == "failed":
         return {"removed": False, "remove_error": None, "checkpoint": checkpoint}
+    before_remove_result: object | None = None
+    before_remove_error: str | None = None
+    if before_remove is not None:
+        try:
+            before_remove_result = before_remove(worktree)
+        except Exception as exc:
+            before_remove_error = str(exc)
     result = run(["git", "worktree", "remove", "--force", str(worktree)], main_root)
     return {
         "removed": result.returncode == 0,
         "remove_error": result.stderr.strip() if result.returncode != 0 else None,
         "checkpoint": checkpoint,
+        "before_remove_result": before_remove_result,
+        "before_remove_error": before_remove_error,
     }
 
 
-def reap_worktree(
+def _revision_reap_blocker(
+    ticket_dir: Path, now: str, *, current_boot: str, hostname: str
+) -> str | None:
+    """Return why a base worktree's revision subtree cannot be reaped."""
+    revisions = ticket_dir / "revisions"
+    if not revisions.is_dir():
+        return None
+    for revision_dir in sorted(path for path in revisions.iterdir() if path.is_dir()):
+        revision_state, state_code = state.read(revision_dir)
+        if revision_state is None and state_code != 0:
+            return f"revision state unreadable at {revision_dir}"
+        if revision_state is not None and any(
+            record.status in ("pending", "in_progress") for record in revision_state.stages.values()
+        ):
+            return f"revision run non-terminal at {revision_dir}"
+        if not lease.run_lock_path(revision_dir).exists():
+            continue
+        info = lease.classify(
+            revision_dir,
+            now,
+            current_boot=current_boot,
+            hostname=hostname,
+        )
+        if info.get("state") in ("live", "corrupt"):
+            return f"revision lease {info['state']} at {revision_dir}"
+    return None
+
+
+def reap_worktree(  # noqa: C901
     *,
     ticket: str,
     main_root: Path,
     branch: str | None = None,
     runner: Runner | None = None,
+    expected_tip: str | None = None,
+    before_remove: Callable[[Path], object] | None = None,
 ) -> dict[str, Any]:
     """Tear down the local worktree + branch left behind after a squash-merge.
 
@@ -637,7 +701,7 @@ def reap_worktree(
     run = runner or _default_runner()
     main_root = main_root.expanduser().resolve()
 
-    if branch is not None and not _is_ticket_branch(branch, ticket):
+    if branch is not None and not is_ticket_branch(branch, ticket):
         return {
             "ticket": ticket,
             "branch": branch,
@@ -659,7 +723,7 @@ def reap_worktree(
             if sb == branch:
                 target_path = Path(path)
                 break
-        elif _is_ticket_branch(sb, ticket):
+        elif is_ticket_branch(sb, ticket):
             target_path = Path(path)
             resolved_branch = sb
             break
@@ -675,19 +739,35 @@ def reap_worktree(
 
     if target_path is not None:
         ticket_dir = target_path / ".flow" / "runs" / ticket
+        now, boot, host = utcnow_iso(), lease.boot_id(), lease.hostname()
 
-        # Hold the lease flock ACROSS classify + checkpoint + the worktree-remove
-        # so a concurrent acquire cannot go live between the decision and the
-        # destructive mutation (the flow-72d9 incident family). classify_then's
-        # teardown runs only when the lease is non-live/non-corrupt; it runs git
-        # subprocesses only (no lease re-entry, flock is non-reentrant).
-        outcome = lease.classify_then(
-            ticket_dir,
-            utcnow_iso(),
-            lambda: _checkpoint_then_remove(ticket, target_path, run, main_root),
-            current_boot=lease.boot_id(),
-            hostname=lease.hostname(),
-        )
+        # The revision claim blocks a new revision from opening while base and revision state is
+        # checked. The base lease flock remains held through the expected-tip check, checkpoint,
+        # close observation, and removal.
+        with _locking.flock_blocking(ticket_dir / "revise.claim"):
+            blocker = _revision_reap_blocker(
+                ticket_dir,
+                now,
+                current_boot=boot,
+                hostname=host,
+            )
+            if blocker is not None:
+                receipt["skipped"] = blocker
+                return receipt
+            outcome = lease.classify_then(
+                ticket_dir,
+                now,
+                lambda: _checkpoint_then_remove(
+                    ticket,
+                    target_path,
+                    run,
+                    main_root,
+                    expected_tip=expected_tip,
+                    before_remove=before_remove,
+                ),
+                current_boot=boot,
+                hostname=host,
+            )
         if not outcome["torn_down"]:
             if outcome["state"] == "live":
                 receipt["skipped"] = "lease live (run still in progress)"
@@ -695,6 +775,9 @@ def reap_worktree(
                 receipt["skipped"] = "lease corrupt (run.lock unparseable; possibly live)"
             return receipt
         result = cast(dict[str, Any], outcome["result"])
+        if result.get("skipped"):
+            receipt["skipped"] = result["skipped"]
+            return receipt
         checkpoint = result["checkpoint"]
         if checkpoint["status"] == "failed":
             receipt["checkpoint_failed"] = True
@@ -704,11 +787,26 @@ def reap_worktree(
             receipt["skipped"] = f"worktree remove failed: {result['remove_error']}"
             return receipt
         receipt["worktree_removed"] = True
+        if before_remove is not None:
+            receipt["before_remove_result"] = result.get("before_remove_result")
+            receipt["before_remove_error"] = result.get("before_remove_error")
         if checkpoint["status"] == "captured":
             receipt["checkpoint"] = {
                 "rescue_branch": checkpoint["rescue_branch"],
                 "sha": checkpoint["sha"],
             }
+
+    if target_path is None and resolved_branch and expected_tip is not None:
+        current = run(["git", "rev-parse", resolved_branch], main_root)
+        if current.returncode != 0:
+            receipt["skipped"] = f"branch tip probe failed: {current.stderr.strip()}"
+            return receipt
+        current_tip = current.stdout.strip()
+        if current_tip != expected_tip:
+            receipt["skipped"] = (
+                f"branch tip changed from {expected_tip} to {current_tip} after worktree removal"
+            )
+            return receipt
 
     if resolved_branch:
         result = run(["git", "branch", "-D", resolved_branch], main_root)
@@ -1087,12 +1185,12 @@ def _stamp_run_frontmatter(
 
 
 def _refuse_offcontract_branch(*, ticket: str, branch: str) -> None:
-    """Branch contract (flow-t0vv): every downstream matcher — _is_ticket_branch,
-    the pool-dir prefixes in _evolve_common, evolve_select's in-flight refs,
-    evolve_reap eligibility, the janitor's PR join, branch_ticket's parse —
-    assumes `feat/<key>-<slug>`. A run that minted `fix/<key>-...` produced a
-    worktree invisible to reap and the drain (witnessed 2026-07-09). Refuse the
-    deviation here, at the one mint site, instead of widening every parser.
+    """Keep every downstream matcher on the shared `feat/<key>-<slug>` branch contract.
+
+    The matchers include `is_ticket_branch`, the pool prefixes in `_evolve_common`, in-flight refs,
+    reap eligibility, janitor PR joins, and `branch_ticket` parsing. A run that minted
+    `fix/<key>-...` produced a worktree invisible to reap and drain (witnessed 2026-07-09). Refuse
+    the deviation at the one mint site instead of widening every parser.
     """
     if not branch.startswith(f"feat/{ticket}"):
         raise _ConfigError(

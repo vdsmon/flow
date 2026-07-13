@@ -78,3 +78,28 @@ def test_cli_user_exit_1(tmp_path, monkeypatch, capsys):
     rc = maintainer.cli_main(["--workspace-root", str(repo)])
     assert rc == 1
     assert capsys.readouterr().out.strip() == ""
+
+
+def test_cli_require_current_refuses_global_redirect_and_names_target(
+    tmp_path, monkeypatch, capsys
+):
+    flow_repo = _ws(tmp_path, "flow", MARKER)
+    other = _ws(tmp_path, "other", NOMARKER)
+    gconf = tmp_path / "config.toml"
+    gconf.write_text(f'[maintainer]\nrepo_root = "{flow_repo}"\n', encoding="utf-8")
+    monkeypatch.setattr(maintainer, "_global_config_path", lambda: gconf)
+
+    rc = maintainer.cli_main(["--workspace-root", str(other), "--require-current"])
+
+    assert rc == 1
+    assert str(flow_repo.resolve()) in capsys.readouterr().err
+
+
+def test_cli_require_current_accepts_self_target(tmp_path, monkeypatch, capsys):
+    _no_global(monkeypatch, tmp_path)
+    repo = _ws(tmp_path, "flow", MARKER)
+
+    rc = maintainer.cli_main(["--workspace-root", str(repo), "--require-current"])
+
+    assert rc == 0
+    assert capsys.readouterr().out.strip() == str(repo.resolve())

@@ -22,6 +22,7 @@ from _runner import CwdRunner as Runner
 from _runner import cwd_default_runner as _default_runner
 from forge import (
     CI_STATUS,
+    PR_STATE,
     THREAD_SEVERITY,
     Capability,
     CICheck,
@@ -146,11 +147,12 @@ class GitHubAdapter:
             "base": str(item.get("baseRefName") or ""),
             "head": str(item.get("headRefName") or ""),
             "state": str(item.get("state") or "OPEN"),
+            "head_sha": str(item["headRefOid"]) if item.get("headRefOid") else None,
         }
 
     # ─── PR mechanics ─────────────────────────────────────────────────────
 
-    def detect_pr(self, branch: str) -> PullRequest | None:
+    def detect_pr(self, branch: str, state: PR_STATE = "open") -> PullRequest | None:
         raw = self._ok_read(
             [
                 "gh",
@@ -159,9 +161,9 @@ class GitHubAdapter:
                 "--head",
                 branch,
                 "--state",
-                "open",
+                state,
                 "--json",
-                "number,url,isDraft,baseRefName,headRefName,state",
+                "number,url,isDraft,baseRefName,headRefName,headRefOid,state",
                 "--limit",
                 "1",
             ],
@@ -187,7 +189,7 @@ class GitHubAdapter:
                 "view",
                 pr_id,
                 "--json",
-                "number,url,isDraft,baseRefName,headRefName,state",
+                "number,url,isDraft,baseRefName,headRefName,headRefOid,state",
             ],
             "gh pr view",
         )
@@ -231,6 +233,7 @@ class GitHubAdapter:
             "base": base,
             "head": head,
             "state": "OPEN",
+            "head_sha": None,
         }
 
     def ci_rollup(self, pr_id: str) -> CIStatus:

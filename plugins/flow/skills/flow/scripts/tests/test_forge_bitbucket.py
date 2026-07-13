@@ -56,6 +56,29 @@ def test_detect_pr_filters_by_source_branch():
     assert pr["base"] == "main"
 
 
+def test_detect_pr_selects_merged_state_and_emits_head_sha():
+    listing = {
+        "values": [
+            {
+                "id": 9,
+                "source": {
+                    "branch": {"name": "feature/flow-x"},
+                    "commit": {"hash": "merged-head"},
+                },
+                "destination": {"branch": {"name": "main"}},
+                "state": "MERGED",
+            }
+        ]
+    }
+    fg, calls = _adapter(lambda _a: json.dumps(listing))
+
+    pr = fg.detect_pr("feature/flow-x", state="merged")
+
+    assert pr is not None
+    assert pr["head_sha"] == "merged-head"
+    assert any("pullrequests?state=MERGED" in _api_path(call) for call in calls)
+
+
 def test_detect_pr_none_when_no_match():
     listing = {"values": [{"id": 1, "source": {"branch": {"name": "other"}}}]}
     fg, _ = _adapter(lambda a: json.dumps(listing))

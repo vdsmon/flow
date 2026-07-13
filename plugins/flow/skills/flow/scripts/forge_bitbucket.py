@@ -25,6 +25,7 @@ from typing import Any
 from _runner import CwdRunner as Runner
 from _runner import cwd_default_runner as _default_runner
 from forge import (
+    PR_STATE,
     THREAD_SEVERITY,
     Capability,
     CICheck,
@@ -100,6 +101,7 @@ class BitbucketAdapter:
         links = item.get("links") or {}
         html = (links.get("html") or {}).get("href") or ""
         src = ((item.get("source") or {}).get("branch") or {}).get("name") or ""
+        head_sha = ((item.get("source") or {}).get("commit") or {}).get("hash")
         dest = ((item.get("destination") or {}).get("branch") or {}).get("name") or ""
         pr_id = str(item.get("id") or "")
         return {
@@ -110,17 +112,18 @@ class BitbucketAdapter:
             "base": str(dest),
             "head": str(src),
             "state": str(item.get("state") or "OPEN"),
+            "head_sha": str(head_sha) if head_sha else None,
         }
 
     # ─── PR mechanics ─────────────────────────────────────────────────────
 
-    def detect_pr(self, branch: str) -> PullRequest | None:
+    def detect_pr(self, branch: str, state: PR_STATE = "open") -> PullRequest | None:
         # follow `next` like _fetch_all_comments: on a busy workspace the run's PR
         # can sit past page 1, and a miss here breaks create_pr's resume idempotency.
         page = 1
         while True:
             data = self._api(
-                f"{self._base()}/pullrequests?state=OPEN&pagelen=50&page={page}",
+                f"{self._base()}/pullrequests?state={state.upper()}&pagelen=50&page={page}",
                 "bkt pr list",
             )
             data = data or {}

@@ -82,9 +82,24 @@ def cli_main(argv: list[str]) -> int:
 
     parser = argparse.ArgumentParser(description="Resolve maintainer mode for a workspace.")
     parser.add_argument("--workspace-root", required=True)
+    parser.add_argument(
+        "--require-current",
+        action="store_true",
+        help="refuse a configured maintainer target outside the invoking repository",
+    )
     args = parser.parse_args(argv)
-    repo = resolve_maintainer_repo(Path(args.workspace_root))
+    workspace = Path(args.workspace_root).resolve()
+    repo = resolve_maintainer_repo(workspace)
     if repo is None:
+        return 1
+    if args.require_current and repo != workspace:
+        import sys
+
+        print(
+            f"configured maintainer target is {repo}; refusing to operate outside "
+            f"invoking repository {workspace}",
+            file=sys.stderr,
+        )
         return 1
     print(repo)
     return 0

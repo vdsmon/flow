@@ -104,6 +104,7 @@ def test_detect_pr_parses_first_item():
                 "isDraft": True,
                 "baseRefName": "main",
                 "headRefName": "feature/flow-x",
+                "headRefOid": "abc123",
                 "state": "OPEN",
             }
         ]
@@ -115,6 +116,29 @@ def test_detect_pr_parses_first_item():
     assert pr["id"] == "7"
     assert pr["draft"] is True
     assert pr["url"].endswith("/pull/7")
+    assert pr["head_sha"] == "abc123"
+
+
+def test_detect_pr_selects_merged_state():
+    listing = json.dumps(
+        [
+            {
+                "number": 7,
+                "url": "https://github.com/o/r/pull/7",
+                "headRefName": "feature/flow-x",
+                "headRefOid": "merged-head",
+                "state": "MERGED",
+            }
+        ]
+    )
+    fg, calls = _adapter({"list": listing})
+
+    pr = fg.detect_pr("feature/flow-x", state="merged")
+
+    assert pr is not None
+    assert pr["head_sha"] == "merged-head"
+    call = next(c for c in calls if c[:3] == ["gh", "pr", "list"])
+    assert call[call.index("--state") + 1] == "merged"
 
 
 def test_detect_pr_none_when_empty():
