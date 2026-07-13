@@ -1,87 +1,78 @@
 #!/bin/bash
-# flow weekly high-altitude producer: /flow evolve epic.
-# Producer-ONLY — epics are judgment work that must not auto-ship, so there is no
-# drain/consumer phase here. The run files parent `epic` beads (+ a decomposition
-# preview); the maintainer accepts and expands one by hand via /flow <key>.
+# Flow weekly high-altitude producer. Copy to ~/.flow-evolve/weekly-epic.sh,
+# replace {{REPO}}, and test-fire before arming its launchd timer.
 #
-# TEMPLATE. Copy to ~/.flow-evolve/weekly-epic.sh and replace the {{...}}
-# placeholders (see ops/README.md):
-#   {{REPO}}          absolute path to the flow checkout
-#   {{MARKETPLACE}}   the plugin marketplace name that tracks that checkout
-#
-# Weekly, not nightly: at theme altitude a daily cadence has weak signal. The epic
-# producer reaches the web and may run a bounded spike, so it is a longer, quieter
-# run than the nightly audit — same `claude --bg` (not `-p`) rationale: -p trips a
-# stream-idle timeout on the silent stretches and dies before filing.
+# The command runs as one synchronous owner session. Its native collaboration
+# agents own discovery fan-out and waiting; Flow's worker-pool reducers enforce the
+# surrounding capacity and read-only guards. Epics remain
+# producer-only; the maintainer explicitly expands an accepted epic later.
 
 set -uo pipefail
 export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${PATH:-}"
 
 REPO="{{REPO}}"
+FLOW_HOST="${FLOW_HOST:-claude}"
+FLOW_REFRESH_CMD="${FLOW_REFRESH_CMD:-}"
 LOG="$HOME/.flow-evolve/logs/epic-$(date +%Y%m%d-%H%M%S).log"
-PROJ="$HOME/.claude/projects/$(echo "$REPO" | sed 's#/#-#g')"
-
-# Deadman run-record: one append-only line per fire. The SessionStart hook
-# (plugins/flow/hooks/session-start.py) reads this and warns when the latest
-# weekly record is >8d stale. Absence of the file = schedule not armed here.
 RECORD="$HOME/.flow-evolve/run-record.jsonl"
-record() { printf '{"schedule":"weekly","phase":"%s","ts":"%s","outcome":"%s"}\n' "$1" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${2:-}" >>"$RECORD"; }
 
-# Block until the detached producer finishes filing. Liveness = transcript mtime.
-# Done = idle > 600s (epic runs go quiet longer than the audit — web fetches + an
-# optional spike), OR a new epic bead appeared AND idle > 240s, OR a 40-min hard cap.
-wait_for_session() {
-  local sid="$1" start now idle epics base t age
-  start="$(date +%s)"
-  base="$(cd "$REPO" && bd list --type epic --status open --json 2>/dev/null | python3 -c 'import sys,json;print(len(json.load(sys.stdin)))' 2>/dev/null || echo 0)"
-  while true; do
-    sleep 30
-    now="$(date +%s)"
-    t="$(ls -t "$PROJ/${sid}"*.jsonl 2>/dev/null | head -1)"
-    if [ -n "$t" ]; then age="$(stat -f %m "$t" 2>/dev/null || echo "$now")"; idle=$(( now - age )); else idle=0; fi
-    epics="$(cd "$REPO" && bd list --type epic --status open --json 2>/dev/null | python3 -c 'import sys,json;print(len(json.load(sys.stdin)))' 2>/dev/null || echo 0)"
-    if [ "$idle" -gt 600 ]; then echo "  producer idle ${idle}s -- done (epics=${epics}, base=${base})"; return 0; fi
-    if [ "$epics" -gt "$base" ] 2>/dev/null && [ "$idle" -gt 240 ]; then echo "  new epic(s) filed (${base}->${epics}), idle ${idle}s -- done"; return 0; fi
-    if [ $(( now - start )) -gt 2400 ]; then echo "  40-min cap reached (epics=${epics}) -- proceeding"; return 0; fi
-  done
+record() {
+  printf '{"schedule":"weekly","phase":"%s","ts":"%s","outcome":"%s"}\n' \
+    "$1" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${2:-}" >>"$RECORD"
+}
+
+run_flow_owner() {
+  local command="$1"
+  case "$FLOW_HOST" in
+    claude)
+      claude -p "/flow $command"
+      ;;
+    codex)
+      codex exec "\$flow:flow $command"
+      ;;
+    *)
+      echo "unsupported FLOW_HOST=$FLOW_HOST (expected claude or codex)" >&2
+      return 2
+      ;;
+  esac
 }
 
 {
-  echo "=== flow weekly epic: $(date) ==="
-  # _RUN_OUTCOME defaults to fail; the EXIT trap records `end` on ANY exit, so a
-  # crashed or aborted fire is captured immediately instead of waiting out the 8d
-  # staleness bar. Set ok only after the producer launched and the wait completed.
+  echo "=== Flow weekly epic: $(date) (host=$FLOW_HOST) ==="
   _RUN_OUTCOME=fail
   trap 'record end "$_RUN_OUTCOME"' EXIT
   record start
   cd "$REPO" || { echo "repo not found: $REPO"; exit 1; }
 
+  SCRIPTS="$REPO/plugins/flow/skills/flow/scripts"
   branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo '?')"
-  if [ "$branch" = "main" ]; then
-    git fetch origin --quiet || true
-    if git merge --ff-only origin/main; then
-      claude plugin marketplace update {{MARKETPLACE}} || true
+  echo "--- clean-boundary preflight before checkout/plugin mutation ---"
+  if python3 "$SCRIPTS/maintainer_preflight.py" \
+    --run-record "$RECORD" --workspace-root "$REPO" \
+    --require-clean-boundary --json; then
+    if [ "$branch" = "main" ]; then
+      git fetch origin --quiet || true
+      if git merge --ff-only origin/main; then
+        if [ -n "$FLOW_REFRESH_CMD" ]; then
+          echo "--- refreshing configured host installation ---"
+          /bin/bash -lc "$FLOW_REFRESH_CMD" || true
+        fi
+      else
+        echo "(ff-only skipped: checkout diverged; proposing as-is)"
+      fi
     else
-      echo "(ff-only skipped: working tree diverged/dirty — proposing as-is)"
+      echo "(repo on '$branch', not main; proposing against current checkout)"
     fi
   else
-    echo "(repo on '$branch', not main — proposing against current checkout, not advancing)"
+    echo "(checkout/plugin refresh skipped: dirty checkout or live/corrupt run lease)"
   fi
 
-  echo "--- producer: claude --bg /flow evolve epic ---"
-  POUT="$(claude --bg "/flow evolve epic" 2>&1)"
-  echo "$POUT"
-  PSID="$(echo "$POUT" | grep -oiE '[0-9a-f]{8}' | head -1)"
-  if [ -n "$PSID" ]; then
-    echo "--- waiting for producer $PSID to finish filing epics ---"
-    wait_for_session "$PSID"
-    _RUN_OUTCOME=ok
-  else
-    echo "(could not capture producer session id — skipping wait)"
-  fi
+  echo "--- owner: FLOW maintain evolution epic ---"
+  run_flow_owner "maintain evolution epic" || exit $?
 
-  echo "--- filed epics (maintainer reviews + expands by hand) ---"
+  echo "--- filed epics (review, then expand explicitly) ---"
   bd list --type epic --status open 2>&1 || true
 
+  _RUN_OUTCOME=ok
   echo "=== done: $(date) ==="
 } 2>&1 | tee "$LOG"

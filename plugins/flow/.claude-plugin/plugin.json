@@ -1,7 +1,7 @@
 {
   "name": "flow",
   "version": "0.104.0",
-  "description": "Ticket pipeline. /flow <ticket> plans in plan mode (ExitPlanMode = the one gate), then enters a worktree and runs the autonomous implement→PR tail in the same session; background it (/bg) anytime to run unattended. You spec and review the draft PR. Multi-tracker engine (Jira | beads), pluggable per-stage handlers, compounding memory layer (reflect-stage extraction + plan-phase recall).",
+  "description": "State-aware ticket-to-PR delivery for Claude Code. Bare /flow shows the cockpit; /flow <ticket|pr> starts, resumes, repairs, revises, or reports from durable evidence. Includes Jira or beads tracking, isolated worktrees, pluggable stages, compounding memory, and native collaboration-worker maintenance.",
   "author": {
     "name": "Victor De Simone",
     "email": "victorsmoliveira@gmail.com",
@@ -10,18 +10,5 @@
   "homepage": "https://github.com/vdsmon/flow",
   "repository": "https://github.com/vdsmon/flow",
   "license": "MIT",
-  "skills": "./skills",
-  "hooks": {
-    "SessionStart": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/session-start.py\"",
-            "timeout": 10
-          }
-        ]
-      }
-    ]
-  }
+  "skills": "./skills"
 }

@@ -1,119 +1,86 @@
 #!/bin/bash
-# flow nightly self-evolution: cold audit + drain (reap green PRs, launch fleet).
-# Maintainer local schedule (full-auto: green leaves + hot guard PRs auto-merge).
+# Flow nightly maintenance: discover bounded fixes, check the loop's senses, and
+# drain confirmed evolution work. Copy to ~/.flow-evolve/nightly-evolve.sh and
+# replace {{REPO}}. Test-fire it before arming the launchd timer.
 #
-# TEMPLATE. Copy to ~/.flow-evolve/nightly-evolve.sh and replace the {{...}}
-# placeholders (see ops/README.md):
-#   {{REPO}}          absolute path to the flow checkout (e.g. $HOME/repos/personal/flow)
-#   {{MARKETPLACE}}   the plugin marketplace name that tracks that checkout (e.g. vdsmon-flow)
+# FLOW_HOST selects the owner-session adapter:
+#   claude -> claude -p "/flow ..."
+#   codex  -> codex exec "$flow:flow ..."
 #
-# Both phases run via `claude --bg` (detached sessions), NOT `claude -p`. The cold
-# audit is a long, quiet run (~15 min, minutes of silent high-effort scoring before
-# it files beads); `claude -p` trips a stream-idle timeout on that silence and dies
-# before filing = total loss. `--bg` has no idle watchdog, so it completes. The cost
-# is sequencing: --bg is fire-and-forget, so the runner must WAIT for the producer
-# to finish filing beads before it drains, else `evolve drain` runs on an empty backlog.
-#
-# TEST-FIRE BY HAND before arming the launchd timer, and watch it:
-#   ~/.flow-evolve/nightly-evolve.sh
-# Only once it cleanly audits + drains should you load the LaunchAgent.
-#
-# Safe by design: it never disturbs your working tree. It advances + updates the
-# plugin ONLY when the repo is sitting on a clean `main`; on any feature branch it
-# audits the current checkout and logs that it skipped advancing.
+# Each adapter call is one synchronous owner session. The owner may itself be
+# backgrounded by its host or this wrapper, but Flow never launches detached host
+# CLIs. Native collaboration agents own fan-out and waiting; Flow's worker-pool
+# reducers enforce their capacity, read-only, and recovery decisions.
 
 set -uo pipefail
-# ~/.local/bin first: that's where `claude` lives. launchd runs with a minimal
-# env (no ~/.local/bin), so omitting it makes the job fail "claude: command not
-# found" — invisible to a by-hand test where the interactive shell already has it.
 export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${PATH:-}"
 
 REPO="{{REPO}}"
+FLOW_HOST="${FLOW_HOST:-claude}"
+FLOW_REFRESH_CMD="${FLOW_REFRESH_CMD:-}"
 LOG="$HOME/.flow-evolve/logs/$(date +%Y%m%d-%H%M%S).log"
-PROJ="$HOME/.claude/projects/$(echo "$REPO" | sed 's#/#-#g')"
-
-# Deadman run-record: one append-only line per fire. The SessionStart hook
-# (plugins/flow/hooks/session-start.py) reads this and warns when the latest
-# nightly record is >36h stale. Absence of the file = schedule not armed here.
 RECORD="$HOME/.flow-evolve/run-record.jsonl"
-record() { printf '{"schedule":"nightly","phase":"%s","ts":"%s","outcome":"%s"}\n' "$1" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${2:-}" >>"$RECORD"; }
 
-# Wait until a detached `claude --bg` session finishes. Liveness = its transcript's
-# mtime; the audit goes silent for minutes mid-scoring (observed up to ~360s), so
-# "idle" needs a generous threshold. Done = idle > 480s (truly quiet), OR a NEW bead
-# appeared above the pre-existing backlog AND idle > 180s (filing happens at the very
-# end), OR a 25-min hard cap (audit never runs longer). The new-bead signal baselines
-# the held backlog (flow held beads persist), so a pre-existing held bead never
-# false-fires the fast path — only an actual produce does.
-wait_for_session() {
-  local sid="$1" start now idle beads base t age
-  start="$(date +%s)"
-  base="$(cd "$REPO" && bd list -l evolve --status open --json 2>/dev/null | python3 -c 'import sys,json;print(len(json.load(sys.stdin)))' 2>/dev/null || echo 0)"
-  while true; do
-    sleep 30
-    now="$(date +%s)"
-    t="$(ls -t "$PROJ/${sid}"*.jsonl 2>/dev/null | head -1)"
-    if [ -n "$t" ]; then age="$(stat -f %m "$t" 2>/dev/null || echo "$now")"; idle=$(( now - age )); else idle=0; fi
-    beads="$(cd "$REPO" && bd list -l evolve --status open --json 2>/dev/null | python3 -c 'import sys,json;print(len(json.load(sys.stdin)))' 2>/dev/null || echo 0)"
-    if [ "$idle" -gt 480 ]; then echo "  producer idle ${idle}s -- done (beads=${beads}, base=${base})"; return 0; fi
-    if [ "$beads" -gt "$base" ] 2>/dev/null && [ "$idle" -gt 180 ]; then echo "  new bead(s) filed (${base}->${beads}), idle ${idle}s -- done"; return 0; fi
-    if [ $(( now - start )) -gt 1500 ]; then echo "  25-min cap reached (beads=${beads}) -- proceeding"; return 0; fi
-  done
+record() {
+  printf '{"schedule":"nightly","phase":"%s","ts":"%s","outcome":"%s"}\n' \
+    "$1" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${2:-}" >>"$RECORD"
+}
+
+run_flow_owner() {
+  local command="$1"
+  case "$FLOW_HOST" in
+    claude)
+      claude -p "/flow $command"
+      ;;
+    codex)
+      codex exec "\$flow:flow $command"
+      ;;
+    *)
+      echo "unsupported FLOW_HOST=$FLOW_HOST (expected claude or codex)" >&2
+      return 2
+      ;;
+  esac
 }
 
 {
-  echo "=== flow nightly evolve: $(date) ==="
-  # _RUN_OUTCOME defaults to fail; the EXIT trap records `end` on ANY exit
-  # (crash, set -uo pipefail abort, bad cd), so a dead fire is captured at once
-  # rather than waiting out the 36h staleness bar. Set ok only on a clean launch.
+  echo "=== Flow nightly maintenance: $(date) (host=$FLOW_HOST) ==="
   _RUN_OUTCOME=fail
   trap 'record end "$_RUN_OUTCOME"' EXIT
   record start
   cd "$REPO" || { echo "repo not found: $REPO"; exit 1; }
 
+  SCRIPTS="$REPO/plugins/flow/skills/flow/scripts"
   branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo '?')"
-  if [ "$branch" = "main" ]; then
-    git fetch origin --quiet || true
-    if git merge --ff-only origin/main; then
-      claude plugin marketplace update {{MARKETPLACE}} || true
+  echo "--- clean-boundary preflight before checkout/plugin mutation ---"
+  if python3 "$SCRIPTS/maintainer_preflight.py" \
+    --run-record "$RECORD" --workspace-root "$REPO" \
+    --require-clean-boundary --json; then
+    if [ "$branch" = "main" ]; then
+      git fetch origin --quiet || true
+      if git merge --ff-only origin/main; then
+        if [ -n "$FLOW_REFRESH_CMD" ]; then
+          echo "--- refreshing configured host installation ---"
+          /bin/bash -lc "$FLOW_REFRESH_CMD" || true
+        fi
+      else
+        echo "(ff-only skipped: checkout diverged; maintaining as-is)"
+      fi
     else
-      echo "(ff-only skipped: working tree diverged/dirty — auditing as-is)"
+      echo "(repo on '$branch', not main; maintaining current checkout)"
     fi
   else
-    echo "(repo on '$branch', not main — auditing current checkout, not advancing)"
+    echo "(checkout/plugin refresh skipped: dirty checkout or live/corrupt run lease)"
   fi
 
-  echo "--- producer: claude --bg /flow evolve audit ---"
-  POUT="$(claude --bg "/flow evolve audit" 2>&1)"
-  echo "$POUT"
-  PSID="$(echo "$POUT" | grep -oiE '[0-9a-f]{8}' | head -1)"
-  if [ -z "$PSID" ]; then
-    echo "(could not capture producer session id — skipping wait, draining anyway)"
-  else
-    echo "--- waiting for producer $PSID to finish filing beads ---"
-    wait_for_session "$PSID"
-  fi
+  echo "--- owner: FLOW maintain evolution audit ---"
+  run_flow_owner "maintain evolution audit" || exit $?
 
-  SCRIPTS="$REPO/plugins/flow/skills/flow/scripts"
-  echo "--- producer: trace-mine recent transcripts (deterministic; files trace-mined proposal beads) ---"
-  # 48h window on a 24h cadence is a deliberate missed-night overlap margin:
-  # the re-mine is idempotent (cluster dedups vs friction.jsonl, file dedups
-  # via the evid: net), so overlap costs a little scan time, never dup beads.
-  python3 "$SCRIPTS/trace_mine.py" runs --since-hours 48 --workspace-root "$REPO" | while IFS=$'\t' read -r TX TK; do
-    [ -n "$TX" ] && [ -n "$TK" ] || continue
-    python3 "$SCRIPTS/trace_mine.py" extract --transcript "$TX" --ticket "$TK" --workspace-root "$REPO" \
-      | python3 "$SCRIPTS/trace_mine.py" cluster --workspace-root "$REPO" \
-      | python3 "$SCRIPTS/trace_mine.py" file --workspace-root "$REPO" || true
-  done
-
-  echo "--- producer: senses-deadman (deterministic; files ONE deduped P0 on ship-event divergence + prints the health digest) ---"
-  # Read-only consumer of is_shipped. The digest tee's into this log as the nightly
-  # evidence trail, and `|| true` keeps a divergence exit (1) from blocking the drain.
+  echo "--- senses preflight: ship-event divergence and health digest ---"
   python3 "$SCRIPTS/senses_deadman.py" --workspace-root "$REPO" || true
 
-  echo "--- consumer: claude --bg /flow evolve drain ---"
-  claude --bg "/flow evolve drain"
-  if [ -n "$PSID" ]; then _RUN_OUTCOME=ok; fi
+  echo "--- owner: FLOW maintain evolution drain ---"
+  run_flow_owner "maintain evolution drain" || exit $?
 
-  echo "=== done (drain detached; janitor + launch run in background): $(date) ==="
+  _RUN_OUTCOME=ok
+  echo "=== done: $(date) ==="
 } 2>&1 | tee "$LOG"

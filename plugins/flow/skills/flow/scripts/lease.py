@@ -1,4 +1,4 @@
-"""Per-ticket run lease: a MUTEX preventing two concurrent /flow do on one ticket.
+"""Per-ticket run lease: a mutex preventing two concurrent deliveries of one ticket.
 
 Library + thin CLI. Stdlib-only.
 
@@ -19,7 +19,7 @@ advisory liveness hint. Both are informational: no
 acquire/refresh/release/classify decision reads them.
 
 The session_nonce is the per-session component run_id alone cannot provide:
-run_id is reused from state.json on resume, so a second /flow do on the same
+run_id is reused from state.json on resume, so a second ``FLOW <ticket>`` on the same
 ticket reads the same run_id and would otherwise re-acquire a LIVE lease as if it
 were the owner. The nonce is minted fresh on each acquire (and rotated on a
 force/takeover or an expired-owner resume) and carried by the dispatching session
@@ -39,7 +39,7 @@ cannot exist after a reboot) only when it is from the SAME hostname AND its boot
 differs from the current boot, so it is overwritten. The same-hostname requirement
 keeps a live foreign host on shared .flow storage (different hostname, different
 boot) from being mis-cleared. An expired foreign lease from the same boot, or from
-a different host, needs human takeover via /flow recover unless `force` is passed.
+a different host, needs human takeover via FLOW workspace repair unless `force` is passed.
 """
 
 from __future__ import annotations
@@ -89,7 +89,7 @@ class LeaseError(Exception):
 
 class LeaseHeld(LeaseError):
     """A live lease holds this ticket: a different run_id, OR the same run_id
-    re-acquired without the matching session_nonce (a second /flow do)."""
+    re-acquired without the matching session_nonce (a second delivery attempt)."""
 
     def __init__(self, holder: Lease) -> None:
         super().__init__(f"ticket lease held by run_id={holder.run_id!r}")
@@ -97,7 +97,7 @@ class LeaseHeld(LeaseError):
 
 
 class LeaseExpiredForeign(LeaseError):
-    """An expired foreign lease that is NOT reboot-clearable. Needs /flow recover."""
+    """An expired foreign lease that is NOT reboot-clearable. Needs FLOW workspace repair."""
 
     def __init__(self, holder: Lease) -> None:
         super().__init__(f"expired foreign lease from run_id={holder.run_id!r}")
@@ -283,7 +283,7 @@ def acquire(
       - force -> rotate the nonce and overwrite (explicit reset/takeover).
       - LIVE owner -> re-acquire ONLY when the caller presents the matching
         session_nonce; otherwise LeaseHeld. This is the per-session guard: a
-        second /flow do reuses run_id from state.json but cannot present the
+        second ``FLOW <ticket>`` reuses run_id from state.json but cannot present the
         live owner's nonce, so it is blocked instead of silently re-acquiring.
       - EXPIRED owner -> legitimate resume of our own dead run; rotate the nonce
         (the prior session is gone) and preserve acquired_at.
@@ -486,7 +486,7 @@ def classify(
     current_boot: str | None = None,
     hostname: str | None = None,
 ) -> dict[str, object]:
-    """Describe the lease for /flow recover.
+    """Describe the lease for FLOW workspace repair.
 
     state is one of: free | live | expired_reboot_clearable | expired_foreign |
     corrupt. holder is the lease as a dict, or None when free or corrupt.

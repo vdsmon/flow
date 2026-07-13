@@ -1,7 +1,7 @@
 """Shared helpers for the evolve + queue drain cluster (lib, no CLI).
 
 Definitions duplicated verbatim across evolve_reap / evolve_select / evolve_drain /
-evolve_session_cleanup / queue_select live here once: the tool-call wrappers, the `feat/<key>`
+/ queue_select live here once: the tool-call wrappers, the `feat/<key>`
 branch regex, the bead-label query sets, the worktree-pool run-dir resolution, and the selector
 primitives (in-flight join, ref gather, pre-PR lease scan, BLAST-RADIUS anchor).
 """

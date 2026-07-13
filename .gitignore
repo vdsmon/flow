@@ -33,15 +33,17 @@ plugins/flow/**/.venv/
 # bootstrap claim flock targets (tickets/<key>.md stays tracked; *.lock above
 # does not reach the subdir)
 **/.flow/tickets/*.claim
+**/.flow/runtime/
+**/.flow/memory/
+# pre-v2 migration inputs remain ignored until the journaled move verifies them
 **/.flow/memory-root
-# generated workspace facade + installed-skill binding
 **/.flow/flow
 **/.flow/skill_dir
 # live queue + .lock flock + .stale eviction sidecar + .tmp atomic-write residue
 **/.flow/recall-pending.jsonl*
 **/.flow/launch-ledger/
 **/.flow/fleet/
-# per-namespace memory + friction + ship-events (local, per-machine)
+# pre-v2 per-namespace memory inputs (local, per-machine)
 **/.flow/*/knowledge.jsonl
 **/.flow/*/knowledge.jsonl.lock
 **/.flow/*/knowledge.embed

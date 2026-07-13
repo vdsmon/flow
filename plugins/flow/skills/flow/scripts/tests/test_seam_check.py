@@ -90,7 +90,7 @@ def test_find_invocations_handles_harness_neutral_skill_root_placeholder() -> No
 
 
 def test_find_facade_invocation_resolves_allowlisted_command() -> None:
-    text = ".flow/flow dispatch advance --ticket X --status completed"
+    text = ".flow/runtime/flow dispatch advance --ticket X --status completed"
     invs = seam_check.find_facade_invocations("t.md", text)
     assert len(invs) == 1
     assert invs[0].facade_command == "dispatch"
@@ -98,8 +98,36 @@ def test_find_facade_invocation_resolves_allowlisted_command() -> None:
     assert [p for p in seam_check.validate(invs[0]) if p.level == "ERROR"] == []
 
 
+def test_facade_context_requires_absolute_binding_and_call_local_harness() -> None:
+    relative = seam_check.find_facade_invocations(
+        "t.md", ".flow/runtime/flow dispatch next --ticket X"
+    )
+    problems = seam_check.facade_context_problems(relative)
+    assert len(problems) == 2
+    assert any("workspace-relative" in problem.msg for problem in problems)
+    assert any("FLOW_HARNESS" in problem.msg for problem in problems)
+
+
+def test_facade_context_accepts_bound_placeholder_with_call_local_harness() -> None:
+    invocations = seam_check.find_facade_invocations(
+        "t.md",
+        'FLOW_HARNESS="<harness>" "<facade>" dispatch next --ticket X',
+    )
+    assert len(invocations) == 1
+    assert invocations[0].facade_path == "<facade>"
+    assert seam_check.facade_context_problems(invocations) == []
+
+
+def test_facade_context_accepts_absolute_literal_with_concrete_harness() -> None:
+    invocations = seam_check.find_facade_invocations(
+        "t.md",
+        'FLOW_HARNESS=codex "/tmp/work tree/.flow/runtime/flow" dispatch next --ticket X',
+    )
+    assert seam_check.facade_context_problems(invocations) == []
+
+
 def test_find_facade_invocation_rejects_command_outside_allowlist() -> None:
-    inv = seam_check.find_facade_invocations("t.md", ".flow/flow arbitrary-script --foo")[0]
+    inv = seam_check.find_facade_invocations("t.md", ".flow/runtime/flow arbitrary-script --foo")[0]
     problems = seam_check.validate(inv)
     assert len(problems) == 1
     assert problems[0].level == "ERROR"
@@ -107,7 +135,7 @@ def test_find_facade_invocation_rejects_command_outside_allowlist() -> None:
 
 
 def test_facade_missing_command_is_error() -> None:
-    invocations = seam_check.find_facade_invocations("t.md", ".flow/flow")
+    invocations = seam_check.find_facade_invocations("t.md", ".flow/runtime/flow")
     assert len(invocations) == 1
     errors = [
         problem for problem in seam_check.validate(invocations[0]) if problem.level == "ERROR"
@@ -117,7 +145,9 @@ def test_facade_missing_command_is_error() -> None:
 
 
 def test_facade_path_traversal_command_is_error() -> None:
-    invocations = seam_check.find_facade_invocations("t.md", ".flow/flow ../../arbitrary.py")
+    invocations = seam_check.find_facade_invocations(
+        "t.md", ".flow/runtime/flow ../../arbitrary.py"
+    )
     assert len(invocations) == 1
     errors = [
         problem for problem in seam_check.validate(invocations[0]) if problem.level == "ERROR"
@@ -128,7 +158,7 @@ def test_facade_path_traversal_command_is_error() -> None:
 
 
 def test_facade_uppercase_command_is_error() -> None:
-    invocations = seam_check.find_facade_invocations("t.md", ".flow/flow Dispatch next")
+    invocations = seam_check.find_facade_invocations("t.md", ".flow/runtime/flow Dispatch next")
     assert len(invocations) == 1
     errors = [
         problem for problem in seam_check.validate(invocations[0]) if problem.level == "ERROR"
@@ -139,13 +169,13 @@ def test_facade_uppercase_command_is_error() -> None:
 
 
 def test_facade_narrative_name_is_not_a_missing_command() -> None:
-    text = "The `.flow/flow` executable is the post-init command seam."
+    text = "The `.flow/runtime/flow` executable is the post-init command seam."
     assert seam_check.find_facade_invocations("t.md", text) == []
 
 
 def test_facade_inline_span_does_not_absorb_later_command_flags() -> None:
     text = (
-        "Run `.flow/flow diff capture-implement-diff --ticket FT-1 --cwd .` "
+        "Run `.flow/runtime/flow diff capture-implement-diff --ticket FT-1 --cwd .` "
         "then `git apply --cached --check patch.diff`."
     )
     invocation = seam_check.find_facade_invocations("t.md", text)[0]
@@ -157,7 +187,7 @@ def test_facade_inline_span_does_not_absorb_later_command_flags() -> None:
 
 def test_facade_unknown_nested_subcommand_is_error() -> None:
     inv = seam_check.find_facade_invocations(
-        "t.md", ".flow/flow dispatch nxt --workspace-root . --ticket FT-1"
+        "t.md", ".flow/runtime/flow dispatch nxt --workspace-root . --ticket FT-1"
     )[0]
     errors = [problem for problem in seam_check.validate(inv) if problem.level == "ERROR"]
     assert len(errors) == 1
@@ -166,7 +196,7 @@ def test_facade_unknown_nested_subcommand_is_error() -> None:
 
 def test_facade_flag_valid_on_another_subcommand_is_error() -> None:
     inv = seam_check.find_facade_invocations(
-        "t.md", ".flow/flow dispatch next --ticket FT-1 --status completed"
+        "t.md", ".flow/runtime/flow dispatch next --ticket FT-1 --status completed"
     )[0]
     errors = [problem for problem in seam_check.validate(inv) if problem.level == "ERROR"]
     assert len(errors) == 1
@@ -176,7 +206,7 @@ def test_facade_flag_valid_on_another_subcommand_is_error() -> None:
 
 def test_facade_valid_subcommand_token_in_argument_value_cannot_mask_typo() -> None:
     inv = seam_check.find_facade_invocations(
-        "t.md", ".flow/flow dispatch nxt --stage next --ticket FT-1"
+        "t.md", ".flow/runtime/flow dispatch nxt --stage next --ticket FT-1"
     )[0]
     errors = [problem for problem in seam_check.validate(inv) if problem.level == "ERROR"]
     assert len(errors) == 1
@@ -186,7 +216,7 @@ def test_facade_valid_subcommand_token_in_argument_value_cannot_mask_typo() -> N
 
 def test_facade_subcommand_flag_before_subcommand_is_error() -> None:
     inv = seam_check.find_facade_invocations(
-        "t.md", ".flow/flow dispatch --workspace-root . next --ticket FT-1"
+        "t.md", ".flow/runtime/flow dispatch --workspace-root . next --ticket FT-1"
     )[0]
     errors = [problem for problem in seam_check.validate(inv) if problem.level == "ERROR"]
     assert any(
@@ -196,7 +226,7 @@ def test_facade_subcommand_flag_before_subcommand_is_error() -> None:
 
 
 def test_find_facade_invocation_recognizes_quoted_absolute_path() -> None:
-    text = '"/tmp/work tree/.flow/flow" dispatch next --ticket FT-1'
+    text = '"/tmp/work tree/.flow/runtime/flow" dispatch next --ticket FT-1'
     invs = seam_check.find_facade_invocations("t.md", text)
     assert len(invs) == 1
     assert invs[0].facade_command == "dispatch"
@@ -206,7 +236,7 @@ def test_find_facade_invocation_recognizes_quoted_absolute_path() -> None:
 
 def test_facade_global_flag_before_subcommand_remains_valid() -> None:
     inv = seam_check.find_facade_invocations(
-        "t.md", ".flow/flow tracker --workspace-root . get --key FT-1"
+        "t.md", ".flow/runtime/flow tracker --workspace-root . get --key FT-1"
     )[0]
     assert [problem for problem in seam_check.validate(inv) if problem.level == "ERROR"] == []
     assert inv.subcommand == "get"
@@ -241,7 +271,7 @@ def test_bare_script_invocation_is_rejected_as_a_facade_escape() -> None:
     assert invocations[0].script == "recover.py"
     problems = seam_check.stale_direct_invocation_problems(invocations)
     assert len(problems) == 1
-    assert "use .flow/flow" in problems[0].msg
+    assert "absolute <facade>" in problems[0].msg
 
 
 def test_bare_script_filename_without_an_executable_surface_is_ignored() -> None:
@@ -306,67 +336,16 @@ def test_forwarder_folds_metric_surface() -> None:
     assert [p for p in seam_check.validate(inv) if p.level == "ERROR"] == []
 
 
-def test_slash_phantom_flag_is_error() -> None:
-    # The headline regression: `/flow recover --reset-foo` names a flag recover.py
-    # has nowhere on its surface, so it must surface as an ERROR.
-    text = "Run `/flow recover --reset-foo` to wipe state."
-    invs = seam_check.find_slash_invocations("t.md", text)
-    assert len(invs) == 1
-    assert invs[0].script == "recover.py"
-    errors = [p for inv in invs for p in seam_check.validate(inv) if p.level == "ERROR"]
-    assert len(errors) == 1
-    assert "--reset-foo" in errors[0].msg
+def test_host_specific_public_recipe_is_rejected_from_reusable_prose() -> None:
+    text = "Use `/flow workspace repair FT-1` or:\n```\n$flow:flow resume FT-1\n```\n"
+    problems = seam_check.host_specific_invocation_problems("t.md", text)
+    assert len(problems) == 2
+    assert all("logical FLOW" in problem.msg for problem in problems)
 
 
-def test_slash_real_flags_pass() -> None:
-    text = "Run `/flow init --reconfigure --resume` to redo setup."
-    invs = seam_check.find_slash_invocations("t.md", text)
-    assert len(invs) == 1
-    assert [p for inv in invs for p in seam_check.validate(inv) if p.level == "ERROR"] == []
-
-
-def test_slash_skips_verbs_without_script() -> None:
-    # evolve and do have no scripts/<verb>.py, so their slash-prose is not linted.
-    text = "Use `/flow evolve drain --include-proposals` or `/flow do --stage implement`."
-    assert seam_check.find_slash_invocations("t.md", text) == []
-
-
-def test_slash_subcommand_recover_passes() -> None:
-    text = "Then `/flow recover reload-snapshot <ticket>` accepts the config."
-    invs = seam_check.find_slash_invocations("t.md", text)
-    assert len(invs) == 1
-    problems = [p for inv in invs for p in seam_check.validate(inv)]
-    assert [p for p in problems if p.level == "ERROR"] == []
-    assert invs[0].subcommand == "reload-snapshot"
-
-
-def test_slash_recall_metric_forwarder_passes() -> None:
-    text = "`/flow recall --metric tickets-per-week` forwards to metric.py."
-    invs = seam_check.find_slash_invocations("t.md", text)
-    assert len(invs) == 1
-    assert [p for inv in invs for p in seam_check.validate(inv) if p.level == "ERROR"] == []
-
-
-def test_slash_adjacent_backtick_spans_do_not_merge() -> None:
-    # Two inline spans on one line must stay separate: the bare recover span must
-    # not absorb the `--stage` that belongs to the second `retry --stage ticket` span.
-    text = "Once fixed, `/flow recover <KEY>` -> `retry --stage ticket`."
-    invs = seam_check.find_slash_invocations("t.md", text)
-    assert len(invs) == 1
-    assert invs[0].script == "recover.py"
-    assert invs[0].flags == []
-
-
-def test_slash_phantom_flag_in_fenced_block_is_error() -> None:
-    # The phantom-flag catch must also fire when the slash command sits on a
-    # fenced-code line, not only an inline backtick span.
-    text = "Example:\n\n```\n/flow recover --reset-foo\n```\n"
-    invs = seam_check.find_slash_invocations("t.md", text)
-    assert len(invs) == 1
-    assert invs[0].script == "recover.py"
-    errors = [p for inv in invs for p in seam_check.validate(inv) if p.level == "ERROR"]
-    assert len(errors) == 1
-    assert "--reset-foo" in errors[0].msg
+def test_bare_host_trigger_mapping_is_not_a_recipe_error() -> None:
+    text = "Claude Code renders FLOW as `/flow`; Codex renders it as `$flow:flow`."
+    assert seam_check.host_specific_invocation_problems("t.md", text) == []
 
 
 def test_live_docs_are_green() -> None:
@@ -377,7 +356,7 @@ def test_live_docs_are_green() -> None:
 def test_live_router_carries_rooted_cross_harness_context() -> None:
     skill = (seam_check.SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
     harness = (seam_check.SKILL_ROOT / "references" / "harness.md").read_text(encoding="utf-8")
-    spec = (seam_check.SKILL_ROOT / "references" / "verb-spec.md").read_text(encoding="utf-8")
+    spec = (seam_check.SKILL_ROOT / "references" / "delivery-plan.md").read_text(encoding="utf-8")
 
     for field in ("arguments", "skill_root", "task_root", "run_root", "facade", "capabilities"):
         assert field in skill
@@ -386,21 +365,23 @@ def test_live_router_carries_rooted_cross_harness_context() -> None:
     for prompt_field in (
         "Workspace root:",
         "Skill root:",
+        "Facade:",
+        "Harness:",
         "Ticket dir:",
         "Reference path:",
         "Artifact path:",
     ):
         assert prompt_field in skill
     assert "result.worktree" in spec
-    assert "native switch is not repaired with `cd`" in spec
+    assert "binding, not the convenience switch" in spec.lower()
 
 
 def test_live_portable_references_use_adapter_capabilities_not_claude_tool_calls() -> None:
     portable = [
-        seam_check.SKILL_ROOT / "references" / "verb-new.md",
-        seam_check.SKILL_ROOT / "references" / "verb-recall.md",
-        seam_check.SKILL_ROOT / "references" / "verb-slice.md",
-        seam_check.SKILL_ROOT / "references" / "verb-spec.md",
+        seam_check.SKILL_ROOT / "references" / "command-ticket.md",
+        seam_check.SKILL_ROOT / "references" / "command-memory.md",
+        seam_check.SKILL_ROOT / "references" / "command-ticket.md",
+        seam_check.SKILL_ROOT / "references" / "delivery-plan.md",
         seam_check.SKILL_ROOT / "references" / "stage-plan.md",
     ]
     text = "\n".join(path.read_text(encoding="utf-8") for path in portable)
@@ -413,7 +394,8 @@ def test_live_portable_references_use_adapter_capabilities_not_claude_tool_calls
         "a `general-purpose` `Agent`",
     ):
         assert claude_only_instruction not in text
-    assert "adapter's user-input capability" in text
+    assert "adapter's" in text
+    assert "user-input capability" in text
     assert "fresh independent agent" in text
 
 
@@ -427,7 +409,7 @@ def test_live_post_init_prose_has_no_bare_script_invocation() -> None:
 
 def test_live_codex_retry_requires_a_model_pin_that_was_actually_applied() -> None:
     skill = (seam_check.SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
-    do_ref = (seam_check.SKILL_ROOT / "references" / "verb-do.md").read_text(encoding="utf-8")
+    do_ref = (seam_check.SKILL_ROOT / "references" / "delivery-loop.md").read_text(encoding="utf-8")
     assert "model_pin_applied" in skill
     assert "model_pin_applied" in do_ref
     assert "Codex" in do_ref
@@ -435,7 +417,9 @@ def test_live_codex_retry_requires_a_model_pin_that_was_actually_applied() -> No
 
 
 def test_live_init_carries_an_absolute_answers_path_across_calls() -> None:
-    init_ref = (seam_check.SKILL_ROOT / "references" / "verb-init.md").read_text(encoding="utf-8")
+    init_ref = (seam_check.SKILL_ROOT / "references" / "command-workspace.md").read_text(
+        encoding="utf-8"
+    )
     assert "answers_path" in init_ref
     assert "<absolute task_root>" in init_ref
     assert "ANSWERS=$(mktemp" not in init_ref
@@ -446,7 +430,7 @@ def test_live_harness_selector_is_call_local_and_explicit() -> None:
     paths = [
         seam_check.SKILL_ROOT / "SKILL.md",
         seam_check.SKILL_ROOT / "references" / "harness.md",
-        seam_check.SKILL_ROOT / "references" / "verb-init.md",
+        seam_check.SKILL_ROOT / "references" / "command-workspace.md",
     ]
     text = "\n".join(path.read_text(encoding="utf-8") for path in paths)
     assert "FLOW_HARNESS" in text
@@ -460,9 +444,9 @@ def test_live_portable_path_never_depends_on_persistent_cd_or_automatic_spill_re
     portable_docs = [
         seam_check.SKILL_ROOT / "SKILL.md",
         seam_check.SKILL_ROOT / "references" / "harness.md",
-        seam_check.SKILL_ROOT / "references" / "verb-spec.md",
-        seam_check.SKILL_ROOT / "references" / "verb-do.md",
-        seam_check.SKILL_ROOT / "references" / "verb-revise.md",
+        seam_check.SKILL_ROOT / "references" / "delivery-plan.md",
+        seam_check.SKILL_ROOT / "references" / "delivery-loop.md",
+        seam_check.SKILL_ROOT / "references" / "delivery-revision.md",
     ]
     text = "\n".join(path.read_text(encoding="utf-8") for path in portable_docs)
     assert "cd the persistent Bash cwd" not in text
@@ -478,11 +462,11 @@ _VALID_AGENTS_STANZA = '''
 _AGENTS_STANZA = """<!-- flow:begin -->
 A generic adapter supplies the absolute `FLOW_SKILL_DIR`; do not search for it.
 Read `$FLOW_SKILL_DIR/SKILL.md` and `$FLOW_SKILL_DIR/references/harness.md`.
-Map text after `/flow` to request `arguments`.
+Route with `public-commands.toml`. Static namespaces win; unknown or removed forms stop.
 Select `codex`, `claude-code`, or `generic`; set `FLOW_HARNESS=<identity>` in the same
 call as each Flow command, never as an export.
-Perform a read-only spec, then stop until the user approves.
-After approval, adopt the absolute worktree as the run root and its `.flow/flow` facade.
+Perform read-only planning, then stop until the user approves.
+After approval, adopt the absolute worktree as the run root and its `.flow/runtime/flow` facade.
 Harness calls need an explicit workdir because a prior `cd` is never persistent state.
 Never relocate dirty main-checkout files; recovery requires proven agent provenance.
 <!-- flow:end -->
@@ -500,7 +484,7 @@ def test_managed_agents_guidance_is_not_satisfied_by_any_agents_mention(tmp_path
     init_path = tmp_path / "init.py"
     init_path.write_text(
         "# AGENTS.md should mention FLOW_SKILL_DIR, SKILL.md, "
-        "references/harness.md, and .flow/flow\n",
+        "references/harness.md, and .flow/runtime/flow\n",
         encoding="utf-8",
     )
     drift = seam_check.managed_agents_guidance_drift(init_path)
@@ -792,7 +776,7 @@ def test_triage_guard_files_parsed_from_source() -> None:
 
 
 def test_guard_lists_match_triage() -> None:
-    """Both prose guard-file enumerations must equal triage._GUARD_FILES."""
+    """The canonical prose guard-file enumeration must equal triage._GUARD_FILES."""
     assert seam_check.guard_file_list_drift() == []
 
 
@@ -825,7 +809,7 @@ def test_guard_list_missing_anchors_is_a_drift(tmp_path) -> None:
     doc.write_text("no anchor here\n")
     drifts = seam_check.guard_file_list_drift(docs=[doc], guard_files=frozenset({"a.py"}))
     assert len(drifts) == 1
-    assert "expected >= 2" in drifts[0][2]
+    assert "expected >= 1" in drifts[0][2]
 
 
 def test_main_fails_on_guard_list_drift(monkeypatch) -> None:
@@ -981,7 +965,7 @@ def test_main_fails_on_stage_doc_citation_offender(monkeypatch) -> None:
 
 
 def test_live_corpus_no_stage_doc_reenumeration() -> None:
-    """No live /flow doc statically re-enumerates the stage->reference_doc map."""
+    """No live Flow doc statically re-enumerates the stage-to-reference map."""
     assert seam_check.docs_over_stage_doc_citation_limit() == {}
 
 

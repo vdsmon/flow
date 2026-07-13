@@ -1,6 +1,6 @@
 """flow_worktree.py: post-approval bootstrap for the ticket pipeline.
 
-After `/flow spec` approves a plan (ExitPlanMode), this seeds a git worktree so the pipeline resumes
+After Flow approves a target plan, this seeds a git worktree so delivery resumes
 directly at the implement stage. The spec session then enters this worktree (EnterWorktree) and
 continues the `do` pipeline in the SAME conversation; running it unattended is a separate,
 harness-level choice (`/bg`), not this script's concern.
@@ -10,7 +10,7 @@ harness-level choice (`/bg`), not this script's concern.
      git worktree only materializes committed files)
   3. mise trust the worktree (toolchain) unless --no-mise-trust
   4. redirect the worktree's memory store to the main checkout's resolved memory base (its own
-     `.flow/memory-root` / `[memory].root` honored) via the gitignored .flow/memory-root sibling
+     `.flow/runtime/memory-root` / `[memory].root` honored) via runtime metadata
      (shared store, so per-ticket worktrees don't fragment the compounding-knowledge layer; tracked
      workspace.toml untouched)
   5. seed state.json: plan marked completed with its output_path; plan.out written from --plan-from;
@@ -258,24 +258,22 @@ def _copy_config(main_root: Path, worktree: Path) -> list[str]:
     return copied
 
 
-def _ensure_flow_config(main_root: Path, worktree: Path, shared_flow: Path) -> None:
+def _ensure_flow_config(main_root: Path, worktree: Path, shared_memory: Path) -> None:
     """Ensure the worktree has .flow/.initialized + workspace.toml (copying from
-    main when absent, the gitignored case), then redirect the memory store to
-    `shared_flow` (main's RESOLVED memory base, so a main checkout configured with
-    `[memory].root` shares that store, not literally main/.flow) via the gitignored
-    `.flow/memory-root` sibling.
+    main when absent, the gitignored case), then bind layout v2 to
+    `shared_memory` (main's resolved `.flow/memory` base, or the corresponding
+    configured external base) through `.flow/runtime/memory-root`.
 
     The redirect lives in the sibling, NOT in workspace.toml: the tracked
     workspace.toml stays byte-identical to main's copy so a per-machine absolute
-    path can never ride into a commit. `resolve_memory_base` reads the sibling
-    first (see _memory_paths)."""
+    path can never ride into a commit."""
     wt_flow = worktree / ".flow"
     wt_ws = wt_flow / "workspace.toml"
     if not wt_ws.exists():
         main_ws = main_root / ".flow" / "workspace.toml"
         if not main_ws.exists():
             raise _ConfigError(
-                f"no workspace.toml at {main_ws}; run /flow init in the main checkout first"
+                f"no workspace.toml at {main_ws}; run FLOW workspace setup in the main checkout"
             )
         wt_flow.mkdir(parents=True, exist_ok=True)
         shutil.copy2(main_ws, wt_ws)
@@ -286,10 +284,22 @@ def _ensure_flow_config(main_root: Path, worktree: Path, shared_flow: Path) -> N
             shutil.copy2(main_marker, marker)
         else:
             marker.touch()
-    (wt_flow / "memory-root").write_text(str(shared_flow) + "\n", encoding="utf-8")
     # Stamp the currently executing Flow installation. Copying the main checkout's machine-local
     # skill path would make new worktrees stale.
-    flow_launcher.install(worktree, skill_dir=Path(__file__).resolve().parent.parent)
+    flow_launcher.install(
+        worktree,
+        skill_dir=Path(__file__).resolve().parent.parent,
+        memory_base=shared_memory,
+    )
+
+
+def _shared_memory_base(main_root: Path) -> Path:
+    """Migrate the main workspace first, then return its v2 memory base."""
+    workspace_toml = main_root / ".flow" / "workspace.toml"
+    if not workspace_toml.is_file():
+        raise _ConfigError(f"no workspace.toml at {workspace_toml}; run Flow workspace setup first")
+    flow_launcher.runtime_layout.ensure_layout(main_root)
+    return _memory_paths.resolve_memory_base(main_root)
 
 
 def _seed_state(worktree: Path, ticket: str, plan_text: str, head_sha: str) -> str:
@@ -410,7 +420,7 @@ def _assert_no_live_sibling(ticket: str, main_root: Path, runner: Runner) -> Non
     lease.classify: a live or corrupt run.lock refuses; an expired lease is a
     dead sibling (reap owns its teardown) and proceeds. A free lease with a
     seeded NON-TERMINAL state.json (any stage pending/in_progress, which
-    includes a failed-mid-pipeline run, since /flow recover can resume it) also
+    includes a failed-mid-pipeline run, since FLOW workspace repair can resume it) also
     refuses: that is the bootstrap→cmd_init window where the winner has seeded
     state but not yet acquired its run lease.
     """
@@ -419,7 +429,8 @@ def _assert_no_live_sibling(ticket: str, main_root: Path, runner: Runner) -> Non
     host = lease.hostname()
     for wt_path, _sb in _ticket_siblings(ticket, main_root, runner):
         unstick = (
-            f"resume/inspect it from the sibling (cd {wt_path} && /flow recover {ticket}; "
+            f"resume/inspect it from the sibling (cd {wt_path} && "
+            f"FLOW workspace repair {ticket}; "
             f"the run's state lives in that worktree, not this checkout), or tear down a "
             f"dead sibling via `flow_worktree.py reap --ticket {ticket}`"
         )
@@ -715,7 +726,7 @@ def locate_or_reseed(
 ) -> dict[str, Any]:
     """Locate the ticket's worktree, or re-materialize it from the PR branch (flow-kx17.2).
 
-    A revision (/flow revise) needs the worktree the original run left behind. The
+    A delivery revision needs the worktree the original run left behind. The
     norm (PR-open ⇒ worktree-present) is a LOCATE: a registered worktree on a
     `feat/<ticket>*` branch is returned as-is (reseeded:false). When the worktree
     was externally reaped, RESEED: fetch the existing remote branch and `git worktree
@@ -727,7 +738,7 @@ def locate_or_reseed(
 
     siblings = _ticket_siblings(ticket, main_root, run)
     if siblings:
-        flow_launcher.install(siblings[0][0], skill_dir=Path(__file__).resolve().parent.parent)
+        _ensure_flow_config(main_root, siblings[0][0], _shared_memory_base(main_root))
         return {"worktree": str(siblings[0][0]), "reseeded": False}
 
     worktree = _worktree_path(main_root, branch, None)
@@ -735,7 +746,7 @@ def locate_or_reseed(
     _git(["worktree", "add", str(worktree), branch], main_root, run)
     try:
         _copy_config(main_root, worktree)
-        _ensure_flow_config(main_root, worktree, _memory_paths.resolve_memory_base(main_root))
+        _ensure_flow_config(main_root, worktree, _shared_memory_base(main_root))
         if (worktree / "mise.toml").exists() or (worktree / ".mise.toml").exists():
             run(["mise", "trust"], worktree)
     except Exception:
@@ -785,7 +796,7 @@ def _resolve_base(base: str, main_root: Path, runner: Runner) -> str:
 
     Every invocation fetches origin (best-effort), so a run never branches off a stale ref.
     `@default`, the local default branch, and a detached HEAD all resolve to the remote default
-    (`origin/<HEAD>`): launching `/flow` from a lagging local `main` is the common stale-base
+    (`origin/<HEAD>`): launching a Flow target from a lagging local `main` is the common stale-base
     error (a PR polluted with already-merged commits), so it branches off `origin/main` instead of
     the local tip. A feature branch passes through unchanged, an interactive run stacked on a
     parent `feat/` branch keeps stacking (the parent may be local-only), but its remote-tracking
@@ -815,7 +826,7 @@ def _enforce_autonomy_floors(
 ) -> None:
     """Code-enforced autonomy floors at the shared bootstrap chokepoint.
 
-    An autonomous run, signaled by `--auto` OR a `@default` base (the load-bearing autonomous
+    An autonomous run, signaled internally by ``auto=True`` OR a `@default` base (the load-bearing
     base; the drain launches from the main checkout, so `--base` alone is not a sufficient signal,
     hence both), must clear two refusals before `git worktree add`, both read off a SINGLE
     `triage.decided` probe (one `bd show`). Beads-only: `triage.decided` reads a
@@ -831,7 +842,7 @@ def _enforce_autonomy_floors(
     HOT floor (flow-aen, exit 2 via `_ConfigError`): a hot change (a guard/safety file, or a
     `hot`-labelled bead) with no maintainer decision on file may NOT self-ship. This lives at the
     single shared bootstrap every self-approve path funnels through, so it holds for the clean
-    >=90% path too. verb-spec.md step 5 only carried the floor in the adjudication/decided
+    >=90% path too. delivery-plan.md step 5 only carried the floor in the adjudication/decided
     sub-branches, so a clean re-plan could slip a hot change past it. The `[evolve] adjudicate_hot`
     flag (default off) lifts this floor for a maintainer self-target workspace. The floor runs even
     with an EMPTY planned set: the `hot` label is independent evidence of hotness (`triage.decided`
@@ -857,7 +868,7 @@ def _enforce_autonomy_floors(
             f"autonomous run refuses to bootstrap {ticket}: it is marked hitl "
             "(human-in-the-loop) and resolves only through a live exchange, with no "
             "recorded DECISION:/TRIAGE-DECISION: comment. Run it interactively WITHOUT "
-            f'--auto, or /flow triage {ticket} "<answer>" to record the decision and '
+            f'--unattended, or FLOW {ticket} --request "<answer>" to record the decision and '
             "clear the label, then re-run."
         )
 
@@ -873,8 +884,8 @@ def _enforce_autonomy_floors(
             "decision: " + tripped + " trips the is_hot_change "
             "floor (a guard/safety file or a 'hot'-labelled bead) and carries no "
             "DECISION:/TRIAGE-DECISION: comment. A hot change never self-approves "
-            f'unattended. Triage it (/flow triage {ticket} "<answer>") then re-run, '
-            "or run WITHOUT --auto so a human gates it at ExitPlanMode."
+            f'unattended. Answer it (FLOW {ticket} --request "<answer>") then re-run, '
+            "or run attended so a human gates it at plan approval."
         )
 
 
@@ -884,14 +895,14 @@ _TERMINAL_STATES = frozenset({"done", "cancelled"})
 def _refuse_terminal_bead(*, ticket: str, main_root: Path) -> None:
     """Refuse (exit 6) to bootstrap a bead whose authoritative status is terminal.
 
-    Witnessed (flow-d6gq): a `/flow <key> --auto` run bootstrapped a CLOSED bead and
+    Witnessed (flow-d6gq): an unattended Flow target bootstrapped a CLOSED bead and
     ran it to implement. The spec `get` ran pre-worktree from the main checkout and
     reflected the bead as open at that instant; the close (its parent epic's merge)
     landed during the run. This re-reads the bead's authoritative status at the
     bootstrap chokepoint (seconds-to-minutes after the spec fetch, so it catches a
     bead that closed during planning), and refuses before `git worktree add` (a
     refusal leaves no orphan). Tracker-agnostic and unconditional (interactive +
-    `--auto`): bootstrapping a done/cancelled bead is wrong either way.
+    unattended mode): bootstrapping a done/cancelled bead is wrong either way.
 
     Fail-open is narrow: a genuine read *exception* (tracker construction / subprocess
     failure) proceeds, so a flaky tracker read never strands a legitimate run. A read
@@ -931,14 +942,14 @@ def _refuse_terminal_bead(*, ticket: str, main_root: Path) -> None:
 def _refuse_epic_bead(*, ticket: str, main_root: Path) -> None:
     """Refuse (exit 7) to bootstrap an epic (a container, not a single-PR unit).
 
-    Witnessed (flow-jvxj, parent flow-8by2): `/flow <epic> --auto` reached this
+    Witnessed (flow-jvxj, parent flow-8by2): an unattended epic target reached this
     chokepoint on an epic bead. `evolve_select.py` filters `issue_type != "epic"`
     unconditionally so drain never launches one, but a manual or misrouted
-    `/flow <epic> --auto` had no structural floor, and bootstrapping an epic
+    unattended epic delivery had no structural floor, and bootstrapping an epic
     cram-ships fragments of an unaccepted empire as a single PR (the ouroboros
-    verb-evolve.md §epic names). This mirrors the select-side filter at the
+    command-maintain.md §epic names). This mirrors the select-side filter at the
     bootstrap chokepoint. Tracker-agnostic ("epic"/"Epic") and unconditional
-    (interactive + `--auto`): an epic is decomposed via the §E expand recipe, not
+    (attended and unattended): an epic is decomposed before delivery, not
     implemented directly, either way.
 
     Fail-open matches `_refuse_terminal_bead`: a read *exception* proceeds so a
@@ -960,7 +971,7 @@ def _refuse_epic_bead(*, ticket: str, main_root: Path) -> None:
         raise _EpicBead(
             f"refusing to bootstrap {ticket}: it is an EPIC (a container, not a "
             "single-PR unit). An epic is decomposed into child beads via the expand "
-            "recipe (verb-evolve.md §E), then each child runs at its own spec gate — "
+            "recipe (command-maintain.md §E), then each child runs at its own spec gate — "
             "bootstrapping the epic directly would cram-ship fragments of an "
             "unaccepted epic as one PR. Expand it, or run a child key instead."
         )
@@ -1257,7 +1268,7 @@ def bootstrap(
                     )
 
             copied = _copy_config(main_root, worktree)
-            _ensure_flow_config(main_root, worktree, _memory_paths.resolve_memory_base(main_root))
+            _ensure_flow_config(main_root, worktree, _shared_memory_base(main_root))
 
             if mise_trust and (
                 (worktree / "mise.toml").exists() or (worktree / ".mise.toml").exists()
@@ -1280,8 +1291,8 @@ def bootstrap(
                 commit_type=commit_type,
                 commit_summary=commit_summary,
                 e2e_recipe=e2e_recipe,
-                # --lane is interactive-only; an --auto run derives its lane
-                # from the bead's tier labels (per the CLI help + verb-spec.md).
+                # An unattended run derives its lane
+                # from the bead's tier labels (per the CLI help + delivery-plan.md).
                 lane=_effective_lane(
                     explicit=None if auto else lane,
                     ticket=ticket,
@@ -1310,9 +1321,7 @@ def bootstrap(
 
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="/flow worktree bootstrap for the background tail."
-    )
+    parser = argparse.ArgumentParser(description="Flow worktree bootstrap for delivery.")
     sub = parser.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("create", help="Create a worktree + seed state for the tail.")
     p.add_argument("--ticket", required=True)

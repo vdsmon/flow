@@ -5,11 +5,11 @@
 Extract durable knowledge from this ticket's run, append entries to the compounding memory layer, and (if the ticket shipped) record an immutable ship-event evidence record.
 
 Reflect is the closing stage.
-The discipline here is what makes `/flow` compounding: every ticket's run produces 0..N knowledge entries that future tickets in the same workspace can recall via BM25.
+The discipline here is what makes `FLOW` compounding: every ticket's run produces 0..N knowledge entries that future tickets in the same workspace can recall via BM25.
 Reflection runs on three lenses, two of them gated by `workspace.toml [reflect]` flags that `reflect_inputs.py` surfaces in the bundle as `reflect_config` (step 1):
 
 - **A. Domain (always on).** DOWN at the ticket's domain — what the work taught you about the code, the libraries, the environment. Appends to the flow knowledge layer (steps 2 + 3 + 4).
-- **B. Machinery (`reflect_config.machinery`, default false).** UP at the harness itself — did `/flow`'s scripts, stages, and loop serve the run, or fight it. This is where you, the agent that just ran the pipeline, are EXPECTED to fix the harness while your context is freshest, and to feed what you cannot safely fix yet to `/skill-polish`. Only a skill DEVELOPER wants this, and it edits flow's own source, so it is OFF unless the workspace opts in (step 2b).
+- **B. Machinery (`reflect_config.machinery`, default false).** UP at the harness itself — did `FLOW`'s scripts, stages, and loop serve the run, or fight it. This is where you, the agent that just ran the pipeline, are EXPECTED to fix the harness while your context is freshest, and to feed what you cannot safely fix yet to an installed skill-polishing capability. Only a skill DEVELOPER wants this, and it edits flow's own source, so it is OFF unless the workspace opts in (step 2b).
 - **C. Project knowledge (`reflect_config.claude_memory`, default true).** OUTWARD at the project's own durable knowledge stores — the on-disk project auto-memory and the checked-in project `CLAUDE.md` / `AGENTS.md`. Auto-writes broadly-useful facts to the project memory and PROPOSES (does not apply) any `AGENTS.md` rule change (step 2c).
 
 The friction a run surfaces is the raw material that makes the next run smoother, so a run that merged cleanly but cost manual intervention is a reflect MISS if that friction goes neither fixed nor recorded (when lens B is on) and the durable project facts it taught go unrecorded (lens C).
@@ -36,7 +36,7 @@ The taxonomy is closed:
 
 1. Bundle the reflect inputs:
    ```bash
-   .flow/flow reflect-inputs \
+   FLOW_HARNESS="<harness>" "<facade>" reflect-inputs \
      --ticket <KEY> \
      --ticket-dir <ticket-dir> \
      --ticket-frontmatter .flow/tickets/<KEY>.md \
@@ -90,7 +90,7 @@ The taxonomy is closed:
 
    **Surface missing REPO-artifact gaps, do NOT act on them.** Reflect runs AFTER `create_pr` and the review loop. If you notice the change shipped without something it should carry (a fixture with no provenance note, an absent doc stub, an un-added file IN THE TICKET REPO), record it as a one-line note to the user and, where it generalizes, a knowledge entry, but do NOT add the file here. Adding a repo file at reflect-time forces a new commit that re-triggers the entire CI + review loop, the exact churn the implement stage's definition-of-done exists to prevent. Reflect names the gap so it lands earlier next time; it does not close it. (This restraint is about repo / PR artifacts ONLY. For the HARNESS itself, the skill's own files, step 2b is the opposite: there you are empowered to fix on the spot, because skill files are not PR artifacts and carry no re-review cost. Caveat: that churn-free property holds only when logical `skill_root` is a distinct tree from `run_root`, the normal case; in the self-target dogfood case where those roots coincide (flow-alz/PR#111) a machinery edit lands IN the open PR and re-triggers CI + review, so it is not churn-free there.)
 
-2b. **Machinery reflection (lens B — gated; mandatory when ON and the run hit any friction).** SKIP this entire step unless `reflect_config.machinery` is true. It is false by default: a stranger running flow neither wants flow editing its own source nor cares about flow-internal findings. When the flag is off, do not record `MACHINERY:` entries and do not apply harness fixes; go straight to step 2c. When it is on (the skill developer's workspace), run it in full. The steps above point the lens DOWN at the ticket's domain (the code, the tax rules, the library). This step points it UP at the harness that produced the work: did `/flow`'s own scripts, stages, exit codes, handler dispatch, and orchestration loop serve the run, or fight it? This is the feedstock `/skill-polish` consumes — produce it whether or not a human asked, at the depth of an engineering review, not a vibe check.
+2b. **Machinery reflection (lens B — gated; mandatory when ON and the run hit any friction).** SKIP this entire step unless `reflect_config.machinery` is true. It is false by default: a stranger running flow neither wants flow editing its own source nor cares about flow-internal findings. When the flag is off, do not record `MACHINERY:` entries and do not apply harness fixes; go straight to step 2c. When it is on (the skill developer's workspace), run it in full. The steps above point the lens DOWN at the ticket's domain (the code, the tax rules, the library). This step points it UP at the harness that produced the work: did `FLOW`'s own scripts, stages, exit codes, handler dispatch, and orchestration loop serve the run, or fight it? This is the feedstock an installed skill-polishing capability consumes — produce it whether or not a human asked, at the depth of an engineering review, not a vibe check.
 
    Reconstruct friction from evidence, not memory (a backgrounded reflect agent has no live recall): the PRIMARY source is the in-flight friction log — the bundle's `friction` array (entries the do-loop appended via `flow_friction.py` as the run hit retries, missing tools, drift, lost leases, planned-file reconciles, failed stages). Corroborate and extend it with the stage `.out` reports in `<ticket-dir>/stages/` (subagents flag things like "created a file outside planned_files"), the `state.json` stage history (retries, `failed`->`retry` transitions, stages that needed a `recover`), and anything else the run had to work around. A non-empty `friction_recurrence` block (step 1) is prima-facie evidence that a class the harness ALREADY claimed to fix recurred (fired_count times, last fix sha X, runs_ago runs ago) — treat each such class as a high-priority machinery finding: the prior fix did not hold, so re-diagnose the root cause rather than re-applying the same fix. Read the two counts on their own anchors: `fired_count` is class-scoped (hits of THIS class since its earliest fix) while `runs_ago` is global (distinct friction-logging runs since the class's latest fix — any class, not this one); the list is capped to the worst 15 classes by fired_count. For EACH friction point:
    - **Re-read the script or reference file behind it** (`scripts/<x>.py`, `references/stage-<y>.md`) — do NOT guess at the cause. Cite `file:line`.
@@ -98,9 +98,9 @@ The taxonomy is closed:
    - Severity-tag: **blocker** (would fail an unattended run) / **major** (needed manual intervention or a confusing recovery) / **minor** (papercut).
    - Name the owning skill file.
 
-   Emit each as a `DEVIATION` knowledge entry (step 3) with the text prefixed `MACHINERY:` so `/skill-polish` can grep them, AND list them in the human-facing reflect output.
+   Emit each as a `DEVIATION` knowledge entry (step 3) with the text prefixed `MACHINERY:` so a skill-polishing capability can find them, AND list them in the human-facing reflect output.
 
-   **You are empowered to FIX the process you just ran, right now.** You are the highest-fidelity judge of this harness that will ever exist for this run: you lived every stage, and no later reviewer (`/skill-polish`, a human, a future session) will have the context you have at this moment. Recording friction for someone else to maybe act on later is the lossy path — it decays, it gets deprioritized, the fix arrives with half the understanding. Default to fixing it yourself, here. The only gate is blast radius:
+   **You are empowered to FIX the process you just ran, right now.** You are the highest-fidelity judge of this harness that will ever exist for this run: you lived every stage, and no later reviewer (a skill-polishing agent, a human, a future session) will have the context you have at this moment. Recording friction for someone else to maybe act on later is the lossy path — it decays, it gets deprioritized, the fix arrives with half the understanding. Default to fixing it yourself, here. The only gate is blast radius:
 
    - **APPLY NOW (the default).** Surgical, high-confidence fixes to flow's OWN process files: a `references/*.md` clarification, a localized bug in a flow engine script (`scripts/*.py`). These carry zero re-review churn and are revertible (rationale, incl. the `skill_root==worktree` dogfood exception: self-evolution.md §Producers — Producer A). Flow's own scripts and reference docs are NOT in the run's canonical snapshot on any tree machinery_edit will accept (it refuses protected-branch skill roots, and worktree copies are never hashed), so editing them mid-run is safe; only the MAIN checkout's engine tree on a protected branch is snapshot-hashed (the `engine` component), and that tree is already un-editable by the sanctioned path. Re-Read the file before editing (a sibling fleet agent may have shifted the anchor; "anchor not found" usually means it is already fixed — treat that as done). If you touch a script, run its test suite and add a regression test for the bug you fixed. Do not ask permission to improve the tool you are running; that is the whole point of reflecting from inside the run.
      - **Corpus-delta advisory pre-check — run BEFORE the apply (after it there is no pristine baseline).** Applies only when the fix touches a flow engine script (`scripts/*.py`) AND the bundle's `harness_eval.available` is true; a prose-only `references/*.md` edit cannot move the deciders — skip. Score the intended edit against a scratch copy:
@@ -109,22 +109,22 @@ The taxonomy is closed:
        cp -R "<absolute skill_root>/scripts/." "$SCRATCH/"
        # apply the intended fix to the COPY (raw edit is fine here, the scratch
        # dir is private; machinery_edit would refuse an out-of-tree path anyway)
-       .flow/flow harness-eval score --candidate "$SCRATCH"
+       FLOW_HARNESS="<harness>" "<facade>" harness-eval score --candidate "$SCRATCH"
        rm -rf "$SCRATCH"
        ```
        `--baseline` defaults to the live, still-unedited checkout the invoked script lives in — which is exactly why this runs before the apply. The outcome is advisory and feeds the dividing question below; there is no new gate: exit 0 → proceed to the `machinery_edit.py` apply and note `non_regression: true` in the `MACHINERY:` entry. Exit 3 → the delta is direct evidence the edit is NOT strictly correct: answer the dividing question No, route to PROPOSE + RECORD, and paste the per-split `regressed`/`detail` JSON into both the human-facing reflect output and the entry. Exit 1/2 → eval unavailable or errored: say so and proceed on judgment alone; the pre-check never blocks reflect. Caveats: replays are not atomic — a sibling agent or an earlier APPLY-NOW edit in the SAME reflect pass can mutate the baseline mid-score, so treat a surprising delta as a re-check prompt, not a verdict; the corpus exercises only the four pure deciders, so exit 0 on a non-decider file is absence-of-regression, NOT positive evidence of correctness; a fix to `harness_eval.py`/`harness_corpus.py` itself is scored by the live scorer against the candidate's deciders only.
      - **Apply the edit through `scripts/machinery_edit.py`, NOT the raw Edit tool.** `machinery_edit.py` holds a single global flock across the whole read -> replace -> atomic-write, so concurrent machinery writers serialize and any concurrent reader sees old-or-new, never a torn file; it also refuses `stage-registry.toml` and any path outside the skill tree (rationale: self-evolution.md §Guardrails — machinery_edit flock). Invoke it per fix:
        ```bash
        PAYLOAD=$(mktemp); printf '%s' "$(jq -n --arg f "<rel-or-abs path>" --arg old "<unique anchor>" --arg new "<replacement>" '{file:$f,old:$old,new:$new}')" > "$PAYLOAD"
-       .flow/flow machinery-edit apply --skill-root "<absolute skill_root>" --payload "$PAYLOAD"
+       FLOW_HARNESS="<harness>" "<facade>" machinery-edit apply --skill-root "<absolute skill_root>" --payload "$PAYLOAD"
        ```
        Exit 0 `applied` → done. Exit 0 `already_applied` → a sibling beat you to it, treat as done. Exit 3 `anchor_not_found` → re-derive the anchor (re-Read; it may already be fixed differently). Exit 4 `ambiguous` → narrow the anchor and retry. Exit 2 `refused` → snapshot-pinned, out-of-tree, OR skill-root on a protected branch (main/master/dev/develop), route to PROPOSE + RECORD.
      - **A machinery fix NEVER commits onto a protected branch.** `machinery_edit.py` refuses an apply (exit 2 `refused`) when skill-root is on a protected branch (main/master/dev/develop), so the finding routes to PROPOSE + RECORD → the evolve-bead sling instead (rationale: self-evolution.md §Guardrails — never commit machinery to `main`). Do NOT bump-and-commit a machinery fix onto a protected branch from inside a run. Only when the skill checkout is itself on a feature branch does the apply succeed; there, capture it: commit the touched skill files on that feature branch (NO version bump — the version stamps at merge) (do NOT push — publishing is a human call), recording the commit sha in the `MACHINERY:` entry as provenance. A dirty skill checkout with unrelated work also falls back to PROPOSE + RECORD.
-     - **Snapshot caveat — things you must NOT touch mid-run** (also: never advance the MAIN checkout — `git pull` / marketplace update — while runs are in flight; the `engine` snapshot component aborts them) (they ARE in the run's canonical snapshot; rationale: self-evolution.md §Guardrails — snapshot caveat): `stage-registry.toml`, and any WIRED handler skill (the plugin behind a `skill:` entry in `pipeline.handlers`, e.g. the `create_pr` / `review_loop` skill). A fix to those is PROPOSE + RECORD, OR apply it and then run `/flow recover reload-snapshot <ticket>` to re-baseline before the loop closes.
-   - **PROPOSE + RECORD, do not self-apply unattended.** Structural changes (the orchestration driver, the dispatch loop, a script rewrite), anything touching a file the fleet is actively mid-stage on, or anything you are not high-confidence is strictly correct. The blast radius across concurrent runs is too large to self-apply. Here the `MACHINERY:` entry + the human note ARE the deliverable, and recording them IS acting on the finding: it is durable, it survives the run, it is findable later. That is the requirement. If a skill-polishing or refactor capability happens to be installed (e.g. `/skill-polish`), you MAY invoke it here to carry the recorded finding into a reviewed edit while the context is fresh, but that is a loose best-effort dependency, not a mandate, and the run does not block on it: the record stands on its own when no such skill exists. A human gate sits on anything that would be pushed.
-     - **Sling it to the backlog (Producer A, maintainer mode).** A `MACHINERY:` entry in `knowledge.jsonl` dead-ends unless someone greps it. So for a PROPOSE+RECORD finding, ALSO file it as a bead in flow's OWN beads, where it becomes triaged, shippable work the `/flow evolve` loop can pick up. File once per finding:
+     - **Snapshot caveat — things you must NOT touch mid-run** (also: never advance the MAIN checkout — `git pull` / marketplace update — while runs are in flight; the `engine` snapshot component aborts them) (they ARE in the run's canonical snapshot; rationale: self-evolution.md §Guardrails — snapshot caveat): `stage-registry.toml`, and any WIRED handler skill (the plugin behind a `skill:` entry in `pipeline.handlers`, e.g. the `create_pr` / `review_loop` skill). A fix to those is PROPOSE + RECORD, OR apply it and then run `FLOW workspace repair reload-snapshot <ticket>` to re-baseline before the loop closes.
+   - **PROPOSE + RECORD, do not self-apply unattended.** Structural changes (the orchestration driver, the dispatch loop, a script rewrite), anything touching a file the fleet is actively mid-stage on, or anything you are not high-confidence is strictly correct. The blast radius across concurrent runs is too large to self-apply. Here the `MACHINERY:` entry + the human note ARE the deliverable, and recording them IS acting on the finding: it is durable, it survives the run, it is findable later. That is the requirement. If a skill-polishing or refactor capability happens to be installed, you MAY invoke it here to carry the recorded finding into a reviewed edit while the context is fresh, but that is a loose best-effort dependency, not a mandate, and the run does not block on it: the record stands on its own when no such skill exists. A human gate sits on anything that would be pushed.
+     - **Sling it to the backlog (Producer A, maintainer mode).** A `MACHINERY:` entry in `knowledge.jsonl` dead-ends unless someone greps it. So for a PROPOSE+RECORD finding, ALSO file it as a bead in flow's OWN beads, where it becomes triaged, shippable work the `FLOW maintain evolution` loop can pick up. File once per finding:
        ```bash
-       .flow/flow flow-beads-create \
+       FLOW_HARNESS="<harness>" "<facade>" flow-beads-create \
          --workspace-root . \
          --summary "<the finding title>" \
          --description "<the MACHINERY entry body + the file:line evidence that motivated it>" \
@@ -133,7 +133,7 @@ The taxonomy is closed:
        ```
        When the slung finding carries a CONCRETE `scripts/*.py` edit and `harness_eval.available` is true, run the same scratch-copy corpus score from the APPLY-NOW pre-check above and include the delta summary in the `--description` next to the confidence statement (or `corpus delta: not scored — no concrete edit yet` / `corpus delta: not scored — eval unavailable`), so the downstream evolve consumer sees a regressing proposal before pickup.
        The `--dedup-key` is anchored on the finding's primary file path (not free wording) and reduced to a deterministic fingerprint, so reflect does not refile the same machinery friction every run (nor re-propose one already closed/rejected). Keep the `::` separator: the file component (basename) now also anchors a fuzzy same-file dedup pass, so a re-discovery worded differently still converges instead of minting a new key. Exit 0 → filed; it prints the bead key, which must be noted in the `MACHINERY:` entry so the two are linked. Exit 5 → a bead for this finding already exists (prints its key); reference that key in the entry and move on, do NOT refile. Exit 4 → not a maintainer setup: dormant, nothing filed, the knowledge entry stands alone. This is the normal user-mode path, NOT an error. Exit 2 → bd error: log and move on (the knowledge entry already captured the finding). If the finding touches a hot file, such as `SKILL.md` / `stage-registry.toml` / `CLAUDE.md` / a wired handler, or a safety-machinery guard file (`lease.py`, `snapshot.py`, `_atomicio.py`, `_locking.py`, `state.py`, `dispatch_stage.py`, `diff_extract.py`, `flow_launcher.py`, `flowctl.py`, `flow_worktree.py`, `machinery_edit.py`, `flow_friction.py`), add `hot` to `--labels` (`evolve,machinery,hot`) so the consumer routes the bead through the hot path and its property-check review.
-   <!-- SYNC: this 10-file hot guard list is duplicated by design in references/verb-evolve.md §audit step 2 — keep both in sync with scripts/triage.py _GUARD_FILES (flow-837; not extracted to a constant per maintainer decision; seam_check gates the equality) -->
+   <!-- SYNC: canonical prose mirror of scripts/triage.py _GUARD_FILES; seam_check gates equality. -->
    - **NEVER at reflect-time:** the repo/PR artifacts (fixtures, docs, code in the ticket's tree). That is the post-PR-churn boundary, and it is the ONLY category reflect must not touch.
 
    The dividing question, asked once per finding: "Am I confident this edit is strictly correct AND cannot break a sibling agent running right now?" Yes -> apply it, and say so in the reflect output. No -> propose + record. One scope gate on top, from the repo-root `VISION.md`: a self-heal stays scoped to the friction it answers — if the clean fix implies a larger structural change (an architecture challenge, a cross-cutting refactor), that part is PROPOSE + RECORD as a proposal bead the maintainer triages, never folded into the APPLY-NOW edit (auto the ground-truth repair; propose the judgment). When you apply, the `MACHINERY:` entry doubles as the changelog (name the file + the fix) so the change is findable and revertible.
@@ -144,11 +144,11 @@ The taxonomy is closed:
 
    **Deterministic closing sub-step: recurrence escalation.** MANDATORY, best-effort, no judgment involved — run the fixed command:
    ```bash
-   .flow/flow friction-escalate escalate --workspace-root .
+   FLOW_HARNESS="<harness>" "<facade>" friction-escalate escalate --workspace-root .
    ```
-   Propose-only: it consumes the same `friction_recurrence` block already in the bundle (step 1) and files a `recurrent`-labelled bead per friction class that recurred `>=K` times since its LATEST claimed fix (not the aggregate since-earliest count), where `K` and the exempt-anchor set are `[evolve]` workspace.toml knobs (`recurrence_escalation_k` default 3, `recurrence_exempt_anchors` default `[planned_files]`). It never gates, reopens, or launches anything — the bead carries no `evolve` label, so `/flow evolve`'s drain never picks it up; it exists to surface a fix that did not hold to the maintainer. Idempotent: dedup is keyed on the bare anchor, so re-running it every reflect files at most one bead per anchor ever. Best-effort: a non-zero exit logs one line and reflect continues, it never fails the stage. Auto-dormant outside maintainer mode (no `[maintainer]` marker) — nothing is filed, this is the normal user-mode path, not an error.
+   Propose-only: it consumes the same `friction_recurrence` block already in the bundle (step 1) and files a `recurrent`-labelled bead per friction class that recurred `>=K` times since its LATEST claimed fix (not the aggregate since-earliest count), where `K` and the exempt-anchor set are `[evolve]` workspace.toml knobs (`recurrence_escalation_k` default 3, `recurrence_exempt_anchors` default `[planned_files]`). It never gates, reopens, or launches anything — the bead carries no `evolve` label, so `FLOW maintain evolution`'s drain never picks it up; it exists to surface a fix that did not hold to the maintainer. Idempotent: dedup is keyed on the bare anchor, so re-running it every reflect files at most one bead per anchor ever. Best-effort: a non-zero exit logs one line and reflect continues, it never fails the stage. Auto-dormant outside maintainer mode (no `[maintainer]` marker) — nothing is filed, this is the normal user-mode path, not an error.
 
-2c. **Project knowledge reflection (lens C — gated, default ON).** SKIP this step only when `reflect_config.claude_memory` is false. It points OUTWARD at the project's own durable knowledge, the stores that compound across EVERY session in this project, not just flow runs (flow's `knowledge.jsonl` is flow-namespaced and only recalled at flow SessionStart; these are broader). Two targets, deliberately different blast radii:
+2c. **Project knowledge reflection (lens C — gated, default ON).** SKIP this step only when `reflect_config.claude_memory` is false. It points OUTWARD at the project's own durable knowledge, the stores that compound across EVERY session in this project, not just Flow runs (Flow's `knowledge.jsonl` is namespaced and recalled during delivery planning; these are broader). Two targets, deliberately different blast radii:
 
    - **Project auto-memory (AUTO-WRITE).** For each durable, broadly-useful fact this run taught — the same novelty bar as lens A, but the subset that helps ANY session, not just a flow run (an environment gotcha, a naming surprise, a workflow constraint) — write it into THIS PROJECT's on-disk auto-memory, the memory directory your harness names in its memory instructions (system context). Resolve it to the project, not the worktree (the project memory is shared across worktrees). Follow that memory system's own discipline exactly: one fact per file with the required frontmatter, a one-line pointer added to its `MEMORY.md` index, `[[links]]` to related entries, and a dedup check against existing files (update the covering file instead of creating a duplicate; delete one that this run proved wrong). Do NOT copy flow-internal machinery findings (lens B) here — those belong in `knowledge.jsonl`, not the project memory. A fact can legitimately land in BOTH lens A (flow knowledge) and here (project memory) when it generalizes; that is expected, not duplication to avoid.
 
@@ -160,7 +160,7 @@ The taxonomy is closed:
 
 3. For EACH extracted entry (0 or more), append to knowledge.jsonl:
    ```bash
-   .flow/flow memory-append \
+   .flow/runtimeFLOW memory-append \
      --type <LEARNED|DECISION|FACT|PATTERN|INVESTIGATION|DEVIATION> \
      --text "<entry body>" \
      --branch "$(git rev-parse --abbrev-ref HEAD)" \
@@ -176,13 +176,13 @@ The taxonomy is closed:
 
    **Grouped runs (`covers` in frontmatter):** append the entry ONCE, attributed to the lead `--ticket <KEY>` (the run's identity), and name the covered keys in the entry body (e.g. "co-delivered FT-1207/1208"). Do NOT loop `memory_append` over the covers — the dedup id is `sha256(namespace + ticket + type + body)`, so per-cover appends create near-duplicate entries that recall later surfaces as dupes. One attributed entry that cites the covers keeps `knowledge.jsonl` clean and traceable.
 
-   **Faceted tagging.** If the bundle's `label_facets` is non-empty and this run's knowledge belongs to a facet value from that list (e.g. `label_facets: ["form"]` and this run's subject is form `iva_2083`), add `--labels <facet>:<value>` to the invocation above (e.g. `--labels form:iva_2083`) so the entry joins that facet's exhaustive `.flow/flow recall --label` cluster. Comma-separate multiple facets. Skip this when `label_facets` is empty (the default; no facet convention configured for this workspace).
+   **Faceted tagging.** If the bundle's `label_facets` is non-empty and this run's knowledge belongs to a facet value from that list (e.g. `label_facets: ["form"]` and this run's subject is form `iva_2083`), add `--labels <facet>:<value>` to the invocation above (e.g. `--labels form:iva_2083`) so the entry joins that facet's exhaustive `FLOW_HARNESS="<harness>" "<facade>" recall --label` cluster. Comma-separate multiple facets. Skip this when `label_facets` is empty (the default; no facet convention configured for this workspace).
 
 3b. **Supersede recalled entries this run disproved (lens A — always on).** For each `recalled_entries` item from the bundle, judge whether THIS run's `final_diff` disproves the behavior the entry asserts. The recalled entry was live context for this run; if your own change made it false, the dead entry must be retired so the next recall does not surface stale truth.
 
    - **AUTO-supersede ONLY when the disproof is ground truth** — the contradicting change is PRESENT in `final_diff` (this run itself changed the behavior the entry describes, not merely a guess that it looks stale). Append a NEW entry that cites this run / PR and states what is now true, supersedes-targeting the dead entry by its exact id:
      ```bash
-     .flow/flow memory-append        --type <FACT|LEARNED|DEVIATION>        --text "<what is now true; cite this run/PR>"        --branch "$(git rev-parse --abbrev-ref HEAD)"        --ticket <KEY>        --supersedes <recalled_entries[i].id>        --workspace-root .
+     .flow/runtimeFLOW memory-append        --type <FACT|LEARNED|DEVIATION>        --text "<what is now true; cite this run/PR>"        --branch "$(git rev-parse --abbrev-ref HEAD)"        --ticket <KEY>        --supersedes <recalled_entries[i].id>        --workspace-root .
      ```
      Use the exact `recalled_entries[i].id` for `--supersedes`. The `--type` respects the closed taxonomy — typically `FACT`/`LEARNED` for the corrected truth, or `DEVIATION` when the point is that the old entry was disproven.
    - **Anything ambiguous, indirect, or inference-based** — the entry merely looks stale, or the contradiction is NOT in `final_diff` — do NOT auto-supersede. Surface a one-line proposal note in the human-facing reflect output instead (`Proposed supersede: <id> — <why it may be stale>`), a binding skeptic correction the maintainer adjudicates. The auto path is reserved for diff-grounded disproof.
@@ -191,23 +191,23 @@ The taxonomy is closed:
 
 3c. **Refresh the semantic index (best-effort, non-blocking).** If any entry was appended (or superseded) this stage and the workspace opts into `[memory.semantic]`, refresh the derived embedding sidecar so plan-phase recall on the NEXT ticket sees this run's knowledge:
    ```bash
-   .flow/flow recall --reindex --workspace-root .
+   FLOW_HARNESS="<harness>" "<facade>" recall --reindex --workspace-root .
    ```
    Incremental (embeds only the new entries). SWALLOW any error — the append already succeeded and the index is derived (it self-heals on the next reindex); this never gates the run. A no-op when semantic is off (the index just stays absent and recall stays BM25).
 
 3d. **Record recall usage (precision signal — best-effort).** SKIP when `recalled_entries` was empty (nothing was surfaced). Otherwise record which of the surfaced entries this run actually leaned on, so the `recall-hit-rate` metric (`metric.py recall-hit-rate`) can measure precision instead of guessing. `--used-ids` is the subset of `recalled_entries[].id` that informed a decision, a diagnosis, or the diff — INCLUDING any you superseded in 3b (acting on an entry is using it). The surfaced denominator is read from the recall-log, so you only name the used subset; an entry you ignored is simply omitted:
    ```bash
-   .flow/flow recall-usage record-usage \
+   FLOW_HARNESS="<harness>" "<facade>" recall-usage record-usage \
      --ticket <KEY> \
      --ticket-dir <ticket-dir> \
      --used-ids <comma-separated recalled ids you leaned on> \
      --workspace-root .
    ```
-   SWALLOW any error — this is observability, never a gate. Deduped on (run_id, recalled_id), so a `/flow recover` rerun does not double-count.
+   SWALLOW any error — this is observability, never a gate. Deduped on (run_id, recalled_id), so a `FLOW workspace repair` rerun does not double-count.
 
 3e. **Detect recall misses (false-negative signal — best-effort).** After the reindex, scan THIS run's newly-written entries for a near-duplicate of an existing live entry that was NOT recalled into the run — the run re-learned a fact the corpus already held but recall failed to surface. It embeds only the new entries (no hot-path cost) and writes a `RECALL_MISS` record the metric folds in:
    ```bash
-   .flow/flow recall-usage detect-misses \
+   FLOW_HARNESS="<harness>" "<facade>" recall-usage detect-misses \
      --ticket <KEY> \
      --ticket-dir <ticket-dir> \
      --workspace-root .
@@ -216,9 +216,9 @@ The taxonomy is closed:
 
 3f. **Surface recall precision (best-effort).** Print the running recall-hit-rate so the human-facing reflect output carries the compounding-memory signal, not just this run's writes:
    ```bash
-   .flow/flow metric recall-hit-rate --workspace-root .
+   FLOW_HARNESS="<harness>" "<facade>" metric recall-hit-rate --workspace-root .
    ```
-   `--namespace` is omitted deliberately; the command auto-resolves it from `workspace.toml`. Echo one line from the result: `recall-hit-rate: <hit_rate> (<used>/<surfaced>, <misses> misses)`. SWALLOW any error — this is observability, never a gate. When the same result shows `surfaced >= 20` AND `hit_rate < 0.30`, echo one more line: `recall precision is low — consider an interactive /flow memory prune (references/verb-recall.md)`. Threshold check only — NEVER run the prune from reflect (reflect runs under `--auto`; prune is interactive-only). Same best-effort discipline: still never a gate.
+   `--namespace` is omitted deliberately; the command auto-resolves it from `workspace.toml`. Echo one line from the result: `recall-hit-rate: <hit_rate> (<used>/<surfaced>, <misses> misses)`. SWALLOW any error — this is observability, never a gate. When the same result shows `surfaced >= 20` AND `hit_rate < 0.30`, echo one more line: `recall precision is low — consider an interactive FLOW memory prune (references/command-memory.md)`. Threshold check only — NEVER run the prune from reflect (reflect may run unattended; prune is interactive-only). Same best-effort discipline: still never a gate.
 
 ### Step 4 — zero novel signal path
 
@@ -234,7 +234,7 @@ The taxonomy is closed:
 
 5. Check the ship state:
    ```bash
-   .flow/flow tracker \
+   FLOW_HARNESS="<harness>" "<facade>" tracker \
      --workspace-root . \
      is-shipped --key <KEY>
    ```
@@ -281,11 +281,11 @@ The taxonomy is closed:
      ```
      `evidence` MUST be the object from is-shipped output (e.g. jira `{tracker, tracker_status, resolution}`; beads `{tracker, tracker_status, commit_sha, closure_reason, closed_at}`), passed through as-is.
    - Read the bead's `tier:*` label into `$TIER` so the tier captured at ship time is stamped onto the durable record (beads: `TIER=$(bd show <KEY> --json | jq -r '.[0].labels[]? | select(startswith("tier:"))' | head -1)`; jira has no such label, leave `$TIER` empty).
-   - Read the bead's `ACCEPTANCE-INVARIANT:` stem (filed by `/flow evolve` for a behavior-changing `tier:light` downshift, §audit step 3) into `$ACCEPTANCE_INVARIANT`, so the assertion the downshift was supposed to satisfy is stamped onto the durable ship event for correlation. It lives in the description as a single-line stem, so stop at the first match (beads: `ACCEPTANCE_INVARIANT=$(bd show <KEY> --json | jq -r '.[0].description // ""' | grep -m1 '^ACCEPTANCE-INVARIANT:' | sed 's/^ACCEPTANCE-INVARIANT:[[:space:]]*//')`; absent stem / jira → empty).
+   - Read the bead's `ACCEPTANCE-INVARIANT:` stem (filed by `FLOW maintain evolution` for a behavior-changing `tier:light` downshift, §audit step 3) into `$ACCEPTANCE_INVARIANT`, so the assertion the downshift was supposed to satisfy is stamped onto the durable ship event for correlation. It lives in the description as a single-line stem, so stop at the first match (beads: `ACCEPTANCE_INVARIANT=$(bd show <KEY> --json | jq -r '.[0].description // ""' | grep -m1 '^ACCEPTANCE-INVARIANT:' | sed 's/^ACCEPTANCE-INVARIANT:[[:space:]]*//')`; absent stem / jira → empty).
    - Read the verification `lane` this run took from the bundle's `ticket_frontmatter.lane` into `$LANE` (the value `flow_worktree` stamped at bootstrap: `express` / `light` / `full`; absent → empty). Stamping it on the ship event is what lets the express-lane defect/revert rate be measured against the full-lane `tier:trivial` baseline (the whole point of de-gating under a metric).
    - Observe the ship event:
      ```bash
-     .flow/flow observe-ship-event \
+     FLOW_HARNESS="<harness>" "<facade>" observe-ship-event \
        --ticket <KEY> \
        --evidence-json '<json>' \
        --run-id "$RUN_ID" \

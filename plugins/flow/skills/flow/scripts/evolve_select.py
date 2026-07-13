@@ -2,11 +2,11 @@
 
 Pure selection over flow's OWN backlog, no side effects. Given the ready evolve
 beads plus the in-flight branches/PRs, decide which keys to fan out as
-`/flow <key> --auto` runs. The `/flow evolve drain` loop consumes this (via
+`FLOW <key> --unattended` runs. The `FLOW maintain evolution drain` loop consumes this (via
 `evolve_drain.py`, which adds in-flight lease liveness) and does the launching.
 
 Partition is best-effort coarse, NOT a disjointness guarantee. Planning is
-post-launch (the headless Plan subagent runs after `claude --bg` fires), so the
+post-launch (the unattended planning agent runs inside its native worker), so the
 selector never knows a bead's real file set. It serializes on the two signals it
 does have (the `hot` label + a primary-file anchor parsed from the bead's BLAST
 RADIUS line) and relies on the keystone gate: each run is worktree/lease-isolated,
@@ -156,7 +156,7 @@ def _hot_inflight(
 
     Under `include_proposals` the hot slot also serializes hot *proposal* beads, so
     a hot proposal already in flight blocks the next hot launch (the `proposal`
-    label can carry `hot` too, see references/verb-evolve.md §propose).
+    label can carry `hot` too, see references/command-maintain.md §propose).
 
     `extra_keys` seeds the in-flight set with keys known live by another channel
     (e.g. a pre-PR lease that has no ref/PR yet), so a hot pre-PR run blocks the
@@ -213,7 +213,7 @@ def select(
     refs, pr_refs, open_pr_count = _gather_refs(run)
     # live_keys is LEASE-ONLY: it surfaces as result["live_runs"], which the drain
     # uses to decide a launched run has "registered" a lease (evolve_drain.cli_main).
-    # Fleet registers at launch (before claude --bg), so letting fleet leak into
+    # Fleet registers before the native worker launch, so letting fleet leak into
     # live_runs would mark a still-booting pre-lease run "registered" and evict it
     # from launched_pending a turn early, re-opening the launch->init blind window
     # (flow-d4s). The reconciled lease|fleet read is for the IN-FLIGHT suppression set

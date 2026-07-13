@@ -3,7 +3,7 @@
 Library + thin CLI. Stdlib-only.
 
 Once `<ticket>.json` exists, it is IMMUTABLE. Subsequent attempts write to
-`<ticket>.json.dupe.<n>.json` instead (monotonic n). `/flow recover` in phase
+`<ticket>.json.dupe.<n>.json` instead (monotonic n). `FLOW workspace repair` in phase
 8c handles dupe reconciliation. On I/O error during write, an intent log is
 left at `<ticket>.json.quarantine-intent.<ts>.json` so recover can replay.
 
@@ -42,7 +42,7 @@ Exit codes:
   1 = evidence JSON invalid, or run_id not 16 hex chars
   2 = EEXIST, wrote .dupe.<n>.json instead (informational, not error)
   3 = I/O error, lock contention, or workspace memory config missing/invalid
-      (intent log written; surfaces for /flow recover)
+      (intent log written; surfaces for FLOW workspace repair)
 """
 
 from __future__ import annotations

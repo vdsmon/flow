@@ -1,4 +1,4 @@
-"""/flow group persistence: durably record a cover set between propose and act.
+"""FLOW ticket group persistence: durably record a cover set between propose and act.
 
 `group` proposes a lead + covers, but if you do not run `spec --covers` right
 away the decision lived only in the proposal. This persists it where it survives

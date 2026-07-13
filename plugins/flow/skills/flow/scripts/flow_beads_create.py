@@ -1,6 +1,6 @@
 """File a self-work (machinery) bead into flow's OWN beads DB.
 
-Used by the reflect sling-bead path and `/flow evolve`. Two guarantees:
+Used by the reflect sling-bead path and `FLOW maintain evolution`. Two guarantees:
 
 - Gated on maintainer mode. Outside it the bead is NOT filed (exit 4), so a normal
   user run never requires a flow checkout and machinery friction stays dormant.

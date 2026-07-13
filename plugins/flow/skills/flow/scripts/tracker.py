@@ -15,7 +15,7 @@ Key invariants:
   the id to `transition()`, NOT the human-readable `name`. Two transitions can
   share a name pointing to different ids (Jira common pattern).
 - `is_shipped` is a PURE READ. Adapters MUST NOT write under `.flow/`. The writer
-  is `observe-ship-event.py` invoked by the reflect stage or `/flow sync
+  is `observe-ship-event.py` invoked by the reflect stage or `FLOW workspace sync
   --observe-ship`.
 - No `extra: dict` escape on `create()` or any mutator, and no generic
   `edit(fields)`. The pipeline never mutates ticket fields after create; the

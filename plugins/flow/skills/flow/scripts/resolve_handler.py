@@ -1,6 +1,6 @@
 """Resolve a workspace handler string to a concrete, installed invocation.
 
-Library + thin CLI. Stdlib-only. Used by the /flow do-loop before invoking a
+Library + thin CLI. Stdlib-only. Used by the target delivery loop before invoking a
 skill handler, and re-usable by validate_workspace.
 
 Handler-string grammar:

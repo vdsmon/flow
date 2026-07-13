@@ -8,7 +8,7 @@ Machine/tool sharp edges that repeatedly burn fresh sessions. None of these are 
 - **`gh api graphql` does not expand `{owner}` / `{repo}`.** Those placeholders work in REST paths only. Pass explicit owner/repo variables to GraphQL queries.
 - **`gh pr list --json commits,files` rejected at scale.** GraphQL node-cost limit (~500k) fails the bulk query. Fetch heavyweight fields per-PR instead of in the list call.
 - **A just-pushed PR's CI shows `CANCELLED`.** Same-SHA concurrency cancellation from a rapid re-push, not a failure; re-check after the newer run finishes.
-- **Unattended `--auto` self-merge denied by the permission classifier.** "Merge Without Review … does not specifically authorize merging this PR" at the merge stage is the Claude Code auto-mode classifier, by design — not a flow gate failure. The green PR is a complete deliverable. Remedy: approve per-PR when asked, or add a specific Bash allow-rule for the merge command to enable unattended self-merge.
+- **Unattended self-merge denied by the permission classifier.** "Merge Without Review … does not specifically authorize merging this PR" at the merge stage is the Claude Code auto-mode classifier, by design — not a flow gate failure. The green PR is a complete deliverable. Remedy: approve per-PR when asked, or add a specific Bash allow-rule for the merge command to enable unattended self-merge.
 
 ## mise
 
@@ -26,7 +26,6 @@ Machine/tool sharp edges that repeatedly burn fresh sessions. None of these are 
 
 - **Unattended run stalls right after "Bootstrap clean", `tempo=blocked`, no `EnterWorktree` call in the transcript.** Claude Code >= 2.1.206 asks an interactive confirmation before `EnterWorktree` enters any worktree OUTSIDE `<repo>/.claude/worktrees/`, and the confirmation is NOT permission-mediated (the tool is "Permission required: No", so no `permissions.allow` rule, auto-mode vouch, or env var suppresses it). flow >= the pool relocation (flow-gh1u) mints worktrees inside `.claude/worktrees/`, which never confirms. On an older flow, the only unattended remedy is upgrading; attended, `claude attach <job>` and approve the prompt.
 - **launchd jobs can't find user-installed CLIs.** launchd's minimal PATH omits `~/.local/bin`; export it in the job definition. Test with `launchctl start`, not by running the script in your shell.
-- **`claude stop` needs the 8-hex job id**, not the session UUID — and must run BEFORE `rm -rf`ing the job dir, or the bg job zombies. Job→ticket mapping lives in the job's `state.json` under `intent`.
 - **`claude agents` hangs in a background shell** (blocks on a TTY). Monitor via transcript mtime + `bd`/`gh` state instead.
 
 ## zsh

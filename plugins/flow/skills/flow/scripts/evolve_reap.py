@@ -12,9 +12,10 @@ rather than trusting GitHub. CI runs on `push` + every `pull_request`, so a PR's
 while it is still a draft. This classify can confirm green here, and the verb marks the PR ready
 right before merging.
 
-This module is pure classification (no side effects). The `/flow evolve drain` reap step performs
-the merge: `gh pr ready` (if draft) then `gh pr merge --squash` over the `merge` set. The remote
-branch is deleted separately via `git push origin --delete`. `--delete-branch` is dropped because
+This module is pure classification (no side effects). The
+`FLOW maintain evolution drain` reap step performs the merge: `gh pr ready` (if draft) then
+`gh pr merge --squash` over the `merge` set. The remote branch is deleted separately via
+`git push origin --delete`. `--delete-branch` is dropped because
 the still-registered worktree holds the local branch checked out, which makes gh's branch-delete
 step fail and an otherwise-clean merge exit 1.
 

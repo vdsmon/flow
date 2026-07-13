@@ -20,7 +20,7 @@ One append-only file `.flow/<namespace>/recall-usage.jsonl`, two record kinds:
 
 The metric reads one file: `metric.py recall-hit-rate` joins both kinds.
 
-Both record kinds are deduped on a stable per-run key so a `/flow recover` rerun
+Both record kinds are deduped on a stable per-run key so a `FLOW workspace repair` rerun
 (same `run_id`) does not double-count. The surfaced set is defined ONE way (the
 per-run recall-log `returned_ids`), so the agent only judges `--used-ids`.
 

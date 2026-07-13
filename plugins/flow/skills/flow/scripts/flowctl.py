@@ -14,13 +14,14 @@ SCRIPTS_DIR = SKILL_ROOT / "scripts"
 
 COMMANDS = {
     "branch-ticket": "branch_ticket.py",
+    "cockpit": "cockpit_cli.py",
     "compose-commit": "compose_commit.py",
+    "commands": "public_commands_cli.py",
     "create-pr": "create_pr.py",
     "diff": "diff_extract.py",
     "dispatch": "dispatch_stage.py",
     "evolve-drain": "evolve_drain.py",
     "evolve-reap": "evolve_reap.py",
-    "evolve-session-cleanup": "evolve_session_cleanup.py",
     "fleet": "fleet.py",
     "flow-beads-create": "flow_beads_create.py",
     "forge": "forge_cli.py",
@@ -33,8 +34,11 @@ COMMANDS = {
     "harness-eval": "harness_eval.py",
     "lint-comments": "lint_comments.py",
     "lint-ticket": "lint_ticket.py",
+    "lifecycle": "lifecycle_cli.py",
     "machinery-edit": "machinery_edit.py",
     "maintainer": "maintainer.py",
+    "maintainer-preflight": "maintainer_preflight.py",
+    "maintainer-senses": "senses_deadman.py",
     "memory-append": "memory_append.py",
     "merge": "stage_merge.py",
     "metric": "metric.py",
@@ -58,6 +62,7 @@ COMMANDS = {
     "validate": "validate_workspace.py",
     "worktree": "flow_worktree.py",
     "worktree-janitor": "worktree_janitor.py",
+    "worker-pool": "worker_pool.py",
 }
 
 

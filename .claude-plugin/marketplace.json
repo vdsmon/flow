@@ -1,7 +1,7 @@
 {
   "name": "vdsmon-flow",
   "metadata": {
-    "description": "flow — an autonomous, self-evolving ticket→PR pipeline skill for Claude Code. Plans in plan mode (ExitPlanMode = the one gate), then runs implement→PR in a worktree, backgroundable anytime. Multi-tracker (Jira | beads), pluggable per-stage handlers, compounding memory, and a reflect stage that repairs its own harness."
+    "description": "flow — state-aware ticket→PR delivery for Claude Code and Codex. One target command starts, resumes, repairs, revises, or reports from durable evidence; namespaced workspace, memory, measurement, and maintenance commands share the same harness-neutral engine."
   },
   "owner": {
     "name": "Victor De Simone",
@@ -12,7 +12,7 @@
     {
       "name": "flow",
       "source": "./plugins/flow",
-      "description": "Claude Code adapter for the Flow ticket pipeline: /flow <ticket> plans in plan mode (ExitPlanMode = the one gate), then binds a worktree and runs the autonomous implement→PR tail in the same session; background it (/bg) anytime to run unattended. Multi-tracker engine (Jira | beads) with pluggable handlers, immutable ship-event evidence, and compounding memory.",
+      "description": "State-aware Flow adapter for Claude Code and Codex: a ticket or PR target starts, resumes, repairs, revises, or reports from durable evidence, then runs the approved plan→draft-PR tail in an isolated worktree. Includes portable maintenance, pluggable handlers, immutable ship-event evidence, and compounding memory.",
       "version": "0.104.0"
     }
   ]

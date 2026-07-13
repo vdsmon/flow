@@ -5,7 +5,7 @@
 Execute the **e2e recipe the plan declared** and surface any failure.
 This stage runs BY DEFAULT (`stage-registry.toml` default handler is `subagent:general-purpose`): it is the ONE stage that observes the change actually behaving end-to-end, and it significantly improves end-to-end correctness — no other stage exercises the change running.
 A workspace disables it only by explicitly setting `e2e = "none"` in `workspace.toml [pipeline.handlers]`; that is a deliberate opt-out, never the convenient default.
-When it runs, the spec/plan gate requires an `e2e_recipe` frontmatter field (see `.flow/flow worktree create --e2e-recipe`), so by the time you run there is a recipe to execute. You do NOT detect or guess a suite.
+When it runs, the spec/plan gate requires an `e2e_recipe` frontmatter field (see `FLOW_HARNESS="<harness>" "<facade>" worktree create --e2e-recipe`), so by the time you run there is a recipe to execute. You do NOT detect or guess a suite.
 
 e2e sits AFTER `code_review` so cheap inline review catches obvious issues before a slow end-to-end run burns time.
 By the time you run, the implement diff has already passed review.
@@ -28,7 +28,7 @@ Your job is to run it exactly, not to reinterpret it.
 
 1. HARD GATE the recipe is present:
    ```bash
-   .flow/flow lint-ticket \
+   FLOW_HARNESS="<harness>" "<facade>" lint-ticket \
      --stage e2e \
      --ticket-path .flow/tickets/<KEY>.md
    ```
@@ -115,7 +115,7 @@ Your job is to run it exactly, not to reinterpret it.
    - **Rung 4, external blob link (only when the note carries a destination).** If,
      and only if, the evidence note contains an explicit human-authored upload
      destination, upload the full artifact there and record the URL plus the sha256
-     that pins it. Never invent a destination; an `--auto` planner never introduces
+     that pins it. Never invent a destination; an unattended planner never introduces
      one, and with no destination in the note there is no rung 4.
 
    Keep the report scrub-safe: no em-dashes in the prose lines (write

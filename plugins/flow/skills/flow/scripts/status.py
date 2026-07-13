@@ -1,4 +1,4 @@
-"""/flow status: a local table over per-ticket runs.
+"""FLOW workspace inspect: a local table over per-ticket runs.
 
 Stdlib-only, offline (no tracker / network). Aggregates every
 .flow/runs/<ticket>/state.json in the workspace plus its lease state.
@@ -112,14 +112,14 @@ def render_table(rows: list[dict[str, Any]]) -> str:
 
 
 def cli_main(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(description="/flow status: local run table.")
+    parser = argparse.ArgumentParser(description="FLOW workspace inspect: local run table.")
     parser.add_argument("--ticket", default=None)
     parser.add_argument("--workspace-root", default=".")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
     workspace_root = Path(args.workspace_root).expanduser().resolve()
     if not (workspace_root / ".flow").is_dir():
-        sys.stderr.write("status: workspace not initialized; run `/flow init`\n")
+        sys.stderr.write("status: workspace not initialized; run `FLOW workspace setup`\n")
         return 1
     rows = collect(workspace_root, ticket=args.ticket)
     if args.json:

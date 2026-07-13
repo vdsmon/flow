@@ -368,13 +368,19 @@ def test_p0_create_carries_priority_and_description(tmp_path, monkeypatch):
     assert "-d" in argv
 
 
-def test_dry_run_never_files(tmp_path, monkeypatch):
+def test_dry_run_never_fetches_files_or_quarantines(tmp_path, monkeypatch):
     keys = ("flow-a", "flow-b")
     _seed_workspace(tmp_path)
+    ship_dir = tmp_path / ".flow" / "demo" / "ship-events"
+    ship_dir.mkdir(parents=True)
+    (ship_dir / "flow-corrupt.json").write_text("{", encoding="utf-8")
     _install_tracker(monkeypatch, _dark_ships(keys))
     runner = _Runner(closed=_dark_closes(keys), bodies={"shaflow-a": "", "shaflow-b": ""})
-    _digest, code = _run(tmp_path, runner, dry_run=True)
+    digest, code = _run(tmp_path, runner, dry_run=True)
     assert runner.create_calls == []
+    assert runner.fetch_calls == []
+    assert not (tmp_path / ".flow" / "demo" / "ship-events.quarantine").exists()
+    assert "read-only dry-run" in digest["trend"]["unavailable"]
     assert code == 1  # still a detected divergence
 
 

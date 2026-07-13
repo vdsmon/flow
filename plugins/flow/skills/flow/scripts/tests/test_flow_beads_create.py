@@ -158,13 +158,13 @@ def test_dedup_new_creates_with_evid_label(tmp_path):
         repo,
         "t",
         "b",
-        dedup_key="references/verb-spec.md::quotepath-bug",
+        dedup_key="references/delivery-plan.md::quotepath-bug",
         labels=["evolve"],
         runner=run,
     )
     assert key == "flow-new"
-    evid = f"evid:{fbc.fingerprint('references/verb-spec.md::quotepath-bug')}"
-    evidfile = f"evidfile:{fbc.fingerprint('verb-spec.md')}"
+    evid = f"evid:{fbc.fingerprint('references/delivery-plan.md::quotepath-bug')}"
+    evidfile = f"evidfile:{fbc.fingerprint('delivery-plan.md')}"
     list_calls = [c for c in calls if c[0][1] == "list"]
     assert len(list_calls) == 2  # exact then file-anchored
     assert "-l" in list_calls[0][0]
@@ -190,9 +190,9 @@ def test_dedup_existing_skips_create(tmp_path):
 
 def test_dedup_fuzzy_converges_real_symptoms(tmp_path):
     repo = _marked_ws(tmp_path)
-    dedup_key = "references/verb-spec.md::auto-plan-reads-prebootstrap-flow-files"
+    dedup_key = "references/delivery-plan.md::auto-plan-reads-prebootstrap-flow-files"
     evid = f"evid:{fbc.fingerprint(dedup_key)}"
-    evidfile = f"evidfile:{fbc.fingerprint('verb-spec.md')}"
+    evidfile = f"evidfile:{fbc.fingerprint('delivery-plan.md')}"
     run, calls = _dispatch_runner(
         list_by_label={evid: [], evidfile: [{"id": "flow-mst", "title": _MST_TITLE}]}
     )
@@ -206,28 +206,28 @@ def test_dedup_fuzzy_converges_real_symptoms(tmp_path):
 def test_dedup_fuzzy_path_variance_still_collides(tmp_path):
     repo = _marked_ws(tmp_path)
     # candidate filed under one path, new finding uses a DIFFERENT dir with the same
-    # basename: both anchor on basename `verb-spec.md`, so the fuzzy pass still collides.
-    assert fbc.fingerprint(fbc._basename("references/verb-spec.md")) == fbc.fingerprint(
-        fbc._basename("docs/verb-spec.md")
+    # basename: both anchor on basename `delivery-plan.md`, so the fuzzy pass still collides.
+    assert fbc.fingerprint(fbc._basename("references/delivery-plan.md")) == fbc.fingerprint(
+        fbc._basename("docs/delivery-plan.md")
     )
-    evidfile = f"evidfile:{fbc.fingerprint('verb-spec.md')}"
+    evidfile = f"evidfile:{fbc.fingerprint('delivery-plan.md')}"
     run, _ = _dispatch_runner(list_by_label={evidfile: [{"id": "flow-mst", "title": _MST_TITLE}]})
     with pytest.raises(fbc.DuplicateBead) as ei:
         fbc.create_bead(
-            repo, _9JK_TITLE, "b", dedup_key="docs/verb-spec.md::bare-prefix", runner=run
+            repo, _9JK_TITLE, "b", dedup_key="docs/delivery-plan.md::bare-prefix", runner=run
         )
     assert ei.value.existing_key == "flow-mst"
 
 
 def test_dedup_fuzzy_does_not_merge_distinct_same_file(tmp_path):
     repo = _marked_ws(tmp_path)
-    distinct = "verb-spec.md bootstrap writes ticket frontmatter to the wrong worktree path"
-    evidfile = f"evidfile:{fbc.fingerprint('verb-spec.md')}"
+    distinct = "delivery-plan.md bootstrap writes ticket frontmatter to the wrong worktree path"
+    evidfile = f"evidfile:{fbc.fingerprint('delivery-plan.md')}"
     run, calls = _dispatch_runner(
         list_by_label={evidfile: [{"id": "flow-other", "title": distinct}]}
     )
     key = fbc.create_bead(
-        repo, _9JK_TITLE, "b", dedup_key="references/verb-spec.md::sym", runner=run
+        repo, _9JK_TITLE, "b", dedup_key="references/delivery-plan.md::sym", runner=run
     )
     assert key == "flow-new"
     assert any(c[0][1] == "create" for c in calls)  # not deduped, create ran
@@ -331,7 +331,7 @@ def test_dedup_bare_real_toplevel_file_keeps_fuzzy(tmp_path):
 
 def test_dedup_epic_child_key_skips_fuzzy(tmp_path):
     # epic:<track> is not a relfile path -> formulaic -> skips fuzzy; the disjoint
-    # exact evid: net is what converges epic children (verb-evolve.md §E), not fuzzy.
+    # exact evid: net is what converges epic children (command-maintain.md §E), not fuzzy.
     repo = _marked_ws(tmp_path)
     evidfile = f"evidfile:{fbc.fingerprint('epic:tracker-frontdoor')}"
     run, calls = _dispatch_runner(

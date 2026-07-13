@@ -2,8 +2,9 @@
 
 Library + thin CLI. Stdlib-only.
 
-The RUNS deadman (the SessionStart hook over `~/.flow-evolve/run-record.jsonl`) watches the nightly
-loop fire. This is the SENSES deadman: it watches the ship-event sense itself going dark. It joins
+The RUNS deadman (`maintainer_preflight.py` over `~/.flow-evolve/run-record.jsonl`) watches the
+nightly loop fire from bare cockpit and maintenance preflight. This is the SENSES deadman: it
+watches the ship-event sense itself going dark. It joins
 the window's closed beads against the ship-event store, buckets each close as observed / missing /
 covered / unmerged / within-lag / ignored, files ONE deduped P0 on divergence, and prints a health
 digest (telemetry freshness incl. quarantine-sidecar growth, metric-trend deltas, loop liveness) as
@@ -13,11 +14,10 @@ turns from a slow "PRs stopped appearing" discovery into a one-night alarm.
 is_shipped is read through the tracker seam and NEVER modified (PR#277's two-join measurement-
 integrity gate is untouched; this path is a read-only consumer).
 
-NOT pure: the metric-trend section calls `metric.load_ship_events`, which appends to the
-`ship-events.quarantine` sidecar non-idempotently for each corrupt primary it reads (metric.py's
-existing lenient-read contract; the store's sole writer is atomic, so corrupt primaries are rare).
-The digest surfaces the sidecar's line count so that growth is itself observed. This module's OWN
-reads stay write-free: `read_jsonl_lenient` everywhere, including the foreign run-record.jsonl.
+Normal alarm-producing runs refresh the default-branch ref and use the metric readers' existing
+quarantine-on-malformed behavior. `--dry-run` is strictly read-only: it does not fetch, file an
+alarm, or call any quarantine-on-malformed reader. Its trend section is marked unavailable rather
+than weakening that guarantee.
 
 CLI:
   senses_deadman.py --workspace-root <dir> [--window-days 7 --lag-hours 24 --min-missing 2
@@ -245,12 +245,15 @@ def render_digest(digest: dict[str, Any]) -> str:
     lines.append(f"- ship-events quarantine lines: {fresh.get('quarantine_lines', 'absent')}")
     lines.append("")
     lines.append("### Metric trend (current vs previous 14d)")
-    for name in ("shipped", "time_to_pr", "friction_per_run", "recall_hit_rate"):
-        measure = trend.get(name, {})
-        lines.append(
-            f"- {name}: current={measure.get('current')} previous={measure.get('previous')} "
-            f"delta={measure.get('delta')}"
-        )
+    if trend.get("unavailable"):
+        lines.append(f"- unavailable: {trend['unavailable']}")
+    else:
+        for name in ("shipped", "time_to_pr", "friction_per_run", "recall_hit_rate"):
+            measure = trend.get(name, {})
+            lines.append(
+                f"- {name}: current={measure.get('current')} previous={measure.get('previous')} "
+                f"delta={measure.get('delta')}"
+            )
     lines.append("")
     lines.append("### Loop liveness")
     if not live.get("armed"):
@@ -342,12 +345,34 @@ def _newest_iso(values: list[Any]) -> str | None:
     return str(max(dated, key=lambda p: p[0])[1])
 
 
-def _gather_freshness(repo: Path, namespace: str) -> dict[str, Any]:
+def _read_ship_events_without_quarantine(repo: Path, namespace: str) -> list[dict[str, Any]]:
+    """Read valid primary ship events without producing a quarantine sidecar."""
+
+    ship_dir = ship_events_dir(repo, namespace)
+    if not ship_dir.is_dir():
+        return []
+    events: list[dict[str, Any]] = []
+    for path in sorted(ship_dir.glob("*.json")):
+        if any(infix in path.name for infix in _SHIP_EVENT_SKIP_INFIXES):
+            continue
+        try:
+            event = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            continue
+        if isinstance(event, dict) and isinstance(event.get("shipped_at"), str):
+            events.append(event)
+    return events
+
+
+def _gather_freshness(repo: Path, namespace: str, *, read_only: bool = False) -> dict[str, Any]:
     ship_dir = ship_events_dir(repo, namespace)
     base = ship_dir.parent
-    newest_ship = _newest_iso(
-        [e.get("shipped_at") for e in metric.load_ship_events(repo, namespace)]
+    ship_events = (
+        _read_ship_events_without_quarantine(repo, namespace)
+        if read_only
+        else metric.load_ship_events(repo, namespace)
     )
+    newest_ship = _newest_iso([e.get("shipped_at") for e in ship_events])
     newest_friction = _newest_iso(
         [e.get("ts") for e in read_jsonl_lenient(base / "friction.jsonl")]
     )
@@ -492,7 +517,8 @@ def deadman(
     try:
         namespace = resolve_namespace(repo)
         branch = _default_branch(run, repo)
-        run(["git", "fetch", "--quiet", "origin", branch], repo)  # the ONE upfront fetch
+        if not dry_run:
+            run(["git", "fetch", "--quiet", "origin", branch], repo)  # one writeful refresh
         closes = _closed_beads(run, repo, since_iso)
         observed = _observed_keys(repo, namespace)
         config = _read_tracker_config(repo)
@@ -519,7 +545,7 @@ def deadman(
     missing_count = len(buckets["missing"])
     alarm = decide_alarm(observed_count, missing_count, min_missing=min_missing, max_gap=max_gap)
 
-    freshness = _gather_freshness(repo, namespace)
+    freshness = _gather_freshness(repo, namespace, read_only=dry_run)
     record_path = run_record_path or (Path.home() / ".flow-evolve" / "run-record.jsonl")
     liveness = run_record_summary(read_jsonl_lenient(record_path, replace_errors=True), now_iso=now)
     digest: dict[str, Any] = {
@@ -536,7 +562,11 @@ def deadman(
             "alarm": alarm,
         },
         "freshness": freshness,
-        "trend": _gather_trend(repo, namespace, now),
+        "trend": (
+            {"unavailable": "read-only dry-run omits quarantine-on-malformed metric readers"}
+            if dry_run
+            else _gather_trend(repo, namespace, now)
+        ),
         "liveness": liveness,
     }
 

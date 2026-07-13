@@ -1,7 +1,7 @@
 """Post-merge worktree janitor: reap orphaned local worktrees whose PR already merged.
 
 A standalone maintainer-only sweep, complementing the evolve drain's reap
-(references/verb-evolve.md, drain step A). That reap is keyed on in-flight /
+(references/command-maintain.md, drain step A). That reap is keyed on in-flight /
 open-PR state; a run whose merge stage closed its bead and whose PR merged drops
 out of every drain channel, and an attended hand-merge never had a local teardown
 path at all. This sweep enumerates registered worktrees, joins each `feat/<key>`
