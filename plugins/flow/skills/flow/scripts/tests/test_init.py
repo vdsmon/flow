@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import shutil
 import subprocess
 import tomllib
 from pathlib import Path
@@ -119,6 +120,15 @@ def _beads_config(tmp_path: Path) -> initmod.InitConfig:
 # ─── Pre-flight ──────────────────────────────────────────────────────────────
 
 
+def test_reserved_memory_namespace_fails_before_filesystem_mutation(tmp_path: Path) -> None:
+    config = dataclasses.replace(_jira_config(tmp_path), memory_namespace="memory")
+
+    with pytest.raises(initmod.InitError, match="reserved memory namespace"):
+        initmod.run_init(config)
+
+    assert not (tmp_path / ".flow").exists()
+
+
 def test_refuses_when_already_initialized(tmp_path: Path) -> None:
     (tmp_path / ".flow").mkdir()
     (tmp_path / ".flow" / ".initialized").touch()
@@ -141,8 +151,25 @@ def test_reconfigure_clears_prior_markers(tmp_path: Path) -> None:
     assert (tmp_path / ".flow" / ".initialized").exists()
     assert not (tmp_path / ".flow" / ".initializing").exists()
     assert not (tmp_path / ".flow" / ".init-progress").exists()
-    assert (tmp_path / ".flow" / "flow").stat().st_mode & 0o111
+    assert (tmp_path / ".flow" / "runtime" / "flow").stat().st_mode & 0o111
     assert result.namespace == "FT"
+
+
+def test_reconfigure_migrates_legacy_flow_namespace_before_writing(tmp_path: Path) -> None:
+    config = dataclasses.replace(_jira_config(tmp_path), memory_namespace="flow")
+    initmod.run_init(config)
+    runtime = tmp_path / ".flow" / "runtime"
+    legacy = tmp_path / ".flow" / "flow"
+    shutil.rmtree(runtime)
+    (tmp_path / ".flow" / "memory" / "flow").rename(legacy)
+    (legacy / "knowledge.jsonl").write_text("preserve me\n", encoding="utf-8")
+
+    initmod.run_init(config, reconfigure=True)
+
+    migrated = tmp_path / ".flow" / "memory" / "flow" / "knowledge.jsonl"
+    assert migrated.read_text(encoding="utf-8") == "preserve me\n"
+    assert (runtime / "layout-version").read_text(encoding="utf-8") == "2\n"
+    assert (runtime / "flow").stat().st_mode & 0o111
 
 
 # ─── Bare happy paths ────────────────────────────────────────────────────────
@@ -179,11 +206,11 @@ def test_init_uses_executing_skill_dir_not_ambient_env(tmp_path: Path, monkeypat
     monkeypatch.setenv("FLOW_SKILL_DIR", str(installed))
     monkeypatch.setenv("CLAUDE_SKILL_DIR", str(installed))
     initmod.run_init(_jira_config(tmp_path))
-    skill_dir = tmp_path / ".flow" / "skill_dir"
+    skill_dir = tmp_path / ".flow" / "runtime" / "skill-root"
     assert skill_dir.read_text(encoding="utf-8").strip() == str(
         Path(initmod.__file__).resolve().parent.parent
     )
-    assert (tmp_path / ".flow" / "flow").stat().st_mode & 0o111
+    assert (tmp_path / ".flow" / "runtime" / "flow").stat().st_mode & 0o111
 
 
 # ─── L1: AGENTS.md cross-harness entry point (opt-in, CC-neutral by default) ──
@@ -201,7 +228,7 @@ def test_agents_md_flag_writes_entry_point(tmp_path: Path) -> None:
     agents = tmp_path / "AGENTS.md"
     body = agents.read_text(encoding="utf-8")
     assert initmod._AGENTS_MARKER in body
-    assert ".flow/flow" in body
+    assert ".flow/runtime/flow" in body
     assert "FLOW_SKILL_DIR" in body
     assert "Approval is not coding" in body
 
@@ -290,7 +317,7 @@ def test_ensure_agents_md_not_requested_is_noop(tmp_path: Path) -> None:
 def test_init_skill_dir_falls_back_to_script_location(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.delenv("CLAUDE_SKILL_DIR", raising=False)
     initmod.run_init(_jira_config(tmp_path))
-    written = (tmp_path / ".flow" / "skill_dir").read_text(encoding="utf-8").strip()
+    written = (tmp_path / ".flow" / "runtime" / "skill-root").read_text(encoding="utf-8").strip()
     expected = str(Path(initmod.__file__).resolve().parent.parent)
     assert written == expected
     assert Path(written).is_absolute()
@@ -462,8 +489,8 @@ def test_resume_skips_completed_phases(tmp_path: Path) -> None:
     result = initmod.run_init(_jira_config(tmp_path), resume=True)
     assert (tmp_path / ".flow" / ".initialized").exists()
     assert not (tmp_path / ".flow" / ".initializing").exists()
-    assert (tmp_path / ".flow" / "skill_dir").is_file()
-    assert (tmp_path / ".flow" / "flow").stat().st_mode & 0o111
+    assert (tmp_path / ".flow" / "runtime" / "skill-root").is_file()
+    assert (tmp_path / ".flow" / "runtime" / "flow").stat().st_mode & 0o111
     assert result.handlers["plan"] == "subagent:Plan"
 
 
@@ -487,8 +514,9 @@ def test_failure_leaves_initializing_marker(tmp_path: Path) -> None:
 def test_creates_flow_subdirs(tmp_path: Path) -> None:
     initmod.run_init(_jira_config(tmp_path))
     assert (tmp_path / ".flow" / "runs").is_dir()
-    assert (tmp_path / ".flow" / "FT").is_dir()
-    assert (tmp_path / ".flow" / "FT" / "ship-events").is_dir()
+    assert (tmp_path / ".flow" / "memory" / "FT").is_dir()
+    assert (tmp_path / ".flow" / "memory" / "FT" / "ship-events").is_dir()
+    assert not (tmp_path / ".flow" / "FT").exists()
 
 
 def test_checkpoint_manifest_appended(tmp_path: Path) -> None:
@@ -561,6 +589,29 @@ def test_cli_missing_backend(capsys: pytest.CaptureFixture[str]) -> None:
     rc = initmod.cli_main(["--bundle", "bare"])
     assert rc == 2
     assert "backend" in capsys.readouterr().err
+
+
+def test_cli_guidance_only_updates_initialized_workspace(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    initmod.run_init(_jira_config(tmp_path))
+
+    rc = initmod.cli_main(["--guidance-only", "--workspace-root", str(tmp_path)])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {"changed": True, "guidance": str(tmp_path / "AGENTS.md")}
+    assert "$flow:flow" in (tmp_path / "AGENTS.md").read_text(encoding="utf-8")
+
+
+def test_cli_guidance_only_refuses_uninitialized_workspace(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    rc = initmod.cli_main(["--guidance-only", "--workspace-root", str(tmp_path)])
+
+    assert rc == 1
+    assert "initialized workspace" in capsys.readouterr().err
+    assert not (tmp_path / "AGENTS.md").exists()
 
 
 def test_cli_preflight_exit_code(tmp_path: Path) -> None:
@@ -796,8 +847,8 @@ def test_failed_reconfigure_restores_launcher_metadata_and_agents(
     first = dataclasses.replace(_jira_config(tmp_path), agents_md=True)
     initmod.run_init(first)
 
-    flow_path = tmp_path / ".flow" / "flow"
-    skill_path = tmp_path / ".flow" / "skill_dir"
+    flow_path = tmp_path / ".flow" / "runtime" / "flow"
+    skill_path = tmp_path / ".flow" / "runtime" / "skill-root"
     agents_path = tmp_path / "AGENTS.md"
     old_agents = (
         "# User-owned preface\n"
@@ -819,8 +870,8 @@ def test_failed_reconfigure_restores_launcher_metadata_and_agents(
         workspace_root: Path, *, skill_dir: Path | None = None
     ) -> tuple[Path, Path]:
         del skill_dir
-        flow = workspace_root / ".flow" / "flow"
-        skill = workspace_root / ".flow" / "skill_dir"
+        flow = workspace_root / ".flow" / "runtime" / "flow"
+        skill = workspace_root / ".flow" / "runtime" / "skill-root"
         flow.write_bytes(b"partial new launcher\n")
         skill.write_bytes(b"/partial/new/skill\n")
         flow.chmod(0o755)
@@ -859,8 +910,8 @@ def test_failed_reconfigure_removes_files_absent_before_attempt(
 ) -> None:
     initmod.run_init(_jira_config(tmp_path))
     generated = (
-        tmp_path / ".flow" / "flow",
-        tmp_path / ".flow" / "skill_dir",
+        tmp_path / ".flow" / "runtime" / "flow",
+        tmp_path / ".flow" / "runtime" / "skill-root",
         tmp_path / "AGENTS.md",
     )
     generated[0].unlink()
@@ -870,8 +921,8 @@ def test_failed_reconfigure_removes_files_absent_before_attempt(
         workspace_root: Path, *, skill_dir: Path | None = None
     ) -> tuple[Path, Path]:
         del skill_dir
-        flow = workspace_root / ".flow" / "flow"
-        skill = workspace_root / ".flow" / "skill_dir"
+        flow = workspace_root / ".flow" / "runtime" / "flow"
+        skill = workspace_root / ".flow" / "runtime" / "skill-root"
         flow.write_text("partial launcher\n", encoding="utf-8")
         skill.write_text("/partial/skill\n", encoding="utf-8")
         raise OSError("injected launcher failure")
@@ -893,7 +944,11 @@ def test_reconfigure_setup_failure_restores_before_phase_driver(
     flow_dir = tmp_path / ".flow"
     prior = {
         path: (path.read_bytes(), path.stat().st_mode & 0o777)
-        for path in (flow_dir / "workspace.toml", flow_dir / "flow", flow_dir / "skill_dir")
+        for path in (
+            flow_dir / "workspace.toml",
+            flow_dir / "runtime" / "flow",
+            flow_dir / "runtime" / "skill-root",
+        )
     }
 
     def fail_registry_load(*_args, **_kwargs):
@@ -1000,6 +1055,7 @@ def test_resume_does_not_duplicate_checkpoint_line(tmp_path: Path) -> None:
     flow_dir.mkdir()
     run_id = "fixedrunid"
     (flow_dir / ".initializing").write_text(run_id + "\n", encoding="utf-8")
+    (flow_dir / "workspace.toml").write_text('[memory]\nnamespace = "FT"\n', encoding="utf-8")
     ckpt = tmp_path / "_ckpt.jsonl"
     ckpt.write_text(
         json.dumps(
@@ -1149,7 +1205,7 @@ def test_init_gitignore_appends_preserving_existing(tmp_path: Path) -> None:
 def test_generated_launcher_files_are_gitignored(tmp_path: Path) -> None:
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
     initmod.run_init(_jira_config(tmp_path))
-    for relative in (".flow/flow", ".flow/skill_dir"):
+    for relative in (".flow/runtime/flow", ".flow/runtime/skill-root"):
         result = subprocess.run(["git", "check-ignore", "-q", relative], cwd=tmp_path, check=False)
         assert result.returncode == 0
 
@@ -1351,7 +1407,7 @@ def test_reconfigure_preserved_warning_names_value_and_default(tmp_path: Path) -
     assert "subagent:general-purpose" in line
 
 
-# ─── flow-js8p: stabilize .flow/skill_dir path ───────────────────────────
+# ─── flow-js8p: stabilize installed skill-root path ─────────────────────
 
 
 def test_stabilize_skill_dir_rewrites_cache_to_marketplace(tmp_path: Path) -> None:

@@ -179,14 +179,16 @@ def test_copies_gitignored_config(tmp_path: Path) -> None:
     assert (wt / ".claude" / "settings.json").exists()
     assert ".env" in res["copied"]
     assert ".claude" in res["copied"]
-    assert (wt / ".flow" / "flow").stat().st_mode & 0o111
+    assert (wt / ".flow" / "runtime" / "flow").stat().st_mode & 0o111
     expected_skill = str(Path(fw.__file__).resolve().parent.parent)
-    assert (wt / ".flow" / "skill_dir").read_text(encoding="utf-8").strip() == expected_skill
+    assert (wt / ".flow" / "runtime" / "skill-root").read_text(
+        encoding="utf-8"
+    ).strip() == expected_skill
 
     # Invoke from the main checkout: the shim must still bind the child to the worktree that owns
-    # `.flow/flow`, where this bootstrap seeded FT-1.
+    # `.flow/runtime/flow`, where this bootstrap seeded FT-1.
     launched = subprocess.run(
-        [str(wt / ".flow" / "flow"), "status", "--json"],
+        [str(wt / ".flow" / "runtime" / "flow"), "status", "--json"],
         cwd=main,
         capture_output=True,
         text=True,
@@ -202,15 +204,17 @@ def test_bootstrap_replaces_stale_main_skill_path_with_executing_install(tmp_pat
     res = _run(tmp_path, main)
     wt = Path(res["worktree"])
     expected_skill = str(Path(fw.__file__).resolve().parent.parent)
-    assert (wt / ".flow" / "skill_dir").read_text(encoding="utf-8").strip() == expected_skill
+    assert (wt / ".flow" / "runtime" / "skill-root").read_text(
+        encoding="utf-8"
+    ).strip() == expected_skill
 
 
 def test_redirects_memory_via_sibling_not_workspace_toml(tmp_path: Path) -> None:
     main = _main_checkout(tmp_path)
     res = _run(tmp_path, main)
     wt_flow = Path(res["worktree"]) / ".flow"
-    sibling = (wt_flow / "memory-root").read_text(encoding="utf-8")
-    assert sibling.strip() == str(main.resolve() / ".flow")
+    sibling = (wt_flow / "runtime" / "memory-root").read_text(encoding="utf-8")
+    assert sibling.strip() == str(main.resolve() / ".flow" / "memory")
     # the tracked workspace.toml is NOT rewritten with an abs root
     assert "root =" not in (wt_flow / "workspace.toml").read_text(encoding="utf-8")
 
@@ -235,8 +239,10 @@ def test_memory_redirect_honors_main_memory_root(tmp_path: Path) -> None:
     ws = main / ".flow" / "workspace.toml"
     ws.write_text(ws.read_text(encoding="utf-8") + f'root = "{shared}"\n', encoding="utf-8")
     res = _run(tmp_path, main)
-    sibling = (Path(res["worktree"]) / ".flow" / "memory-root").read_text(encoding="utf-8")
-    assert sibling.strip() == str(shared)
+    sibling = (Path(res["worktree"]) / ".flow" / "runtime" / "memory-root").read_text(
+        encoding="utf-8"
+    )
+    assert sibling.strip() == str(shared / "memory")
 
 
 def test_prepopulates_commit_frontmatter(tmp_path: Path) -> None:
@@ -414,8 +420,8 @@ def test_works_when_worktree_already_has_committed_flow(tmp_path: Path) -> None:
     main = _main_checkout(tmp_path)
     res = _run(tmp_path, main, runner=_fake_runner(worktree_has_flow=True))
     wt_flow = Path(res["worktree"]) / ".flow"
-    assert (wt_flow / "memory-root").read_text(encoding="utf-8").strip() == str(
-        main.resolve() / ".flow"
+    assert (wt_flow / "runtime" / "memory-root").read_text(encoding="utf-8").strip() == str(
+        main.resolve() / ".flow" / "memory"
     )
     assert "root =" not in (wt_flow / "workspace.toml").read_text(encoding="utf-8")
 
@@ -2072,7 +2078,7 @@ def test_bootstrap_refuses_live_sibling_lease(tmp_path: Path) -> None:
     msg = str(exc.value)
     assert str(sib) in msg
     assert "live" in msg
-    assert "recover" in msg
+    assert "workspace repair" in msg
     # refused BEFORE any git mutation: no worktree add, no orphan dir
     assert not any(c[:3] == ["git", "worktree", "add"] for c in calls)
     assert not (tmp_path / "wt").exists()
@@ -2088,7 +2094,7 @@ def test_live_sibling_unstick_hint_targets_sibling_worktree(tmp_path: Path) -> N
     runner = _fake_runner(worktree_list=_siblings_porcelain(sib))
     with pytest.raises(fw._DuplicateClaim) as exc:
         _run(tmp_path, main, runner=runner)
-    assert f"cd {sib} && /flow recover FT-1" in str(exc.value)
+    assert f"cd {sib} && FLOW workspace repair FT-1" in str(exc.value)
 
 
 def test_cli_duplicate_claim_exits_4(tmp_path: Path, monkeypatch, capsys) -> None:
@@ -2170,7 +2176,7 @@ def test_bootstrap_proceeds_past_terminal_sibling_state(tmp_path: Path) -> None:
 
 
 def test_bootstrap_refuses_corrupt_sibling_lock(tmp_path: Path) -> None:
-    # unconfirmable ownership (possibly live): refuse, and point at /flow recover.
+    # unconfirmable ownership (possibly live): refuse, and point at FLOW workspace repair.
     main = _main_checkout(tmp_path)
     sib, td = _sibling_ticket_dir(tmp_path)
     lease.run_lock_path(td).write_text("{not json", encoding="utf-8")
@@ -2178,7 +2184,7 @@ def test_bootstrap_refuses_corrupt_sibling_lock(tmp_path: Path) -> None:
         _run(tmp_path, main, runner=_fake_runner(worktree_list=_siblings_porcelain(sib)))
     msg = str(exc.value)
     assert "corrupt" in msg
-    assert "recover" in msg
+    assert "workspace repair" in msg
 
 
 def test_bootstrap_no_siblings_creates_claim_file(tmp_path: Path) -> None:
@@ -2456,8 +2462,8 @@ def test_locate_existing_worktree(tmp_path: Path) -> None:
         ticket="FT-1", branch="feat/FT-1-thing", main_root=main, runner=runner
     )
     assert result == {"worktree": str(wt), "reseeded": False}
-    assert (wt / ".flow" / "flow").stat().st_mode & 0o111
-    assert (wt / ".flow" / "skill_dir").read_text(encoding="utf-8").strip() == str(
+    assert (wt / ".flow" / "runtime" / "flow").stat().st_mode & 0o111
+    assert (wt / ".flow" / "runtime" / "skill-root").read_text(encoding="utf-8").strip() == str(
         Path(fw.__file__).resolve().parent.parent
     )
     # LOCATE never adds a worktree
@@ -2492,8 +2498,8 @@ def test_reseed_when_externally_removed(tmp_path: Path) -> None:
     assert (wt / ".claude" / "settings.json").exists()
     # flow config ensured + memory redirect written
     assert (wt / ".flow" / "workspace.toml").exists()
-    assert (wt / ".flow" / "memory-root").read_text(encoding="utf-8").strip() == str(
-        main.resolve() / ".flow"
+    assert (wt / ".flow" / "runtime" / "memory-root").read_text(encoding="utf-8").strip() == str(
+        main.resolve() / ".flow" / "memory"
     )
 
 
@@ -2533,7 +2539,9 @@ def test_reseed_memory_redirect_honors_main_memory_root(tmp_path: Path) -> None:
     )
     wt = Path(result["worktree"])
     assert result["reseeded"] is True
-    assert (wt / ".flow" / "memory-root").read_text(encoding="utf-8").strip() == str(shared)
+    assert (wt / ".flow" / "runtime" / "memory-root").read_text(encoding="utf-8").strip() == str(
+        shared / "memory"
+    )
 
 
 def test_locate_or_reseed_cli_locate(tmp_path: Path, monkeypatch, capsys) -> None:

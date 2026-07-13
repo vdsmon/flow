@@ -17,7 +17,9 @@ import flow_launcher
 def _workspace(tmp_path: Path) -> Path:
     root = tmp_path / "workspace with spaces"
     (root / ".flow").mkdir(parents=True)
-    (root / ".flow" / "workspace.toml").write_text("[tracker]\n", encoding="utf-8")
+    (root / ".flow" / "workspace.toml").write_text(
+        '[tracker]\n[memory]\nnamespace = "demo"\n', encoding="utf-8"
+    )
     return root
 
 
@@ -45,7 +47,7 @@ def test_install_is_idempotent_and_executable(tmp_path: Path) -> None:
     flow_launcher.install(root, skill_dir=skill)
     assert shim.read_bytes() == first
     assert stat.S_IMODE(shim.stat().st_mode) == 0o755
-    assert (root / ".flow" / "skill_dir").read_text(encoding="utf-8").strip() == str(
+    assert (root / ".flow" / "runtime" / "skill-root").read_text(encoding="utf-8").strip() == str(
         skill.resolve()
     )
 
@@ -62,7 +64,12 @@ def test_install_uses_atomic_replacement_for_both_files(tmp_path: Path, monkeypa
 
     monkeypatch.setattr(_atomicio.os, "replace", recording_replace)
     flow_launcher.install(root, skill_dir=skill)
-    assert replaced == [root / ".flow" / "skill_dir", root / ".flow" / "flow"]
+    assert replaced == [
+        root / ".flow" / "runtime" / "memory-root",
+        root / ".flow" / "runtime" / "layout-version",
+        root / ".flow" / "runtime" / "skill-root",
+        root / ".flow" / "runtime" / "flow",
+    ]
 
 
 @pytest.mark.parametrize("harness", [None, "claude-code"])
@@ -182,7 +189,9 @@ def test_codex_cache_upgrade_does_not_break_installed_workspace_launcher(
     root = _workspace(tmp_path)
     _, cache, target = _codex_marketplace_skill(tmp_path)
     _, shim = flow_launcher.install(root, skill_dir=cache)
-    assert (root / ".flow" / "skill_dir").read_text(encoding="utf-8") == str(target) + "\n"
+    assert (root / ".flow" / "runtime" / "skill-root").read_text(encoding="utf-8") == str(
+        target
+    ) + "\n"
 
     cache.parents[2].rename(cache.parents[2].with_name("removed old version"))
     result = subprocess.run([str(shim), "status"], capture_output=True, text=True, check=False)
@@ -298,7 +307,9 @@ def test_shim_preserves_trailing_space_in_skill_path(tmp_path: Path) -> None:
     )
 
     assert result.returncode == 0, result.stderr
-    assert (root / ".flow" / "skill_dir").read_text(encoding="utf-8") == str(skill.resolve()) + "\n"
+    assert (root / ".flow" / "runtime" / "skill-root").read_text(encoding="utf-8") == str(
+        skill.resolve()
+    ) + "\n"
 
 
 def test_shim_propagates_exact_child_exit_code(tmp_path: Path) -> None:
@@ -309,42 +320,42 @@ def test_shim_propagates_exact_child_exit_code(tmp_path: Path) -> None:
     assert result.returncode == 37
 
 
-def test_shim_reports_legacy_workspace_without_skill_dir(tmp_path: Path) -> None:
+def test_shim_reports_workspace_without_skill_root(tmp_path: Path) -> None:
     root = _workspace(tmp_path)
     skill = _fixture_skill(tmp_path, "")
     _, shim = flow_launcher.install(root, skill_dir=skill)
-    (root / ".flow" / "skill_dir").unlink()
+    (root / ".flow" / "runtime" / "skill-root").unlink()
     result = subprocess.run([str(shim), "status"], capture_output=True, text=True, check=False)
     assert result.returncode == 1
-    assert "legacy workspace" in result.stderr
-    assert "init --reconfigure" in result.stderr
+    assert "no .flow/runtime/skill-root" in result.stderr
+    assert "workspace setup" in result.stderr
 
 
 def test_shim_reports_stale_skill_path_without_searching(tmp_path: Path) -> None:
     root = _workspace(tmp_path)
     skill = _fixture_skill(tmp_path, "")
     _, shim = flow_launcher.install(root, skill_dir=skill)
-    (root / ".flow" / "skill_dir").write_text(
+    (root / ".flow" / "runtime" / "skill-root").write_text(
         str(tmp_path / "missing skill") + "\n", encoding="utf-8"
     )
     result = subprocess.run([str(shim), "status"], capture_output=True, text=True, check=False)
     assert result.returncode == 1
     assert "does not exist" in result.stderr
     assert "missing skill" in result.stderr
-    assert "init --reconfigure" in result.stderr
+    assert "workspace setup" in result.stderr
 
 
 def test_shim_reports_non_utf8_skill_metadata_without_traceback(tmp_path: Path) -> None:
     root = _workspace(tmp_path)
     skill = _fixture_skill(tmp_path, "")
     _, shim = flow_launcher.install(root, skill_dir=skill)
-    (root / ".flow" / "skill_dir").write_bytes(b"/invalid/\xff\n")
+    (root / ".flow" / "runtime" / "skill-root").write_bytes(b"/invalid/\xff\n")
 
     result = subprocess.run([str(shim), "status"], capture_output=True, text=True, check=False)
 
     assert result.returncode == 1
     assert "cannot read" in result.stderr
-    assert "init --reconfigure" in result.stderr
+    assert "workspace setup" in result.stderr
     assert "Traceback" not in result.stderr
 
 
@@ -352,19 +363,19 @@ def test_shim_reports_invalid_skill_path_without_traceback(tmp_path: Path) -> No
     root = _workspace(tmp_path)
     skill = _fixture_skill(tmp_path, "")
     _, shim = flow_launcher.install(root, skill_dir=skill)
-    (root / ".flow" / "skill_dir").write_bytes(b"/invalid/\x00/path\n")
+    (root / ".flow" / "runtime" / "skill-root").write_bytes(b"/invalid/\x00/path\n")
 
     result = subprocess.run([str(shim), "status"], capture_output=True, text=True, check=False)
 
     assert result.returncode == 1
     assert "invalid path" in result.stderr
-    assert "init --reconfigure" in result.stderr
+    assert "workspace setup" in result.stderr
     assert "Traceback" not in result.stderr
 
 
 def test_launcher_cli_requires_initialized_workspace(tmp_path: Path, capsys) -> None:
     assert flow_launcher.cli_main(["--workspace-root", str(tmp_path)]) == 1
-    assert "init --reconfigure" in capsys.readouterr().err
+    assert "workspace setup" in capsys.readouterr().err
 
 
 def test_launcher_cli_repairs_legacy_workspace_from_executing_install(
@@ -377,7 +388,7 @@ def test_launcher_cli_repairs_legacy_workspace_from_executing_install(
     monkeypatch.setenv("CLAUDE_SKILL_DIR", str(ambient))
 
     assert flow_launcher.cli_main(["--workspace-root", str(root)]) == 0
-    assert (root / ".flow" / "skill_dir").read_text(encoding="utf-8") == (
+    assert (root / ".flow" / "runtime" / "skill-root").read_text(encoding="utf-8") == (
         str(executing.resolve()) + "\n"
     )
-    assert os.access(root / ".flow" / "flow", os.X_OK)
+    assert os.access(root / ".flow" / "runtime" / "flow", os.X_OK)

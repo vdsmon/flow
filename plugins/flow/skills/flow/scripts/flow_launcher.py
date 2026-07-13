@@ -1,4 +1,4 @@
-"""Install and repair the workspace-local ``.flow/flow`` command facade."""
+"""Install and repair the workspace-local ``.flow/runtime/flow`` facade."""
 
 from __future__ import annotations
 
@@ -8,13 +8,14 @@ import sys
 import tomllib
 from pathlib import Path
 
+import runtime_layout
 from _atomicio import atomic_write_text
 from bundle_discover import HarnessError, flow_harness
 
 SKILL_ROOT = Path(__file__).resolve().parent.parent
 
 _SHIM = r'''#!/usr/bin/env python3
-"""Generated Flow workspace launcher. Re-run /flow init --reconfigure to replace."""
+"""Generated Flow workspace launcher. Re-run Flow workspace setup to replace."""
 
 from __future__ import annotations
 
@@ -29,48 +30,57 @@ def _fail(message: str) -> int:
 
 
 def main() -> int:
-    flow_dir = Path(__file__).resolve().parent
+    runtime_dir = Path(__file__).resolve().parent
+    flow_dir = runtime_dir.parent
     workspace_root = flow_dir.parent.resolve()
     workspace_toml = flow_dir / "workspace.toml"
     if not workspace_toml.is_file():
         return _fail(
-            f"workspace config is missing at {workspace_toml}; run /flow init --reconfigure"
+            f"workspace config is missing at {workspace_toml}; run Flow workspace setup"
         )
 
-    skill_file = flow_dir / "skill_dir"
+    version_file = runtime_dir / "layout-version"
+    try:
+        version = version_file.read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeError) as exc:
+        return _fail(f"cannot read {version_file}: {exc}; run Flow workspace setup")
+    if version != "2":
+        return _fail(f"unsupported runtime layout {version!r}; run Flow workspace setup")
+
+    skill_file = runtime_dir / "skill-root"
     if not skill_file.is_file():
         return _fail(
-            "this legacy workspace has no .flow/skill_dir; run /flow init --reconfigure"
+            "this workspace has no .flow/runtime/skill-root; run Flow workspace setup"
         )
     try:
         # ``skill_dir`` is a one-line machine path. Remove only the record
         # terminator: spaces are legal POSIX path characters and must survive.
         raw_skill_dir = skill_file.read_text(encoding="utf-8").strip("\r\n")
     except (OSError, UnicodeError) as exc:
-        return _fail(f"cannot read {skill_file}: {exc}; run /flow init --reconfigure")
+        return _fail(f"cannot read {skill_file}: {exc}; run Flow workspace setup")
     if not raw_skill_dir:
-        return _fail(f"{skill_file} is empty; run /flow init --reconfigure")
+        return _fail(f"{skill_file} is empty; run Flow workspace setup")
     if "\x00" in raw_skill_dir:
         return _fail(
-            f"{skill_file} contains an invalid path (NUL byte); run /flow init --reconfigure"
+            f"{skill_file} contains an invalid path (NUL byte); run Flow workspace setup"
         )
 
     try:
         skill_dir = Path(raw_skill_dir).expanduser()
     except (OSError, RuntimeError, ValueError) as exc:
-        return _fail(f"{skill_file} contains an invalid path: {exc}; run /flow init --reconfigure")
+        return _fail(f"{skill_file} contains an invalid path: {exc}; run Flow workspace setup")
     if not skill_dir.is_absolute():
-        return _fail(f"{skill_file} must contain an absolute path; run /flow init --reconfigure")
+        return _fail(f"{skill_file} must contain an absolute path; run Flow workspace setup")
     if not skill_dir.is_dir():
         return _fail(
             f"Flow skill directory from {skill_file} does not exist: {skill_dir}; "
-            "run /flow init --reconfigure"
+            "run Flow workspace setup"
         )
 
     flowctl = skill_dir / "scripts" / "flowctl.py"
     if not flowctl.is_file():
         return _fail(
-            f"Flow installation is missing {flowctl}; update Flow and run /flow init --reconfigure"
+            f"Flow installation is missing {flowctl}; update Flow and run Flow workspace setup"
         )
 
     os.environ["FLOW_SKILL_DIR"] = str(skill_dir)
@@ -193,8 +203,13 @@ def executing_skill_dir() -> Path:
     return Path(stabilize_skill_dir(str(SKILL_ROOT))).expanduser().resolve()
 
 
-def install(workspace_root: Path, *, skill_dir: Path | None = None) -> tuple[Path, Path]:
-    """Install ``skill_dir`` and the shim, atomically replacing each file."""
+def install(
+    workspace_root: Path,
+    *,
+    skill_dir: Path | None = None,
+    memory_base: Path | None = None,
+) -> tuple[Path, Path]:
+    """Migrate layout v2, then atomically install ``skill_dir`` and the shim."""
     root = workspace_root.expanduser().resolve()
     resolved_skill = Path(stabilize_skill_dir(str(skill_dir or executing_skill_dir()))).resolve()
     if not resolved_skill.is_dir():
@@ -202,10 +217,9 @@ def install(workspace_root: Path, *, skill_dir: Path | None = None) -> tuple[Pat
     flowctl = resolved_skill / "scripts" / "flowctl.py"
     if not flowctl.is_file():
         raise FileNotFoundError(f"Flow installation is missing {flowctl}")
-    flow_dir = root / ".flow"
-    flow_dir.mkdir(parents=True, exist_ok=True)
-    skill_path = flow_dir / "skill_dir"
-    shim_path = flow_dir / "flow"
+    layout = runtime_layout.ensure_layout(root, memory_base=memory_base)
+    skill_path = layout.skill_root_file
+    shim_path = layout.launcher
     atomic_write_text(skill_path, str(resolved_skill) + "\n")
     atomic_write_text(shim_path, _SHIM, mode=0o755)
     return skill_path, shim_path
@@ -223,12 +237,12 @@ def cli_main(argv: list[str]) -> int:
     if not (root / ".flow" / "workspace.toml").is_file():
         sys.stderr.write(
             f"flow-launcher: no workspace.toml at {root / '.flow' / 'workspace.toml'}; "
-            "run /flow init --reconfigure\n"
+            "run Flow workspace setup\n"
         )
         return 1
     try:
         install(root)
-    except (OSError, HarnessError) as exc:
+    except (OSError, HarnessError, runtime_layout.RuntimeLayoutError) as exc:
         sys.stderr.write(f"flow-launcher: install failed: {exc}\n")
         return 1
     return 0

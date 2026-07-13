@@ -97,5 +97,5 @@ def test_version_workflow_stamps_and_commits_codex_manifest() -> None:
 
 def test_repository_ignores_generated_workspace_launcher_files() -> None:
     lines = ROOT_GITIGNORE.read_text(encoding="utf-8").splitlines()
-    assert "**/.flow/flow" in lines
-    assert "**/.flow/skill_dir" in lines
+    assert "**/.flow/runtime/" in lines
+    assert "**/.flow/memory/" in lines
