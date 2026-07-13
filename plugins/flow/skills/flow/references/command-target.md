@@ -160,6 +160,13 @@ force operation.
   on an open PR. Reject it on an active approved run and on terminal delivery.
 - `--together` requests one coherent grouped run. All targets must be fresh, live,
   distinct, non-epic tickets with verified coupling.
+- `--route "<profile>=<harness>,<model>,<effort>"` overrides one complete agent
+  route for this run. It is repeatable, cannot partially inherit fields, and is
+  frozen into the route snapshot at bootstrap. The public harness names are
+  `claude_code` and `codex`. It is valid only while starting a fresh target; reject
+  it after the lifecycle reducer selects resume, repair, revise, show, or a terminal
+  action. This increment records planner and assessor overrides as shadow provenance;
+  the cross-harness planning increment activates them before approval.
 
 For multiple targets without `--together`, attended mode asks whether to deliver
 sequentially or as one coherent group. Unattended mode errors because that choice

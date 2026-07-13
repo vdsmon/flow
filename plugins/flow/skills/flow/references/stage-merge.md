@@ -30,7 +30,11 @@ Branch on the verdict:
 
 ## 2. Independent guard-property review (hot beads only)
 
-A `hot` bead touches a guard / safety-machinery file. Before merging it, spawn a **fresh, independent reviewer** — NOT the agent that wrote the change — with the `Agent` tool (`subagent_type: general-purpose`), prompted to REFUTE:
+A `hot` bead touches a guard / safety-machinery file. Resolve the
+`guard_reviewer` profile from the frozen snapshot, then spawn a **fresh, independent
+reviewer** that is not the agent that wrote the change. Apply
+`references/delivery-loop.md`'s structured launch and attestation contract before
+prompting it to REFUTE:
 
 > Review this PR diff for the evolve self-target. Question: does it DELETE or WEAKEN any safety property — lease exclusivity (one run per ticket), snapshot drift-detection, atomic-write + corrupt-file quarantine, content-ownership refusal, or self-edit flock serialization? Guard *code* may be refactored/sped up freely; a guard *property* may only be replaced by a provably-equivalent one, never dropped. Default to "property removed" when uncertain. Return a verdict: `{property_removed: bool, which: str, why: str}`. Diff:
 > ```

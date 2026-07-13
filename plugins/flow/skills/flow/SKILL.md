@@ -94,7 +94,7 @@ The complete public grammar is generated from the registry:
 <!-- flow:public-grammar:begin -->
 ```text
 FLOW
-FLOW <target> [<target> ...] [--unattended] [--together] [--verify express|light|full] [--e2e <recipe>] [--request <additional-intent>]
+FLOW <target> [<target> ...] [--unattended] [--together] [--verify express|light|full] [--e2e <recipe>] [--request <additional-intent>] [--route <profile=harness,model,effort>]...
 FLOW ticket create [--request <problem>]
 FLOW ticket group (<ticket> ... | --mine) [--state open]
 FLOW ticket split <ticket>
@@ -223,9 +223,10 @@ Parse the returned branches structurally: `{"done": true}` is complete, while
 stop. Otherwise expect a handler descriptor with `stage`, `handler_type`, `head_sha`,
 `ticket_dir`, `output_path`, and `roles`. If `descriptor.roles` includes `"records_diff_baseline"`,
 capture the owned-file baseline before the handler. When
-`descriptor.roles` includes `"model_routed"`, resolve the adapter's supported model
-hint. Track `model_pin_applied` from whether the host actually accepted that hint, not
-from whether resolution returned a value.
+`descriptor.roles` includes `"agent_routed"`, resolve the frozen profile from the
+run's route snapshot. A desired route becomes active only after the host returns a
+structured native launch acceptance for its exact model and effort. Codex post-plan
+routes remain shadowed and inherit the owner model in this increment.
 
 Every independent stage-agent prompt includes these exact rooted fields. The agent
 applies the call-local `FLOW_HARNESS` selector to the bound absolute `facade`:
@@ -241,8 +242,8 @@ Artifact path: <absolute output_path>
 ```
 
 Handlers may be inline, independent subagents, installed skills, or no-ops. Claude
-Code may honor a configured Claude model hint. Codex collaboration agents inherit the
-active model; never pass them a Claude model name. Every agent receives absolute
+Code may honor an exact configured model and effort after structured acceptance.
+Codex collaboration agents inherit the active model in this increment. Every agent receives absolute
 workspace, skill, ticket, reference, and artifact paths plus the harness identity.
 Read `references/delivery-loop.md` before starting or continuing a run.
 

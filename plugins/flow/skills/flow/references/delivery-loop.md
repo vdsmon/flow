@@ -75,10 +75,34 @@ Artifact path: <absolute output_path>
 State that inherited cwd is non-authoritative, every repository operation stays
 beneath the workspace, and every facade call applies the call-local `FLOW_HARNESS`
 selector to the absolute bound `facade`.
-Claude Code may apply a non-empty supported model hint. Codex and generic adapters
-that do not accept Claude names omit it and inherit their active model.
-Record `model_pin_applied` only when the host accepted the requested hint. Codex
-does not retry merely because a resolver produced a Claude model name.
+
+When `descriptor.roles` includes `"agent_routed"`, resolve its frozen profile from
+`$TICKET_DIR/route-snapshot.json` through the facade. `implement` maps to
+`implementer`; `e2e` maps to `e2e`:
+
+```bash
+FLOW_HARNESS="<harness>" "<facade>" agent-route resolve \
+  --snapshot "$TICKET_DIR/route-snapshot.json" --profile "<profile>"
+```
+
+An `activation: pending` Claude Code route supplies the exact desired model and
+effort to the native launch. Capture the native tool request and response as JSON;
+never use the worker's prose as acceptance evidence. Attest and persist it:
+
+```bash
+FLOW_HARNESS="<harness>" "<facade>" agent-route attest \
+  --snapshot "$TICKET_DIR/route-snapshot.json" --profile "<profile>" \
+  --acceptance-from "<absolute-acceptance-json>" \
+  --output "$TICKET_DIR/stages/<stage>.route.json"
+```
+
+Only an `active` receipt proves exact execution. A `shadow` Codex, generic, or
+cross-harness route launches through the existing owner-native path with no model or
+effort selector and records the shadow receipt. Codex does not retry merely because
+a desired route stayed shadowed. A `legacy` route follows
+`model_resolve.py` unchanged, including lane skips, OFF, fail-open reads, and Codex
+inheritance. A missing route snapshot identifies a pre-upgrade run and takes the
+same legacy path.
 
 Capture the complete returned report at the exact absolute artifact path before
 advancing. Prefer the host's exact-write primitive. If unavailable, use a

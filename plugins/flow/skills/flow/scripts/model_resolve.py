@@ -1,7 +1,11 @@
-"""Resolve the per-stage subagent model for a run (opus plans, sonnet writes).
+"""Preserve the standalone legacy ``[models]`` resolver contract.
 
-Pure, stdlib-only. Prints the model to pin on a given stage's subagent (typically BELOW the opus
-session model), or nothing when the caller should inherit the session model.
+New runs use ``agent_routes.py``. This wrapper remains for pre-snapshot runs and workspaces that
+have not selected explicit ``[agents]`` routing. It deliberately does not parse, inherit from, or
+coerce an AgentRoute.
+
+Pure, stdlib-only. Prints the model to pin on a given stage's subagent, or nothing when the caller
+should inherit the session model.
 
 The disposition is ON BY DEFAULT: on a full-lane run each routable stage downshifts to `sonnet`
 unless a workspace overrides or disables it. Routable stages (the ones that spawn a subagent) and

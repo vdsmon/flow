@@ -28,18 +28,71 @@ worker_model = "opus"
 # every PR; the floor was pure friction). Merge-time guard-property review + CI gate.
 adjudicate_hot = true
 
-# opus plans, sonnet writes is ON BY DEFAULT (scripts/model_resolve.py): a full-lane
-# run's routable stages (implement, e2e, code_review, review_loop) drop to sonnet while
-# planning / the --auto ship gate / non-routable stages stay on the opus session
-# ([evolve] worker_model). No [models] block needed to get it. Each key below is a
-# routable stage -> the model to pin (or "off" to inherit the session for that stage).
+# Explicit routes are desired execution contracts. Flow records the selected route and
+# requires structured native launch acceptance before calling it active. Planner routes
+# remain shadowed until the planning-loop increment; current Codex post-plan launches
+# inherit the owner model and remain visibly shadowed.
+[agents.planner]
+harness = "codex"
+model = "gpt-5.6-sol"
+effort = "xhigh"
 
-# Maintainer preference: code-writing / self-editing stages pin to opus instead of the
-# default sonnet downshift (implement here can self-edit the harness, so keep it strong);
-# work_model is the deprecated global fallback covering the routable stages without a
-# per-stage key. e2e only runs and observes the change (it doesn't self-edit), so it
-# rides the cheaper sonnet tier via the per-stage override. worker_model above stays the
-# session model for spawned runs.
+[agents.plan_assessor]
+harness = "claude_code"
+model = "opus"
+effort = "high"
+
+[agents.implementer.by_owner.claude_code]
+harness = "claude_code"
+model = "sonnet"
+effort = "high"
+
+[agents.implementer.by_owner.codex]
+harness = "codex"
+model = "gpt-5.6-luna"
+effort = "high"
+
+[agents.e2e.by_owner.claude_code]
+harness = "claude_code"
+model = "sonnet"
+effort = "medium"
+
+[agents.e2e.by_owner.codex]
+harness = "codex"
+model = "gpt-5.6-luna"
+effort = "medium"
+
+[agents.diff_reviewer.by_owner.claude_code]
+harness = "claude_code"
+model = "opus"
+effort = "high"
+
+[agents.diff_reviewer.by_owner.codex]
+harness = "codex"
+model = "gpt-5.6-sol"
+effort = "high"
+
+[agents.guard_reviewer.by_owner.claude_code]
+harness = "claude_code"
+model = "opus"
+effort = "high"
+
+[agents.guard_reviewer.by_owner.codex]
+harness = "codex"
+model = "gpt-5.6-sol"
+effort = "high"
+
+[agents.revision_fixer.by_owner.claude_code]
+harness = "claude_code"
+model = "sonnet"
+effort = "high"
+
+[agents.revision_fixer.by_owner.codex]
+harness = "codex"
+model = "gpt-5.6-luna"
+effort = "high"
+
+# Removing [agents] restores the standalone legacy resolver during rollback.
 [models]
 work_model = "opus"   # deprecated global fallback -> implement, code_review, review_loop
 e2e = "sonnet"        # per-stage override wins over work_model

@@ -171,6 +171,21 @@ def test_seeds_plan_completed_with_output_path(tmp_path: Path) -> None:
     assert ts.stages["ticket"].status == "pending"
 
 
+def test_bootstrap_seeds_frozen_route_snapshot_before_return(tmp_path: Path) -> None:
+    main = _main_checkout(tmp_path)
+    res = _run(
+        tmp_path,
+        main,
+        owner_harness="claude-code",
+        route_overrides=["implementer=claude_code,opus,high"],
+    )
+    route_path = Path(res["worktree"]) / ".flow" / "runs" / "FT-1" / "route-snapshot.json"
+    snapshot = json.loads(route_path.read_text(encoding="utf-8"))
+    assert snapshot["owner_harness"] == "claude_code"
+    assert snapshot["routes"]["implementer"]["desired"]["model"] == "opus"
+    assert res["route_digest"] == snapshot["digest"]
+
+
 def test_copies_gitignored_config(tmp_path: Path) -> None:
     main = _main_checkout(tmp_path)
     res = _run(tmp_path, main)

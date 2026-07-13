@@ -19,7 +19,9 @@ Validates:
 8. `required = true` stages appear.
 9. `required_when_compounding = true` stages appear iff
    `[memory] compounding = true`.
-10. `[memory]`: `namespace` string; `compounding` bool; `auto_recall` bool;
+10. Optional `[agents]`: complete routes, valid public harnesses, and common XOR
+    `by_owner` profile shape.
+11. `[memory]`: `namespace` string; `compounding` bool; `auto_recall` bool;
     `recall_by` list[str]; `recall_top_n` int.
 """
 
@@ -32,6 +34,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import agent_routes
 from _registry import HANDLER_RE, StageEntry, load_registry
 from model_resolve import OFF_VALUES
 
@@ -117,6 +120,13 @@ def _validate_forge_block(data: dict[str, Any], result: ValidationResult) -> Non
             for key in ("workspace", "repo_slug"):
                 if not isinstance(bb.get(key), str) or not bb[key]:
                     result.add(f"forge.bitbucket.{key}", "missing or not a non-empty string")
+
+
+def _validate_agent_routes(data: dict[str, Any], result: ValidationResult) -> None:
+    for message in agent_routes.configuration_errors(data):
+        result.add("agents", message)
+    if isinstance(data.get("agents"), dict) and isinstance(data.get("models"), dict):
+        result.warn("models", "ignored while explicit [agents] routing mode is present")
 
 
 def _parse_stages(pipeline: dict[str, Any], result: ValidationResult) -> list[str] | None:
@@ -337,6 +347,7 @@ def validate(
 
     backend = _validate_tracker_block(data, result)
     _validate_forge_block(data, result)
+    _validate_agent_routes(data, result)
     compounding = _validate_memory_block(data, result)
 
     registry = stage_registry or load_registry(_stage_registry_path())

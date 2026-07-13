@@ -73,6 +73,17 @@ def test_work_model_fallback_applies_to_all_routable(tmp_path: Path) -> None:
         assert _resolve(ws, stage) == "opus", stage
 
 
+def test_explicit_agents_do_not_coerce_or_change_legacy_wrapper(tmp_path: Path) -> None:
+    ws = _make_workspace(tmp_path, models_lines=['work_model = "opus"'])
+    path = ws / ".flow" / "workspace.toml"
+    path.write_text(
+        path.read_text(encoding="utf-8")
+        + '\n[agents.implementer]\nharness = "claude_code"\nmodel = "sonnet"\neffort = "high"\n',
+        encoding="utf-8",
+    )
+    assert _resolve(ws, "implement") == "opus"
+
+
 def test_per_stage_pin_wins_over_work_model(tmp_path: Path) -> None:
     ws = _make_workspace(tmp_path, models_lines=['work_model = "opus"', 'e2e = "sonnet"'])
     assert _resolve(ws, "implement") == "opus"  # falls back to work_model
