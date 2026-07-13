@@ -1,4 +1,4 @@
-"""/flow recover: inspect + remediate a broken per-ticket run.
+"""FLOW workspace repair: inspect + remediate a broken per-ticket run.
 
 Operates only on <workspace_root>/.flow/runs/<ticket>/. Reuses state, lease,
 snapshot. `detect` never mutates; the other subcommands do the narrow,
@@ -182,7 +182,9 @@ def reload_snapshot(workspace_root: Path, ticket: str) -> tuple[int, dict[str, A
 
 
 def cli_main(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(description="/flow recover: inspect + remediate a run.")
+    parser = argparse.ArgumentParser(
+        description="FLOW workspace repair: inspect + remediate a run."
+    )
     sub = parser.add_subparsers(dest="cmd", required=True)
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--ticket", required=True)

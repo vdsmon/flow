@@ -1,10 +1,10 @@
-"""/flow triage: surface the deferred queue + each bead's open-question comment.
+"""bare FLOW cockpit: surface the deferred queue + each bead's open-question comment.
 
 Read-only. Lists every `deferred` bead (whole queue, unscoped by assignee) PLUS
 `blocked` beads whose comments carry the defer stem (decided-mode hot blocks),
 each with the last "could not self-approve" defer comment inline, so a human can
 answer it and reopen via the tracker_cli seams (the reopen mutation lives in
-verb-triage.md, not here). Deferred is a beads-native concept; non-beads
+command-target.md, not here). Deferred is a beads-native concept; non-beads
 backends short-circuit. Every row is tagged with its queue (`evolve` when the
 bead carries the evolve label, else `day-job`); `--ready` opt-in adds the ready
 queues via one extra `bd ready` call.
@@ -30,7 +30,7 @@ from _workspace import WorkspaceConfigError, load_workspace_toml
 from tracker_beads import BeadsAdapter
 from tracker_cli import _read_tracker_config, _WorkspaceConfigError
 
-# The defer comment stem written by the `--auto` path (verb-spec.md). Both the
+# The defer comment stem written by the `--auto` path (delivery-plan.md). Both the
 # template form `... self-approve:` and the in-the-wild `... self-approve (HOT...`
 # share this prefix, so we match on the stem and accept whatever follows.
 _DEFER_STEM = "flow --auto could not self-approve"
@@ -42,7 +42,7 @@ _DEFER_STEM = "flow --auto could not self-approve"
 _DECISION_RE = re.compile(r"^(?:MAINTAINER\s+)?(?:TRIAGE-)?DECISION\b[^:\n]*:")
 
 # Guard set for hot-change classification (self-contained; not shared with
-# verb-evolve.md prose). A change touching any of these basenames is hot: it
+# command-maintain.md prose). A change touching any of these basenames is hot: it
 # must not blind-ship from a decided-mode --auto run, even if the bead carries
 # no `hot` label.
 _GUARD_FILES = frozenset(
@@ -104,7 +104,7 @@ def adjudicate_hot(workspace_root: Path) -> bool:
     Only an explicit `True` enables it; an absent key/section/file (and any read
     error) reads as off, the conservative side. Sibling of `advisor_adjudicates`.
 
-    Lifting the floor removes BOTH the verb-spec step 5.3 `proceed`->`block`
+    Lifting the floor removes BOTH the delivery-plan `proceed`->`block`
     downgrade and the flow_worktree bootstrap refusal. The remaining gates still
     hold: advisor adjudication rules on the fork, and the merge-time
     guard-property review plus CI back-stop every hot landing.
@@ -363,7 +363,7 @@ def _resolve_config(workspace_root: Path) -> tuple[dict[str, Any] | None, int]:
     config error). config is set with exit_code 0 on success.
     """
     if not (workspace_root / ".flow").is_dir():
-        sys.stderr.write("triage: workspace not initialized; run `/flow init`\n")
+        sys.stderr.write("triage: workspace not initialized; run `FLOW workspace setup`\n")
         return None, 1
     try:
         config = _read_tracker_config(workspace_root)
@@ -445,7 +445,7 @@ def _default_to_list(argv: list[str]) -> list[str]:
 
 
 def cli_main(argv: list[str], runner: Any = None) -> int:
-    parser = argparse.ArgumentParser(description="/flow triage: list deferred beads.")
+    parser = argparse.ArgumentParser(description="bare FLOW cockpit: list deferred beads.")
     sub = parser.add_subparsers(dest="command")
 
     p_list = sub.add_parser("list", help="list deferred + decided-mode hot-block beads")

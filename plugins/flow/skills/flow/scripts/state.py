@@ -269,7 +269,7 @@ def finish_stage(
 def force_stage_status(ticket_dir: Path, stage: str, status: StageStatus) -> TicketState:
     """Recovery-only: force a stage to a given status, outside begin/finish.
 
-    Used by /flow recover to retry (-> pending), skip (-> completed), or reset a
+    Used by FLOW workspace repair to retry (-> pending), skip (-> completed), or reset a
     stage. Resetting to pending clears the stage's timestamps + failure detail so
     the retry starts clean.
     """

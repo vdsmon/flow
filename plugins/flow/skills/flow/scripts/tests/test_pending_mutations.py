@@ -111,7 +111,7 @@ def test_invalid_op_rejected(tmp_path: Path) -> None:
 
 def test_edit_op_rejected(tmp_path: Path) -> None:
     # Dropped from VALID_OPS: no adapter implements generic edit, so a queued
-    # edit could never be replayed by /flow sync.
+    # edit could never be replayed by FLOW workspace sync.
     with pytest.raises(pm._InvalidArgs):
         pm.append_mutation(
             tmp_path, ticket="FT-5", op="edit", args={"fields": {}}, intent_at=_INTENT

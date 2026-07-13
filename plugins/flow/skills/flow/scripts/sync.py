@@ -1,4 +1,4 @@
-"""/flow sync: reconcile failed tracker mutations against live tracker state.
+"""FLOW workspace sync: reconcile failed tracker mutations against live tracker state.
 
 Reads .flow/pending-mutations.jsonl (written by the commit-stage transition
 chokepoint, `tracker_cli.py transition --enqueue-on-transient`, on a transient
@@ -116,7 +116,7 @@ def reconcile(workspace_root: Path, tracker: _Tracker) -> dict[str, Any]:
             # excluded from the exit code) instead of dropping it silently.
             sys.stderr.write(
                 f"sync: parked {key} (op={op} is not replayable; remove via "
-                f".flow/flow pending-mutations --workspace-root . compact "
+                f".flow/runtime/flow pending-mutations --workspace-root . compact "
                 f"--drop-keys {key})\n"
             )
             parked.append(key)
@@ -151,7 +151,9 @@ def _build_tracker(workspace_root: Path) -> Any:
 
 
 def cli_main(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(description="/flow sync: drain pending tracker mutations.")
+    parser = argparse.ArgumentParser(
+        description="FLOW workspace sync: drain pending tracker mutations."
+    )
     parser.add_argument("--workspace-root", default=".")
     args = parser.parse_args(argv)
     workspace_root = Path(args.workspace_root).expanduser().resolve()

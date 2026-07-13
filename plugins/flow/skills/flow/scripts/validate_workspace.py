@@ -322,7 +322,7 @@ def validate(
     initialized = flow_dir / ".initialized"
 
     if not initialized.exists():
-        result.add(".flow/.initialized", "marker missing; run /flow init first")
+        result.add(".flow/.initialized", "marker missing; run FLOW workspace setup first")
         return result, None
 
     if not workspace_toml.exists():

@@ -349,7 +349,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         "--enqueue-on-transient",
         action="store_true",
         help="on a transient failure (exit 1), durably queue the transition to "
-        ".flow/pending-mutations.jsonl for /flow sync to reconcile.",
+        ".flow/pending-mutations.jsonl for FLOW workspace sync to reconcile.",
     )
 
     p_comment = sub.add_parser("comment", help="tracker.comment(key, body)")

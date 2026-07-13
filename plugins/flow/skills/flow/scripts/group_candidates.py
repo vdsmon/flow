@@ -1,8 +1,8 @@
-"""/flow group: candidate fetch + duplicate hints for run-level grouping.
+"""FLOW ticket group: candidate fetch + duplicate hints for run-level grouping.
 
 Read-only. Resolves a candidate ticket set (explicit keys, or the
 assigned-open selector), enriches each via ``tracker.get``, and emits a JSON
-bundle that the verb-group prose clusters into lead+covers proposals.
+bundle that the ticket-group prose clusters into lead+covers proposals.
 
 The clustering itself is judgment (shared files / deps / subsystem) and lives
 in the reference doc. This script owns only the deterministic half: fetch,

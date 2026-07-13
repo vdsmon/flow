@@ -2,8 +2,9 @@
 
 The drain loop reaps finished orphans, then asks this module: given the current `evolve_select`
 result plus the liveness of every in-flight run, should the loop LAUNCH the next batch, WAIT for a
-live run to settle, or is it DONE (nothing startable)? The loop itself (reap, fan out `claude --bg`,
-Monitor-wait) is prose in `references/verb-evolve.md` (§drain); this is the pure decision it
+live run to settle, or is it DONE (nothing startable)? The owner-session loop itself (reap, launch
+native collaboration workers, owner wait) is prose in `references/command-maintain.md` (§drain);
+this is the pure decision it
 consumes.
 
 The in-flight set is derived from the actual OPEN evolve PRs (plus any ready bead that is
@@ -28,14 +29,14 @@ reads "live" → the loop waits → it self-merges → the next turn's reap clea
 `hot_inflight` → the next batch launches.
 A corrupt lease blocks until a human runs `recover takeover`.
 
-A fourth termination guard is the STRANDED gate: a `/flow <key> --auto` run that died PRE-PR
+A fourth termination guard is the STRANDED gate: a `FLOW <key> --unattended` run that died PRE-PR
 (crash/zombie/OOM in plan or implement) strands its bead in_progress with a dirty orphan worktree
 but no lease and no PR, so every other channel reads it as gone and the loop would false-positive to
 "done". cli_main detects it (an in_progress evolve-scoped bead whose lease is non-live, that is not
 in `launched_pending`, and has NO PR open or merged) and feeds the key list to decide() as
 `stranded`; a non-empty `stranded` returns action "recover" (never "done"), and the loop reaps the
 dirty worktree + reopens the bead so the next turn relaunches it FRESH. See
-references/verb-evolve.md §drain (the recover branch).
+references/command-maintain.md §drain (the recover branch).
 
 Exit codes: 0 ok; 2 = a `bd`/`git`/`gh` call failed; 4 = not a maintainer setup.
 """

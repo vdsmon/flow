@@ -16,7 +16,9 @@ jobs:
       - uses: jdx/mise-action@v4
       - name: lint (ruff + ty)
         run: mise run lint
-      - name: test (pytest scripts + hooks)
+      - name: test (pytest scripts)
         run: mise run test
+      - name: public command registry check
+        run: mise run check:commands
       - name: prose↔CLI seam check
         run: mise exec -- python3 seam_check.py

@@ -1,8 +1,8 @@
 """Maintainer-mode detection for the self-evolution loop.
 
 Maintainer mode means this run may file machinery-friction beads into flow's OWN
-beads DB and run `/flow evolve`. Outside it (a normal user of the flow plugin),
-machinery friction stays dormant and `/flow evolve` is disabled.
+beads DB and run `FLOW maintain evolution`. Outside it (a normal user of the flow plugin),
+machinery friction stays dormant and `FLOW maintain evolution` is disabled.
 
 Two signals, by context:
 
@@ -76,7 +76,7 @@ def is_maintainer(workspace_root: Path) -> bool:
 def cli_main(argv: list[str]) -> int:
     """Print the maintainer repo root (exit 0) or nothing (exit 1, user mode).
 
-    The gate `/flow evolve` checks before running a cold audit.
+    The gate `FLOW maintain evolution` checks before running a cold audit.
     """
     import argparse
 

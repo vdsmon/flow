@@ -18,7 +18,7 @@ That bias is acceptable for personal-mode flow; work-mode users opt in to `skill
 
 1. Pull the implement-stage diff:
    ```bash
-   .flow/flow diff since-stage \
+   FLOW_HARNESS="<harness>" "<facade>" diff since-stage \
      --stage implement \
      --ticket <KEY> \
      --ticket-dir <ticket-dir> \
@@ -26,7 +26,7 @@ That bias is acceptable for personal-mode flow; work-mode users opt in to `skill
    ```
    - Exit 0 → JSON with `files_touched / insertions / deletions / binary`.
    - Exit 1 → no started_at_sha (implement didn't run).
-     Abort with status=failed; `/flow recover <KEY>` → `retry --stage implement`.
+     Abort with status=failed; `FLOW workspace repair <KEY>` → `retry --stage implement`.
    - Exit 2 → git error. Surface stderr.
 
    **Empty `files_touched` is expected, not "nothing to review".** `since-stage` diffs the committed range `started_at_sha..HEAD`, but implement leaves its work UNCOMMITTED (the commit stage runs later), so `started_at_sha == HEAD` and the committed range is empty. The real change is in the working tree. When `files_touched` is empty, get the actual file list from the working tree instead: `git diff HEAD --name-only` (or `git status --porcelain`). Only treat the stage as a genuine no-op if the working tree is also clean.
@@ -36,7 +36,7 @@ That bias is acceptable for personal-mode flow; work-mode users opt in to `skill
    - Obvious bugs (off-by-one, null-deref, missing await, etc.).
    - Regressions in nearby tests not updated by implement stage.
    - Style violations against existing file conventions.
-   - Comment bloat: run `.flow/flow lint-comments --diff-base <started_at_sha>` over the reviewed files first (same sha as step 1's diff range). Each finding is at minimum a Minor auto-fix; then flag any comment that violates the code-comment bar in `references/stage-implement.md` Step 4 (self-document first; WHY-only plus the workaround / invariant / dense-expression tail; wrapped to the configured line length; no AI tells). That bar overrides local file precedent: a new comment that restates the code or narrates the diff is a violation even if it matches a comment already sitting in the file.
+   - Comment bloat: run `FLOW_HARNESS="<harness>" "<facade>" lint-comments --diff-base <started_at_sha>` over the reviewed files first (same sha as step 1's diff range). Each finding is at minimum a Minor auto-fix; then flag any comment that violates the code-comment bar in `references/stage-implement.md` Step 4 (self-document first; WHY-only plus the workaround / invariant / dense-expression tail; wrapped to the configured line length; no AI tells). That bar overrides local file precedent: a new comment that restates the code or narrates the diff is a violation even if it matches a comment already sitting in the file.
    - Security-sensitive patterns (eval, raw SQL, missing escape).
 
    **Fowler smell baseline (always carried).** This baseline of high-signal refactoring smells rides even when the repo documents no standards; each smell reads what-it-is then how-to-fix, matched against the diff only.
@@ -76,20 +76,20 @@ That bias is acceptable for personal-mode flow; work-mode users opt in to `skill
 
    **Auto-fix confinement to `planned_files`.** The commit stage stages only `planned_files` from `baseline.json`; a fix touching a file outside that set does not ride into the commit. A finding whose fix would touch an out-of-set file is NOT auto-fixable: downgrade it to ask-user, or, if Critical, leave it unresolved (it fails the stage at the gate below — the correct rerun-implement escape hatch, not a `planned_files` widening here).
 
-   **Auto-fix edit-path discipline.** These edits follow the same "Inline-edit path discipline" as the review_loop fix edits (`references/verb-do.md`, flow-cjgy): a worktree-absolute (or worktree-relative) path only — a main-checkout-absolute path silently escapes the worktree and writes main. In a backgrounded `--auto` run the bg-isolation guard forces the heredoc/Bash string-replace fallback for these edits, same as any other inline write in that mode.
+   **Auto-fix edit-path discipline.** These edits follow the same "Inline-edit path discipline" as the review_loop fix edits (`references/delivery-loop.md`, flow-cjgy): a worktree-absolute (or worktree-relative) path only — a main-checkout-absolute path silently escapes the worktree and writes main. In a backgrounded unattended run the bg-isolation guard forces the heredoc/Bash string-replace fallback for these edits, same as any other inline write in that mode.
 
 5. **Plan-blind reader pass (full lane only).** A second review by a fresh mind that has never seen the plan, closing the residual planner-bias window this same context cannot: a flawed plan faithfully implemented reads clean to the reviewer who shares the planner's assumptions. It is a DISTINCT single pass, NOT a re-entry of step 4's loop — step 4's "re-assess ONCE" guards the biased context from iterating on itself, while a plan-blind reader is categorically a different reviewer. One inline pass + one reader pass = two single passes, no loop.
 
    **Gate on the lane — full only.** Read the run's lane from frontmatter and SKIP this entire step on the cheap lanes (`express` / `light`), which already traded away this depth:
    ```bash
-   LANE=$(.flow/flow frontmatter read .flow/tickets/<KEY>.md \
+   LANE=$(FLOW_HARNESS="<harness>" "<facade>" frontmatter read .flow/tickets/<KEY>.md \
      | python3 -c "import json,sys; print(json.load(sys.stdin).get('lane') or 'full')")
    ```
    Run the reader only when `LANE` is `full` (absent frontmatter reads as `full`). Gate on the LANE, never on `model_resolve.py`'s output: a full-lane run whose `code_review` model is opted out returns an empty model yet still carries the full planner-bias window, so it still gets a reader. Every full-lane run gets one; the model is a separate question.
 
-   **Model — cheap by default, the `model_resolve.py` idiom.** Resolve the reader's model exactly as the implement stage pins its worker (`references/verb-do.md`), passing this stage's name:
+   **Model — cheap by default, the `model_resolve.py` idiom.** Resolve the reader's model exactly as the implement stage pins its worker (`references/delivery-loop.md`), passing this stage's name:
    ```bash
-   M=$(.flow/flow model --workspace-root . --ticket <KEY> --stage code_review)
+   M=$(FLOW_HARNESS="<harness>" "<facade>" model --workspace-root . --ticket <KEY> --stage code_review)
    ```
    Pass `model=$M` only when it is non-empty and the adapter accepts Claude model
    names. Codex omits it and inherits the active model. A configured `off` also omits
@@ -114,7 +114,7 @@ That bias is acceptable for personal-mode flow; work-mode users opt in to `skill
 
 ## Outputs
 
-- `$TICKET_DIR/stages/code_review.out` — the classified findings, one section per decision owner. Written via the same quoted-heredoc pattern as `pr_body.md` (sentinel `FLOW_OUT_SENTINEL_9f3a`, see `references/verb-do.md`), then `--output-path "$TICKET_DIR/stages/code_review.out"` is passed on `advance`. First line is the marker `<!-- flow:code_review-taxonomy v1 -->` (flow's `<!-- SYNC: ... -->` HTML-comment idiom) — the signal `create_pr` uses to distinguish this taxonomy from a `skill:<name>` handler's free-form `.out`.
+- `$TICKET_DIR/stages/code_review.out` — the classified findings, one section per decision owner. Written via the same quoted-heredoc pattern as `pr_body.md` (sentinel `FLOW_OUT_SENTINEL_9f3a`, see `references/delivery-loop.md`), then `--output-path "$TICKET_DIR/stages/code_review.out"` is passed on `advance`. First line is the marker `<!-- flow:code_review-taxonomy v1 -->` (flow's `<!-- SYNC: ... -->` HTML-comment idiom) — the signal `create_pr` uses to distinguish this taxonomy from a `skill:<name>` handler's free-form `.out`.
 
   ```
   <!-- flow:code_review-taxonomy v1 -->

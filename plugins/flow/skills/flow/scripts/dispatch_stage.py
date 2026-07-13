@@ -1,4 +1,4 @@
-"""State-machine driver for /flow do <ticket>.
+"""State-machine driver for Flow target delivery.
 
 Library + thin CLI. Stdlib-only. Imports `state` + `validate_workspace`.
 
@@ -20,7 +20,7 @@ Exit codes:
     2 = no such ticket dir / not yet initialized
     3 = original run not terminal (revise-open)
     4 = a revision is already live (revise-open)
-    5 = stale foreign lease (needs /flow recover --takeover)
+    5 = stale foreign lease (needs target-specific Flow workspace repair)
     7 = lost lease (another run took over)
 """
 
@@ -62,7 +62,7 @@ _INIT_TTL_S = 600
 # legitimately ran 38min and self-evicted its own lease, flow-0xex); a
 # proportional multiplier gives every stage headroom for overrun. The cost
 # is a longer dead-run hold before auto-reclaim on the longest stage
-# (review_loop, 60min -> 120min), bounded and recoverable via /flow recover.
+# (review_loop, 60min -> 120min), bounded and recoverable via FLOW workspace repair.
 _LEASE_TTL_MULTIPLIER = 2
 
 
@@ -190,7 +190,7 @@ def cmd_init(
     if exit_code == 2 and not force:
         return 1, {
             "error": f"unrecoverable state.json at {td}",
-            "hint": f"/flow recover {ticket}",
+            "hint": f"FLOW workspace repair {ticket}",
         }
     # exit_code 1 = state.read quarantined a corrupt state.json and restored a
     # valid run from .bak (rewriting it to disk); treat it as valid-for-resume,
@@ -207,7 +207,7 @@ def cmd_init(
 
     # session_nonce is the per-session lease component run_id cannot supply: a
     # caller presenting the live owner's nonce re-acquires; one without it (a
-    # second /flow do, which can only read run_id from state.json) is blocked at
+    # second target invocation, which can only read run_id from state.json) is blocked at
     # acquire. The first acquire of a run presents none and acquire mints one; it
     # is returned so the dispatching session can carry it on later dispatch calls.
     boot, host, cwd, now = lease.boot_id(), socket.gethostname(), str(workspace_root), utcnow_iso()
@@ -228,13 +228,13 @@ def cmd_init(
         return 1, {
             "error": "ticket locked by another live run",
             "holder": asdict(exc.holder),
-            "hint": f"/flow recover --takeover {ticket}",
+            "hint": f"FLOW workspace repair {ticket}",
         }
     except lease.LeaseExpiredForeign as exc:
         return 5, {
             "error": "stale lease from another run",
             "holder": asdict(exc.holder),
-            "hint": f"/flow recover --takeover {ticket}",
+            "hint": f"FLOW workspace repair {ticket}",
         }
     except lease.LeaseError as exc:
         # corrupt run.lock: cannot confirm ownership. Do NOT auto-clear; hand off
@@ -242,7 +242,7 @@ def cmd_init(
         return 1, {
             "error": "corrupt run.lock",
             "detail": str(exc),
-            "hint": f"/flow recover --takeover {ticket}",
+            "hint": f"FLOW workspace repair {ticket}",
         }
 
     # Canonical snapshot for later `next` TOCTOU checks. On a FRESH run (or a
@@ -274,7 +274,7 @@ def cmd_init(
                     f"dispatch init: snapshot write failed for {ticket} ({exc}) and no "
                     "snapshot.sha exists; the config/version drift guard is OFF for this "
                     "run (fail-open) and drift will NOT be detected. Run "
-                    "`/flow recover --reload-snapshot` to restore it.\n"
+                    f"`FLOW workspace repair {ticket}` to restore it.\n"
                 )
             marker = {"snapshot_write_failed": True, "snapshot_guard_active": sha_present}
 
@@ -366,7 +366,10 @@ def cmd_revise_open(
     if orig is None:
         return 2, {"error": f"no original run state.json at {orig_td}; nothing to revise"}
     if not (state.pick_next_pending(orig, ws.stages) is None and state.find_failed(orig) is None):
-        return 3, {"error": "original run not terminal", "hint": "/flow do or /flow recover"}
+        return 3, {
+            "error": "original run not terminal",
+            "hint": f"FLOW {ticket} or FLOW workspace repair {ticket}",
+        }
 
     if stages is not None:
         # cmd_next picks via pick_next_pending over ws.stages, so a seeded stage
@@ -427,7 +430,7 @@ def cmd_revise_open(
 
 _DRIFT_ABORT = {
     "error": "config/version drift mid-run",
-    "hint": "/flow recover --reload-snapshot or --abort",
+    "hint": "FLOW workspace repair <target>",
 }
 
 
@@ -504,13 +507,13 @@ def _guard_lease_ownership(
         return lease.EXIT_LEASE_LOST, {
             "error": "lost lease",
             "detail": str(exc),
-            "hint": "/flow recover",
+            "hint": "FLOW workspace repair",
         }
     except lease.LeaseError as exc:
         return lease.EXIT_LEASE_LOST, {
             "error": "corrupt run.lock",
             "detail": str(exc),
-            "hint": "/flow recover --takeover",
+            "hint": "FLOW workspace repair <target>",
         }
     return None
 
@@ -701,7 +704,7 @@ def cmd_next(
             return lease.EXIT_LEASE_LOST, {
                 "error": "lost lease",
                 "detail": str(exc),
-                "hint": "/flow recover",
+                "hint": "FLOW workspace repair",
             }
 
     # Shadow-write the fleet liveness ledger (epic flow-8by2.2): an upsert that
@@ -780,7 +783,7 @@ def cmd_finish(
         next_pending = state.pick_next_pending(new_state, snapshot.stages)
 
     # Run finished cleanly (last stage completed, nothing pending or failed):
-    # drop the lease. A failed run keeps its lease so /flow recover can act.
+    # drop the lease. A failed run keeps its lease so FLOW workspace repair can act.
     if (
         status_value == "completed"
         and snapshot is not None
@@ -870,7 +873,7 @@ def cmd_release(
         except lease.LeaseError as exc:
             # SKILL.md step 5 calls release unconditionally on every exit path,
             # so a corrupt run.lock must yield released=false, not a traceback.
-            # The corrupt lock stays for /flow recover --takeover to quarantine.
+            # The corrupt lock stays for confirmed target repair to quarantine.
             return 0, {"ticket": ticket, "released": False, "detail": str(exc)}
     return 0, {"ticket": ticket, "released": released}
 
@@ -879,7 +882,7 @@ def cmd_release(
 
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="/flow dispatcher state machine.")
+    parser = argparse.ArgumentParser(description="Flow dispatcher state machine.")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     common = argparse.ArgumentParser(add_help=False)

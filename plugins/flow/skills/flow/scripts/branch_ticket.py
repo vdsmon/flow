@@ -94,7 +94,7 @@ def resolve(
     """Returns ticket key on match, None on no-match.
 
     When `branch` is given, resolve the key from THAT branch name (no git call),
-    the PR->ticket enabler for `/flow revise <pr#>`, which is not checked out on
+    the PR-to-ticket enabler for a `FLOW pr:<number>` target, which is not checked out on
     the PR branch. When `branch` is None, behavior is byte-identical to before:
     resolve from the current git branch.
 
@@ -114,7 +114,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         "--branch",
         default=None,
         help="resolve from this branch name instead of the current git branch "
-        "(the PR->ticket enabler for /flow revise <pr#>)",
+        "(the PR-to-ticket enabler for a FLOW pr:<number> target)",
     )
     return parser.parse_args(argv)
 

@@ -42,22 +42,23 @@ _SCRIPT_RE = re.compile(
     r"(?:\$\{(?:CLAUDE_SKILL_DIR|FLOW_SKILL_DIR)\}|<skill-root>)/scripts/"
     r"(?P<script>[a-z0-9_]+\.py)(?P=direct_quote)?"
 )
-# The canonical post-init command form accepts a workspace-relative executable, an unquoted absolute
-# path, or a quoted absolute path (including spaces). The first token after it resolves through
-# flowctl's single-source allowlist. The token is deliberately broad and optional: validation must
-# see and reject a missing token, path traversal, or wrong-case command instead of letting the regex
-# silently ignore the malformed recipe.
+# The canonical post-init command form is the bound ``<facade>`` placeholder or an absolute
+# ``.../.flow/runtime/flow`` path. Relative paths remain parseable so the rooted-context gate can
+# reject them explicitly instead of silently omitting their CLI surface from validation.
 _FACADE_RE = re.compile(
     r"""
     (?<![A-Za-z0-9_])
     (?:
-        (?P<quote>["'])(?P<quoted_path>[^"'\n]*\.flow/flow)(?P=quote)
+        (?P<quote>["'])(?P<quoted_path><facade>|[^"'\n]*\.flow/runtime/flow)(?P=quote)
         |
-        (?P<bare_path>(?:[^\s"'`|;&()]+/)?(?:\./)?\.flow/flow)
+        (?P<bare_path><facade>|(?:[^\s"'`|;&()]+/)?(?:\./)?\.flow/runtime/flow)
     )
     (?:\s+(?P<command>[^\s`|;&()]+))?
     """,
     re.VERBOSE,
+)
+_CALL_LOCAL_HARNESS_RE = re.compile(
+    r"FLOW_HARNESS\s*=\s*(?:[\"']?(?:<harness>|codex|claude-code|generic)[\"']?)\s*$"
 )
 # A command-like bare script citation becomes an invocation only when the next token is a real
 # subcommand of that script or a leading long option. This avoids treating narrative ``foo.py owns
@@ -69,7 +70,7 @@ _BARE_SCRIPT_CANDIDATE_RE = re.compile(
     r"(?<![/A-Za-z0-9_])(?P<script>[a-z0-9_]+\.py)\s+"
     r"(?P<token>--[A-Za-z][A-Za-z0-9-]*|[a-z][a-z0-9-]*)"
 )
-_DIRECT_BOOTSTRAP_ALLOWLIST = frozenset({"init.py", "flow_launcher.py"})
+_DIRECT_BOOTSTRAP_ALLOWLIST = frozenset({"init.py", "flow_launcher.py", "public_commands_cli.py"})
 # A long-option token. Matches the flag name and stops before `=`.
 _FLAG_RE = re.compile(r"--[a-zA-Z][a-zA-Z0-9-]*")
 # Quoted strings and command substitutions hold VALUES, not flags of this
@@ -119,7 +120,7 @@ _REGISTRY_SCRIPT_RE = re.compile(r"[A-Za-z0-9_-]+\.py")
 _STAGE_DOC_RE = re.compile(r"stage-[a-z0-9_]+\.md")
 
 # Live-corpus max distinct stage-doc citations per doc = 2 (SKILL.md,
-# verb-spec.md, verb-evolve.md); 3 = max+1 tripwire. A doc citing 3+ distinct
+# delivery-plan.md, command-maintain.md); 3 = max+1 tripwire. A doc citing 3+ distinct
 # registry stage-docs is a static re-enumeration of the registry mapping (the
 # flow-0n8 regression class). Fire condition is count >= limit.
 STAGE_DOC_CITATION_LIMIT = 3
@@ -146,9 +147,9 @@ _ROLE_LITERAL_RE = re.compile(r"[\"']+([a-z][a-z0-9_]+)[\"']+")
 _INLINE_SPAN_RE = re.compile(r"`([^`]*)`")
 # A fenced-code block delimiter (``` or ~~~), ignoring leading whitespace.
 _FENCE_RE = re.compile(r"^\s*(```|~~~)")
-# A user-facing slash command in prose, e.g. `/flow recover --ticket X`. The verb
-# is the first word after `/flow `; cross-checked against scripts/<verb>.py.
-_SLASH_RE = re.compile(r"^/flow\s+([a-z][a-z0-9-]*)\b(.*)$")
+# Reusable docs use logical FLOW. Host-specific invocations belong only at the
+# conversation boundary, never in stage/command recipes.
+_HOST_PUBLIC_RE = re.compile(r"^(?:/flow|\$flow:flow)\s+\S")
 
 
 @dataclass(frozen=True)
@@ -178,6 +179,8 @@ class Invocation:
     # Arguments after the facade command, with quoted / command-substitution values masked. Only
     # facade invocations populate this structural argv.
     argv: tuple[str, ...] | None = None
+    facade_path: str | None = None
+    call_local_harness: bool = False
 
 
 @dataclass
@@ -263,7 +266,7 @@ def find_facade_invocations(doc_name: str, text: str) -> list[Invocation]:
         for index, match in enumerate(matches):
             command = match.group("command") or ""
             if not command:
-                # A prose citation such as "the `.flow/flow` executable" is not a command recipe. A
+                # A prose citation such as "the `.flow/runtime/flow` executable" is not a recipe. A
                 # line whose entire executable content is the facade is, and must fail as a
                 # missing-command shape.
                 prefix = logical[: match.start()].strip()
@@ -289,6 +292,8 @@ def find_facade_invocations(doc_name: str, text: str) -> list[Invocation]:
                 # structural command problem where applicable.
                 argv = tuple(args.split())
             script = flowctl.COMMANDS.get(command, "")
+            facade_path = match.group("quoted_path") or match.group("bare_path")
+            prefix = logical[: match.start()]
             invs.append(
                 Invocation(
                     doc=doc_name,
@@ -299,9 +304,43 @@ def find_facade_invocations(doc_name: str, text: str) -> list[Invocation]:
                     raw=logical[match.start() : end].strip(),
                     facade_command=command,
                     argv=argv,
+                    facade_path=facade_path,
+                    call_local_harness=_CALL_LOCAL_HARNESS_RE.search(prefix) is not None,
                 )
             )
     return invs
+
+
+def facade_context_problems(invocations: list[Invocation]) -> list[Problem]:
+    """Reject cwd-dependent or adapter-ambiguous post-init recipes."""
+
+    problems: list[Problem] = []
+    for invocation in invocations:
+        path = invocation.facade_path or ""
+        rooted = path == "<facade>" or path.startswith(("/", "<run_root>/"))
+        if not rooted:
+            problems.append(
+                Problem(
+                    doc=invocation.doc,
+                    line=invocation.line,
+                    level="ERROR",
+                    msg=(
+                        "facade invocation is workspace-relative; use the absolute <facade> binding"
+                    ),
+                    raw=invocation.raw,
+                )
+            )
+        if not invocation.call_local_harness:
+            problems.append(
+                Problem(
+                    doc=invocation.doc,
+                    line=invocation.line,
+                    level="ERROR",
+                    msg="facade invocation is missing call-local FLOW_HARNESS=<harness>",
+                    raw=invocation.raw,
+                )
+            )
+    return problems
 
 
 def find_bare_script_invocations(doc_name: str, text: str) -> list[Invocation]:
@@ -369,15 +408,15 @@ def find_bare_script_invocations(doc_name: str, text: str) -> list[Invocation]:
 
 
 def stale_direct_invocation_problems(invocations: list[Invocation]) -> list[Problem]:
-    """Reject direct skill-script calls outside init and launcher repair."""
+    """Reject direct skill-script calls outside bootstrap and public routing."""
     return [
         Problem(
             doc=inv.doc,
             line=inv.line,
             level="ERROR",
             msg=(
-                f"stale direct script invocation: {inv.script}; use .flow/flow "
-                "outside init and launcher repair"
+                f"stale direct script invocation: {inv.script}; use the absolute <facade> binding "
+                "outside setup, launcher repair, and public routing"
             ),
             raw=inv.raw,
         )
@@ -389,7 +428,7 @@ def stale_direct_invocation_problems(invocations: list[Invocation]) -> list[Prob
 def _slash_spans(text: str) -> list[tuple[int, str]]:
     """Yield (1-based line, span-content) for each inline-code span and each
     fenced-code line. Spans are extracted independently so two adjacent backtick
-    spans on one line never merge (e.g. `/flow recover <KEY>` then `retry --stage
+    spans on one line never merge (e.g. `FLOW workspace repair <KEY>` then `retry --stage
     ticket` stay separate)."""
     spans: list[tuple[int, str]] = []
     in_fence = False
@@ -404,33 +443,20 @@ def _slash_spans(text: str) -> list[tuple[int, str]]:
     return spans
 
 
-def find_slash_invocations(doc_name: str, text: str) -> list[Invocation]:
-    """Parse user-facing `/flow <verb> ...` slash-prose and normalize each to the
-    same Invocation form `find_invocations` produces, so validate() runs unchanged.
-    Only verbs with a matching scripts/<verb>.py on disk are linted; verbs without
-    a script (do, evolve, new, spec, triage) are intentionally skipped."""
-    invs: list[Invocation] = []
-    for lineno, span in _slash_spans(text):
-        m = _SLASH_RE.match(span)
-        if not m:
-            continue
-        verb, rest = m.group(1), m.group(2)
-        script = f"{verb}.py"
-        if not (SCRIPTS_DIR / script).is_file():
-            continue
-        raw = f"{script}{rest}"
-        flags = _FLAG_RE.findall(_VALUE_SPAN_RE.sub(" ", rest))
-        invs.append(
-            Invocation(
-                doc=doc_name,
-                line=lineno,
-                script=script,
-                subcommand=None,
-                flags=flags,
-                raw=raw,
-            )
+def host_specific_invocation_problems(doc_name: str, text: str) -> list[Problem]:
+    """Reject host-rendered public recipes from reusable skill references."""
+
+    return [
+        Problem(
+            doc=doc_name,
+            line=lineno,
+            level="ERROR",
+            msg="host-specific public invocation in reusable prose; use logical FLOW",
+            raw=span,
         )
-    return invs
+        for lineno, span in _slash_spans(text)
+        if _HOST_PUBLIC_RE.match(span)
+    ]
 
 
 # --- script introspection ----------------------------------------------------
@@ -730,8 +756,10 @@ def managed_agents_guidance_drift(
             "SKILL.md" in guidance and "references/harness.md" in guidance,
         ),
         (
-            "request argument mapping",
-            "arguments" in guidance and "/flow" in guidance,
+            "public registry routing",
+            "public-commands.toml" in guidance
+            and "Static namespaces" in guidance
+            and "removed forms stop" in guidance,
         ),
         (
             "call-local harness selector guidance",
@@ -748,7 +776,7 @@ def managed_agents_guidance_drift(
         ),
         (
             "absolute rooted facade guidance",
-            ".flow/flow" in guidance
+            ".flow/runtime/flow" in guidance
             and "absolute" in guidance.lower()
             and "run root" in guidance.lower(),
         ),
@@ -905,7 +933,7 @@ def triage_guard_files(scripts_dir: Path = SCRIPTS_DIR) -> frozenset[str]:
 
 
 _GUARD_LIST_ANCHOR = "safety-machinery guard file"
-_GUARD_LIST_EXPECTED_DOCS = 2  # verb-evolve.md §audit step 2 + stage-reflect.md step 2b
+_GUARD_LIST_EXPECTED_DOCS = 1  # stage-reflect.md is the canonical prose enumeration
 
 
 def guard_file_list_drift(
@@ -913,9 +941,8 @@ def guard_file_list_drift(
 ) -> list[tuple[str, int, str]]:
     """Prose hot-guard enumerations diverging from triage._GUARD_FILES.
 
-    The two guard lists are duplicated by design (flow-837: prose stays readable, not extracted to a
-    constant) and synced by hand, which is how flow_worktree.py went missing from both for months
-    after PR#174 added it to the code set. Each enumeration is anchored on the literal
+    The canonical prose list stays readable while the runtime set remains code. The
+    enumeration is anchored on the literal
     "safety-machinery guard file" phrase followed by a parenthesized list of backticked *.py names;
     that set must equal the *.py members of _GUARD_FILES. Finding fewer than the expected anchored
     enumerations is itself a drift (the phrase moved and the gate would silently check nothing).
@@ -1308,7 +1335,7 @@ def docs_to_check() -> list[Path]:
 
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(
-        description="Validate /flow prose script invocations against real CLIs."
+        description="Validate Flow prose invocations against the public registry and real CLIs."
     )
     ap.add_argument("--verbose", action="store_true", help="print every resolved invocation")
     args = ap.parse_args(argv)
@@ -1319,10 +1346,12 @@ def main(argv: list[str]) -> int:
     for doc in docs:
         text = doc.read_text(encoding="utf-8")
         direct = find_invocations(doc.name, text) + find_bare_script_invocations(doc.name, text)
+        facade = find_facade_invocations(doc.name, text)
         all_invs.extend(direct)
-        all_invs.extend(find_facade_invocations(doc.name, text))
-        all_invs.extend(find_slash_invocations(doc.name, text))
+        all_invs.extend(facade)
+        problems.extend(host_specific_invocation_problems(doc.name, text))
         problems.extend(stale_direct_invocation_problems(direct))
+        problems.extend(facade_context_problems(facade))
 
     for inv in all_invs:
         problems.extend(validate(inv))

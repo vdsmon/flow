@@ -7,38 +7,39 @@
 [tools]
 python = "3.14.6"
 ruff = "0.15.20"
-ty = "0.0.56"
+uv = "0.11.28"
 "pipx:pytest" = { version = "8.3.3", uvx_args = "--with pytest-cov --with pytest-xdist", pipx_args = "--preinstall pytest-cov --preinstall pytest-xdist" }
 
 # Split into per-check sub-tasks so both `mise run lint` (CI) and the prek hooks
 # reuse one definition of each check (no rule set declared twice). The prek
 # pre-commit stage runs lint:ruff + lint:format; pre-push runs lint:ty.
 [tasks."lint:ruff"]
-description = "ruff check (scripts + plugin hooks)"
-run = "ruff check . ../../../hooks"
+description = "ruff check (Flow scripts)"
+run = "ruff check ."
 
 [tasks."lint:format"]
-description = "ruff format --check (scripts + plugin hooks)"
-run = "ruff format --check . ../../../hooks"
+description = "ruff format --check (Flow scripts)"
+run = "ruff format --check ."
 
 [tasks."lint:ty"]
-description = "ty check --error all (scripts + plugin hooks)"
-# ty runs with every rule at error severity. Deterministic because ty is pinned
-# above; a version bump re-triages whatever new rules surface. Per-path
+description = "ty check --error all (Flow scripts)"
+# ty runs with every rule at error severity. uvx pins the ephemeral tool, so a
+# version bump explicitly re-triages whatever new rules surface. Per-path
 # relaxations live in pyproject.toml [[tool.ty.overrides]], which win over
 # --error all.
-run = "ty check --error all . ../../../hooks"
+run = "uvx --from ty==0.0.56 ty check --error all ."
 
 [tasks.lint]
-description = "ruff check + ruff format --check + ty check (scripts + plugin hooks)"
+description = "ruff check + ruff format --check + ty check (Flow scripts)"
 depends = ["lint:ruff", "lint:format", "lint:ty"]
 
+[tasks."check:commands"]
+description = "check generated public command router, help, trigger, and references"
+run = "python3 public_commands_check.py"
+
 [tasks.test]
-description = "pytest scripts/tests/ + plugin hooks/tests/ -q"
-run = [
-    "pytest tests/ -q -n auto --dist loadfile",
-    "pytest ../../../hooks/tests/ -q",
-]
+description = "pytest scripts/tests/ -q"
+run = "pytest tests/ -q -n auto --dist loadfile"
 
 [tasks.cov]
 description = "pytest with line coverage over the engine (term-missing)"

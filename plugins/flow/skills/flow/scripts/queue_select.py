@@ -2,7 +2,7 @@
 
 Day-job sibling of `evolve_select.py`: pure selection over the project's
 NON-evolve backlog, no side effects. Given the ready beads plus the in-flight
-branches/PRs, decide which keys to fan out as `/flow <key> --auto` runs. The
+branches/PRs, decide which keys to fan out as `FLOW <key> --unattended` runs. The
 day-job queue-drain loop (flow-hw1.3) consumes this and does the launching.
 
 Day-job = `bd ready --json` (unlabelled) minus epics and minus beads labelled

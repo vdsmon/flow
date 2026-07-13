@@ -2,7 +2,7 @@
 
 Library + thin CLI. Stdlib-only.
 
-`/flow sync` replays these against the tracker. File:
+`FLOW workspace sync` replays these against the tracker. File:
 `<workspace_root>/.flow/pending-mutations.jsonl`. Single writer via flock_retry
 on `<file>.lock`; atomic append + fsync inside the lock.
 
@@ -43,7 +43,7 @@ from _jsonl import iter_jsonl
 from _locking import LockContention, flock_retry
 
 # "edit" is not a valid op: the Tracker protocol dropped generic edit(fields)
-# (see tracker.py), so a queued edit could never be replayed by /flow sync.
+# (see tracker.py), so a queued edit could never be replayed by FLOW workspace sync.
 VALID_OPS: tuple[str, ...] = ("create", "transition", "comment", "link")
 
 Clock = Callable[[], str]

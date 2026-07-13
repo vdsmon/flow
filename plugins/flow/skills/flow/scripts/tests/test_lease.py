@@ -183,8 +183,8 @@ def test_acquire_mints_nonce_on_free_dir(tmp_path: Path) -> None:
 
 
 def test_live_owner_reacquire_without_nonce_raises_held(tmp_path: Path) -> None:
-    # THE BUG: a second /flow do reuses run_id from state.json but cannot present
-    # the live owner's nonce, so it must be blocked, not silently re-acquire.
+    # THE BUG: a second `FLOW FT-1` reuses run_id from state.json but cannot
+    # present the live owner's nonce, so it must be blocked, not silently re-acquire.
     first = _acquire(tmp_path, "run-1")
     assert first.session_nonce
     with pytest.raises(lease.LeaseHeld) as exc:

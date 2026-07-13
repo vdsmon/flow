@@ -124,7 +124,7 @@ def test_init_is_idempotent_preserves_progress(
 
 def test_init_resumes_bak_recovered_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # flow-k6l6: a completed run releases its lease, its state.json later
-    # corrupts on disk, and an operator runs `/flow do T` (the "none present"
+    # corrupts on disk, and an operator runs `FLOW FT-1` (the "none present"
     # re-init path: no nonce, no force). state.read quarantines the corrupt file
     # and restores the newest .bak (exit 1). cmd_init MUST resume that recovered
     # run, NOT mint a fresh run_id + state.init wipe it to all-pending (which
@@ -150,7 +150,7 @@ def test_init_resumes_bak_recovered_state(tmp_path: Path, monkeypatch: pytest.Mo
     ds.cmd_release(tmp_path, "FT-1", nonce)
     state_path.write_text("{ this is not valid json ]", encoding="utf-8")
 
-    # Re-init with NO nonce and no force (a fresh `/flow do`).
+    # Re-init with NO nonce and no force (a fresh `FLOW FT-1`).
     rc2, payload = ds.cmd_init(tmp_path, "FT-1")
     assert rc2 == 0
     assert payload["resumed"] is True
@@ -192,9 +192,9 @@ def test_init_refuses_unrecoverable_state(tmp_path: Path, monkeypatch: pytest.Mo
     rc2, payload = ds.cmd_init(tmp_path, "FT-1")
     assert rc2 == 1
     assert payload["error"] == f"unrecoverable state.json at {td}"
-    assert "recover" in payload["hint"]
+    assert payload["hint"] == "FLOW workspace repair FT-1"
     # fail closed: no fresh run minted, no lease acquired; the corrupt file was
-    # quarantined by the read (forensics for /flow recover).
+    # quarantined by the read (forensics for FLOW workspace repair).
     assert not (td / "state.json").exists()
     assert not (td / "run.lock").exists()
     assert list(td.glob("state.json.quarantine.*"))
@@ -229,9 +229,9 @@ def test_init_force_replaces_unrecoverable_state(
 def test_init_second_run_on_live_lease_is_blocked(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # flow-8i6l: a second /flow do reuses run_id from state.json but cannot present the live owner's
-    # nonce, so its init must be blocked (exit 1 + recover hint) rather than silently re-acquiring
-    # the live lease.
+    # flow-8i6l: a second delivery reuses run_id from state.json but cannot present
+    # the live owner's nonce, so its init must be blocked rather than silently
+    # re-acquiring the live lease.
     _write_workspace(tmp_path, stages=["ticket", "plan"], compounding=False)
     _stub_git_head(monkeypatch)
     rc, first = ds.cmd_init(tmp_path, "FT-1")
@@ -920,7 +920,7 @@ def test_init_snapshot_write_failure_fail_open(
     assert not sha_path.exists()
     err = capsys.readouterr().err
     assert "fail-open" in err
-    assert "recover --reload-snapshot" in err
+    assert "FLOW workspace repair FT-1" in err
 
 
 def test_init_resume_skips_snapshot_write_preserving_guard(
@@ -1020,7 +1020,7 @@ def test_init_refuses_foreign_live_lease(tmp_path: Path, monkeypatch: pytest.Mon
     rc, payload = ds.cmd_init(tmp_path, "FT-1")
     assert rc == 1
     assert payload["holder"]["run_id"] == "other-run"
-    assert "recover --takeover" in payload["hint"]
+    assert payload["hint"] == "FLOW workspace repair FT-1"
 
 
 def test_init_stale_foreign_lease_returns_5(
@@ -1055,7 +1055,7 @@ def test_cli_init_stale_foreign_lease_exits_5(
     captured = capsys.readouterr()
     payload = json.loads(captured.out)
     assert payload["holder"]["run_id"] == "old-run"
-    assert "recover --takeover" in payload["hint"]
+    assert payload["hint"] == "FLOW workspace repair FT-1"
     assert "stale lease" in captured.err
 
 
@@ -1616,7 +1616,7 @@ def test_init_corrupt_lock_returns_clean_error_no_clear(
     rc, payload = ds.cmd_init(tmp_path, "FT-1")
     assert rc == 1
     assert payload["error"] == "corrupt run.lock"
-    assert "recover --takeover" in payload["hint"]
+    assert payload["hint"] == "FLOW workspace repair FT-1"
     # NOT auto-cleared: the corrupt lock survives for human-driven takeover.
     assert lock.exists()
     assert lock.read_text(encoding="utf-8") == "{not json"
@@ -1632,7 +1632,7 @@ def test_next_corrupt_lock_returns_lease_lost_no_advance(
     rc, payload = ds.cmd_next(tmp_path, "FT-1")
     assert rc == lease.EXIT_LEASE_LOST
     assert payload["error"] == "corrupt run.lock"
-    assert "recover" in payload["hint"]
+    assert payload["hint"] == "FLOW workspace repair <target>"
     # state did not advance: ticket stage stays pending (never begun).
     state_path = tmp_path / ".flow" / "runs" / "FT-1" / "state.json"
     data = json.loads(state_path.read_text(encoding="utf-8"))
@@ -1650,7 +1650,7 @@ def test_finish_corrupt_lock_returns_lease_lost_no_advance(
     rc, payload = ds.cmd_finish(tmp_path, "FT-1", "ticket", "completed")
     assert rc == lease.EXIT_LEASE_LOST
     assert payload["error"] == "corrupt run.lock"
-    assert "recover" in payload["hint"]
+    assert payload["hint"] == "FLOW workspace repair <target>"
     # finish did not run: ticket stays in_progress (begun by cmd_next, not closed).
     state_path = tmp_path / ".flow" / "runs" / "FT-1" / "state.json"
     data = json.loads(state_path.read_text(encoding="utf-8"))

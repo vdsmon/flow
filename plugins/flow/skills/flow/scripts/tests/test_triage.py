@@ -270,7 +270,7 @@ def test_workspace_not_initialized_exits_1(tmp_path: Path) -> None:
     runner = _FakeRunner([])
     code, _, err = _run(["--workspace-root", str(tmp_path)], runner)
     assert code == 1
-    assert "/flow init" in err
+    assert "FLOW workspace setup" in err
     assert runner.calls == []
 
 

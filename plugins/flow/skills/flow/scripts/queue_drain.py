@@ -1,20 +1,21 @@
 """Decide the next action for the day-job `queue drain` loop (pure core + thin CLI).
 
 Day-job sibling of `evolve_drain.py`. The loop itself (reap merged-and-exited runs, fan out
-`claude --bg "/flow <key> --auto"`, Monitor-wait) is prose in `references/verb-queue.md`
+native `FLOW <key> --unattended` workers and owner waits) is prose in
+`references/command-maintain.md`
 (§drain); this module supplies the decision it consumes. The `launch | recover | wait | done`
 core and the lease-liveness annotation are `evolve_drain.decide` / `evolve_drain.liveness_map`,
 imported (both pure), not duplicated; the selection is `queue_select.select`. New here is
 `classify_reap`, the merged-PR reap classification.
 
-STRANDED pre-PR parity: a day-job `/flow <key> --auto` run that dies pre-PR strands its bead
+STRANDED pre-PR parity: a day-job `FLOW <key> --unattended` run that dies pre-PR strands its bead
 in_progress with no lease and no PR, invisible to every channel (the loop would false-positive
 to `done`). `cli_main` detects it with the SAME `evolve_drain.stranded_pre_pr` core, fed a
 DAY-JOB-scoped in_progress set (all in_progress beads minus epics minus the `{evolve, proposal,
 hot}` labels, the inverse of evolve's per-label union), and threads the keys into `decide` as
 `stranded` so it returns `recover` instead of `done`. The recover recipe (reap the dirty
 worktree + reopen, bounded by the prose `STRANDED-RECOVERY:` ladder) lives in
-`references/verb-queue.md` §Recover.
+`references/command-maintain.md` §Recover.
 
 Unlike the evolve drain this loop NEVER merges PRs: a day-job run's merge stage skips on a
 non-evolve bead, so every green PR parks for the maintainer's review. Parked open PRs are this

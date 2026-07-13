@@ -576,7 +576,7 @@ def test_parse_types_all_and_csv() -> None:
 def test_cli_propose_type_all_with_usage(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    # Locks the exact argparse surface verb-recall.md names.
+    # Locks the exact argparse surface command-memory.md names.
     _seed_workspace(tmp_path)
     _write_entries(tmp_path, [_entry("l1", "LEARNED", "x")])
     _write_usage(tmp_path, [_usage("l1", False, "2026-06-01T00:00:00.000Z")])

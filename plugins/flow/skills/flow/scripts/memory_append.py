@@ -7,7 +7,7 @@ Idempotency key formula (canonical for cross-run stability):
     id = sha256(namespace + ticket + type + normalized_body)[:16]
     normalize(body) = NFKC + lowercase + collapse-whitespace + strip-trailing-punct
 
-The `ts` field is NOT in the formula so `/flow recover` reruns produce the
+The `ts` field is NOT in the formula so `FLOW workspace repair` reruns produce the
 same id, letting the dedup scan suppress re-writes.
 
 Quarantine semantics (sidecar, main file untouched):

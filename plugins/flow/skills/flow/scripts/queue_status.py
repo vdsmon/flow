@@ -1,4 +1,4 @@
-"""Read-only day-job queue status (the `/flow queue` verb's core).
+"""Read-only day-job backlog status for `FLOW maintain backlog status`.
 
 Wraps `queue_select.select()` (the canonical partition) with the full day-job ready backlog, per-key
 lease liveness (`evolve_drain.liveness_map`), and the ADVISORY next action a queue drain would take
@@ -11,9 +11,10 @@ to the close path can still appear in it (the reap classification needs the merg
 show` gather this status verb skips).
 
 Also carries the parked-PR review enrichment (epic flow-kx17.5): each parked key's open PR is probed
-for unresolved NATIVE Major+ review threads (a genuine new human CHANGES_REQUESTED -> `/flow revise
-<pr#>`), surfaced as `reviews`. Best-effort: no `[forge]` block, no parked keys, or any per-key
-forge error -> `reviews: []`, never a failure. The `[revise] plain_comment_severity` floor is
+for unresolved NATIVE Major+ review threads (a genuine new human CHANGES_REQUESTED ->
+`FLOW pr:<number>`), surfaced as `reviews`. Best-effort: no `[forge]` block, no parked keys,
+or any per-key forge error -> `reviews: []`, never a failure. The
+`[revise] plain_comment_severity` floor is
 deliberately NOT applied here (a leftover unresolved bot minor must never produce a false
 human-review flag; the floor is a revise-time knob).
 

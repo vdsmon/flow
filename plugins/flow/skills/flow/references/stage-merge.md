@@ -9,7 +9,7 @@ The mechanical plumbing (eligibility probe, CI re-read, harness eval, main-CI he
 ## 1. Probe
 
 ```bash
-PROBE=$(.flow/flow merge probe \
+PROBE=$(FLOW_HARNESS="<harness>" "<facade>" merge probe \
   --workspace-root . --ticket-dir "$TICKET_DIR" --key "$KEY")
 ALREADY_MERGED=$(printf '%s' "$PROBE" | python3 -c 'import sys,json;print(json.load(sys.stdin)["already_merged"])')
 PR_ID=$(printf '%s' "$PROBE" | python3 -c 'import sys,json;print(json.load(sys.stdin)["pr_id"])')
@@ -24,7 +24,7 @@ IS_HOT=$(printf '%s' "$PROBE" | python3 -c 'import sys,json;print(json.load(sys.
 Branch on the verdict:
 
 - **`already_merged` true** → nothing to do. Run `execute --already-merged` (§3 below) to close the bead + any covers, then `STATUS=completed`. STOP — skip everything else in this doc.
-- **`action` `"skip"`** → leave the PR as-is for the human (the normal outcome on a user project, and for a held hot bead), `STATUS=completed`. Done. On a `--auto` run this skip plus the self-teardown makes the completed session vanish from the jobs panel while its PR stays open+green, a parked PR by design that a later drain scan can misread as an orphan death (see the parked-vs-orphan taxonomy in `references/verb-evolve.md` §drain step A). On an eval-driven skip (`eval_status` is `regressed`/`error`), first post a PR comment naming `regressed_cases` from the verdict (mirrors §2's `held_guard` pattern) so the maintainer sees WHICH frozen cases moved.
+- **`action` `"skip"`** → leave the PR as-is for the human (the normal outcome on a user project, and for a held hot ticket), `STATUS=completed`. Done. An unattended owner records this as a parked green PR in durable evidence; a later drain distinguishes it from an orphan without consulting host session state. On an eval-driven skip (`eval_status` is `regressed`/`error`), first post a PR comment naming `regressed_cases` from the verdict (mirrors §2's `held_guard` pattern) so the maintainer sees WHICH frozen cases moved.
 - **`action` `"merge"`, `is_hot` false** → skip straight to §3 (Execute).
 - **`action` `"merge"`, `is_hot` true** → run §2 first; only a clean review proceeds to §3.
 
@@ -42,7 +42,7 @@ If the reviewer reports `property_removed: true` → **do NOT merge.** Post a PR
 ## 3. Execute
 
 ```bash
-.flow/flow merge execute \
+FLOW_HARNESS="<harness>" "<facade>" merge execute \
   --workspace-root . --pr "$PR_ID" --key "$KEY"
 ```
 
@@ -58,7 +58,7 @@ The **local** worktree + branch are NOT torn down by this stage — a run cannot
 
 ## Cover-close (grouped runs only)
 
-When this run folded sibling beads (`/flow <KEY> --auto --covers <c1,c2>`, the §drain group-fold in `verb-evolve.md`), the lead's self-merge must close the covers too — symmetric to the lead close, so a folded cover does not re-surface in `bd ready` next drain turn. `execute` does this automatically, at both the already-merged branch and the main merge branch: it reads `covers` off `.flow/tickets/<KEY>.md` frontmatter and, per cover, comments + transitions it to `closed` through the `tracker_cli.py` seam (tracker-agnostic — the same call routes to Jira's done state) and drops the `bd dep` suppression edge. Best-effort, mirroring the lead close: a cover hiccup is a warning, never a stage failure — the lead is the source of truth, the diff is already merged. Absent/empty `covers` closes nothing extra.
+When this run grouped sibling tickets (`FLOW <KEY> <c1> <c2> --unattended --together`), the lead's self-merge must close the covers too — symmetric to the lead close, so a grouped cover does not re-surface in `bd ready` next drain turn. `execute` does this automatically, at both the already-merged branch and the main merge branch: it reads `covers` off `.flow/tickets/<KEY>.md` frontmatter and, per cover, comments + transitions it to `closed` through the `tracker_cli.py` seam (tracker-agnostic — the same call routes to Jira's done state) and drops the `bd dep` suppression edge. Best-effort, mirroring the lead close: a cover hiccup is a warning, never a stage failure — the lead is the source of truth, the diff is already merged. Absent/empty `covers` closes nothing extra.
 
 ## Serialization note
 

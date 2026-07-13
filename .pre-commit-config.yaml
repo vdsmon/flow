@@ -39,6 +39,13 @@ repos:
         files: ^plugins/flow/
         pass_filenames: false
         stages: [pre-commit]
+      - id: public-command-check
+        name: public_commands_check.py
+        language: system
+        entry: "bash -c 'cd plugins/flow/skills/flow/scripts && mise run check:commands'"
+        files: ^plugins/flow/
+        pass_filenames: false
+        stages: [pre-commit]
       # Seconds-long check: block the push, not every commit.
       - id: ty-check
         name: ty check
