@@ -1,0 +1,327 @@
+# Flow's public command grammar. This is the authored source for routing, help,
+# harness parity, and effect metadata. Runtime script names deliberately do not
+# appear here: they are implementation details behind these intent-level commands.
+
+schema_version = 1
+logical_trigger = "FLOW"
+static_namespaces = ["ticket", "memory", "measure", "workspace", "maintain", "help"]
+forbidden_root_tokens = [
+  "spec",
+  "do",
+  "resume",
+  "revise",
+  "new",
+  "group",
+  "slice",
+  "status",
+  "recall",
+  "triage",
+  "recover",
+  "sync",
+  "init",
+  "queue",
+  "evolve",
+]
+
+[[command]]
+id = "cockpit"
+path = []
+usage = "FLOW"
+summary = "Show active work, decisions, and the most useful next action."
+effect = "read"
+workspace = "optional"
+reference = "references/command-target.md"
+harnesses = ["claude-code", "codex"]
+
+[[command]]
+id = "target"
+path = ["<target>"]
+usage = "FLOW <target> [<target> ...] [--unattended] [--together] [--verify express|light|full] [--e2e <recipe>] [--request <additional-intent>]"
+summary = "Start, answer, resume, repair, revise, or show work from its current state."
+effect = "confirm"
+workspace = "required"
+reference = "references/command-target.md"
+harnesses = ["claude-code", "codex"]
+arguments = [
+  { name = "target", value_type = "target", cardinality = "one_or_more" },
+]
+options = [
+  { name = "--unattended", value_type = "boolean", cardinality = "zero_or_one", conflicts = ["--verify"] },
+  { name = "--together", value_type = "boolean", cardinality = "zero_or_one" },
+  { name = "--verify", value_type = "choice", cardinality = "zero_or_one", choices = ["express", "light", "full"], conflicts = ["--unattended"] },
+  { name = "--e2e", value_type = "text", cardinality = "zero_or_one" },
+  { name = "--request", value_type = "text", cardinality = "zero_or_one" },
+]
+
+[[command]]
+id = "ticket.create"
+path = ["ticket", "create"]
+usage = "FLOW ticket create [--request <problem>]"
+summary = "Capture a problem, create a tracker ticket, and offer to run it."
+effect = "confirm"
+workspace = "required"
+reference = "references/command-ticket.md"
+harnesses = ["claude-code", "codex"]
+options = [
+  { name = "--request", value_type = "text", cardinality = "zero_or_one" },
+]
+
+[[command]]
+id = "ticket.group"
+path = ["ticket", "group"]
+usage = "FLOW ticket group (<ticket> ... | --mine) [--state open]"
+summary = "Propose a coherent ticket group before running or persisting it."
+effect = "confirm"
+workspace = "required"
+reference = "references/command-ticket.md"
+harnesses = ["claude-code", "codex"]
+arguments = [
+  { name = "ticket", value_type = "ticket", cardinality = "zero_or_more" },
+]
+options = [
+  { name = "--mine", value_type = "boolean", cardinality = "zero_or_one" },
+  { name = "--state", value_type = "choice", cardinality = "zero_or_one", choices = ["open"] },
+]
+constraints = ["exactly one of explicit tickets or --mine"]
+
+[[command]]
+id = "ticket.split"
+path = ["ticket", "split"]
+usage = "FLOW ticket split <ticket>"
+summary = "Plan a parent-ticket decomposition, then create and migrate its children."
+effect = "confirm"
+workspace = "required"
+reference = "references/command-ticket.md"
+harnesses = ["claude-code", "codex"]
+arguments = [
+  { name = "ticket", value_type = "ticket", cardinality = "one" },
+]
+
+[[command]]
+id = "memory.search"
+path = ["memory", "search"]
+usage = "FLOW memory search [<query>] [--ticket <key>]... [--label <facet:value>] [--digest] [--semantic] [--threshold <float>] [--branch <branch>] [--limit <n>]"
+summary = "Search durable Flow memory with structured and semantic filters."
+effect = "read"
+workspace = "required"
+reference = "references/command-memory.md"
+harnesses = ["claude-code", "codex"]
+arguments = [
+  { name = "query", value_type = "text", cardinality = "zero_or_one" },
+]
+options = [
+  { name = "--ticket", value_type = "ticket", cardinality = "zero_or_more" },
+  { name = "--label", value_type = "text", cardinality = "zero_or_one" },
+  { name = "--digest", value_type = "boolean", cardinality = "zero_or_one" },
+  { name = "--semantic", value_type = "boolean", cardinality = "zero_or_one" },
+  { name = "--threshold", value_type = "float", cardinality = "zero_or_one" },
+  { name = "--branch", value_type = "text", cardinality = "zero_or_one" },
+  { name = "--limit", value_type = "integer", cardinality = "zero_or_one" },
+]
+
+[[command]]
+id = "memory.prune"
+path = ["memory", "prune"]
+usage = "FLOW memory prune"
+summary = "Review and confirm removal of superseded memory."
+effect = "confirm"
+workspace = "required"
+reference = "references/command-memory.md"
+harnesses = ["claude-code", "codex"]
+
+[[command]]
+id = "memory.rebuild"
+path = ["memory", "rebuild"]
+usage = "FLOW memory rebuild [--full]"
+summary = "Rebuild the derived memory index."
+effect = "write"
+workspace = "required"
+reference = "references/command-memory.md"
+harnesses = ["claude-code", "codex"]
+options = [
+  { name = "--full", value_type = "boolean", cardinality = "zero_or_one" },
+]
+
+[[command]]
+id = "measure"
+path = ["measure"]
+usage = "FLOW measure <throughput|lead-time|friction|reverts|experiment|trend|memory-health|recall-quality|fix-efficacy> [--since <date>] [--until <date>] [--json]"
+additional_usages = [
+  "FLOW measure throughput --checkpoint <personal|work> [--manifest <path>]",
+]
+summary = "Measure delivery, quality, experiment, or memory outcomes."
+effect = "read"
+workspace = "required"
+reference = "references/command-measure.md"
+harnesses = ["claude-code", "codex"]
+arguments = [
+  { name = "metric", value_type = "choice", cardinality = "one", choices = ["throughput", "lead-time", "friction", "reverts", "experiment", "trend", "memory-health", "recall-quality", "fix-efficacy"] },
+]
+options = [
+  { name = "--since", value_type = "date", cardinality = "zero_or_one", forbidden_argument_values = ["fix-efficacy"] },
+  { name = "--until", value_type = "date", cardinality = "zero_or_one", forbidden_argument_values = ["fix-efficacy"] },
+  { name = "--json", value_type = "boolean", cardinality = "zero_or_one" },
+  { name = "--checkpoint", value_type = "choice", cardinality = "zero_or_one", choices = ["personal", "work"], allowed_argument_values = ["throughput"] },
+  { name = "--manifest", value_type = "path", cardinality = "zero_or_one", allowed_argument_values = ["throughput"], requires = ["--checkpoint"] },
+]
+
+[[command]]
+id = "workspace.setup"
+path = ["workspace", "setup"]
+usage = "FLOW workspace setup [--guidance]"
+summary = "Initialize, resume, repair, or validate the current workspace."
+effect = "confirm"
+workspace = "optional"
+reference = "references/command-workspace.md"
+harnesses = ["claude-code", "codex"]
+options = [
+  { name = "--guidance", value_type = "boolean", cardinality = "zero_or_one" },
+]
+
+[[command]]
+id = "workspace.inspect"
+path = ["workspace", "inspect"]
+usage = "FLOW workspace inspect [<target>] [--json]"
+summary = "Inspect workspace or target health without mutation."
+effect = "read"
+workspace = "required"
+reference = "references/command-workspace.md"
+harnesses = ["claude-code", "codex"]
+arguments = [
+  { name = "target", value_type = "target", cardinality = "zero_or_one" },
+]
+options = [
+  { name = "--json", value_type = "boolean", cardinality = "zero_or_one" },
+]
+
+[[command]]
+id = "workspace.repair"
+path = ["workspace", "repair"]
+usage = "FLOW workspace repair [<target>]"
+summary = "Diagnose a workspace or run and confirm an applicable repair."
+effect = "confirm"
+workspace = "required"
+reference = "references/command-workspace.md"
+harnesses = ["claude-code", "codex"]
+arguments = [
+  { name = "target", value_type = "target", cardinality = "zero_or_one" },
+]
+
+[[command]]
+id = "workspace.sync"
+path = ["workspace", "sync"]
+usage = "FLOW workspace sync"
+summary = "Drain queued tracker mutations."
+effect = "write"
+workspace = "required"
+reference = "references/command-workspace.md"
+harnesses = ["claude-code", "codex"]
+
+[[command]]
+id = "maintain.backlog.status"
+path = ["maintain", "backlog", "status"]
+usage = "FLOW maintain backlog status [--preview]"
+summary = "Inspect backlog fleet state and the next drain decision."
+effect = "read"
+workspace = "required"
+reference = "references/command-maintain.md"
+harnesses = ["claude-code", "codex"]
+options = [
+  { name = "--preview", value_type = "boolean", cardinality = "zero_or_one" },
+]
+
+[[command]]
+id = "maintain.backlog.drain"
+path = ["maintain", "backlog", "drain"]
+usage = "FLOW maintain backlog drain [--dry-run]"
+summary = "Run ready backlog work through the bounded worker pool."
+effect = "write"
+workspace = "required"
+reference = "references/command-maintain.md"
+harnesses = ["claude-code", "codex"]
+options = [
+  { name = "--dry-run", value_type = "boolean", cardinality = "zero_or_one" },
+]
+
+[[command]]
+id = "maintain.evolution.audit"
+path = ["maintain", "evolution", "audit"]
+usage = "FLOW maintain evolution audit"
+summary = "Audit Flow machinery and produce actionable evolution work."
+effect = "write"
+workspace = "required"
+reference = "references/command-maintain.md"
+harnesses = ["claude-code", "codex"]
+
+[[command]]
+id = "maintain.evolution.propose"
+path = ["maintain", "evolution", "propose"]
+usage = "FLOW maintain evolution propose"
+summary = "Turn observed friction into evolution proposals."
+effect = "write"
+workspace = "required"
+reference = "references/command-maintain.md"
+harnesses = ["claude-code", "codex"]
+
+[[command]]
+id = "maintain.evolution.epic"
+path = ["maintain", "evolution", "epic"]
+usage = "FLOW maintain evolution epic"
+summary = "Produce a weekly evolution epic from accepted proposals."
+effect = "write"
+workspace = "required"
+reference = "references/command-maintain.md"
+harnesses = ["claude-code", "codex"]
+
+[[command]]
+id = "maintain.evolution.expand"
+path = ["maintain", "evolution", "expand"]
+usage = "FLOW maintain evolution expand <epic>"
+summary = "Expand an accepted epic into runnable child work."
+effect = "confirm"
+workspace = "required"
+reference = "references/command-maintain.md"
+harnesses = ["claude-code", "codex"]
+arguments = [
+  { name = "epic", value_type = "ticket", cardinality = "one" },
+]
+
+[[command]]
+id = "maintain.evolution.drain"
+path = ["maintain", "evolution", "drain"]
+usage = "FLOW maintain evolution drain [--dry-run] [--include-proposals]"
+summary = "Run ready evolution work through the bounded worker pool."
+effect = "write"
+workspace = "required"
+reference = "references/command-maintain.md"
+harnesses = ["claude-code", "codex"]
+options = [
+  { name = "--dry-run", value_type = "boolean", cardinality = "zero_or_one" },
+  { name = "--include-proposals", value_type = "boolean", cardinality = "zero_or_one" },
+]
+
+[[command]]
+id = "maintain.worktrees.clean"
+path = ["maintain", "worktrees", "clean"]
+usage = "FLOW maintain worktrees clean [--dry-run]"
+summary = "Remove safe stale Flow worktrees after review."
+effect = "confirm"
+workspace = "required"
+reference = "references/command-maintain.md"
+harnesses = ["claude-code", "codex"]
+options = [
+  { name = "--dry-run", value_type = "boolean", cardinality = "zero_or_one" },
+]
+
+[[command]]
+id = "help"
+path = ["help"]
+usage = "FLOW help [ticket|memory|measure|workspace|maintain]"
+summary = "Show all commands or help for one namespace."
+effect = "read"
+workspace = "none"
+reference = "references/command-target.md"
+harnesses = ["claude-code", "codex"]
+arguments = [
+  { name = "topic", value_type = "choice", cardinality = "zero_or_one", choices = ["ticket", "memory", "measure", "workspace", "maintain"] },
+]
