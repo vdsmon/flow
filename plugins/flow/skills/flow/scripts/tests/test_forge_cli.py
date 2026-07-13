@@ -20,8 +20,8 @@ class _FakeForge:
         self._threads_supported = threads_supported
         self._bot_review_supported = bot_review_supported
 
-    def detect_pr(self, branch):
-        self.calls.append(("detect_pr", branch))
+    def detect_pr(self, branch, state="open"):
+        self.calls.append(("detect_pr", branch, state))
         return {
             "id": "7",
             "url": "u",
@@ -91,7 +91,7 @@ class _FakeForge:
 
 class _FailingForge(_FakeForge):
     @override
-    def detect_pr(self, branch):
+    def detect_pr(self, branch, state="open"):
         raise ForgeError(f"network failed for {branch}")
 
 
@@ -115,7 +115,14 @@ def test_detect_pr(ws, capsys):
     assert rc == 0
     out = json.loads(capsys.readouterr().out)
     assert out["number"] == 7
-    assert ("detect_pr", "feature/flow-x") in fake.calls
+    assert ("detect_pr", "feature/flow-x", "open") in fake.calls
+
+
+def test_detect_pr_passes_state_selector(ws, capsys):
+    rc, fake = _run(["detect-pr", "--branch", "feature/flow-x", "--state", "merged"], ws)
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out)["number"] == 7
+    assert ("detect_pr", "feature/flow-x", "merged") in fake.calls
 
 
 def test_pr_info(ws, capsys):

@@ -2,445 +2,394 @@ from __future__ import annotations
 
 import json
 import subprocess
+from pathlib import Path
+
+import pytest
 
 import worktree_janitor as wj
 
 
-def _cp(stdout: str = "", returncode: int = 0) -> subprocess.CompletedProcess[str]:
-    return subprocess.CompletedProcess(args=[], returncode=returncode, stdout=stdout, stderr="")
+def _cp(stdout: str = "", returncode: int = 0, stderr: str = ""):
+    return subprocess.CompletedProcess([], returncode, stdout, stderr)
 
 
-def _porcelain(entries: list[tuple[str, str | None, str]]) -> str:
-    """Render `git worktree list --porcelain` from (path, branch, head_sha) triples.
-
-    Distinct head shas per entry: tip==head_oid equality is the reap safety gate.
-    None branch -> detached.
-    """
-    blocks = []
-    for path, branch, head in entries:
-        lines = [f"worktree {path}", f"HEAD {head}"]
-        lines.append("detached" if branch is None else f"branch refs/heads/{branch}")
-        blocks.append("\n".join(lines))
-    return "\n\n".join(blocks) + "\n"
+def _porcelain(entries: list[tuple[Path, str, str]]) -> str:
+    return (
+        "\n\n".join(
+            f"worktree {path}\nHEAD {tip}\nbranch refs/heads/{branch}"
+            for path, branch, tip in entries
+        )
+        + "\n"
+    )
 
 
 class _Runner:
-    """Contract-C fake answering git worktree list / gh pr list --head / bd show."""
-
-    def __init__(self, *, porcelain="", merged=None, bead_status=None, bd_error=(), gh_error=False):
+    def __init__(self, porcelain: str, *, unique: dict[str, int] | None = None):
         self.porcelain = porcelain
-        self.merged = dict(merged or {})  # branch -> {"number","headRefOid"}
-        self.bead_status = dict(bead_status or {})  # key -> raw status
-        self.bd_error = set(bd_error)  # keys whose `bd show` returns rc!=0
-        self.gh_error = gh_error
+        self.unique = unique or {}
         self.calls: list[list[str]] = []
 
     def __call__(self, args):
-        self.calls.append(list(args))
-        if args[:4] == ["git", "worktree", "list", "--porcelain"]:
+        args = list(args)
+        self.calls.append(args)
+        if args == ["git", "worktree", "list", "--porcelain"]:
             return _cp(self.porcelain)
-        if args[:3] == ["gh", "pr", "list"]:
-            if self.gh_error:
-                return _cp("boom", returncode=1)
-            head = args[args.index("--head") + 1]
-            pr = self.merged.get(head)
-            return _cp(json.dumps([pr] if pr else []))
-        if args[:2] == ["bd", "show"]:
-            key = args[2]
-            if key in self.bd_error:
-                return _cp("boom", returncode=1)
-            return _cp(json.dumps({"id": key, "status": self.bead_status.get(key, "closed")}))
-        raise AssertionError(f"unexpected tool call: {args}")
+        if args == ["git", "symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"]:
+            return _cp("refs/remotes/origin/main\n")
+        if args == ["git", "rev-parse", "refs/remotes/origin/main"]:
+            return _cp("default-sha\n")
+        if args == ["git", "ls-remote", "origin", "refs/heads/main"]:
+            return _cp("default-sha\trefs/heads/main\n")
+        if args[:3] == ["git", "rev-list", "--count"]:
+            return _cp(f"{self.unique.get(args[3], 0)}\n")
+        raise AssertionError(f"unexpected call: {args}")
 
 
-class _LiveProbe:
-    def __init__(self, live: bool):
-        self.live = live
-        self.calls: list[tuple] = []
+class _Tracker:
+    def __init__(self, states: dict[str, str], failures: set[str] | None = None):
+        self.states = states
+        self.failures = failures or set()
 
-    def __call__(self, ws, key):
-        self.calls.append((ws, key))
-        return self.live
-
-
-class _Observer:
-    """Stand-in for observe_at_close.observe_at_close (records call order + args)."""
-
-    def __init__(self, result=None, *, raises=False, order=None, tag="observe"):
-        self.result = result if result is not None else {"action": "skipped", "reason": "stub"}
-        self.raises = raises
-        self.order = order
-        self.tag = tag
-        self.calls: list[dict] = []
-
-    def __call__(self, workspace_root, key, worktree):
-        self.calls.append({"workspace_root": workspace_root, "key": key, "worktree": worktree})
-        if self.order is not None:
-            self.order.append((self.tag, key))
-        if self.raises:
-            raise RuntimeError("observe exploded")
-        return self.result
+    def state(self, key):
+        if key in self.failures:
+            raise RuntimeError(f"tracker failed for {key}")
+        return {"normalized": self.states[key]}
 
 
-def _wire(monkeypatch, tmp_path, runner, *, live_probe, observer=None):
-    repo = tmp_path / "flow"
-    repo.mkdir()
-    reap_calls: list[dict] = []
+class _Forge:
+    def __init__(self, prs: dict[tuple[str, str], dict | None], failures=()):
+        self.prs = prs
+        self.failures = set(failures)
+        self.calls: list[tuple[str, str]] = []
 
-    def fake_reap(*, ticket, main_root, branch):
-        reap_calls.append({"ticket": ticket, "main_root": main_root, "branch": branch})
-        return {"ticket": ticket, "branch": branch, "worktree_removed": True}
+    def detect_pr(self, branch, state="open"):
+        self.calls.append((branch, state))
+        if (branch, state) in self.failures:
+            raise RuntimeError(f"forge {state} failed")
+        return self.prs.get((branch, state))
 
-    monkeypatch.setattr(wj, "resolve_maintainer_repo", lambda ws: repo)
-    monkeypatch.setattr(wj, "_default_runner", lambda r: runner)
-    monkeypatch.setattr(wj.fleet, "is_live", live_probe)
-    monkeypatch.setattr(wj, "reap_worktree", fake_reap)
-    # Default the reap-seam observer to a no-op stub so the existing reap tests do not touch the
-    # real is_shipped gate; new tests pass their own recorder.
+
+def _wire(
+    monkeypatch,
+    tmp_path: Path,
+    *,
+    entries: list[tuple[Path, str, str]],
+    states: dict[str, str],
+    prs: dict[tuple[str, str], dict | None] | None = None,
+    unique: dict[str, int] | None = None,
+    lease_states: dict[str, str] | None = None,
+    tracker_failures: set[str] | None = None,
+    forge_failures=(),
+):
+    runner = _Runner(_porcelain(entries), unique=unique)
+    tracker = _Tracker(states, tracker_failures)
+    forge = _Forge(prs or {}, forge_failures)
+    monkeypatch.setattr(wj, "_default_runner", lambda _root: runner)
+    monkeypatch.setattr(wj, "_load_tracker", lambda _root: tracker)
+    monkeypatch.setattr(wj, "_load_forge", lambda _root: forge)
     monkeypatch.setattr(
-        wj.observe_at_close, "observe_at_close", observer if observer is not None else _Observer()
-    )
-    return repo, reap_calls
-
-
-def _run(monkeypatch, tmp_path, runner, capsys, *, live=False, dry_run=False, observer=None):
-    probe = _LiveProbe(live)
-    repo, reap_calls = _wire(monkeypatch, tmp_path, runner, live_probe=probe, observer=observer)
-    argv = ["sweep", "--workspace-root", str(tmp_path)]
-    if dry_run:
-        argv.append("--dry-run")
-    rc = wj.cli_main(argv)
-    out = json.loads(capsys.readouterr().out) if rc == 0 else None
-    return repo, rc, reap_calls, probe, out
-
-
-# --- pure classify_orphans ---------------------------------------------------
-
-
-def test_classify_orphans_match_is_reapable():
-    wts = [{"key": "flow-a", "branch": "feat/flow-a-x", "worktree": "/wt/a", "tip": "sha1"}]
-    out = wj.classify_orphans(wts, {"feat/flow-a-x": {"pr": 7, "head_oid": "sha1"}})
-    assert [e["key"] for e in out["reapable"]] == ["flow-a"]
-    assert out["reapable"][0]["pr"] == 7
-    assert out["skipped_ahead"] == []
-    assert out["no_merged_pr"] == []
-
-
-def test_classify_orphans_tip_ahead_is_skipped():
-    # local tip past the merged head (e.g. unpushed reflect commit) -> never reap
-    wts = [{"key": "flow-a", "branch": "feat/flow-a-x", "worktree": "/wt/a", "tip": "sha2"}]
-    out = wj.classify_orphans(wts, {"feat/flow-a-x": {"pr": 7, "head_oid": "sha1"}})
-    assert out["reapable"] == []
-    assert [e["key"] for e in out["skipped_ahead"]] == ["flow-a"]
-
-
-def test_classify_orphans_no_merged_pr():
-    wts = [{"key": "flow-a", "branch": "feat/flow-a-x", "worktree": "/wt/a", "tip": "sha1"}]
-    out = wj.classify_orphans(wts, {})
-    assert [e["key"] for e in out["no_merged_pr"]] == ["flow-a"]
-    assert out["reapable"] == []
-
-
-def test_classify_orphans_mixed():
-    wts = [
-        {"key": "flow-a", "branch": "feat/flow-a-x", "worktree": "/wt/a", "tip": "sha1"},
-        {"key": "flow-b", "branch": "feat/flow-b-y", "worktree": "/wt/b", "tip": "ahead"},
-        {"key": "flow-c", "branch": "feat/flow-c-z", "worktree": "/wt/c", "tip": "sha3"},
-    ]
-    merged = {
-        "feat/flow-a-x": {"pr": 1, "head_oid": "sha1"},
-        "feat/flow-b-y": {"pr": 2, "head_oid": "sha2"},
-    }
-    out = wj.classify_orphans(wts, merged)
-    assert [e["key"] for e in out["reapable"]] == ["flow-a"]
-    assert [e["key"] for e in out["skipped_ahead"]] == ["flow-b"]
-    assert [e["key"] for e in out["no_merged_pr"]] == ["flow-c"]
-
-
-# --- _enumerate_worktrees ----------------------------------------------------
-
-
-def test_enumerate_keeps_only_flow_branches():
-    blob = _porcelain(
-        [
-            ("/main", "main", "m0"),
-            ("/wt/a", "feat/flow-a-x", "sha1"),
-            ("/wt/d", None, "d0"),
-        ]
-    )
-    entries = wj._enumerate_worktrees(blob)
-    assert entries == [
-        {"key": "flow-a", "branch": "feat/flow-a-x", "worktree": "/wt/a", "tip": "sha1"}
-    ]
-
-
-# --- CLI sweep ---------------------------------------------------------------
-
-
-def test_sweep_reaps_terminal_nonlive_match(monkeypatch, tmp_path, capsys):
-    runner = _Runner(
-        porcelain=_porcelain([("/wt/a", "feat/flow-a-x", "sha1")]),
-        merged={"feat/flow-a-x": {"number": 7, "headRefOid": "sha1"}},
-        bead_status={"flow-a": "closed"},  # RAW status beads emits for a closed bead
-    )
-    repo, rc, reap_calls, _probe, out = _run(monkeypatch, tmp_path, runner, capsys)
-    assert rc == 0
-    assert [e["key"] for e in out["reaped"]] == ["flow-a"]
-    assert reap_calls == [{"ticket": "flow-a", "main_root": repo, "branch": "feat/flow-a-x"}]
-
-
-def test_sweep_active_bead_in_progress_skipped(monkeypatch, tmp_path, capsys):
-    runner = _Runner(
-        porcelain=_porcelain([("/wt/a", "feat/flow-a-x", "sha1")]),
-        merged={"feat/flow-a-x": {"number": 7, "headRefOid": "sha1"}},
-        bead_status={"flow-a": "in_progress"},
-    )
-    _repo, rc, reap_calls, _probe, out = _run(monkeypatch, tmp_path, runner, capsys)
-    assert rc == 0
-    assert reap_calls == []
-    assert [e["key"] for e in out["skipped_active_bead"]] == ["flow-a"]
-    assert out["reaped"] == []
-
-
-def test_sweep_active_bead_open_skipped(monkeypatch, tmp_path, capsys):
-    runner = _Runner(
-        porcelain=_porcelain([("/wt/a", "feat/flow-a-x", "sha1")]),
-        merged={"feat/flow-a-x": {"number": 7, "headRefOid": "sha1"}},
-        bead_status={"flow-a": "open"},
-    )
-    _repo, rc, reap_calls, _probe, out = _run(monkeypatch, tmp_path, runner, capsys)
-    assert rc == 0
-    assert reap_calls == []
-    assert [e["key"] for e in out["skipped_active_bead"]] == ["flow-a"]
-
-
-def test_sweep_bd_read_error_treated_active(monkeypatch, tmp_path, capsys):
-    # a bd show failure is fail-safe: treat active -> skip, never reap
-    runner = _Runner(
-        porcelain=_porcelain([("/wt/a", "feat/flow-a-x", "sha1")]),
-        merged={"feat/flow-a-x": {"number": 7, "headRefOid": "sha1"}},
-        bd_error=["flow-a"],
-    )
-    _repo, rc, reap_calls, _probe, out = _run(monkeypatch, tmp_path, runner, capsys)
-    assert rc == 0
-    assert reap_calls == []
-    assert [e["key"] for e in out["skipped_active_bead"]] == ["flow-a"]
-
-
-def test_sweep_live_lease_skipped(monkeypatch, tmp_path, capsys):
-    runner = _Runner(
-        porcelain=_porcelain([("/wt/a", "feat/flow-a-x", "sha1")]),
-        merged={"feat/flow-a-x": {"number": 7, "headRefOid": "sha1"}},
-        bead_status={"flow-a": "closed"},
-    )
-    repo, rc, reap_calls, probe, out = _run(monkeypatch, tmp_path, runner, capsys, live=True)
-    assert rc == 0
-    assert reap_calls == []
-    assert [e["key"] for e in out["skipped_live"]] == ["flow-a"]
-    # is_live must be called with the RAW workspace-root, not the resolved repo
-    assert probe.calls == [(tmp_path, "flow-a")]
-    assert probe.calls[0][0] != repo
-
-
-def test_sweep_dry_run_reports_without_reaping(monkeypatch, tmp_path, capsys):
-    # closed + non-live so the entry reaches the would-reap branch
-    runner = _Runner(
-        porcelain=_porcelain([("/wt/a", "feat/flow-a-x", "sha1")]),
-        merged={"feat/flow-a-x": {"number": 7, "headRefOid": "sha1"}},
-        bead_status={"flow-a": "closed"},
-    )
-    _repo, rc, reap_calls, _probe, out = _run(monkeypatch, tmp_path, runner, capsys, dry_run=True)
-    assert rc == 0
-    assert reap_calls == []
-    assert out["dry_run"] is True
-    assert [e["key"] for e in out["reaped"]] == ["flow-a"]
-    assert out["reaped"][0]["receipt"] is None
-
-
-def test_sweep_tip_mismatch_end_to_end_skipped_ahead(monkeypatch, tmp_path, capsys):
-    runner = _Runner(
-        porcelain=_porcelain([("/wt/a", "feat/flow-a-x", "local-ahead")]),
-        merged={"feat/flow-a-x": {"number": 7, "headRefOid": "merged-head"}},
-        bead_status={"flow-a": "closed"},
-    )
-    _repo, rc, reap_calls, _probe, out = _run(monkeypatch, tmp_path, runner, capsys)
-    assert rc == 0
-    assert reap_calls == []
-    assert [e["key"] for e in out["skipped_ahead"]] == ["flow-a"]
-    # a skipped_ahead worktree is never bd-probed (gated before the bead read)
-    assert not any(c[:2] == ["bd", "show"] for c in runner.calls)
-
-
-def test_sweep_no_merged_pr_bucketed(monkeypatch, tmp_path, capsys):
-    runner = _Runner(porcelain=_porcelain([("/wt/a", "feat/flow-a-x", "sha1")]))
-    _repo, rc, reap_calls, _probe, out = _run(monkeypatch, tmp_path, runner, capsys)
-    assert rc == 0
-    assert reap_calls == []
-    assert [e["key"] for e in out["no_merged_pr"]] == ["flow-a"]
-
-
-def test_sweep_not_maintainer_exit_4(monkeypatch, tmp_path, capsys):
-    monkeypatch.setattr(wj, "resolve_maintainer_repo", lambda ws: None)
-    rc = wj.cli_main(["sweep", "--workspace-root", str(tmp_path)])
-    assert rc == 4
-    assert "dormant" in capsys.readouterr().err
-
-
-def test_sweep_gh_error_exit_2(monkeypatch, tmp_path, capsys):
-    runner = _Runner(
-        porcelain=_porcelain([("/wt/a", "feat/flow-a-x", "sha1")]),
-        gh_error=True,
-    )
-    _repo, rc, reap_calls, _probe, _out = _run(monkeypatch, tmp_path, runner, capsys)
-    assert rc == 2
-    assert reap_calls == []
-    assert "gh pr list" in capsys.readouterr().err
-
-
-def test_sweep_reap_failure_isolated(monkeypatch, tmp_path, capsys):
-    # a mid-sweep reap failure buckets into reap_failed; the loop keeps going and
-    # the JSON audit trail of the reaps already done still prints (exit 0).
-    runner = _Runner(
-        porcelain=_porcelain(
-            [("/wt/a", "feat/flow-a-x", "sha1"), ("/wt/b", "feat/flow-b-y", "sha2")]
+        wj.branch_ticket,
+        "resolve",
+        lambda _root, _cwd, branch=None: next(
+            (key for key in states if branch and key in branch), None
         ),
-        merged={
-            "feat/flow-a-x": {"number": 1, "headRefOid": "sha1"},
-            "feat/flow-b-y": {"number": 2, "headRefOid": "sha2"},
-        },
-        bead_status={"flow-a": "closed", "flow-b": "closed"},
     )
-    repo = tmp_path / "flow"
-    repo.mkdir()
+    lease_calls: list[Path] = []
 
-    def raising_reap(*, ticket, main_root, branch):
-        if ticket == "flow-a":
-            raise RuntimeError("worktree remove exploded")
-        return {"ticket": ticket, "branch": branch, "worktree_removed": True}
+    def classify(ticket_dir, *_args, **_kwargs):
+        lease_calls.append(ticket_dir)
+        return {"state": (lease_states or {}).get(ticket_dir.name, "free")}
 
-    monkeypatch.setattr(wj, "resolve_maintainer_repo", lambda ws: repo)
-    monkeypatch.setattr(wj, "_default_runner", lambda r: runner)
-    monkeypatch.setattr(wj.fleet, "is_live", lambda ws, key: False)
-    monkeypatch.setattr(wj, "reap_worktree", raising_reap)
-    monkeypatch.setattr(wj.observe_at_close, "observe_at_close", _Observer())
+    monkeypatch.setattr(wj.lease, "classify", classify)
+    monkeypatch.setattr(wj.lease, "boot_id", lambda: "boot")
+    monkeypatch.setattr(wj.lease, "hostname", lambda: "host")
+    reap_calls: list[dict] = []
+    order: list[tuple[str, str]] = []
 
-    rc = wj.cli_main(["sweep", "--workspace-root", str(tmp_path)])
-    out = json.loads(capsys.readouterr().out)
-    assert rc == 0
-    assert [e["key"] for e in out["reap_failed"]] == ["flow-a"]
-    assert "worktree remove exploded" in out["reap_failed"][0]["reap_error"]
-    assert [e["key"] for e in out["reaped"]] == ["flow-b"]
+    def reap(**kwargs):
+        reap_calls.append(kwargs)
+        before_remove = kwargs.get("before_remove")
+        before_result = None
+        if before_remove is not None:
+            worktree = next(path for path, branch, _tip in entries if kwargs["ticket"] in branch)
+            before_result = before_remove(worktree)
+        order.append(("reap", kwargs["ticket"]))
+        return {
+            "worktree_removed": True,
+            "branch_deleted": True,
+            "before_remove_result": before_result,
+            "before_remove_error": None,
+        }
+
+    def observe(_root, key, _worktree):
+        order.append(("observe", key))
+        return {"action": "observed"}
+
+    monkeypatch.setattr(wj, "reap_worktree", reap)
+    monkeypatch.setattr(wj.observe_at_close, "observe_at_close", observe)
+    return runner, forge, lease_calls, reap_calls, order
 
 
-# --- observe-at-close seam ---------------------------------------------------
-
-
-def test_sweep_observes_before_reap(monkeypatch, tmp_path, capsys):
-    # observe_at_close must freeze the ship event BEFORE reap destroys state.json.
-    order: list[tuple] = []
-    runner = _Runner(
-        porcelain=_porcelain([("/wt/a", "feat/flow-a-x", "sha1")]),
-        merged={"feat/flow-a-x": {"number": 7, "headRefOid": "sha1"}},
-        bead_status={"flow-a": "closed"},
+def _confirmed_sweep(workspace_root: Path) -> dict:
+    preview = wj.sweep(workspace_root, dry_run=True)
+    return wj.sweep(
+        workspace_root,
+        dry_run=False,
+        confirmed_target=Path(preview["target_root"]),
+        confirmed_candidates=frozenset(row["confirmation_id"] for row in preview["reapable"]),
     )
-    repo = tmp_path / "flow"
-    repo.mkdir()
-
-    def ordered_reap(*, ticket, main_root, branch):
-        order.append(("reap", ticket))
-        return {"ticket": ticket, "branch": branch, "worktree_removed": True}
-
-    observer = _Observer(result={"action": "observed", "path": "/x"}, order=order)
-    monkeypatch.setattr(wj, "resolve_maintainer_repo", lambda ws: repo)
-    monkeypatch.setattr(wj, "_default_runner", lambda r: runner)
-    monkeypatch.setattr(wj.fleet, "is_live", lambda ws, key: False)
-    monkeypatch.setattr(wj, "reap_worktree", ordered_reap)
-    monkeypatch.setattr(wj.observe_at_close, "observe_at_close", observer)
-
-    rc = wj.cli_main(["sweep", "--workspace-root", str(tmp_path)])
-    out = json.loads(capsys.readouterr().out)
-    assert rc == 0
-    assert order == [("observe", "flow-a"), ("reap", "flow-a")]
-    # the outcome rides the reaped entry as `ship_event`
-    assert out["reaped"][0]["ship_event"] == {"action": "observed", "path": "/x"}
-    # observe gets the MAIN repo + the doomed worktree path (never the raw ws)
-    assert observer.calls[0]["workspace_root"] == repo
-    assert str(observer.calls[0]["worktree"]) == "/wt/a"
 
 
-def test_sweep_observe_failure_does_not_block_reap(monkeypatch, tmp_path, capsys):
-    # even if observe_at_close raised (it never does), the teardown still proceeds.
-    runner = _Runner(
-        porcelain=_porcelain([("/wt/a", "feat/flow-a-x", "sha1")]),
-        merged={"feat/flow-a-x": {"number": 7, "headRefOid": "sha1"}},
-        bead_status={"flow-a": "closed"},
+def test_sweep_scopes_to_primary_repo_managed_dirs_and_skips_invoking_checkout(
+    monkeypatch, tmp_path
+):
+    main = tmp_path / "repo"
+    invoking = main / ".claude" / "worktrees" / "feat-flow-run"
+    managed = main / ".flow" / "worktrees" / "feat-flow-old"
+    foreign = tmp_path / "elsewhere" / "feat-flow-outside"
+    entries = [
+        (main, "main", "default-sha"),
+        (invoking, "feat/flow-run-x", "run-tip"),
+        (managed, "feat/flow-old-x", "old-tip"),
+        (foreign, "feat/flow-out-x", "out-tip"),
+    ]
+    _wire(
+        monkeypatch,
+        tmp_path,
+        entries=entries,
+        states={"flow-run": "done", "flow-old": "done", "flow-out": "done"},
     )
-    observer = _Observer(raises=True)
-    _repo, rc, reap_calls, _probe, out = _run(
-        monkeypatch, tmp_path, runner, capsys, observer=observer
-    )
-    assert rc == 0
-    assert [e["key"] for e in out["reaped"]] == ["flow-a"]
-    assert out["reaped"][0]["ship_event"]["action"] == "failed"
-    assert reap_calls == [{"ticket": "flow-a", "main_root": _repo, "branch": "feat/flow-a-x"}]
+
+    result = wj.sweep(invoking, dry_run=True)
+
+    assert result["target_root"] == str(main.resolve())
+    assert [row["key"] for row in result["reapable"]] == ["flow-old"]
+    assert [row["branch"] for row in result["skipped_invoking_checkout"]] == ["feat/flow-run-x"]
+    assert [row["branch"] for row in result["skipped_unmanaged"]] == ["feat/flow-out-x"]
 
 
-def test_sweep_dry_run_never_observes(monkeypatch, tmp_path, capsys):
-    runner = _Runner(
-        porcelain=_porcelain([("/wt/a", "feat/flow-a-x", "sha1")]),
-        merged={"feat/flow-a-x": {"number": 7, "headRefOid": "sha1"}},
-        bead_status={"flow-a": "closed"},
+def test_open_pr_is_always_preserved(monkeypatch, tmp_path):
+    main = tmp_path / "repo"
+    wt = main / ".flow" / "worktrees" / "feat-FT-10"
+    branch = "feat/FT-10-x"
+    _runner, forge, _lease, reap_calls, _order = _wire(
+        monkeypatch,
+        tmp_path,
+        entries=[(main, "main", "default-sha"), (wt, branch, "tip")],
+        states={"FT-10": "done"},
+        prs={(branch, "open"): {"id": "9", "state": "OPEN", "head_sha": "tip"}},
     )
-    observer = _Observer()
-    _repo, rc, reap_calls, _probe, out = _run(
-        monkeypatch, tmp_path, runner, capsys, dry_run=True, observer=observer
-    )
-    assert rc == 0
-    assert observer.calls == []
+
+    result = _confirmed_sweep(main)
+
+    assert [row["key"] for row in result["skipped_open_pr"]] == ["FT-10"]
     assert reap_calls == []
-    assert [e["key"] for e in out["reaped"]] == ["flow-a"]
+    assert forge.calls == [(branch, "open"), (branch, "open")]
 
 
-def test_sweep_skipped_active_bead_never_observed(monkeypatch, tmp_path, capsys):
-    runner = _Runner(
-        porcelain=_porcelain([("/wt/a", "feat/flow-a-x", "sha1")]),
-        merged={"feat/flow-a-x": {"number": 7, "headRefOid": "sha1"}},
-        bead_status={"flow-a": "open"},
+def test_merged_pr_reaps_only_when_local_tip_matches_head(monkeypatch, tmp_path):
+    main = tmp_path / "repo"
+    match = main / ".claude" / "worktrees" / "match"
+    ahead = main / ".claude" / "worktrees" / "ahead"
+    match_branch = "feat/FT-10-match"
+    ahead_branch = "feat/FT-11-ahead"
+    _runner, _forge, lease_calls, reap_calls, order = _wire(
+        monkeypatch,
+        tmp_path,
+        entries=[
+            (main, "main", "default-sha"),
+            (match, match_branch, "match-tip"),
+            (ahead, ahead_branch, "ahead-tip"),
+        ],
+        states={"FT-10": "done", "FT-11": "cancelled"},
+        prs={
+            (match_branch, "merged"): {
+                "id": "10",
+                "state": "MERGED",
+                "head_sha": "match-tip",
+            },
+            (ahead_branch, "merged"): {
+                "id": "11",
+                "state": "MERGED",
+                "head_sha": "merged-tip",
+            },
+        },
     )
-    observer = _Observer()
-    _repo, rc, _reap_calls, _probe, out = _run(
-        monkeypatch, tmp_path, runner, capsys, observer=observer
+
+    result = _confirmed_sweep(main)
+
+    assert [row["key"] for row in result["reaped"]] == ["FT-10"]
+    assert [row["key"] for row in result["skipped_merged_head_mismatch"]] == ["FT-11"]
+    assert reap_calls[0]["branch"] == match_branch
+    assert order == [("observe", "FT-10"), ("reap", "FT-10")]
+    assert lease_calls == [
+        match / ".flow" / "runs" / "FT-10",
+        ahead / ".flow" / "runs" / "FT-11",
+        match / ".flow" / "runs" / "FT-10",
+        ahead / ".flow" / "runs" / "FT-11",
+    ]
+
+
+def test_terminal_no_pr_requires_verified_default_and_zero_unique_commits(monkeypatch, tmp_path):
+    main = tmp_path / "repo"
+    zero = main / ".claude" / "worktrees" / "zero"
+    unique = main / ".claude" / "worktrees" / "unique"
+    _runner, _forge, _lease, reap_calls, _order = _wire(
+        monkeypatch,
+        tmp_path,
+        entries=[
+            (main, "main", "default-sha"),
+            (zero, "feat/FT-10-zero", "zero-tip"),
+            (unique, "feat/FT-11-unique", "unique-tip"),
+        ],
+        states={"FT-10": "done", "FT-11": "done"},
+        unique={"default-sha..zero-tip": 0, "default-sha..unique-tip": 2},
     )
+
+    result = _confirmed_sweep(main)
+
+    assert [row["key"] for row in result["reaped"]] == ["FT-10"]
+    assert [row["key"] for row in result["skipped_unique_commits"]] == ["FT-11"]
+    assert [call["ticket"] for call in reap_calls] == ["FT-10"]
+
+
+def test_probe_failures_are_bucketed_per_candidate_and_preserved(monkeypatch, tmp_path):
+    main = tmp_path / "repo"
+    tracker_fail = main / ".flow" / "worktrees" / "tracker-fail"
+    forge_fail = main / ".flow" / "worktrees" / "forge-fail"
+    _runner, _forge, _lease, reap_calls, _order = _wire(
+        monkeypatch,
+        tmp_path,
+        entries=[
+            (main, "main", "default-sha"),
+            (tracker_fail, "feat/FT-10-x", "tip-10"),
+            (forge_fail, "feat/FT-11-x", "tip-11"),
+        ],
+        states={"FT-10": "done", "FT-11": "done"},
+        tracker_failures={"FT-10"},
+        forge_failures={("feat/FT-11-x", "open")},
+    )
+
+    result = _confirmed_sweep(main)
+
+    assert {(row["key"], row["probe"]) for row in result["probe_failed"]} == {
+        ("FT-10", "tracker_state"),
+        ("FT-11", "forge_open_pr"),
+    }
+    assert reap_calls == []
+
+
+def test_live_and_corrupt_exact_leases_are_preserved(monkeypatch, tmp_path):
+    main = tmp_path / "repo"
+    live = main / ".flow" / "worktrees" / "live"
+    corrupt = main / ".flow" / "worktrees" / "corrupt"
+    _runner, _forge, _lease, reap_calls, _order = _wire(
+        monkeypatch,
+        tmp_path,
+        entries=[
+            (main, "main", "default-sha"),
+            (live, "feat/FT-10-x", "tip-10"),
+            (corrupt, "feat/FT-11-x", "tip-11"),
+        ],
+        states={"FT-10": "done", "FT-11": "done"},
+        lease_states={"FT-10": "live", "FT-11": "corrupt"},
+    )
+
+    result = _confirmed_sweep(main)
+
+    assert [row["key"] for row in result["skipped_live_lease"]] == ["FT-10"]
+    assert [row["key"] for row in result["skipped_corrupt_lease"]] == ["FT-11"]
+    assert reap_calls == []
+
+
+def test_live_revision_lease_is_preserved_in_preview(monkeypatch, tmp_path):
+    main = tmp_path / "repo"
+    wt = main / ".flow" / "worktrees" / "revision"
+    revision = wt / ".flow" / "runs" / "FT-10" / "revisions" / "r1"
+    revision.mkdir(parents=True)
+    _runner, _forge, _lease, reap_calls, _order = _wire(
+        monkeypatch,
+        tmp_path,
+        entries=[(main, "main", "default-sha"), (wt, "feat/FT-10-x", "tip")],
+        states={"FT-10": "done"},
+        lease_states={"r1": "live"},
+    )
+
+    result = wj.sweep(main, dry_run=True)
+
+    assert [row["key"] for row in result["skipped_live_lease"]] == ["FT-10"]
+    assert result["reapable"] == []
+    assert reap_calls == []
+
+
+def test_dry_run_never_observes_or_reaps(monkeypatch, tmp_path):
+    main = tmp_path / "repo"
+    wt = main / ".flow" / "worktrees" / "orphan"
+    _runner, _forge, _lease, reap_calls, order = _wire(
+        monkeypatch,
+        tmp_path,
+        entries=[(main, "main", "default-sha"), (wt, "feat/FT-10-x", "tip")],
+        states={"FT-10": "done"},
+    )
+
+    result = wj.sweep(main, dry_run=True)
+
+    assert [row["key"] for row in result["reapable"]] == ["FT-10"]
+    assert result["reaped"] == []
+    assert reap_calls == []
+    assert order == []
+
+
+def test_real_sweep_never_reaps_candidate_that_was_not_confirmed(monkeypatch, tmp_path):
+    main = tmp_path / "repo"
+    wt = main / ".flow" / "worktrees" / "orphan"
+    branch = "feat/FT-10-x"
+    _runner, forge, _lease, reap_calls, _order = _wire(
+        monkeypatch,
+        tmp_path,
+        entries=[(main, "main", "default-sha"), (wt, branch, "tip")],
+        states={"FT-10": "done"},
+        prs={(branch, "open"): {"id": "10", "state": "OPEN", "head_sha": "tip"}},
+    )
+    preview = wj.sweep(main, dry_run=True)
+    assert preview["reapable"] == []
+
+    forge.prs[(branch, "open")] = None
+    result = wj.sweep(
+        main,
+        dry_run=False,
+        confirmed_target=Path(preview["target_root"]),
+        confirmed_candidates=frozenset(),
+    )
+
+    assert [row["key"] for row in result["skipped_unconfirmed"]] == ["FT-10"]
+    assert result["reaped"] == []
+    assert reap_calls == []
+
+
+def test_real_sweep_refuses_changed_confirmed_target(monkeypatch, tmp_path):
+    main = tmp_path / "repo"
+    _wire(monkeypatch, tmp_path, entries=[(main, "main", "default-sha")], states={})
+
+    with pytest.raises(wj._JanitorError, match="does not match current target"):
+        wj.sweep(
+            main,
+            dry_run=False,
+            confirmed_target=tmp_path / "different-repo",
+            confirmed_candidates=frozenset(),
+        )
+
+
+def test_cli_outputs_absolute_target_root(monkeypatch, tmp_path, capsys):
+    main = tmp_path / "repo"
+    _wire(
+        monkeypatch,
+        tmp_path,
+        entries=[(main, "main", "default-sha")],
+        states={},
+    )
+
+    rc = wj.cli_main(["sweep", "--workspace-root", str(main), "--dry-run"])
+
     assert rc == 0
-    assert observer.calls == []
-    assert [e["key"] for e in out["skipped_active_bead"]] == ["flow-a"]
-
-
-def test_sweep_skipped_live_never_observed(monkeypatch, tmp_path, capsys):
-    runner = _Runner(
-        porcelain=_porcelain([("/wt/a", "feat/flow-a-x", "sha1")]),
-        merged={"feat/flow-a-x": {"number": 7, "headRefOid": "sha1"}},
-        bead_status={"flow-a": "closed"},
-    )
-    observer = _Observer()
-    _repo, rc, _reap_calls, _probe, out = _run(
-        monkeypatch, tmp_path, runner, capsys, live=True, observer=observer
-    )
-    assert rc == 0
-    assert observer.calls == []
-    assert [e["key"] for e in out["skipped_live"]] == ["flow-a"]
-
-
-def test_sweep_skipped_ahead_never_observed(monkeypatch, tmp_path, capsys):
-    runner = _Runner(
-        porcelain=_porcelain([("/wt/a", "feat/flow-a-x", "local-ahead")]),
-        merged={"feat/flow-a-x": {"number": 7, "headRefOid": "merged-head"}},
-        bead_status={"flow-a": "closed"},
-    )
-    observer = _Observer()
-    _repo, rc, _reap_calls, _probe, out = _run(
-        monkeypatch, tmp_path, runner, capsys, observer=observer
-    )
-    assert rc == 0
-    assert observer.calls == []
-    assert [e["key"] for e in out["skipped_ahead"]] == ["flow-a"]
+    assert json.loads(capsys.readouterr().out)["target_root"] == str(main.resolve())

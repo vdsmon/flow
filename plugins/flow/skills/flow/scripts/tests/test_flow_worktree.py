@@ -134,10 +134,10 @@ def _run(tmp: Path, main: Path, **kw):
 
 
 def test_is_ticket_branch_accepts_both_prefixes() -> None:
-    assert fw._is_ticket_branch("feat/FT-1", "FT-1")
-    assert fw._is_ticket_branch("feat/FT-1-some-slug", "FT-1")
-    assert fw._is_ticket_branch("feature/FT-1-some-slug", "FT-1")  # legacy
-    assert not fw._is_ticket_branch("feat/FT-10-other", "FT-1")  # no prefix-bleed
+    assert fw.is_ticket_branch("feat/FT-1", "FT-1")
+    assert fw.is_ticket_branch("feat/FT-1-some-slug", "FT-1")
+    assert fw.is_ticket_branch("feature/FT-1-some-slug", "FT-1")  # legacy
+    assert not fw.is_ticket_branch("feat/FT-10-other", "FT-1")  # no prefix-bleed
 
 
 def test_bootstrap_refuses_non_feat_branch(tmp_path: Path) -> None:
@@ -1236,6 +1236,50 @@ def test_reap_skips_when_lease_corrupt(tmp_path: Path) -> None:
     assert not any(c[:3] == ["git", "branch", "-D"] for c in calls)
 
 
+def test_reap_skips_nonterminal_revision_run(tmp_path: Path) -> None:
+    wt = tmp_path / "main" / ".flow" / "worktrees" / "feat-FT-1-thing"
+    revision_dir = wt / ".flow" / "runs" / "FT-1" / "revisions" / "r1"
+    fw.state.init(revision_dir, "FT-1", "beads", ["implement"], run_id="revision-run")
+    calls: list = []
+    runner = _reap_runner(
+        worktrees=_porcelain([(str(wt), "feat/FT-1-thing")]),
+        calls=calls,
+    )
+
+    receipt = fw.reap_worktree(ticket="FT-1", main_root=tmp_path / "main", runner=runner)
+
+    assert "revision run non-terminal" in str(receipt["skipped"])
+    assert not any(c[:4] == ["git", "worktree", "remove", "--force"] for c in calls)
+    assert not any(c[:3] == ["git", "branch", "-D"] for c in calls)
+
+
+def test_reap_skips_when_tip_changed_after_classification(tmp_path: Path) -> None:
+    wt = tmp_path / "main" / ".flow" / "worktrees" / "feat-FT-1-thing"
+    wt.mkdir(parents=True)
+    calls: list = []
+    base_runner = _reap_runner(
+        worktrees=_porcelain([(str(wt), "feat/FT-1-thing")]),
+        calls=calls,
+    )
+
+    def runner(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
+        if args == ["git", "rev-parse", "HEAD"]:
+            calls.append(args)
+            return subprocess.CompletedProcess(args, 0, "new-tip\n", "")
+        return base_runner(args, cwd)
+
+    receipt = fw.reap_worktree(
+        ticket="FT-1",
+        main_root=tmp_path / "main",
+        runner=runner,
+        expected_tip="confirmed-tip",
+    )
+
+    assert "tip changed" in str(receipt["skipped"])
+    assert not any(c[:4] == ["git", "worktree", "remove", "--force"] for c in calls)
+    assert not any(c[:3] == ["git", "branch", "-D"] for c in calls)
+
+
 def test_reap_removes_expired_same_host_previous_boot_lease(tmp_path: Path) -> None:
     import lease
 
@@ -1321,6 +1365,32 @@ def test_reap_deletes_leaked_branch_when_worktree_gone(tmp_path: Path) -> None:
     assert receipt["worktree_removed"] is False
     assert receipt["branch_deleted"] is True
     assert any(c == ["git", "branch", "-D", "feat/FT-1-thing"] for c in calls)
+
+
+def test_reap_preserves_changed_branch_when_worktree_went_away(tmp_path: Path) -> None:
+    calls: list = []
+    base_runner = _reap_runner(
+        worktrees=_porcelain([(str(tmp_path / "main"), "main")]),
+        calls=calls,
+    )
+
+    def runner(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
+        if args == ["git", "rev-parse", "feat/FT-1-thing"]:
+            calls.append(args)
+            return subprocess.CompletedProcess(args, 0, "new-tip\n", "")
+        return base_runner(args, cwd)
+
+    receipt = fw.reap_worktree(
+        ticket="FT-1",
+        main_root=tmp_path / "main",
+        branch="feat/FT-1-thing",
+        runner=runner,
+        expected_tip="confirmed-tip",
+    )
+
+    assert "branch tip changed" in str(receipt["skipped"])
+    assert receipt["branch_deleted"] is False
+    assert not any(c[:3] == ["git", "branch", "-D"] for c in calls)
 
 
 def test_reap_remove_failure_skips_branch_delete(tmp_path: Path) -> None:
@@ -1817,7 +1887,7 @@ def test_reap_recovery_skips_push_when_rescue_ref_already_present(tmp_path: Path
 
 
 def test_rescue_branch_not_ticket_branch() -> None:
-    assert not fw._is_ticket_branch("flow-rescue/flow-x1-abc1234", "flow-x1")
+    assert not fw.is_ticket_branch("flow-rescue/flow-x1-abc1234", "flow-x1")
 
 
 def test_rescue_branch_not_flow_key_re() -> None:
