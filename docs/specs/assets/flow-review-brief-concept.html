@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Flow review brief concept</title>
+  <style>
+    * { box-sizing: border-box; }
+    :root {
+      --ink: #18221d;
+      --muted: #66716b;
+      --paper: #fbfaf6;
+      --line: #dcded6;
+      --moss: #274f3f;
+      --moss-soft: #e8f0ea;
+      --rust: #9d4736;
+      --gold: #b58a42;
+    }
+    html { background: #e8ebe5; color: var(--ink); }
+    body { margin: 0; padding: 32px; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
+    .shell {
+      max-width: 1160px;
+      margin: auto;
+      background: radial-gradient(circle at 87% 3%, rgba(181,138,66,.13), transparent 27%), var(--paper);
+      border: 1px solid #d7d8d0;
+      border-radius: 24px;
+      box-shadow: 0 24px 70px rgba(31,43,35,.12);
+      overflow: hidden;
+    }
+    .topbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 20px;
+      padding: 16px 26px;
+      border-bottom: 1px solid var(--line);
+      font-size: 12px;
+    }
+    .brand { display: flex; align-items: center; gap: 10px; font-weight: 760; }
+    .mark { width: 26px; height: 26px; display: grid; place-items: center; border-radius: 8px; color: white; background: var(--moss); font-family: Georgia, serif; }
+    .meta { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 7px; color: var(--muted); }
+    .pill { border: 1px solid var(--line); border-radius: 999px; padding: 5px 9px; background: white; }
+    .pill.snapshot { background: var(--moss-soft); border-color: #b7cabd; color: var(--moss); font-weight: 700; }
+    .layout { display: grid; grid-template-columns: 190px minmax(0, 1fr); }
+    .rail { padding: 30px 20px; border-right: 1px solid var(--line); background: rgba(244,244,238,.72); }
+    .rail-label { color: #8a928d; font-size: 10px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; margin: 0 9px 12px; }
+    .rail a { display: block; color: var(--muted); text-decoration: none; padding: 9px 10px; margin: 2px 0; border-radius: 9px; font-size: 12px; }
+    .rail a:first-of-type { background: white; box-shadow: 0 1px 4px rgba(30,40,34,.08); color: var(--ink); font-weight: 750; }
+    main { max-width: 890px; padding: 52px 56px 60px; }
+    .kicker { color: var(--rust); font-size: 11px; font-weight: 850; letter-spacing: .18em; text-transform: uppercase; }
+    h1 { max-width: 720px; font: 600 clamp(34px, 4.8vw, 58px)/1.02 Georgia, serif; letter-spacing: -.035em; margin: 13px 0 17px; }
+    .deck { max-width: 720px; color: #4e5a53; font: 400 18px/1.58 Georgia, serif; margin: 0; }
+    .context { display: grid; grid-template-columns: minmax(0,1fr) 220px; gap: 20px; margin: 36px 0 48px; }
+    .observation { border-left: 3px solid var(--gold); padding: 4px 0 4px 20px; font: 16px/1.55 Georgia, serif; }
+    .facts { border: 1px solid var(--line); border-radius: 14px; padding: 15px 17px; background: rgba(255,255,255,.67); }
+    .fact { display: flex; justify-content: space-between; gap: 14px; padding: 7px 0; border-bottom: 1px solid #e7e8e2; font-size: 11px; color: var(--muted); }
+    .fact:last-child { border: 0; }
+    .fact strong { color: var(--ink); }
+    .section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 20px; margin: 44px 0 16px; }
+    .section-head h2 { font: 600 27px/1.1 Georgia, serif; margin: 0; letter-spacing: -.02em; }
+    .section-head span { color: var(--muted); font-size: 11px; }
+    .scenarios { display: grid; grid-template-columns: 1fr 44px 1fr; gap: 13px; align-items: stretch; }
+    .arrow { display: grid; place-items: center; color: var(--gold); font-size: 24px; }
+    .scenario { border: 1px solid var(--line); border-radius: 16px; background: white; overflow: hidden; }
+    .scenario.before { border-top: 3px solid var(--rust); }
+    .scenario.after { border-top: 3px solid var(--moss); }
+    .scenario-title { display: flex; justify-content: space-between; padding: 16px 18px 12px; }
+    .scenario-title strong { font-size: 11px; letter-spacing: .13em; }
+    .before .scenario-title strong { color: var(--rust); }
+    .after .scenario-title strong { color: var(--moss); }
+    .scenario-title span { color: var(--muted); font-size: 10px; }
+    .steps { padding: 0 18px 18px; }
+    .step { display: grid; grid-template-columns: 22px 1fr; gap: 9px; position: relative; padding: 7px 0; font-size: 12px; line-height: 1.45; }
+    .step:not(:last-child)::after { content: ""; position: absolute; left: 10px; top: 28px; bottom: -4px; width: 1px; background: var(--line); }
+    .num { width: 20px; height: 20px; display: grid; place-items: center; border-radius: 50%; background: #f0f1ec; color: #69726d; font-size: 9px; font-weight: 800; z-index: 1; }
+    .before .step:last-child { color: var(--rust); font-weight: 700; }
+    .after .step:last-child { color: var(--moss); font-weight: 700; }
+    .map { padding: 22px; border: 1px solid var(--line); border-radius: 17px; background: #202b25; color: #edf2ee; }
+    .map-note { color: #aebbb3; font-size: 11px; margin-bottom: 20px; }
+    .flow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+    .node { min-width: 105px; border: 1px solid #526158; border-radius: 11px; padding: 11px 13px; background: #28352e; }
+    .node small { display: block; color: #a9b7ae; font-size: 9px; letter-spacing: .08em; text-transform: uppercase; margin-bottom: 4px; }
+    .node strong { font-size: 12px; }
+    .node.changed { border-color: #d1ad6b; box-shadow: 0 0 0 2px rgba(209,173,107,.13); }
+    .edge { color: #839188; }
+    .claims { display: grid; grid-template-columns: repeat(3,1fr); gap: 12px; }
+    .claim { border: 1px solid var(--line); border-radius: 14px; padding: 16px; background: rgba(255,255,255,.72); }
+    .claim b { display: block; font-size: 12px; margin-bottom: 5px; }
+    .claim p { color: var(--muted); font-size: 11px; line-height: 1.5; margin: 0; }
+    .claim-index { width: 26px; height: 26px; display: grid; place-items: center; border-radius: 8px; background: var(--moss-soft); color: var(--moss); font-weight: 900; margin-bottom: 12px; }
+    .code { display: grid; grid-template-columns: 1.05fr .95fr; border: 1px solid #27332c; border-radius: 16px; overflow: hidden; background: #1c2520; color: #e7ece8; }
+    .code-copy { padding: 20px; border-right: 1px solid #354139; }
+    .code-copy strong { font: 600 18px/1.2 Georgia, serif; }
+    .code-copy p { color: #aab6ae; font-size: 11px; line-height: 1.55; }
+    .code-copy a { color: #e2bf7c; font-size: 11px; text-decoration: none; }
+    pre { margin: 0; padding: 20px; overflow: auto; font: 10px/1.65 ui-monospace, monospace; color: #cdd7d0; }
+    .hi { color: #e2bf7c; }
+    @media (max-width: 760px) {
+      body { padding: 0; }
+      .shell { border: 0; border-radius: 0; box-shadow: none; }
+      .layout { grid-template-columns: 1fr; }
+      .rail { display: none; }
+      main { padding: 38px 24px 44px; }
+      .context, .code { grid-template-columns: 1fr; }
+      .scenarios { grid-template-columns: 1fr; }
+      .arrow { transform: rotate(90deg); }
+      .claims { grid-template-columns: 1fr; }
+      .code-copy { border-right: 0; border-bottom: 1px solid #354139; }
+    }
+  </style>
+</head>
+<body>
+  <article class="shell">
+    <header class="topbar">
+      <div class="brand"><span class="mark">F</span> Flow review brief</div>
+      <div class="meta"><span class="pill">PR #480</span><span class="pill">aa009e4</span><span class="pill snapshot">Snapshot</span></div>
+    </header>
+    <div class="layout">
+      <nav class="rail" aria-label="Review brief sections">
+        <div class="rail-label">On this page</div>
+        <a href="#why">Why this changed</a><a href="#scenarios">Before and after</a><a href="#map">System map</a><a href="#decisions">Decisions</a><a href="#evidence">Code evidence</a><a href="#verification">Verification &amp; risk</a><a href="#">Open full diff ↗</a>
+      </nav>
+      <main>
+        <section id="why"><div class="kicker">Safety &amp; workspace scope</div><h1>Cleanup that cannot escape its workspace</h1><p class="deck">A maintenance command could quietly reason about the wrong repository. This change makes the invoking workspace the hard boundary for every cleanup decision.</p></section>
+        <div class="context"><div class="observation"><strong>The problem was not deletion itself.</strong> It was that the command could establish its scope from maintainer state instead of the place where the user invoked it.</div><div class="facts"><div class="fact"><span>Change shape</span><strong>Cross-cutting</strong></div><div class="fact"><span>Primary concern</span><strong>Destructive safety</strong></div><div class="fact"><span>Behavior retained</span><strong>Normal cleanup</strong></div></div></div>
+        <section id="scenarios"><div class="section-head"><h2>The same action, two outcomes</h2><span>Follow the operator</span></div><div class="scenarios"><article class="scenario before"><div class="scenario-title"><strong>BEFORE</strong><span>scope could drift</span></div><div class="steps"><div class="step"><span class="num">1</span><span>Operator invokes cleanup inside workspace A.</span></div><div class="step"><span class="num">2</span><span>Maintainer metadata resolves repository B.</span></div><div class="step"><span class="num">3</span><span>B’s unrelated worktrees enter the candidate set.</span></div><div class="step"><span class="num">!</span><span>The confirmation describes the wrong scope.</span></div></div></article><div class="arrow">→</div><article class="scenario after"><div class="scenario-title"><strong>AFTER</strong><span>scope is derived once</span></div><div class="steps"><div class="step"><span class="num">1</span><span>Operator invokes cleanup inside workspace A.</span></div><div class="step"><span class="num">2</span><span>Git identifies A’s primary checkout.</span></div><div class="step"><span class="num">3</span><span>Every candidate is checked against A’s managed roots.</span></div><div class="step"><span class="num">✓</span><span>Cleanup cannot cross the workspace boundary.</span></div></div></article></div></section>
+        <section id="map"><div class="section-head"><h2>The relevant system slice</h2><span>Unrelated architecture omitted</span></div><div class="map"><div class="map-note">One source of truth now feeds discovery, confirmation, and deletion.</div><div class="flow"><div class="node changed"><small>Boundary</small><strong>Invoking workspace</strong></div><span class="edge">→</span><div class="node changed"><small>Derive once</small><strong>Primary checkout</strong></div><span class="edge">→</span><div class="node"><small>Filter</small><strong>Managed worktrees</strong></div><span class="edge">→</span><div class="node"><small>Guard</small><strong>Revalidate tip</strong></div><span class="edge">→</span><div class="node"><small>Action</small><strong>Reap</strong></div></div></div></section>
+        <section id="decisions"><div class="section-head"><h2>What the change guarantees</h2><span>Claims linked to evidence</span></div><div class="claims"><div class="claim"><span class="claim-index">1</span><b>Scope is stable</b><p>Discovery and execution share one workspace identity.</p></div><div class="claim"><span class="claim-index">2</span><b>Consent is specific</b><p>The confirmation is bound to the exact candidate set.</p></div><div class="claim"><span class="claim-index">3</span><b>Freshness is checked</b><p>A changed branch tip stops destructive action.</p></div></div></section>
+        <section id="evidence"><div class="section-head"><h2>Focused code evidence</h2><span>2 of 4 excerpts · full diff in Forge</span></div><div class="code"><div class="code-copy"><strong>Derive scope at the command boundary</strong><p>This is the decisive seam: downstream cleanup receives an already-resolved workspace instead of consulting global maintainer state.</p><a href="#">Open exact lines in Forge ↗</a></div><pre><span class="hi">workspace = resolve_invoking_workspace(cwd)</span>
+candidates = discover_managed_worktrees(
+    workspace.primary_checkout,
+)
+reap(candidates, workspace=workspace)</pre></div></section>
+        <section id="verification"><div class="section-head"><h2>Verification &amp; risk</h2><span>Evidence over assertion</span></div><div class="observation"><strong>3,288 tests passed.</strong> The targeted workspace-scope scenarios, seam validation, and full suite are green. The remaining review question is whether every destructive path shares the same derived workspace identity.</div></section>
+      </main>
+    </div>
+  </article>
+</body>
+</html>

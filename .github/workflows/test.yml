@@ -22,3 +22,25 @@ jobs:
         run: mise run check:commands
       - name: prose↔CLI seam check
         run: mise exec -- python3 seam_check.py
+
+  review-brief-visual:
+    runs-on: macos-14
+    defaults:
+      run:
+        working-directory: plugins/flow/skills/flow/scripts/ui-tests
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: plugins/flow/skills/flow/scripts/ui-tests/package-lock.json
+      - name: install visual-test dependencies
+        run: npm ci
+      - name: install Chromium
+        run: npx playwright install chromium
+      - name: review brief visual and accessibility regression
+        run: npm test

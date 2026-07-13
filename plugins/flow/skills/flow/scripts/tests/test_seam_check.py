@@ -900,7 +900,7 @@ def test_stage_doc_re_matches_e2e_digit() -> None:
     assert seam_check._STAGE_DOC_RE.findall("see references/stage-e2e.md") == ["stage-e2e.md"]
 
 
-def test_live_registry_yields_ten_stage_docs() -> None:
+def test_live_registry_yields_eleven_stage_docs() -> None:
     import tomllib
 
     registry = seam_check.SKILL_ROOT / "stage-registry.toml"
@@ -908,8 +908,9 @@ def test_live_registry_yields_ten_stage_docs() -> None:
     basenames: set[str] = set()
     for stage in data.get("stage", []):
         basenames |= set(seam_check._STAGE_DOC_RE.findall(stage.get("reference_doc", "")))
-    assert len(basenames) == 10
+    assert len(basenames) == 11
     assert "stage-e2e.md" in basenames
+    assert "stage-review_brief.md" in basenames
 
 
 def test_exact_three_distinct_citations_flagged(tmp_path) -> None:

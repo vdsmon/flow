@@ -154,6 +154,9 @@ class Forge(Protocol):
     def merge(self, pr_id: str, squash: bool = True) -> None: ...
     def delete_branch(self, branch: str) -> None: ...  # cap-gated delete_branch
     def set_default_reviewers(self, pr_id: str) -> None: ...  # cap-gated default_reviewers
+    def source_url(
+        self, pr_id: str, sha: str, path: str, start_line: int, end_line: int
+    ) -> str: ...
 
 
 # ─── Factory + config ────────────────────────────────────────────────────────

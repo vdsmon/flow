@@ -105,6 +105,9 @@ class _FakeForge:
             raise self.raise_on_reviewers
         self.reviewers_set.append(pr_id)
 
+    def source_url(self, pr_id: str, sha: str, path: str, start_line: int, end_line: int) -> str:
+        return f"https://github.com/o/r/blob/{sha}/{path}#L{start_line}-L{end_line}"
+
 
 def _ran(calls: Recorder, prefix: list[str]) -> bool:
     return any(c[: len(prefix)] == prefix for c in calls)

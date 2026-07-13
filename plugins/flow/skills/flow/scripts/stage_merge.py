@@ -42,6 +42,7 @@ import json
 import re
 import subprocess
 import sys
+import tomllib
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -112,6 +113,9 @@ def _verdict(
     regressed_cases: list[str] | None = None,
     changed_files: list[str] | None = None,
     guard_diff_path: str | None = None,
+    review_brief_status: str | None = None,
+    review_brief_reason: str | None = None,
+    review_brief_path: str | None = None,
 ) -> dict[str, Any]:
     return {
         "already_merged": already_merged,
@@ -124,6 +128,9 @@ def _verdict(
         "regressed_cases": regressed_cases or [],
         "changed_files": changed_files or [],
         "guard_diff_path": guard_diff_path,
+        "review_brief_status": review_brief_status,
+        "review_brief_reason": review_brief_reason,
+        "review_brief_path": review_brief_path,
     }
 
 
@@ -158,6 +165,52 @@ def _changed_files(pr_id: str, runner: Runner) -> list[str]:
     if r.returncode != 0:
         return []
     return [line.strip() for line in r.stdout.splitlines() if line.strip()]
+
+
+def _review_brief_enabled(workspace_root: Path) -> bool:
+    try:
+        data = tomllib.loads((workspace_root / ".flow" / "workspace.toml").read_text())
+    except (OSError, tomllib.TOMLDecodeError):
+        return False
+    pipeline = data.get("pipeline")
+    if not isinstance(pipeline, dict):
+        return False
+    stages = pipeline.get("stages")
+    if not isinstance(stages, list) or "review_brief" not in stages:
+        return False
+    handlers = pipeline.get("handlers")
+    if not isinstance(handlers, dict) or handlers.get("review_brief") == "none":
+        return False
+    review_brief = data.get("review_brief")
+    return not (isinstance(review_brief, dict) and review_brief.get("mode") == "off")
+
+
+def _review_brief_freshness(
+    workspace_root: Path, ticket_dir: Path, pr_id: str, runner: Runner
+) -> dict[str, Any]:
+    r = runner(
+        [
+            sys.executable,
+            _script("review_brief.py"),
+            "freshness",
+            "--workspace-root",
+            str(workspace_root),
+            "--ticket-dir",
+            str(ticket_dir),
+            "--pr-id",
+            pr_id,
+        ]
+    )
+    if r.returncode != 0:
+        return {
+            "status": "error",
+            "reason": r.stderr.strip() or "review-brief freshness probe failed",
+        }
+    try:
+        value = json.loads(r.stdout)
+    except json.JSONDecodeError:
+        return {"status": "error", "reason": "review-brief freshness output was not JSON"}
+    return value if isinstance(value, dict) else {"status": "error", "reason": "bad output"}
 
 
 def _extract_regressed_cases(stdout: str) -> list[str]:
@@ -259,6 +312,22 @@ def probe(workspace_root: Path, ticket_dir: Path, key: str, *, runner: Runner) -
     if _pr_state(pr_id, runner) == "MERGED":
         return _verdict(already_merged=True, pr_id=pr_id, reason="already merged")
 
+    brief: dict[str, Any] | None = None
+    if _review_brief_enabled(workspace_root):
+        brief = _review_brief_freshness(workspace_root, ticket_dir, pr_id, runner)
+        if brief.get("status") != "current":
+            status = str(brief.get("status") or "error")
+            detail = str(brief.get("reason") or "freshness could not be established")
+            return _verdict(
+                already_merged=False,
+                pr_id=pr_id,
+                action="refresh_review_brief",
+                reason=f"review brief {status}: {detail}",
+                review_brief_status=status,
+                review_brief_reason=detail,
+                review_brief_path=brief.get("html_path"),
+            )
+
     ci_status = _ci_rollup(workspace_root, pr_id, runner)
     changed_files = _changed_files(pr_id, runner)
 
@@ -288,6 +357,9 @@ def probe(workspace_root: Path, ticket_dir: Path, key: str, *, runner: Runner) -
         regressed_cases=regressed_cases,
         changed_files=changed_files,
         guard_diff_path=guard_diff_path,
+        review_brief_status=str(brief.get("status")) if brief else "disabled",
+        review_brief_reason=str(brief.get("reason")) if brief else None,
+        review_brief_path=brief.get("html_path") if brief else None,
     )
 
 

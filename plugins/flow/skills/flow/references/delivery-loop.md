@@ -85,6 +85,17 @@ advancing. Prefer the host's exact-write primitive. If unavailable, use a
 collision-safe quoted heredoc from a command rooted in `run_root`; never interpolate
 model output into a shell argument.
 
+Only one independent writer may own a stage at a time. If the agent has not returned
+by the descriptor timeout, inspect three pieces of evidence before recovering: the
+host's agent status, the declared artifact path, and the worktree diff. A still-running
+agent gets another bounded wait while this owner refreshes the lease; do not launch a
+second writer. A complete artifact is captured and advanced even if the host's status
+message arrived late. Only after the original agent is confirmed terminal or stopped,
+with no complete artifact, may the owner log `RETRY` and either finish the stage itself
+or launch one replacement against the same baseline and ownership boundary. Never
+overlap the replacement with the original: two plausible writers turn a recoverable
+stall into ambiguous code ownership.
+
 ### Installed skill
 
 Resolve the configured handler through the facade, then invoke it with the host's
@@ -152,6 +163,23 @@ Backgrounding and session lifetime remain host-owned. The loop never stops its h
 removes host session files, or schedules self-teardown.
 
 ## Release and finish
+
+When the descriptor returns `done: true`, generate the durable local run receipt
+before release:
+
+```bash
+FLOW_HARNESS="<harness>" "<facade>" run-report \
+  --workspace-root . --ticket-dir "$TICKET_DIR" \
+  --output "$TICKET_DIR/run-report.json"
+```
+
+This is best-effort reporting, not a delivery gate. It ranks stage durations and
+between-stage gaps separately, scoped to state timestamps, and joins only friction
+events carrying this run's `run_id`. A gap is neutral evidence; do not infer whether
+the human, forge, or agent caused it without corroboration. Include the total, the
+largest contributors, and recorded friction (or “none recorded”) in the final
+summary. For a long or frictional run, add one sentence explaining the dominant
+segment and the workaround/fix; for a short clean run, the compact block is enough.
 
 After every post-acquisition exit—done, blocked, drift, or lost lease—release:
 

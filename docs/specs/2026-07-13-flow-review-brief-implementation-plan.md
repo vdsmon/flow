@@ -1,8 +1,12 @@
 # Flow review brief implementation plan
 
-Status: proposed
+Status: implemented
 Date: 2026-07-13
 Design: `docs/specs/2026-07-13-flow-review-brief-design.md`
+
+Implemented on `feat/flow-review-brief`. Final verification: Python lint/type checks,
+3,307 Python tests (1 skipped), command/seam checks, and four Playwright visual,
+responsive, accessibility, JavaScript-disabled, and print tests all pass.
 
 ## Outcome
 

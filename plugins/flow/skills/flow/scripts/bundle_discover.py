@@ -79,6 +79,7 @@ _KNOWN_STAGES: frozenset[str] = frozenset(
         "commit",
         "create_pr",
         "review_loop",
+        "review_brief",
         "reflect",
         "merge",
     }
