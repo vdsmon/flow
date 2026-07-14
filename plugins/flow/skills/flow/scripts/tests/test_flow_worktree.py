@@ -295,7 +295,12 @@ def test_bootstrap_seeds_frozen_route_snapshot_before_return(tmp_path: Path) -> 
     route_path = Path(res["worktree"]) / ".flow" / "runs" / "FT-1" / "route-snapshot.json"
     snapshot = json.loads(route_path.read_text(encoding="utf-8"))
     assert snapshot["owner_harness"] == "claude_code"
+    assert set(snapshot["routes"]) == set(agent_routes.PROFILES)
     assert snapshot["routes"]["implementer"]["desired"]["model"] == "opus"
+    assert snapshot["stage_execution"]["review_brief"]["profile"] == "review_brief_author"
+    assert (
+        snapshot["stage_execution"]["reflect"]["substeps"]["reflection"]["profile"] == "reflector"
+    )
     assert res["route_digest"] == snapshot["digest"]
 
 

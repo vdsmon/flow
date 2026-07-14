@@ -8,6 +8,9 @@ relies on.
 
 from __future__ import annotations
 
+import copy
+
+import agent_routes
 import seam_check
 
 
@@ -407,13 +410,15 @@ def test_live_post_init_prose_has_no_bare_script_invocation() -> None:
     assert escaped == []
 
 
-def test_live_codex_route_requires_structured_activation() -> None:
+def test_live_non_planner_routes_stay_shadowed() -> None:
     skill = (seam_check.SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
     do_ref = (seam_check.SKILL_ROOT / "references" / "delivery-loop.md").read_text(encoding="utf-8")
-    assert "structured native launch acceptance" in skill
-    assert "Only an `active` receipt proves exact execution" in do_ref
-    assert "Codex" in do_ref
-    assert "does not retry" in do_ref
+    assert "Only the planner" in skill
+    assert "may become active" in skill
+    assert "Every post-plan" in do_ref
+    assert "receipt is `shadow`" in do_ref
+    assert "`effective: null`" in do_ref
+    assert "Do not retry" in do_ref
 
 
 def test_live_init_carries_an_absolute_answers_path_across_calls() -> None:
@@ -1150,3 +1155,55 @@ def test_main_fails_on_role_literal_drift(monkeypatch) -> None:
 def test_live_role_citations_all_in_registry() -> None:
     """Every role literal cited in the live docs exists in a registry roles array."""
     assert seam_check.role_literal_drift() == []
+
+
+# --- universal route-contract gate -----------------------------------------
+
+
+def test_live_route_contract_surfaces_are_aligned() -> None:
+    assert seam_check.route_contract_drift() == []
+
+
+def test_route_contract_flags_a_profile_missing_from_stage_composition() -> None:
+    execution = copy.deepcopy(agent_routes.stage_execution_contract())
+    del execution["reflect"]["substeps"]["machinery_fix"]
+
+    drift = seam_check.route_contract_drift(stage_execution=execution)
+
+    assert any("machinery_fixer" in problem and "stage composition" in problem for problem in drift)
+
+
+def test_route_contract_treats_an_explicit_empty_stage_map_as_empty() -> None:
+    drift = seam_check.route_contract_drift(stage_execution={})
+
+    assert any("absent from stage composition" in problem for problem in drift)
+
+
+def test_route_contract_accepts_matching_partial_self_workspace_during_bootstrap() -> None:
+    partial = """
+[agents.planner]
+harness = "codex"
+model = "gpt-5.6-sol"
+effort = "xhigh"
+"""
+
+    assert seam_check.route_contract_drift(workspace_toml=partial) == []
+
+
+def test_route_contract_flags_a_deterministic_stage_with_a_model() -> None:
+    execution = copy.deepcopy(agent_routes.stage_execution_contract())
+    execution["commit"]["model"] = "opus"
+
+    drift = seam_check.route_contract_drift(stage_execution=execution)
+
+    assert any("commit" in problem and "model=none" in problem for problem in drift)
+
+
+def test_route_contract_flags_inventory_catalog_drift() -> None:
+    inventory = "Agent route profiles: " + ", ".join(
+        profile for profile in agent_routes.PROFILES if profile != "reflector"
+    )
+
+    drift = seam_check.route_contract_drift(inventory_text=inventory)
+
+    assert any("inventory" in problem and "reflector" in problem for problem in drift)

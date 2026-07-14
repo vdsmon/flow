@@ -26,14 +26,19 @@ PUBLIC_HARNESSES = frozenset({"claude_code", "codex"})
 OWNER_HARNESSES = frozenset({"claude_code", "codex", "generic"})
 EFFORTS = frozenset({"low", "medium", "high", "xhigh", "max"})
 
-_PROFILES = (
+PROFILES = (
     "planner",
     "plan_assessor",
     "implementer",
     "e2e",
+    "code_reviewer",
     "diff_reviewer",
     "guard_reviewer",
+    "review_fixer",
     "revision_fixer",
+    "review_brief_author",
+    "reflector",
+    "machinery_fixer",
 )
 
 _COMMON_DEFAULTS = {
@@ -50,6 +55,10 @@ _OWNER_DEFAULTS = {
         "claude_code": {"harness": "claude_code", "model": "sonnet", "effort": "medium"},
         "codex": {"harness": "codex", "model": "gpt-5.6-luna", "effort": "medium"},
     },
+    "code_reviewer": {
+        "claude_code": {"harness": "claude_code", "model": "opus", "effort": "high"},
+        "codex": {"harness": "codex", "model": "gpt-5.6-sol", "effort": "high"},
+    },
     "diff_reviewer": {
         "claude_code": {"harness": "claude_code", "model": "opus", "effort": "high"},
         "codex": {"harness": "codex", "model": "gpt-5.6-sol", "effort": "high"},
@@ -58,7 +67,23 @@ _OWNER_DEFAULTS = {
         "claude_code": {"harness": "claude_code", "model": "opus", "effort": "high"},
         "codex": {"harness": "codex", "model": "gpt-5.6-sol", "effort": "high"},
     },
+    "review_fixer": {
+        "claude_code": {"harness": "claude_code", "model": "sonnet", "effort": "high"},
+        "codex": {"harness": "codex", "model": "gpt-5.6-luna", "effort": "high"},
+    },
     "revision_fixer": {
+        "claude_code": {"harness": "claude_code", "model": "sonnet", "effort": "high"},
+        "codex": {"harness": "codex", "model": "gpt-5.6-luna", "effort": "high"},
+    },
+    "review_brief_author": {
+        "claude_code": {"harness": "claude_code", "model": "sonnet", "effort": "high"},
+        "codex": {"harness": "codex", "model": "gpt-5.6-luna", "effort": "high"},
+    },
+    "reflector": {
+        "claude_code": {"harness": "claude_code", "model": "opus", "effort": "high"},
+        "codex": {"harness": "codex", "model": "gpt-5.6-sol", "effort": "high"},
+    },
+    "machinery_fixer": {
         "claude_code": {"harness": "claude_code", "model": "sonnet", "effort": "high"},
         "codex": {"harness": "codex", "model": "gpt-5.6-luna", "effort": "high"},
     },
@@ -67,19 +92,33 @@ _OWNER_DEFAULTS = {
 _LEGACY_STAGE = {
     "implementer": "implement",
     "e2e": "e2e",
+    "code_reviewer": "code_review",
     "diff_reviewer": "code_review",
     "guard_reviewer": "code_review",
+    "review_fixer": "review_loop",
     "revision_fixer": "review_loop",
 }
 
 _STAGE_EXECUTION = {
     "ticket": {"kind": "tool", "model": "none"},
-    "plan": {"kind": "agent", "profile": "planner"},
+    "plan": {
+        "kind": "agent",
+        "profile": "planner",
+        "substeps": {
+            "planning": {"profile": "planner"},
+            "assessment": {"profile": "plan_assessor"},
+        },
+    },
     "implement": {"kind": "agent", "profile": "implementer"},
     "code_review": {
         "kind": "composite",
         "owner": {"model": "unknown", "effort": "unknown"},
         "profile": "diff_reviewer",
+        "substeps": {
+            "primary_review": {"profile": "code_reviewer"},
+            "plan_blind_review": {"profile": "diff_reviewer"},
+            "review_fix": {"profile": "review_fixer", "conditional": True},
+        },
     },
     "e2e": {"kind": "agent", "profile": "e2e"},
     "commit": {"kind": "tool", "model": "none"},
@@ -88,21 +127,39 @@ _STAGE_EXECUTION = {
         "kind": "composite",
         "owner": {"model": "unknown", "effort": "unknown"},
         "profile": "revision_fixer",
+        "substeps": {
+            "review_fix": {"profile": "review_fixer", "conditional": True},
+            "revision_fix": {"profile": "revision_fixer", "conditional": True},
+        },
     },
+    "review_brief": {"kind": "agent", "profile": "review_brief_author"},
     "reflect": {
         "kind": "owner",
         "model": "unknown",
         "effort": "unknown",
+        "substeps": {
+            "reflection": {"profile": "reflector"},
+            "machinery_fix": {"profile": "machinery_fixer", "conditional": True},
+        },
     },
-    "merge": {"kind": "tool", "model": "none", "guard_profile": "guard_reviewer"},
+    "merge": {
+        "kind": "tool",
+        "model": "none",
+        "guard_profile": "guard_reviewer",
+        "substeps": {
+            "guard_review": {"profile": "guard_reviewer", "conditional": True},
+        },
+    },
 }
 
 _MIGRATABLE_CLAUDE_MODELS = frozenset({"sonnet", "opus", "haiku"})
 _MIGRATION_EFFORT = {
     "implementer": "high",
     "e2e": "medium",
+    "code_reviewer": "high",
     "diff_reviewer": "high",
     "guard_reviewer": "high",
+    "review_fixer": "high",
     "revision_fixer": "high",
 }
 
@@ -127,6 +184,16 @@ def _canonical_bytes(value: object) -> bytes:
 
 def _digest(value: object) -> str:
     return hashlib.sha256(_canonical_bytes(value)).hexdigest()
+
+
+def canonical_digest(value: object) -> str:
+    """Return the digest used by route snapshots and receipts."""
+    return _digest(value)
+
+
+def stage_execution_contract() -> dict[str, dict[str, Any]]:
+    """Return an isolated copy of the public stage-to-profile composition."""
+    return json.loads(json.dumps(_STAGE_EXECUTION))
 
 
 def _with_digest(value: dict[str, Any]) -> dict[str, Any]:
@@ -180,12 +247,15 @@ def _parse_route(raw: object, field: str) -> dict[str, str]:
     return route
 
 
-def _parse_override_values(values: list[str] | tuple[str, ...]) -> dict[str, dict[str, str]]:
+def parse_route_overrides(
+    values: list[str] | tuple[str, ...],
+) -> dict[str, dict[str, str]]:
+    """Parse repeated public route tuples as one atomic override set."""
     parsed: dict[str, dict[str, str]] = {}
     for raw in values:
         profile, separator, body = raw.partition("=")
         parts = [part.strip() for part in body.split(",")]
-        if not separator or profile not in _PROFILES or len(parts) != 3 or not all(parts):
+        if not separator or profile not in PROFILES or len(parts) != 3 or not all(parts):
             raise RouteError("--route expects profile=harness,model,effort with a known profile")
         if profile in parsed:
             raise RouteError(f"duplicate --route for profile {profile!r}")
@@ -243,9 +313,9 @@ def configuration_errors(data: dict[str, Any]) -> list[str]:
         return ["agents must be a table"]
     errors = [
         f"agents.{unknown} is not a known profile"
-        for unknown in sorted(set(agents) - set(_PROFILES))
+        for unknown in sorted(set(agents) - set(PROFILES))
     ]
-    for profile in _PROFILES:
+    for profile in PROFILES:
         raw = agents.get(profile)
         if raw is None:
             continue
@@ -300,6 +370,18 @@ def _legacy_route(data: dict[str, Any], profile: str) -> dict[str, str] | None:
     return {"field": "built-in legacy default", "value": "sonnet"}
 
 
+def legacy_fallback_profiles(data: dict[str, Any]) -> tuple[str, ...]:
+    """Return missing explicit profiles backed by the legacy model block."""
+    agents = data.get("agents")
+    if not isinstance(agents, dict) or not isinstance(data.get("models"), dict):
+        return ()
+    return tuple(
+        profile
+        for profile in PROFILES
+        if profile not in agents and _legacy_route(data, profile) is not None
+    )
+
+
 def _builtin_route(profile: str, owner_harness: str) -> dict[str, str] | None:
     common = _COMMON_DEFAULTS.get(profile)
     if common is not None:
@@ -315,24 +397,14 @@ def _activation(
     profile: str,
     desired: dict[str, str] | None,
     owner_harness: str,
-    source: str,
 ) -> tuple[str, str]:
     if desired is None:
         return "unrouted", "no exact route exists for this owner harness"
     if profile == "planner":
         return "pending", "strict read-only planner CLI activation requires an exact receipt"
-    if profile == "plan_assessor":
-        return "shadow", "plan assessor routes remain non-activating in this increment"
     if owner_harness == "generic":
         return "shadow", "the generic adapter has no structured model and effort selector"
-    if desired["harness"] != owner_harness:
-        return "shadow", "cross-harness post-plan execution is not enabled in this increment"
-    if owner_harness == "codex":
-        return (
-            "shadow",
-            "the current Codex native spawn interface cannot select model and effort",
-        )
-    return "pending", "activation requires a structured native launch acceptance"
+    return "shadow", "non-planner routes remain shadowed until execution capsules are available"
 
 
 def _resolve_data(
@@ -341,7 +413,7 @@ def _resolve_data(
     owner_harness: str,
     parsed_overrides: dict[str, dict[str, str]],
 ) -> dict[str, Any]:
-    if profile not in _PROFILES:
+    if profile not in PROFILES:
         raise RouteError(f"unknown agent profile {profile!r}")
     desired = parsed_overrides.get(profile)
     source = "override" if desired is not None else ""
@@ -349,7 +421,7 @@ def _resolve_data(
         desired = _explicit_route(data.get("agents"), profile, owner_harness)
         if desired is not None:
             source = "workspace"
-    if desired is None and data.get("agents") is None:
+    if desired is None:
         legacy = _legacy_route(data, profile)
         if legacy is not None:
             return {
@@ -365,7 +437,7 @@ def _resolve_data(
     if desired is None:
         desired = _builtin_route(profile, owner_harness)
         source = "built_in" if desired is not None else "generic_legacy"
-    activation, reason = _activation(profile, desired, owner_harness, source)
+    activation, reason = _activation(profile, desired, owner_harness)
     return {
         "schema": SCHEMA,
         "profile": profile,
@@ -388,7 +460,7 @@ def resolve(
     """Resolve one profile without claiming that its desired route executed."""
     owner = normalize_owner_harness(owner_harness)
     data, _ = _load_workspace(workspace_root)
-    return _resolve_data(data, profile, owner, _parse_override_values(overrides))
+    return _resolve_data(data, profile, owner, parse_route_overrides(overrides))
 
 
 def snapshot(
@@ -424,9 +496,11 @@ def snapshot_config(
     except (UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
         raise RouteError(f"cannot parse fetched workspace routes: {exc}") from exc
     owner = normalize_owner_harness(owner_harness)
-    parsed = _parse_override_values(overrides)
-    routes = {profile: _resolve_data(data, profile, owner, parsed) for profile in _PROFILES}
-    stage_execution = json.loads(json.dumps(_STAGE_EXECUTION))
+    parsed = parse_route_overrides(overrides)
+    routes = {profile: _resolve_data(data, profile, owner, parsed) for profile in PROFILES}
+    stage_execution = stage_execution_contract()
+    # Keep the v1 inline-owner fields populated while the additive substep map names the cognitive
+    # roles that later increments may execute externally.
     for execution in stage_execution.values():
         if execution.get("kind") == "owner":
             execution["harness"] = owner
@@ -555,26 +629,57 @@ def _legacy_model(models: dict[str, Any], stage: str) -> str:
 
 
 def _migration_appendix(models: dict[str, Any]) -> str:
-    profile_stage = {
-        "implementer": "implement",
-        "e2e": "e2e",
-        "diff_reviewer": "code_review",
-        "guard_reviewer": "code_review",
-        "revision_fixer": "review_loop",
-    }
-    lines = ["", "# Explicit agent routes migrated from the legacy [models] block."]
-    for profile, stage in profile_stage.items():
-        model = _legacy_model(models, stage)
-        lines.extend(
-            [
-                f"[agents.{profile}]",
-                'harness = "claude_code"',
-                f'model = "{model}"',
-                f'effort = "{_MIGRATION_EFFORT[profile]}"',
-                "",
-            ]
+    rendered = render_migration_routes_toml(models)
+    return "\n# Explicit agent routes migrated from the legacy [models] block.\n" + rendered
+
+
+def render_migration_routes_toml(models: dict[str, Any]) -> str:
+    """Render complete explicit routes from legacy models and built-ins."""
+    config = default_route_config()
+    for profile, stage in _LEGACY_STAGE.items():
+        config[profile] = {
+            "harness": "claude_code",
+            "model": _legacy_model(models, stage),
+            "effort": _MIGRATION_EFFORT[profile],
+        }
+    return render_route_config(config)
+
+
+def default_route_config() -> dict[str, dict[str, Any]]:
+    """Return native setup defaults for the complete profile catalog."""
+    config: dict[str, dict[str, Any]] = {}
+    for profile in PROFILES:
+        common = _COMMON_DEFAULTS.get(profile)
+        if common is not None:
+            config[profile] = dict(common)
+            continue
+        config[profile] = {
+            "by_owner": {owner: dict(route) for owner, route in _OWNER_DEFAULTS[profile].items()}
+        }
+    return config
+
+
+def render_route_config(config: dict[str, dict[str, Any]]) -> str:
+    """Render a complete route configuration in canonical profile order."""
+    lines: list[str] = []
+    for profile in PROFILES:
+        raw = config[profile]
+        by_owner = raw.get("by_owner")
+        routes = (
+            [(f"agents.{profile}.by_owner.{owner}", by_owner[owner]) for owner in sorted(by_owner)]
+            if isinstance(by_owner, dict)
+            else [(f"agents.{profile}", raw)]
         )
+        for heading, route in routes:
+            lines.append(f"[{heading}]")
+            lines.extend(f'{key} = "{route[key]}"' for key in ("harness", "model", "effort"))
+            lines.append("")
     return "\n".join(lines).rstrip() + "\n"
+
+
+def render_default_routes_toml() -> str:
+    """Render native setup defaults from the closed route catalog."""
+    return render_route_config(default_route_config())
 
 
 def migrate(workspace_root: Path, *, apply: bool, confirm: bool = False) -> dict[str, Any]:
@@ -625,7 +730,7 @@ def _parser() -> argparse.ArgumentParser:
     resolve_parser.add_argument("--owner-harness")
     resolve_parser.add_argument("--route", action="append", default=[])
     resolve_parser.add_argument("--snapshot")
-    resolve_parser.add_argument("--profile", required=True, choices=_PROFILES)
+    resolve_parser.add_argument("--profile", required=True, choices=PROFILES)
 
     snapshot_parser = sub.add_parser("snapshot")
     _add_resolution_args(snapshot_parser)
@@ -634,7 +739,7 @@ def _parser() -> argparse.ArgumentParser:
 
     attest_parser = sub.add_parser("attest")
     attest_parser.add_argument("--snapshot", required=True)
-    attest_parser.add_argument("--profile", required=True, choices=_PROFILES)
+    attest_parser.add_argument("--profile", required=True, choices=PROFILES)
     attest_parser.add_argument("--acceptance-from", required=True)
     attest_parser.add_argument("--output")
 
@@ -712,17 +817,26 @@ if __name__ == "__main__":
 
 __all__ = [
     "EFFORTS",
+    "PROFILES",
     "PUBLIC_HARNESSES",
     "RouteError",
     "attest",
+    "canonical_digest",
     "cli_main",
     "configuration_errors",
+    "default_route_config",
+    "legacy_fallback_profiles",
     "load_snapshot",
     "migrate",
     "normalize_owner_harness",
+    "parse_route_overrides",
+    "render_default_routes_toml",
+    "render_migration_routes_toml",
+    "render_route_config",
     "resolve",
     "resolve_snapshot",
     "snapshot",
     "snapshot_config",
+    "stage_execution_contract",
     "verify_receipt",
 ]

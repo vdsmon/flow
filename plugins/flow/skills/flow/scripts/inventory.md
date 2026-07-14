@@ -209,6 +209,8 @@ Every explicit route is a complete `harness`, `model`, and `effort` triple. Publ
 harness values are `claude_code` and `codex`. A profile defines either one common
 route or a `by_owner` table; mixing them or omitting a field is invalid.
 
+Agent route profiles: `planner`, `plan_assessor`, `implementer`, `e2e`, `code_reviewer`, `diff_reviewer`, `guard_reviewer`, `review_fixer`, `revision_fixer`, `review_brief_author`, `reflector`, `machinery_fixer`
+
 ```toml
 [agents.planner]
 harness = "codex"
@@ -226,11 +228,16 @@ model = "gpt-5.6-luna"
 effort = "high"
 ```
 
-Resolution precedence is a complete per-run `--route` tuple, explicit workspace
-route, standalone legacy mode, then built-in defaults. Bootstrap freezes the
-canonical route snapshot. Claude Code activates a desired post-plan route only when
-its structured native launch response accepts the exact model and effort. Current
-Codex post-plan routes remain shadowed and inherit their owner model.
+Resolution precedence is a complete per-run `--route` tuple, an explicit workspace
+route for that profile, its corresponding legacy `[models]` fallback, then built-in
+defaults. Profiles without a legacy knob go straight to their built-in route. Bootstrap freezes the
+canonical route snapshot. The snapshot records plan assessment, implementation, E2E,
+primary and plan-blind review, ordinary and revision fixes, review-brief authorship,
+reflection, optional machinery fixes, and merge guarding. Ticket, commit, PR creation,
+and merge retain `model: none` at stage level. Only planner may activate exact routed
+execution in this increment. Every non-planner profile stays shadowed with
+`effective: null`, including a matching native acceptance, while its current inline
+or owner-native path continues.
 
 `agent_routes.py` owns resolution, snapshot digests, attestations, and the surgical
 `migrate --check|--apply` operation. Migration leaves `[models]` bytes intact so

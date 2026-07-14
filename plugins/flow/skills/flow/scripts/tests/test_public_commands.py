@@ -106,6 +106,7 @@ def test_target_options_encode_conflicts_and_cardinality() -> None:
     assert options["--verify"].conflicts == frozenset({"--unattended"})
     assert options["--verify"].choices == ("express", "light", "full")
     assert options["--request"].value_type == "text"
+    assert options["--route"].value_type == "agent_route"
 
 
 @pytest.mark.parametrize(
@@ -231,6 +232,36 @@ def test_route_keeps_repeated_route_values_without_losing_option_names() -> None
         ("--route", "planner=codex,gpt-5.6-sol,xhigh"),
         ("--route", "implementer=claude_code,sonnet,high"),
     )
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "unknown=codex,gpt-5.6-sol,high",
+        "reflector=codex,gpt-5.6-sol",
+        "reflector=generic,gpt-5.6-sol,high",
+        "reflector=codex,gpt-5.6-sol,extreme",
+        "reflector-codex,gpt-5.6-sol,high",
+    ],
+)
+def test_route_rejects_invalid_atomic_agent_route_values(value: str) -> None:
+    with pytest.raises(RegistryError, match="--route"):
+        route_tokens(["FT-1", "--route", value], load_registry(REGISTRY), TRACKER_PATTERNS)
+
+
+def test_route_rejects_duplicate_profiles_across_repeated_overrides() -> None:
+    with pytest.raises(RegistryError, match="duplicate --route"):
+        route_tokens(
+            [
+                "FT-1",
+                "--route",
+                "reflector=codex,gpt-5.6-sol,high",
+                "--route",
+                "reflector=claude_code,opus,high",
+            ],
+            load_registry(REGISTRY),
+            TRACKER_PATTERNS,
+        )
 
 
 @pytest.mark.parametrize(

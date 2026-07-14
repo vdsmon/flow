@@ -224,11 +224,12 @@ stop. Otherwise expect a handler descriptor with `stage`, `handler_type`, `head_
 `ticket_dir`, `output_path`, and `roles`. If `descriptor.roles` includes `"records_diff_baseline"`,
 capture the owned-file baseline before the handler. When
 `descriptor.roles` includes `"agent_routed"`, resolve the frozen profile from the
-run's route snapshot. A desired post-plan route becomes active only after the host
-returns a structured native launch acceptance for its exact model and effort. The
-configured or built-in planner follows the strict pre-approval CLI contract in
+run's route snapshot. The snapshot covers all twelve cognitive profiles and records
+composite substeps separately from deterministic stage execution. Only the planner
+may become active in this increment. Every non-planner route remains shadowed with
+`effective: null`, including a matching native launch acceptance. The configured or
+built-in planner follows the strict pre-approval CLI contract in
 `references/delivery-plan.md`. A per-run override may replace its complete route.
-Codex post-plan routes remain shadowed and inherit the owner model in this increment.
 
 Every independent stage-agent prompt includes these exact rooted fields. The agent
 applies the call-local `FLOW_HARNESS` selector to the bound absolute `facade`:
@@ -243,10 +244,10 @@ Reference path: <absolute reference, or none>
 Artifact path: <absolute output_path>
 ```
 
-Handlers may be inline, independent subagents, installed skills, or no-ops. Claude
-Code may honor an exact configured model and effort after structured acceptance.
-Codex collaboration agents inherit the active model in this increment. Every agent receives absolute
-workspace, skill, ticket, reference, and artifact paths plus the harness identity.
+Handlers may be inline, independent subagents, installed skills, or no-ops. Existing
+post-plan handlers keep their current owner-native or inline execution and record
+desired route provenance without activating a new worker. Every agent receives
+absolute workspace, skill, ticket, reference, and artifact paths plus the harness identity.
 Read `references/delivery-loop.md` before starting or continuing a run.
 
 ## Internal delivery references

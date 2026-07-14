@@ -5,6 +5,11 @@
 Inline main-agent self-review of the implement-stage diff.
 Bare workspace default; richer review is wired by installing a code-review skill via the init wizard.
 
+The route snapshot records the inline primary pass as `code_reviewer`, the plan-blind
+pass as `diff_reviewer`, and any mutation as the conditional `review_fixer` substep.
+All three are desired shadow routes in this increment. This stage keeps its existing
+inline and owner-native behavior, and it does not launch a new routed worker.
+
 This is the lowest-cost gate against regressions.
 The main agent is the same context that just produced the implement-stage code, so the review is biased toward what it just wrote.
 That bias is acceptable for personal-mode flow; work-mode users opt in to `skill:code-review` via init.
@@ -93,9 +98,9 @@ That bias is acceptable for personal-mode flow; work-mode users opt in to `skill
    FLOW_HARNESS="<harness>" "<facade>" agent-route resolve \
      --snapshot "$TICKET_DIR/route-snapshot.json" --profile diff_reviewer
    ```
-   Claude Code may activate the exact desired route after native structured
-   acceptance. Codex, generic, and legacy paths inherit as documented and never
-   claim the desired route ran.
+   Every non-planner route remains shadowed in this increment. A matching native
+   response records the desired route with `effective: null`, and the existing
+   owner-native reader still runs and never claims the configured route executed.
 
    **Spawn: the diff, and only the diff.** Capture the post-auto-fix working-tree diff (`git diff <started_at_sha>`, no `..HEAD`, so it includes the uncommitted implement work and any step-4 auto-fixes; this is the diff that will actually ship), then spawn ONE fresh independent agent with the compatible model behavior above. Include `Harness: <claude-code|codex|generic>` in its prompt, then carry ONLY that diff embedded verbatim plus the fixed question: *what does this change do; what looks wrong or surprising*. Instruct it to review ONLY the shown diff and NOT read any file, open the ticket or plan, or run any command; its value is that it is blind to the intent. If the protocol ever permits a Flow command later, the harness identity requires the same-call `FLOW_HARNESS=<Harness>` prefix. Embedding the diff rather than telling it to run `git` is load-bearing: a fresh subagent could otherwise wander into `.flow/tickets/` or `plan.out` and lose the plan-blindness that is the whole point.
 
