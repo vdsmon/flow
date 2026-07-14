@@ -310,6 +310,31 @@ def _typed_result(stdout: str, stderr: str, *, command: list[str]) -> WorkerResu
     raise WorkerError("planner output did not contain a typed planner result and thread id")
 
 
+def _cli_error_detail(stdout: str, stderr: str) -> str:
+    """Prefer actionable structured CLI errors over transport chatter."""
+    messages: list[str] = []
+    for line in stdout.splitlines():
+        try:
+            value = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(value, dict):
+            continue
+        candidates = [value.get("message")]
+        error = value.get("error")
+        if isinstance(error, dict):
+            candidates.append(error.get("message"))
+        elif isinstance(error, str):
+            candidates.append(error)
+        for candidate in candidates:
+            if isinstance(candidate, str) and candidate.strip() and candidate not in messages:
+                messages.append(candidate.strip())
+    if messages:
+        return "; ".join(messages)
+    fallback = [part.strip() for part in (stderr, stdout) if part.strip()]
+    return "\n".join(fallback) or "no diagnostic output"
+
+
 def _default_popen(command: list[str], **kwargs: Any) -> subprocess.Popen[str]:
     return subprocess.Popen(command, **kwargs)
 
@@ -408,7 +433,7 @@ def run_process(
             "terminal_acknowledged": True,
         }
         raise WorkerError(
-            f"planner CLI exited {process.returncode}: {(stderr or stdout).strip()}",
+            f"planner CLI exited {process.returncode}: {_cli_error_detail(stdout, stderr)}",
             attempts=(metric,),
         )
     metric = {
