@@ -165,6 +165,34 @@ def test_review_bundle_records_deletes_renames_and_mode_changes(tmp_path: Path) 
     assert staged["chmod.sh"]["new_mode"] == "100755"
 
 
+def test_patch_layers_ignore_an_external_diff_driver(tmp_path: Path) -> None:
+    """An external driver replaces the patch and nullifies --binary, dropping binary content."""
+    root = _repository(tmp_path)
+    (root / "image.bin").write_bytes(b"\x00base\xff")
+    _git(root, "add", "image.bin")
+    _git(root, "commit", "-qm", "binary")
+
+    driver = tmp_path / "external-diff"
+    driver.write_text("#!/bin/sh\necho EXTERNAL-DIFF-RAN\n", encoding="utf-8")
+    driver.chmod(0o755)
+    _git(root, "config", "diff.external", str(driver))
+
+    (root / "image.bin").write_bytes(b"\x00staged\xff")
+    _git(root, "add", "image.bin")
+    (root / "base.txt").write_text("worktree\n", encoding="utf-8")
+
+    cw.build_review_input_bundle(root, tmp_path / "bundle")
+    staged = (tmp_path / "bundle" / "raw" / "staged.patch").read_bytes()
+    worktree = (tmp_path / "bundle" / "raw" / "worktree.patch").read_bytes()
+
+    assert b"EXTERNAL-DIFF-RAN" not in staged
+    assert b"EXTERNAL-DIFF-RAN" not in worktree
+    assert staged.startswith(b"diff --git ")
+    assert b"GIT binary patch" in staged
+    assert worktree.startswith(b"diff --git ")
+    assert b"@@ " in worktree
+
+
 def test_untracked_blob_bytes_survive_the_round_trip(tmp_path: Path) -> None:
     root = _repository(tmp_path)
     payload = bytes(range(256)) * 4

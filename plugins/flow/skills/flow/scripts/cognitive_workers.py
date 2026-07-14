@@ -1285,8 +1285,12 @@ def build_review_input_bundle(
         before = git_receipt(source)
         status = _git_bytes(source, "status", "--porcelain=v2", "-z", "--untracked-files=all")
         index = _git_bytes(source, "ls-files", "--stage", "-z")
-        staged = _git_bytes(source, "diff", "--binary", "--full-index", "--cached")
-        worktree = _git_bytes(source, "diff", "--binary", "--full-index")
+        staged = _git_bytes(
+            source, "diff", "--binary", "--full-index", "--no-ext-diff", "--no-textconv", "--cached"
+        )
+        worktree = _git_bytes(
+            source, "diff", "--binary", "--full-index", "--no-ext-diff", "--no-textconv"
+        )
         staged_raw = _git_bytes(source, "diff", "--raw", "-z", "--cached")
         worktree_raw = _git_bytes(source, "diff", "--raw", "-z")
         untracked_raw = _git_bytes(source, "ls-files", "--others", "--exclude-standard", "-z")
