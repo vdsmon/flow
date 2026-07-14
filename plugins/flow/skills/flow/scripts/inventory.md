@@ -236,6 +236,38 @@ Codex post-plan routes remain shadowed and inherit their owner model.
 `migrate --check|--apply` operation. Migration leaves `[models]` bytes intact so
 removing `[agents]` restores legacy behavior.
 
+Only an explicit per-run planner override can activate a pre-approval route in this
+rollout. Its exact CLI acceptance can promote the planner receipt; a configured
+workspace planner remains shadowed. `snapshot --workspace-config` resolves from bytes
+read at the fetched base SHA instead of ambient checkout state.
+
+### Pre-approval planning schemas
+
+`planning_attempt.py` owns six canonical, digest-bearing artifacts:
+
+| Schema | Purpose |
+|---|---|
+| `flow.plan-envelope/v1` | Complete planner result with attempt/version/parent CAS, base, route-bound author id, status, required review fields, typed questions, and incorporated feedback ids |
+| `flow.planning-attempt/v1` | Ephemeral review bundle with plan history, visible feedback ledger, assessment, and revalidation; never a worker thread receipt |
+| `flow.plan-assessment/v1` | Author-separated assessor outcome and findings bound to the exact plan digest, actual author id, and required-fresh assessor launch receipt |
+| `flow.plan-revalidation/v1` | Approved/latest base and exact changed/planned/context paths classified as unchanged, unrelated, relevant, or ambiguous |
+| `flow.plan-gate/v1` | Plan version/digest, approved SHA, route digest, unique planner-launch receipt, feedback watermark, assessment, and revalidation digests |
+| `flow.plan-approval/v1` | Host-native gate id, exact gate tuple, and approved plan-file digest consumed by bootstrap |
+
+Only `PLAN_READY` with no pending feedback, a passing policy-valid assessment, and an
+unchanged or proven-unrelated revalidation may produce a gate tuple. Owner loss can
+rehydrate from the complete bundle, but its physical Codex or Claude session id exists
+only in live owner memory.
+
+`flow.bootstrap-journal/v1` advances one approval digest through `prepared`,
+`worktree_intended`, `worktree_created`, `run_seeded`, and `committed`. The journal rejects a different
+tuple. An incomplete matching tuple is rolled back and retried under the existing claim;
+a committed tuple returns the existing run only after state, route, approval, and plan
+artifacts are re-verified. Its filename derives from the approval digest rather than a
+planner-provided attempt id.
+The intent phase records branch and worktree before Git mutation so every crash point
+has deterministic rollback coordinates.
+
 ### Legacy `[models]` workspace schema
 
 ```toml

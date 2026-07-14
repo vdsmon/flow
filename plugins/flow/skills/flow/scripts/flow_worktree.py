@@ -5,7 +5,8 @@ directly at the implement stage. The spec session then enters this worktree (Ent
 continues the `do` pipeline in the SAME conversation; running it unattended is a separate,
 harness-level choice (`/bg`), not this script's concern.
 
-  1. git worktree add -b <branch> <worktree> <base>
+  1. validate an optional native-gate receipt, pin its approved SHA and route snapshot,
+     then git worktree add -b <branch> <worktree> <base>
   2. copy gitignored dev config main->worktree; ensure .flow/.initialized + workspace.toml exist (a
      git worktree only materializes committed files)
   3. mise trust the worktree (toolchain) unless --no-mise-trust
@@ -19,7 +20,9 @@ harness-level choice (`/bg`), not this script's concern.
   6. freeze the normalized owner and desired/effective agent-route snapshot in the run
   7. stamp commit_type/commit_summary (and e2e_recipe unless e2e is explicitly disabled) into the
      worktree frontmatter so the commit + e2e stages do not block on a prompt
-  8. print the worktree path (the spec session enters it via EnterWorktree)
+  8. persist the approval receipt and advance its crash journal when routed planning
+     supplied one
+  9. print the worktree path (the spec session enters it via EnterWorktree)
 
 The bootstrap holds NO run lease; the pipeline's cmd_init acquires it under the run_id seeded here
 (it sees that run_id as the owner, so resume is clean). It DOES transiently hold the canonical
@@ -51,6 +54,8 @@ left INTACT, failing toward preserving work; see reap_worktree).
 from __future__ import annotations
 
 import argparse
+import contextlib
+import json
 import os
 import secrets
 import shutil
@@ -64,8 +69,10 @@ import _locking
 import _memory_paths
 import _workspace
 import agent_routes
+import bootstrap_journal
 import flow_launcher
 import lease
+import planning_attempt
 import state
 import ticket_frontmatter
 from _runner import Runner
@@ -346,6 +353,96 @@ def _freeze_route_snapshot(
         )
     except agent_routes.RouteError as exc:
         raise _ConfigError(f"cannot freeze agent routes: {exc}") from exc
+
+
+def _seed_approval_receipt(
+    worktree: Path,
+    ticket: str,
+    approval: planning_attempt.ApprovalReceipt,
+) -> None:
+    path = worktree / ".flow" / "runs" / ticket / "approval-receipt.json"
+    _atomicio.atomic_write_text(
+        path,
+        json.dumps(approval.to_mapping(), indent=2, sort_keys=True) + "\n",
+    )
+
+
+def _approved_bootstrap_journal_path(main_root: Path, approval_digest: str) -> Path:
+    """Keep planner-controlled attempt identifiers out of filesystem paths."""
+    if len(approval_digest) != 64 or any(
+        character not in "0123456789abcdef" for character in approval_digest
+    ):
+        raise _ConfigError("approved bootstrap journal requires a canonical approval digest")
+    return main_root / ".flow" / "runtime" / "bootstrap" / f"approved-{approval_digest}.json"
+
+
+def _verify_committed_approved_bootstrap(
+    *,
+    record: bootstrap_journal.JournalRecord,
+    ticket: str,
+    branch: str,
+    worktree: Path,
+    approval: planning_attempt.ApprovalReceipt,
+) -> None:
+    """Verify every durable artifact before treating a journal commit as recoverable."""
+    if record.branch != branch or record.worktree != str(worktree) or not record.run_id:
+        raise _ConfigError("committed approved bootstrap does not match the requested run location")
+    if not worktree.is_dir():
+        raise _ConfigError("committed approved bootstrap worktree is missing")
+    ticket_dir = worktree / ".flow" / "runs" / ticket
+    recovered_state, state_code = state.read(ticket_dir)
+    if (
+        state_code != 0
+        or recovered_state is None
+        or recovered_state.ticket != ticket
+        or recovered_state.run_id != record.run_id
+    ):
+        raise _ConfigError("committed approved bootstrap state does not match its journal")
+    try:
+        seeded_approval = planning_attempt.load_approval_receipt(
+            ticket_dir / "approval-receipt.json"
+        )
+        seeded_routes = agent_routes.load_snapshot(ticket_dir / "route-snapshot.json")
+        approval.verify_plan_bytes((ticket_dir / "stages" / "plan.out").read_bytes())
+    except (OSError, planning_attempt.AttemptError, agent_routes.RouteError) as exc:
+        raise _ConfigError(f"committed approved bootstrap artifacts are invalid: {exc}") from exc
+    if seeded_approval.digest != approval.digest:
+        raise _ConfigError("committed approved bootstrap approval receipt does not match")
+    if seeded_routes["digest"] != approval.route_digest:
+        raise _ConfigError("committed approved bootstrap route snapshot does not match")
+
+
+def _rollback_incomplete_approved_bootstrap(
+    *,
+    record: bootstrap_journal.JournalRecord,
+    main_root: Path,
+    run: Runner,
+) -> None:
+    """Prove an interrupted worktree and branch are gone before resetting the journal."""
+    if not record.worktree or not record.branch:
+        raise _ConfigError("incomplete approved bootstrap lacks its rollback coordinates")
+    worktree = Path(record.worktree)
+    removed = run(["git", "worktree", "remove", "--force", str(worktree)], main_root)
+    if removed.returncode != 0 and worktree.exists():
+        raise _ConfigError(
+            "cannot roll back incomplete approved bootstrap worktree: "
+            + (removed.stderr or removed.stdout).strip()
+        )
+    if worktree.exists():
+        raise _ConfigError("incomplete approved bootstrap worktree still exists after rollback")
+    deleted = run(["git", "branch", "-D", record.branch], main_root)
+    if deleted.returncode != 0:
+        exists = run(
+            ["git", "show-ref", "--verify", "--quiet", f"refs/heads/{record.branch}"],
+            main_root,
+        )
+        if exists.returncode == 0:
+            raise _ConfigError(
+                "cannot roll back incomplete approved bootstrap branch: "
+                + (deleted.stderr or deleted.stdout).strip()
+            )
+        if exists.returncode != 1:
+            raise _ConfigError("cannot verify incomplete approved bootstrap branch removal")
 
 
 def _e2e_enabled(main_root: Path) -> bool:
@@ -1222,7 +1319,7 @@ def _refuse_offcontract_branch(*, ticket: str, branch: str) -> None:
         )
 
 
-def bootstrap(
+def bootstrap(  # noqa: C901
     *,
     ticket: str,
     plan_from: Path,
@@ -1241,6 +1338,7 @@ def bootstrap(
     recover_spill: bool = False,
     owner_harness: str | None = None,
     route_overrides: list[str] | None = None,
+    approval_receipt: Path | None = None,
     runner: Runner | None = None,
 ) -> dict[str, Any]:
     run = runner or _default_runner()
@@ -1277,7 +1375,64 @@ def bootstrap(
     )
 
     plan_text = plan_from.read_text(encoding="utf-8")
+    approval: planning_attempt.ApprovalReceipt | None = None
+    journal: bootstrap_journal.BootstrapJournal | None = None
+    journal_recovery: bootstrap_journal.JournalRecord | None = None
     worktree = _worktree_path(main_root, branch, worktree_override)
+    if approval_receipt is not None:
+        try:
+            approval = planning_attempt.load_approval_receipt(approval_receipt)
+            approval.verify_plan_bytes(plan_from.read_bytes())
+            selected_owner = owner_harness or os.environ.get("FLOW_HARNESS") or "claude-code"
+            config_result = run(
+                ["git", "show", f"{approval.approved_base_sha}:.flow/workspace.toml"],
+                main_root,
+            )
+            if config_result.returncode != 0:
+                raise _GitError(
+                    "git show of approved workspace configuration failed: "
+                    + config_result.stderr.strip()
+                )
+            fetched_config = config_result.stdout.encode()
+            pre_gate_routes = agent_routes.snapshot_config(
+                fetched_config,
+                selected_owner,
+                overrides=route_overrides or [],
+            )
+        except (planning_attempt.AttemptError, agent_routes.RouteError, _GitError) as exc:
+            raise _ConfigError(f"invalid approval receipt: {exc}") from exc
+        if pre_gate_routes["digest"] != approval.route_digest:
+            raise _ConfigError(
+                "current route snapshot does not match the exact native-gate receipt"
+            )
+        base = approval.approved_base_sha
+        journal = bootstrap_journal.BootstrapJournal(
+            _approved_bootstrap_journal_path(main_root, approval.digest)
+        )
+        try:
+            prepared = journal.prepare(ticket=ticket, approval=approval.to_mapping())
+            if prepared.phase == "committed":
+                _verify_committed_approved_bootstrap(
+                    record=prepared,
+                    ticket=ticket,
+                    branch=branch,
+                    worktree=worktree,
+                    approval=approval,
+                )
+                return {
+                    "ticket": ticket,
+                    "branch": prepared.branch,
+                    "worktree": prepared.worktree,
+                    "run_id": prepared.run_id,
+                    "copied": [],
+                    "warnings": ["recovered committed approved bootstrap"],
+                    "route_digest": approval.route_digest,
+                    "approval_digest": approval.digest,
+                }
+            if prepared.phase != "prepared":
+                journal_recovery = prepared
+        except bootstrap_journal.JournalError as exc:
+            raise _ConfigError(f"cannot prepare approved bootstrap journal: {exc}") from exc
     warnings: list[str] = []
 
     # Spill recovery is an explicit operator action after the caller confirms that these paths were
@@ -1291,7 +1446,8 @@ def bootstrap(
     # The fetch inside _resolve_base stays OUTSIDE the claim, so a second launch
     # never blocks on the winner's network round-trip; the claim window below is
     # local-only ops, seconds.
-    base = _resolve_base(base, main_root, run)
+    if approval is None:
+        base = _resolve_base(base, main_root, run)
 
     # Canonical per-ticket bootstrap claim: two simultaneous bootstraps of the
     # same ticket serialize here; the loser then sees the winner's seeded state
@@ -1299,6 +1455,20 @@ def bootstrap(
     # Held across worktree-add → state-seed → frontmatter stamp, so a sibling's
     # check never observes a half-seeded run.
     with _locking.flock_blocking(_claim_path(main_root, ticket)):
+        if journal is not None and journal_recovery is not None:
+            if journal_recovery.worktree != str(worktree) or journal_recovery.branch != branch:
+                raise _ConfigError(
+                    "incomplete approved bootstrap journal names a different worktree or branch"
+                )
+            _rollback_incomplete_approved_bootstrap(
+                record=journal_recovery,
+                main_root=main_root,
+                run=run,
+            )
+            try:
+                journal.restart_after_rollback()
+            except bootstrap_journal.JournalError as exc:
+                raise _ConfigError(f"cannot restart approved bootstrap: {exc}") from exc
         _assert_no_live_sibling(ticket, main_root, run)
 
         # flow-vpg1: a DEAD sibling (already ruled out live/corrupt above) on the exact colliding
@@ -1329,7 +1499,19 @@ def bootstrap(
                     f"it, or tear it down by hand (`flow_worktree.py reap --ticket {ticket}`)."
                 )
 
+        if journal is not None:
+            try:
+                journal.advance("worktree_intended", worktree=str(worktree), branch=branch)
+            except bootstrap_journal.JournalError as exc:
+                raise _ConfigError(f"cannot journal approved worktree intent: {exc}") from exc
         _git(["worktree", "add", "-b", branch, str(worktree), base], main_root, run)
+        if journal is not None:
+            try:
+                journal.advance("worktree_created", worktree=str(worktree), branch=branch)
+            except bootstrap_journal.JournalError as exc:
+                run(["git", "worktree", "remove", "--force", str(worktree)], main_root)
+                run(["git", "branch", "-D", branch], main_root)
+                raise _ConfigError(f"cannot journal approved worktree creation: {exc}") from exc
 
         # Past the worktree+branch creation, ANY exception (a deliberate refusal
         # below, or a non-deliberate raise from _copy_config / mise / _seed_state /
@@ -1407,6 +1589,14 @@ def bootstrap(
             route_snapshot = _freeze_route_snapshot(
                 worktree, ticket, owner_harness, route_overrides
             )
+            if approval is not None and route_snapshot["digest"] != approval.route_digest:
+                raise _ConfigError(
+                    "seeded route snapshot does not match the exact native-gate receipt"
+                )
+            if approval is not None:
+                _seed_approval_receipt(worktree, ticket, approval)
+            if journal is not None:
+                journal.advance("run_seeded", run_id=run_id)
 
             _stamp_run_frontmatter(
                 worktree,
@@ -1430,9 +1620,14 @@ def bootstrap(
             # cleaning them off main) can no longer be undone by the except-cleanup.
             if spilled:
                 _relocate_spilled(spilled, main_root, worktree, run, warnings)
+            if journal is not None:
+                journal.advance("committed")
         except Exception:
             run(["git", "worktree", "remove", "--force", str(worktree)], main_root)
             run(["git", "branch", "-D", branch], main_root)
+            if journal is not None:
+                with contextlib.suppress(bootstrap_journal.JournalError):
+                    journal.restart_after_rollback()
             raise
 
     return {
@@ -1443,6 +1638,7 @@ def bootstrap(
         "copied": copied,
         "warnings": warnings,
         "route_digest": route_snapshot["digest"],
+        "approval_digest": approval.digest if approval is not None else None,
     }
 
 
@@ -1481,6 +1677,11 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         action="append",
         default=[],
         help="profile=harness,model,effort; repeatable and frozen into run provenance",
+    )
+    p.add_argument(
+        "--approval-receipt",
+        default=None,
+        help="exact native-gate receipt for routed planning; legacy host-native callers omit it",
     )
     p.add_argument(
         "--lane",
@@ -1608,6 +1809,9 @@ def cli_main(argv: list[str]) -> int:
             auto=args.auto,
             recover_spill=args.recover_spill,
             route_overrides=args.route,
+            approval_receipt=(
+                Path(args.approval_receipt).expanduser() if args.approval_receipt else None
+            ),
         )
     except _ConfigError as exc:
         sys.stderr.write(f"flow-worktree: {exc}\n")

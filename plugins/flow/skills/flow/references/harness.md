@@ -35,7 +35,7 @@ roots, stop for authorization rather than escaping the sandbox.
 | Trigger | `/flow` | `$flow:flow` | installed skill equivalent |
 | Plan gate | native plan mode | native Plan mode when active, else turn boundary | turn boundary |
 | Workspace | native switch plus absolute binding | explicit absolute binding | native switch if real, else explicit binding |
-| Worker | native collaboration agent; exact route requires structured launch acceptance | native collaboration agent; desired post-plan routes stay shadowed and inherit active model | independent call or documented inline fallback |
+| Worker | native collaboration agent, plus exact read-only CLI planner when explicitly routed | native collaboration agent, plus exact read-only CLI planner when explicitly routed | independent call or documented inline fallback |
 | Exact write | native file writer | rooted safe edit/write | exact writer or collision-safe fallback |
 | Wait | native owning-session wait | native owning-session wait | bounded foreground poll |
 | Input | native question surface | plain question and wait | plain question and wait |
@@ -44,9 +44,11 @@ roots, stop for authorization rather than escaping the sandbox.
 
 Do not infer the harness from ambient environment. The adapter supplies it. Public
 route configuration uses `claude_code` and `codex`; Flow normalizes the ambient
-`claude-code` adapter name at the boundary. Claude Code activates a route only from
-the structured native tool response for the exact model and effort. Current Codex
-post-plan routes remain desired shadow routes and inherit the active model.
+`claude-code` adapter name at the boundary. Claude Code activates a post-plan route
+only from the structured native tool response for the exact model and effort. An
+explicit planner override may activate through an exact structured CLI receipt on
+either owner harness. Current Codex post-plan routes remain desired shadow routes and
+inherit the active model.
 
 ## Discovery and runtime
 
@@ -77,6 +79,14 @@ Fresh targets remain read-only through the complete plan. Claude Code exits nati
 plan mode; Codex either exits native Plan mode or ends the turn at the soft boundary.
 Approval is the only attended delivery gate. No worktree or repository edit exists
 before it.
+
+An explicit per-run planner override uses `planning-attempt`, `planner-worker`, and
+`plan-review` through the facade. The worker process has a read-only sandbox, a typed
+result schema, a 10-minute soft deadline, and a 40-minute hard deadline. Its thread id
+stays only in the live owner conversation. The attempt bundle may retain complete plan
+versions and feedback, but never a resumable worker receipt or a Flow run. The owner
+drains the review surface before requesting its host-native gate, then writes the exact
+approval receipt and passes it to `worktree create --approval-receipt`.
 
 Unattended delivery has no live gate. It proceeds only under the documented
 independent-confidence and safety policy; otherwise it records a durable question
