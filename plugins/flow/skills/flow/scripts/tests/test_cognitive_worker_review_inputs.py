@@ -128,6 +128,29 @@ def test_review_bundle_rejects_an_in_place_tracked_rewrite_during_capture(
     assert not (tmp_path / "bundle").exists()
 
 
+def test_review_bundle_rejects_an_untracked_rewrite_during_capture(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The untracked blobs are read inside the receipt bracket, so the rewrite is caught."""
+    root = _repository(tmp_path)
+    (root / "note.log").write_text("untracked-a\n", encoding="utf-8")
+    real = cw.git_receipt
+    calls = {"n": 0}
+
+    def racing(target: Path) -> dict[str, object]:
+        calls["n"] += 1
+        if calls["n"] == 2:
+            (root / "note.log").write_text("untracked-b-much-longer\n", encoding="utf-8")
+        return real(target)
+
+    monkeypatch.setattr(cw, "git_receipt", racing)
+    with pytest.raises(cw.WorkerFailure, match="changed while review evidence") as error:
+        cw.build_review_input_bundle(root, tmp_path / "bundle")
+
+    assert error.value.code == "baseline_mismatch"
+    assert not (tmp_path / "bundle").exists()
+
+
 def test_review_bundle_refuses_a_special_file(tmp_path: Path) -> None:
     root = _repository(tmp_path)
     os.mkfifo(root / "pipe")

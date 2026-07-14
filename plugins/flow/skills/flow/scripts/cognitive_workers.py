@@ -1093,6 +1093,45 @@ def _harness_surface(root: Path) -> list[list[Any]]:
     return entries
 
 
+_UNTRACKED_DIGEST_MAX_FILE_BYTES = 8 * 1024 * 1024
+
+
+def _untracked_content(root: Path) -> list[list[Any]]:
+    """Digest the content of untracked, non-ignored files.
+
+    `status --porcelain=v2` lists an untracked path by name alone and `git diff` hashes tracked
+    content only, so rewriting an existing untracked file moved no other field of this receipt.
+    Ignored paths stay out: a blanket digest churns on caches, virtualenvs, and build output.
+    A file over the cap carries its size instead of a content hash, which keeps a receipt taken
+    twice per bundle capture and four times per worker invocation from reading an unbounded
+    artifact. Size is a function of content, unlike mtime, so a size-only entry is not a
+    false-positive source, but a same-size rewrite of an over-cap file does escape the guard.
+    """
+    raw = _git_bytes(root, "ls-files", "--others", "--exclude-standard", "-z")
+    entries: list[list[Any]] = []
+    for name in sorted(item for item in raw.split(b"\0") if item):
+        path = root / os.fsdecode(name)
+        encoded = _encoded_path(name)
+        try:
+            info = path.lstat()
+        except OSError:
+            continue
+        content: str
+        if stat.S_ISLNK(info.st_mode):
+            content = hashlib.sha256(os.readlink(path).encode(errors="surrogateescape")).hexdigest()
+        elif stat.S_ISREG(info.st_mode) and info.st_size <= _UNTRACKED_DIGEST_MAX_FILE_BYTES:
+            try:
+                content = _file_digest(path)
+            except OSError:
+                continue
+        else:
+            content = f"size:{info.st_size}"
+        entries.append(
+            [encoded["path"], encoded["path_encoding"], info.st_mode, info.st_size, content]
+        )
+    return entries
+
+
 def git_receipt(root: Path) -> dict[str, Any]:
     """Capture source, index, worktree, untracked, submodule, and Git metadata."""
     resolved = root.resolve()
@@ -1160,6 +1199,7 @@ def git_receipt(root: Path) -> dict[str, Any]:
         "hooks": hooks,
         "runtime_surface": _runtime_surface(resolved),
         "harness_surface": _harness_surface(resolved),
+        "untracked_content": _untracked_content(resolved),
     }
     return {**body, "digest": _digest(body)}
 
