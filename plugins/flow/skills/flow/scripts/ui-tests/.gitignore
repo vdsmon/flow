@@ -1,0 +1,5 @@
+.generated/
+node_modules/
+playwright-report/
+review-brief.spec.mjs-snapshots/
+test-results/

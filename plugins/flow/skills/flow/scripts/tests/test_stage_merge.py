@@ -92,6 +92,24 @@ def _ticket_with_covers(ws: Path, key: str, covers: list[str]) -> None:
     (tickets / f"{key}.md").write_text(body, encoding="utf-8")
 
 
+def _enable_review_brief(ws: Path) -> None:
+    flow_dir = ws / ".flow"
+    flow_dir.mkdir(parents=True, exist_ok=True)
+    (flow_dir / "workspace.toml").write_text(
+        '[pipeline]\nstages = ["review_brief"]\n\n[pipeline.handlers]\nreview_brief = "inline"\n',
+        encoding="utf-8",
+    )
+
+
+def _disable_review_brief(ws: Path) -> None:
+    _enable_review_brief(ws)
+    path = ws / ".flow" / "workspace.toml"
+    path.write_text(
+        path.read_text(encoding="utf-8") + '\n[review_brief]\nmode = "off"\n',
+        encoding="utf-8",
+    )
+
+
 def _probe_recorder(
     *,
     pr_id=_PR_ID,
@@ -219,6 +237,47 @@ def test_probe_closed_not_merged_falls_through(tmp_path):
     result = sm.probe(tmp_path, ticket_dir, "flow-x", runner=rec)
     assert result["already_merged"] is False
     assert any(_is_script("forge_cli.py", "ci-rollup")(c) for c in rec.calls)
+
+
+def test_probe_blocks_stale_review_brief_before_other_merge_gates(tmp_path):
+    ticket_dir = tmp_path / "run"
+    _create_pr_out(ticket_dir)
+    _enable_review_brief(tmp_path)
+    rec = _probe_recorder()
+    rec.when(
+        _is_script("review_brief.py", "freshness"),
+        _cp(
+            0,
+            json.dumps(
+                {
+                    "status": "stale",
+                    "reason": "latest brief targets aaaaaaa, not bbbbbbb",
+                    "html_path": "/tmp/old.html",
+                }
+            ),
+        ),
+    )
+
+    result = sm.probe(tmp_path, ticket_dir, "flow-x", runner=rec)
+
+    assert result["action"] == "refresh_review_brief"
+    assert result["review_brief_status"] == "stale"
+    assert result["review_brief_path"] == "/tmp/old.html"
+    assert "latest brief targets" in result["reason"]
+    assert not any(_is_script("forge_cli.py", "ci-rollup")(call) for call in rec.calls)
+
+
+def test_probe_does_not_require_brief_when_workspace_mode_is_off(tmp_path):
+    ticket_dir = tmp_path / "run"
+    _create_pr_out(ticket_dir)
+    _disable_review_brief(tmp_path)
+    rec = _probe_recorder()
+
+    result = sm.probe(tmp_path, ticket_dir, "flow-x", runner=rec)
+
+    assert result["review_brief_status"] == "disabled"
+    assert any(_is_script("forge_cli.py", "ci-rollup")(call) for call in rec.calls)
+    assert not any(_is_script("review_brief.py", "freshness")(call) for call in rec.calls)
 
 
 def test_probe_gh_view_state_failure_treated_as_not_merged(tmp_path):
@@ -519,6 +578,9 @@ _VERDICT_KEYS = {
     "regressed_cases",
     "changed_files",
     "guard_diff_path",
+    "review_brief_status",
+    "review_brief_reason",
+    "review_brief_path",
 }
 
 

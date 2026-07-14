@@ -36,13 +36,15 @@ In attended mode, fetch unresolved review threads through the forge seam and pre
 one disposition set: fix now, defer, or dismiss, with reasons. Persist the whole set
 atomically under the revision directory. If the interactive board capability is
 unavailable, fall back to the stage protocol's severity floor and say why. A board
-failure never changes which PR is being updated.
+failure never changes which PR is being updated. The complete board mechanics and
+artifact schema live in `references/revision-triage-board.md`.
 
 ## Execute
 
 Drive `delivery-loop.md` with one addition: pass the revision id on every dispatcher
 `next`, `advance`, and `release`. The fix-only subset normally covers implementation,
-review, e2e, commit, reflection, and review-loop stages. PR creation is absent.
+review, e2e, commit, review-loop, review-brief regeneration, and reflection stages.
+PR creation is absent.
 
 Implementation and review consume the persisted instruction/dispositions or forge
 threads as their fix set. The same baseline, artifact, friction, snapshot, lost-lease,

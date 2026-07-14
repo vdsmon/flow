@@ -21,6 +21,7 @@ import json
 import re
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 from _runner import CwdRunner as Runner
 from _runner import cwd_default_runner as _default_runner
@@ -216,6 +217,15 @@ class BitbucketAdapter:
             method="PUT",
             payload={"reviewers": reviewers},
         )
+
+    def source_url(self, pr_id: str, sha: str, path: str, start_line: int, end_line: int) -> str:
+        """Return a commit-pinned Bitbucket Cloud source URL."""
+        del pr_id  # The source view is commit-addressed rather than PR-addressed.
+        encoded = quote(path, safe="/")
+        anchor = (
+            f"#lines-{start_line}" if start_line == end_line else f"#lines-{start_line}:{end_line}"
+        )
+        return f"https://bitbucket.org/{self._workspace}/{self._repo}/src/{sha}/{encoded}{anchor}"
 
     # ─── review threads (CodeRabbit) ──────────────────────────────────────
 

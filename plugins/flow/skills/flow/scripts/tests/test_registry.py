@@ -23,6 +23,7 @@ def test_load_real_registry():
     names = [e.name for e in entries]
     assert "ticket" in names
     assert "commit" in names
+    assert "review_brief" in names
     assert "reflect" in names
 
 
@@ -33,6 +34,8 @@ def test_registry_by_name_fields():
     assert "agent_routed" in by["implement"].roles
     assert "agent_routed" in by["e2e"].roles
     assert by["implement"].default_timeout_min == 30
+    assert by["review_brief"].default_handler == "inline"
+    assert by["review_brief"].required_predecessors == ["create_pr"]
 
 
 def test_load_malformed_non_array(tmp_path):

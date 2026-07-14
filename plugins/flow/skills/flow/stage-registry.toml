@@ -125,8 +125,19 @@ reference_doc = "references/stage-review_loop.md"
 roles = []
 
 [[stage]]
+name = "review_brief"
+description = "Local review companion generated after the PR pipeline. The inline handler (references/stage-review_brief.md → scripts/review_brief.py) degrades to a no-op in forge-less workspaces; otherwise it authors a motivation-first brief, freezes evidence at the exact PR SHA, opens a self-contained HTML artifact, and continues immediately to reflect. No human gate; Forge remains the formal review surface."
+default_handler = "inline"
+default_timeout_min = 10
+required_predecessors = ["create_pr"]
+required = false
+required_when_compounding = false
+reference_doc = "references/stage-review_brief.md"
+roles = []
+
+[[stage]]
 name = "reflect"
-description = "Closing-phase compounding extraction. Reads state.json + subagent reports + final diff. Writes durable knowledge entries; conditional CLAUDE.md / MEMORY.md updates. If no novel signal, writes zero entries (not a failure)."
+description = "Closing-phase compounding extraction. Starts immediately after the review brief is generated; it never waits for human review. Reads state.json + subagent reports + final diff. Writes durable knowledge entries; conditional CLAUDE.md / MEMORY.md updates. If no novel signal, writes zero entries (not a failure)."
 default_handler = "inline"
 default_timeout_min = 5
 required_predecessors = []

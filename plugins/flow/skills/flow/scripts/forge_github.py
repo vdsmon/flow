@@ -17,6 +17,7 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 from _runner import CwdRunner as Runner
 from _runner import cwd_default_runner as _default_runner
@@ -263,6 +264,14 @@ class GitHubAdapter:
         # GitHub has no default-reviewers REST surface for a solo repo; CODEOWNERS covers review
         # assignment.
         raise NotSupported("github adapter does not set default reviewers")
+
+    def source_url(self, pr_id: str, sha: str, path: str, start_line: int, end_line: int) -> str:
+        """Return a commit-pinned source URL for one evidence range."""
+        del pr_id  # GitHub blob URLs need repository + commit, not the PR number.
+        owner, repo = self._resolve_owner_repo()
+        encoded = quote(path, safe="/")
+        anchor = f"#L{start_line}" if start_line == end_line else f"#L{start_line}-L{end_line}"
+        return f"https://github.com/{owner}/{repo}/blob/{sha}/{encoded}{anchor}"
 
     # ─── review threads (GraphQL) ─────────────────────────────────────────
 

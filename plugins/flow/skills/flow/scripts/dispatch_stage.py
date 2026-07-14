@@ -75,7 +75,15 @@ def _stage_ttl_seconds(stage_meta: StageEntry | None) -> int:
 # (human-merge keystone holds), so plan/ticket/create_pr/merge are skipped; reflect
 # stays in (a human-review catch is prime compounding signal). Intersected with the
 # workspace's configured stages, preserving ws.stages order.
-_REVISION_DEFAULT_STAGES = ("implement", "code_review", "e2e", "commit", "reflect", "review_loop")
+_REVISION_DEFAULT_STAGES = (
+    "implement",
+    "code_review",
+    "e2e",
+    "commit",
+    "review_loop",
+    "review_brief",
+    "reflect",
+)
 
 
 # ─── Handler-string parsing ──────────────────────────────────────────────────

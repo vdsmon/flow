@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "mode": "compact",
+  "title": "Reject ambiguous cleanup scope",
+  "outcome": "Cleanup now stops before acting when the workspace cannot be resolved.",
+  "risk": "medium",
+  "change_shape": "Linear guard change",
+  "motivation": {
+    "observed_problem": "An unresolved workspace could flow into candidate discovery.",
+    "why_it_matters": "A destructive command must fail closed when its boundary is unknown."
+  },
+  "invariants": [
+    {"title": "Ambiguity stops action", "body": "No candidate is deleted without one resolved workspace."}
+  ],
+  "code_evidence": [
+    {
+      "claim": "Fail closed at the command boundary",
+      "explanation": "The guard returns before candidate discovery begins.",
+      "path": "src/scope.py",
+      "start_line": 1,
+      "end_line": 3,
+      "highlight_lines": [1]
+    }
+  ],
+  "verification": [
+    {"claim": "Ambiguous scope is rejected", "evidence": "The targeted guard test passes.", "status": "passed"}
+  ]
+}

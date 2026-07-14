@@ -146,6 +146,15 @@ def test_detect_pr_none_when_empty():
     assert fg.detect_pr("feature/flow-x") is None
 
 
+def test_source_url_is_commit_pinned_and_encodes_path():
+    fg, calls = _adapter()
+
+    url = fg.source_url("7", "abc123", "src/a b.py", 10, 12)
+
+    assert url == "https://github.com/o/r/blob/abc123/src/a%20b.py#L10-L12"
+    assert _ran(calls, ["gh", "repo", "view"])
+
+
 def test_pr_info_parses_object():
     view = json.dumps(
         {

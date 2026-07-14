@@ -85,6 +85,15 @@ def test_detect_pr_none_when_no_match():
     assert fg.detect_pr("feature/flow-x") is None
 
 
+def test_source_url_is_commit_pinned_and_encodes_path():
+    fg, calls = _adapter(lambda _a: "null")
+
+    url = fg.source_url("9", "abc123", "src/a b.py", 10, 12)
+
+    assert url == "https://bitbucket.org/ws/rs/src/abc123/src/a%20b.py#lines-10:12"
+    assert calls == []
+
+
 def test_detect_pr_follows_pagination():
     # >50 open PRs push the run's PR past page 1; detect_pr must follow `next`
     # (like _fetch_all_comments) or create_pr's resume idempotency breaks.
