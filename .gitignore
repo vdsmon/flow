@@ -3,6 +3,10 @@
 .idea/
 .vscode/
 
+# Local agent-generated review and planning artifacts
+.lavish/
+.superpowers/
+
 # Claude Code local/transient state
 .claude/settings.local.json
 .claude/settings.json
