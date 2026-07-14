@@ -188,19 +188,43 @@ def transcript_invocations(path: Path, parent_harness: str) -> list[dict[str, An
     return invocations
 
 
+_WRAPPER_SHELLS = {"sh", "bash", "zsh", "dash", "ksh"}
+_WRAPPER_C_FLAGS = {"-c", "-lc", "-ic", "-lic", "-cl"}
+
+
+def _facade_argv(command: object) -> list[str]:
+    """Return the argv a recorded command line would execute, unwrapping one login shell.
+
+    Codex records ``/bin/zsh -lc '<approved command>'``; Claude Code records the approved command
+    as the Bash argv itself. A wrapper counts only when the shell carries exactly one ``-c`` body
+    and nothing else, so the body is the whole command rather than one clause among several.
+    """
+    try:
+        argv = shlex.split(str(command or ""))
+    except ValueError:
+        return []
+    if len(argv) == 3 and Path(argv[0]).name in _WRAPPER_SHELLS and argv[1] in _WRAPPER_C_FLAGS:
+        try:
+            argv = shlex.split(argv[2])
+        except ValueError:
+            return []
+    return argv
+
+
 def _verify_real_parent(
     manifest: dict[str, Any], outer: dict[str, Any], outcome_digest: object
 ) -> list[str]:
     """Check the parent's own transcript for the facade invocation and the nested outcome digest.
 
-    The facade command must appear in the parent's transcript, and no other command may. The
-    matched invocation must not have failed. The digest of the nested outcome must appear in the
-    output the parent recorded for that invocation.
+    An invocation is attributed to the facade only when its argv, after unwrapping a single login
+    shell, is token-for-token the facade command. No other command may appear, the matched
+    invocation must not have failed, and the nested outcome digest must appear in the output the
+    parent recorded for it.
 
-    Command attribution is a substring match on the recorded command line, so these checks do not
-    yet exclude a forged parent: a command that prints the facade command text and then reads a
-    pre-existing outcome.json off disk satisfies both halves without running the facade. Tightening
-    the match to real execution is filed as flow-zzdd.
+    This rejects a shell line that merely contains the facade text next to other clauses, such as
+    one that echoes the command and cats a pre-existing outcome.json. It does not make the
+    transcript unforgeable: the transcript is an unsigned file, so an owner who hand-authors the
+    whole JSONL can still fabricate an item whose argv is exact and whose output carries the digest.
     """
     errors: list[str] = []
     stdout_path = Path(str(outer.get("stdout_path", "")))
@@ -210,10 +234,10 @@ def _verify_real_parent(
         invocations = transcript_invocations(stdout_path, str(manifest.get("parent_harness")))
     except OSError as exc:
         return [f"parent transcript is unreadable: {exc}"]
-    expected = str(manifest.get("facade_command"))
-    # A harness may wrap the approved command in its own login shell, so this is a substring match.
-    # A command that only contains the text also matches; see flow-zzdd.
-    matched = [item for item in invocations if expected in str(item.get("command", ""))]
+    expected_argv = _facade_argv(manifest.get("facade_command"))
+    if not expected_argv:
+        return ["the smoke manifest carries no parseable facade command"]
+    matched = [item for item in invocations if _facade_argv(item.get("command")) == expected_argv]
     if not matched:
         errors.append("the parent transcript never executed the exact absolute facade command")
     if len(invocations) > len(matched):
