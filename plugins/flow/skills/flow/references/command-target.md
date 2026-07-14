@@ -1,5 +1,13 @@
 # Cockpit and target commands
 
+## Routed cognitive substeps
+
+The target loop consumes `cognitive_substeps` from the dispatch descriptor. A pending
+exact read-only route is executed through the common capsule facade, and its typed
+outcome is passed back in the stage's structured output. Conditional substeps require a
+deterministic skip receipt when they do not apply. Stale generations, shadow receipts,
+and missing terminal or cleanup evidence cannot complete a stage.
+
 This reference owns bare `FLOW`, `FLOW <target>...`, and `FLOW help`. The rooted
 execution contract in `harness.md` applies throughout: `<facade>` means the absolute
 `<run_root>/.flow/runtime/flow`, invoked with an explicit workdir and call-local

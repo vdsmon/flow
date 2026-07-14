@@ -71,7 +71,7 @@ effort = "high"
         agent_routes.resolve(root, "implementer", "claude-code")
 
 
-def test_override_wins_and_codex_post_plan_route_is_shadowed(tmp_path: Path) -> None:
+def test_override_wins_and_writer_route_remains_shadowed(tmp_path: Path) -> None:
     root = _workspace(tmp_path)
     resolved = agent_routes.resolve(
         root,
@@ -87,7 +87,7 @@ def test_override_wins_and_codex_post_plan_route_is_shadowed(tmp_path: Path) -> 
     }
     assert resolved["activation"] == "shadow"
     assert resolved["effective"] is None
-    assert "remain shadowed" in resolved["reason"]
+    assert "write-capable" in resolved["reason"]
 
 
 @pytest.mark.parametrize("owner", ["claude-code", "codex"])
@@ -99,11 +99,18 @@ def test_snapshot_contains_the_complete_cognitive_profile_catalog(
     assert agent_routes.PROFILES == PROFILES
     assert tuple(snapshot["routes"]) == PROFILES
     assert snapshot["routes"]["planner"]["activation"] == "pending"
-    assert all(
-        route["activation"] == "shadow"
-        for profile, route in snapshot["routes"].items()
-        if profile != "planner"
-    )
+    pending = {
+        profile for profile, route in snapshot["routes"].items() if route["activation"] == "pending"
+    }
+    assert pending == {
+        "planner",
+        "plan_assessor",
+        "code_reviewer",
+        "diff_reviewer",
+        "guard_reviewer",
+        "review_brief_author",
+        "reflector",
+    }
     assert all(route["effective"] is None for route in snapshot["routes"].values())
 
 
@@ -303,6 +310,8 @@ def test_ordinary_planner_cli_attestation_proves_exact_execution(
             },
             "prompt_hash": "a" * 64,
             "schema_hash": "b" * 64,
+            "physical_attempt": {"terminal_acknowledged": True},
+            "cleanup": {"capsule_absent": True, "quarantined": False},
         },
     )
     assert receipt["source"] == source
@@ -332,10 +341,65 @@ def test_explicit_planner_cli_attestation_proves_exact_execution(tmp_path: Path)
             },
             "prompt_hash": "prompt",
             "schema_hash": "schema",
+            "physical_attempt": {"terminal_acknowledged": True},
+            "cleanup": {"capsule_absent": True, "quarantined": False},
         },
     )
     assert receipt["activation"] == "active"
     assert receipt["effective"] == request
+
+
+@pytest.mark.parametrize(
+    "profile",
+    [
+        "planner",
+        "plan_assessor",
+        "code_reviewer",
+        "diff_reviewer",
+        "guard_reviewer",
+        "review_brief_author",
+        "reflector",
+    ],
+)
+def test_read_only_receipt_activates_only_with_capsule_proof(tmp_path: Path, profile: str) -> None:
+    snap = agent_routes.snapshot(_workspace(tmp_path), "codex")
+    request = dict(snap["routes"][profile]["desired"])
+    receipt = agent_routes.attest(
+        snap,
+        profile,
+        {
+            "request": request,
+            "response": {
+                "accepted": True,
+                **request,
+                "transport": "cli",
+                "adapter_version": "adapter/1",
+            },
+            "prompt_hash": "a" * 64,
+            "schema_hash": "b" * 64,
+            "physical_attempt": {"pid": 17, "terminal_acknowledged": True},
+            "cleanup": {"capsule_absent": True, "quarantined": False},
+        },
+    )
+    assert receipt["activation"] == "active"
+    assert receipt["physical_attempt"]["pid"] == 17
+    assert receipt["cleanup"]["capsule_absent"] is True
+
+
+def test_read_only_receipt_without_terminal_cleanup_proof_stays_shadow(tmp_path: Path) -> None:
+    snap = agent_routes.snapshot(_workspace(tmp_path), "codex")
+    request = dict(snap["routes"]["diff_reviewer"]["desired"])
+    receipt = agent_routes.attest(
+        snap,
+        "diff_reviewer",
+        {
+            "request": request,
+            "response": {"accepted": True, **request, "transport": "cli"},
+            "prompt_hash": "a" * 64,
+            "schema_hash": "b" * 64,
+        },
+    )
+    assert receipt["activation"] == "shadow"
 
 
 def test_legacy_models_are_classified_without_becoming_agent_routes(tmp_path: Path) -> None:

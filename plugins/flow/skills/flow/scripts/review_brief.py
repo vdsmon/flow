@@ -425,6 +425,90 @@ def validate_content(value: Any) -> dict[str, Any]:
     return normalized
 
 
+def provider_schema() -> dict[str, Any]:
+    """Return the closed JSON schema used by the routed content author."""
+
+    def obj(properties: dict[str, Any], required: list[str]) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": properties,
+            "required": required,
+            "additionalProperties": False,
+        }
+
+    text = {"type": "string", "minLength": 1}
+    text_array = {"type": "array", "items": text}
+    claim = obj({"title": text, "body": text}, ["title", "body"])
+    scenario = obj(
+        {
+            "name": text,
+            "before_label": text,
+            "after_label": text,
+            "before_steps": text_array,
+            "after_steps": text_array,
+        },
+        ["name", "before_label", "after_label", "before_steps", "after_steps"],
+    )
+    node = obj(
+        {"id": text, "label": text, "kind": text, "changed": {"type": "boolean"}},
+        ["id", "label", "kind", "changed"],
+    )
+    edge = obj({"from": text, "to": text}, ["from", "to"])
+    system_map = obj(
+        {
+            "caption": text,
+            "nodes": {"type": "array", "items": node},
+            "edges": {"type": "array", "items": edge},
+        },
+        ["caption", "nodes", "edges"],
+    )
+    evidence = obj(
+        {
+            "claim": text,
+            "explanation": text,
+            "path": text,
+            "start_line": {"type": "integer", "minimum": 1},
+            "end_line": {"type": "integer", "minimum": 1},
+            "highlight_lines": {
+                "type": "array",
+                "items": {"type": "integer", "minimum": 1},
+            },
+        },
+        ["claim", "explanation", "path", "start_line", "end_line", "highlight_lines"],
+    )
+    verification = obj(
+        {
+            "claim": text,
+            "evidence": text,
+            "status": {"type": "string", "enum": sorted(_STATUS)},
+        },
+        ["claim", "evidence", "status"],
+    )
+    return obj(
+        {
+            "schema_version": {"type": "integer", "const": SCHEMA_VERSION},
+            "mode": {"type": "string", "enum": sorted(_MODE)},
+            "title": text,
+            "outcome": text,
+            "risk": {"type": "string", "enum": sorted(_RISK)},
+            "change_shape": text,
+            "motivation": obj(
+                {"observed_problem": text, "why_it_matters": text},
+                ["observed_problem", "why_it_matters"],
+            ),
+            "scenarios": {"type": "array", "items": scenario},
+            "system_map": {"anyOf": [system_map, {"type": "null"}]},
+            "decisions": {"type": "array", "items": claim},
+            "invariants": {"type": "array", "items": claim},
+            "code_evidence": {"type": "array", "items": evidence},
+            "verification": {"type": "array", "items": verification},
+            "limitations": text_array,
+            "reviewer_prompts": text_array,
+        },
+        sorted(_ROOT_FIELDS),
+    )
+
+
 def _resolved_mode(content: Mapping[str, Any]) -> Literal["compact", "full"]:
     selected = content["mode"]
     if selected == "compact":

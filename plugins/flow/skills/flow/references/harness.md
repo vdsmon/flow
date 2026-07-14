@@ -1,5 +1,14 @@
 # Harness adapters
 
+## Cross-harness cognitive workers
+
+The public route names remain `claude_code` and `codex`; CLI is a receipt-level
+transport detail. A routed read-only worker runs in a standalone exact-SHA clone with
+closed immutable inputs, exact model and effort flags, typed output, process-group
+terminal proof, Git pre/post guards, and disposal evidence. The outer owner harness can
+differ from the worker harness. Real smoke evidence must name the actual outer `claude`
+or `codex` executable and its version; changing `FLOW_HARNESS` alone proves nothing.
+
 Flow's engine and public grammar are shared. Claude Code and Codex are first-class
 adapters; a generic adapter must state capability loss instead of pretending a
 weaker operation is equivalent.

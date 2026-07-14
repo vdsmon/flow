@@ -44,6 +44,8 @@ BACKUP_RETENTION = 5
 @dataclass(frozen=True)
 class StageRecord:
     status: StageStatus = "pending"
+    generation: int = 0
+    cognitive_substeps: dict[str, Any] | None = None
     started_at_iso: str | None = None
     started_at_sha: str | None = None
     finished_at_iso: str | None = None
@@ -225,6 +227,7 @@ def begin_stage(
         new_record = replace(
             record,
             status="in_progress",
+            generation=record.generation + 1 if record.status == "pending" else record.generation,
             started_at_iso=record.started_at_iso or utcnow_iso(),
             started_at_sha=record.started_at_sha or head_sha,
             agent_id=agent_id or record.agent_id,
@@ -266,6 +269,28 @@ def finish_stage(
     return _update(ticket_dir, mutate)
 
 
+def seal_cognitive_substeps(
+    ticket_dir: Path,
+    stage: str,
+    generation: int,
+    substeps: dict[str, Any],
+) -> TicketState:
+    """Bind immutable cognitive work facts to one in-progress stage generation."""
+
+    def mutate(ticket_state: TicketState) -> TicketState:
+        if stage not in ticket_state.stages:
+            raise ValueError(f"stage {stage!r} not in state.stages")
+        record = ticket_state.stages[stage]
+        if record.status != "in_progress" or record.generation != generation:
+            raise ValueError(f"cannot seal cognitive work for stale {stage!r} generation")
+        if record.cognitive_substeps is not None and record.cognitive_substeps != substeps:
+            raise ValueError(f"cognitive work for {stage!r} generation is already sealed")
+        new_record = replace(record, cognitive_substeps=json.loads(json.dumps(substeps)))
+        return replace(ticket_state, stages={**ticket_state.stages, stage: new_record})
+
+    return _update(ticket_dir, mutate)
+
+
 def force_stage_status(ticket_dir: Path, stage: str, status: StageStatus) -> TicketState:
     """Recovery-only: force a stage to a given status, outside begin/finish.
 
@@ -289,6 +314,7 @@ def force_stage_status(ticket_dir: Path, stage: str, status: StageStatus) -> Tic
                 finished_at_iso=None,
                 finished_at_sha=None,
                 failure_detail=None,
+                cognitive_substeps=None,
             )
         else:
             new_record = replace(record, status=status)
@@ -367,4 +393,5 @@ __all__ = [
     "init",
     "pick_next_pending",
     "read",
+    "seal_cognitive_substeps",
 ]

@@ -1,18 +1,28 @@
 # Stage: code_review
 
+## Routed read-only reviews
+
+When the frozen route marks a reviewer pending, dispatch seals its logical invocation,
+stage generation, source SHA, route digest, owner, and lease fence. Build one immutable
+`flow.review-input-bundle/v1` from the authoritative tree. `code_reviewer` receives the
+accepted plan and ticket; `diff_reviewer` receives only source identity, the bundle,
+and its fixed plan-blind rubric. Both return typed findings only. A matching successful
+outcome is required before completion. `review_fixer` remains a separate shadow writer;
+review findings never grant write authority or trigger a fallback review.
+
 ## Purpose
 
-Inline main-agent self-review of the implement-stage diff.
-Bare workspace default; richer review is wired by installing a code-review skill via the init wizard.
+Review the implement-stage diff through the frozen exact reader routes when active.
+Historical, generic, and legacy snapshots retain their recorded inline behavior.
 
 The route snapshot records the inline primary pass as `code_reviewer`, the plan-blind
 pass as `diff_reviewer`, and any mutation as the conditional `review_fixer` substep.
-All three are desired shadow routes in this increment. This stage keeps its existing
-inline and owner-native behavior, and it does not launch a new routed worker.
+`code_reviewer` and `diff_reviewer` activate from a new exact snapshot. The conditional
+`review_fixer` stays shadowed, preserving the existing sole-writer repair path.
 
 This is the lowest-cost gate against regressions.
-The main agent is the same context that just produced the implement-stage code, so the review is biased toward what it just wrote.
-That bias is acceptable for personal-mode flow; work-mode users opt in to `skill:code-review` via init.
+The routed readers are isolated from the implementation context. A historical shadow
+run may still use the inline compatibility path recorded in its snapshot.
 
 ## Inputs
 

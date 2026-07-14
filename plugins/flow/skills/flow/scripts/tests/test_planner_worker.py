@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 from pathlib import Path
-from typing import override
 
 import pytest
 
+import cognitive_workers as cw
 import planner_worker as pw
 
 
@@ -53,6 +54,82 @@ def _envelope(*, author_id: str = "codex:gpt-5.6-sol") -> dict[str, object]:
     }
 
 
+class _FakeAdapter:
+    """Stand in for the exact CLI while keeping the real process lifecycle."""
+
+    harness = "codex"
+
+    def __init__(self, payload: object, *, returncode: int = 0) -> None:
+        self.payload = payload
+        self.returncode = returncode
+        self.prompts: list[str] = []
+        self.thread_ids: list[str | None] = []
+
+    def preflight(self, route):
+        return {"executable": "/usr/bin/codex", "version": "codex 1", "harness": "codex"}
+
+    def command(self, route, prompt, schema_path, capsule):
+        raise AssertionError("the planner compatibility order must use the session command")
+
+    def session_command(self, route, prompt, schema_path, *, thread_id, new_thread_id):
+        self.prompts.append(prompt)
+        self.thread_ids.append(thread_id)
+        event = {"thread_id": thread_id or new_thread_id, "result": self.payload}
+        script = (
+            f"import json,sys; sys.stdout.write(json.dumps({event!r})); sys.exit({self.returncode})"
+        )
+        return [sys.executable, "-c", script]
+
+
+def _git(root: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", *args], cwd=root, check=True, capture_output=True, text=True
+    ).stdout.strip()
+
+
+def _source(tmp_path: Path) -> Path:
+    root = tmp_path / "source"
+    root.mkdir()
+    _git(root, "init", "-q")
+    _git(root, "config", "user.email", "flow@example.test")
+    _git(root, "config", "user.name", "Flow Test")
+    (root / "tracked.txt").write_text("base\n", encoding="utf-8")
+    _git(root, "add", "tracked.txt")
+    _git(root, "commit", "-qm", "base")
+    return root
+
+
+def _argv(tmp_path: Path, source: Path, *extra: str) -> list[str]:
+    prompt = tmp_path / "prompt.txt"
+    if not prompt.exists():
+        prompt.write_text("plan the ticket", encoding="utf-8")
+    schema = tmp_path / "schema.json"
+    schema.write_text(json.dumps({"type": "object"}), encoding="utf-8")
+    return [
+        "--harness",
+        "codex",
+        "--model",
+        "gpt-5.6-sol",
+        "--effort",
+        "xhigh",
+        "--prompt-from",
+        str(prompt),
+        "--schema",
+        str(schema),
+        "--attempt-id",
+        "attempt-1",
+        "--plan-version",
+        "1",
+        "--route-digest",
+        "b" * 64,
+        "--source-root",
+        str(source),
+        "--invocation-root",
+        str(tmp_path / "invocation"),
+        *extra,
+    ]
+
+
 def test_codex_command_is_exact_read_only_and_resumable(tmp_path: Path) -> None:
     schema = tmp_path / "schema.json"
     command = pw.build_command(_route(), "prompt", schema_path=schema, thread_id="thread-7")
@@ -77,6 +154,17 @@ def test_claude_command_is_exact_read_only_and_resumable(tmp_path: Path) -> None
     assert command[command.index("--resume") + 1] == "session-7"
     assert command[command.index("--output-format") + 1] == "stream-json"
     assert command[command.index("--json-schema") + 1] == '{"type":"object"}'
+    # The real CLI rejects --print with stream-json unless --verbose is present.
+    assert "--verbose" in command
+
+
+def test_planning_owns_no_second_process_lifecycle() -> None:
+    source = Path(pw.__file__).read_text(encoding="utf-8")
+    assert "Popen" not in source
+    assert "killpg" not in source
+    assert "communicate" not in source
+    assert not hasattr(pw, "run_process")
+    assert not hasattr(pw, "run_with_retry")
 
 
 def test_rotation_after_three_revisions_or_context_pressure() -> None:
@@ -109,252 +197,11 @@ def test_contradictory_relay_fails_closed() -> None:
         )
 
 
-class _FakeProcess:
-    def __init__(self, outcomes: list[object], *, pid: int = 71) -> None:
-        self.outcomes = outcomes
-        self.pid = pid
-        self.returncode: int | None = None
-        self.killed = False
-        self.timeouts: list[float | None] = []
-
-    def communicate(self, timeout: float | None = None):
-        self.timeouts.append(timeout)
-        outcome = self.outcomes.pop(0)
-        if isinstance(outcome, BaseException):
-            raise outcome
-        self.returncode = 0
-        return outcome
-
-    def poll(self):
-        return self.returncode
-
-
-def test_soft_deadline_emits_event_but_allows_completion(tmp_path: Path) -> None:
-    process = _FakeProcess(
-        [
-            subprocess.TimeoutExpired(["codex"], 10),
-            (json.dumps({"thread_id": "T-1", "result": {"status": "PLAN_READY"}}), ""),
-        ]
-    )
-    events: list[str] = []
-    result = pw.run_process(
-        ["codex"],
-        popen=lambda *a, **k: process,
-        soft_timeout=10,
-        hard_timeout=40,
-        on_event=lambda event: events.append(event["type"]),
-    )
-    assert result.thread_id == "T-1"
-    assert result.command == ("codex",)
-    assert events == ["soft_deadline"]
-    assert process.timeouts == [10, 30]
-    assert result.attempts[0]["attempt"] == 1
-    assert result.attempts[0]["outcome"] == "success"
-    assert result.attempts[0]["soft_budget_seconds"] == 10
-    assert result.attempts[0]["hard_budget_seconds"] == 40
-    assert result.attempts[0]["deadline_events"] == ["soft_deadline"]
-    assert result.attempts[0]["terminal_acknowledged"] is True
-
-
-def test_hard_timeout_requires_terminal_ack_before_retry(monkeypatch) -> None:
-    first = _FakeProcess(
-        [subprocess.TimeoutExpired(["codex"], 10), subprocess.TimeoutExpired(["codex"], 30)]
-    )
-    second = _FakeProcess(
-        [(json.dumps({"thread_id": "fresh", "result": {"status": "PLAN_READY"}}), "")]
-    )
-    processes = iter([first, second])
-    killed: list[tuple[int, int]] = []
-
-    def killpg(pid: int, signal: int) -> None:
-        killed.append((pid, signal))
-        first.returncode = -signal
-        first.outcomes.append(("", ""))
-
-    result = pw.run_with_retry(
-        lambda fresh: ["codex", "fresh" if fresh else "resume"],
-        popen=lambda *a, **k: next(processes),
-        killpg=killpg,
-        soft_timeout=10,
-        hard_timeout=40,
-    )
-    assert result.thread_id == "fresh"
-    assert killed
-    assert result.attempt == 2
-    assert result.command[-1] == "fresh"
-    assert first.timeouts[:2] == [10, 30]
-    assert second.timeouts == [10]
-    assert [metric["attempt"] for metric in result.attempts] == [1, 2]
-    assert [metric["outcome"] for metric in result.attempts] == [
-        "hard_timeout",
-        "success",
-    ]
-    assert all(metric["soft_budget_seconds"] == 10 for metric in result.attempts)
-    assert all(metric["hard_budget_seconds"] == 40 for metric in result.attempts)
-    assert result.attempts[0]["terminal_acknowledged"] is True
-    assert result.aggregate_elapsed_seconds >= sum(
-        metric["elapsed_seconds"] for metric in result.attempts
-    )
-
-
-def test_unacknowledged_termination_never_starts_retry() -> None:
-    first = _FakeProcess(
-        [subprocess.TimeoutExpired(["codex"], 10), subprocess.TimeoutExpired(["codex"], 30)]
-    )
-    launches = 0
-
-    def popen(*args, **kwargs):
-        nonlocal launches
-        launches += 1
-        return first
-
-    with pytest.raises(pw.WorkerError, match="terminal acknowledgement"):
-        pw.run_with_retry(
-            lambda fresh: ["codex"],
-            popen=popen,
-            killpg=lambda pid, signal: None,
-            soft_timeout=10,
-            hard_timeout=40,
-            termination_grace=0,
-        )
-    assert launches == 1
-
-
-def test_second_hard_timeout_has_two_distinct_metrics_and_no_third_launch() -> None:
-    processes = [
-        _FakeProcess(
-            [subprocess.TimeoutExpired(["codex"], 600), subprocess.TimeoutExpired(["codex"], 1800)],
-            pid=71,
-        ),
-        _FakeProcess(
-            [subprocess.TimeoutExpired(["codex"], 600), subprocess.TimeoutExpired(["codex"], 1800)],
-            pid=72,
-        ),
-    ]
-    launches = 0
-
-    def popen(*args, **kwargs):
-        nonlocal launches
-        process = processes[launches]
-        launches += 1
-        return process
-
-    def killpg(pid: int, sig: int) -> None:
-        process = next(item for item in processes if item.pid == pid)
-        process.returncode = -sig
-        process.outcomes.append(("", ""))
-
-    with pytest.raises(pw.WorkerError, match="one fresh retry") as error:
-        pw.run_with_retry(
-            lambda fresh: ["codex", "fresh" if fresh else "initial"],
-            popen=popen,
-            killpg=killpg,
-        )
-    assert launches == 2
-    assert [process.timeouts[:2] for process in processes] == [[600, 1800], [600, 1800]]
-    assert [metric["attempt"] for metric in error.value.attempts] == [1, 2]
-    assert all(metric["outcome"] == "hard_timeout" for metric in error.value.attempts)
-    assert all(metric["terminal_acknowledged"] is True for metric in error.value.attempts)
-
-
-def test_open_output_pipe_prevents_retry_even_after_process_exit() -> None:
-    process = _FakeProcess(
-        [
-            subprocess.TimeoutExpired(["codex"], 600),
-            subprocess.TimeoutExpired(["codex"], 1800),
-            subprocess.TimeoutExpired(["codex"], 5),
-            subprocess.TimeoutExpired(["codex"], 5),
-        ]
-    )
-    launches = 0
-
-    def popen(*args, **kwargs):
-        nonlocal launches
-        launches += 1
-        return process
-
-    with pytest.raises(pw.WorkerError, match="terminal acknowledgement") as error:
-        pw.run_with_retry(
-            lambda fresh: ["codex"],
-            popen=popen,
-            killpg=lambda pid, sig: setattr(process, "returncode", -sig),
-        )
-    assert launches == 1
-    assert len(error.value.attempts) == 1
-    assert error.value.attempts[0]["terminal_acknowledged"] is False
-
-
-def test_malformed_output_is_not_approvable() -> None:
-    process = _FakeProcess([("not-json\n", "")])
-    with pytest.raises(pw.WorkerError, match="typed planner result") as error:
-        pw.run_process(["codex"], popen=lambda *a, **k: process, soft_timeout=10, hard_timeout=40)
-    assert len(error.value.attempts) == 1
-    assert error.value.attempts[0]["outcome"] == "invalid_output"
-    assert error.value.attempts[0]["terminal_acknowledged"] is True
-
-
-def test_cli_failure_surfaces_structured_stdout_error_over_stderr_noise() -> None:
-    class _FailingProcess(_FakeProcess):
-        @override
-        def communicate(self, timeout: float | None = None):
-            result = super().communicate(timeout)
-            self.returncode = 1
-            return result
-
-    process = _FailingProcess(
-        [
-            (
-                "\n".join(
-                    [
-                        json.dumps({"type": "thread.started", "thread_id": "T-1"}),
-                        json.dumps(
-                            {
-                                "type": "error",
-                                "message": "You've hit your usage limit. Try again later.",
-                            }
-                        ),
-                    ]
-                ),
-                "Reading additional input from stdin...\n",
-            )
-        ]
-    )
-
-    with pytest.raises(pw.WorkerError, match="usage limit") as error:
-        pw.run_process(["codex"], popen=lambda *a, **k: process, soft_timeout=10, hard_timeout=40)
-
-    assert "Reading additional input from stdin" not in str(error.value)
-    assert error.value.attempts[0]["outcome"] == "cli_error"
-
-
 def test_typed_worker_result_must_match_the_actual_route_identity() -> None:
     with pytest.raises(pw.WorkerError, match="author identity"):
         pw.validate_envelope(_route(), _envelope(author_id="claude_code:opus"))
     validated = pw.validate_envelope(_route(), _envelope())
     assert validated["author"]["id"] == "codex:gpt-5.6-sol"
-
-
-def test_jsonl_parser_joins_thread_and_typed_result_events() -> None:
-    stdout = "\n".join(
-        [
-            json.dumps({"type": "thread.started", "thread_id": "T-9"}),
-            json.dumps(
-                {
-                    "type": "item.completed",
-                    "item": {
-                        "type": "agent_message",
-                        "text": json.dumps({"status": "PLAN_READY"}),
-                    },
-                }
-            ),
-        ]
-    )
-    process = _FakeProcess([(stdout, "")])
-    result = pw.run_process(
-        ["codex"], popen=lambda *a, **k: process, soft_timeout=10, hard_timeout=40
-    )
-    assert result.thread_id == "T-9"
-    assert result.envelope["status"] == "PLAN_READY"
 
 
 def test_preflight_has_no_fallback_and_bounds_probes(monkeypatch) -> None:
@@ -364,241 +211,120 @@ def test_preflight_has_no_fallback_and_bounds_probes(monkeypatch) -> None:
         calls.append((command, kwargs["timeout"]))
         return subprocess.CompletedProcess(command, 1, "", "not logged in")
 
-    monkeypatch.setattr(pw.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(cw.shutil, "which", lambda name: f"/usr/bin/{name}")
     with pytest.raises(pw.WorkerError, match="authentication"):
         pw.preflight(_route(), runner=run, timeout=3)
     assert calls
     assert all(timeout == 3 for _, timeout in calls)
 
 
-def test_resumed_cli_retry_uses_rehydration_prompt_and_reports_actual_command(
+def test_initial_launch_reports_capsule_disposal_and_terminal_acceptance(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
-    prompt = tmp_path / "feedback.txt"
-    prompt.write_text("one feedback delta", encoding="utf-8")
-    fresh_prompt = tmp_path / "rehydrate.txt"
-    fresh_prompt.write_text("complete plan plus ledger", encoding="utf-8")
-    schema = tmp_path / "schema.json"
-    schema.write_text('{"type":"object"}', encoding="utf-8")
+    adapter = _FakeAdapter(_envelope())
+    monkeypatch.setattr(cw, "ADAPTERS", {"codex": adapter})
+    monkeypatch.setenv("FLOW_HARNESS", "codex")
+    source = _source(tmp_path)
 
-    monkeypatch.setattr(
-        pw,
-        "preflight",
-        lambda route: {"executable": "/usr/bin/codex", "version": "codex 1", "harness": "codex"},
-    )
+    assert pw.cli_main(_argv(tmp_path, source)) == 0
 
-    def run_retry(factory):
-        resumed = factory(False)
-        fresh = factory(True)
-        assert resumed[-2:] == ["thread-old", "one feedback delta"]
-        assert "resume" not in fresh[:3]
-        assert fresh[-1] == "complete plan plus ledger"
-        return pw.WorkerResult(
-            envelope=_envelope(),
-            thread_id="thread-new",
-            stdout="",
-            stderr="",
-            command=tuple(fresh),
-            attempt=2,
-            attempts=(
-                {
-                    "attempt": 1,
-                    "outcome": "hard_timeout",
-                    "soft_budget_seconds": 600,
-                    "hard_budget_seconds": 2400,
-                    "deadline_events": ["soft_deadline", "hard_deadline"],
-                    "elapsed_seconds": 2400.0,
-                    "terminal_acknowledged": True,
-                },
-                {
-                    "attempt": 2,
-                    "outcome": "success",
-                    "soft_budget_seconds": 600,
-                    "hard_budget_seconds": 2400,
-                    "deadline_events": [],
-                    "elapsed_seconds": 1.0,
-                    "terminal_acknowledged": True,
-                },
-            ),
-            aggregate_elapsed_seconds=2401.0,
-        )
+    result = json.loads(capsys.readouterr().out)
+    assert result["envelope"]["author"]["id"] == "codex:gpt-5.6-sol"
+    assert result["thread_id"]
+    assert result["command"][-1] == "<prompt>"
+    assert result["acceptance"]["response"]["accepted"] is True
+    assert result["acceptance"]["physical_attempt"]["terminal_acknowledged"] is True
+    assert result["acceptance"]["cleanup"] == {
+        "capsule_absent": True,
+        "quarantined": False,
+        "invocation_root": str((tmp_path / "invocation").resolve()),
+    }
+    assert result["acceptance"]["capsule"]["source_sha"] == _git(source, "rev-parse", "HEAD")
+    assert result["capability"]["version"] == "codex 1"
+    assert [item["attempt"] for item in result["physical_attempts"]] == [1]
+    assert adapter.thread_ids == [None]
+    assert not list((tmp_path / "invocation" / "capsules").glob("*"))
 
-    monkeypatch.setattr(pw, "run_with_retry", run_retry)
+
+def test_resumed_launch_binds_the_live_thread_and_needs_a_fresh_prompt(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    adapter = _FakeAdapter(_envelope())
+    monkeypatch.setattr(cw, "ADAPTERS", {"codex": adapter})
+    monkeypatch.setenv("FLOW_HARNESS", "codex")
+    source = _source(tmp_path)
+
+    assert pw.cli_main(_argv(tmp_path, source, "--thread-id", "thread-old")) == 2
+    assert "fresh rehydration prompt" in capsys.readouterr().err
+
+    fresh = tmp_path / "rehydrate.txt"
+    fresh.write_text("complete plan plus ledger", encoding="utf-8")
     assert (
         pw.cli_main(
-            [
-                "--harness",
-                "codex",
-                "--model",
-                "gpt-5.6-sol",
-                "--effort",
-                "xhigh",
-                "--prompt-from",
-                str(prompt),
-                "--fresh-prompt-from",
-                str(fresh_prompt),
-                "--schema",
-                str(schema),
+            _argv(
+                tmp_path,
+                source,
                 "--thread-id",
                 "thread-old",
-            ]
+                "--fresh-prompt-from",
+                str(fresh),
+            )
         )
         == 0
     )
     result = json.loads(capsys.readouterr().out)
-    assert result["command"][-1] == "<prompt>"
-    assert result["command"][-2] != "thread-old"
-    assert (
-        result["acceptance"]["prompt_hash"]
-        == pw.hashlib.sha256(b"complete plan plus ledger").hexdigest()
-    )
-    assert [item["attempt"] for item in result["physical_attempts"]] == [1, 2]
-    assert result["aggregate_wall_seconds"] == 2401.0
+    assert adapter.thread_ids == ["thread-old"]
+    assert adapter.prompts[-1] == "plan the ticket"
+    assert result["thread_id"] == "thread-old"
 
 
-def test_resumed_cli_requires_a_fresh_rehydration_prompt(
+def test_launch_requires_the_exact_attempt_and_route_binding(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
-    prompt = tmp_path / "feedback.txt"
-    prompt.write_text("delta only", encoding="utf-8")
-    schema = tmp_path / "schema.json"
-    schema.write_text('{"type":"object"}', encoding="utf-8")
-    monkeypatch.setattr(
-        pw,
-        "preflight",
-        lambda route: {"executable": "/usr/bin/codex", "version": "codex 1", "harness": "codex"},
-    )
-    assert (
-        pw.cli_main(
-            [
-                "--harness",
-                "codex",
-                "--model",
-                "gpt-5.6-sol",
-                "--effort",
-                "xhigh",
-                "--prompt-from",
-                str(prompt),
-                "--schema",
-                str(schema),
-                "--thread-id",
-                "thread-old",
-            ]
-        )
-        == 2
-    )
-    assert "fresh rehydration prompt" in capsys.readouterr().err
+    monkeypatch.setattr(cw, "ADAPTERS", {"codex": _FakeAdapter(_envelope())})
+    monkeypatch.setenv("FLOW_HARNESS", "codex")
+    source = _source(tmp_path)
+    argv = [item for item in _argv(tmp_path, source) if item not in {"--route-digest", "b" * 64}]
+
+    assert pw.cli_main(argv) == 2
+    assert "--route-digest" in capsys.readouterr().err
+
+
+def test_launch_requires_the_owner_harness(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.setattr(cw, "ADAPTERS", {"codex": _FakeAdapter(_envelope())})
+    monkeypatch.delenv("FLOW_HARNESS", raising=False)
+    source = _source(tmp_path)
+
+    assert pw.cli_main(_argv(tmp_path, source)) == 2
+    assert "FLOW_HARNESS" in capsys.readouterr().err
 
 
 def test_cli_failure_reports_each_terminal_physical_attempt(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
-    prompt = tmp_path / "prompt.txt"
-    prompt.write_text("plan", encoding="utf-8")
-    schema = tmp_path / "schema.json"
-    schema.write_text('{"type":"object"}', encoding="utf-8")
-    metric = {
-        "attempt": 1,
-        "outcome": "hard_timeout",
-        "soft_budget_seconds": 600,
-        "hard_budget_seconds": 2400,
-        "deadline_events": ["soft_deadline", "hard_deadline"],
-        "elapsed_seconds": 2400.0,
-        "terminal_acknowledged": False,
-    }
-    monkeypatch.setattr(
-        pw,
-        "preflight",
-        lambda route: {
-            "executable": "/usr/bin/codex",
-            "version": "codex 1",
-            "harness": "codex",
-        },
+    adapter = _FakeAdapter(
+        {"type": "error", "message": "You've hit your usage limit."}, returncode=1
     )
+    monkeypatch.setattr(cw, "ADAPTERS", {"codex": adapter})
+    monkeypatch.setenv("FLOW_HARNESS", "codex")
+    source = _source(tmp_path)
 
-    def fail(factory):
-        del factory
-        raise pw.WorkerError("terminal acknowledgement missing", attempts=(metric,))
+    assert pw.cli_main(_argv(tmp_path, source)) == 2
 
-    monkeypatch.setattr(pw, "run_with_retry", fail)
-    assert (
-        pw.cli_main(
-            [
-                "--harness",
-                "codex",
-                "--model",
-                "gpt-5.6-sol",
-                "--effort",
-                "xhigh",
-                "--prompt-from",
-                str(prompt),
-                "--schema",
-                str(schema),
-            ]
-        )
-        == 2
-    )
-    error = capsys.readouterr().err.removeprefix("planner-worker: ")
-    detail = json.loads(error)
-    assert detail["error"] == "terminal acknowledgement missing"
-    assert detail["physical_attempts"] == [metric]
+    detail = json.loads(capsys.readouterr().err.removeprefix("planner-worker: "))
+    assert "exited 1" in detail["error"]
+    assert [item["outcome"] for item in detail["physical_attempts"]] == ["cli_error"]
+    assert detail["physical_attempts"][0]["terminal_acknowledged"] is True
 
 
-def test_cli_semantic_output_failure_reclassifies_the_terminal_attempt(
+def test_envelope_author_outside_the_launched_route_is_not_approvable(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
-    prompt = tmp_path / "prompt.txt"
-    prompt.write_text("plan", encoding="utf-8")
-    schema = tmp_path / "schema.json"
-    schema.write_text('{"type":"object"}', encoding="utf-8")
-    metric = {
-        "attempt": 1,
-        "outcome": "success",
-        "soft_budget_seconds": 600,
-        "hard_budget_seconds": 2400,
-        "deadline_events": [],
-        "elapsed_seconds": 1.0,
-        "terminal_acknowledged": True,
-    }
     monkeypatch.setattr(
-        pw,
-        "preflight",
-        lambda route: {
-            "executable": "/usr/bin/codex",
-            "version": "codex 1",
-            "harness": "codex",
-        },
+        cw, "ADAPTERS", {"codex": _FakeAdapter(_envelope(author_id="claude_code:opus"))}
     )
-    monkeypatch.setattr(
-        pw,
-        "run_with_retry",
-        lambda factory: pw.WorkerResult(
-            envelope=_envelope(author_id="claude_code:opus"),
-            thread_id="thread-1",
-            stdout="",
-            stderr="",
-            command=("codex", "plan"),
-            attempts=(metric,),
-            aggregate_elapsed_seconds=1.0,
-        ),
-    )
-    assert (
-        pw.cli_main(
-            [
-                "--harness",
-                "codex",
-                "--model",
-                "gpt-5.6-sol",
-                "--effort",
-                "xhigh",
-                "--prompt-from",
-                str(prompt),
-                "--schema",
-                str(schema),
-            ]
-        )
-        == 2
-    )
-    detail = json.loads(capsys.readouterr().err.removeprefix("planner-worker: "))
-    assert detail["physical_attempts"][0]["outcome"] == "invalid_output"
-    assert detail["physical_attempts"][0]["terminal_acknowledged"] is True
+    monkeypatch.setenv("FLOW_HARNESS", "codex")
+    source = _source(tmp_path)
+
+    assert pw.cli_main(_argv(tmp_path, source)) == 2
+    assert "author identity" in capsys.readouterr().err

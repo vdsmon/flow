@@ -1,5 +1,13 @@
 # Delivery planning and approval
 
+## Cognitive execution boundary
+
+Pre-approval planning keeps its existing version CAS, feedback ledger, revalidation,
+and native host gate. The provider call itself now uses the same exact read-only capsule
+contract as post-plan readers. Fresh assessment requires an active `plan_assessor`
+receipt bound to the candidate plan, route, terminal physical attempt, and disposed
+capsule. No worker-session receipt becomes durable pre-gate Flow run state.
+
 This is the read-only front half for a fresh target. It produces one approved plan,
 seeds an isolated worktree, then hands control to `delivery-loop.md` in the same owner
 conversation. The target's public options have already been parsed by the registry.
@@ -95,7 +103,20 @@ FLOW_HARNESS="<harness>" "<facade>" planning-attempt create \
   --owner-identity "<owner identity>"
 ```
 
-Preflight and launch `planner-worker` with the desired harness, model, and effort.
+Launch `planner-worker` with the desired harness, model, and effort. It runs one exact
+read-only capsule through the common cognitive executor, so the launch is also bound to
+the attempt, the owner-allocated plan version, and the frozen route digest:
+
+```bash
+FLOW_HARNESS="<harness>" "<facade>" planner-worker \
+  --harness "<harness>" --model "<model>" --effort "<effort>" \
+  --prompt-from "<attempt-dir>/prompt.txt" \
+  --schema "<attempt-dir>/plan-envelope.schema.json" \
+  --attempt-id "<attempt id>" --plan-version "<next version>" \
+  --route-digest "<route digest>" \
+  [--thread-id "<live thread>" --fresh-prompt-from "<attempt-dir>/rehydrate.txt"]
+```
+
 The prompt includes the exact attempt id, owner-allocated next version, parent digest,
 base SHA, route digest, ticket intent, current complete plan when revising, feedback
 ledger, and required plan sections. The envelope author id is

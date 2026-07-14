@@ -1,5 +1,12 @@
 # Workspace commands
 
+## Agent-route workspace contract
+
+Initialized workspaces carry all twelve explicit route profiles. New exact snapshots
+can activate the seven read-only profiles; generic owners and every writer/E2E profile
+remain shadowed. Repair and validation reject a partial self-workspace catalog because
+route resolution, dispatch composition, prompt entries, and receipts must agree.
+
 Workspace commands manage Flow's local installation, health, repairs, queued tracker
 writes, and runtime layout. The loaded skill directory is the only trusted source for
 installing or repairing runtime metadata. Never search arbitrary plugin caches.

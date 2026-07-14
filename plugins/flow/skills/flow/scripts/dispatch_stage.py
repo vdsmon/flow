@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import hashlib
 import json
 import secrets
 import socket
@@ -38,11 +39,13 @@ from pathlib import Path
 from typing import Any, cast
 
 import _locking
+import agent_routes
 import fleet
 import lease
 import recall_pending
 import state
 import validate_workspace as vw
+from _atomicio import atomic_write_text
 from _registry import StageEntry, registry_by_name
 from _timeutil import utcnow_iso
 from snapshot import (
@@ -64,6 +67,168 @@ _INIT_TTL_S = 600
 # is a longer dead-run hold before auto-reclaim on the longest stage
 # (review_loop, 60min -> 120min), bounded and recoverable via FLOW workspace repair.
 _LEASE_TTL_MULTIPLIER = 2
+
+
+def _cognitive_substeps(
+    ticket_dir: Path,
+    ticket_state: state.TicketState,
+    stage_name: str,
+    generation: int,
+    head_sha: str,
+    lease_fence: str | None,
+) -> dict[str, dict[str, Any]]:
+    """Build sealed cognitive facts from the run's frozen route snapshot."""
+    route_path = ticket_dir / "route-snapshot.json"
+    if not route_path.is_file():
+        return {}
+    try:
+        snapshot = agent_routes.load_snapshot(route_path)
+    except agent_routes.RouteError:
+        return {}
+    execution = snapshot.get("stage_execution", {}).get(stage_name, {})
+    raw_substeps = execution.get("substeps") if isinstance(execution, dict) else None
+    if isinstance(raw_substeps, dict):
+        candidates = raw_substeps
+    elif isinstance(execution, dict) and isinstance(execution.get("profile"), str):
+        candidates = {"main": {"profile": execution["profile"]}}
+    else:
+        return {}
+    routes = snapshot.get("routes")
+    if not isinstance(routes, dict):
+        return {}
+    result: dict[str, dict[str, Any]] = {}
+    for substep, raw in candidates.items():
+        if not isinstance(raw, dict) or not isinstance(raw.get("profile"), str):
+            continue
+        profile = raw["profile"]
+        route = routes.get(profile)
+        if not isinstance(route, dict):
+            continue
+        result[str(substep)] = {
+            "logical_invocation_id": (f"{ticket_state.run_id}:{stage_name}:{substep}:{generation}"),
+            "run_id": ticket_state.run_id,
+            "stage": stage_name,
+            "substep": str(substep),
+            "stage_generation": generation,
+            "source_sha": head_sha,
+            "route_snapshot_digest": snapshot["digest"],
+            "profile": profile,
+            "desired_route": route.get("desired"),
+            "activation": route.get("activation"),
+            "conditional": raw.get("conditional") is True,
+            "owner_harness": snapshot.get("owner_harness"),
+            "lease_fence": lease_fence,
+            # The dispatcher, not the agent, decides where the worker's receipt lands, and
+            # reads it back from there. An outcome passed in through the stage's structured
+            # output would be an agent-authored JSON blob, which is trivially fabricable.
+            "artifact_root": str(ticket_dir / "cognitive" / stage_name),
+        }
+    return result
+
+
+def _read_worker_outcome(expected: dict[str, Any]) -> dict[str, Any] | None:
+    """Load one worker's own receipt from the path the dispatcher sealed for it."""
+    artifact_root = expected.get("artifact_root")
+    logical_id = expected.get("logical_invocation_id")
+    if not isinstance(artifact_root, str) or not isinstance(logical_id, str):
+        return None
+    token = hashlib.sha256(logical_id.encode()).hexdigest()
+    path = Path(artifact_root) / "invocations" / token / "outcome.json"
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def _outcome_matches(outcome: dict[str, Any], expected: dict[str, Any]) -> bool:
+    body = {key: value for key, value in outcome.items() if key != "digest"}
+    if outcome.get("digest") != agent_routes.canonical_digest(body):
+        return False
+    receipts = outcome.get("receipts")
+    if not isinstance(receipts, dict):
+        return False
+    route_receipt = receipts.get("route")
+    process = receipts.get("process")
+    disposal = receipts.get("disposal")
+    if not all(isinstance(item, dict) for item in (route_receipt, process, disposal)):
+        return False
+    route_receipt = cast(dict[str, Any], route_receipt)
+    process = cast(dict[str, Any], process)
+    disposal = cast(dict[str, Any], disposal)
+    terminal = all(
+        process.get(key) is True
+        for key in ("child_reaped", "process_group_absent", "stdout_eof", "stderr_eof")
+    )
+    return (
+        outcome.get("status") == "succeeded"
+        and outcome.get("logical_invocation_id") == expected["logical_invocation_id"]
+        and outcome.get("generation") == expected["stage_generation"]
+        and outcome.get("profile") == expected["profile"]
+        and outcome.get("run_id") == expected["run_id"]
+        and outcome.get("stage") == expected["stage"]
+        and outcome.get("substep") == expected["substep"]
+        and outcome.get("stage_generation") == expected["stage_generation"]
+        and outcome.get("source_sha") == expected["source_sha"]
+        and outcome.get("route_snapshot_digest") == expected["route_snapshot_digest"]
+        and outcome.get("lease_fence") == expected["lease_fence"]
+        and route_receipt.get("activation") == "active"
+        and route_receipt.get("effective") == expected["desired_route"]
+        and terminal
+        and disposal.get("absent") is True
+        and disposal.get("quarantined") is False
+    )
+
+
+def _validate_cognitive_completion(
+    record: state.StageRecord, skill_output: dict[str, Any] | None
+) -> str | None:
+    """Reject stage completion when an activated substep has no matching worker receipt.
+
+    The receipt is read from the invocation directory the dispatcher sealed, never from the
+    stage's structured output: an outcome the agent hands back is an agent-authored JSON blob
+    and would let a stage complete without any worker ever running.
+    """
+    sealed = record.cognitive_substeps or {}
+    active = {
+        name: value
+        for name, value in sealed.items()
+        if isinstance(value, dict) and value.get("activation") == "pending"
+    }
+    if not active:
+        return None
+    raw_skips = skill_output.get("cognitive_skips") if isinstance(skill_output, dict) else None
+    skips = raw_skips if isinstance(raw_skips, dict) else {}
+    for name, expected in active.items():
+        outcome = _read_worker_outcome(expected)
+        if outcome is not None:
+            if _outcome_matches(outcome, expected):
+                continue
+            return f"cognitive outcome for {name!r} does not match the sealed stage generation"
+        skip = skips.get(name)
+        if expected.get("conditional") and isinstance(skip, dict) and skip.get("reason"):
+            continue
+        return f"activated cognitive substep {name!r} has no successful outcome or valid skip"
+    return None
+
+
+def _begin_and_seal(
+    ticket_dir: Path,
+    stage_name: str,
+    head_sha: str,
+    generation: int,
+    cognitive: dict[str, Any],
+    *,
+    already_sealed: bool,
+) -> str | None:
+    """Open the stage and bind its cognitive facts once, or report why it cannot open."""
+    try:
+        state.begin_stage(ticket_dir, stage_name, head_sha)
+        if cognitive and not already_sealed:
+            state.seal_cognitive_substeps(ticket_dir, stage_name, generation, cognitive)
+    except ValueError as exc:
+        return str(exc)
+    return None
 
 
 def _stage_ttl_seconds(stage_meta: StageEntry | None) -> int:
@@ -665,6 +830,20 @@ def cmd_next(
         return 0, {"done": True, **recovery}
 
     head_sha = _git_head_sha(workspace_root)
+    current_record = ts.stages[next_stage]
+    generation = (
+        current_record.generation + 1
+        if current_record.status == "pending"
+        else current_record.generation
+    )
+    # A resumed stage keeps the facts it was sealed with. Recomputing them against a HEAD
+    # that moved mid-stage would contradict the seal and strand the stage permanently.
+    sealed = current_record.cognitive_substeps
+    cognitive = (
+        _cognitive_substeps(td, ts, next_stage, generation, head_sha, session_nonce)
+        if current_record.status == "pending"
+        else (sealed or {})
+    )
 
     # Assemble the full descriptor BEFORE mutating state. If descriptor assembly raises, the stage
     # must stay pending rather than be stuck in_progress.
@@ -672,6 +851,7 @@ def cmd_next(
     stage_meta = registry_by_name(registry_path).get(next_stage)
     handler_descriptor = _parse_handler(snapshot.handlers[next_stage])
     output_path = td / "stages" / f"{next_stage}.out"
+    descriptor_path = td / "stages" / f"{next_stage}.descriptor.json"
     payload: dict[str, Any] = {
         "done": False,
         "stage": next_stage,
@@ -679,7 +859,10 @@ def cmd_next(
         "head_sha": head_sha,
         "ticket_dir": str(td),
         "output_path": str(output_path),
+        "descriptor_path": str(descriptor_path),
         "roles": stage_meta.roles if stage_meta else [],
+        "generation": generation,
+        "cognitive_substeps": cognitive,
         **handler_descriptor,
     }
     # Attach reference_doc regardless of handler type so the do-loop can pass it
@@ -731,7 +914,13 @@ def cmd_next(
             boot_id=boot,
         )
 
-    state.begin_stage(td, next_stage, head_sha)
+    descriptor_path.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_text(descriptor_path, json.dumps(payload, indent=2, sort_keys=True) + "\n")
+    error = _begin_and_seal(
+        td, next_stage, head_sha, generation, cognitive, already_sealed=sealed is not None
+    )
+    if error is not None:
+        return 1, {"error": error, "stage": next_stage}
     return 0, payload
 
 
@@ -770,6 +959,13 @@ def cmd_finish(
                 "error": f"--output-path names a missing file: {p}",
                 "hint": "write the stage output file first, then re-run finish/advance",
             }
+
+    record = ts.stages.get(stage_name)
+    if record is None:
+        return 1, {"error": f"stage {stage_name!r} not in state.stages"}
+    cognitive_error = _validate_cognitive_completion(record, skill_output)
+    if status_value == "completed" and cognitive_error is not None:
+        return 1, {"error": cognitive_error}
 
     head_sha = _git_head_sha(workspace_root)
     try:
@@ -942,14 +1138,29 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     )
     p_advance.add_argument("--output-path", default=None)
     p_advance.add_argument("--skill-output", default=None)
+    p_advance.add_argument(
+        "--skill-output-from",
+        default=None,
+        help="path to the stage's structured output; required for cognitive outcomes, whose "
+        "process evidence does not fit in one argument",
+    )
     p_advance.add_argument("--failure-detail", default=None)
     p_advance.add_argument("--revision", default=None, help=revision_help)
 
     return parser.parse_args(argv)
 
 
-def _parse_skill_output_arg(raw: str | None) -> tuple[dict[str, Any] | None, str | None]:
-    """Parse the --skill-output JSON arg. Returns (parsed_or_None, error_or_None)."""
+def _parse_skill_output_arg(
+    raw: str | None, path: str | None = None
+) -> tuple[dict[str, Any] | None, str | None]:
+    """Parse the stage's structured output. Returns (parsed_or_None, error_or_None)."""
+    if raw and path:
+        return None, "pass either --skill-output or --skill-output-from, not both"
+    if path:
+        try:
+            raw = Path(path).expanduser().read_text(encoding="utf-8")
+        except OSError as exc:
+            return None, f"--skill-output-from unreadable: {exc}"
     if not raw:
         return None, None
     try:
@@ -977,7 +1188,7 @@ def cli_main(argv: list[str]) -> int:
     elif args.cmd == "next":
         rc, payload = cmd_next(workspace_root, args.ticket, args.session_nonce, args.revision)
     elif args.cmd == "advance":
-        skill_output, err = _parse_skill_output_arg(args.skill_output)
+        skill_output, err = _parse_skill_output_arg(args.skill_output, args.skill_output_from)
         if err:
             sys.stderr.write(f"dispatch advance: {err}\n")
             return 1

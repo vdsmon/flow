@@ -895,7 +895,14 @@ class PlanningAttempt:
             if (
                 assessor_receipt.get("digest") != verdict.launch_receipt_digest
                 or assessor_receipt.get("worker_id") != verdict.assessor_id
-                or assessor_receipt.get("transport") in {None, "unknown"}
+                or assessor_receipt.get("activation") != "active"
+                or assessor_receipt.get("transport") != "cli"
+                or assessor_receipt.get("effective") != assessor_receipt.get("desired")
+                or not isinstance(assessor_receipt.get("physical_attempt"), dict)
+                or assessor_receipt["physical_attempt"].get("terminal_acknowledged") is not True
+                or not isinstance(assessor_receipt.get("cleanup"), dict)
+                or assessor_receipt["cleanup"].get("capsule_absent") is not True
+                or assessor_receipt["cleanup"].get("quarantined") is not False
             ):
                 raise AttemptError("fresh assessor launch receipt does not prove independence")
         elif launch_receipt is not None:

@@ -410,15 +410,17 @@ def test_live_post_init_prose_has_no_bare_script_invocation() -> None:
     assert escaped == []
 
 
-def test_live_non_planner_routes_stay_shadowed() -> None:
+def test_live_writer_and_e2e_routes_stay_shadowed() -> None:
     skill = (seam_check.SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
     do_ref = (seam_check.SKILL_ROOT / "references" / "delivery-loop.md").read_text(encoding="utf-8")
-    assert "Only the planner" in skill
-    assert "may become active" in skill
-    assert "Every post-plan" in do_ref
-    assert "receipt is `shadow`" in do_ref
-    assert "`effective: null`" in do_ref
+    assert "Only the seven" in skill
+    assert "read-only profiles may become active" in skill
+    assert "writer and E2E route" in skill
+    assert "`effective: null`" in skill
+    assert "every writer and E2E route\nstays shadow" in do_ref
+    assert "A shadow receipt" in do_ref
     assert "Do not retry" in do_ref
+    assert "never fall back to a native" in do_ref
 
 
 def test_live_init_carries_an_absolute_answers_path_across_calls() -> None:
@@ -1164,6 +1166,10 @@ def test_live_route_contract_surfaces_are_aligned() -> None:
     assert seam_check.route_contract_drift() == []
 
 
+def test_cognitive_worker_design_provenance_is_exact() -> None:
+    assert seam_check.cognitive_worker_design_drift() == []
+
+
 def test_route_contract_flags_a_profile_missing_from_stage_composition() -> None:
     execution = copy.deepcopy(agent_routes.stage_execution_contract())
     del execution["reflect"]["substeps"]["machinery_fix"]
@@ -1179,7 +1185,7 @@ def test_route_contract_treats_an_explicit_empty_stage_map_as_empty() -> None:
     assert any("absent from stage composition" in problem for problem in drift)
 
 
-def test_route_contract_accepts_matching_partial_self_workspace_during_bootstrap() -> None:
+def test_route_contract_rejects_partial_self_workspace_after_capsule_activation() -> None:
     partial = """
 [agents.planner]
 harness = "codex"
@@ -1187,7 +1193,8 @@ model = "gpt-5.6-sol"
 effort = "xhigh"
 """
 
-    assert seam_check.route_contract_drift(workspace_toml=partial) == []
+    drift = seam_check.route_contract_drift(workspace_toml=partial)
+    assert any("self-workspace route catalog mismatch" in detail for detail in drift)
 
 
 def test_route_contract_flags_a_deterministic_stage_with_a_model() -> None:
