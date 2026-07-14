@@ -1039,6 +1039,32 @@ def _git_bytes(root: Path, *args: str, allow_returncodes: tuple[int, ...] = (0,)
     return result.stdout
 
 
+_RUNTIME_POINTERS = frozenset({"skill-root", "memory-root", "layout-version"})
+
+
+def _runtime_surface(root: Path) -> list[list[Any]]:
+    """Digest the executable surface of the gitignored .flow/runtime/ directory.
+
+    `status --untracked-files=all` never lists ignored paths, and .gitignore ignores
+    `**/.flow/runtime/`, which holds the `flow` facade every prose command executes plus the
+    pointers deciding which code that facade loads. Without this, a worker could rewrite the
+    facade, redirect skill-root at its own tree, or flip an executable bit and still pass the
+    read-only postcondition. Only executables and pointers are digested: the same directory
+    carries per-run envelopes and locks that prose writes while a reader is in flight, so a
+    whole-directory digest would report a violation for the run's own bookkeeping.
+    """
+    runtime = root / ".flow" / "runtime"
+    entries: list[list[Any]] = []
+    for path in sorted(runtime.rglob("*")) if runtime.is_dir() else []:
+        info = path.lstat()
+        if not stat.S_ISREG(info.st_mode):
+            continue
+        if not (info.st_mode & 0o111 or path.name in _RUNTIME_POINTERS):
+            continue
+        entries.append([path.relative_to(root).as_posix(), info.st_mode, _file_digest(path)])
+    return entries
+
+
 def git_receipt(root: Path) -> dict[str, Any]:
     """Capture source, index, worktree, untracked, submodule, and Git metadata."""
     resolved = root.resolve()
@@ -1093,6 +1119,7 @@ def git_receipt(root: Path) -> dict[str, Any]:
         "submodules": {"length": len(submodules), "sha256": hashlib.sha256(submodules).hexdigest()},
         "metadata": metadata,
         "hooks": hooks,
+        "runtime_surface": _runtime_surface(resolved),
     }
     return {**body, "digest": _digest(body)}
 
