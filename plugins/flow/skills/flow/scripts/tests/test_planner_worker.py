@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import subprocess
 from pathlib import Path
+from typing import override
 
 import pytest
 
@@ -290,6 +291,40 @@ def test_malformed_output_is_not_approvable() -> None:
     assert len(error.value.attempts) == 1
     assert error.value.attempts[0]["outcome"] == "invalid_output"
     assert error.value.attempts[0]["terminal_acknowledged"] is True
+
+
+def test_cli_failure_surfaces_structured_stdout_error_over_stderr_noise() -> None:
+    class _FailingProcess(_FakeProcess):
+        @override
+        def communicate(self, timeout: float | None = None):
+            result = super().communicate(timeout)
+            self.returncode = 1
+            return result
+
+    process = _FailingProcess(
+        [
+            (
+                "\n".join(
+                    [
+                        json.dumps({"type": "thread.started", "thread_id": "T-1"}),
+                        json.dumps(
+                            {
+                                "type": "error",
+                                "message": "You've hit your usage limit. Try again later.",
+                            }
+                        ),
+                    ]
+                ),
+                "Reading additional input from stdin...\n",
+            )
+        ]
+    )
+
+    with pytest.raises(pw.WorkerError, match="usage limit") as error:
+        pw.run_process(["codex"], popen=lambda *a, **k: process, soft_timeout=10, hard_timeout=40)
+
+    assert "Reading additional input from stdin" not in str(error.value)
+    assert error.value.attempts[0]["outcome"] == "cli_error"
 
 
 def test_typed_worker_result_must_match_the_actual_route_identity() -> None:
