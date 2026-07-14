@@ -1065,7 +1065,7 @@ def _runtime_surface(root: Path) -> list[list[Any]]:
     return entries
 
 
-UNTRACKED_DIGEST_MAX_FILE_BYTES = 8 * 1024 * 1024
+_UNTRACKED_DIGEST_MAX_FILE_BYTES = 8 * 1024 * 1024
 
 
 def _untracked_content(root: Path) -> list[list[Any]]:
@@ -1075,9 +1075,9 @@ def _untracked_content(root: Path) -> list[list[Any]]:
     content only, so rewriting an existing untracked file moved no other field of this receipt.
     Ignored paths stay out: a blanket digest churns on caches, virtualenvs, and build output.
     A file over the cap carries its size instead of a content hash, which keeps a receipt taken
-    four times per bundle capture from reading an unbounded artifact. Size is a function of
-    content, unlike mtime, so a size-only entry is not a false-positive source, but a same-size
-    rewrite of an over-cap file does escape the guard.
+    twice per bundle capture and four times per worker invocation from reading an unbounded
+    artifact. Size is a function of content, unlike mtime, so a size-only entry is not a
+    false-positive source, but a same-size rewrite of an over-cap file does escape the guard.
     """
     raw = _git_bytes(root, "ls-files", "--others", "--exclude-standard", "-z")
     entries: list[list[Any]] = []
@@ -1091,7 +1091,7 @@ def _untracked_content(root: Path) -> list[list[Any]]:
         content: str
         if stat.S_ISLNK(info.st_mode):
             content = hashlib.sha256(os.readlink(path).encode(errors="surrogateescape")).hexdigest()
-        elif stat.S_ISREG(info.st_mode) and info.st_size <= UNTRACKED_DIGEST_MAX_FILE_BYTES:
+        elif stat.S_ISREG(info.st_mode) and info.st_size <= _UNTRACKED_DIGEST_MAX_FILE_BYTES:
             try:
                 content = _file_digest(path)
             except OSError:

@@ -173,7 +173,7 @@ def test_read_only_git_receipt_size_marks_an_over_cap_untracked_file(
     tmp_path: Path, monkeypatch
 ) -> None:
     """Over the cap the entry carries a size, so an equal-size rewrite escapes the guard."""
-    monkeypatch.setattr(cw, "UNTRACKED_DIGEST_MAX_FILE_BYTES", 8)
+    monkeypatch.setattr(cw, "_UNTRACKED_DIGEST_MAX_FILE_BYTES", 8)
     source, _ = _repository(tmp_path)
     big = source / "big.bin"
     big.write_bytes(b"aaaaaaaaaaaa")
