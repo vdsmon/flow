@@ -140,8 +140,11 @@ non-authoritative and every facade command carries the call-local
 `FLOW_HARNESS=<Harness>` prefix. Have
 it apply the fix, commit with the existing commit machinery, and `git push`. Then
 re-arm the adapter's CI wait (step 1).
-This is a `model_routed` stage: resolve `M` through the facade, pass it only when the
-adapter accepts Claude model names, and omit it on Codex or any incompatible spawn API.
+Resolve the `revision_fixer` profile from the frozen route snapshot and apply the
+structured launch and attestation contract in `references/delivery-loop.md`. Claude
+Code may activate the exact native route; Codex and generic launches remain shadowed
+and inherit their active owner model. Legacy `[models]` retains its existing lane,
+OFF, and fail-open behavior.
 
 **Hard cap: 3 fix cycles total** across CI + review combined (human-requested revision triage-board rounds do NOT count — a present human is the judgment the cap substitutes for, so the cap bounds unattended loops only; see `references/revision-triage-board.md`). If CI is still red after 3, set `STATUS=failed` and surface the last failing logs — do not loop forever.
 

@@ -124,6 +124,7 @@ class Route:
     command: CommandSpec | None
     positionals: tuple[str, ...] = ()
     options: tuple[str, ...] = ()
+    option_values: tuple[tuple[str, str], ...] = ()
     topic: str | None = None
 
 
@@ -537,10 +538,11 @@ def _consume_tail(
     tail: list[str],
     tracker_key_patterns: tuple[str, ...] | list[str],
     forbidden_root_tokens: frozenset[str] | set[str],
-) -> tuple[list[str], list[str]]:
+) -> tuple[list[str], list[str], list[tuple[str, str]]]:
     option_by_name = {option.name: option for option in command.options}
     positionals: list[str] = []
     seen: list[str] = []
+    values: list[tuple[str, str]] = []
     index = 0
     while index < len(tail):
         token = tail[index]
@@ -576,11 +578,12 @@ def _consume_tail(
                 tracker_key_patterns=tracker_key_patterns,
                 forbidden_root_tokens=forbidden_root_tokens,
             )
+            values.append((name, value))
         elif separator:
             raise RegistryError(f"{command.id}: boolean option {name} takes no value")
         index += 1
 
-    return positionals, seen
+    return positionals, seen, values
 
 
 def _validate_seen_options(command: CommandSpec, positionals: list[str], seen: list[str]) -> None:
@@ -607,8 +610,10 @@ def _parse_command_tail(
     tail: list[str],
     tracker_key_patterns: tuple[str, ...] | list[str],
     forbidden_root_tokens: frozenset[str] | set[str] = frozenset(),
-) -> tuple[tuple[str, ...], tuple[str, ...]]:
-    positionals, seen = _consume_tail(command, tail, tracker_key_patterns, forbidden_root_tokens)
+) -> tuple[tuple[str, ...], tuple[str, ...], tuple[tuple[str, str], ...]]:
+    positionals, seen, values = _consume_tail(
+        command, tail, tracker_key_patterns, forbidden_root_tokens
+    )
 
     _validate_argument_values(command, positionals, tracker_key_patterns, forbidden_root_tokens)
     _validate_seen_options(command, positionals, seen)
@@ -619,7 +624,7 @@ def _parse_command_tail(
         if explicit == mine:
             raise RegistryError("ticket.group: pass explicit tickets or --mine, not both")
 
-    return tuple(positionals), tuple(seen)
+    return tuple(positionals), tuple(seen), tuple(values)
 
 
 def route_tokens(
@@ -653,7 +658,7 @@ def route_tokens(
             raise RegistryError(f"unknown {root} command: {' '.join(tokens[1:]) or '<none>'}")
         command = max(candidates, key=lambda candidate: len(candidate.path))
         tail = tokens[len(command.path) :]
-        positionals, options = _parse_command_tail(
+        positionals, options, option_values = _parse_command_tail(
             command, tail, tracker_key_patterns, registry.forbidden_root_tokens
         )
         topic = positionals[0] if command.id == "help" and positionals else None
@@ -662,15 +667,22 @@ def route_tokens(
             command=command,
             positionals=positionals,
             options=options,
+            option_values=option_values,
             topic=topic,
         )
 
     if classified.kind in {TargetKind.TICKET, TargetKind.PR, TargetKind.PR_URL}:
         command = registry.by_id["target"]
-        positionals, options = _parse_command_tail(
+        positionals, options, option_values = _parse_command_tail(
             command, tokens, tracker_key_patterns, registry.forbidden_root_tokens
         )
-        return Route(kind="command", command=command, positionals=positionals, options=options)
+        return Route(
+            kind="command",
+            command=command,
+            positionals=positionals,
+            options=options,
+            option_values=option_values,
+        )
 
     raise RegistryError(f"unknown command or target {tokens[0]!r}")
 

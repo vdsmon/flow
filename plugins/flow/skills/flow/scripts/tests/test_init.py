@@ -26,6 +26,7 @@ from pathlib import Path
 
 import pytest
 
+import agent_routes
 import flow_launcher
 import init as initmod
 
@@ -212,6 +213,61 @@ def test_init_uses_executing_skill_dir_not_ambient_env(tmp_path: Path, monkeypat
         Path(initmod.__file__).resolve().parent.parent
     )
     assert (tmp_path / ".flow" / "runtime" / "flow").stat().st_mode & 0o111
+
+
+def test_native_setup_emits_explicit_owner_relative_agent_routes(tmp_path: Path) -> None:
+    result = initmod.run_init(_jira_config(tmp_path))
+    data = tomllib.loads(result.workspace_toml_path.read_text(encoding="utf-8"))
+    assert data["agents"]["planner"] == {
+        "harness": "codex",
+        "model": "gpt-5.6-sol",
+        "effort": "xhigh",
+    }
+    assert data["agents"]["implementer"]["by_owner"]["claude_code"]["model"] == "sonnet"
+    assert data["agents"]["implementer"]["by_owner"]["codex"]["model"] == "gpt-5.6-luna"
+    resolved = agent_routes.resolve(tmp_path, "planner", "codex")
+    assert resolved["desired"] == data["agents"]["planner"]
+    assert resolved["source"] == "workspace"
+    assert resolved["activation"] == "pending"
+
+
+def test_generic_setup_emits_no_explicit_agent_routes(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("FLOW_HARNESS", "generic")
+    result = initmod.run_init(_jira_config(tmp_path))
+    data = tomllib.loads(result.workspace_toml_path.read_text(encoding="utf-8"))
+    assert "agents" not in data
+
+
+def test_reconfigure_preserves_legacy_models_without_migrating(tmp_path: Path) -> None:
+    first = initmod.run_init(_jira_config(tmp_path))
+    workspace = first.workspace_toml_path
+    content = workspace.read_text(encoding="utf-8")
+    agents_at = content.index("[agents.planner]")
+    workspace.write_text(
+        content[:agents_at] + '[models]\nwork_model = "opus"\ne2e = "off"\n',
+        encoding="utf-8",
+    )
+
+    initmod.run_init(_jira_config(tmp_path), reconfigure=True)
+    data = tomllib.loads(workspace.read_text(encoding="utf-8"))
+    assert data["models"] == {"work_model": "opus", "e2e": "off"}
+    assert "agents" not in data
+
+
+def test_reconfigure_preserves_explicit_routes_and_legacy_rollback_block(
+    tmp_path: Path,
+) -> None:
+    first = initmod.run_init(_jira_config(tmp_path))
+    workspace = first.workspace_toml_path
+    workspace.write_text(
+        workspace.read_text(encoding="utf-8") + '\n[models]\nwork_model = "opus"\ne2e = "sonnet"\n',
+        encoding="utf-8",
+    )
+
+    initmod.run_init(_jira_config(tmp_path), reconfigure=True)
+    data = tomllib.loads(workspace.read_text(encoding="utf-8"))
+    assert data["agents"]["planner"]["model"] == "gpt-5.6-sol"
+    assert data["models"] == {"work_model": "opus", "e2e": "sonnet"}
 
 
 # ─── L1: AGENTS.md cross-harness entry point (opt-in, CC-neutral by default) ──

@@ -85,15 +85,17 @@ That bias is acceptable for personal-mode flow; work-mode users opt in to `skill
    LANE=$(FLOW_HARNESS="<harness>" "<facade>" frontmatter read .flow/tickets/<KEY>.md \
      | python3 -c "import json,sys; print(json.load(sys.stdin).get('lane') or 'full')")
    ```
-   Run the reader only when `LANE` is `full` (absent frontmatter reads as `full`). Gate on the LANE, never on `model_resolve.py`'s output: a full-lane run whose `code_review` model is opted out returns an empty model yet still carries the full planner-bias window, so it still gets a reader. Every full-lane run gets one; the model is a separate question.
+   Run the reader only when `LANE` is `full` (absent frontmatter reads as `full`). Gate on the LANE, never on route activation: a full-lane run whose reader route is legacy, shadowed, or opted out still carries the planner-bias window. Every full-lane run gets one; execution provenance is a separate question.
 
-   **Model — cheap by default, the `model_resolve.py` idiom.** Resolve the reader's model exactly as the implement stage pins its worker (`references/delivery-loop.md`), passing this stage's name:
+   **Route.** Resolve `diff_reviewer` from the frozen snapshot and follow the
+   structured launch and attestation contract in `references/delivery-loop.md`:
    ```bash
-   M=$(FLOW_HARNESS="<harness>" "<facade>" model --workspace-root . --ticket <KEY> --stage code_review)
+   FLOW_HARNESS="<harness>" "<facade>" agent-route resolve \
+     --snapshot "$TICKET_DIR/route-snapshot.json" --profile diff_reviewer
    ```
-   Pass `model=$M` only when it is non-empty and the adapter accepts Claude model
-   names. Codex omits it and inherits the active model. A configured `off` also omits
-   it and inherits the session.
+   Claude Code may activate the exact desired route after native structured
+   acceptance. Codex, generic, and legacy paths inherit as documented and never
+   claim the desired route ran.
 
    **Spawn: the diff, and only the diff.** Capture the post-auto-fix working-tree diff (`git diff <started_at_sha>`, no `..HEAD`, so it includes the uncommitted implement work and any step-4 auto-fixes; this is the diff that will actually ship), then spawn ONE fresh independent agent with the compatible model behavior above. Include `Harness: <claude-code|codex|generic>` in its prompt, then carry ONLY that diff embedded verbatim plus the fixed question: *what does this change do; what looks wrong or surprising*. Instruct it to review ONLY the shown diff and NOT read any file, open the ticket or plan, or run any command; its value is that it is blind to the intent. If the protocol ever permits a Flow command later, the harness identity requires the same-call `FLOW_HARNESS=<Harness>` prefix. Embedding the diff rather than telling it to run `git` is load-bearing: a fresh subagent could otherwise wander into `.flow/tickets/` or `plan.out` and lose the plan-blindness that is the whole point.
 

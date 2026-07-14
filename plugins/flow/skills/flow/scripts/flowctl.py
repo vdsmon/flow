@@ -13,6 +13,7 @@ SKILL_ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS_DIR = SKILL_ROOT / "scripts"
 
 COMMANDS = {
+    "agent-route": "agent_routes.py",
     "branch-ticket": "branch_ticket.py",
     "cockpit": "cockpit_cli.py",
     "compose-commit": "compose_commit.py",
@@ -46,6 +47,9 @@ COMMANDS = {
     "observe-at-close": "observe_at_close.py",
     "observe-ship-event": "observe_ship_event.py",
     "pending-mutations": "pending_mutations.py",
+    "plan-review": "plan_review.py",
+    "planner-worker": "planner_worker.py",
+    "planning-attempt": "planning_attempt.py",
     "queue-drain": "queue_drain.py",
     "queue-status": "queue_status.py",
     "recall": "recall.py",

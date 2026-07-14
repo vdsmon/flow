@@ -542,6 +542,58 @@ def test_subagent_e2e_with_per_stage_pin_no_warn(tmp_path: Path) -> None:
     assert result.warnings == []
 
 
+def test_complete_common_agent_route_is_valid(tmp_path: Path) -> None:
+    root = _make_workspace(tmp_path, backend="beads")
+    _append_forge(
+        root,
+        '[agents.implementer]\nharness = "claude_code"\nmodel = "sonnet"\neffort = "high"\n',
+    )
+    result, _ = vw.validate(root)
+    assert result.ok, result.violations
+
+
+def test_partial_agent_route_is_invalid(tmp_path: Path) -> None:
+    root = _make_workspace(tmp_path, backend="beads")
+    _append_forge(root, '[agents.implementer]\nharness = "claude_code"\nmodel = "sonnet"\n')
+    result, _ = vw.validate(root)
+    assert any("agents.implementer.effort" in violation for violation in result.violations)
+
+
+def test_agent_route_common_xor_by_owner(tmp_path: Path) -> None:
+    root = _make_workspace(tmp_path, backend="beads")
+    _append_forge(
+        root,
+        """[agents.implementer]
+harness = "claude_code"
+model = "sonnet"
+effort = "high"
+[agents.implementer.by_owner.codex]
+harness = "codex"
+model = "gpt-5.6-luna"
+effort = "high"
+""",
+    )
+    result, _ = vw.validate(root)
+    assert any("common route or by_owner" in violation for violation in result.violations)
+
+
+def test_agents_and_models_warn_that_legacy_is_inactive(tmp_path: Path) -> None:
+    root = _make_workspace(tmp_path, backend="beads")
+    _append_forge(
+        root,
+        """[models]
+work_model = "opus"
+[agents.implementer]
+harness = "claude_code"
+model = "sonnet"
+effort = "high"
+""",
+    )
+    result, _ = vw.validate(root)
+    assert result.ok
+    assert any("models" in warning and "ignored" in warning for warning in result.warnings)
+
+
 def test_inline_code_review_with_per_stage_pin_no_warn(tmp_path: Path) -> None:
     # code_review is an inline parent that pins a subagent it spawns in its own prose, so
     # its per-stage model IS honored even while the parent is inline -> it must NOT warn.

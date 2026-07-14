@@ -5,7 +5,7 @@
 Live contract sections (grep the heading; everything else here is build log):
 
 - §Jira API inventory + §Status normalization mapping + §HTTP error → exception / TransitionResult mapping
-- §Forge (PR host) surface — operation surface, `[forge]` + `[models]` workspace schemas
+- §Forge (PR host) surface: operation surface, `[forge]`, `[agents]`, and legacy `[models]` workspace schemas
 - §`.flow-bundle.toml` schema — discovery contract, composition rules, bootstrap markers
 - §Beads CLI surface — subcommands, state normalization, transition synthesis, is_shipped contract
 - §Dispatcher state machine — stage lifecycle, `state.json` schema, atomic-write contract, quarantine, exit codes, handler-descriptor shape, revision sub-run, TOCTOU invariant
@@ -203,7 +203,79 @@ repo_slug = "rs"
 
 `validate_workspace.py` validates the block only when present (`KNOWN_FORGE_BACKENDS = ("github", "bitbucket")`); github needs no sub-keys, bitbucket requires `workspace` + `repo_slug`.
 
-### `[models]` workspace schema (opus plans, sonnet writes — ON BY DEFAULT)
+### `[agents]` route schema
+
+Every explicit route is a complete `harness`, `model`, and `effort` triple. Public
+harness values are `claude_code` and `codex`. A profile defines either one common
+route or a `by_owner` table; mixing them or omitting a field is invalid.
+
+```toml
+[agents.planner]
+harness = "codex"
+model = "gpt-5.6-sol"
+effort = "xhigh"
+
+[agents.implementer.by_owner.claude_code]
+harness = "claude_code"
+model = "sonnet"
+effort = "high"
+
+[agents.implementer.by_owner.codex]
+harness = "codex"
+model = "gpt-5.6-luna"
+effort = "high"
+```
+
+Resolution precedence is a complete per-run `--route` tuple, explicit workspace
+route, standalone legacy mode, then built-in defaults. Bootstrap freezes the
+canonical route snapshot. Claude Code activates a desired post-plan route only when
+its structured native launch response accepts the exact model and effort. Current
+Codex post-plan routes remain shadowed and inherit their owner model.
+
+`agent_routes.py` owns resolution, snapshot digests, attestations, and the surgical
+`migrate --check|--apply` operation. Migration leaves `[models]` bytes intact so
+removing `[agents]` restores legacy behavior.
+
+Configured, built-in, and overridden planner routes enter the strict read-only CLI
+path. Exact capability, authentication, provider-schema acceptance, and launch receipt
+evidence is required before activation. Failure stops visibly without selecting a
+fallback route. `snapshot --workspace-config` resolves from bytes read at the fetched
+base SHA instead of ambient checkout state.
+
+### Pre-approval planning schemas
+
+`planning_attempt.py` owns six canonical, digest-bearing artifacts:
+
+| Schema | Purpose |
+|---|---|
+| `flow.plan-envelope/v1` | Complete planner result with attempt/version/parent CAS, base, route-bound author id, status, required review fields, typed questions, and incorporated feedback ids. Provider objects are closed. Duplicate lists are rejected by Python after provider parsing. |
+| `flow.planning-attempt/v1` | Ephemeral review bundle with plan history, visible feedback ledger, assessment, and revalidation. Mutations lock the complete load/CAS/save transaction, and the bundle never stores a worker thread receipt. |
+| `flow.plan-assessment/v1` | Author-separated assessor outcome and findings bound to the exact plan digest, actual author id, and required-fresh assessor launch receipt |
+| `flow.plan-revalidation/v1` | Approved/latest base and exact changed/planned/context paths classified as unchanged, unrelated, relevant, or ambiguous |
+| `flow.plan-gate/v1` | Plan version/digest, approved SHA, route digest, unique planner-launch receipt, feedback watermark, assessment, and revalidation digests |
+| `flow.plan-approval/v1` | Host-native gate id, exact gate tuple, and approved plan-file digest consumed by bootstrap. Approval must present the exact digest returned by `gate`. |
+
+Only `PLAN_READY` with no pending feedback, a passing policy-valid assessment, and an
+unchanged or proven-unrelated revalidation may produce a gate tuple. Owner loss can
+rehydrate from the complete bundle, but its physical Codex or Claude session id exists
+only in live owner memory.
+
+`flow.bootstrap-journal/v1` advances one approval digest through `prepared`,
+`worktree_intended`, `worktree_created`, `run_seeded`, and `committed`. The journal rejects a different
+tuple. An incomplete matching tuple is rolled back and retried under the existing claim;
+a committed tuple returns the existing run only after state, route, approval, and plan
+artifacts are re-verified. Its filename derives from the approval digest rather than a
+planner-provided attempt id.
+The intent phase records branch and worktree before Git mutation so every crash point
+has deterministic rollback coordinates. Cleanup clears those coordinates only after
+worktree and branch removal are proven.
+
+`planner_worker.py` reports one record per physical launch: attempt number, exact
+600-second soft and 2400-second hard budgets, deadline events, outcome, elapsed time,
+and terminal acknowledgement. One fresh retry receives a new budget after process and
+output closure. Aggregate wall time is a separate field rather than an attempt metric.
+
+### Legacy `[models]` workspace schema
 
 ```toml
 # The block is OPTIONAL. Omit it entirely for the default (routable stages = sonnet
@@ -218,7 +290,10 @@ e2e         = "sonnet"   # run + observe the change -> cheap
                          # stage without a per-stage key. A per-stage key always wins.
 ```
 
-The downshift is **on by default** — no `[models]` block needed. On a full-lane run each routable stage (`implement`, `e2e`, `code_review`, the `review_loop` fix subagent) pins to `sonnet`, while planning, the `--auto` ship gate, and every non-routable stage stay on the launch/session model (`[evolve] worker_model`). `model_resolve.py --workspace-root . --ticket <KEY> --stage <STAGE>` is the resolver, and it prints the model for `<STAGE>` with this precedence: (1) `[models].<STAGE>` if set, (2) the deprecated `[models].work_model` global fallback if set, (3) the built-in default (`sonnet`). It prints nothing when the run is `express`/`light` (already a cheap session), when the resolved value is an OFF_VALUE (`off`/`none`/`false`/`""`), or when `<STAGE>` is not routable (e.g. `plan`). `hot` and normal full-lane runs both downshift (a hot bead follows the split; its opus protection is the session-model judgment layer + CI + the merge keystone). `validate_workspace.py` accepts the block as unknown-but-tolerated and emits a non-fatal WARNING (never a violation) when an EXPLICIT non-opt-out model applies to `implement` or `e2e` AND that stage's handler is `inline` — an inline stage rides the session model and cannot be pinned. (`code_review`/`review_loop` are inline parents that pin a subagent they spawn, so their per-stage model IS honored and they never warn.)
+The compatibility wrapper remains byte-for-byte behavioral legacy: full-lane default,
+stage-over-work-model precedence, express/light skip, OFF inheritance, fail-open
+reads, and Codex inheritance. It is never coerced into an `AgentRoute`. Explicit
+`[agents]` routes win as a separate mode; migration requires an explicit apply.
 
 ## `.flow-bundle.toml` schema
 

@@ -11,14 +11,18 @@ import fcntl
 import json
 import multiprocessing
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 
+import agent_routes
+import bootstrap_journal
 import flow_worktree as fw
 import lease
+import planning_attempt as pa
 import state
 import triage
 
@@ -94,11 +98,17 @@ def _fake_runner(
                     encoding="utf-8",
                 )
             return subprocess.CompletedProcess(args, 0, "", "")
+        if args[:4] == ["git", "worktree", "remove", "--force"]:
+            shutil.rmtree(Path(args[4]), ignore_errors=True)
+            return subprocess.CompletedProcess(args, 0, "", "")
         if args[:2] == ["git", "check-ignore"]:
             req = [a for a in args[3:] if a != "--"]
             hit = [f for f in req if ignored and f in ignored]
             out = "".join(f + "\n" for f in hit)
             return subprocess.CompletedProcess(args, 0 if hit else 1, out, "")
+        if args[:2] == ["git", "show"] and main is not None:
+            content = (main / ".flow" / "workspace.toml").read_text(encoding="utf-8")
+            return subprocess.CompletedProcess(args, 0, content, "")
         if args[:2] == ["git", "rev-parse"]:
             return subprocess.CompletedProcess(args, 0, "wtsha0001\n", "")
         if args[:2] == ["mise", "trust"]:
@@ -128,6 +138,109 @@ def _run(tmp: Path, main: Path, **kw):
         runner=kw.pop("runner", _fake_runner()),
         **kw,
     )
+
+
+def _approval_file(
+    tmp: Path,
+    main: Path,
+    *,
+    plan: Path,
+    owner_harness: str = "claude-code",
+    route_overrides: list[str] | None = None,
+    attempt_id: str = "attempt-1",
+) -> Path:
+    route = agent_routes.snapshot(main, owner_harness, overrides=route_overrides or [])
+    desired = {"harness": "codex", "model": "gpt-5.6-sol", "effort": "xhigh"}
+    receipt_body = {
+        "schema": "flow.agent-route-receipt/v1",
+        "snapshot_digest": route["digest"],
+        "profile": "planner",
+        "source": "override",
+        "desired": desired,
+        "effective": desired,
+        "activation": "active",
+        "reason": "test receipt",
+        "launch_request": desired,
+        "transport": "cli",
+        "adapter_version": "test",
+        "canonical_model": None,
+        "worker_id": None,
+        "prompt_hash": "c" * 64,
+        "schema_hash": "d" * 64,
+    }
+    planner_receipt = {**receipt_body, "digest": pa.canonical_digest(receipt_body)}
+    attempt = pa.PlanningAttempt.create(
+        attempt_id=attempt_id,
+        base_sha="a" * 40,
+        route_digest=route["digest"],
+        owner_identity="owner",
+    )
+    attempt.accept(
+        {
+            "attempt_id": attempt_id,
+            "version": 1,
+            "parent_digest": None,
+            "base_sha": "a" * 40,
+            "route_digest": route["digest"],
+            "author": {
+                "id": "codex:gpt-5.6-sol",
+                "harness": "codex",
+                "model": "gpt-5.6-sol",
+            },
+            "status": "PLAN_READY",
+            "plan": {
+                "motivation": "Make the approved bootstrap exact.",
+                "goal": "Create one run from the exact reviewed tuple.",
+                "scenarios": [{"before": "Moving base", "after": "Pinned base"}],
+                "architecture": ["approval", "journal", "worktree"],
+                "decisions": ["Fail closed on mismatched recovery state"],
+                "acceptance_outcomes": ["Recovery returns only a verified seeded run"],
+                "steps": ["Verify receipt", "Create worktree", "Seed run"],
+                "files": ["a.py"],
+                "context_paths": [],
+                "verification": ["Run bootstrap recovery tests"],
+                "e2e_recipe": "Bootstrap and recover the same approved tuple.",
+                "lane": "full",
+                "compatibility": [],
+                "rollout": "Require an explicit approval receipt.",
+                "risks": ["Crash between journal phases"],
+            },
+            "questions": [],
+            "incorporated_feedback_ids": [],
+        },
+        launch_receipt=planner_receipt,
+    )
+    current = attempt.current
+    assert current is not None
+    attempt.assess(
+        pa.AssessorVerdict.create(
+            assessor_id="owner",
+            author_id="codex:gpt-5.6-sol",
+            plan_digest=current.digest,
+            outcome="pass",
+            findings=[],
+        )
+    )
+    attempt.revalidate(
+        pa.RevalidationReceipt.create(
+            approved_base="a" * 40,
+            latest_base="a" * 40,
+            changed_paths=[],
+            planned_paths=["a.py"],
+            context_paths=[],
+        )
+    )
+    current = attempt.current
+    assert current is not None
+    plan.write_bytes(pa.approval_plan_bytes(current))
+    receipt = attempt.freeze(
+        native_gate_id="gate-1",
+        expected_gate_digest=attempt.gate_tuple().digest,
+        plan_bytes=plan.read_bytes(),
+    )
+    path = tmp / "approval.json"
+    pa.write_approval_receipt(path, receipt)
+    return path
 
 
 # ─── bootstrap ────────────────────────────────────────────────────────────────
@@ -169,6 +282,337 @@ def test_seeds_plan_completed_with_output_path(tmp_path: Path) -> None:
     assert "Goal: do the thing." in plan_out.read_text(encoding="utf-8")
     # ticket left pending so the tail self-fetches ticket.json + frontmatter
     assert ts.stages["ticket"].status == "pending"
+
+
+def test_bootstrap_seeds_frozen_route_snapshot_before_return(tmp_path: Path) -> None:
+    main = _main_checkout(tmp_path)
+    res = _run(
+        tmp_path,
+        main,
+        owner_harness="claude-code",
+        route_overrides=["implementer=claude_code,opus,high"],
+    )
+    route_path = Path(res["worktree"]) / ".flow" / "runs" / "FT-1" / "route-snapshot.json"
+    snapshot = json.loads(route_path.read_text(encoding="utf-8"))
+    assert snapshot["owner_harness"] == "claude_code"
+    assert snapshot["routes"]["implementer"]["desired"]["model"] == "opus"
+    assert res["route_digest"] == snapshot["digest"]
+
+
+def test_approval_receipt_pins_base_route_and_journals_commit(tmp_path: Path) -> None:
+    main = _main_checkout(tmp_path)
+    plan = _plan_file(tmp_path)
+    overrides = ["planner=codex,gpt-5.6-sol,xhigh"]
+    approval = _approval_file(
+        tmp_path,
+        main,
+        plan=plan,
+        route_overrides=overrides,
+    )
+    calls: list[list[str]] = []
+    res = fw.bootstrap(
+        ticket="FT-1",
+        plan_from=plan,
+        base="moving-main",
+        branch="feat/FT-1-thing",
+        main_root=main,
+        worktree_override=str(tmp_path / "wt"),
+        owner_harness="claude-code",
+        route_overrides=overrides,
+        approval_receipt=approval,
+        runner=_fake_runner(calls=calls, main=main),
+    )
+    add = next(call for call in calls if call[:3] == ["git", "worktree", "add"])
+    assert add[-1] == "a" * 40
+    assert res["approval_digest"]
+    seeded_approval = Path(res["worktree"]) / ".flow" / "runs" / "FT-1" / "approval-receipt.json"
+    assert (
+        json.loads(seeded_approval.read_text(encoding="utf-8"))["digest"] == res["approval_digest"]
+    )
+    journals = list((main / ".flow" / "runtime" / "bootstrap").glob("*.json"))
+    assert len(journals) == 1
+    journal = journals[0]
+    assert json.loads(journal.read_text(encoding="utf-8"))["phase"] == "committed"
+
+
+def test_approval_attempt_id_cannot_escape_bootstrap_journal_directory(tmp_path: Path) -> None:
+    main = _main_checkout(tmp_path)
+    plan = _plan_file(tmp_path)
+    approval = _approval_file(tmp_path, main, plan=plan, attempt_id="../../outside")
+    result = fw.bootstrap(
+        ticket="FT-1",
+        plan_from=plan,
+        base="main",
+        branch="feat/FT-1-thing",
+        main_root=main,
+        worktree_override=str(tmp_path / "wt"),
+        approval_receipt=approval,
+        runner=_fake_runner(main=main),
+    )
+    journals = list((main / ".flow" / "runtime" / "bootstrap").glob("*.json"))
+    assert result["run_id"]
+    assert len(journals) == 1
+    assert journals[0].parent == main / ".flow" / "runtime" / "bootstrap"
+    assert not (main / ".flow" / "outside.json").exists()
+
+
+def test_committed_approval_recovery_verifies_seeded_artifacts(tmp_path: Path) -> None:
+    main = _main_checkout(tmp_path)
+    plan = _plan_file(tmp_path)
+    approval = _approval_file(tmp_path, main, plan=plan)
+
+    def recover():
+        return fw.bootstrap(
+            ticket="FT-1",
+            plan_from=plan,
+            base="main",
+            branch="feat/FT-1-thing",
+            main_root=main,
+            worktree_override=str(tmp_path / "wt"),
+            approval_receipt=approval,
+            runner=_fake_runner(main=main),
+        )
+
+    first = recover()
+    second = recover()
+    assert second["run_id"] == first["run_id"]
+    assert "recovered committed approved bootstrap" in second["warnings"]
+
+    seeded_receipt = Path(first["worktree"]) / ".flow" / "runs" / "FT-1" / "approval-receipt.json"
+    seeded_receipt.unlink()
+    with pytest.raises(fw._ConfigError, match="committed approved bootstrap"):
+        recover()
+
+
+@pytest.mark.parametrize("artifact", ["state", "route", "approval", "plan"])
+def test_committed_approval_recovery_rejects_each_tampered_seeded_artifact(
+    tmp_path: Path, artifact: str
+) -> None:
+    main = _main_checkout(tmp_path)
+    plan = _plan_file(tmp_path)
+    approval = _approval_file(tmp_path, main, plan=plan)
+
+    def recover():
+        return fw.bootstrap(
+            ticket="FT-1",
+            plan_from=plan,
+            base="main",
+            branch="feat/FT-1-thing",
+            main_root=main,
+            worktree_override=str(tmp_path / "wt"),
+            approval_receipt=approval,
+            runner=_fake_runner(main=main),
+        )
+
+    first = recover()
+    ticket_dir = Path(first["worktree"]) / ".flow" / "runs" / "FT-1"
+    paths = {
+        "state": ticket_dir / "state.json",
+        "route": ticket_dir / "route-snapshot.json",
+        "approval": ticket_dir / "approval-receipt.json",
+        "plan": ticket_dir / "stages" / "plan.out",
+    }
+    paths[artifact].write_text("{}\n", encoding="utf-8")
+    with pytest.raises(fw._ConfigError, match="committed approved bootstrap"):
+        recover()
+
+
+def test_approval_receipt_rejects_changed_plan_before_git_mutation(tmp_path: Path) -> None:
+    main = _main_checkout(tmp_path)
+    plan = _plan_file(tmp_path)
+    approval = _approval_file(tmp_path, main, plan=plan)
+    plan.write_text("changed behind the gate\n", encoding="utf-8")
+    calls: list[list[str]] = []
+    with pytest.raises(fw._ConfigError, match="approved plan file"):
+        fw.bootstrap(
+            ticket="FT-1",
+            plan_from=plan,
+            base="main",
+            branch="feat/FT-1-thing",
+            main_root=main,
+            worktree_override=str(tmp_path / "wt"),
+            approval_receipt=approval,
+            runner=_fake_runner(calls=calls, main=main),
+        )
+    assert not any(call[:3] == ["git", "worktree", "add"] for call in calls)
+
+
+def test_approval_receipt_rejects_route_config_drift_before_git_mutation(tmp_path: Path) -> None:
+    main = _main_checkout(tmp_path)
+    plan = _plan_file(tmp_path)
+    overrides = ["planner=codex,gpt-5.6-sol,xhigh"]
+    approval = _approval_file(tmp_path, main, plan=plan, route_overrides=overrides)
+    workspace = main / ".flow" / "workspace.toml"
+    workspace.write_text(workspace.read_text() + "\n# drift\n", encoding="utf-8")
+    calls: list[list[str]] = []
+    with pytest.raises(fw._ConfigError, match="route snapshot"):
+        fw.bootstrap(
+            ticket="FT-1",
+            plan_from=plan,
+            base="main",
+            branch="feat/FT-1-thing",
+            main_root=main,
+            worktree_override=str(tmp_path / "wt"),
+            owner_harness="claude-code",
+            route_overrides=overrides,
+            approval_receipt=approval,
+            runner=_fake_runner(calls=calls, main=main),
+        )
+    assert not any(call[:3] == ["git", "worktree", "add"] for call in calls)
+
+
+def test_approval_receipt_recovers_incomplete_seed_before_retry(tmp_path: Path) -> None:
+    main = _main_checkout(tmp_path)
+    plan = _plan_file(tmp_path)
+    approval_path = _approval_file(tmp_path, main, plan=plan)
+    approval = pa.load_approval_receipt(approval_path)
+    worktree = tmp_path / "wt"
+    journal = bootstrap_journal.BootstrapJournal(
+        fw._approved_bootstrap_journal_path(main, approval.digest)
+    )
+    journal.prepare(ticket="FT-1", approval=approval.to_mapping())
+    journal.advance("worktree_intended", worktree=str(worktree), branch="feat/FT-1-thing")
+    journal.advance("worktree_created")
+    journal.advance("run_seeded", run_id="partial")
+    calls: list[list[str]] = []
+    result = fw.bootstrap(
+        ticket="FT-1",
+        plan_from=plan,
+        base="main",
+        branch="feat/FT-1-thing",
+        main_root=main,
+        worktree_override=str(worktree),
+        approval_receipt=approval_path,
+        runner=_fake_runner(calls=calls, main=main),
+    )
+    remove_at = next(
+        index
+        for index, call in enumerate(calls)
+        if call[:4] == ["git", "worktree", "remove", "--force"]
+    )
+    add_at = next(
+        index for index, call in enumerate(calls) if call[:3] == ["git", "worktree", "add"]
+    )
+    assert remove_at < add_at
+    assert result["run_id"] != "partial"
+
+
+def test_approval_receipt_recovers_crash_after_worktree_add_before_phase_advance(
+    tmp_path: Path,
+) -> None:
+    main = _main_checkout(tmp_path)
+    plan = _plan_file(tmp_path)
+    approval_path = _approval_file(tmp_path, main, plan=plan)
+    approval = pa.load_approval_receipt(approval_path)
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    journal = bootstrap_journal.BootstrapJournal(
+        fw._approved_bootstrap_journal_path(main, approval.digest)
+    )
+    journal.prepare(ticket="FT-1", approval=approval.to_mapping())
+    journal.advance("worktree_intended", worktree=str(worktree), branch="feat/FT-1-thing")
+    fallback = _fake_runner(main=main)
+    calls: list[list[str]] = []
+
+    def remove_then_run(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        if args[:4] == ["git", "worktree", "remove", "--force"]:
+            worktree.rmdir()
+            return subprocess.CompletedProcess(args, 0, "", "")
+        return fallback(args, cwd)
+
+    result = fw.bootstrap(
+        ticket="FT-1",
+        plan_from=plan,
+        base="main",
+        branch="feat/FT-1-thing",
+        main_root=main,
+        worktree_override=str(worktree),
+        approval_receipt=approval_path,
+        runner=remove_then_run,
+    )
+    remove_at = next(
+        index
+        for index, call in enumerate(calls)
+        if call[:4] == ["git", "worktree", "remove", "--force"]
+    )
+    add_at = next(
+        index for index, call in enumerate(calls) if call[:3] == ["git", "worktree", "add"]
+    )
+    assert remove_at < add_at
+    assert result["run_id"]
+
+
+def test_incomplete_approval_recovery_refuses_unproven_rollback(tmp_path: Path) -> None:
+    main = _main_checkout(tmp_path)
+    plan = _plan_file(tmp_path)
+    approval_path = _approval_file(tmp_path, main, plan=plan)
+    approval = pa.load_approval_receipt(approval_path)
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    journal = bootstrap_journal.BootstrapJournal(
+        fw._approved_bootstrap_journal_path(main, approval.digest)
+    )
+    journal.prepare(ticket="FT-1", approval=approval.to_mapping())
+    journal.advance("worktree_intended", worktree=str(worktree), branch="feat/FT-1-thing")
+    journal.advance("worktree_created")
+    fallback = _fake_runner(main=main)
+    calls: list[list[str]] = []
+
+    def failing_remove(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        if args[:4] == ["git", "worktree", "remove", "--force"]:
+            return subprocess.CompletedProcess(args, 1, "", "worktree is locked")
+        return fallback(args, cwd)
+
+    with pytest.raises(fw._ConfigError, match="cannot roll back"):
+        fw.bootstrap(
+            ticket="FT-1",
+            plan_from=plan,
+            base="main",
+            branch="feat/FT-1-thing",
+            main_root=main,
+            worktree_override=str(worktree),
+            approval_receipt=approval_path,
+            runner=failing_remove,
+        )
+    assert not any(call[:3] == ["git", "worktree", "add"] for call in calls)
+    assert journal.recovery().phase == "worktree_created"
+
+
+def test_failed_bootstrap_cleanup_keeps_rollback_coordinates(tmp_path: Path) -> None:
+    main = _main_checkout(tmp_path)
+    plan = _plan_file(tmp_path)
+    approval_path = _approval_file(tmp_path, main, plan=plan)
+    approval = pa.load_approval_receipt(approval_path)
+    worktree = tmp_path / "wt"
+    fallback = _fake_runner(main=main)
+
+    def fail_body_and_cleanup(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
+        if args[:2] == ["git", "rev-parse"]:
+            return subprocess.CompletedProcess(args, 1, "", "bad object")
+        if args[:4] == ["git", "worktree", "remove", "--force"]:
+            return subprocess.CompletedProcess(args, 1, "", "worktree locked")
+        return fallback(args, cwd)
+
+    with pytest.raises(fw._ConfigError, match="cleanup"):
+        fw.bootstrap(
+            ticket="FT-1",
+            plan_from=plan,
+            base="main",
+            branch="feat/FT-1-thing",
+            main_root=main,
+            worktree_override=str(worktree),
+            approval_receipt=approval_path,
+            runner=fail_body_and_cleanup,
+        )
+    journal = bootstrap_journal.BootstrapJournal(
+        fw._approved_bootstrap_journal_path(main, approval.digest)
+    )
+    recovery = journal.recovery()
+    assert recovery.phase == "worktree_created"
+    assert recovery.worktree == str(worktree)
+    assert recovery.branch == "feat/FT-1-thing"
 
 
 def test_copies_gitignored_config(tmp_path: Path) -> None:

@@ -36,7 +36,7 @@ harnesses = ["claude-code", "codex"]
 [[command]]
 id = "target"
 path = ["<target>"]
-usage = "FLOW <target> [<target> ...] [--unattended] [--together] [--verify express|light|full] [--e2e <recipe>] [--request <additional-intent>]"
+usage = "FLOW <target> [<target> ...] [--unattended] [--together] [--verify express|light|full] [--e2e <recipe>] [--request <additional-intent>] [--route <profile=harness,model,effort>]..."
 summary = "Start, answer, resume, repair, revise, or show work from its current state."
 effect = "confirm"
 workspace = "required"
@@ -51,6 +51,7 @@ options = [
   { name = "--verify", value_type = "choice", cardinality = "zero_or_one", choices = ["express", "light", "full"], conflicts = ["--unattended"] },
   { name = "--e2e", value_type = "text", cardinality = "zero_or_one" },
   { name = "--request", value_type = "text", cardinality = "zero_or_one" },
+  { name = "--route", value_type = "text", cardinality = "zero_or_more" },
 ]
 
 [[command]]
