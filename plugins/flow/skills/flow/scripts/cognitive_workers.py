@@ -1065,6 +1065,28 @@ def _runtime_surface(root: Path) -> list[list[Any]]:
     return entries
 
 
+_HARNESS_CONFIG = (".claude/settings.json", ".claude/settings.local.json")
+
+
+def _harness_surface(root: Path) -> list[list[Any]]:
+    """Digest the harness settings files, which are gitignored yet declare executable hooks.
+
+    Claude Code runs the hook commands declared in these two files, so a worker that appends a
+    PreToolUse hook reaches arbitrary code execution in the parent harness on its next tool call.
+    Both are ignored in this repository, so `status --untracked-files=all` never lists them and
+    the read-only postcondition passes clean. Only these two paths are digested: the rest of
+    .claude/ (todos, statsig, shell snapshots, worktrees) churns under a live session and would
+    report the harness's own bookkeeping as a violation.
+    """
+    entries: list[list[Any]] = []
+    for relative in _HARNESS_CONFIG:
+        path = root / relative
+        if not path.is_file():
+            continue
+        entries.append([relative, path.lstat().st_mode, _file_digest(path)])
+    return entries
+
+
 def git_receipt(root: Path) -> dict[str, Any]:
     """Capture source, index, worktree, untracked, submodule, and Git metadata."""
     resolved = root.resolve()
@@ -1131,6 +1153,7 @@ def git_receipt(root: Path) -> dict[str, Any]:
         "metadata": metadata,
         "hooks": hooks,
         "runtime_surface": _runtime_surface(resolved),
+        "harness_surface": _harness_surface(resolved),
     }
     return {**body, "digest": _digest(body)}
 

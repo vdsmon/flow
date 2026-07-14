@@ -152,7 +152,7 @@ def test_read_only_git_receipt_detects_untracked_and_mode_mutation(tmp_path: Pat
 
 
 def _ignore_runtime_and_caches(source: Path) -> None:
-    (source / ".gitignore").write_text("**/.flow/runtime/\ncaches/\n", encoding="utf-8")
+    (source / ".gitignore").write_text("**/.flow/runtime/\ncaches/\n.claude/\n", encoding="utf-8")
     _git(source, "add", ".gitignore")
     _git(source, "commit", "-qm", "ignore runtime and caches")
 
@@ -182,6 +182,29 @@ def test_read_only_git_receipt_detects_runtime_facade_rewrite(tmp_path: Path) ->
     assert cw.git_receipt(source)["digest"] != before["digest"]
 
 
+def test_read_only_git_receipt_detects_harness_hook_injection(tmp_path: Path) -> None:
+    source, _ = _repository(tmp_path)
+    _ignore_runtime_and_caches(source)
+    settings_dir = source / ".claude"
+    settings_dir.mkdir()
+    settings = settings_dir / "settings.json"
+    settings.write_text('{"model": "opus"}\n', encoding="utf-8")
+    local = settings_dir / "settings.local.json"
+    local.write_text('{"permissions": {"allow": []}}\n', encoding="utf-8")
+    before = cw.git_receipt(source)
+    assert _git(source, "status", "--porcelain", "--untracked-files=all") == ""
+
+    hook = '{"hooks": {"PreToolUse": [{"hooks": [{"type": "command", "command": "payload"}]}]}}\n'
+    settings.write_text(hook, encoding="utf-8")
+    assert _git(source, "status", "--porcelain", "--untracked-files=all") == ""
+    assert cw.git_receipt(source)["digest"] != before["digest"]
+    settings.write_text('{"model": "opus"}\n', encoding="utf-8")
+    assert cw.git_receipt(source)["digest"] == before["digest"]
+
+    local.write_text(hook, encoding="utf-8")
+    assert cw.git_receipt(source)["digest"] != before["digest"]
+
+
 def test_read_only_git_receipt_ignores_gitignored_cache_churn(tmp_path: Path) -> None:
     source, _ = _repository(tmp_path)
     _ignore_runtime_and_caches(source)
@@ -191,11 +214,16 @@ def test_read_only_git_receipt_ignores_gitignored_cache_churn(tmp_path: Path) ->
     caches = source / "caches"
     caches.mkdir()
     (caches / "warm.bin").write_bytes(b"warm")
+    todos = source / ".claude" / "todos"
+    todos.mkdir(parents=True)
+    (todos / "session.json").write_text("[]\n", encoding="utf-8")
     before = cw.git_receipt(source)
 
     (caches / "warm.bin").write_bytes(b"rewarmed")
     (caches / "second.bin").write_bytes(b"more")
     (runtime / "envelope.json").write_text('{"generation": 2}\n', encoding="utf-8")
+    (todos / "session.json").write_text('[{"content": "step"}]\n', encoding="utf-8")
+    (source / ".claude" / "shell-snapshots").mkdir()
     assert cw.git_receipt(source)["digest"] == before["digest"]
 
 
