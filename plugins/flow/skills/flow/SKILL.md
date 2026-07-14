@@ -225,10 +225,10 @@ stop. Otherwise expect a handler descriptor with `stage`, `handler_type`, `head_
 capture the owned-file baseline before the handler. When
 `descriptor.roles` includes `"agent_routed"`, resolve the frozen profile from the
 run's route snapshot. A desired post-plan route becomes active only after the host
-returns a structured native launch acceptance for its exact model and effort. An
-explicit planner override follows the pre-approval CLI contract in
-`references/delivery-plan.md`. Codex post-plan routes remain shadowed and inherit the
-owner model in this increment.
+returns a structured native launch acceptance for its exact model and effort. The
+configured or built-in planner follows the strict pre-approval CLI contract in
+`references/delivery-plan.md`. A per-run override may replace its complete route.
+Codex post-plan routes remain shadowed and inherit the owner model in this increment.
 
 Every independent stage-agent prompt includes these exact rooted fields. The agent
 applies the call-local `FLOW_HARNESS` selector to the bound absolute `facade`:

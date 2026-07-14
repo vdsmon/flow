@@ -33,10 +33,14 @@ TERMINATION_GRACE_SECONDS = 5.0
 class WorkerError(RuntimeError):
     """A planner launch cannot satisfy the exact safe-worker contract."""
 
+    def __init__(self, message: str, *, attempts: tuple[dict[str, Any], ...] = ()) -> None:
+        super().__init__(message)
+        self.attempts = attempts
+
 
 class _HardTimeout(WorkerError):
-    def __init__(self, terminal_acknowledged: bool) -> None:
-        super().__init__("planner reached its hard deadline")
+    def __init__(self, terminal_acknowledged: bool, metric: dict[str, Any]) -> None:
+        super().__init__("planner reached its hard deadline", attempts=(metric,))
         self.terminal_acknowledged = terminal_acknowledged
 
 
@@ -74,6 +78,8 @@ class WorkerResult:
     stderr: str
     command: tuple[str, ...]
     attempt: int = 1
+    attempts: tuple[dict[str, Any], ...] = ()
+    aggregate_elapsed_seconds: float = 0.0
 
 
 def should_rotate(*, revision_rounds: int, context_pressure: bool) -> bool:
@@ -339,6 +345,7 @@ def run_process(
     hard_timeout: float = HARD_TIMEOUT_SECONDS,
     termination_grace: float = TERMINATION_GRACE_SECONDS,
     on_event: Callable[[dict[str, Any]], None] | None = None,
+    attempt_number: int = 1,
 ) -> WorkerResult:
     """Run one physical worker and fail closed at the hard deadline."""
     if soft_timeout <= 0 or hard_timeout <= soft_timeout:
@@ -351,19 +358,79 @@ def run_process(
         start_new_session=True,
     )
     started = time.monotonic()
+    deadline_events: list[str] = []
     try:
         stdout, stderr = process.communicate(timeout=soft_timeout)
     except subprocess.TimeoutExpired:
+        deadline_events.append("soft_deadline")
         if on_event is not None:
-            on_event({"type": "soft_deadline", "elapsed_seconds": time.monotonic() - started})
+            on_event(
+                {
+                    "type": "soft_deadline",
+                    "attempt": attempt_number,
+                    "elapsed_seconds": time.monotonic() - started,
+                }
+            )
         try:
             stdout, stderr = process.communicate(timeout=hard_timeout - soft_timeout)
         except subprocess.TimeoutExpired:
+            deadline_events.append("hard_deadline")
             acknowledged = _terminate_process_group(process, killpg=killpg, grace=termination_grace)
-            raise _HardTimeout(acknowledged) from None
+            elapsed = max(0.0, time.monotonic() - started)
+            metric = {
+                "attempt": attempt_number,
+                "outcome": "hard_timeout",
+                "soft_budget_seconds": soft_timeout,
+                "hard_budget_seconds": hard_timeout,
+                "deadline_events": deadline_events,
+                "elapsed_seconds": elapsed,
+                "terminal_acknowledged": acknowledged,
+            }
+            if on_event is not None:
+                on_event(
+                    {
+                        "type": "hard_deadline",
+                        "attempt": attempt_number,
+                        "elapsed_seconds": elapsed,
+                        "terminal_acknowledged": acknowledged,
+                    }
+                )
+            raise _HardTimeout(acknowledged, metric) from None
+    elapsed = max(0.0, time.monotonic() - started)
     if process.returncode != 0:
-        raise WorkerError(f"planner CLI exited {process.returncode}: {(stderr or stdout).strip()}")
-    return _typed_result(stdout, stderr, command=command)
+        metric = {
+            "attempt": attempt_number,
+            "outcome": "cli_error",
+            "soft_budget_seconds": soft_timeout,
+            "hard_budget_seconds": hard_timeout,
+            "deadline_events": deadline_events,
+            "elapsed_seconds": elapsed,
+            "terminal_acknowledged": True,
+        }
+        raise WorkerError(
+            f"planner CLI exited {process.returncode}: {(stderr or stdout).strip()}",
+            attempts=(metric,),
+        )
+    metric = {
+        "attempt": attempt_number,
+        "outcome": "success",
+        "soft_budget_seconds": soft_timeout,
+        "hard_budget_seconds": hard_timeout,
+        "deadline_events": deadline_events,
+        "elapsed_seconds": elapsed,
+        "terminal_acknowledged": True,
+    }
+    try:
+        typed = _typed_result(stdout, stderr, command=command)
+    except WorkerError as exc:
+        metric["outcome"] = "invalid_output"
+        raise WorkerError(str(exc), attempts=(metric,)) from exc
+    return replace(
+        typed,
+        attempt=attempt_number,
+        attempts=(metric,),
+        aggregate_elapsed_seconds=elapsed,
+    )
 
 
 def run_with_retry(
@@ -377,6 +444,8 @@ def run_with_retry(
     on_event: Callable[[dict[str, Any]], None] | None = None,
 ) -> WorkerResult:
     """Permit one fresh retry only after confirmed terminal cancellation."""
+    started = time.monotonic()
+    attempts: list[dict[str, Any]] = []
     for attempt in (1, 2):
         try:
             result = run_process(
@@ -387,15 +456,31 @@ def run_with_retry(
                 hard_timeout=hard_timeout,
                 termination_grace=termination_grace,
                 on_event=on_event,
+                attempt_number=attempt,
             )
-            return replace(result, attempt=attempt)
+            attempts.extend(result.attempts)
+            aggregate = max(
+                time.monotonic() - started,
+                sum(float(item["elapsed_seconds"]) for item in attempts),
+            )
+            return replace(
+                result,
+                attempt=attempt,
+                attempts=tuple(attempts),
+                aggregate_elapsed_seconds=max(0.0, aggregate),
+            )
         except _HardTimeout as exc:
+            attempts.extend(exc.attempts)
             if not exc.terminal_acknowledged:
                 raise WorkerError(
-                    "planner cancellation lacks terminal acknowledgement; refusing overlap"
+                    "planner cancellation lacks terminal acknowledgement; refusing overlap",
+                    attempts=tuple(attempts),
                 ) from exc
             if attempt == 2:
-                raise WorkerError("planner exhausted its one fresh retry") from exc
+                raise WorkerError(
+                    "planner exhausted its one fresh retry",
+                    attempts=tuple(attempts),
+                ) from exc
             if on_event is not None:
                 on_event({"type": "fresh_retry", "attempt": 2})
     raise AssertionError("bounded planner retry loop escaped")
@@ -447,11 +532,19 @@ def cli_main(argv: list[str]) -> int:
 
             worker = run_with_retry(command_factory)
             executed_prompt = worker.command[-1]
-            envelope = validate_envelope(route, worker.envelope)
+            try:
+                envelope = validate_envelope(route, worker.envelope)
+            except WorkerError as exc:
+                attempts = [dict(item) for item in worker.attempts]
+                if attempts:
+                    attempts[-1]["outcome"] = "invalid_output"
+                raise WorkerError(str(exc), attempts=tuple(attempts)) from exc
             result = {
                 "envelope": envelope,
                 "thread_id": worker.thread_id,
                 "attempt": worker.attempt,
+                "physical_attempts": list(worker.attempts),
+                "aggregate_wall_seconds": worker.aggregate_elapsed_seconds,
                 "capability": capability,
                 "command": [*worker.command[:-1], "<prompt>"],
                 "acceptance": {
@@ -474,7 +567,14 @@ def cli_main(argv: list[str]) -> int:
                 },
             }
     except (OSError, WorkerError) as exc:
-        sys.stderr.write(f"planner-worker: {exc}\n")
+        if isinstance(exc, WorkerError) and exc.attempts:
+            detail = {
+                "error": str(exc),
+                "physical_attempts": list(exc.attempts),
+            }
+            sys.stderr.write("planner-worker: " + json.dumps(detail, sort_keys=True) + "\n")
+        else:
+            sys.stderr.write(f"planner-worker: {exc}\n")
         return 2
     sys.stdout.write(json.dumps(result, indent=2, sort_keys=True) + "\n")
     return 0

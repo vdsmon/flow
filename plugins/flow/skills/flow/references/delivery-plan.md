@@ -58,16 +58,17 @@ Derive the effective verification lane:
 Settle an e2e recipe from explicit `--e2e`, the workspace cookbook, or the documented
 CI-only floor. If e2e is enabled, never silently omit the recipe.
 
-### Explicit routed-planner path
+### Routed planner path
 
-Keep the host-native planning path below byte-for-byte when no explicit `planner`
-override was supplied. A workspace-configured planner route alone does not opt in
-during this rollout.
+Resolve the planner before choosing a planning transport. A configured or built-in
+planner with `activation: pending` uses this strict read-only path. A complete
+`planner` override wins for this attempt. Standalone legacy `[models]` workspaces keep
+their host-native planning behavior because they do not become partial agent routes.
 
-For an explicit planner override, create one absolute temporary attempt directory
-outside `.flow/runs/`. Read `.flow/workspace.toml` at the freshly fetched base SHA
-with `git show` and write those exact bytes to `<attempt-dir>/workspace.toml`. Resolve
-the complete route snapshot from that file and every supplied override:
+Create one absolute temporary attempt directory outside `.flow/runs/`. Read
+`.flow/workspace.toml` at the freshly fetched base SHA with `git show` and write those
+exact bytes to `<attempt-dir>/workspace.toml`. Resolve the complete route snapshot
+from that file and every supplied override:
 
 ```bash
 FLOW_HARNESS="<harness>" "<facade>" agent-route snapshot \
@@ -77,9 +78,13 @@ FLOW_HARNESS="<harness>" "<facade>" agent-route resolve \
   --snapshot "<attempt-dir>/route.json" --profile planner
 ```
 
-Proceed only when the planner has `source: override`, `activation: pending`, and an
-exact desired route. Then emit the provider schema and initialize the ephemeral
-attempt with the fetched base SHA and route-snapshot digest:
+Proceed only when the planner has `source: override`, `source: workspace`, or
+`source: built_in`, together with `activation: pending` and an exact desired route.
+Then emit the provider schema and initialize the ephemeral attempt with the fetched
+base SHA and route-snapshot digest. The emitted schema is the provider input: do not
+normalize or rewrite a copy. Every object is closed with
+`additionalProperties: false`; array uniqueness remains a Python validation rule
+because Codex structured output does not accept `uniqueItems`.
 
 ```bash
 FLOW_HARNESS="<harness>" "<facade>" planning-attempt schema \
@@ -108,9 +113,13 @@ separately labelled owner guidance. Send the user's answer back verbatim with an
 and separately labelled synthesis. Use the same physical thread until three revision
 rounds or context-pressure telemetry, then launch fresh with the complete current plan
 and feedback ledger. A resumed launch supplies that complete state separately through
-`--fresh-prompt-from`; Flow refuses a delta-only fresh retry. Owner loss also rehydrates fresh. A hard-timeout retry is fresh
-and may start only after the worker reports terminal cancellation acknowledgement.
-Never select a fallback route automatically.
+`--fresh-prompt-from`. Flow refuses a delta-only fresh retry. Owner loss also
+rehydrates fresh. Each physical launch records its own 600-second soft budget,
+2400-second hard budget, deadline events, elapsed time, outcome, and terminal
+acknowledgement. One hard-timeout retry starts a new 600/2400 budget only after the
+first process and output pipe are both closed. Report aggregate wall time separately,
+and never describe two attempts as one 80-minute attempt. Never select a fallback
+route automatically.
 
 Every revision is a complete plan version. Record human annotations through
 `planning-attempt feedback`; every id must be incorporated by a later envelope or
@@ -162,11 +171,14 @@ Attended mode presents the full plan and confidence evidence at the selected bou
 Approval is the single delivery gate. A requested change revises the plan while still
 read-only; rejection stops.
 
-For a routed attempt, call `planning-attempt gate` before offering the boundary. After
-the host-native gate succeeds, and only then, render the exact plan file with
+For a routed attempt, call `planning-attempt gate` before offering the boundary and
+retain its exact `digest` as the optimistic approval token. After the host-native gate
+succeeds, and only then, render the exact plan file with
 `planning-attempt render-plan --attempt-dir <dir> --output <plan>` and call
-`planning-attempt approve` with the native gate receipt/id, that canonical plan file,
-and an absolute temporary output path. `approve` refuses any other plan bytes.
+`planning-attempt approve` with `--expected-gate-digest <digest>`, the native gate
+receipt/id, that canonical plan file, and an absolute temporary output path. `approve`
+reloads and compares the complete tuple under the attempt lock, and refuses stale
+digests or any other plan bytes.
 Any plan, feedback, route, base, assessment, or revalidation change invalidates that
 approval attempt.
 
@@ -207,7 +219,9 @@ frontmatter persistence, and freezing the route snapshot before exposing the run
 approval receipt makes it regenerate and compare the route snapshot, use the approved
 SHA instead of re-resolving the branch, and journal prepared, worktree-intended,
 worktree-created, run-seeded, and committed phases. The intent phase records rollback
-coordinates before `git worktree add`. A receipt-free legacy caller keeps the
+coordinates before `git worktree add`. Cleanup resets the journal only after worktree
+and branch removal are proven. If cleanup cannot be proven, Flow retains the rollback
+coordinates for the next claimed recovery. A receipt-free legacy caller keeps the
 existing bootstrap behavior.
 Do not hand-create the branch or run directories around it.
 Do not pass `--recover-spill` automatically; provenance must be proven first.

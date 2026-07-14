@@ -236,10 +236,11 @@ Codex post-plan routes remain shadowed and inherit their owner model.
 `migrate --check|--apply` operation. Migration leaves `[models]` bytes intact so
 removing `[agents]` restores legacy behavior.
 
-Only an explicit per-run planner override can activate a pre-approval route in this
-rollout. Its exact CLI acceptance can promote the planner receipt; a configured
-workspace planner remains shadowed. `snapshot --workspace-config` resolves from bytes
-read at the fetched base SHA instead of ambient checkout state.
+Configured, built-in, and overridden planner routes enter the strict read-only CLI
+path. Exact capability, authentication, provider-schema acceptance, and launch receipt
+evidence is required before activation. Failure stops visibly without selecting a
+fallback route. `snapshot --workspace-config` resolves from bytes read at the fetched
+base SHA instead of ambient checkout state.
 
 ### Pre-approval planning schemas
 
@@ -247,12 +248,12 @@ read at the fetched base SHA instead of ambient checkout state.
 
 | Schema | Purpose |
 |---|---|
-| `flow.plan-envelope/v1` | Complete planner result with attempt/version/parent CAS, base, route-bound author id, status, required review fields, typed questions, and incorporated feedback ids |
-| `flow.planning-attempt/v1` | Ephemeral review bundle with plan history, visible feedback ledger, assessment, and revalidation; never a worker thread receipt |
+| `flow.plan-envelope/v1` | Complete planner result with attempt/version/parent CAS, base, route-bound author id, status, required review fields, typed questions, and incorporated feedback ids. Provider objects are closed. Duplicate lists are rejected by Python after provider parsing. |
+| `flow.planning-attempt/v1` | Ephemeral review bundle with plan history, visible feedback ledger, assessment, and revalidation. Mutations lock the complete load/CAS/save transaction, and the bundle never stores a worker thread receipt. |
 | `flow.plan-assessment/v1` | Author-separated assessor outcome and findings bound to the exact plan digest, actual author id, and required-fresh assessor launch receipt |
 | `flow.plan-revalidation/v1` | Approved/latest base and exact changed/planned/context paths classified as unchanged, unrelated, relevant, or ambiguous |
 | `flow.plan-gate/v1` | Plan version/digest, approved SHA, route digest, unique planner-launch receipt, feedback watermark, assessment, and revalidation digests |
-| `flow.plan-approval/v1` | Host-native gate id, exact gate tuple, and approved plan-file digest consumed by bootstrap |
+| `flow.plan-approval/v1` | Host-native gate id, exact gate tuple, and approved plan-file digest consumed by bootstrap. Approval must present the exact digest returned by `gate`. |
 
 Only `PLAN_READY` with no pending feedback, a passing policy-valid assessment, and an
 unchanged or proven-unrelated revalidation may produce a gate tuple. Owner loss can
@@ -266,7 +267,13 @@ a committed tuple returns the existing run only after state, route, approval, an
 artifacts are re-verified. Its filename derives from the approval digest rather than a
 planner-provided attempt id.
 The intent phase records branch and worktree before Git mutation so every crash point
-has deterministic rollback coordinates.
+has deterministic rollback coordinates. Cleanup clears those coordinates only after
+worktree and branch removal are proven.
+
+`planner_worker.py` reports one record per physical launch: attempt number, exact
+600-second soft and 2400-second hard budgets, deadline events, outcome, elapsed time,
+and terminal acknowledgement. One fresh retry receives a new budget after process and
+output closure. Aggregate wall time is a separate field rather than an attempt metric.
 
 ### Legacy `[models]` workspace schema
 

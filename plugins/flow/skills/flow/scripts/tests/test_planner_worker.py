@@ -114,8 +114,10 @@ class _FakeProcess:
         self.pid = pid
         self.returncode: int | None = None
         self.killed = False
+        self.timeouts: list[float | None] = []
 
     def communicate(self, timeout: float | None = None):
+        self.timeouts.append(timeout)
         outcome = self.outcomes.pop(0)
         if isinstance(outcome, BaseException):
             raise outcome
@@ -144,6 +146,13 @@ def test_soft_deadline_emits_event_but_allows_completion(tmp_path: Path) -> None
     assert result.thread_id == "T-1"
     assert result.command == ("codex",)
     assert events == ["soft_deadline"]
+    assert process.timeouts == [10, 30]
+    assert result.attempts[0]["attempt"] == 1
+    assert result.attempts[0]["outcome"] == "success"
+    assert result.attempts[0]["soft_budget_seconds"] == 10
+    assert result.attempts[0]["hard_budget_seconds"] == 40
+    assert result.attempts[0]["deadline_events"] == ["soft_deadline"]
+    assert result.attempts[0]["terminal_acknowledged"] is True
 
 
 def test_hard_timeout_requires_terminal_ack_before_retry(monkeypatch) -> None:
@@ -172,6 +181,19 @@ def test_hard_timeout_requires_terminal_ack_before_retry(monkeypatch) -> None:
     assert killed
     assert result.attempt == 2
     assert result.command[-1] == "fresh"
+    assert first.timeouts[:2] == [10, 30]
+    assert second.timeouts == [10]
+    assert [metric["attempt"] for metric in result.attempts] == [1, 2]
+    assert [metric["outcome"] for metric in result.attempts] == [
+        "hard_timeout",
+        "success",
+    ]
+    assert all(metric["soft_budget_seconds"] == 10 for metric in result.attempts)
+    assert all(metric["hard_budget_seconds"] == 40 for metric in result.attempts)
+    assert result.attempts[0]["terminal_acknowledged"] is True
+    assert result.aggregate_elapsed_seconds >= sum(
+        metric["elapsed_seconds"] for metric in result.attempts
+    )
 
 
 def test_unacknowledged_termination_never_starts_retry() -> None:
@@ -197,10 +219,77 @@ def test_unacknowledged_termination_never_starts_retry() -> None:
     assert launches == 1
 
 
+def test_second_hard_timeout_has_two_distinct_metrics_and_no_third_launch() -> None:
+    processes = [
+        _FakeProcess(
+            [subprocess.TimeoutExpired(["codex"], 600), subprocess.TimeoutExpired(["codex"], 1800)],
+            pid=71,
+        ),
+        _FakeProcess(
+            [subprocess.TimeoutExpired(["codex"], 600), subprocess.TimeoutExpired(["codex"], 1800)],
+            pid=72,
+        ),
+    ]
+    launches = 0
+
+    def popen(*args, **kwargs):
+        nonlocal launches
+        process = processes[launches]
+        launches += 1
+        return process
+
+    def killpg(pid: int, sig: int) -> None:
+        process = next(item for item in processes if item.pid == pid)
+        process.returncode = -sig
+        process.outcomes.append(("", ""))
+
+    with pytest.raises(pw.WorkerError, match="one fresh retry") as error:
+        pw.run_with_retry(
+            lambda fresh: ["codex", "fresh" if fresh else "initial"],
+            popen=popen,
+            killpg=killpg,
+        )
+    assert launches == 2
+    assert [process.timeouts[:2] for process in processes] == [[600, 1800], [600, 1800]]
+    assert [metric["attempt"] for metric in error.value.attempts] == [1, 2]
+    assert all(metric["outcome"] == "hard_timeout" for metric in error.value.attempts)
+    assert all(metric["terminal_acknowledged"] is True for metric in error.value.attempts)
+
+
+def test_open_output_pipe_prevents_retry_even_after_process_exit() -> None:
+    process = _FakeProcess(
+        [
+            subprocess.TimeoutExpired(["codex"], 600),
+            subprocess.TimeoutExpired(["codex"], 1800),
+            subprocess.TimeoutExpired(["codex"], 5),
+            subprocess.TimeoutExpired(["codex"], 5),
+        ]
+    )
+    launches = 0
+
+    def popen(*args, **kwargs):
+        nonlocal launches
+        launches += 1
+        return process
+
+    with pytest.raises(pw.WorkerError, match="terminal acknowledgement") as error:
+        pw.run_with_retry(
+            lambda fresh: ["codex"],
+            popen=popen,
+            killpg=lambda pid, sig: setattr(process, "returncode", -sig),
+        )
+    assert launches == 1
+    assert len(error.value.attempts) == 1
+    assert error.value.attempts[0]["terminal_acknowledged"] is False
+
+
 def test_malformed_output_is_not_approvable() -> None:
     process = _FakeProcess([("not-json\n", "")])
-    with pytest.raises(pw.WorkerError, match="typed planner result"):
+    with pytest.raises(pw.WorkerError, match="typed planner result") as error:
         pw.run_process(["codex"], popen=lambda *a, **k: process, soft_timeout=10, hard_timeout=40)
+    assert len(error.value.attempts) == 1
+    assert error.value.attempts[0]["outcome"] == "invalid_output"
+    assert error.value.attempts[0]["terminal_acknowledged"] is True
 
 
 def test_typed_worker_result_must_match_the_actual_route_identity() -> None:
@@ -276,6 +365,27 @@ def test_resumed_cli_retry_uses_rehydration_prompt_and_reports_actual_command(
             stderr="",
             command=tuple(fresh),
             attempt=2,
+            attempts=(
+                {
+                    "attempt": 1,
+                    "outcome": "hard_timeout",
+                    "soft_budget_seconds": 600,
+                    "hard_budget_seconds": 2400,
+                    "deadline_events": ["soft_deadline", "hard_deadline"],
+                    "elapsed_seconds": 2400.0,
+                    "terminal_acknowledged": True,
+                },
+                {
+                    "attempt": 2,
+                    "outcome": "success",
+                    "soft_budget_seconds": 600,
+                    "hard_budget_seconds": 2400,
+                    "deadline_events": [],
+                    "elapsed_seconds": 1.0,
+                    "terminal_acknowledged": True,
+                },
+            ),
+            aggregate_elapsed_seconds=2401.0,
         )
 
     monkeypatch.setattr(pw, "run_with_retry", run_retry)
@@ -307,6 +417,8 @@ def test_resumed_cli_retry_uses_rehydration_prompt_and_reports_actual_command(
         result["acceptance"]["prompt_hash"]
         == pw.hashlib.sha256(b"complete plan plus ledger").hexdigest()
     )
+    assert [item["attempt"] for item in result["physical_attempts"]] == [1, 2]
+    assert result["aggregate_wall_seconds"] == 2401.0
 
 
 def test_resumed_cli_requires_a_fresh_rehydration_prompt(
@@ -341,3 +453,117 @@ def test_resumed_cli_requires_a_fresh_rehydration_prompt(
         == 2
     )
     assert "fresh rehydration prompt" in capsys.readouterr().err
+
+
+def test_cli_failure_reports_each_terminal_physical_attempt(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    prompt = tmp_path / "prompt.txt"
+    prompt.write_text("plan", encoding="utf-8")
+    schema = tmp_path / "schema.json"
+    schema.write_text('{"type":"object"}', encoding="utf-8")
+    metric = {
+        "attempt": 1,
+        "outcome": "hard_timeout",
+        "soft_budget_seconds": 600,
+        "hard_budget_seconds": 2400,
+        "deadline_events": ["soft_deadline", "hard_deadline"],
+        "elapsed_seconds": 2400.0,
+        "terminal_acknowledged": False,
+    }
+    monkeypatch.setattr(
+        pw,
+        "preflight",
+        lambda route: {
+            "executable": "/usr/bin/codex",
+            "version": "codex 1",
+            "harness": "codex",
+        },
+    )
+
+    def fail(factory):
+        del factory
+        raise pw.WorkerError("terminal acknowledgement missing", attempts=(metric,))
+
+    monkeypatch.setattr(pw, "run_with_retry", fail)
+    assert (
+        pw.cli_main(
+            [
+                "--harness",
+                "codex",
+                "--model",
+                "gpt-5.6-sol",
+                "--effort",
+                "xhigh",
+                "--prompt-from",
+                str(prompt),
+                "--schema",
+                str(schema),
+            ]
+        )
+        == 2
+    )
+    error = capsys.readouterr().err.removeprefix("planner-worker: ")
+    detail = json.loads(error)
+    assert detail["error"] == "terminal acknowledgement missing"
+    assert detail["physical_attempts"] == [metric]
+
+
+def test_cli_semantic_output_failure_reclassifies_the_terminal_attempt(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    prompt = tmp_path / "prompt.txt"
+    prompt.write_text("plan", encoding="utf-8")
+    schema = tmp_path / "schema.json"
+    schema.write_text('{"type":"object"}', encoding="utf-8")
+    metric = {
+        "attempt": 1,
+        "outcome": "success",
+        "soft_budget_seconds": 600,
+        "hard_budget_seconds": 2400,
+        "deadline_events": [],
+        "elapsed_seconds": 1.0,
+        "terminal_acknowledged": True,
+    }
+    monkeypatch.setattr(
+        pw,
+        "preflight",
+        lambda route: {
+            "executable": "/usr/bin/codex",
+            "version": "codex 1",
+            "harness": "codex",
+        },
+    )
+    monkeypatch.setattr(
+        pw,
+        "run_with_retry",
+        lambda factory: pw.WorkerResult(
+            envelope=_envelope(author_id="claude_code:opus"),
+            thread_id="thread-1",
+            stdout="",
+            stderr="",
+            command=("codex", "plan"),
+            attempts=(metric,),
+            aggregate_elapsed_seconds=1.0,
+        ),
+    )
+    assert (
+        pw.cli_main(
+            [
+                "--harness",
+                "codex",
+                "--model",
+                "gpt-5.6-sol",
+                "--effort",
+                "xhigh",
+                "--prompt-from",
+                str(prompt),
+                "--schema",
+                str(schema),
+            ]
+        )
+        == 2
+    )
+    detail = json.loads(capsys.readouterr().err.removeprefix("planner-worker: "))
+    assert detail["physical_attempts"][0]["outcome"] == "invalid_output"
+    assert detail["physical_attempts"][0]["terminal_acknowledged"] is True

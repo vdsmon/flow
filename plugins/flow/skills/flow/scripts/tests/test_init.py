@@ -26,6 +26,7 @@ from pathlib import Path
 
 import pytest
 
+import agent_routes
 import flow_launcher
 import init as initmod
 
@@ -223,6 +224,10 @@ def test_native_setup_emits_explicit_owner_relative_agent_routes(tmp_path: Path)
     }
     assert data["agents"]["implementer"]["by_owner"]["claude_code"]["model"] == "sonnet"
     assert data["agents"]["implementer"]["by_owner"]["codex"]["model"] == "gpt-5.6-luna"
+    resolved = agent_routes.resolve(tmp_path, "planner", "codex")
+    assert resolved["desired"] == data["agents"]["planner"]
+    assert resolved["source"] == "workspace"
+    assert resolved["activation"] == "pending"
 
 
 def test_generic_setup_emits_no_explicit_agent_routes(tmp_path: Path, monkeypatch) -> None:

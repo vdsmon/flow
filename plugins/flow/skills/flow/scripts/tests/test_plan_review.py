@@ -80,6 +80,10 @@ def test_html_is_polished_complete_and_has_no_approval_control(tmp_path: Path) -
     assert "overflow-wrap:anywhere" in html.replace(" ", "")
     assert "approve plan" not in html.lower()
     assert 'data-lavish-action="approve"' not in html.lower()
+    assert "minute read" not in html.lower()
+    assert "min read" not in html.lower()
+    assert "Show the motivation first." in html
+    assert "Lead with before and after." in html
     out = tmp_path / "review.html"
     pr.write_review(out, html)
     assert out.read_text(encoding="utf-8") == html
@@ -106,6 +110,10 @@ def test_markdown_fallback_is_behaviorally_equivalent_and_visible() -> None:
         assert value in markdown
     assert "Lavish: skipped - Lavish could not open" in markdown
     assert "native approval" in markdown.lower()
+    assert "minute read" not in markdown.lower()
+    assert "min read" not in markdown.lower()
+    assert "Show the motivation first." in markdown
+    assert "owner synthesis: Lead with before and after." in markdown
 
 
 def test_review_freeze_drains_final_feedback_and_closes_surface() -> None:

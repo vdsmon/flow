@@ -12,11 +12,12 @@ import hashlib
 import json
 import re
 import sys
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
+import _locking
 import agent_routes
 from _atomicio import atomic_write_bytes, atomic_write_text
 
@@ -96,12 +97,18 @@ def envelope_json_schema() -> dict[str, Any]:
             "route_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
             "author": {
                 "type": "object",
-                "additionalProperties": {"type": "string", "minLength": 1},
+                "additionalProperties": False,
                 "required": ["id", "harness", "model"],
+                "properties": {
+                    "id": {"type": "string", "minLength": 1},
+                    "harness": {"type": "string", "minLength": 1},
+                    "model": {"type": "string", "minLength": 1},
+                },
             },
             "status": {"enum": sorted(_STATUSES)},
             "plan": {
                 "type": "object",
+                "additionalProperties": False,
                 "required": list(_PLAN_REQUIRED),
                 "properties": {
                     "motivation": {"type": "string", "minLength": 1},
@@ -111,6 +118,7 @@ def envelope_json_schema() -> dict[str, Any]:
                         "minItems": 1,
                         "items": {
                             "type": "object",
+                            "additionalProperties": False,
                             "required": ["before", "after"],
                             "properties": {
                                 "before": {"type": "string", "minLength": 1},
@@ -163,7 +171,6 @@ def envelope_json_schema() -> dict[str, Any]:
             },
             "incorporated_feedback_ids": {
                 "type": "array",
-                "uniqueItems": True,
                 "items": {"type": "string"},
             },
         },
@@ -218,6 +225,9 @@ def _validate_complete_plan(value: object) -> dict[str, Any]:
     missing = [field for field in _PLAN_REQUIRED if field not in value]
     if missing:
         raise AttemptError(f"complete plan is missing required field {missing[0]!r}")
+    extra = set(value) - set(_PLAN_REQUIRED)
+    if extra:
+        raise AttemptError(f"plan has unknown fields: {', '.join(sorted(extra))}")
     _nonempty(value.get("motivation"), "plan motivation")
     _nonempty(value.get("goal"), "plan goal")
     scenarios = value.get("scenarios")
@@ -226,6 +236,11 @@ def _validate_complete_plan(value: object) -> dict[str, Any]:
     for index, scenario in enumerate(scenarios):
         if not isinstance(scenario, dict):
             raise AttemptError(f"plan scenario {index + 1} must be an object")
+        extra = set(scenario) - {"before", "after"}
+        if extra:
+            raise AttemptError(
+                f"plan scenario {index + 1} has unknown fields: {', '.join(sorted(extra))}"
+            )
         _nonempty(scenario.get("before"), f"plan scenario {index + 1} before")
         _nonempty(scenario.get("after"), f"plan scenario {index + 1} after")
     _plan_string_list(value.get("architecture"), "plan architecture")
@@ -288,8 +303,14 @@ class PlanEnvelope:
     schema: str = field(default=ENVELOPE_SCHEMA, init=False)
 
     @classmethod
-    def from_mapping(cls, value: Mapping[str, Any]) -> PlanEnvelope:
+    def from_mapping(cls, value: Mapping[str, Any]) -> PlanEnvelope:  # noqa: C901
         """Validate a worker result and derive its canonical content digest."""
+        allowed = {*envelope_json_schema()["required"], "schema", "digest"}
+        extra = set(value) - allowed
+        if extra:
+            raise AttemptError(f"plan envelope has unknown fields: {', '.join(sorted(extra))}")
+        if value.get("schema") not in {None, ENVELOPE_SCHEMA}:
+            raise AttemptError("unsupported plan envelope schema")
         attempt_id = _nonempty(value.get("attempt_id"), "attempt id")
         version = value.get("version")
         if not isinstance(version, int) or isinstance(version, bool) or version < 1:
@@ -302,11 +323,10 @@ class PlanEnvelope:
         raw_author = value.get("author")
         if not isinstance(raw_author, dict):
             raise AttemptError("author must be an identity object")
-        author = {
-            str(key): _nonempty(item, f"author.{key}")
-            for key, item in raw_author.items()
-            if key != "thread"
-        }
+        author_extra = set(raw_author) - {"id", "harness", "model"}
+        if author_extra:
+            raise AttemptError(f"author has unknown fields: {', '.join(sorted(author_extra))}")
+        author = {str(key): _nonempty(item, f"author.{key}") for key, item in raw_author.items()}
         if not author.get("id") or not author.get("harness") or not author.get("model"):
             raise AttemptError("author requires id, harness, and model")
         status = value.get("status")
@@ -321,6 +341,11 @@ class PlanEnvelope:
         for raw in raw_questions:
             if not isinstance(raw, dict):
                 raise AttemptError("each question must be an object")
+            question_extra = set(raw) - {"id", "text", "anchors"}
+            if question_extra:
+                raise AttemptError(
+                    "question has unknown fields: " + ", ".join(sorted(question_extra))
+                )
             question_id = _nonempty(raw.get("id"), "question id")
             text = _nonempty(raw.get("text"), "question text")
             anchors = _string_list(raw.get("anchors", []), "question anchors")
@@ -938,9 +963,20 @@ class PlanningAttempt:
             digest=canonical_digest(body),
         )
 
-    def freeze(self, *, native_gate_id: str, plan_bytes: bytes) -> ApprovalReceipt:
+    def freeze(
+        self,
+        *,
+        native_gate_id: str,
+        expected_gate_digest: str,
+        plan_bytes: bytes,
+    ) -> ApprovalReceipt:
         self._assert_mutable()
         gate = self.gate_tuple()
+        expected = _require_hex(expected_gate_digest, "expected pre-gate digest", _HEX_64)
+        if gate.digest != expected:
+            raise AttemptError(
+                "native approval does not match the exact pre-gate digest; review again"
+            )
         current = self.current
         if current is None:
             raise AttemptError("native gate lost its current plan")
@@ -1093,6 +1129,23 @@ class PlanningAttempt:
             attempt.revalidation = _revalidation_from_mapping(raw_revalidation)
         attempt.frozen = bool(raw.get("frozen"))
         return attempt
+
+
+def _attempt_lock_path(directory: Path) -> Path:
+    return directory.expanduser().resolve() / "attempt.lock"
+
+
+def mutate_bundle(
+    directory: Path,
+    operation: Callable[[PlanningAttempt], Any],
+) -> Any:
+    """Serialize one complete load, compare-and-swap mutation, and save."""
+    resolved = directory.expanduser().resolve()
+    with _locking.flock_blocking(_attempt_lock_path(resolved)):
+        attempt = PlanningAttempt.load_bundle(resolved)
+        result = operation(attempt)
+        attempt.save_bundle(resolved)
+        return result
 
 
 def write_approval_receipt(path: Path, receipt: ApprovalReceipt) -> None:
@@ -1251,6 +1304,7 @@ def _parser() -> argparse.ArgumentParser:
     approve = sub.add_parser("approve")
     approve.add_argument("--attempt-dir", required=True)
     approve.add_argument("--native-gate-id", required=True)
+    approve.add_argument("--expected-gate-digest", required=True)
     approve.add_argument("--plan-from", required=True)
     approve.add_argument("--output", required=True)
 
@@ -1271,91 +1325,103 @@ def cli_main(argv: list[str]) -> int:  # noqa: C901
                     json.dumps(result, indent=2, sort_keys=True) + "\n",
                 )
         elif args.operation == "create":
-            attempt = PlanningAttempt.create(
-                attempt_id=args.attempt_id,
-                base_sha=args.base_sha,
-                route_digest=args.route_digest,
-                owner_identity=args.owner_identity,
-            )
-            attempt.save_bundle(Path(args.attempt_dir))
-            result: object = attempt.to_mapping()
+            directory = Path(args.attempt_dir).expanduser().resolve()
+            with _locking.flock_blocking(_attempt_lock_path(directory)):
+                attempt = PlanningAttempt.create(
+                    attempt_id=args.attempt_id,
+                    base_sha=args.base_sha,
+                    route_digest=args.route_digest,
+                    owner_identity=args.owner_identity,
+                )
+                attempt.save_bundle(directory)
+                result: object = attempt.to_mapping()
         elif args.operation == "verify-approval":
             receipt = load_approval_receipt(Path(args.receipt))
             receipt.verify_plan_bytes(Path(args.plan_from).read_bytes())
             result = receipt.to_mapping()
         else:
-            attempt = PlanningAttempt.load_bundle(Path(args.attempt_dir))
-            if args.operation == "accept":
-                envelope_value = json.loads(Path(args.envelope_from).read_text(encoding="utf-8"))
-                if not isinstance(envelope_value, dict):
-                    raise AttemptError("envelope input must be a JSON object")
-                launch_receipt = json.loads(Path(args.route_receipt).read_text(encoding="utf-8"))
-                if not isinstance(launch_receipt, dict):
-                    raise AttemptError("planner route receipt must be a JSON object")
-                envelope = attempt.accept(envelope_value, launch_receipt=launch_receipt)
-                attempt.save_bundle(Path(args.attempt_dir))
-                result = envelope.to_mapping()
-            elif args.operation == "feedback":
-                value = json.loads(Path(args.feedback_from).read_text(encoding="utf-8"))
-                if not isinstance(value, dict):
-                    raise AttemptError("feedback input must be a JSON object")
-                entry = attempt.add_feedback(
-                    feedback_id=value.get("id"),
-                    verbatim=value.get("verbatim"),
-                    anchors=value.get("anchors", []),
-                    owner_synthesis=value.get("owner_synthesis", ""),
-                )
-                attempt.save_bundle(Path(args.attempt_dir))
-                result = entry.to_mapping()
-            elif args.operation == "reject-feedback":
-                entry = attempt.reject_feedback(args.feedback_id, args.reason)
-                attempt.save_bundle(Path(args.attempt_dir))
-                result = entry.to_mapping()
-            elif args.operation == "assess":
-                value = json.loads(Path(args.verdict_from).read_text(encoding="utf-8"))
-                if not isinstance(value, dict):
-                    raise AttemptError("verdict input must be a JSON object")
-                verdict = _verdict_from_mapping(value)
-                launch_receipt = (
-                    json.loads(Path(args.launch_receipt).read_text(encoding="utf-8"))
-                    if args.launch_receipt
-                    else None
-                )
-                if launch_receipt is not None and not isinstance(launch_receipt, dict):
-                    raise AttemptError("assessor launch receipt must be a JSON object")
-                attempt.assess(
-                    verdict,
-                    require_fresh=args.require_fresh,
-                    launch_receipt=launch_receipt,
-                )
-                attempt.save_bundle(Path(args.attempt_dir))
-                result = verdict.to_mapping()
-            elif args.operation == "revalidate":
-                value = json.loads(Path(args.receipt_from).read_text(encoding="utf-8"))
-                if not isinstance(value, dict):
-                    raise AttemptError("revalidation input must be a JSON object")
-                revalidation = _revalidation_from_mapping(value)
-                attempt.revalidate(revalidation)
-                attempt.save_bundle(Path(args.attempt_dir))
-                result = revalidation.to_mapping()
-            elif args.operation == "gate":
-                result = attempt.gate_tuple().to_mapping()
-            elif args.operation == "render-plan":
-                current = attempt.current
-                if current is None:
-                    raise AttemptError("cannot render without a current complete plan")
-                atomic_write_bytes(
-                    Path(args.output).expanduser().resolve(), approval_plan_bytes(current)
-                )
-                result = {"output": str(Path(args.output).expanduser().resolve())}
-            elif args.operation == "approve":
-                plan_bytes = Path(args.plan_from).read_bytes()
-                receipt = attempt.freeze(native_gate_id=args.native_gate_id, plan_bytes=plan_bytes)
-                attempt.save_bundle(Path(args.attempt_dir))
-                write_approval_receipt(Path(args.output), receipt)
-                result = receipt.to_mapping()
-            else:
-                result = attempt.to_mapping()
+            directory = Path(args.attempt_dir).expanduser().resolve()
+            with _locking.flock_blocking(_attempt_lock_path(directory)):
+                attempt = PlanningAttempt.load_bundle(directory)
+                if args.operation == "accept":
+                    envelope_value = json.loads(
+                        Path(args.envelope_from).read_text(encoding="utf-8")
+                    )
+                    if not isinstance(envelope_value, dict):
+                        raise AttemptError("envelope input must be a JSON object")
+                    launch_receipt = json.loads(
+                        Path(args.route_receipt).read_text(encoding="utf-8")
+                    )
+                    if not isinstance(launch_receipt, dict):
+                        raise AttemptError("planner route receipt must be a JSON object")
+                    envelope = attempt.accept(envelope_value, launch_receipt=launch_receipt)
+                    attempt.save_bundle(directory)
+                    result = envelope.to_mapping()
+                elif args.operation == "feedback":
+                    value = json.loads(Path(args.feedback_from).read_text(encoding="utf-8"))
+                    if not isinstance(value, dict):
+                        raise AttemptError("feedback input must be a JSON object")
+                    entry = attempt.add_feedback(
+                        feedback_id=value.get("id"),
+                        verbatim=value.get("verbatim"),
+                        anchors=value.get("anchors", []),
+                        owner_synthesis=value.get("owner_synthesis", ""),
+                    )
+                    attempt.save_bundle(directory)
+                    result = entry.to_mapping()
+                elif args.operation == "reject-feedback":
+                    entry = attempt.reject_feedback(args.feedback_id, args.reason)
+                    attempt.save_bundle(directory)
+                    result = entry.to_mapping()
+                elif args.operation == "assess":
+                    value = json.loads(Path(args.verdict_from).read_text(encoding="utf-8"))
+                    if not isinstance(value, dict):
+                        raise AttemptError("verdict input must be a JSON object")
+                    verdict = _verdict_from_mapping(value)
+                    launch_receipt = (
+                        json.loads(Path(args.launch_receipt).read_text(encoding="utf-8"))
+                        if args.launch_receipt
+                        else None
+                    )
+                    if launch_receipt is not None and not isinstance(launch_receipt, dict):
+                        raise AttemptError("assessor launch receipt must be a JSON object")
+                    attempt.assess(
+                        verdict,
+                        require_fresh=args.require_fresh,
+                        launch_receipt=launch_receipt,
+                    )
+                    attempt.save_bundle(directory)
+                    result = verdict.to_mapping()
+                elif args.operation == "revalidate":
+                    value = json.loads(Path(args.receipt_from).read_text(encoding="utf-8"))
+                    if not isinstance(value, dict):
+                        raise AttemptError("revalidation input must be a JSON object")
+                    revalidation = _revalidation_from_mapping(value)
+                    attempt.revalidate(revalidation)
+                    attempt.save_bundle(directory)
+                    result = revalidation.to_mapping()
+                elif args.operation == "gate":
+                    result = attempt.gate_tuple().to_mapping()
+                elif args.operation == "render-plan":
+                    current = attempt.current
+                    if current is None:
+                        raise AttemptError("cannot render without a current complete plan")
+                    atomic_write_bytes(
+                        Path(args.output).expanduser().resolve(), approval_plan_bytes(current)
+                    )
+                    result = {"output": str(Path(args.output).expanduser().resolve())}
+                elif args.operation == "approve":
+                    plan_bytes = Path(args.plan_from).read_bytes()
+                    receipt = attempt.freeze(
+                        native_gate_id=args.native_gate_id,
+                        expected_gate_digest=args.expected_gate_digest,
+                        plan_bytes=plan_bytes,
+                    )
+                    attempt.save_bundle(directory)
+                    write_approval_receipt(Path(args.output), receipt)
+                    result = receipt.to_mapping()
+                else:
+                    result = attempt.to_mapping()
     except (AttemptError, OSError) as exc:
         sys.stderr.write(f"planning-attempt: {exc}\n")
         return 2
@@ -1385,6 +1451,7 @@ __all__ = [
     "envelope_json_schema",
     "feedback_watermark",
     "load_approval_receipt",
+    "mutate_bundle",
     "requires_fresh_assessor",
     "write_approval_receipt",
 ]

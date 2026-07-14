@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
+import threading
 from pathlib import Path
 
 import pytest
@@ -20,7 +22,6 @@ def _plan(*, version: int = 1, parent: str | None = None) -> dict[str, object]:
             "id": "codex:gpt-5.6-sol",
             "harness": "codex",
             "model": "gpt-5.6-sol",
-            "thread": "live-1",
         },
         "status": "PLAN_READY",
         "plan": {
@@ -114,6 +115,89 @@ def _verdict(
         findings=[] if outcome == "pass" else ["missing test"],
         fresh=fresh,
     )
+
+
+def _ready_for_gate(attempt: pa.PlanningAttempt) -> pa.PlanEnvelope:
+    envelope = _accept(attempt)
+    attempt.assess(_verdict(attempt))
+    attempt.revalidate(
+        pa.RevalidationReceipt.create(
+            approved_base="a" * 40,
+            latest_base="a" * 40,
+            changed_paths=[],
+            planned_paths=["src/planning.py"],
+            context_paths=["src/routing.py", ".flow/workspace.toml"],
+        )
+    )
+    return envelope
+
+
+def test_provider_schema_is_closed_without_provider_side_uniqueness() -> None:
+    schema = pa.envelope_json_schema()
+
+    def walk(value: object) -> None:
+        if isinstance(value, dict):
+            assert "uniqueItems" not in value
+            if value.get("type") == "object":
+                assert value.get("additionalProperties") is False
+                required = value.get("required", [])
+                properties = value.get("properties", {})
+                assert isinstance(required, list)
+                assert isinstance(properties, dict)
+                assert set(required) == set(properties)
+            for child in value.values():
+                walk(child)
+        elif isinstance(value, list):
+            for child in value:
+                walk(child)
+
+    walk(schema)
+    assert set(schema["properties"]["author"]["properties"]) == {
+        "id",
+        "harness",
+        "model",
+    }
+    assert set(schema["properties"]["plan"]["properties"]) == set(pa._PLAN_REQUIRED)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("incorporated_feedback_ids", ["F-1", "F-1"], "must not contain duplicates"),
+        (
+            "questions",
+            [
+                {"id": "Q-1", "text": "First?", "anchors": []},
+                {"id": "Q-1", "text": "Again?", "anchors": []},
+            ],
+            "duplicate question id",
+        ),
+    ],
+)
+def test_semantic_validation_still_rejects_duplicate_lists(
+    field: str, value: object, message: str
+) -> None:
+    payload = _plan()
+    payload["status"] = "NEEDS_INPUT" if field == "questions" else "PLAN_READY"
+    payload[field] = value
+    with pytest.raises(pa.AttemptError, match=message):
+        pa.PlanEnvelope.from_mapping(payload)
+
+
+def test_semantic_validation_rejects_provider_object_extensions() -> None:
+    payload = _plan()
+    author = payload["author"]
+    assert isinstance(author, dict)
+    payload["author"] = {**author, "thread": "must-stay-outside-envelope"}
+    with pytest.raises(pa.AttemptError, match=r"author.*unknown"):
+        pa.PlanEnvelope.from_mapping(payload)
+
+    payload = _plan()
+    plan = payload["plan"]
+    assert isinstance(plan, dict)
+    payload["plan"] = {**plan, "reading_time": "five minutes"}
+    with pytest.raises(pa.AttemptError, match=r"plan.*unknown"):
+        pa.PlanEnvelope.from_mapping(payload)
 
 
 def test_accepts_complete_envelope_with_compare_and_swap() -> None:
@@ -353,6 +437,14 @@ def test_selective_revalidation_classifies_unrelated_relevant_and_ambiguous() ->
     )
     assert prefix_relevant.classification == "relevant"
     assert sibling_unrelated.classification == "unrelated"
+    route_config_relevant = pa.RevalidationReceipt.create(
+        approved_base="a" * 40,
+        latest_base="b" * 40,
+        changed_paths=[".flow/workspace.toml"],
+        planned_paths=["src/planning.py"],
+        context_paths=[".flow/workspace.toml"],
+    )
+    assert route_config_relevant.classification == "relevant"
 
 
 def test_relevant_drift_invalidates_current_plan() -> None:
@@ -373,21 +465,16 @@ def test_relevant_drift_invalidates_current_plan() -> None:
 
 def test_native_receipt_binds_exact_tuple_and_plan_bytes(tmp_path: Path) -> None:
     attempt = _attempt()
-    _accept(attempt)
-    attempt.assess(_verdict(attempt))
-    attempt.revalidate(
-        pa.RevalidationReceipt.create(
-            approved_base="a" * 40,
-            latest_base="a" * 40,
-            changed_paths=[],
-            planned_paths=["src/planning.py"],
-            context_paths=[],
-        )
-    )
+    _ready_for_gate(attempt)
     current = attempt.current
     assert current is not None
     plan_bytes = pa.approval_plan_bytes(current)
-    receipt = attempt.freeze(native_gate_id="gate-42", plan_bytes=plan_bytes)
+    gate = attempt.gate_tuple()
+    receipt = attempt.freeze(
+        native_gate_id="gate-42",
+        expected_gate_digest=gate.digest,
+        plan_bytes=plan_bytes,
+    )
     path = tmp_path / "approval.json"
     pa.write_approval_receipt(path, receipt)
     loaded = pa.load_approval_receipt(path)
@@ -398,21 +485,160 @@ def test_native_receipt_binds_exact_tuple_and_plan_bytes(tmp_path: Path) -> None
     assert loaded.gate.plan_digest == current.digest
     assert json.loads(path.read_text())["digest"] == receipt.digest
     another = _attempt()
-    _accept(another)
-    another.assess(_verdict(another))
-    another.revalidate(
+    _ready_for_gate(another)
+    with pytest.raises(pa.AttemptError, match="canonical rendering"):
+        another.freeze(
+            native_gate_id="gate-other",
+            expected_gate_digest=another.gate_tuple().digest,
+            plan_bytes=b"# Different plan\n",
+        )
+    with pytest.raises(pa.AttemptError, match="frozen"):
+        attempt.add_feedback(feedback_id="F-late", verbatim="late", anchors=[], owner_synthesis="")
+
+
+def test_native_approval_requires_the_exact_pre_gate_digest() -> None:
+    attempt = _attempt()
+    current = _ready_for_gate(attempt)
+    before = attempt.to_mapping()
+    with pytest.raises(pa.AttemptError, match="pre-gate digest"):
+        attempt.freeze(
+            native_gate_id="gate-stale",
+            expected_gate_digest="0" * 64,
+            plan_bytes=pa.approval_plan_bytes(current),
+        )
+    assert attempt.to_mapping() == before
+    assert attempt.frozen is False
+
+
+def test_feedback_watermark_change_invalidates_an_outstanding_gate() -> None:
+    attempt = _attempt()
+    current = _ready_for_gate(attempt)
+    stale_gate = attempt.gate_tuple()
+    attempt.add_feedback(
+        feedback_id="F-late",
+        verbatim="Record this explicit rejection.",
+        anchors=["plan:rollout"],
+        owner_synthesis="This conflicts with the approved no-fallback decision.",
+    )
+    attempt.reject_feedback("F-late", "The accepted strict route forbids fallback.")
+    attempt.assess(_verdict(attempt))
+    attempt.revalidate(
         pa.RevalidationReceipt.create(
             approved_base="a" * 40,
             latest_base="a" * 40,
             changed_paths=[],
             planned_paths=["src/planning.py"],
-            context_paths=[],
+            context_paths=[".flow/workspace.toml"],
         )
     )
-    with pytest.raises(pa.AttemptError, match="canonical rendering"):
-        another.freeze(native_gate_id="gate-other", plan_bytes=b"# Different plan\n")
-    with pytest.raises(pa.AttemptError, match="frozen"):
-        attempt.add_feedback(feedback_id="F-late", verbatim="late", anchors=[], owner_synthesis="")
+    assert attempt.gate_tuple().feedback_watermark != stale_gate.feedback_watermark
+    with pytest.raises(pa.AttemptError, match="pre-gate digest"):
+        attempt.freeze(
+            native_gate_id="gate-stale-feedback",
+            expected_gate_digest=stale_gate.digest,
+            plan_bytes=pa.approval_plan_bytes(current),
+        )
+
+
+def test_attempt_mutations_serialize_the_complete_load_cas_save_transaction(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    attempt = _attempt()
+    attempt.save_bundle(tmp_path)
+    first_entered = threading.Event()
+    release_first = threading.Event()
+    second_entered = threading.Event()
+    second_reached_lock = threading.Event()
+    errors: list[BaseException] = []
+    real_flock = pa._locking.flock_blocking
+
+    @contextlib.contextmanager
+    def observed_flock(path: Path):
+        if threading.current_thread().name == "second-mutation":
+            second_reached_lock.set()
+        with real_flock(path):
+            yield
+
+    monkeypatch.setattr(pa._locking, "flock_blocking", observed_flock)
+
+    def mutate(feedback_id: str, entered: threading.Event, wait: bool) -> None:
+        try:
+
+            def operation(loaded: pa.PlanningAttempt) -> None:
+                entered.set()
+                if wait:
+                    assert release_first.wait(timeout=5)
+                loaded.add_feedback(
+                    feedback_id=feedback_id,
+                    verbatim=feedback_id,
+                    anchors=[],
+                    owner_synthesis="",
+                )
+
+            pa.mutate_bundle(tmp_path, operation)
+        except BaseException as exc:  # pragma: no cover - reported by the assertion below
+            errors.append(exc)
+
+    first = threading.Thread(target=mutate, args=("F-1", first_entered, True))
+    second = threading.Thread(
+        target=mutate,
+        args=("F-2", second_entered, False),
+        name="second-mutation",
+    )
+    first.start()
+    assert first_entered.wait(timeout=5)
+    second.start()
+    assert second_reached_lock.wait(timeout=5)
+    assert not second_entered.is_set()
+    release_first.set()
+    first.join(timeout=5)
+    second.join(timeout=5)
+    assert not first.is_alive()
+    assert not second.is_alive()
+    assert errors == []
+    assert set(pa.PlanningAttempt.load_bundle(tmp_path).feedback) == {"F-1", "F-2"}
+
+
+def test_concurrent_sibling_plan_versions_have_exactly_one_cas_winner(
+    tmp_path: Path,
+) -> None:
+    _attempt().save_bundle(tmp_path)
+    start = threading.Barrier(3)
+    outcomes: list[str] = []
+
+    def accept(worker_id: str) -> None:
+        start.wait(timeout=5)
+        try:
+            pa.mutate_bundle(
+                tmp_path,
+                lambda attempt: attempt.accept(
+                    _plan(),
+                    launch_receipt=_launch_receipt(worker_id=worker_id),
+                ),
+            )
+        except pa.AttemptError as exc:
+            outcomes.append(str(exc))
+        else:
+            outcomes.append("accepted")
+
+    workers = [
+        threading.Thread(target=accept, args=("planner-a",)),
+        threading.Thread(target=accept, args=("planner-b",)),
+    ]
+    for worker in workers:
+        worker.start()
+    start.wait(timeout=5)
+    for worker in workers:
+        worker.join(timeout=5)
+        assert not worker.is_alive()
+    assert sorted(outcomes) == [
+        "accepted",
+        "plan envelope version 1 does not match expected 2",
+    ]
+    loaded = pa.PlanningAttempt.load_bundle(tmp_path)
+    assert [envelope.version for envelope in loaded.history] == [1]
+    assert len(loaded.planner_launch_receipts) == 1
 
 
 def test_ephemeral_bundle_excludes_worker_thread_receipt(tmp_path: Path) -> None:
@@ -523,6 +749,17 @@ def test_cli_round_trip_reaches_exact_approval_receipt(tmp_path: Path, capsys) -
     assert (
         pa.cli_main(
             [
+                "gate",
+                "--attempt-dir",
+                str(attempt_dir),
+            ]
+        )
+        == 0
+    )
+    gate = json.loads(capsys.readouterr().out)
+    assert (
+        pa.cli_main(
+            [
                 "render-plan",
                 "--attempt-dir",
                 str(attempt_dir),
@@ -542,6 +779,8 @@ def test_cli_round_trip_reaches_exact_approval_receipt(tmp_path: Path, capsys) -
                 str(attempt_dir),
                 "--native-gate-id",
                 "gate-1",
+                "--expected-gate-digest",
+                gate["digest"],
                 "--plan-from",
                 str(plan_path),
                 "--output",

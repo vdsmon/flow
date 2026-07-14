@@ -79,6 +79,12 @@ emits no route that its adapter cannot honor. Existing `[models]` configuration 
 in standalone compatibility mode during repair or reconfiguration; setup never
 silently converts it.
 
+The native default planner is `codex / gpt-5.6-sol / xhigh`. Configured and built-in
+planner routes enter the strict read-only CLI path without a per-run override. Exact
+capability, authentication, schema, and launch-receipt evidence is required. A failure
+stops the attempt and does not select another harness or model. Post-plan cross-harness
+workers remain shadowed.
+
 Review migration before applying it:
 
 ```bash
