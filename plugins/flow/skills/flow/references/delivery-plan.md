@@ -102,7 +102,8 @@ After approval only:
 
 1. write the approved plan to a temporary exact-content file;
 2. invoke the worktree bootstrap seam with ticket, plan path, freshly fetched default
-   base, branch, planned files, group covers, lane, e2e recipe, and commit metadata;
+   base, branch, planned files, group covers, lane, e2e recipe, commit metadata, and
+   every parsed `--route` value;
 3. use spill recovery only when the exact files are proven to have been created by
    this planning attempt and do not overlap pre-existing user work;
 4. parse the returned `result.worktree` absolute path;
@@ -113,8 +114,9 @@ After approval only:
    promotion;
 8. continue immediately into `delivery-loop.md`.
 
-The bootstrap owns collision detection, dirty-file ownership, base fetching, and
-frontmatter persistence. Do not hand-create the branch or run directories around it.
+The bootstrap owns collision detection, dirty-file ownership, base fetching,
+frontmatter persistence, and freezing the route snapshot before exposing the run.
+Do not hand-create the branch or run directories around it.
 Do not pass `--recover-spill` automatically; provenance must be proven first.
 Claude Code may additionally switch its native workspace after the absolute binding;
 Codex keeps using explicit workdirs. The binding, not the convenience switch, is

@@ -1,7 +1,7 @@
 Flow commands
 
   FLOW
-  FLOW <target> [<target> ...] [--unattended] [--together] [--verify express|light|full] [--e2e <recipe>] [--request <additional-intent>]
+  FLOW <target> [<target> ...] [--unattended] [--together] [--verify express|light|full] [--e2e <recipe>] [--request <additional-intent>] [--route <profile=harness,model,effort>]...
       Start, answer, resume, repair, revise, or show work from its current state.
   FLOW ticket create [--request <problem>]
       Capture a problem, create a tracker ticket, and offer to run it.

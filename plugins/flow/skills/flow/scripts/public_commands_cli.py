@@ -56,11 +56,15 @@ def _route_payload(registry: Registry, tokens: list[str], patterns: list[str]) -
         effect = "read"
         workspace = "none"
         reference = _help_reference(registry, route.topic)
+    option_values: dict[str, list[str]] = {}
+    for name, value in route.option_values:
+        option_values.setdefault(name, []).append(value)
     return {
         "command_id": command_id,
         "effect": effect,
         "kind": route.kind,
         "options": list(route.options),
+        "option_values": option_values,
         "positionals": list(route.positionals),
         "reference": reference,
         "topic": route.topic,

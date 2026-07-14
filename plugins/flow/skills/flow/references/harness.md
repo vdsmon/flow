@@ -35,16 +35,18 @@ roots, stop for authorization rather than escaping the sandbox.
 | Trigger | `/flow` | `$flow:flow` | installed skill equivalent |
 | Plan gate | native plan mode | native Plan mode when active, else turn boundary | turn boundary |
 | Workspace | native switch plus absolute binding | explicit absolute binding | native switch if real, else explicit binding |
-| Worker | native collaboration agent; supported Claude model hint allowed | native collaboration agent; inherits active model | independent call or documented inline fallback |
+| Worker | native collaboration agent; exact route requires structured launch acceptance | native collaboration agent; desired post-plan routes stay shadowed and inherit active model | independent call or documented inline fallback |
 | Exact write | native file writer | rooted safe edit/write | exact writer or collision-safe fallback |
 | Wait | native owning-session wait | native owning-session wait | bounded foreground poll |
 | Input | native question surface | plain question and wait | plain question and wait |
 | Notification | native notification plus durable receipt | in-thread plus durable receipt | in-thread plus durable receipt |
 | Background | user backgrounds owner conversation | user backgrounds owner task | host-owned or foreground |
 
-Do not infer the harness from ambient environment. The adapter supplies it. Claude
-Code may honor a configured Claude model hint; Codex workers inherit the active model
-and never receive a Claude model name.
+Do not infer the harness from ambient environment. The adapter supplies it. Public
+route configuration uses `claude_code` and `codex`; Flow normalizes the ambient
+`claude-code` adapter name at the boundary. Claude Code activates a route only from
+the structured native tool response for the exact model and effort. Current Codex
+post-plan routes remain desired shadow routes and inherit the active model.
 
 ## Discovery and runtime
 
@@ -96,6 +98,12 @@ Artifact path: <absolute output_path>
 The prompt states that inherited cwd is non-authoritative and every facade call applies
 the call-local `FLOW_HARNESS` selector to the absolute bound `facade`. Capture the full returned report at the exact
 artifact path before advancing.
+
+Agent-written prose never proves which model executed. The route receipt records the
+desired route, effective route when proven, activation, source, transport/adapter
+identity, canonical provider model when exposed, and prompt/schema hashes. Tool and
+inline stages record `none` or the owner-reported identity; missing owner identity is
+`unknown`, never an inferred alias.
 
 Maintenance adapters perform launch, wait, and cancel with native collaboration
 primitives. They call the `worker-pool` facade for the enforceable capacity,

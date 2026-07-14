@@ -407,11 +407,11 @@ def test_live_post_init_prose_has_no_bare_script_invocation() -> None:
     assert escaped == []
 
 
-def test_live_codex_retry_requires_a_model_pin_that_was_actually_applied() -> None:
+def test_live_codex_route_requires_structured_activation() -> None:
     skill = (seam_check.SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
     do_ref = (seam_check.SKILL_ROOT / "references" / "delivery-loop.md").read_text(encoding="utf-8")
-    assert "model_pin_applied" in skill
-    assert "model_pin_applied" in do_ref
+    assert "structured native launch acceptance" in skill
+    assert "Only an `active` receipt proves exact execution" in do_ref
     assert "Codex" in do_ref
     assert "does not retry" in do_ref
 
@@ -1090,7 +1090,7 @@ def test_prose_role_citation_membership_idiom() -> None:
 
 
 def test_prose_role_citation_rejects_stage_name_as_role_membership() -> None:
-    text = "If the stage is `model_routed`, resolve the adapter model.\n"
+    text = "If the stage is `agent_routed`, resolve the adapter route.\n"
     assert seam_check.prose_role_citations(text) == []
 
 
@@ -1102,8 +1102,8 @@ def test_prose_role_citation_ignores_non_membership_roles_mention() -> None:
 
 def test_prose_role_citation_ignores_later_backticked_token() -> None:
     # a backticked lowercase token AFTER the role literal must not read as a role
-    text = 'when `descriptor.roles` includes `"model_routed"`, pass `model` in the Agent call.\n'
-    assert seam_check.prose_role_citations(text) == [(1, "model_routed")]
+    text = 'when `descriptor.roles` includes `"agent_routed"`, pass the route in the Agent call.\n'
+    assert seam_check.prose_role_citations(text) == [(1, "agent_routed")]
 
 
 def test_live_role_citations_recognized() -> None:
@@ -1115,7 +1115,7 @@ def test_live_role_citations_recognized() -> None:
             (seam_check.SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
         )
     }
-    assert {"records_diff_baseline", "model_routed"} <= roles
+    assert {"records_diff_baseline", "agent_routed"} <= roles
 
 
 def test_role_literal_drift_flags_renamed_role(tmp_path) -> None:

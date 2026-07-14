@@ -22,6 +22,7 @@ def test_hot_path_command_resolution() -> None:
         "frontmatter": "ticket_frontmatter.py",
         "friction": "flow_friction.py",
         "model": "model_resolve.py",
+        "agent-route": "agent_routes.py",
         "pending-mutations": "pending_mutations.py",
         "handler": "resolve_handler.py",
         "merge": "stage_merge.py",

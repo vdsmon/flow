@@ -74,6 +74,25 @@ Success reports tracker backend, namespace, runtime layout version, facade path,
 the host-rendered invocation for bare `FLOW`. A healthy second setup is a successful
 validation, not an error and not a destructive reconfiguration.
 
+Fresh Claude Code and Codex setup writes explicit `[agents]` defaults. Generic setup
+emits no route that its adapter cannot honor. Existing `[models]` configuration stays
+in standalone compatibility mode during repair or reconfiguration; setup never
+silently converts it.
+
+Review migration before applying it:
+
+```bash
+FLOW_HARNESS="<harness>" "<facade>" agent-route migrate \
+  --workspace-root . --check
+FLOW_HARNESS="<harness>" "<facade>" agent-route migrate \
+  --workspace-root . --apply --confirm
+```
+
+The migration appends complete routes atomically and preserves every existing byte.
+It refuses OFF values and provider aliases that cannot become an explicit Claude
+Code route. Removing the appended `[agents]` tables restores the unchanged legacy
+block.
+
 ## `FLOW workspace inspect [<target>] [--json]`
 
 Inspection is read-only. With no target, report every run, stage progress, lease,

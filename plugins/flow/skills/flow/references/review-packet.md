@@ -67,12 +67,13 @@ delegated-fix recipe: give the subagent the six rooted prompt fields from
 `references/harness.md`, including `Harness`, and require the call-local
 `FLOW_HARNESS` prefix on any facade command. Use the existing commit machinery and
 `git push`, followed
-by a bounded CI re-probe. Resolve the model hint as §2 does:
+by a bounded CI re-probe. Resolve `revision_fixer` as §2 does:
 ```bash
-M=$(FLOW_HARNESS="<harness>" "<facade>" model --workspace-root . --ticket "$KEY" --stage review_loop)
+FLOW_HARNESS="<harness>" "<facade>" agent-route resolve \
+  --snapshot "$TICKET_DIR/route-snapshot.json" --profile revision_fixer
 ```
-Pass `M` only when non-empty and the adapter accepts Claude model names. Codex omits
-the model parameter and inherits the active model.
+Follow `references/delivery-loop.md`'s structured launch and attestation contract.
+Codex and generic launches inherit the active owner model and remain shadowed.
 Then re-render, showing only the interdiff since the last reviewed round:
 ```bash
 git diff "$ROUND_SHA"..HEAD
@@ -145,7 +146,7 @@ Field contract:
 - Fix pile (the one definition): `threads[]` entries with `"disposition": "fix"`. stage-implement source #1 reads it as the work list; stage-review_loop's supersede branch computes the Major+-replacement fix set and the §5 terminal check from it. An explicit empty triage — file exists, fix pile empty (all defer/dismiss, or `"threads": []`) — supersedes the floor: no floor-bumped thread enters the fix set, so the terminal check has nothing left to chase. Termination timing stays with the convergence rules below — a mid-session all-defer/dismiss batch (**Send to Agent**) keeps the loop alive; only a user-ended session closes it. No file → floor applies (the empty-vs-absent distinction).
 - Unanchored threads (`file: null` / `line: null` / unpinnable anchor) live in the SAME array; the board renders them in a visible section; the schema needs no split.
 
-**Rounds.** Round 1: the queued fix dispositions seed the fix-only stage subset. WAIT for the first poll return before dispatching, so the first batch is in hand before implement runs. Rounds 2+: at review_loop's revision tail, each mid-session batch is applied as ONE fix round via `references/stage-review_loop.md` §2's delegated-fix recipe verbatim (the fix subagent's hint resolves through `FLOW_HARNESS="<harness>" "<facade>" model --stage review_loop`; human rounds cap-exempt per §2's carve-out), followed by a bounded CI re-probe, then a re-render showing only the LOCAL-git interdiff `git diff "$ROUND_SHA"..HEAD`, never a forge review-round API.
+**Rounds.** Round 1: the queued fix dispositions seed the fix-only stage subset. WAIT for the first poll return before dispatching, so the first batch is in hand before implement runs. Rounds 2+: at review_loop's revision tail, each mid-session batch is applied as ONE fix round via `references/stage-review_loop.md` §2's delegated-fix recipe verbatim (the fix subagent resolves the frozen `revision_fixer` route; human rounds are cap-exempt per §2's carve-out), followed by a bounded CI re-probe, then a re-render showing only the LOCAL-git interdiff `git diff "$ROUND_SHA"..HEAD`, never a forge review-round API.
 
 **Lease heartbeat (two regimes).** Inside the review_loop tail (rounds 2+): the packet's heartbeat block above applies, with `--revision "$REV_ID"` appended to the `next` call — review_loop is in_progress there, so `next` is state-idempotent (`pick_next_pending` resumes the in_progress stage rather than beginning a new one). During the step-5a board wait (before the do-loop): do NOT heartbeat — a `next` on an all-pending sub-run begins the first pending stage (implement) before any triage exists. Documented residual: the `revise-open` lease carries a 10-min init TTL, and a long triage can outlive it; refresh-past-expiry is legal for the owner (`lease.assert_lease_still_mine` skips the expiry check) and the do-loop's first real `next --revision` re-covers it — the same residual class the packet's heartbeat block documents.
 

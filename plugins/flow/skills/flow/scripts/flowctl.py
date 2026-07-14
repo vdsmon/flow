@@ -13,6 +13,7 @@ SKILL_ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS_DIR = SKILL_ROOT / "scripts"
 
 COMMANDS = {
+    "agent-route": "agent_routes.py",
     "branch-ticket": "branch_ticket.py",
     "cockpit": "cockpit_cli.py",
     "compose-commit": "compose_commit.py",

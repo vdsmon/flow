@@ -377,9 +377,8 @@ def test_next_surfaces_roles_for_stage_with_roles(
     rc, payload = ds.cmd_next(tmp_path, "FT-1")
     assert rc == 0
     assert payload["stage"] == "implement"
-    # implement carries records_diff_baseline (the diff-baseline pre-hook) + model_routed
-    # (the routable marker the do-loop gates model_resolve on).
-    assert payload["roles"] == ["records_diff_baseline", "model_routed"]
+    # implement carries the diff-baseline pre-hook and explicit route marker.
+    assert payload["roles"] == ["records_diff_baseline", "agent_routed"]
 
 
 def test_next_surfaces_empty_roles_for_stage_without(
