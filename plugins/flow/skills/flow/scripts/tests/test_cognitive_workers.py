@@ -752,6 +752,8 @@ def test_a_recovered_capsule_at_the_wrong_base_quarantines(tmp_path: Path) -> No
     order = _review_order(source, sha, input_path, logical_id)
     capsule = tmp_path / "capsules" / hashlib.sha256(f"{logical_id}:1".encode()).hexdigest()
     cw.create_private_clone(source, sha, capsule)
+    _git(capsule, "config", "user.email", "flow@example.test")
+    _git(capsule, "config", "user.name", "Flow Test")
     (capsule / "drift.txt").write_text("x", encoding="utf-8")
     _git(capsule, "add", "drift.txt")
     _git(capsule, "commit", "-qm", "drift")
