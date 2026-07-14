@@ -218,6 +218,7 @@ def test_init_uses_executing_skill_dir_not_ambient_env(tmp_path: Path, monkeypat
 def test_native_setup_emits_explicit_owner_relative_agent_routes(tmp_path: Path) -> None:
     result = initmod.run_init(_jira_config(tmp_path))
     data = tomllib.loads(result.workspace_toml_path.read_text(encoding="utf-8"))
+    assert tuple(data["agents"]) == agent_routes.PROFILES
     assert data["agents"]["planner"] == {
         "harness": "codex",
         "model": "gpt-5.6-sol",
@@ -225,6 +226,12 @@ def test_native_setup_emits_explicit_owner_relative_agent_routes(tmp_path: Path)
     }
     assert data["agents"]["implementer"]["by_owner"]["claude_code"]["model"] == "sonnet"
     assert data["agents"]["implementer"]["by_owner"]["codex"]["model"] == "gpt-5.6-luna"
+    assert data["agents"]["code_reviewer"]["by_owner"]["codex"]["model"] == "gpt-5.6-sol"
+    assert data["agents"]["review_fixer"]["by_owner"]["claude_code"]["model"] == "sonnet"
+    assert data["agents"]["review_brief_author"]["by_owner"]["codex"]["model"] == ("gpt-5.6-luna")
+    assert data["agents"]["reflector"]["by_owner"]["claude_code"]["model"] == "opus"
+    assert data["agents"]["machinery_fixer"]["by_owner"]["codex"]["model"] == ("gpt-5.6-luna")
+    assert initmod._default_agent_routes_toml() == agent_routes.render_default_routes_toml()
     resolved = agent_routes.resolve(tmp_path, "planner", "codex")
     assert resolved["desired"] == data["agents"]["planner"]
     assert resolved["source"] == "workspace"

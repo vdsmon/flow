@@ -9,6 +9,21 @@ import pytest
 
 import agent_routes
 
+PROFILES = (
+    "planner",
+    "plan_assessor",
+    "implementer",
+    "e2e",
+    "code_reviewer",
+    "diff_reviewer",
+    "guard_reviewer",
+    "review_fixer",
+    "revision_fixer",
+    "review_brief_author",
+    "reflector",
+    "machinery_fixer",
+)
+
 
 def _workspace(tmp_path: Path, body: str = "") -> Path:
     flow = tmp_path / ".flow"
@@ -72,7 +87,168 @@ def test_override_wins_and_codex_post_plan_route_is_shadowed(tmp_path: Path) -> 
     }
     assert resolved["activation"] == "shadow"
     assert resolved["effective"] is None
-    assert "cannot select model and effort" in resolved["reason"]
+    assert "remain shadowed" in resolved["reason"]
+
+
+@pytest.mark.parametrize("owner", ["claude-code", "codex"])
+def test_snapshot_contains_the_complete_cognitive_profile_catalog(
+    tmp_path: Path, owner: str
+) -> None:
+    snapshot = agent_routes.snapshot(_workspace(tmp_path), owner)
+
+    assert agent_routes.PROFILES == PROFILES
+    assert tuple(snapshot["routes"]) == PROFILES
+    assert snapshot["routes"]["planner"]["activation"] == "pending"
+    assert all(
+        route["activation"] == "shadow"
+        for profile, route in snapshot["routes"].items()
+        if profile != "planner"
+    )
+    assert all(route["effective"] is None for route in snapshot["routes"].values())
+
+
+@pytest.mark.parametrize(
+    ("owner", "strong_harness", "strong_model", "fast_harness", "fast_model"),
+    [
+        ("claude-code", "claude_code", "opus", "claude_code", "sonnet"),
+        ("codex", "codex", "gpt-5.6-sol", "codex", "gpt-5.6-luna"),
+    ],
+)
+def test_builtin_profile_defaults_follow_the_approved_role_tiers(
+    tmp_path: Path,
+    owner: str,
+    strong_harness: str,
+    strong_model: str,
+    fast_harness: str,
+    fast_model: str,
+) -> None:
+    routes = agent_routes.snapshot(_workspace(tmp_path), owner)["routes"]
+
+    assert routes["planner"]["desired"] == {
+        "harness": "codex",
+        "model": "gpt-5.6-sol",
+        "effort": "xhigh",
+    }
+    assert routes["plan_assessor"]["desired"] == {
+        "harness": "claude_code",
+        "model": "opus",
+        "effort": "high",
+    }
+    for profile in ("code_reviewer", "diff_reviewer", "guard_reviewer", "reflector"):
+        assert routes[profile]["desired"] == {
+            "harness": strong_harness,
+            "model": strong_model,
+            "effort": "high",
+        }
+    for profile in (
+        "implementer",
+        "review_fixer",
+        "revision_fixer",
+        "review_brief_author",
+        "machinery_fixer",
+    ):
+        assert routes[profile]["desired"] == {
+            "harness": fast_harness,
+            "model": fast_model,
+            "effort": "high",
+        }
+    assert routes["e2e"]["desired"] == {
+        "harness": fast_harness,
+        "model": fast_model,
+        "effort": "medium",
+    }
+
+
+def test_stage_execution_records_complete_composite_provenance(tmp_path: Path) -> None:
+    execution = agent_routes.snapshot(_workspace(tmp_path), "codex")["stage_execution"]
+
+    assert set(execution) == {
+        "ticket",
+        "plan",
+        "implement",
+        "code_review",
+        "e2e",
+        "commit",
+        "create_pr",
+        "review_loop",
+        "review_brief",
+        "reflect",
+        "merge",
+    }
+    assert execution["plan"] == {
+        "kind": "agent",
+        "profile": "planner",
+        "substeps": {
+            "planning": {"profile": "planner"},
+            "assessment": {"profile": "plan_assessor"},
+        },
+    }
+    assert execution["code_review"] == {
+        "kind": "composite",
+        "owner": {"model": "unknown", "effort": "unknown", "harness": "codex"},
+        "profile": "diff_reviewer",
+        "substeps": {
+            "primary_review": {"profile": "code_reviewer"},
+            "plan_blind_review": {"profile": "diff_reviewer"},
+            "review_fix": {"profile": "review_fixer", "conditional": True},
+        },
+    }
+    assert execution["review_loop"] == {
+        "kind": "composite",
+        "owner": {"model": "unknown", "effort": "unknown", "harness": "codex"},
+        "profile": "revision_fixer",
+        "substeps": {
+            "review_fix": {"profile": "review_fixer", "conditional": True},
+            "revision_fix": {"profile": "revision_fixer", "conditional": True},
+        },
+    }
+    assert execution["review_brief"] == {
+        "kind": "agent",
+        "profile": "review_brief_author",
+    }
+    assert execution["reflect"] == {
+        "kind": "owner",
+        "model": "unknown",
+        "effort": "unknown",
+        "harness": "codex",
+        "substeps": {
+            "reflection": {"profile": "reflector"},
+            "machinery_fix": {"profile": "machinery_fixer", "conditional": True},
+        },
+    }
+    assert execution["merge"] == {
+        "kind": "tool",
+        "model": "none",
+        "guard_profile": "guard_reviewer",
+        "substeps": {"guard_review": {"profile": "guard_reviewer", "conditional": True}},
+    }
+    assert {stage for stage, record in execution.items() if record.get("model") == "none"} == {
+        "ticket",
+        "commit",
+        "create_pr",
+        "merge",
+    }
+
+
+def test_stage_execution_keeps_original_v1_fields_while_adding_substeps(
+    tmp_path: Path,
+) -> None:
+    execution = agent_routes.snapshot(_workspace(tmp_path), "claude-code")["stage_execution"]
+
+    assert execution["plan"]["kind"] == "agent"
+    assert execution["plan"]["profile"] == "planner"
+    assert execution["code_review"]["profile"] == "diff_reviewer"
+    assert execution["code_review"]["owner"]["harness"] == "claude_code"
+    assert execution["review_loop"]["profile"] == "revision_fixer"
+    assert execution["review_loop"]["owner"]["harness"] == "claude_code"
+    assert execution["reflect"] | {"substeps": None} == {
+        "kind": "owner",
+        "model": "unknown",
+        "effort": "unknown",
+        "harness": "claude_code",
+        "substeps": None,
+    }
+    assert execution["merge"]["guard_profile"] == "guard_reviewer"
 
 
 def test_configured_and_builtin_planner_routes_enter_strict_cli_activation(
@@ -179,7 +355,7 @@ def test_legacy_models_are_classified_without_becoming_agent_routes(tmp_path: Pa
     assert e2e["legacy"] == {"field": "models.e2e", "value": "off"}
 
 
-def test_agents_mode_never_partially_inherits_legacy_models(tmp_path: Path) -> None:
+def test_partial_agents_use_per_profile_legacy_then_builtin_fallback(tmp_path: Path) -> None:
     root = _workspace(
         tmp_path,
         """
@@ -191,10 +367,15 @@ model = "sonnet"
 effort = "medium"
 """,
     )
-    resolved = agent_routes.resolve(root, "implementer", "claude-code")
-    assert resolved["source"] == "built_in"
-    assert resolved["desired"]["model"] == "sonnet"
-    assert resolved["legacy"] is None
+    implementer = agent_routes.resolve(root, "implementer", "claude-code")
+    assessor = agent_routes.resolve(root, "plan_assessor", "claude-code")
+
+    assert implementer["source"] == "legacy_models"
+    assert implementer["desired"] is None
+    assert implementer["legacy"] == {"field": "models.work_model", "value": "opus"}
+    assert assessor["source"] == "built_in"
+    assert assessor["desired"]["model"] == "opus"
+    assert assessor["legacy"] is None
 
 
 def test_snapshot_is_canonical_stable_and_round_trips(
@@ -219,8 +400,11 @@ def test_snapshot_is_canonical_stable_and_round_trips(
     assert first["schema"] == "flow.agent-routes/v1"
     assert first["routes"]["implementer"]["desired"]["model"] == "sonnet"
     assert first["stage_execution"]["commit"]["model"] == "none"
-    assert first["stage_execution"]["reflect"]["harness"] == "claude_code"
-    assert first["stage_execution"]["code_review"]["owner"]["harness"] == "claude_code"
+    assert first["stage_execution"]["reflect"]["substeps"]["reflection"]["profile"] == "reflector"
+    assert (
+        first["stage_execution"]["code_review"]["substeps"]["primary_review"]["profile"]
+        == "code_reviewer"
+    )
     assert agent_routes.load_snapshot(path) == first
 
     tampered = json.loads(path.read_text(encoding="utf-8"))
@@ -261,8 +445,8 @@ def test_attestation_requires_structured_exact_native_acceptance(tmp_path: Path)
             "schema_hash": "schema-1",
         },
     )
-    assert receipt["activation"] == "active"
-    assert receipt["effective"] == request
+    assert receipt["activation"] == "shadow"
+    assert receipt["effective"] is None
     assert receipt["source"] == "built_in"
     assert receipt["canonical_model"] == "claude-sonnet-test"
     assert receipt["worker_id"] == "agent-42"
@@ -405,4 +589,96 @@ def test_cli_snapshot_resolve_attest_round_trip(tmp_path: Path, capsys) -> None:
         )
         == 0
     )
-    assert json.loads(capsys.readouterr().out)["activation"] == "active"
+    assert json.loads(capsys.readouterr().out)["activation"] == "shadow"
+
+
+def test_every_non_planner_exact_acceptance_remains_shadowed(tmp_path: Path) -> None:
+    snapshot = agent_routes.snapshot(_workspace(tmp_path), "claude-code")
+
+    for profile in PROFILES:
+        if profile == "planner":
+            continue
+        desired = snapshot["routes"][profile]["desired"]
+        receipt = agent_routes.attest(
+            snapshot,
+            profile,
+            {
+                "request": desired,
+                "response": {"accepted": True, **desired, "transport": "native"},
+            },
+        )
+        assert receipt["activation"] == "shadow", profile
+        assert receipt["effective"] is None, profile
+
+
+def test_new_profiles_are_valid_atomic_overrides_and_duplicates_are_rejected(
+    tmp_path: Path,
+) -> None:
+    root = _workspace(tmp_path)
+    override = "review_brief_author=codex,gpt-5.6-sol,max"
+
+    resolved = agent_routes.resolve(
+        root,
+        "review_brief_author",
+        "claude-code",
+        overrides=[override],
+    )
+    assert resolved["source"] == "override"
+    assert resolved["desired"] == {
+        "harness": "codex",
+        "model": "gpt-5.6-sol",
+        "effort": "max",
+    }
+    with pytest.raises(agent_routes.RouteError, match="duplicate --route"):
+        agent_routes.snapshot(root, "codex", overrides=[override, override])
+
+
+def test_migration_emits_the_complete_catalog(tmp_path: Path) -> None:
+    root = _workspace(tmp_path, '\n[models]\nwork_model = "sonnet"\ne2e = "opus"\n')
+
+    appendix = agent_routes.migrate(root, apply=False)["appendix"]
+
+    assert all(f"[agents.{profile}" in appendix for profile in PROFILES)
+    assert "[agents.code_reviewer]" in appendix
+    assert "[agents.review_fixer]" in appendix
+    assert "[agents.review_brief_author.by_owner.codex]" in appendix
+    assert "[agents.reflector.by_owner.claude_code]" in appendix
+    assert "[agents.machinery_fixer.by_owner.codex]" in appendix
+
+
+def test_old_v1_snapshot_retains_its_recorded_routes_without_synthesis(tmp_path: Path) -> None:
+    old = agent_routes.snapshot(_workspace(tmp_path), "codex")
+    for profile in (
+        "code_reviewer",
+        "review_fixer",
+        "review_brief_author",
+        "reflector",
+        "machinery_fixer",
+    ):
+        del old["routes"][profile]
+    del old["stage_execution"]["review_brief"]
+    old["stage_execution"]["reflect"] = {
+        "kind": "owner",
+        "model": "unknown",
+        "effort": "unknown",
+        "harness": "codex",
+    }
+    body = {key: value for key, value in old.items() if key != "digest"}
+    old["digest"] = agent_routes.canonical_digest(body)
+    path = tmp_path / "old-route-snapshot.json"
+    path.write_text(json.dumps(old), encoding="utf-8")
+
+    loaded = agent_routes.load_snapshot(path)
+
+    assert set(loaded["routes"]) == {
+        "planner",
+        "plan_assessor",
+        "implementer",
+        "e2e",
+        "diff_reviewer",
+        "guard_reviewer",
+        "revision_fixer",
+    }
+    assert "review_brief" not in loaded["stage_execution"]
+    with pytest.raises(agent_routes.RouteError, match="has no route"):
+        agent_routes.resolve_snapshot(path, "reflector")

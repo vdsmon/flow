@@ -126,7 +126,15 @@ def _validate_agent_routes(data: dict[str, Any], result: ValidationResult) -> No
     for message in agent_routes.configuration_errors(data):
         result.add("agents", message)
     if isinstance(data.get("agents"), dict) and isinstance(data.get("models"), dict):
-        result.warn("models", "ignored while explicit [agents] routing mode is present")
+        fallbacks = agent_routes.legacy_fallback_profiles(data)
+        if fallbacks:
+            result.warn(
+                "models",
+                "legacy fallback remains active for profiles without explicit routes: "
+                + ", ".join(fallbacks),
+            )
+        else:
+            result.warn("models", "retained for rollback only; every profile is explicit")
 
 
 def _parse_stages(pipeline: dict[str, Any], result: ValidationResult) -> list[str] | None:

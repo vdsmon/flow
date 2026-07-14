@@ -27,7 +27,9 @@ from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
 
+import agent_routes
 import flowctl
+import init as initmod
 
 SCRIPTS_DIR = Path(__file__).resolve().parent
 SKILL_ROOT = SCRIPTS_DIR.parent
@@ -1333,6 +1335,161 @@ def docs_to_check() -> list[Path]:
     return [d for d in docs if d.is_file()]
 
 
+def _configured_profiles(toml_text: str) -> set[str]:
+    try:
+        data = tomllib.loads(toml_text)
+    except tomllib.TOMLDecodeError:
+        return set()
+    agents = data.get("agents")
+    return {str(profile) for profile in agents} if isinstance(agents, dict) else set()
+
+
+def _composed_profiles(stage_execution: dict[str, dict[str, object]]) -> set[str]:
+    profiles: set[str] = set()
+    for record in stage_execution.values():
+        profile = record.get("profile")
+        if isinstance(profile, str):
+            profiles.add(profile)
+        substeps = record.get("substeps")
+        if not isinstance(substeps, dict):
+            continue
+        for substep in substeps.values():
+            substep_profile = substep.get("profile") if isinstance(substep, dict) else None
+            if isinstance(substep_profile, str):
+                profiles.add(substep_profile)
+    return profiles
+
+
+def _route_config_drift(
+    label: str,
+    toml_text: str,
+    expected: set[str],
+    *,
+    require_complete: bool = True,
+    require_defaults: bool,
+) -> list[str]:
+    configured = _configured_profiles(toml_text)
+    missing = expected - configured
+    extra = configured - expected
+    if extra or (require_complete and missing):
+        return [f"{label} route catalog mismatch; missing {missing}, extra {extra}"]
+    configured_routes = tomllib.loads(toml_text).get("agents", {})
+    defaults = agent_routes.default_route_config()
+    defaults_drift = require_defaults and any(
+        configured_routes.get(profile) != defaults[profile] for profile in configured
+    )
+    if defaults_drift:
+        return [f"{label} route defaults diverge from agent_routes"]
+    return []
+
+
+def _inventory_route_drift(inventory_text: str, expected: set[str]) -> list[str]:
+    inventory_line = next(
+        (line for line in inventory_text.splitlines() if line.startswith("Agent route profiles:")),
+        "",
+    )
+    inventory_profiles = {
+        value.strip().strip("`")
+        for value in inventory_line.removeprefix("Agent route profiles:").split(",")
+        if value.strip()
+    }
+    drift = [
+        f"inventory route catalog is missing {profile}"
+        for profile in sorted(expected - inventory_profiles)
+    ]
+    drift.extend(
+        f"inventory route catalog names unknown profile {profile}"
+        for profile in sorted(inventory_profiles - expected)
+    )
+    return drift
+
+
+def _public_route_drift(public_registry_text: str) -> list[str]:
+    try:
+        public_data = tomllib.loads(public_registry_text)
+    except tomllib.TOMLDecodeError:
+        return ["public command registry is not valid TOML"]
+    target = next(
+        (command for command in public_data.get("command", []) if command.get("id") == "target"),
+        {},
+    )
+    route_option = next(
+        (option for option in target.get("options", []) if option.get("name") == "--route"),
+        {},
+    )
+    if route_option.get("value_type") != "agent_route":
+        return ["public --route must use the agent_route atomic value type"]
+    return []
+
+
+def route_contract_drift(
+    *,
+    stage_execution: dict[str, dict[str, object]] | None = None,
+    setup_toml: str | None = None,
+    workspace_toml: str | None = None,
+    migration_toml: str | None = None,
+    inventory_text: str | None = None,
+    public_registry_text: str | None = None,
+) -> list[str]:
+    """Compare every duplicated route surface with the central catalog."""
+    expected = set(agent_routes.PROFILES)
+    execution = (
+        stage_execution if stage_execution is not None else agent_routes.stage_execution_contract()
+    )
+
+    composed = _composed_profiles(execution)
+    drift = [
+        f"profile {profile} is absent from stage composition"
+        for profile in sorted(expected - composed)
+    ]
+    drift.extend(
+        f"stage composition names unknown profile {profile}"
+        for profile in sorted(composed - expected)
+    )
+    drift.extend(
+        f"deterministic stage {stage} must retain model=none"
+        for stage in ("ticket", "commit", "create_pr", "merge")
+        if execution.get(stage, {}).get("model") != "none"
+    )
+
+    setup = setup_toml if setup_toml is not None else initmod._default_agent_routes_toml()
+    drift.extend(_route_config_drift("native setup", setup, expected, require_defaults=True))
+
+    if workspace_toml is None:
+        workspace_path = SKILL_ROOT.parents[3] / ".flow" / "workspace.toml"
+        if workspace_path.is_file():
+            workspace_toml = workspace_path.read_text(encoding="utf-8")
+    if workspace_toml is not None:
+        # A self-hosting Flow upgrade installs the expanded validator before it can safely
+        # materialize newly introduced profiles in its own workspace.
+        # Explicit entries must already match the canonical defaults; the next increment completes
+        # the catalog and tightens this to complete=True.
+        drift.extend(
+            _route_config_drift(
+                "self-workspace",
+                workspace_toml,
+                expected,
+                require_complete=False,
+                require_defaults=True,
+            )
+        )
+
+    if migration_toml is None:
+        migration_toml = agent_routes.render_migration_routes_toml(
+            {"work_model": "sonnet", "e2e": "sonnet"}
+        )
+    drift.extend(_route_config_drift("migration", migration_toml, expected, require_defaults=False))
+
+    if inventory_text is None:
+        inventory_text = (SCRIPTS_DIR / "inventory.md").read_text(encoding="utf-8")
+    drift.extend(_inventory_route_drift(inventory_text, expected))
+
+    if public_registry_text is None:
+        public_registry_text = (SKILL_ROOT / "public-commands.toml").read_text(encoding="utf-8")
+    drift.extend(_public_route_drift(public_registry_text))
+    return drift
+
+
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(
         description="Validate Flow prose invocations against the public registry and real CLIs."
@@ -1487,6 +1644,17 @@ def main(argv: list[str]) -> int:
             raw="",
         )
         for detail in managed_agents_guidance_drift()
+    )
+
+    problems.extend(
+        Problem(
+            doc="agent route contract",
+            line=0,
+            level="ERROR",
+            msg=detail,
+            raw="",
+        )
+        for detail in route_contract_drift()
     )
 
     if args.verbose:

@@ -4,6 +4,11 @@ The terminal self-merge stage. Runs **after `reflect`**, so every output of the 
 
 A `hot`/guard PR self-merges **only after an independent reviewer subagent clears the §2 guard-property check** — the run that wrote the diff is never the sole judge of whether it removed a safety property.
 
+Merge itself remains a deterministic tool stage with `model: none`. The frozen stage
+map records its conditional cognitive substep as `guard_reviewer`. That desired route
+is shadowed in this increment, so the existing independent owner-native review path
+continues without claiming exact routed execution.
+
 The mechanical plumbing (eligibility probe, CI re-read, harness eval, main-CI health, the self-merge gate call, the §3 push-state guard, the squash merge, bead close + covers) lives in `scripts/stage_merge.py`, shelling `evolve_self_merge.py` / `main_ci_health.py` / `harness_eval.py` / `forge_cli.py` as subprocesses so the decision code stays byte-identical to what those scripts always did. This doc stays judgment-only: the two `stage_merge.py` calls, the branch on their verdict, and the §2 independent guard review that runs between them.
 
 ## 1. Probe

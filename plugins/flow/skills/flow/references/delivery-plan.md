@@ -130,7 +130,9 @@ back to the planner; the assessor never edits the plan. Every verdict includes t
 exact plan digest and author id, and a stale or differently authored verdict is refused.
 A required-fresh verdict also includes the `plan_assessor` launch-receipt digest and
 is recorded with `assess --launch-receipt <receipt>`; the receipt's distinct worker id
-must match the assessor id.
+must match the assessor id. The route receipt records `plan_assessor` as desired and
+shadowed in this increment. The existing fresh-owner execution remains the effective
+reality until routed read-only workers are activated.
 
 Immediately before review completion, diff the originally approved base against the
 latest fetched default and record the exact changed, planned, and context paths through

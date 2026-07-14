@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 
+import agent_routes
 import validate_workspace as vw
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -552,6 +553,41 @@ def test_complete_common_agent_route_is_valid(tmp_path: Path) -> None:
     assert result.ok, result.violations
 
 
+@pytest.mark.parametrize("profile", agent_routes.PROFILES)
+def test_every_cognitive_profile_accepts_a_complete_common_route(
+    tmp_path: Path, profile: str
+) -> None:
+    root = _make_workspace(tmp_path, backend="beads")
+    _append_forge(
+        root,
+        f'[agents.{profile}]\nharness = "codex"\nmodel = "test-model"\neffort = "high"\n',
+    )
+
+    result, _ = vw.validate(root)
+
+    assert result.ok, result.violations
+
+
+def test_new_profile_accepts_owner_relative_routes(tmp_path: Path) -> None:
+    root = _make_workspace(tmp_path, backend="beads")
+    _append_forge(
+        root,
+        """[agents.reflector.by_owner.claude_code]
+harness = "claude_code"
+model = "opus"
+effort = "high"
+[agents.reflector.by_owner.codex]
+harness = "codex"
+model = "gpt-5.6-sol"
+effort = "high"
+""",
+    )
+
+    result, _ = vw.validate(root)
+
+    assert result.ok, result.violations
+
+
 def test_partial_agent_route_is_invalid(tmp_path: Path) -> None:
     root = _make_workspace(tmp_path, backend="beads")
     _append_forge(root, '[agents.implementer]\nharness = "claude_code"\nmodel = "sonnet"\n')
@@ -577,7 +613,7 @@ effort = "high"
     assert any("common route or by_owner" in violation for violation in result.violations)
 
 
-def test_agents_and_models_warn_that_legacy_is_inactive(tmp_path: Path) -> None:
+def test_agents_and_models_warn_which_profiles_use_legacy_fallback(tmp_path: Path) -> None:
     root = _make_workspace(tmp_path, backend="beads")
     _append_forge(
         root,
@@ -591,7 +627,24 @@ effort = "high"
     )
     result, _ = vw.validate(root)
     assert result.ok
-    assert any("models" in warning and "ignored" in warning for warning in result.warnings)
+    assert any(
+        "models" in warning
+        and "fallback" in warning
+        and "implementer" not in warning
+        and "review_fixer" in warning
+        for warning in result.warnings
+    )
+
+
+def test_complete_agents_and_models_warn_that_models_are_rollback_only(tmp_path: Path) -> None:
+    root = _make_workspace(tmp_path, backend="beads")
+    routes = agent_routes.render_default_routes_toml()
+    _append_forge(root, f'[models]\nwork_model = "opus"\n{routes}')
+
+    result, _ = vw.validate(root)
+
+    assert result.ok
+    assert any("rollback only" in warning for warning in result.warnings)
 
 
 def test_inline_code_review_with_per_stage_pin_no_warn(tmp_path: Path) -> None:

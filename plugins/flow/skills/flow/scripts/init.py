@@ -42,6 +42,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
+import agent_routes
 import flow_launcher
 from _atomicio import atomic_write_bytes, atomic_write_text
 from _registry import StageEntry, load_registry, parse_handler
@@ -492,66 +493,7 @@ def _render_workspace_toml(
 
 def _default_agent_routes_toml() -> str:
     """Return the native setup defaults; generic setup intentionally omits them."""
-    return """[agents.planner]
-harness = "codex"
-model = "gpt-5.6-sol"
-effort = "xhigh"
-
-[agents.plan_assessor]
-harness = "claude_code"
-model = "opus"
-effort = "high"
-
-[agents.implementer.by_owner.claude_code]
-harness = "claude_code"
-model = "sonnet"
-effort = "high"
-
-[agents.implementer.by_owner.codex]
-harness = "codex"
-model = "gpt-5.6-luna"
-effort = "high"
-
-[agents.e2e.by_owner.claude_code]
-harness = "claude_code"
-model = "sonnet"
-effort = "medium"
-
-[agents.e2e.by_owner.codex]
-harness = "codex"
-model = "gpt-5.6-luna"
-effort = "medium"
-
-[agents.diff_reviewer.by_owner.claude_code]
-harness = "claude_code"
-model = "opus"
-effort = "high"
-
-[agents.diff_reviewer.by_owner.codex]
-harness = "codex"
-model = "gpt-5.6-sol"
-effort = "high"
-
-[agents.guard_reviewer.by_owner.claude_code]
-harness = "claude_code"
-model = "opus"
-effort = "high"
-
-[agents.guard_reviewer.by_owner.codex]
-harness = "codex"
-model = "gpt-5.6-sol"
-effort = "high"
-
-[agents.revision_fixer.by_owner.claude_code]
-harness = "claude_code"
-model = "sonnet"
-effort = "high"
-
-[agents.revision_fixer.by_owner.codex]
-harness = "codex"
-model = "gpt-5.6-luna"
-effort = "high"
-"""
+    return agent_routes.render_default_routes_toml()
 
 
 def _preserved_routing_toml(workspace_toml_text: str | None) -> str:

@@ -77,17 +77,19 @@ beneath the workspace, and every facade call applies the call-local `FLOW_HARNES
 selector to the absolute bound `facade`.
 
 When `descriptor.roles` includes `"agent_routed"`, resolve its frozen profile from
-`$TICKET_DIR/route-snapshot.json` through the facade. `implement` maps to
-`implementer`; `e2e` maps to `e2e`:
+`$TICKET_DIR/route-snapshot.json` through the facade. The stage map is frozen in the
+same snapshot. Current agent-routed descriptors still map `implement` to
+`implementer` and `e2e` to `e2e`:
 
 ```bash
 FLOW_HARNESS="<harness>" "<facade>" agent-route resolve \
   --snapshot "$TICKET_DIR/route-snapshot.json" --profile "<profile>"
 ```
 
-An `activation: pending` Claude Code route supplies the exact desired model and
-effort to the native launch. Capture the native tool request and response as JSON;
-never use the worker's prose as acceptance evidence. Attest and persist it:
+Only planner routes may have `activation: pending`. A post-plan desired route is
+provenance for the future execution capsule and does not change the current native
+launch. Capture the native tool request and response as JSON, and never use the worker's
+prose as acceptance evidence. Attest and persist it:
 
 ```bash
 FLOW_HARNESS="<harness>" "<facade>" agent-route attest \
@@ -96,10 +98,11 @@ FLOW_HARNESS="<harness>" "<facade>" agent-route attest \
   --output "$TICKET_DIR/stages/<stage>.route.json"
 ```
 
-Only an `active` receipt proves exact execution. A `shadow` Codex, generic, or
-cross-harness route launches through the existing owner-native path with no model or
-effort selector and records the shadow receipt. Codex does not retry merely because
-a desired route stayed shadowed. A `legacy` route follows
+Only an `active` planner receipt proves exact routed execution. Every post-plan
+receipt is `shadow` with `effective: null`, including a same-owner exact native
+acceptance. The handler launches through its existing owner-native or inline path and
+records the desired route without claiming it ran. Do not retry because a desired
+route stayed shadowed. A `legacy` route follows
 `model_resolve.py` unchanged, including lane skips, OFF, fail-open reads, and Codex
 inheritance. A missing route snapshot identifies a pre-upgrade run and takes the
 same legacy path.

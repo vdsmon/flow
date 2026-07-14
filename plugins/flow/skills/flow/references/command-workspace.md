@@ -76,14 +76,19 @@ validation, not an error and not a destructive reconfiguration.
 
 Fresh Claude Code and Codex setup writes explicit `[agents]` defaults. Generic setup
 emits no route that its adapter cannot honor. Existing `[models]` configuration stays
-in standalone compatibility mode during repair or reconfiguration; setup never
-silently converts it.
+in standalone compatibility mode during repair or reconfiguration. Setup never
+silently converts it. When a workspace has both tables, a missing explicit profile
+uses its corresponding legacy model when one exists, then falls back to the built-in
+route for profiles without a legacy knob.
 
-The native default planner is `codex / gpt-5.6-sol / xhigh`. Configured and built-in
-planner routes enter the strict read-only CLI path without a per-run override. Exact
-capability, authentication, schema, and launch-receipt evidence is required. A failure
-stops the attempt and does not select another harness or model. Post-plan cross-harness
-workers remain shadowed.
+Native setup emits all twelve profiles from the central route catalog. Planner remains
+`codex / gpt-5.6-sol / xhigh`, and plan assessment remains
+`claude_code / opus / high`. Review and reflection use the owner's strong tier.
+Implementation, fixes, and review-brief authorship use its faster tier, while E2E
+uses that tier at medium effort. Configured and built-in planner routes enter the strict
+read-only CLI path without a per-run override. Exact capability, authentication,
+schema, and launch-receipt evidence is required. A failure stops the attempt and does
+not select another harness or model. Every non-planner profile remains shadowed.
 
 Review migration before applying it:
 
@@ -94,10 +99,11 @@ FLOW_HARNESS="<harness>" "<facade>" agent-route migrate \
   --workspace-root . --apply --confirm
 ```
 
-The migration appends complete routes atomically and preserves every existing byte.
-It refuses OFF values and provider aliases that cannot become an explicit Claude
-Code route. Removing the appended `[agents]` tables restores the unchanged legacy
-block.
+The migration appends the complete twelve-profile catalog atomically and preserves
+every existing byte. It translates roles that have legacy stage knobs and fills the
+remaining roles from declared built-ins. It refuses OFF values and provider aliases
+that cannot become an explicit Claude Code route. Removing the appended `[agents]`
+tables restores the unchanged legacy block.
 
 ## `FLOW workspace inspect [<target>] [--json]`
 

@@ -12,6 +12,10 @@ artifact, opens it when configured, records `STATUS=completed`, and advances to
 Forge. Forge remains the source of truth for the full diff, comments, approval, and
 merge authorization.
 
+The route snapshot records the cognitive authorship as `review_brief_author`. Its
+desired route remains shadowed with `effective: null`, while the inline owner still authors
+the evidence model in this increment, and the deterministic renderer publishes it.
+
 The registry default handler is `inline`, so newly initialized and explicitly
 reconfigured workspaces receive the stage. Existing workspaces that omit the optional
 stage keep their current behavior. When `create_pr` is `none`, no `[forge]` block

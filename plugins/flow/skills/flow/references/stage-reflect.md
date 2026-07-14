@@ -8,6 +8,10 @@ Reflect is the closing stage. When `review_brief` is configured, reflection star
 soon as that stage publishes its snapshot; it does not wait for the human to finish
 reading the brief or reviewing in Forge. Human review and reflection intentionally
 overlap.
+The route snapshot records the read-only reflection decision as `reflector` and any
+conditional machinery edit as a separate `machinery_fixer` substep. Both desired
+routes remain shadowed with `effective: null`, while the existing inline owner performs
+reflection and the guarded machinery path remains unchanged in this increment.
 The discipline here is what makes `FLOW` compounding: every ticket's run produces 0..N knowledge entries that future tickets in the same workspace can recall via BM25.
 Reflection runs on three lenses, two of them gated by `workspace.toml [reflect]` flags that `reflect_inputs.py` surfaces in the bundle as `reflect_config` (step 1):
 

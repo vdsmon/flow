@@ -51,7 +51,7 @@ options = [
   { name = "--verify", value_type = "choice", cardinality = "zero_or_one", choices = ["express", "light", "full"], conflicts = ["--unattended"] },
   { name = "--e2e", value_type = "text", cardinality = "zero_or_one" },
   { name = "--request", value_type = "text", cardinality = "zero_or_one" },
-  { name = "--route", value_type = "text", cardinality = "zero_or_more" },
+  { name = "--route", value_type = "agent_route", cardinality = "zero_or_more" },
 ]
 
 [[command]]

@@ -44,11 +44,11 @@ roots, stop for authorization rather than escaping the sandbox.
 
 Do not infer the harness from ambient environment. The adapter supplies it. Public
 route configuration uses `claude_code` and `codex`; Flow normalizes the ambient
-`claude-code` adapter name at the boundary. Claude Code activates a post-plan route
-only from the structured native tool response for the exact model and effort. The
-configured, built-in, or overridden planner may activate through an exact structured
-CLI receipt on either owner harness. Current Codex post-plan routes remain desired
-shadow routes and inherit the active model.
+`claude-code` adapter name at the boundary. The configured, built-in, or overridden
+planner may activate through an exact structured CLI receipt on either owner harness.
+Every non-planner profile remains a desired shadow route in this increment, on both
+owner harnesses, even when a native response matches its model and effort. Existing
+post-plan handlers continue to inherit the active owner model or run inline.
 
 ## Discovery and runtime
 
