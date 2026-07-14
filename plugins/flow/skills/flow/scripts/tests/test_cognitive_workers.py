@@ -151,6 +151,41 @@ def test_read_only_git_receipt_detects_untracked_and_mode_mutation(tmp_path: Pat
     assert cw.git_receipt(source)["digest"] == before["digest"]
 
 
+def test_read_only_git_receipt_detects_an_untracked_content_rewrite(tmp_path: Path) -> None:
+    """Untracked paths reach status --porcelain=v2 by name only, and git diff skips them."""
+    source, _ = _repository(tmp_path)
+    note = source / "note.log"
+    note.write_text("untracked-a\n", encoding="utf-8")
+    before = cw.git_receipt(source)
+
+    note.write_text("untracked-b\n", encoding="utf-8")
+    after = cw.git_receipt(source)
+
+    assert after["status"] == before["status"]
+    assert after["worktree_diff"] == before["worktree_diff"]
+    assert after["digest"] != before["digest"]
+
+    note.write_text("untracked-a\n", encoding="utf-8")
+    assert cw.git_receipt(source)["digest"] == before["digest"]
+
+
+def test_read_only_git_receipt_size_marks_an_over_cap_untracked_file(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Over the cap the entry carries a size, so an equal-size rewrite escapes the guard."""
+    monkeypatch.setattr(cw, "UNTRACKED_DIGEST_MAX_FILE_BYTES", 8)
+    source, _ = _repository(tmp_path)
+    big = source / "big.bin"
+    big.write_bytes(b"aaaaaaaaaaaa")
+    before = cw.git_receipt(source)
+
+    big.write_bytes(b"bbbbbbbbbbbb")
+    assert cw.git_receipt(source)["digest"] == before["digest"]
+
+    big.write_bytes(b"bbbbbbbbbbbbb")
+    assert cw.git_receipt(source)["digest"] != before["digest"]
+
+
 def _ignore_runtime_and_caches(source: Path) -> None:
     (source / ".gitignore").write_text("**/.flow/runtime/\ncaches/\n", encoding="utf-8")
     _git(source, "add", ".gitignore")
