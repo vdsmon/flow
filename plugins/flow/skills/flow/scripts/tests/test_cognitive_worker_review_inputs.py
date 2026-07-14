@@ -103,6 +103,31 @@ def test_review_bundle_rejects_a_repository_that_changes_during_capture(
     assert not (tmp_path / "bundle").exists()
 
 
+def test_review_bundle_rejects_an_in_place_tracked_rewrite_during_capture(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The rewritten file is already modified, so its porcelain=v2 record never moves."""
+    root = _repository(tmp_path)
+    (root / "base.txt").write_text("dirty-a\n", encoding="utf-8")
+    status_before = _git(root, "status", "--porcelain=v2")
+    real = cw.git_receipt
+    calls = {"n": 0}
+
+    def racing(target: Path) -> dict[str, object]:
+        calls["n"] += 1
+        if calls["n"] == 2:
+            (root / "base.txt").write_text("dirty-b\n", encoding="utf-8")
+        return real(target)
+
+    monkeypatch.setattr(cw, "git_receipt", racing)
+    with pytest.raises(cw.WorkerFailure, match="changed while review evidence") as error:
+        cw.build_review_input_bundle(root, tmp_path / "bundle")
+
+    assert error.value.code == "baseline_mismatch"
+    assert _git(root, "status", "--porcelain=v2") == status_before
+    assert not (tmp_path / "bundle").exists()
+
+
 def test_review_bundle_refuses_a_special_file(tmp_path: Path) -> None:
     root = _repository(tmp_path)
     os.mkfifo(root / "pipe")
@@ -110,7 +135,7 @@ def test_review_bundle_refuses_a_special_file(tmp_path: Path) -> None:
     blobs.mkdir()
 
     with pytest.raises(cw.WorkerFailure, match="special file"):
-        cw._path_payload(root, b"pipe", blobs)
+        cw._path_payload(root, b"pipe", blobs, 1024)
 
     # Git itself never reports a FIFO as untracked, so the bundle publishes without it.
     cw.build_review_input_bundle(root, tmp_path / "bundle")
@@ -166,6 +191,28 @@ def test_review_bundle_fails_closed_on_its_size_policy(tmp_path: Path) -> None:
     assert not (tmp_path / "bundle").exists()
 
 
+def test_review_bundle_rejects_an_oversized_file_without_reading_it(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root = _repository(tmp_path)
+    huge = root / "huge.bin"
+    with huge.open("wb") as handle:
+        handle.truncate(64 * 1024 * 1024)
+    reads: list[Path] = []
+    real_read = Path.read_bytes
+
+    def watched(self: Path) -> bytes:
+        reads.append(self)
+        return real_read(self)
+
+    monkeypatch.setattr(Path, "read_bytes", watched)
+    with pytest.raises(cw.WorkerFailure, match="byte limit"):
+        cw.build_review_input_bundle(root, tmp_path / "bundle", max_bytes=4096)
+
+    assert huge not in reads
+    assert not (tmp_path / "bundle").exists()
+
+
 def test_review_bundle_is_immutable_once_published(tmp_path: Path) -> None:
     root = _repository(tmp_path)
     (root / "note.txt").write_text("note\n", encoding="utf-8")
@@ -208,6 +255,20 @@ def test_index_flags_cannot_hide_a_tracked_file_rewrite(tmp_path: Path) -> None:
     _git(root, "update-index", "--no-assume-unchanged", "base.txt")
     (root / "base.txt").write_text("base\n", encoding="utf-8")
     assert cw.git_receipt(root)["digest"] == before
+
+
+def test_an_in_place_tracked_rewrite_is_a_repository_change(tmp_path: Path) -> None:
+    """status --porcelain=v2 and ls-files --stage report no worktree content hash."""
+    root = _repository(tmp_path)
+    (root / "base.txt").write_text("dirty-a\n", encoding="utf-8")
+    before = cw.git_receipt(root)
+
+    (root / "base.txt").write_text("dirty-b\n", encoding="utf-8")
+    after = cw.git_receipt(root)
+
+    assert after["status"] == before["status"]
+    assert after["index"] == before["index"]
+    assert after["digest"] != before["digest"]
 
 
 def test_an_injected_git_hook_is_a_repository_change(tmp_path: Path) -> None:

@@ -1056,6 +1056,13 @@ def git_receipt(root: Path) -> dict[str, Any]:
     # rewrite from the whole guard. This listing is stable across a stat-cache refresh, so it
     # restores the coverage the raw .git/index hash gave without its false positives.
     index_flags = _git_bytes(resolved, "ls-files", "-v", "-z")
+    # Neither status --porcelain=v2 nor ls-files --stage carries a worktree content hash, so a
+    # tracked file rewritten in place keeps both digests equal while its bytes change. The
+    # unstaged diff hashes that content through Git and stays byte-identical across a stat-cache
+    # refresh, which is why the raw .git/index below is still excluded.
+    worktree_diff = _git_bytes(
+        resolved, "diff", "--binary", "--full-index", "--no-ext-diff", "--no-textconv"
+    )
     submodules = _git_bytes(resolved, "submodule", "status", "--recursive")
     hooks = sorted(
         (entry.name, entry.stat().st_mode, hashlib.sha256(entry.read_bytes()).hexdigest())
@@ -1088,6 +1095,10 @@ def git_receipt(root: Path) -> dict[str, Any]:
         "index_flags": {
             "length": len(index_flags),
             "sha256": hashlib.sha256(index_flags).hexdigest(),
+        },
+        "worktree_diff": {
+            "length": len(worktree_diff),
+            "sha256": hashlib.sha256(worktree_diff).hexdigest(),
         },
         "submodules": {"length": len(submodules), "sha256": hashlib.sha256(submodules).hexdigest()},
         "metadata": metadata,
@@ -1223,11 +1234,15 @@ def _write_blob(blobs: Path, data: bytes) -> dict[str, Any]:
     return {"sha256": digest, "length": len(data), "blob": f"blobs/{digest}"}
 
 
-def _path_payload(root: Path, raw: bytes, blobs: Path) -> dict[str, Any]:
+def _path_payload(root: Path, raw: bytes, blobs: Path, budget: int) -> dict[str, Any]:
     path = root / os.fsdecode(raw)
     item: dict[str, Any] = _encoded_path(raw)
-    mode = path.lstat().st_mode
+    info = path.lstat()
+    mode = info.st_mode
     item["mode"] = stat.S_IMODE(mode)
+    # Size first: reading a huge artifact into memory to then reject it is how the limit OOMs.
+    if info.st_size > budget:
+        raise WorkerFailure("review bundle exceeds its byte limit", code="artifact_failure")
     if stat.S_ISREG(mode):
         item["kind"] = "file"
         item.update(_write_blob(blobs, path.read_bytes()))
@@ -1280,10 +1295,14 @@ def build_review_input_bundle(
             raise WorkerFailure(
                 "review bundle exceeds the untracked-file limit", code="artifact_failure"
             )
-        untracked = [_path_payload(source, raw, blobs) for raw in paths]
-        blob_bytes = sum(int(item["length"]) for item in untracked)
-        if blob_bytes + len(staged) + len(worktree) > max_bytes:
+        budget = max_bytes - len(staged) - len(worktree)
+        if budget < 0:
             raise WorkerFailure("review bundle exceeds its byte limit", code="artifact_failure")
+        untracked: list[dict[str, Any]] = []
+        for raw in paths:
+            item = _path_payload(source, raw, blobs, budget)
+            budget -= int(item["length"])
+            untracked.append(item)
         raw_dir = temporary / "raw"
         raw_dir.mkdir()
         raw_files = {
