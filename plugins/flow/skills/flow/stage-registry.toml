@@ -53,7 +53,7 @@ required_predecessors = ["ticket"]
 required = false
 required_when_compounding = false
 reference_doc = "references/stage-plan.md"
-roles = []
+roles = ["agent_routed"]
 
 [[stage]]
 name = "implement"
@@ -76,7 +76,7 @@ required_predecessors = ["implement"]
 required = false
 required_when_compounding = false
 reference_doc = "references/stage-code_review.md"
-roles = []
+roles = ["agent_routed"]
 
 [[stage]]
 name = "e2e"
@@ -133,7 +133,7 @@ required_predecessors = ["create_pr"]
 required = false
 required_when_compounding = false
 reference_doc = "references/stage-review_brief.md"
-roles = []
+roles = ["agent_routed"]
 
 [[stage]]
 name = "reflect"
@@ -144,7 +144,7 @@ required_predecessors = []
 required = false
 required_when_compounding = true
 reference_doc = "references/stage-reflect.md"
-roles = ["reflect_anchor", "ship_observer"]
+roles = ["reflect_anchor", "ship_observer", "agent_routed"]
 
 [[stage]]
 name = "merge"
@@ -155,4 +155,4 @@ required_predecessors = ["reflect"]
 required = false
 required_when_compounding = false
 reference_doc = "references/stage-merge.md"
-roles = []
+roles = ["agent_routed"]

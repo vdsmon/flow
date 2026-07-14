@@ -234,10 +234,10 @@ defaults. Profiles without a legacy knob go straight to their built-in route. Bo
 canonical route snapshot. The snapshot records plan assessment, implementation, E2E,
 primary and plan-blind review, ordinary and revision fixes, review-brief authorship,
 reflection, optional machinery fixes, and merge guarding. Ticket, commit, PR creation,
-and merge retain `model: none` at stage level. Only planner may activate exact routed
-execution in this increment. Every non-planner profile stays shadowed with
-`effective: null`, including a matching native acceptance, while its current inline
-or owner-native path continues.
+and merge retain `model: none` at stage level. Exact CLI receipts may activate the
+planner, plan assessor, code and plan-blind reviewers, guard reviewer, review-brief
+author, and reflector. Writer and E2E profiles remain shadowed with `effective: null`
+while their current owner-native paths continue.
 
 `agent_routes.py` owns resolution, snapshot digests, attestations, and the surgical
 `migrate --check|--apply` operation. Migration leaves `[models]` bytes intact so
@@ -248,6 +248,14 @@ path. Exact capability, authentication, provider-schema acceptance, and launch r
 evidence is required before activation. Failure stops visibly without selecting a
 fallback route. `snapshot --workspace-config` resolves from bytes read at the fetched
 base SHA instead of ambient checkout state.
+
+`cognitive_workers.py` is the common exact-route boundary. It owns the closed role
+catalog, prompt and schema digests, standalone exact-SHA clones, immutable dirty-review
+bundles, durable invocation journals, provider commands, process-group terminal proof,
+typed results, Git guards, cleanup, and quarantine. Writer and E2E requests fail before
+capsule allocation. `cognitive_worker_smoke.py` verifies a fresh challenge from a real
+Codex or Claude Code parent through the nested exact route, terminal, Git, and disposal
+receipts. Setting `FLOW_HARNESS` without the real outer executable cannot satisfy it.
 
 ### Pre-approval planning schemas
 
@@ -277,7 +285,8 @@ The intent phase records branch and worktree before Git mutation so every crash 
 has deterministic rollback coordinates. Cleanup clears those coordinates only after
 worktree and branch removal are proven.
 
-`planner_worker.py` reports one record per physical launch: attempt number, exact
+`planner_worker.py` is the compatibility wrapper over the common capsule and journal
+primitives. It reports one record per physical launch: attempt number, exact
 600-second soft and 2400-second hard budgets, deadline events, outcome, elapsed time,
 and terminal acknowledgement. One fresh retry receives a new budget after process and
 output closure. Aggregate wall time is a separate field rather than an attempt metric.
@@ -952,8 +961,12 @@ Bundles the reflect-stage's inputs into a single JSON payload for the reflect LL
 | `--ticket-dir` | `.flow/runs/<ticket>` directory. |
 | `--ticket-frontmatter` | Optional path to ticket .md frontmatter file. |
 | `--cwd` | Git repo working dir (for `diff_since_stage` call). Default `.`. |
+| `--immutable-output` | Atomically write `flow.reflection-input-bundle/v1` for routed reflection. |
+| `--source-sha` / `--route-digest` / `--stage-generation` | Required digest and generation fence for immutable output. |
 
 Payload shape: `{ticket, run_id, state, ticket_frontmatter, final_diff, subagent_reports[], friction[], recalled_entries[], reflect_config, harness_eval}`.
+Immutable mode wraps the unchanged payload with exact source, route, generation, payload
+digest, and envelope digest fields and publishes it read-only.
 `final_diff` is null when ticket stage never started.
 Missing report files → `body: null` + warning to stderr (not fatal).
 

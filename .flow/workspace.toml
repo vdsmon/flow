@@ -82,12 +82,62 @@ harness = "codex"
 model = "gpt-5.6-sol"
 effort = "high"
 
+[agents.code_reviewer.by_owner.claude_code]
+harness = "claude_code"
+model = "opus"
+effort = "high"
+
+[agents.code_reviewer.by_owner.codex]
+harness = "codex"
+model = "gpt-5.6-sol"
+effort = "high"
+
+[agents.review_fixer.by_owner.claude_code]
+harness = "claude_code"
+model = "sonnet"
+effort = "high"
+
+[agents.review_fixer.by_owner.codex]
+harness = "codex"
+model = "gpt-5.6-luna"
+effort = "high"
+
 [agents.revision_fixer.by_owner.claude_code]
 harness = "claude_code"
 model = "sonnet"
 effort = "high"
 
 [agents.revision_fixer.by_owner.codex]
+harness = "codex"
+model = "gpt-5.6-luna"
+effort = "high"
+
+[agents.review_brief_author.by_owner.claude_code]
+harness = "claude_code"
+model = "sonnet"
+effort = "high"
+
+[agents.review_brief_author.by_owner.codex]
+harness = "codex"
+model = "gpt-5.6-luna"
+effort = "high"
+
+[agents.reflector.by_owner.claude_code]
+harness = "claude_code"
+model = "opus"
+effort = "high"
+
+[agents.reflector.by_owner.codex]
+harness = "codex"
+model = "gpt-5.6-sol"
+effort = "high"
+
+[agents.machinery_fixer.by_owner.claude_code]
+harness = "claude_code"
+model = "sonnet"
+effort = "high"
+
+[agents.machinery_fixer.by_owner.codex]
 harness = "codex"
 model = "gpt-5.6-luna"
 effort = "high"

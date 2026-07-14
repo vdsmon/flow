@@ -1,13 +1,21 @@
 # merge stage (inline, evolve self-target only)
 
+## Routed guard review
+
+When the deterministic hot-path probe requires independent judgment and the frozen
+route is active, issue `guard_reviewer` over the immutable guard diff and fixed guard
+properties. Only a matching stage-generation-fenced `clean` outcome permits the merge.
+Worker failure, a stale outcome, or a `block` verdict holds the merge without native or
+alternate-model fallback. The reviewer has no write or merge authority.
+
 The terminal self-merge stage. Runs **after `reflect`**, so every output of the run is committed before the PR lands. Default handler is `none` (the generic pipeline and every user project skip it — the human keystone holds); flow's own self-target workspace wires `merge = "inline"`. This is **Layer 2** of the evolve restructure: an evolve run that reached green + review-clean (`review_loop`) merges its own PR instead of waiting for a deferred drain pass.
 
 A `hot`/guard PR self-merges **only after an independent reviewer subagent clears the §2 guard-property check** — the run that wrote the diff is never the sole judge of whether it removed a safety property.
 
 Merge itself remains a deterministic tool stage with `model: none`. The frozen stage
-map records its conditional cognitive substep as `guard_reviewer`. That desired route
-is shadowed in this increment, so the existing independent owner-native review path
-continues without claiming exact routed execution.
+map records its conditional cognitive substep as `guard_reviewer`. A new exact snapshot
+activates the routed guard. Historical, generic, or shadow snapshots retain their
+recorded owner-native independent review path without claiming routed execution.
 
 The mechanical plumbing (eligibility probe, CI re-read, harness eval, main-CI health, the self-merge gate call, the §3 push-state guard, the squash merge, bead close + covers) lives in `scripts/stage_merge.py`, shelling `evolve_self_merge.py` / `main_ci_health.py` / `harness_eval.py` / `forge_cli.py` as subprocesses so the decision code stays byte-identical to what those scripts always did. This doc stays judgment-only: the two `stage_merge.py` calls, the branch on their verdict, and the §2 independent guard review that runs between them.
 

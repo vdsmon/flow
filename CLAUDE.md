@@ -1,5 +1,12 @@
 # CLAUDE.md
 
+Flow's cognitive route catalog is authoritative for model selection. New exact route
+snapshots may launch read-only planning, assessment, review, review-brief authorship,
+and reflection through either Claude Code or Codex capsules. Keep the owner as the
+single human cockpit, pass exact typed outcomes back to dispatch, and never treat an
+environment-only harness label as cross-harness execution proof. Writer and E2E routes
+remain shadowed in this increment.
+
 Guide for Claude Code or Codex working in the `flow` repo.
 
 ## What this is

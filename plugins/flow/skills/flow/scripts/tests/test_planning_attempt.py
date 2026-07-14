@@ -83,6 +83,8 @@ def _launch_receipt(
         "worker_id": worker_id,
         "prompt_hash": pa.canonical_digest({"version": version}),
         "schema_hash": "d" * 64,
+        "physical_attempt": {"pid": 17, "terminal_acknowledged": True},
+        "cleanup": {"capsule_absent": True, "quarantined": False},
     }
     return {**body, "digest": pa.canonical_digest(body)}
 
@@ -375,8 +377,8 @@ def test_fresh_assessment_requires_matching_worker_launch_provenance() -> None:
         profile="plan_assessor",
         harness="claude_code",
         model="opus",
-        activation="shadow",
-        transport="codex_collaboration",
+        activation="active",
+        transport="cli",
         worker_id="assessor-agent-1",
     )
     current = attempt.current

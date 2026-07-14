@@ -1,5 +1,14 @@
 # review_brief stage (inline, local reviewer companion)
 
+## Routed authorship boundary
+
+On an active exact route, `review_brief_author` receives immutable ticket, plan, PR,
+review, E2E, and CI facts and returns only the existing validated content model. The
+worker cannot render, publish, open a browser, or mutate source. `review_brief.py`
+retains deterministic snapshot binding, HTML rendering, publication, and freshness.
+The matching cognitive outcome is stage-generation fenced; exact-route failure stops
+instead of silently asking the owner to author the brief.
+
 Generate a beautiful, read-only HTML companion for the human reviewing the PR.
 The brief answers the questions a maintainer arriving cold to a large codebase has
 before a raw diff becomes legible: **why did this need to change, what happened
@@ -12,9 +21,10 @@ artifact, opens it when configured, records `STATUS=completed`, and advances to
 Forge. Forge remains the source of truth for the full diff, comments, approval, and
 merge authorization.
 
-The route snapshot records the cognitive authorship as `review_brief_author`. Its
-desired route remains shadowed with `effective: null`, while the inline owner still authors
-the evidence model in this increment, and the deterministic renderer publishes it.
+The route snapshot records the cognitive authorship as `review_brief_author`. A new
+exact snapshot runs the author in a read-only capsule; historical or generic shadow
+runs retain inline authorship. The deterministic renderer publishes either validated
+content model through the same snapshot-bound path.
 
 The registry default handler is `inline`, so newly initialized and explicitly
 reconfigured workspaces receive the stage. Existing workspaces that omit the optional

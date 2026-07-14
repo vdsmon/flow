@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import hashlib
 import re
 import shlex
 import subprocess
@@ -33,6 +34,7 @@ import init as initmod
 
 SCRIPTS_DIR = Path(__file__).resolve().parent
 SKILL_ROOT = SCRIPTS_DIR.parent
+_COGNITIVE_WORKER_DESIGN_DIGEST = "36b2007e88e43cd99b6c1b3a99b7a4102ff6f099a9525f6a58854b01407f3a85"
 
 # A direct script reference inside prose, using a legacy child environment alias or the
 # harness-neutral loaded-root placeholder.
@@ -1460,16 +1462,12 @@ def route_contract_drift(
         if workspace_path.is_file():
             workspace_toml = workspace_path.read_text(encoding="utf-8")
     if workspace_toml is not None:
-        # A self-hosting Flow upgrade installs the expanded validator before it can safely
-        # materialize newly introduced profiles in its own workspace.
-        # Explicit entries must already match the canonical defaults; the next increment completes
-        # the catalog and tightens this to complete=True.
         drift.extend(
             _route_config_drift(
                 "self-workspace",
                 workspace_toml,
                 expected,
-                require_complete=False,
+                require_complete=True,
                 require_defaults=True,
             )
         )
@@ -1488,6 +1486,26 @@ def route_contract_drift(
         public_registry_text = (SKILL_ROOT / "public-commands.toml").read_text(encoding="utf-8")
     drift.extend(_public_route_drift(public_registry_text))
     return drift
+
+
+def cognitive_worker_design_drift(path: Path | None = None) -> list[str]:
+    """Require the landed capsule design to match its approved source bytes."""
+    design = path or (
+        SKILL_ROOT.parents[3]
+        / "docs"
+        / "specs"
+        / "2026-07-14-universal-cognitive-worker-routing-design.md"
+    )
+    try:
+        digest = hashlib.sha256(design.read_bytes()).hexdigest()
+    except OSError as exc:
+        return [f"cannot read cognitive-worker design: {exc}"]
+    if digest != _COGNITIVE_WORKER_DESIGN_DIGEST:
+        return [
+            "cognitive-worker design digest is "
+            f"{digest}, expected {_COGNITIVE_WORKER_DESIGN_DIGEST}"
+        ]
+    return []
 
 
 def main(argv: list[str]) -> int:
@@ -1655,6 +1673,17 @@ def main(argv: list[str]) -> int:
             raw="",
         )
         for detail in route_contract_drift()
+    )
+
+    problems.extend(
+        Problem(
+            doc="cognitive-worker design",
+            line=0,
+            level="ERROR",
+            msg=detail,
+            raw="",
+        )
+        for detail in cognitive_worker_design_drift()
     )
 
     if args.verbose:

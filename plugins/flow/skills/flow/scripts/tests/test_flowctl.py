@@ -32,6 +32,7 @@ def test_hot_path_command_resolution() -> None:
         "commands": "public_commands_cli.py",
         "lifecycle": "lifecycle_cli.py",
         "cockpit": "cockpit_cli.py",
+        "cognitive-worker": "cognitive_workers.py",
         "maintainer-preflight": "maintainer_preflight.py",
         "worker-pool": "worker_pool.py",
         "maintainer-senses": "senses_deadman.py",

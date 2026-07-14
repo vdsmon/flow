@@ -1,5 +1,14 @@
 # Stage: reflect
 
+## Routed reflection boundary
+
+`reflect-inputs --immutable-output` publishes the unchanged historical payload inside
+`flow.reflection-input-bundle/v1`, bound to the exact source SHA, route digest, and
+stage generation. An active `reflector` returns typed proposals only. Deterministic
+Flow commands remain the sole appliers for knowledge, supersession, recall usage,
+project-rule suggestions, and ship events. `machinery_fixer` stays shadowed and
+separate, so reflection never acquires source-write authority through its findings.
+
 ## Purpose
 
 Extract durable knowledge from this ticket's run, append entries to the compounding memory layer, and (if the ticket shipped) record an immutable ship-event evidence record.
@@ -9,9 +18,9 @@ soon as that stage publishes its snapshot; it does not wait for the human to fin
 reading the brief or reviewing in Forge. Human review and reflection intentionally
 overlap.
 The route snapshot records the read-only reflection decision as `reflector` and any
-conditional machinery edit as a separate `machinery_fixer` substep. Both desired
-routes remain shadowed with `effective: null`, while the existing inline owner performs
-reflection and the guarded machinery path remains unchanged in this increment.
+conditional machinery edit as a separate `machinery_fixer` substep. New exact snapshots
+activate the reflector; machinery repair remains shadowed and guarded. Historical and
+generic shadow runs retain inline reflection.
 The discipline here is what makes `FLOW` compounding: every ticket's run produces 0..N knowledge entries that future tickets in the same workspace can recall via BM25.
 Reflection runs on three lenses, two of them gated by `workspace.toml [reflect]` flags that `reflect_inputs.py` surfaces in the bundle as `reflect_config` (step 1):
 

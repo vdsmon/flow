@@ -1,5 +1,14 @@
 # Robustness: the load-bearing safety machinery
 
+## Cognitive-worker failure containment
+
+Every physical worker is isolated from the authoritative checkout in a standalone
+exact-SHA clone. Intent is durable before clone and process launch. Cancellation is
+acknowledged only after direct-child reap, process-group absence, and both stream EOFs.
+Ambiguous termination or a Git postcondition mismatch quarantines evidence and forbids
+replacement. Validated read-only completion removes the capsule; cleanup failure is a
+hard artifact failure. Increment two contains no patch apply or import path.
+
 The index CLAUDE.md's "Robustness (do not erode)" paragraph points at. Each mechanism below accreted from a real incident; the "witnessed failure" column is the proof it is load-bearing, not incidental complexity — mined from the `fix:` history so a reader no longer needs git archaeology to know which clauses are safe to touch. Simplify presentation, never the machinery.
 
 The taxonomy is typed: **four correctness guards** (they make a wrong outcome impossible), on **one substrate** (the primitive they share), plus **one feedstock** (not a guard — the evidence stream self-evolution runs on). Older prose disagreed on the five-item membership (friction logging vs flock); this list supersedes both readings.

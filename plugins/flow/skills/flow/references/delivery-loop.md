@@ -1,5 +1,13 @@
 # Dispatcher delivery loop
 
+## Cognitive outcome fence
+
+Dispatch seals each cognitive substep with run, stage, substep, stage generation,
+source SHA, route snapshot, owner, and lease facts. Resuming an in-progress stage reuses
+the generation; an explicit retry increments it. Stage completion accepts only matching
+successful outcomes or a reasoned conditional skip. The model never advances pipeline
+state directly.
+
 The dispatcher owns state, lease refresh, snapshot validation, stage transitions, and
 the canonical descriptor. The owner conversation executes handlers and persists their
 artifacts. All commands use the absolute runtime facade and `run_root` workdir.
@@ -86,10 +94,10 @@ FLOW_HARNESS="<harness>" "<facade>" agent-route resolve \
   --snapshot "$TICKET_DIR/route-snapshot.json" --profile "<profile>"
 ```
 
-Only planner routes may have `activation: pending`. A post-plan desired route is
-provenance for the future execution capsule and does not change the current native
-launch. Capture the native tool request and response as JSON, and never use the worker's
-prose as acceptance evidence. Attest and persist it:
+The seven read-only profiles may have `activation: pending`; every writer and E2E route
+stays shadow. A shadow desired route is provenance for a future execution capsule and
+does not change the current native launch. Capture the native tool request and response
+as JSON, and never use the worker's prose as acceptance evidence. Attest and persist it:
 
 ```bash
 FLOW_HARNESS="<harness>" "<facade>" agent-route attest \
@@ -98,14 +106,38 @@ FLOW_HARNESS="<harness>" "<facade>" agent-route attest \
   --output "$TICKET_DIR/stages/<stage>.route.json"
 ```
 
-Only an `active` planner receipt proves exact routed execution. Every post-plan
-receipt is `shadow` with `effective: null`, including a same-owner exact native
-acceptance. The handler launches through its existing owner-native or inline path and
-records the desired route without claiming it ran. Do not retry because a desired
-route stayed shadowed. A `legacy` route follows
+Only an `active` receipt proves exact routed execution, and only a receipt carrying a
+terminal physical attempt and a disposed capsule can become active. A shadow receipt,
+including a same-owner exact native acceptance, means the handler launched through its
+existing owner-native or inline path and recorded the desired route without claiming it
+ran. Do not retry because a desired route stayed shadowed. A `legacy` route follows
 `model_resolve.py` unchanged, including lane skips, OFF, fail-open reads, and Codex
 inheritance. A missing route snapshot identifies a pre-upgrade run and takes the
 same legacy path.
+
+### Activated cognitive substeps
+
+When the descriptor carries `cognitive_substeps` with `activation: pending`, one
+deterministic command executes every one of them. Do not launch a capsule by hand, and
+do not assemble a provider prompt: build each substep's closed facts and its immutable
+input bundle, then hand both to the executor. It launches only the substeps the frozen
+snapshot recorded active, publishes each typed result separately for the deterministic
+renderers and appliers, and writes the outcome fence the dispatcher validates.
+
+```bash
+FLOW_HARNESS="<harness>" "<facade>" cognitive-worker run-stage \
+  --descriptor-from "<descriptor_path>" \
+  --inputs-from "<absolute-cognitive-inputs-json>" \
+  --source-root . \
+  --artifact-root "$TICKET_DIR/cognitive/<stage>" \
+  --capsule-root "$TICKET_DIR/cognitive/capsules" \
+  --output "$TICKET_DIR/stages/<stage>.cognitive.json"
+```
+
+Each `--inputs-from` entry is keyed by substep and holds either `facts` plus an
+`input_bundle` path, or a `skip` with an exact `reason` when a conditional substep does
+not apply. An exact-route failure stops the stage visibly: never fall back to a native
+or alternate-model reader. Pass the resulting fence to `advance`.
 
 Capture the complete returned report at the exact absolute artifact path before
 advancing. Prefer the host's exact-write primitive. If unavailable, use a
@@ -142,12 +174,16 @@ never claim it ran.
 FLOW_HARNESS="<harness>" "<facade>" dispatch advance \
   --workspace-root . --ticket "<ticket>" --session-nonce "<nonce>" \
   --stage "<stage>" --status "<completed|failed>" \
-  [--output-path "<absolute-existing-artifact>"]
+  [--output-path "<absolute-existing-artifact>"] \
+  [--skill-output-from "$TICKET_DIR/stages/<stage>.cognitive.json"]
 ```
 
 An artifact path must exist before advance. If it does not, write it and retry the
 same advance; the stage has not finished. A failed advance returns a blocking
-descriptor.
+descriptor. A stage with activated cognitive substeps passes its outcome fence through
+`--skill-output-from`; the evidence is far too large for one shell argument, and
+`advance` refuses to complete the stage without a matching successful outcome or a
+reasoned conditional skip.
 
 ## Safety markers and exit handling
 

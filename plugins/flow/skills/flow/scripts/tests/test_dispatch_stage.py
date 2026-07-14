@@ -16,6 +16,7 @@ from typing import Any
 
 import pytest
 
+import agent_routes
 import dispatch_stage as ds
 import lease
 import snapshot
@@ -1905,3 +1906,144 @@ def test_next_refreshes_lease_with_multiplied_ttl(
     assert expires is not None
     remaining = (expires - datetime.now(UTC)).total_seconds()
     assert remaining > 50 * 60, remaining
+
+
+# ─── cognitive substeps ──────────────────────────────────────────────────────
+
+
+def _cognitive_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Init a run whose plan stage carries a frozen exact route snapshot."""
+    _write_workspace(
+        tmp_path,
+        handlers={"ticket": "inline", "plan": "inline"},
+        stages=["ticket", "plan"],
+        compounding=False,
+    )
+    _stub_git_head(monkeypatch, "a" * 40)
+    ds.cmd_init(tmp_path, "FT-1")
+    td = tmp_path / ".flow" / "runs" / "FT-1"
+    agent_routes.snapshot(tmp_path, "codex", output_path=td / "route-snapshot.json")
+    ds.cmd_next(tmp_path, "FT-1")
+    ds.cmd_finish(tmp_path, "FT-1", "ticket", "completed")
+    return td
+
+
+def _sealed(td: Path, stage: str = "plan") -> dict[str, Any]:
+    ts, _ = state.read(td)
+    assert ts is not None
+    return ts.stages[stage].cognitive_substeps or {}
+
+
+def test_next_seals_each_cognitive_substep_to_its_stage_generation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    td = _cognitive_workspace(tmp_path, monkeypatch)
+    rc, payload = ds.cmd_next(tmp_path, "FT-1")
+    assert rc == 0
+    assert payload["stage"] == "plan"
+    assert payload["generation"] == 1
+
+    sealed = payload["cognitive_substeps"]
+    assert set(sealed) == {"planning", "assessment"}
+    assert sealed["planning"]["profile"] == "planner"
+    assert sealed["planning"]["activation"] == "pending"
+    assert sealed["planning"]["source_sha"] == "a" * 40
+    assert sealed["planning"]["logical_invocation_id"].endswith(":plan:planning:1")
+    assert sealed == _sealed(td)
+    assert json.loads(Path(payload["descriptor_path"]).read_text(encoding="utf-8")) == payload
+
+
+def test_stage_cannot_complete_without_a_matching_cognitive_outcome(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _cognitive_workspace(tmp_path, monkeypatch)
+    ds.cmd_next(tmp_path, "FT-1")
+
+    rc, payload = ds.cmd_finish(tmp_path, "FT-1", "plan", "completed")
+    assert rc == 1
+    assert "no successful outcome" in payload["error"]
+
+
+def test_stale_generation_outcome_cannot_complete_the_stage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    td = _cognitive_workspace(tmp_path, monkeypatch)
+    ds.cmd_next(tmp_path, "FT-1")
+    sealed = _sealed(td)
+    outputs = {
+        "cognitive_outcomes": {
+            name: _outcome(facts, generation=facts["stage_generation"] + 1)
+            for name, facts in sealed.items()
+        }
+    }
+
+    rc, payload = ds.cmd_finish(tmp_path, "FT-1", "plan", "completed", skill_output=outputs)
+    assert rc == 1
+    assert "does not match the sealed stage generation" in payload["error"]
+
+
+def test_matching_outcomes_complete_the_stage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    td = _cognitive_workspace(tmp_path, monkeypatch)
+    ds.cmd_next(tmp_path, "FT-1")
+    sealed = _sealed(td)
+    outputs = {"cognitive_outcomes": {name: _outcome(facts) for name, facts in sealed.items()}}
+
+    rc, payload = ds.cmd_finish(tmp_path, "FT-1", "plan", "completed", skill_output=outputs)
+    assert rc == 0, payload
+    ts, _ = state.read(td)
+    assert ts is not None
+    assert ts.stages["plan"].status == "completed"
+
+
+def test_tampered_outcome_digest_cannot_complete_the_stage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    td = _cognitive_workspace(tmp_path, monkeypatch)
+    ds.cmd_next(tmp_path, "FT-1")
+    sealed = _sealed(td)
+    outcomes = {name: _outcome(facts) for name, facts in sealed.items()}
+    outcomes["planning"]["status"] = "succeeded"
+    outcomes["planning"]["result"] = {"tampered": True}
+
+    rc, payload = ds.cmd_finish(
+        tmp_path, "FT-1", "plan", "completed", skill_output={"cognitive_outcomes": outcomes}
+    )
+    assert rc == 1
+    assert "does not match the sealed stage generation" in payload["error"]
+
+
+def _outcome(facts: dict[str, Any], *, generation: int | None = None) -> dict[str, Any]:
+    generation = facts["stage_generation"] if generation is None else generation
+    body = {
+        "logical_invocation_id": facts["logical_invocation_id"],
+        "generation": generation,
+        "profile": facts["profile"],
+        "status": "succeeded",
+        "result": {"ok": True},
+        "receipts": {
+            "route": {
+                "activation": "active",
+                "desired": facts["desired_route"],
+                "effective": facts["desired_route"],
+            },
+            "process": {
+                "child_reaped": True,
+                "process_group_absent": True,
+                "stdout_eof": True,
+                "stderr_eof": True,
+            },
+            "disposal": {"absent": True, "quarantined": False},
+        },
+        "failure": None,
+        "run_id": facts["run_id"],
+        "stage": facts["stage"],
+        "substep": facts["substep"],
+        "stage_generation": generation,
+        "route_snapshot_digest": facts["route_snapshot_digest"],
+        "source_sha": facts["source_sha"],
+        "lease_fence": facts["lease_fence"],
+        "schema": "flow.cognitive-work-outcome/v1",
+    }
+    return {**body, "digest": agent_routes.canonical_digest(body)}

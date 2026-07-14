@@ -2,9 +2,9 @@
 
 The module owns route precedence and provenance. Callers work with complete
 ``harness/model/effort`` routes and never need to interpret workspace TOML,
-activation capability, or digest rules themselves. The planner is the only profile
-whose configured, built-in, or overridden route may cross the CLI boundary in this
-increment.
+activation capability, or digest rules themselves. Exact CLI receipts activate the
+planner and read-only post-plan profiles. Writer and E2E routes remain shadowed until
+their capsule import contract lands.
 """
 
 from __future__ import annotations
@@ -162,6 +162,18 @@ _MIGRATION_EFFORT = {
     "review_fixer": "high",
     "revision_fixer": "high",
 }
+
+_ACTIVE_READ_ONLY = frozenset(
+    {
+        "planner",
+        "plan_assessor",
+        "code_reviewer",
+        "diff_reviewer",
+        "guard_reviewer",
+        "review_brief_author",
+        "reflector",
+    }
+)
 
 
 class RouteError(ValueError):
@@ -400,11 +412,13 @@ def _activation(
 ) -> tuple[str, str]:
     if desired is None:
         return "unrouted", "no exact route exists for this owner harness"
-    if profile == "planner":
-        return "pending", "strict read-only planner CLI activation requires an exact receipt"
     if owner_harness == "generic":
         return "shadow", "the generic adapter has no structured model and effort selector"
-    return "shadow", "non-planner routes remain shadowed until execution capsules are available"
+    if profile == "planner":
+        return "pending", "strict read-only planner CLI activation requires an exact receipt"
+    if profile in _ACTIVE_READ_ONLY:
+        return "pending", "strict read-only capsule activation requires an exact CLI receipt"
+    return "shadow", "write-capable and E2E routes remain shadowed until guarded import lands"
 
 
 def _resolve_data(
@@ -584,14 +598,27 @@ def attest(route_snapshot: dict[str, Any], profile: str, acceptance: object) -> 
 
     exact_response = all(response.get(key) == desired[key] for key in desired)
     transport = response.get("transport")
-    supported_transport = transport == "native" or (profile == "planner" and transport == "cli")
+    supported_transport = profile in _ACTIVE_READ_ONLY and transport == "cli"
+    physical_attempt = acceptance.get("physical_attempt")
+    cleanup = acceptance.get("cleanup")
+    lifecycle_proven = (
+        isinstance(physical_attempt, dict)
+        and physical_attempt.get("terminal_acknowledged") is True
+        and isinstance(cleanup, dict)
+        and cleanup.get("capsule_absent") is True
+        and cleanup.get("quarantined") is False
+    )
     active = (
-        response.get("accepted") is True and exact_response and supported_transport and can_activate
+        response.get("accepted") is True
+        and exact_response
+        and supported_transport
+        and can_activate
+        and lifecycle_proven
     )
     reason = (
         "structured launch accepted the exact desired route"
         if active
-        else "launch response did not prove exact supported native execution"
+        else "launch response did not prove exact supported CLI execution"
     )
     body = {
         "schema": RECEIPT_SCHEMA,
@@ -611,6 +638,8 @@ def attest(route_snapshot: dict[str, Any], profile: str, acceptance: object) -> 
         "worker_id": response.get("worker_id"),
         "prompt_hash": acceptance.get("prompt_hash"),
         "schema_hash": acceptance.get("schema_hash"),
+        "physical_attempt": physical_attempt,
+        "cleanup": cleanup,
     }
     return _with_digest(body)
 

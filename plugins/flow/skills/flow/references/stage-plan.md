@@ -1,5 +1,15 @@
 # Stage: plan
 
+## Routed planning contract
+
+New exact snapshots execute `planner` and any required fresh `plan_assessor` through
+`cognitive-worker` read-only capsules. The planner compatibility surface retains live
+thread continuity and rehydration, but the common worker owns the exact CLI, prompt and
+schema digests, standalone exact-SHA clone, journal, terminal proof, Git guards, and
+disposal receipt. Failure stops visibly; it never falls back to a native or alternate
+model. Planning CAS, feedback, revalidation, the host-native approval gate, and
+bootstrap approval verification remain authoritative here.
+
 ## Purpose
 
 Produce an implementation plan for the ticket and return it as your report.

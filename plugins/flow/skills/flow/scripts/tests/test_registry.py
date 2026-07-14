@@ -36,8 +36,11 @@ def test_registry_by_name_fields():
     assert by["implement"].default_timeout_min == 30
     assert by["review_brief"].default_handler == "inline"
     assert by["review_brief"].required_predecessors == ["create_pr"]
-    assert "agent_routed" not in by["review_brief"].roles
-    assert "agent_routed" not in by["reflect"].roles
+    assert "agent_routed" in by["review_brief"].roles
+    assert "agent_routed" in by["plan"].roles
+    assert "agent_routed" in by["code_review"].roles
+    assert "agent_routed" in by["reflect"].roles
+    assert "agent_routed" in by["merge"].roles
     assert by["review_brief"].default_handler == "inline"
     assert by["reflect"].default_handler == "inline"
 
