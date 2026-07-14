@@ -188,8 +188,20 @@ def transcript_invocations(path: Path, parent_harness: str) -> list[dict[str, An
     return invocations
 
 
-def _verify_real_parent(manifest: dict[str, Any], outer: dict[str, Any]) -> list[str]:
-    """Bind the claimed facade invocation to the parent's own transcript."""
+def _verify_real_parent(
+    manifest: dict[str, Any], outer: dict[str, Any], outcome_digest: object
+) -> list[str]:
+    """Check the parent's own transcript for the facade invocation and the nested outcome digest.
+
+    The facade command must appear in the parent's transcript, and no other command may. The
+    matched invocation must not have failed. The digest of the nested outcome must appear in the
+    output the parent recorded for that invocation.
+
+    Command attribution is a substring match on the recorded command line, so these checks do not
+    yet exclude a forged parent: a command that prints the facade command text and then reads a
+    pre-existing outcome.json off disk satisfies both halves without running the facade. Tightening
+    the match to real execution is filed as flow-zzdd.
+    """
     errors: list[str] = []
     stdout_path = Path(str(outer.get("stdout_path", "")))
     if not stdout_path.is_file():
@@ -199,7 +211,8 @@ def _verify_real_parent(manifest: dict[str, Any], outer: dict[str, Any]) -> list
     except OSError as exc:
         return [f"parent transcript is unreadable: {exc}"]
     expected = str(manifest.get("facade_command"))
-    # A harness may wrap the approved command in its own login shell; it may not alter it.
+    # A harness may wrap the approved command in its own login shell, so this is a substring match.
+    # A command that only contains the text also matches; see flow-zzdd.
     matched = [item for item in invocations if expected in str(item.get("command", ""))]
     if not matched:
         errors.append("the parent transcript never executed the exact absolute facade command")
@@ -207,6 +220,11 @@ def _verify_real_parent(manifest: dict[str, Any], outer: dict[str, Any]) -> list
         errors.append("the parent executed a command outside its single allowed invocation")
     if any(item.get("exit_code") not in (0, None) for item in matched):
         errors.append("the parent's own transcript records a failed facade invocation")
+    digest = str(outcome_digest or "")
+    if not digest:
+        errors.append("no nested outcome digest is available to bind to the parent transcript")
+    elif not any(digest in str(item.get("output") or "") for item in matched):
+        errors.append("the parent's own transcript never carried the nested outcome digest")
     return errors
 
 
@@ -215,6 +233,9 @@ def verify_manifest(manifest: dict[str, Any]) -> dict[str, Any]:  # noqa: C901
     errors: list[str] = []
     if manifest.get("schema") != SCHEMA:
         errors.append("unsupported smoke manifest schema")
+    manifest_body = {key: value for key, value in manifest.items() if key != "digest"}
+    if manifest.get("digest") != cognitive_workers._digest(manifest_body):
+        errors.append("smoke manifest digest is invalid")
     outer_path = Path(str(manifest.get("outer_evidence", "")))
     try:
         outer = json.loads(outer_path.read_text(encoding="utf-8"))
@@ -235,8 +256,8 @@ def verify_manifest(manifest: dict[str, Any]) -> dict[str, Any]:  # noqa: C901
         path = Path(str(outer.get(field, "")))
         if not path.is_file():
             errors.append(f"outer evidence is missing {field}")
-    errors.extend(_verify_real_parent(manifest, outer))
 
+    outcome: dict[str, Any] = {}
     try:
         order = cognitive_workers.WorkOrder.from_mapping(
             json.loads(Path(str(manifest["work_order"])).read_text(encoding="utf-8"))
@@ -256,7 +277,6 @@ def verify_manifest(manifest: dict[str, Any]) -> dict[str, Any]:  # noqa: C901
         try:
             outcome = json.loads(outcome_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
-            outcome = {}
             errors.append("nested worker outcome is missing")
         if outcome.get("status") != "succeeded":
             errors.append("nested worker did not succeed")
@@ -293,6 +313,7 @@ def verify_manifest(manifest: dict[str, Any]) -> dict[str, Any]:  # noqa: C901
                         errors.append("logical replay returned a different durable outcome")
                 except (KeyError, cognitive_workers.WorkerFailure) as exc:
                     errors.append(f"logical replay failed: {exc}")
+    errors.extend(_verify_real_parent(manifest, outer, outcome.get("digest")))
     try:
         after = cognitive_workers.git_receipt(Path(str(manifest["source_root"])))
         if after["digest"] != manifest.get("source_receipt_before", {}).get("digest"):
