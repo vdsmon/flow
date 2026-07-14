@@ -7,6 +7,7 @@ via monkeypatch.setattr(subprocess, "run", ...). No real git repo needed.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import socket
 import subprocess
@@ -1969,15 +1970,10 @@ def test_stale_generation_outcome_cannot_complete_the_stage(
 ) -> None:
     td = _cognitive_workspace(tmp_path, monkeypatch)
     ds.cmd_next(tmp_path, "FT-1")
-    sealed = _sealed(td)
-    outputs = {
-        "cognitive_outcomes": {
-            name: _outcome(facts, generation=facts["stage_generation"] + 1)
-            for name, facts in sealed.items()
-        }
-    }
+    for facts in _sealed(td).values():
+        _publish_outcome(facts, generation=facts["stage_generation"] + 1)
 
-    rc, payload = ds.cmd_finish(tmp_path, "FT-1", "plan", "completed", skill_output=outputs)
+    rc, payload = ds.cmd_finish(tmp_path, "FT-1", "plan", "completed")
     assert rc == 1
     assert "does not match the sealed stage generation" in payload["error"]
 
@@ -1987,14 +1983,33 @@ def test_matching_outcomes_complete_the_stage(
 ) -> None:
     td = _cognitive_workspace(tmp_path, monkeypatch)
     ds.cmd_next(tmp_path, "FT-1")
-    sealed = _sealed(td)
-    outputs = {"cognitive_outcomes": {name: _outcome(facts) for name, facts in sealed.items()}}
+    for facts in _sealed(td).values():
+        _publish_outcome(facts)
 
-    rc, payload = ds.cmd_finish(tmp_path, "FT-1", "plan", "completed", skill_output=outputs)
+    rc, payload = ds.cmd_finish(tmp_path, "FT-1", "plan", "completed")
     assert rc == 0, payload
     ts, _ = state.read(td)
     assert ts is not None
     assert ts.stages["plan"].status == "completed"
+
+
+def test_a_fabricated_outcome_in_the_stage_output_cannot_complete_the_stage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The fence reads the worker's own receipt, never the agent's structured output."""
+    td = _cognitive_workspace(tmp_path, monkeypatch)
+    ds.cmd_next(tmp_path, "FT-1")
+    forged = {name: _outcome(facts) for name, facts in _sealed(td).items()}
+
+    rc, payload = ds.cmd_finish(
+        tmp_path,
+        "FT-1",
+        "plan",
+        "completed",
+        skill_output={"cognitive_outcomes": forged},
+    )
+    assert rc == 1
+    assert "no successful outcome" in payload["error"]
 
 
 def test_tampered_outcome_digest_cannot_complete_the_stage(
@@ -2003,15 +2018,47 @@ def test_tampered_outcome_digest_cannot_complete_the_stage(
     td = _cognitive_workspace(tmp_path, monkeypatch)
     ds.cmd_next(tmp_path, "FT-1")
     sealed = _sealed(td)
-    outcomes = {name: _outcome(facts) for name, facts in sealed.items()}
-    outcomes["planning"]["status"] = "succeeded"
-    outcomes["planning"]["result"] = {"tampered": True}
+    for facts in sealed.values():
+        _publish_outcome(facts)
+    planning = sealed["planning"]
+    token = hashlib.sha256(str(planning["logical_invocation_id"]).encode()).hexdigest()
+    path = Path(planning["artifact_root"]) / "invocations" / token / "outcome.json"
+    value = json.loads(path.read_text(encoding="utf-8"))
+    value["result"] = {"tampered": True}
+    path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
-    rc, payload = ds.cmd_finish(
-        tmp_path, "FT-1", "plan", "completed", skill_output={"cognitive_outcomes": outcomes}
-    )
+    rc, payload = ds.cmd_finish(tmp_path, "FT-1", "plan", "completed")
     assert rc == 1
     assert "does not match the sealed stage generation" in payload["error"]
+
+
+def test_a_resumed_cognitive_stage_keeps_its_seal_when_head_moves(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Re-entering next after a mid-stage commit must not crash or reseal."""
+    td = _cognitive_workspace(tmp_path, monkeypatch)
+    rc, first = ds.cmd_next(tmp_path, "FT-1")
+    assert rc == 0
+    sealed_before = _sealed(td)
+
+    monkeypatch.setattr(ds, "_git_head_sha", lambda root: "b" * 40)
+    rc, second = ds.cmd_next(tmp_path, "FT-1")
+
+    assert rc == 0, second
+    assert second["stage"] == "plan"
+    assert second["generation"] == first["generation"]
+    assert _sealed(td) == sealed_before
+    assert second["cognitive_substeps"] == sealed_before
+
+
+def _publish_outcome(facts: dict[str, Any], *, generation: int | None = None) -> dict[str, Any]:
+    """Write the worker's receipt where the dispatcher seals it, as the engine would."""
+    outcome = _outcome(facts, generation=generation)
+    token = hashlib.sha256(str(facts["logical_invocation_id"]).encode()).hexdigest()
+    path = Path(facts["artifact_root"]) / "invocations" / token / "outcome.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(outcome, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return outcome
 
 
 def _outcome(facts: dict[str, Any], *, generation: int | None = None) -> dict[str, Any]:

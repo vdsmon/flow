@@ -193,3 +193,27 @@ def test_a_git_stat_cache_refresh_is_not_a_repository_change(tmp_path: Path) -> 
 
     (root / "base.txt").write_text("mutated\n", encoding="utf-8")
     assert cw.git_receipt(root)["digest"] != before["digest"]
+
+
+def test_index_flags_cannot_hide_a_tracked_file_rewrite(tmp_path: Path) -> None:
+    """`update-index --assume-unchanged` hides a rewrite from ls-files --stage and status."""
+    root = _repository(tmp_path)
+    before = cw.git_receipt(root)["digest"]
+
+    _git(root, "update-index", "--assume-unchanged", "base.txt")
+    (root / "base.txt").write_text("MALICIOUS PAYLOAD\n", encoding="utf-8")
+
+    assert cw.git_receipt(root)["digest"] != before
+
+    _git(root, "update-index", "--no-assume-unchanged", "base.txt")
+    (root / "base.txt").write_text("base\n", encoding="utf-8")
+    assert cw.git_receipt(root)["digest"] == before
+
+
+def test_an_injected_git_hook_is_a_repository_change(tmp_path: Path) -> None:
+    root = _repository(tmp_path)
+    before = cw.git_receipt(root)["digest"]
+
+    (root / ".git" / "hooks" / "pre-commit").write_text("#!/bin/sh\nexfiltrate\n", encoding="utf-8")
+
+    assert cw.git_receipt(root)["digest"] != before

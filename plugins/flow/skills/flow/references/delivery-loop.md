@@ -137,7 +137,36 @@ FLOW_HARNESS="<harness>" "<facade>" cognitive-worker run-stage \
 Each `--inputs-from` entry is keyed by substep and holds either `facts` plus an
 `input_bundle` path, or a `skip` with an exact `reason` when a conditional substep does
 not apply. An exact-route failure stops the stage visibly: never fall back to a native
-or alternate-model reader. Pass the resulting fence to `advance`.
+or alternate-model reader.
+
+Each profile's fact bundle is closed: exactly these keys, no more and no fewer. An extra
+key is refused rather than ignored, so a prompt can never be extended from the outside.
+
+| profile | facts |
+|---|---|
+| `planner` | `stage_plan`, `ticket`, `base_sha`, `route`, `current_envelope`, `feedback_ledger`, `version_requirements`, `approved_design_digest`, `mode` |
+| `plan_assessor` | `ticket`, `base_sha`, `route_digest`, `candidate_plan`, `planner_receipt`, `assessment_rubric` |
+| `code_reviewer` | `stage_code_review`, `ticket`, `accepted_plan`, `source_sha`, `review_bundle` |
+| `diff_reviewer` | `source_sha`, `review_bundle`, `review_rubric` |
+| `guard_reviewer` | `probe`, `guard_diff`, `guard_properties` |
+| `review_brief_author` | `ticket`, `plan`, `pr`, `review`, `e2e`, `ci`, `content_contract` |
+| `reflector` | `reflection_input`, `stage_reflect`, `action_contract` |
+
+Build the reviewers' `input_bundle` from the authoritative tree first. The bundle is
+immutable, content-addressed evidence, never an appliable patch:
+
+```bash
+FLOW_HARNESS="<harness>" "<facade>" cognitive-worker bundle-review \
+  --source-root . --output "$TICKET_DIR/cognitive/<stage>/review-bundle"
+```
+
+A `code_reviewer` or `diff_reviewer` verdict must cite that bundle's exact digest in its
+`input_digest`, or the worker refuses the result: a clean verdict reached over the wrong
+evidence is worse than none.
+
+`advance` reads each worker's receipt from the invocation directory the dispatcher sealed,
+not from the structured output you pass it. Only a conditional skip travels through
+`--skill-output-from`; a fabricated outcome cannot complete a stage.
 
 Capture the complete returned report at the exact absolute artifact path before
 advancing. Prefer the host's exact-write primitive. If unavailable, use a

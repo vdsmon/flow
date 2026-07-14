@@ -527,11 +527,14 @@ class _ScriptedAdapter:
         raise AssertionError("a reader order never carries a provider session")
 
 
+# Every review order in this module is given the same one-byte-object bundle, so the
+# reviewer must cite exactly this digest or its verdict is refused.
+_BUNDLE_DIGEST = "ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356"
 _REVIEW_RESULT = {
     "verdict": "clean",
     "summary": "No findings.",
     "findings": [],
-    "input_digest": "d" * 64,
+    "input_digest": _BUNDLE_DIGEST,
 }
 _EMIT = f"import json,sys; sys.stdout.write(json.dumps({{'result': {_REVIEW_RESULT!r}}}))"
 
@@ -554,7 +557,7 @@ def _review_order(source: Path, sha: str, input_path: Path, logical_id: str) -> 
             "ticket": {"key": "F-1"},
             "accepted_plan": {"digest": "c" * 64},
             "source_sha": sha,
-            "review_bundle": {"digest": "d" * 64},
+            "review_bundle": {"digest": _BUNDLE_DIGEST},
         },
     )
 
@@ -825,14 +828,14 @@ def _stage_inputs(source_sha: str, input_path: Path) -> dict[str, Any]:
                 "ticket": {"key": "F-1"},
                 "accepted_plan": {"digest": "c" * 64},
                 "source_sha": source_sha,
-                "review_bundle": {"digest": "d" * 64},
+                "review_bundle": {"digest": _BUNDLE_DIGEST},
             },
         },
         "plan_blind_review": {
             "input_bundle": str(input_path),
             "facts": {
                 "source_sha": source_sha,
-                "review_bundle": {"digest": "d" * 64},
+                "review_bundle": {"digest": _BUNDLE_DIGEST},
                 "review_rubric": "Judge the change on its own terms.",
             },
         },
@@ -946,3 +949,79 @@ def test_a_shadow_writer_substep_is_never_launched_by_stage_execution(tmp_path: 
     assert adapter.launches == 2
     assert "review_fix" not in body["cognitive_outcomes"]
     assert "review_fix" not in body["cognitive_skips"]
+
+
+def test_a_reviewer_verdict_over_the_wrong_bundle_is_refused(tmp_path: Path) -> None:
+    """A clean verdict is worthless if it does not cite the evidence it was handed."""
+    source, sha = _repository(tmp_path)
+    input_path = tmp_path / "input.json"
+    input_path.write_text("{}\n", encoding="utf-8")
+    lying = {**_REVIEW_RESULT, "input_digest": "f" * 64}
+    body = f"import json,sys; sys.stdout.write(json.dumps({{'result': {lying!r}}}))"
+    order = _review_order(source, sha, input_path, "review-wrong-bundle")
+
+    with pytest.raises(cw.WorkerFailure, match="does not cite the exact review bundle") as error:
+        _workers(tmp_path, _ScriptedAdapter(body)).run(
+            order, cw.OwnerProof(owner_id="owner", harness="codex")
+        )
+    assert error.value.code == "invalid_result"
+    assert not list((tmp_path / "capsules").glob("*"))
+
+
+def test_a_cleanly_failed_invocation_does_not_strand_its_capsule(tmp_path: Path) -> None:
+    source, sha = _repository(tmp_path)
+    input_path = tmp_path / "input.json"
+    input_path.write_text("{}\n", encoding="utf-8")
+    body = "import sys; sys.stderr.write('provider down'); sys.exit(1)"
+    order = _review_order(source, sha, input_path, "review-blocked")
+
+    with pytest.raises(cw.WorkerFailure, match="exited 1"):
+        _workers(tmp_path, _ScriptedAdapter(body)).run(
+            order, cw.OwnerProof(owner_id="owner", harness="codex")
+        )
+
+    assert not list((tmp_path / "capsules").glob("*"))
+
+
+def test_a_read_only_violation_quarantines_the_capsule_instead_of_stranding_it(
+    tmp_path: Path,
+) -> None:
+    source, sha = _repository(tmp_path)
+    input_path = tmp_path / "input.json"
+    input_path.write_text("{}\n", encoding="utf-8")
+    body = (
+        "import json,pathlib,sys; pathlib.Path('escaped.txt').write_text('x');"
+        f" sys.stdout.write(json.dumps({{'result': {_REVIEW_RESULT!r}}}))"
+    )
+    order = _review_order(source, sha, input_path, "review-quarantine")
+
+    with pytest.raises(cw.WorkerFailure, match="changed its capsule"):
+        _workers(tmp_path, _ScriptedAdapter(body)).run(
+            order, cw.OwnerProof(owner_id="owner", harness="codex")
+        )
+
+    quarantined = list((tmp_path / "capsules" / "quarantine").glob("*"))
+    assert len(quarantined) == 1
+    assert (quarantined[0] / "escaped.txt").is_file()
+
+
+def test_a_partial_clone_never_occupies_the_capsule_path(tmp_path: Path, monkeypatch) -> None:
+    """A crash mid-clone must not leave a repository the recovery path cannot read."""
+    source, sha = _repository(tmp_path)
+    capsule = tmp_path / "capsules" / "target"
+    real_run = subprocess.run
+
+    def crashing(command, **kwargs):
+        if command[:2] == ["git", "clone"]:
+            real_run(command, **kwargs)
+            raise KeyboardInterrupt("crash after the clone, before the detach")
+        return real_run(command, **kwargs)
+
+    monkeypatch.setattr(cw.subprocess, "run", crashing)
+    with pytest.raises(KeyboardInterrupt):
+        cw.create_private_clone(source, sha, capsule)
+
+    monkeypatch.undo()
+    assert not capsule.exists()
+    receipt = cw.create_private_clone(source, sha, capsule)
+    assert receipt["source_sha"] == sha

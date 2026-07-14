@@ -266,6 +266,8 @@ class WorkOutcome:
     route_snapshot_digest: str | None = None
     source_sha: str | None = None
     lease_fence: str | None = None
+    input_bundle: str | None = None
+    input_digest: str | None = None
     schema: str = OUTCOME_SCHEMA
     digest: str = field(default="", compare=False)
 
@@ -301,6 +303,23 @@ def _input_digest(path: Path) -> str:
     body = {key: value for key, value in manifest.items() if key != "digest"}
     if manifest.get("digest") != _digest(body):
         raise WorkerFailure("work-order input manifest digest is invalid")
+    # A self-consistent manifest says nothing about the bytes the reviewer will read. Verify
+    # every raw capture and blob against the digest the manifest recorded for it.
+    expected: list[tuple[Path, str]] = [
+        (path / "raw" / name, str(receipt["sha256"]))
+        for name, receipt in cast(dict[str, Any], manifest.get("raw", {})).items()
+    ]
+    expected.extend(
+        (path / str(item["blob"]), str(item["sha256"]))
+        for item in cast(list[dict[str, Any]], manifest.get("untracked", []))
+        if item.get("blob")
+    )
+    for target, digest in expected:
+        try:
+            if hashlib.sha256(target.read_bytes()).hexdigest() != digest:
+                raise WorkerFailure(f"review bundle content is not its recorded {target.name}")
+        except OSError as exc:
+            raise WorkerFailure(f"review bundle is missing {target.name}: {exc}") from exc
     return str(manifest["digest"])
 
 
@@ -704,24 +723,37 @@ def preflight_route(
     timeout: float = 5.0,
     require_resume: bool = False,
 ) -> dict[str, str]:
-    """Probe one exact provider route, including planner resume when requested."""
+    """Probe one exact provider route, including planner resume when requested.
+
+    The probe runs in the same narrowed environment the worker will get. Probing the owner's
+    full environment instead would green-light an authentication the launch cannot reproduce.
+    """
     executable = "codex" if route["harness"] == "codex" else "claude"
     resolved = shutil.which(executable)
     if resolved is None:
         raise WorkerFailure(
             f"worker executable {executable!r} is unavailable", code="route_unavailable"
         )
+    environment = worker_environment()
     auth_command = (
         [executable, "login", "status"] if executable == "codex" else [executable, "auth", "status"]
     )
     try:
-        auth = runner(auth_command, capture_output=True, text=True, timeout=timeout, check=False)
+        auth = runner(
+            auth_command,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+            env=environment,
+        )
         version = runner(
             [executable, "--version"],
             capture_output=True,
             text=True,
             timeout=timeout,
             check=False,
+            env=environment,
         )
         help_commands = (
             [[executable, "exec", "--help"], [executable, "exec", "resume", "--help"]]
@@ -737,6 +769,7 @@ def preflight_route(
                 text=True,
                 timeout=timeout,
                 check=False,
+                env=environment,
             )
             for command in help_commands
         ]
@@ -1018,7 +1051,17 @@ def git_receipt(root: Path) -> dict[str, Any]:
     )
     status_bytes = _git_bytes(resolved, "status", "--porcelain=v2", "-z", "--untracked-files=all")
     index_bytes = _git_bytes(resolved, "ls-files", "--stage", "-z")
+    # Per-entry index flags, which neither ls-files --stage nor status reveals. Without them,
+    # `update-index --assume-unchanged` (or --skip-worktree) hides an arbitrary tracked-file
+    # rewrite from the whole guard. This listing is stable across a stat-cache refresh, so it
+    # restores the coverage the raw .git/index hash gave without its false positives.
+    index_flags = _git_bytes(resolved, "ls-files", "-v", "-z")
     submodules = _git_bytes(resolved, "submodule", "status", "--recursive")
+    hooks = sorted(
+        (entry.name, entry.stat().st_mode, hashlib.sha256(entry.read_bytes()).hexdigest())
+        for entry in (Path(os.fsdecode(git_dir_raw)) / "hooks").glob("*")
+        if entry.is_file() and not entry.name.endswith(".sample")
+    )
     git_dir = Path(os.fsdecode(git_dir_raw))
     if not git_dir.is_absolute():
         git_dir = resolved / git_dir
@@ -1042,33 +1085,46 @@ def git_receipt(root: Path) -> dict[str, Any]:
         "common_dir": os.fsdecode(common_raw),
         "status": {"length": len(status_bytes), "sha256": hashlib.sha256(status_bytes).hexdigest()},
         "index": {"length": len(index_bytes), "sha256": hashlib.sha256(index_bytes).hexdigest()},
+        "index_flags": {
+            "length": len(index_flags),
+            "sha256": hashlib.sha256(index_flags).hexdigest(),
+        },
         "submodules": {"length": len(submodules), "sha256": hashlib.sha256(submodules).hexdigest()},
         "metadata": metadata,
+        "hooks": hooks,
     }
     return {**body, "digest": _digest(body)}
 
 
 def create_private_clone(source_root: Path, source_sha: str, capsule: Path) -> dict[str, Any]:
-    """Create a standalone exact-SHA clone without linked mutable Git metadata."""
+    """Create a standalone exact-SHA clone without linked mutable Git metadata.
+
+    The clone is built beside its final path and installed with one rename. A crash mid-clone
+    would otherwise leave a partial repository at the capsule path, and recovery reads that
+    path as an existing capsule it cannot inspect, wedging the invocation for good.
+    """
     source = source_root.resolve()
     target = capsule.resolve()
     if target.exists():
         raise WorkerFailure(f"capsule already exists: {target}", code="execution_busy")
     target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    staging = Path(tempfile.mkdtemp(prefix=f".{target.name}.", dir=target.parent))
+    build = staging / "capsule"
     result = subprocess.run(
-        ["git", "clone", "--no-hardlinks", "--no-checkout", "--quiet", str(source), str(target)],
+        ["git", "clone", "--no-hardlinks", "--no-checkout", "--quiet", str(source), str(build)],
         capture_output=True,
         text=True,
         check=False,
     )
     if result.returncode != 0:
+        shutil.rmtree(staging, ignore_errors=True)
         raise WorkerFailure(
             f"private clone failed: {result.stderr.strip()}", code="artifact_failure"
         )
     try:
         checkout = subprocess.run(
             ["git", "checkout", "--detach", "--quiet", source_sha],
-            cwd=target,
+            cwd=build,
             capture_output=True,
             text=True,
             check=False,
@@ -1078,10 +1134,10 @@ def create_private_clone(source_root: Path, source_sha: str, capsule: Path) -> d
                 f"private clone cannot checkout {source_sha}: {checkout.stderr.strip()}",
                 code="artifact_failure",
             )
-        git_entry = target / ".git"
+        git_entry = build / ".git"
         alternates = git_entry / "objects" / "info" / "alternates"
-        common = _git_bytes(target, "rev-parse", "--git-common-dir").strip()
-        head = _git_bytes(target, "rev-parse", "HEAD").strip().decode()
+        common = _git_bytes(build, "rev-parse", "--git-common-dir").strip()
+        head = _git_bytes(build, "rev-parse", "HEAD").strip().decode()
         if not git_entry.is_dir() or alternates.exists() or common not in {b".git", b"./.git"}:
             raise WorkerFailure(
                 "private clone shares mutable Git metadata", code="artifact_failure"
@@ -1090,6 +1146,7 @@ def create_private_clone(source_root: Path, source_sha: str, capsule: Path) -> d
             raise WorkerFailure(
                 "private clone did not resolve the exact source SHA", code="artifact_failure"
             )
+        os.replace(build, target)
         body = {
             "schema": "flow.cognitive-capsule/v1",
             "source_root": str(source),
@@ -1103,6 +1160,8 @@ def create_private_clone(source_root: Path, source_sha: str, capsule: Path) -> d
         with contextlib.suppress(OSError):
             shutil.rmtree(target)
         raise
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
 
 
 def _encoded_path(raw: bytes) -> dict[str, str]:
@@ -1524,7 +1583,22 @@ def run_provider_process(
             raise _ProviderHardTimeout(acknowledged, metric) from None
     elapsed = max(0.0, time.monotonic() - started)
     returncode = process.returncode
+    # The provider CLI can outlive its own exit through a helper that never held the output
+    # pipes. Give the group a bounded chance to drain, then end it, before calling the
+    # termination ambiguous: a snap judgement here quarantines a successful invocation.
     absent = group_absent(process.pid)
+    if returncode is not None and not absent:
+        deadline = time.monotonic() + grace
+        while not absent and time.monotonic() < deadline:
+            time.sleep(0.05)
+            absent = group_absent(process.pid)
+        if not absent:
+            with contextlib.suppress(OSError, ProcessLookupError):
+                killpg(process.pid, signal.SIGKILL)
+            deadline = time.monotonic() + grace
+            while not absent and time.monotonic() < deadline:
+                time.sleep(0.05)
+                absent = group_absent(process.pid)
     if returncode is None or not absent:
         raise WorkerFailure(
             "worker termination lacks child or process-group acknowledgement",
@@ -1717,6 +1791,26 @@ class CognitiveWorkers:
         token = hashlib.sha256(logical_id.encode()).hexdigest()
         return self.artifact_root / "invocations" / token
 
+    def _dispose_failed_capsule(self, capsule: Path, *, quarantine: bool) -> dict[str, Any]:
+        """Remove a dead capsule, or set an ambiguous one aside for an operator."""
+        if not capsule.exists():
+            return {"capsule": str(capsule), "absent": True, "quarantined": False}
+        if not quarantine:
+            shutil.rmtree(capsule, ignore_errors=True)
+            return {"capsule": str(capsule), "absent": not capsule.exists(), "quarantined": False}
+        held = self.capsule_root / "quarantine" / capsule.name
+        held.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        with contextlib.suppress(OSError):
+            if held.exists():
+                shutil.rmtree(held, ignore_errors=True)
+            os.replace(capsule, held)
+        return {
+            "capsule": str(capsule),
+            "absent": not capsule.exists(),
+            "quarantined": True,
+            "quarantine_path": str(held),
+        }
+
     def run(self, order: WorkOrder, owner: OwnerProof) -> WorkOutcome:  # noqa: C901
         """Execute or recover one idempotent logical invocation."""
         policy = ROLE_CATALOG[order.profile]
@@ -1776,6 +1870,8 @@ class CognitiveWorkers:
                 route_snapshot_digest=cast(str | None, value.get("route_snapshot_digest")),
                 source_sha=cast(str | None, value.get("source_sha")),
                 lease_fence=cast(str | None, value.get("lease_fence")),
+                input_bundle=cast(str | None, value.get("input_bundle")),
+                input_digest=cast(str | None, value.get("input_digest")),
                 digest=str(value["digest"]),
             )
 
@@ -1912,7 +2008,13 @@ class CognitiveWorkers:
                     retry_limit=policy.retry_limit,
                 )
             except WorkerFailure as exc:
-                state = "quarantined" if exc.code == "termination_unconfirmed" else "blocked"
+                quarantine = exc.code == "termination_unconfirmed"
+                state = "quarantined" if quarantine else "blocked"
+                # A blocked invocation is provably terminal, so its capsule is dead weight:
+                # both states are terminal, and nothing would ever come back to remove it.
+                # Only a possibly-live process earns a retained capsule, and it is moved
+                # aside so quarantine stays inspectable and bounded.
+                disposal = self._dispose_failed_capsule(capsule, quarantine=quarantine)
                 journal.transition(
                     state,
                     failure={
@@ -1920,6 +2022,7 @@ class CognitiveWorkers:
                         "message": str(exc),
                         "physical_attempts": list(exc.attempts),
                     },
+                    disposal=disposal,
                 )
                 raise
             process = execution.process
@@ -1954,17 +2057,44 @@ class CognitiveWorkers:
                 result, worker_id = execution.payload, execution.worker_id
             else:
                 result, worker_id = _extract_typed_result(process.stdout)
-            result = validate_typed_result(order.profile, result)
+            try:
+                result = validate_typed_result(order.profile, result)
+                # A reviewer's verdict is only meaningful over the evidence it was actually
+                # given. Without this the schema accepts any 64-hex string and a clean verdict
+                # could have been reached over a stale or empty bundle.
+                if (
+                    order.profile in {"code_reviewer", "diff_reviewer"}
+                    and result.get("input_digest") != order.input_digest
+                ):
+                    raise WorkerFailure(
+                        f"{order.profile} verdict does not cite the exact review bundle",
+                        code="invalid_result",
+                    )
+            except WorkerFailure as exc:
+                journal.transition(
+                    "blocked",
+                    failure={"code": exc.code, "message": str(exc)},
+                    disposal=self._dispose_failed_capsule(capsule, quarantine=False),
+                )
+                raise
             authoritative_after = git_receipt(source)
             capsule_after = git_receipt(capsule)
             if authoritative_before["digest"] != authoritative_after["digest"]:
-                journal.transition("quarantined", failure={"code": "read_only_violation"})
+                journal.transition(
+                    "quarantined",
+                    failure={"code": "read_only_violation"},
+                    disposal=self._dispose_failed_capsule(capsule, quarantine=True),
+                )
                 raise WorkerFailure(
                     "worker invocation changed the authoritative repository",
                     code="read_only_violation",
                 )
             if capsule_before["digest"] != capsule_after["digest"]:
-                journal.transition("quarantined", failure={"code": "read_only_violation"})
+                journal.transition(
+                    "quarantined",
+                    failure={"code": "read_only_violation"},
+                    disposal=self._dispose_failed_capsule(capsule, quarantine=True),
+                )
                 raise WorkerFailure(
                     "read-only worker changed its capsule", code="read_only_violation"
                 )
@@ -1976,7 +2106,11 @@ class CognitiveWorkers:
                 authoritative_after=authoritative_after,
             )
         if order.session is not None and not worker_id:
-            journal.transition("blocked", failure={"code": "invalid_result"})
+            journal.transition(
+                "blocked",
+                failure={"code": "invalid_result"},
+                disposal=self._dispose_failed_capsule(capsule, quarantine=False),
+            )
             raise WorkerFailure(
                 "planner output carried no worker session id", code="invalid_result"
             )
@@ -2054,6 +2188,8 @@ class CognitiveWorkers:
             route_snapshot_digest=order.route_snapshot_digest,
             source_sha=order.source_sha,
             lease_fence=order.lease_fence,
+            input_bundle=order.input_bundle,
+            input_digest=order.input_digest,
         )
         mapping = outcome.to_mapping()
         _atomic_json(outcome_path, mapping, mode=0o400)
@@ -2167,7 +2303,6 @@ def run_stage(
     sealed = descriptor.get("cognitive_substeps")
     if not isinstance(sealed, dict):
         raise WorkerFailure("stage descriptor carries no sealed cognitive substeps")
-    executor = workers or CognitiveWorkers(artifact_root=artifact_root, capsule_root=capsule_root)
     outcomes: dict[str, Any] = {}
     skips: dict[str, Any] = {}
     results: dict[str, str] = {}
@@ -2175,6 +2310,11 @@ def run_stage(
         facts_of = sealed[substep]
         if not isinstance(facts_of, dict) or facts_of.get("activation") != "pending":
             continue
+        # The dispatcher sealed where this receipt has to land; it reads the outcome back
+        # from exactly that path, so the caller does not get to choose it.
+        sealed_root = facts_of.get("artifact_root")
+        root = Path(sealed_root) if isinstance(sealed_root, str) else artifact_root
+        executor = workers or CognitiveWorkers(artifact_root=root, capsule_root=capsule_root)
         entry = inputs.get(substep)
         if not isinstance(entry, dict):
             raise WorkerFailure(
@@ -2206,7 +2346,7 @@ def run_stage(
             source_root=source_root,
             input_bundle=Path(bundle),
             facts=facts,
-            output=artifact_root / "orders" / f"{substep}.json",
+            output=root / "orders" / f"{substep}.json",
         )
         owner = OwnerProof(
             owner_id=owner_id,
@@ -2216,7 +2356,7 @@ def run_stage(
         )
         outcome = executor.run(order, owner).to_mapping()
         outcomes[substep] = outcome
-        result_path = artifact_root / "results" / f"{substep}.json"
+        result_path = root / "results" / f"{substep}.json"
         _atomic_json(result_path, outcome["result"], mode=0o400)
         results[substep] = str(result_path)
     return {

@@ -14,6 +14,7 @@ import argparse
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -218,6 +219,7 @@ def _launch(args: argparse.Namespace, route: PlannerRoute) -> dict[str, Any]:
     """Run one logical planner invocation through the common capsule executor."""
     order = _work_order(args, route)
     owner = _owner_proof()
+    ephemeral = args.invocation_root is None
     invocation_root = Path(
         args.invocation_root
         or tempfile.mkdtemp(prefix="flow-planner-worker-", dir=os.environ.get("TMPDIR"))
@@ -231,6 +233,12 @@ def _launch(args: argparse.Namespace, route: PlannerRoute) -> dict[str, Any]:
     acceptance = dict(receipts["route_acceptance"])
     acceptance["cleanup"] = {**acceptance["cleanup"], "invocation_root": str(invocation_root)}
     acceptance["capsule"] = receipts["capsule"]
+    if ephemeral:
+        # The planner's durable state is the envelope it just returned. Its journal holds the
+        # provider transcript, and the transcript holds the live thread id, which must never
+        # outlive the owner conversation. A failed launch keeps its evidence.
+        shutil.rmtree(invocation_root, ignore_errors=True)
+        acceptance["cleanup"]["invocation_root_absent"] = not invocation_root.exists()
     return {
         "envelope": validate_envelope(route, outcome.result),
         "thread_id": receipts["route"]["worker_id"],
