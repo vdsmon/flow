@@ -63,3 +63,35 @@ def test_committed_tuple_recovers_as_existing_run(tmp_path: Path) -> None:
     recovery = journal.recovery()
     assert recovery.action == "return_committed"
     assert recovery.run_id == "run-1"
+
+
+@pytest.mark.parametrize(
+    ("phase", "action"),
+    [
+        ("prepared", "rollback_then_retry"),
+        ("worktree_intended", "rollback_then_retry"),
+        ("worktree_created", "rollback_then_retry"),
+        ("run_seeded", "rollback_then_retry"),
+        ("committed", "return_committed"),
+    ],
+)
+def test_every_durable_phase_has_an_explicit_recovery_action(
+    tmp_path: Path, phase: str, action: str
+) -> None:
+    journal = bj.BootstrapJournal(tmp_path / "journal.json")
+    journal.prepare(ticket="FT-1", approval=_receipt())
+    if phase != "prepared":
+        journal.advance(
+            "worktree_intended",
+            worktree=str(tmp_path / "wt"),
+            branch="feat/FT-1-x",
+        )
+    if phase in {"worktree_created", "run_seeded", "committed"}:
+        journal.advance("worktree_created")
+    if phase in {"run_seeded", "committed"}:
+        journal.advance("run_seeded", run_id="run-1")
+    if phase == "committed":
+        journal.advance("committed")
+    recovery = journal.recovery()
+    assert recovery.phase == phase
+    assert recovery.action == action

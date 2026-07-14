@@ -2,7 +2,9 @@
 
 The module owns route precedence and provenance. Callers work with complete
 ``harness/model/effort`` routes and never need to interpret workspace TOML,
-activation capability, or digest rules themselves.
+activation capability, or digest rules themselves. The planner is the only profile
+whose configured, built-in, or overridden route may cross the CLI boundary in this
+increment.
 """
 
 from __future__ import annotations
@@ -285,7 +287,11 @@ def configuration_errors(data: dict[str, Any]) -> list[str]:
 def _legacy_route(data: dict[str, Any], profile: str) -> dict[str, str] | None:
     models = data.get("models")
     stage = _LEGACY_STAGE.get(profile)
-    if not isinstance(models, dict) or stage is None:
+    if not isinstance(models, dict):
+        return None
+    if profile == "planner":
+        return {"field": "owner session model", "value": "host-native planning"}
+    if stage is None:
         return None
     if isinstance(models.get(stage), str):
         return {"field": f"models.{stage}", "value": models[stage]}
@@ -313,10 +319,10 @@ def _activation(
 ) -> tuple[str, str]:
     if desired is None:
         return "unrouted", "no exact route exists for this owner harness"
-    if profile == "planner" and source == "override":
-        return "pending", "explicit override may activate an exact read-only planner CLI route"
-    if profile in {"planner", "plan_assessor"}:
-        return "shadow", "configured planning routes remain non-activating until rollout"
+    if profile == "planner":
+        return "pending", "strict read-only planner CLI activation requires an exact receipt"
+    if profile == "plan_assessor":
+        return "shadow", "plan assessor routes remain non-activating in this increment"
     if owner_harness == "generic":
         return "shadow", "the generic adapter has no structured model and effort selector"
     if desired["harness"] != owner_harness:

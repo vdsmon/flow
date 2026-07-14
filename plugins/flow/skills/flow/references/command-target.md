@@ -165,10 +165,11 @@ force operation.
   frozen into the route snapshot at bootstrap. The public harness names are
   `claude_code` and `codex`. It is valid only while starting a fresh target; reject
   it after the lifecycle reducer selects resume, repair, revise, show, or a terminal
-  action. An explicit `planner` override opts a fresh target into the read-only routed
-  planning loop before approval. A configured workspace planner remains shadowed until
-  the rollout gate flips the default. Assessor and post-plan cross-harness routes remain
-  shadowed in this increment.
+  action. Fresh targets use the configured or built-in strict read-only planner route
+  before approval. An explicit `planner` override replaces that complete route for this
+  attempt. Missing capability, authentication, schema acceptance, or exact receipt
+  evidence stops visibly, with no automatic fallback. Assessor and post-plan
+  cross-harness routes remain shadowed in this increment.
 
 For multiple targets without `--together`, attended mode asks whether to deliver
 sequentially or as one coherent group. Unattended mode errors because that choice

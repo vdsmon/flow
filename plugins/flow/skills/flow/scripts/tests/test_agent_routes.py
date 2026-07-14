@@ -75,7 +75,9 @@ def test_override_wins_and_codex_post_plan_route_is_shadowed(tmp_path: Path) -> 
     assert "cannot select model and effort" in resolved["reason"]
 
 
-def test_only_explicit_planner_override_activates_cross_harness_planning(tmp_path: Path) -> None:
+def test_configured_and_builtin_planner_routes_enter_strict_cli_activation(
+    tmp_path: Path,
+) -> None:
     root = _workspace(
         tmp_path,
         '\n[agents.planner]\nharness = "codex"\nmodel = "gpt-5.6-sol"\neffort = "xhigh"\n',
@@ -87,9 +89,49 @@ def test_only_explicit_planner_override_activates_cross_harness_planning(tmp_pat
         "claude-code",
         overrides=["planner=codex,gpt-5.6-sol,xhigh"],
     )
-    assert configured["activation"] == "shadow"
+    builtin = agent_routes.resolve(_workspace(tmp_path / "builtin"), "planner", "codex")
+    assert configured["activation"] == "pending"
+    assert configured["desired"] == {
+        "harness": "codex",
+        "model": "gpt-5.6-sol",
+        "effort": "xhigh",
+    }
+    assert builtin["activation"] == "pending"
+    assert builtin["desired"] == configured["desired"]
     assert explicit["activation"] == "pending"
-    assert "read-only planner CLI" in explicit["reason"]
+    assert "strict read-only planner CLI" in explicit["reason"]
+
+
+@pytest.mark.parametrize("source", ["workspace", "built_in"])
+def test_ordinary_planner_cli_attestation_proves_exact_execution(
+    tmp_path: Path, source: str
+) -> None:
+    body = (
+        '\n[agents.planner]\nharness = "codex"\nmodel = "gpt-5.6-sol"\neffort = "xhigh"\n'
+        if source == "workspace"
+        else ""
+    )
+    root = _workspace(tmp_path, body)
+    snap = agent_routes.snapshot(root, "claude-code")
+    request = dict(snap["routes"]["planner"]["desired"])
+    receipt = agent_routes.attest(
+        snap,
+        "planner",
+        {
+            "request": request,
+            "response": {
+                "accepted": True,
+                **request,
+                "transport": "cli",
+                "adapter_version": "codex-cli/test",
+            },
+            "prompt_hash": "a" * 64,
+            "schema_hash": "b" * 64,
+        },
+    )
+    assert receipt["source"] == source
+    assert receipt["activation"] == "active"
+    assert receipt["effective"] == request
 
 
 def test_explicit_planner_cli_attestation_proves_exact_execution(tmp_path: Path) -> None:
@@ -122,8 +164,15 @@ def test_explicit_planner_cli_attestation_proves_exact_execution(tmp_path: Path)
 
 def test_legacy_models_are_classified_without_becoming_agent_routes(tmp_path: Path) -> None:
     root = _workspace(tmp_path, '\n[models]\nwork_model = "opus"\ne2e = "off"\n')
+    planner = agent_routes.resolve(root, "planner", "claude-code")
     implement = agent_routes.resolve(root, "implementer", "claude-code")
     e2e = agent_routes.resolve(root, "e2e", "claude-code")
+    assert planner["activation"] == "legacy"
+    assert planner["desired"] is None
+    assert planner["legacy"] == {
+        "field": "owner session model",
+        "value": "host-native planning",
+    }
     assert implement["activation"] == "legacy"
     assert implement["desired"] is None
     assert implement["legacy"] == {"field": "models.work_model", "value": "opus"}

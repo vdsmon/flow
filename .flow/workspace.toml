@@ -29,10 +29,9 @@ worker_model = "opus"
 adjudicate_hot = true
 
 # Explicit routes are desired execution contracts. Flow records the selected route and
-# requires structured launch acceptance before calling it active. A workspace planner
-# route remains shadowed in this rollout; an exact per-run planner override opts into
-# the read-only planning loop. Codex post-plan launches inherit the owner model and
-# remain visibly shadowed.
+# requires structured launch acceptance before calling it active. The planner route is
+# the ordinary strict read-only path, with no automatic fallback. Codex post-plan
+# launches still inherit the owner model and remain visibly shadowed.
 [agents.planner]
 harness = "codex"
 model = "gpt-5.6-sol"

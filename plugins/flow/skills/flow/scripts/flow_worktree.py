@@ -54,7 +54,6 @@ left INTACT, failing toward preserving work; see reap_worktree).
 from __future__ import annotations
 
 import argparse
-import contextlib
 import json
 import os
 import secrets
@@ -1518,9 +1517,10 @@ def bootstrap(  # noqa: C901
         # the frontmatter write) would otherwise strand the worktree dir AND the
         # -b-created branch. Clean both before propagating so a crash or refusal
         # leaves no orphan (flow-fh05, broadening flow-n2a6's single-site cleanup).
-        # Cleanup runs inside the flock so a sibling never sees a half-state; remove
-        # the worktree BEFORE the branch (a checked-out branch refuses -D); best-effort
-        # `run` (not `_git`) so a cleanup failure never masks the original exception.
+        # Cleanup runs inside the flock so a sibling never sees a half-state. Remove
+        # the worktree before the branch because a checked-out branch refuses -D.
+        # Receipt-free callers retain best-effort cleanup. Approved bootstraps reset
+        # their journal only after both removals are proven.
         try:
             # A gitignored planned file is silently dropped from the commit and hard-fails
             # capture-implement-diff's `git add --intent-to-add` four stages later in the
@@ -1622,12 +1622,28 @@ def bootstrap(  # noqa: C901
                 _relocate_spilled(spilled, main_root, worktree, run, warnings)
             if journal is not None:
                 journal.advance("committed")
-        except Exception:
-            run(["git", "worktree", "remove", "--force", str(worktree)], main_root)
-            run(["git", "branch", "-D", branch], main_root)
-            if journal is not None:
-                with contextlib.suppress(bootstrap_journal.JournalError):
-                    journal.restart_after_rollback()
+        except Exception as original:
+            if journal is None:
+                run(["git", "worktree", "remove", "--force", str(worktree)], main_root)
+                run(["git", "branch", "-D", branch], main_root)
+                raise
+            try:
+                recovery_record = journal.prepare(
+                    ticket=ticket,
+                    approval=approval.to_mapping() if approval is not None else {},
+                )
+                _rollback_incomplete_approved_bootstrap(
+                    record=recovery_record,
+                    main_root=main_root,
+                    run=run,
+                )
+                journal.restart_after_rollback()
+            except (bootstrap_journal.JournalError, _ConfigError) as cleanup_error:
+                raise _ConfigError(
+                    "approved bootstrap failed and cleanup could not be proven; "
+                    "rollback coordinates remain in the journal: "
+                    f"{cleanup_error}"
+                ) from original
             raise
 
     return {

@@ -11,6 +11,7 @@ import fcntl
 import json
 import multiprocessing
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -96,6 +97,9 @@ def _fake_runner(
                     '[memory]\nnamespace = "FT"\n',
                     encoding="utf-8",
                 )
+            return subprocess.CompletedProcess(args, 0, "", "")
+        if args[:4] == ["git", "worktree", "remove", "--force"]:
+            shutil.rmtree(Path(args[4]), ignore_errors=True)
             return subprocess.CompletedProcess(args, 0, "", "")
         if args[:2] == ["git", "check-ignore"]:
             req = [a for a in args[3:] if a != "--"]
@@ -229,7 +233,11 @@ def _approval_file(
     current = attempt.current
     assert current is not None
     plan.write_bytes(pa.approval_plan_bytes(current))
-    receipt = attempt.freeze(native_gate_id="gate-1", plan_bytes=plan.read_bytes())
+    receipt = attempt.freeze(
+        native_gate_id="gate-1",
+        expected_gate_digest=attempt.gate_tuple().digest,
+        plan_bytes=plan.read_bytes(),
+    )
     path = tmp / "approval.json"
     pa.write_approval_receipt(path, receipt)
     return path
@@ -372,6 +380,39 @@ def test_committed_approval_recovery_verifies_seeded_artifacts(tmp_path: Path) -
 
     seeded_receipt = Path(first["worktree"]) / ".flow" / "runs" / "FT-1" / "approval-receipt.json"
     seeded_receipt.unlink()
+    with pytest.raises(fw._ConfigError, match="committed approved bootstrap"):
+        recover()
+
+
+@pytest.mark.parametrize("artifact", ["state", "route", "approval", "plan"])
+def test_committed_approval_recovery_rejects_each_tampered_seeded_artifact(
+    tmp_path: Path, artifact: str
+) -> None:
+    main = _main_checkout(tmp_path)
+    plan = _plan_file(tmp_path)
+    approval = _approval_file(tmp_path, main, plan=plan)
+
+    def recover():
+        return fw.bootstrap(
+            ticket="FT-1",
+            plan_from=plan,
+            base="main",
+            branch="feat/FT-1-thing",
+            main_root=main,
+            worktree_override=str(tmp_path / "wt"),
+            approval_receipt=approval,
+            runner=_fake_runner(main=main),
+        )
+
+    first = recover()
+    ticket_dir = Path(first["worktree"]) / ".flow" / "runs" / "FT-1"
+    paths = {
+        "state": ticket_dir / "state.json",
+        "route": ticket_dir / "route-snapshot.json",
+        "approval": ticket_dir / "approval-receipt.json",
+        "plan": ticket_dir / "stages" / "plan.out",
+    }
+    paths[artifact].write_text("{}\n", encoding="utf-8")
     with pytest.raises(fw._ConfigError, match="committed approved bootstrap"):
         recover()
 
@@ -537,6 +578,41 @@ def test_incomplete_approval_recovery_refuses_unproven_rollback(tmp_path: Path) 
         )
     assert not any(call[:3] == ["git", "worktree", "add"] for call in calls)
     assert journal.recovery().phase == "worktree_created"
+
+
+def test_failed_bootstrap_cleanup_keeps_rollback_coordinates(tmp_path: Path) -> None:
+    main = _main_checkout(tmp_path)
+    plan = _plan_file(tmp_path)
+    approval_path = _approval_file(tmp_path, main, plan=plan)
+    approval = pa.load_approval_receipt(approval_path)
+    worktree = tmp_path / "wt"
+    fallback = _fake_runner(main=main)
+
+    def fail_body_and_cleanup(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
+        if args[:2] == ["git", "rev-parse"]:
+            return subprocess.CompletedProcess(args, 1, "", "bad object")
+        if args[:4] == ["git", "worktree", "remove", "--force"]:
+            return subprocess.CompletedProcess(args, 1, "", "worktree locked")
+        return fallback(args, cwd)
+
+    with pytest.raises(fw._ConfigError, match="cleanup"):
+        fw.bootstrap(
+            ticket="FT-1",
+            plan_from=plan,
+            base="main",
+            branch="feat/FT-1-thing",
+            main_root=main,
+            worktree_override=str(worktree),
+            approval_receipt=approval_path,
+            runner=fail_body_and_cleanup,
+        )
+    journal = bootstrap_journal.BootstrapJournal(
+        fw._approved_bootstrap_journal_path(main, approval.digest)
+    )
+    recovery = journal.recovery()
+    assert recovery.phase == "worktree_created"
+    assert recovery.worktree == str(worktree)
+    assert recovery.branch == "feat/FT-1-thing"
 
 
 def test_copies_gitignored_config(tmp_path: Path) -> None:
