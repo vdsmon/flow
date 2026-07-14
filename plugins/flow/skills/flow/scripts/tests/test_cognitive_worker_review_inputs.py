@@ -103,6 +103,31 @@ def test_review_bundle_rejects_a_repository_that_changes_during_capture(
     assert not (tmp_path / "bundle").exists()
 
 
+def test_review_bundle_rejects_an_in_place_tracked_rewrite_during_capture(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The rewritten file is already modified, so its porcelain=v2 record never moves."""
+    root = _repository(tmp_path)
+    (root / "base.txt").write_text("dirty-a\n", encoding="utf-8")
+    status_before = _git(root, "status", "--porcelain=v2")
+    real = cw.git_receipt
+    calls = {"n": 0}
+
+    def racing(target: Path) -> dict[str, object]:
+        calls["n"] += 1
+        if calls["n"] == 2:
+            (root / "base.txt").write_text("dirty-b\n", encoding="utf-8")
+        return real(target)
+
+    monkeypatch.setattr(cw, "git_receipt", racing)
+    with pytest.raises(cw.WorkerFailure, match="changed while review evidence") as error:
+        cw.build_review_input_bundle(root, tmp_path / "bundle")
+
+    assert error.value.code == "baseline_mismatch"
+    assert _git(root, "status", "--porcelain=v2") == status_before
+    assert not (tmp_path / "bundle").exists()
+
+
 def test_review_bundle_refuses_a_special_file(tmp_path: Path) -> None:
     root = _repository(tmp_path)
     os.mkfifo(root / "pipe")
@@ -110,7 +135,7 @@ def test_review_bundle_refuses_a_special_file(tmp_path: Path) -> None:
     blobs.mkdir()
 
     with pytest.raises(cw.WorkerFailure, match="special file"):
-        cw._path_payload(root, b"pipe", blobs)
+        cw._path_payload(root, b"pipe", blobs, 1024)
 
     # Git itself never reports a FIFO as untracked, so the bundle publishes without it.
     cw.build_review_input_bundle(root, tmp_path / "bundle")
@@ -140,6 +165,34 @@ def test_review_bundle_records_deletes_renames_and_mode_changes(tmp_path: Path) 
     assert staged["chmod.sh"]["new_mode"] == "100755"
 
 
+def test_patch_layers_ignore_an_external_diff_driver(tmp_path: Path) -> None:
+    """An external driver replaces the patch and nullifies --binary, dropping binary content."""
+    root = _repository(tmp_path)
+    (root / "image.bin").write_bytes(b"\x00base\xff")
+    _git(root, "add", "image.bin")
+    _git(root, "commit", "-qm", "binary")
+
+    driver = tmp_path / "external-diff"
+    driver.write_text("#!/bin/sh\necho EXTERNAL-DIFF-RAN\n", encoding="utf-8")
+    driver.chmod(0o755)
+    _git(root, "config", "diff.external", str(driver))
+
+    (root / "image.bin").write_bytes(b"\x00staged\xff")
+    _git(root, "add", "image.bin")
+    (root / "base.txt").write_text("worktree\n", encoding="utf-8")
+
+    cw.build_review_input_bundle(root, tmp_path / "bundle")
+    staged = (tmp_path / "bundle" / "raw" / "staged.patch").read_bytes()
+    worktree = (tmp_path / "bundle" / "raw" / "worktree.patch").read_bytes()
+
+    assert b"EXTERNAL-DIFF-RAN" not in staged
+    assert b"EXTERNAL-DIFF-RAN" not in worktree
+    assert staged.startswith(b"diff --git ")
+    assert b"GIT binary patch" in staged
+    assert worktree.startswith(b"diff --git ")
+    assert b"@@ " in worktree
+
+
 def test_untracked_blob_bytes_survive_the_round_trip(tmp_path: Path) -> None:
     root = _repository(tmp_path)
     payload = bytes(range(256)) * 4
@@ -163,6 +216,28 @@ def test_review_bundle_fails_closed_on_its_size_policy(tmp_path: Path) -> None:
         cw.build_review_input_bundle(root, tmp_path / "bundle", max_bytes=16)
     with pytest.raises(cw.WorkerFailure, match="untracked-file limit"):
         cw.build_review_input_bundle(root, tmp_path / "bundle", max_files=0)
+    assert not (tmp_path / "bundle").exists()
+
+
+def test_review_bundle_rejects_an_oversized_file_without_reading_it(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root = _repository(tmp_path)
+    huge = root / "huge.bin"
+    with huge.open("wb") as handle:
+        handle.truncate(64 * 1024 * 1024)
+    reads: list[Path] = []
+    real_read = Path.read_bytes
+
+    def watched(self: Path) -> bytes:
+        reads.append(self)
+        return real_read(self)
+
+    monkeypatch.setattr(Path, "read_bytes", watched)
+    with pytest.raises(cw.WorkerFailure, match="byte limit"):
+        cw.build_review_input_bundle(root, tmp_path / "bundle", max_bytes=4096)
+
+    assert huge not in reads
     assert not (tmp_path / "bundle").exists()
 
 
@@ -208,6 +283,20 @@ def test_index_flags_cannot_hide_a_tracked_file_rewrite(tmp_path: Path) -> None:
     _git(root, "update-index", "--no-assume-unchanged", "base.txt")
     (root / "base.txt").write_text("base\n", encoding="utf-8")
     assert cw.git_receipt(root)["digest"] == before
+
+
+def test_an_in_place_tracked_rewrite_is_a_repository_change(tmp_path: Path) -> None:
+    """status --porcelain=v2 and ls-files --stage report no worktree content hash."""
+    root = _repository(tmp_path)
+    (root / "base.txt").write_text("dirty-a\n", encoding="utf-8")
+    before = cw.git_receipt(root)
+
+    (root / "base.txt").write_text("dirty-b\n", encoding="utf-8")
+    after = cw.git_receipt(root)
+
+    assert after["status"] == before["status"]
+    assert after["index"] == before["index"]
+    assert after["digest"] != before["digest"]
 
 
 def test_an_injected_git_hook_is_a_repository_change(tmp_path: Path) -> None:
