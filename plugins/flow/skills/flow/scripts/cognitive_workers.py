@@ -1052,16 +1052,44 @@ def _runtime_surface(root: Path) -> list[list[Any]]:
     read-only postcondition. Only executables and pointers are digested: the same directory
     carries per-run envelopes and locks that prose writes while a reader is in flight, so a
     whole-directory digest would report a violation for the run's own bookkeeping.
+
+    A listed path that vanishes before its stat or its read is skipped: live writers publish
+    into this directory through mkstemp + os.replace, so the listing can name a temporary the
+    rename removes a moment later. A guarded file a worker deleted still changes the receipt,
+    because the before-receipt carries the entry the after-receipt now lacks.
     """
     runtime = root / ".flow" / "runtime"
     entries: list[list[Any]] = []
     for path in sorted(runtime.rglob("*")) if runtime.is_dir() else []:
-        info = path.lstat()
-        if not stat.S_ISREG(info.st_mode):
+        with contextlib.suppress(FileNotFoundError):
+            info = path.lstat()
+            if not stat.S_ISREG(info.st_mode):
+                continue
+            if not (info.st_mode & 0o111 or path.name in _RUNTIME_POINTERS):
+                continue
+            entries.append([path.relative_to(root).as_posix(), info.st_mode, _file_digest(path)])
+    return entries
+
+
+_HARNESS_CONFIG = (".claude/settings.json", ".claude/settings.local.json")
+
+
+def _harness_surface(root: Path) -> list[list[Any]]:
+    """Digest the harness settings files, which are gitignored yet declare executable hooks.
+
+    Claude Code runs the hook commands declared in these two files, so a worker that appends a
+    PreToolUse hook reaches arbitrary code execution in the parent harness on its next tool call.
+    Both are ignored in this repository, so `status --untracked-files=all` never lists them and
+    the read-only postcondition passes clean. Only these two paths are digested: the rest of
+    .claude/ (todos, statsig, shell snapshots, worktrees) churns under a live session and would
+    report the harness's own bookkeeping as a violation.
+    """
+    entries: list[list[Any]] = []
+    for relative in _HARNESS_CONFIG:
+        path = root / relative
+        if not path.is_file():
             continue
-        if not (info.st_mode & 0o111 or path.name in _RUNTIME_POINTERS):
-            continue
-        entries.append([path.relative_to(root).as_posix(), info.st_mode, _file_digest(path)])
+        entries.append([relative, path.lstat().st_mode, _file_digest(path)])
     return entries
 
 
@@ -1170,6 +1198,7 @@ def git_receipt(root: Path) -> dict[str, Any]:
         "metadata": metadata,
         "hooks": hooks,
         "runtime_surface": _runtime_surface(resolved),
+        "harness_surface": _harness_surface(resolved),
         "untracked_content": _untracked_content(resolved),
     }
     return {**body, "digest": _digest(body)}
@@ -2025,10 +2054,25 @@ class CognitiveWorkers:
                 f"{order.logical_invocation_id}:{order.generation}".encode()
             ).hexdigest()
         )
+
+        def guarded_receipt(path: Path) -> dict[str, Any]:
+            try:
+                return git_receipt(path)
+            except OSError as exc:
+                # A receipt that cannot be read cannot prove the read-only postcondition, and a
+                # bare OSError would escape every WorkerFailure handler below: no journal
+                # transition, no capsule disposal, and a spurious artifact_failure at the CLI.
+                journal.transition(
+                    "quarantined",
+                    failure={"code": "artifact_failure", "message": str(exc)},
+                    disposal=self._dispose_failed_capsule(capsule, quarantine=True),
+                )
+                raise WorkerFailure(f"git receipt failed: {exc}", code="artifact_failure") from exc
+
         if recovery_state in {"prepared", "cloning"}:
             journal.transition("cloning", capsule=str(capsule))
         if capsule.exists():
-            capsule_git = git_receipt(capsule)
+            capsule_git = guarded_receipt(capsule)
             if capsule_git["head"] != order.source_sha:
                 journal.transition("quarantined", failure={"code": "baseline_mismatch"})
                 raise WorkerFailure(
@@ -2067,8 +2111,8 @@ class CognitiveWorkers:
                     code="termination_unconfirmed",
                 )
         else:
-            authoritative_before = git_receipt(source)
-            capsule_before = git_receipt(capsule)
+            authoritative_before = guarded_receipt(source)
+            capsule_before = guarded_receipt(capsule)
 
             def build_command(fresh: bool) -> list[str]:
                 if order.provider_prompt is not None:
@@ -2182,8 +2226,8 @@ class CognitiveWorkers:
                     disposal=self._dispose_failed_capsule(capsule, quarantine=False),
                 )
                 raise
-            authoritative_after = git_receipt(source)
-            capsule_after = git_receipt(capsule)
+            authoritative_after = guarded_receipt(source)
+            capsule_after = guarded_receipt(capsule)
             if authoritative_before["digest"] != authoritative_after["digest"]:
                 journal.transition(
                     "quarantined",

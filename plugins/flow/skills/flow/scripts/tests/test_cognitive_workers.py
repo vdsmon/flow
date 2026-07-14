@@ -187,7 +187,7 @@ def test_read_only_git_receipt_size_marks_an_over_cap_untracked_file(
 
 
 def _ignore_runtime_and_caches(source: Path) -> None:
-    (source / ".gitignore").write_text("**/.flow/runtime/\ncaches/\n", encoding="utf-8")
+    (source / ".gitignore").write_text("**/.flow/runtime/\ncaches/\n.claude/\n", encoding="utf-8")
     _git(source, "add", ".gitignore")
     _git(source, "commit", "-qm", "ignore runtime and caches")
 
@@ -217,6 +217,29 @@ def test_read_only_git_receipt_detects_runtime_facade_rewrite(tmp_path: Path) ->
     assert cw.git_receipt(source)["digest"] != before["digest"]
 
 
+def test_read_only_git_receipt_detects_harness_hook_injection(tmp_path: Path) -> None:
+    source, _ = _repository(tmp_path)
+    _ignore_runtime_and_caches(source)
+    settings_dir = source / ".claude"
+    settings_dir.mkdir()
+    settings = settings_dir / "settings.json"
+    settings.write_text('{"model": "opus"}\n', encoding="utf-8")
+    local = settings_dir / "settings.local.json"
+    local.write_text('{"permissions": {"allow": []}}\n', encoding="utf-8")
+    before = cw.git_receipt(source)
+    assert _git(source, "status", "--porcelain", "--untracked-files=all") == ""
+
+    hook = '{"hooks": {"PreToolUse": [{"hooks": [{"type": "command", "command": "payload"}]}]}}\n'
+    settings.write_text(hook, encoding="utf-8")
+    assert _git(source, "status", "--porcelain", "--untracked-files=all") == ""
+    assert cw.git_receipt(source)["digest"] != before["digest"]
+    settings.write_text('{"model": "opus"}\n', encoding="utf-8")
+    assert cw.git_receipt(source)["digest"] == before["digest"]
+
+    local.write_text(hook, encoding="utf-8")
+    assert cw.git_receipt(source)["digest"] != before["digest"]
+
+
 def test_read_only_git_receipt_ignores_gitignored_cache_churn(tmp_path: Path) -> None:
     source, _ = _repository(tmp_path)
     _ignore_runtime_and_caches(source)
@@ -226,12 +249,148 @@ def test_read_only_git_receipt_ignores_gitignored_cache_churn(tmp_path: Path) ->
     caches = source / "caches"
     caches.mkdir()
     (caches / "warm.bin").write_bytes(b"warm")
+    todos = source / ".claude" / "todos"
+    todos.mkdir(parents=True)
+    (todos / "session.json").write_text("[]\n", encoding="utf-8")
     before = cw.git_receipt(source)
 
     (caches / "warm.bin").write_bytes(b"rewarmed")
     (caches / "second.bin").write_bytes(b"more")
     (runtime / "envelope.json").write_text('{"generation": 2}\n', encoding="utf-8")
+    (todos / "session.json").write_text('[{"content": "step"}]\n', encoding="utf-8")
+    (source / ".claude" / "shell-snapshots").mkdir()
     assert cw.git_receipt(source)["digest"] == before["digest"]
+
+
+def _runtime_with_facade(source: Path) -> Path:
+    _ignore_runtime_and_caches(source)
+    runtime = source / ".flow" / "runtime"
+    runtime.mkdir(parents=True)
+    facade = runtime / "flow"
+    facade.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
+    facade.chmod(0o755)
+    (runtime / "memory-root").write_text(f"{source}/memory\n", encoding="utf-8")
+    return runtime
+
+
+def test_read_only_git_receipt_survives_a_vanishing_runtime_temp(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source, _ = _repository(tmp_path)
+    runtime = _runtime_with_facade(source)
+    before = cw.git_receipt(source)
+
+    stat_race = runtime / ".memory-root.abcd1234.tmp"
+    stat_race.write_text("published\n", encoding="utf-8")
+    read_race = runtime / ".flow.efgh5678.tmp"
+    read_race.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
+    read_race.chmod(0o755)
+
+    real_lstat = Path.lstat
+    real_digest = cw._file_digest
+
+    def racing_lstat(self: Path, **kwargs: Any) -> os.stat_result:
+        if self == stat_race:
+            stat_race.unlink()
+        return real_lstat(self, **kwargs)
+
+    def racing_digest(path: Path) -> str:
+        if path == read_race:
+            read_race.unlink()
+        return real_digest(path)
+
+    monkeypatch.setattr(Path, "lstat", racing_lstat)
+    monkeypatch.setattr(cw, "_file_digest", racing_digest)
+    after = cw.git_receipt(source)
+    assert after["digest"] == before["digest"]
+
+
+def test_read_only_git_receipt_detects_a_deleted_runtime_executable(tmp_path: Path) -> None:
+    source, _ = _repository(tmp_path)
+    runtime = _runtime_with_facade(source)
+    before = cw.git_receipt(source)
+    (runtime / "flow").unlink()
+    assert cw.git_receipt(source)["digest"] != before["digest"]
+
+
+def test_unreadable_git_receipt_quarantines_instead_of_escaping(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import hashlib
+
+    source, sha = _repository(tmp_path)
+    input_path = tmp_path / "input.json"
+    input_path.write_text('{"candidate":"plan"}\n', encoding="utf-8")
+    launched = False
+
+    class Adapter:
+        harness = "codex"
+
+        def preflight(self, route):
+            return {"executable": sys.executable, "version": "fake/1", "harness": "codex"}
+
+        def session_command(self, route, prompt, schema_path, *, thread_id, new_thread_id):
+            raise AssertionError("a reader order never carries a provider session")
+
+        def command(self, route, prompt, schema_path, capsule):
+            nonlocal launched
+            launched = True
+            result = {
+                "verdict": "approve",
+                "confidence": "high",
+                "summary": "The challenge is bound.",
+                "findings": [],
+                "assessed_plan_digest": "c" * 64,
+            }
+            event = {"thread_id": "worker-1", "result": result}
+            return [sys.executable, "-c", f"import json; print(json.dumps({event!r}))"]
+
+    real_receipt = cw.git_receipt
+
+    def racing_receipt(root: Path) -> dict[str, Any]:
+        if launched:
+            raise FileNotFoundError(2, "No such file or directory", str(root))
+        return real_receipt(root)
+
+    monkeypatch.setattr(cw, "git_receipt", racing_receipt)
+    logical_id = "assessment-receipt-race"
+    order = cw.WorkOrder(
+        logical_invocation_id=logical_id,
+        generation=1,
+        profile="plan_assessor",
+        source_root=str(source),
+        source_sha=sha,
+        route={"harness": "codex", "model": "fake", "effort": "high"},
+        route_snapshot_digest="b" * 64,
+        input_bundle=str(input_path),
+        input_digest=hashlib.sha256(input_path.read_bytes()).hexdigest(),
+        facts={
+            "ticket": {"key": "F-1"},
+            "base_sha": sha,
+            "route_digest": "b" * 64,
+            "candidate_plan": {"digest": "c" * 64},
+            "planner_receipt": {"digest": "d" * 64},
+            "assessment_rubric": "Check the plan.",
+        },
+    )
+    workers = cw.CognitiveWorkers(
+        artifact_root=tmp_path / "artifacts",
+        capsule_root=tmp_path / "capsules",
+        adapters={"codex": Adapter()},
+    )
+    with pytest.raises(cw.WorkerFailure) as failure:
+        workers.run(order, cw.OwnerProof(owner_id="owner", harness="codex"))
+    assert failure.value.code == "artifact_failure"
+
+    token = hashlib.sha256(logical_id.encode()).hexdigest()
+    journal = cw.InvocationJournal(
+        tmp_path / "artifacts" / "invocations" / token / "journal.json", logical_id
+    )
+    value = journal.read()
+    assert value is not None
+    assert value["state"] == "quarantined"
+    assert value["disposal"]["quarantined"] is True
+    assert not Path(value["capsule"]).exists()
 
 
 def test_common_executor_returns_durable_outcome_without_second_launch(tmp_path: Path) -> None:

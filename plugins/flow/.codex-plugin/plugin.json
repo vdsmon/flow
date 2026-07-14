@@ -1,6 +1,6 @@
 {
   "name": "flow",
-  "version": "0.109.5",
+  "version": "0.109.8",
   "description": "State-aware ticket-to-PR delivery, workspace operations, memory, and maintenance for Flow-managed repositories.",
   "author": {
     "name": "Victor De Simone",

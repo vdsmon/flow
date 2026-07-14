@@ -190,6 +190,41 @@ def test_a_parent_that_never_ran_the_facade_cannot_be_attested(tmp_path: Path) -
     assert any("outside its single allowed invocation" in item for item in errors)
 
 
+def test_a_shell_line_that_only_echoes_the_facade_command_is_not_attributed(tmp_path: Path) -> None:
+    """Printing the facade text and reading an outcome.json off disk is not running the facade."""
+    command = "FLOW_HARNESS=codex /abs/flow cognitive-worker run --work-order /abs/o.json"
+    digest = "e" * 64
+    transcript = tmp_path / "codex.jsonl"
+    transcript.write_text(
+        json.dumps(
+            {
+                "item": {
+                    "type": "command_execution",
+                    "command": (
+                        f"/bin/zsh -lc \"echo '{command}' ; "
+                        'cat /abs/artifacts/invocations/deadbeef/outcome.json"'
+                    ),
+                    "exit_code": 0,
+                    "aggregated_output": json.dumps({"digest": digest, "status": "succeeded"}),
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    manifest = {"parent_harness": "codex", "facade_command": command}
+    errors = smoke._verify_real_parent(manifest, {"stdout_path": str(transcript)}, digest)
+    assert any("never executed the exact absolute facade command" in item for item in errors)
+
+
+def test_a_login_shell_wrapper_around_the_exact_facade_command_is_attributed(
+    tmp_path: Path,
+) -> None:
+    """Codex records the approved command inside its own /bin/zsh -lc, which stays attributable."""
+    command = "FLOW_HARNESS=codex /abs/flow cognitive-worker run --work-order /abs/o.json"
+    assert smoke._facade_argv(f"/bin/zsh -lc '{command}'") == smoke._facade_argv(command)
+
+
 def test_worker_environment_carries_the_sandbox_egress_proxy(monkeypatch) -> None:
     """A sandboxed owner reaches the network only through its injected proxy."""
     monkeypatch.setenv("HTTPS_PROXY", "http://user:pass@localhost:60521")
