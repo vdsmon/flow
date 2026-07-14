@@ -34,6 +34,7 @@ from pathlib import Path
 from typing import Any, Literal, Protocol, cast
 
 from _atomicio import atomic_write_text
+from _locking import LockContention, flock_blocking, flock_retry
 
 PROMPTS_PATH = Path(__file__).with_name("cognitive_worker_prompts.json")
 WORK_ORDER_SCHEMA = "flow.cognitive-work-order/v1"
@@ -1791,6 +1792,9 @@ class CognitiveWorkers:
         token = hashlib.sha256(logical_id.encode()).hexdigest()
         return self.artifact_root / "invocations" / token
 
+    def _invocation_lock(self, logical_id: str) -> Path:
+        return self._invocation_dir(logical_id).with_suffix(".lock")
+
     def _dispose_failed_capsule(self, capsule: Path, *, quarantine: bool) -> dict[str, Any]:
         """Remove a dead capsule, or set an ambiguous one aside for an operator."""
         if not capsule.exists():
@@ -1811,8 +1815,19 @@ class CognitiveWorkers:
             "quarantine_path": str(held),
         }
 
-    def run(self, order: WorkOrder, owner: OwnerProof) -> WorkOutcome:  # noqa: C901
-        """Execute or recover one idempotent logical invocation."""
+    def run(self, order: WorkOrder, owner: OwnerProof) -> WorkOutcome:
+        """Execute or recover one idempotent logical invocation.
+
+        The whole body runs under an exclusive lock on the invocation, so the durable-outcome
+        check, the journal read, the capsule clone, and the capsule disposal are one critical
+        section. Two concurrent calls for the same logical invocation would otherwise both read
+        an empty journal, reuse the one generation-keyed capsule, and delete it under the live
+        provider process.
+        """
+        with flock_blocking(self._invocation_lock(order.logical_invocation_id)):
+            return self._run_locked(order, owner)
+
+    def _run_locked(self, order: WorkOrder, owner: OwnerProof) -> WorkOutcome:  # noqa: C901
         policy = ROLE_CATALOG[order.profile]
         if not policy.active:
             raise WorkerFailure(
@@ -2197,7 +2212,24 @@ class CognitiveWorkers:
         return WorkOutcome(**{**asdict(outcome), "digest": mapping["digest"]})
 
     def cancel(self, logical_invocation_id: str, owner: OwnerProof, reason: str) -> dict[str, Any]:
-        """Idempotently cancel a known invocation or refuse ambiguous recovery."""
+        """Idempotently cancel a known invocation or refuse ambiguous recovery.
+
+        Cancellation waits for the invocation lock only within the bounded retry budget: it exists
+        to stop a live run, so blocking for that run's whole duration would be indistinguishable
+        from a hang. A caller that loses the race is told the invocation is busy and can retry.
+        """
+        try:
+            with flock_retry(self._invocation_lock(logical_invocation_id)):
+                return self._cancel_locked(logical_invocation_id, owner, reason)
+        except LockContention as exc:
+            raise WorkerFailure(
+                "invocation is executing under another run; cancellation cannot mutate its journal",
+                code="execution_busy",
+            ) from exc
+
+    def _cancel_locked(
+        self, logical_invocation_id: str, owner: OwnerProof, reason: str
+    ) -> dict[str, Any]:
         del owner
         invocation = self._invocation_dir(logical_invocation_id)
         journal = InvocationJournal(invocation / "journal.json", logical_invocation_id)

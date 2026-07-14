@@ -5,12 +5,14 @@ import json
 import os
 import subprocess
 import sys
+import threading
 from pathlib import Path
 from typing import Any, override
 
 import pytest
 
 import cognitive_workers as cw
+from _locking import flock_blocking
 
 
 def _git(root: Path, *args: str) -> str:
@@ -767,6 +769,77 @@ def test_a_recovered_capsule_at_the_wrong_base_quarantines(tmp_path: Path) -> No
         )
     assert error.value.code == "baseline_mismatch"
     assert json.loads((invocation / "journal.json").read_text())["state"] == "quarantined"
+
+
+def test_two_concurrent_runs_of_one_invocation_launch_one_provider(tmp_path: Path) -> None:
+    source, sha = _repository(tmp_path)
+    input_path = tmp_path / "input.json"
+    input_path.write_text("{}\n", encoding="utf-8")
+    order = _review_order(source, sha, input_path, "review-concurrent")
+    adapter = _ScriptedAdapter(f"import time; time.sleep(0.5); {_EMIT}")
+    workers = _workers(tmp_path, adapter)
+    start = threading.Barrier(2)
+    outcomes: list[cw.WorkOutcome] = []
+    failures: list[BaseException] = []
+
+    def attempt() -> None:
+        start.wait()
+        try:
+            outcomes.append(workers.run(order, cw.OwnerProof(owner_id="owner", harness="codex")))
+        except BaseException as exc:
+            failures.append(exc)
+
+    threads = [threading.Thread(target=attempt) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=60)
+        assert not thread.is_alive()
+
+    assert failures == []
+    assert adapter.launches == 1
+    assert [outcome.status for outcome in outcomes] == ["succeeded", "succeeded"]
+    assert outcomes[0].to_mapping() == outcomes[1].to_mapping()
+
+
+def test_a_held_invocation_lock_does_not_block_another_invocation(tmp_path: Path) -> None:
+    source, sha = _repository(tmp_path)
+    input_path = tmp_path / "input.json"
+    input_path.write_text("{}\n", encoding="utf-8")
+    workers = _workers(tmp_path, _ScriptedAdapter(_EMIT))
+    order = _review_order(source, sha, input_path, "review-other-invocation")
+    outcomes: list[cw.WorkOutcome] = []
+
+    def attempt() -> None:
+        outcomes.append(workers.run(order, cw.OwnerProof(owner_id="owner", harness="codex")))
+
+    with flock_blocking(workers._invocation_lock("review-held-invocation")):
+        thread = threading.Thread(target=attempt)
+        thread.start()
+        thread.join(timeout=60)
+        assert not thread.is_alive()
+
+    assert [outcome.status for outcome in outcomes] == ["succeeded"]
+
+
+def test_cancel_refuses_a_contended_invocation_instead_of_waiting_for_the_run(
+    tmp_path: Path,
+) -> None:
+    workers = _workers(tmp_path, _ScriptedAdapter(_EMIT))
+    logical_id = "review-cancel-contended"
+    invocation = workers._invocation_dir(logical_id)
+    journal = cw.InvocationJournal(invocation / "journal.json", logical_id)
+    journal.transition("prepared", launch_nonce="nonce")
+    journal.transition("running", pid=4242)
+
+    with (
+        flock_blocking(workers._invocation_lock(logical_id)),
+        pytest.raises(cw.WorkerFailure, match="executing under another run") as error,
+    ):
+        workers.cancel(logical_id, cw.OwnerProof(owner_id="owner", harness="codex"), "operator")
+
+    assert error.value.code == "execution_busy"
+    assert json.loads((invocation / "journal.json").read_text())["state"] == "running"
 
 
 # ─── deterministic stage execution ───────────────────────────────────────────
