@@ -58,10 +58,25 @@ def test_verify_refuses_environment_only_parent_claim(tmp_path: Path) -> None:
     assert any("real parent executable" in item for item in result["errors"])
 
 
-def test_codex_transcript_binds_one_terminal_facade_invocation(tmp_path: Path) -> None:
-    command = "FLOW_HARNESS=codex /abs/flow cognitive-worker run --work-order /abs/o.json"
-    transcript = tmp_path / "codex.jsonl"
-    transcript.write_text(
+def test_verify_rechecks_the_manifests_own_digest(tmp_path: Path) -> None:
+    body = {
+        "schema": smoke.SCHEMA,
+        "direction": "claude-parent",
+        "parent_harness": "claude_code",
+        "worker_harness": "codex",
+        "outer_evidence": str(tmp_path / "outer.json"),
+    }
+    honest = {**body, "digest": cognitive_workers._digest(body)}
+    assert "smoke manifest digest is invalid" not in smoke.verify_manifest(honest)["errors"]
+
+    tampered = {**honest, "parent_harness": "codex"}
+    result = smoke.verify_manifest(tampered)
+    assert result["verified"] is False
+    assert "smoke manifest digest is invalid" in result["errors"]
+
+
+def _codex_transcript(path: Path, command: str, output: str) -> Path:
+    path.write_text(
         "\n".join(
             [
                 json.dumps(
@@ -73,6 +88,7 @@ def test_codex_transcript_binds_one_terminal_facade_invocation(tmp_path: Path) -
                             "type": "command_execution",
                             "command": f"/bin/zsh -lc '{command}'",
                             "exit_code": 0,
+                            "aggregated_output": output,
                         }
                     }
                 ),
@@ -80,16 +96,39 @@ def test_codex_transcript_binds_one_terminal_facade_invocation(tmp_path: Path) -
         ),
         encoding="utf-8",
     )
+    return path
+
+
+def test_codex_transcript_binds_one_terminal_facade_invocation(tmp_path: Path) -> None:
+    command = "FLOW_HARNESS=codex /abs/flow cognitive-worker run --work-order /abs/o.json"
+    digest = "a" * 64
+    transcript = _codex_transcript(
+        tmp_path / "codex.jsonl", command, json.dumps({"digest": digest, "status": "succeeded"})
+    )
 
     invocations = smoke.transcript_invocations(transcript, "codex")
     assert len(invocations) == 1
     assert invocations[0]["exit_code"] == 0
     manifest = {"parent_harness": "codex", "facade_command": command}
-    assert smoke._verify_real_parent(manifest, {"stdout_path": str(transcript)}) == []
+    assert smoke._verify_real_parent(manifest, {"stdout_path": str(transcript)}, digest) == []
+
+
+def test_a_parent_transcript_without_the_nested_outcome_digest_is_unjoined(tmp_path: Path) -> None:
+    """The exact facade command alone leaves outer and inner evidence forgeable apart."""
+    command = "FLOW_HARNESS=codex /abs/flow cognitive-worker run --work-order /abs/o.json"
+    transcript = _codex_transcript(
+        tmp_path / "codex.jsonl", command, json.dumps({"digest": "b" * 64})
+    )
+
+    manifest = {"parent_harness": "codex", "facade_command": command}
+    errors = smoke._verify_real_parent(manifest, {"stdout_path": str(transcript)}, "a" * 64)
+    assert not any("never executed the exact absolute facade command" in item for item in errors)
+    assert any("never carried the nested outcome digest" in item for item in errors)
 
 
 def test_claude_transcript_binds_its_single_bash_invocation(tmp_path: Path) -> None:
     command = "FLOW_HARNESS=claude-code /abs/flow cognitive-worker run --work-order /abs/o.json"
+    digest = "c" * 64
     transcript = tmp_path / "claude.jsonl"
     transcript.write_text(
         "\n".join(
@@ -112,7 +151,11 @@ def test_claude_transcript_binds_its_single_bash_invocation(tmp_path: Path) -> N
                     {
                         "message": {
                             "content": [
-                                {"type": "tool_result", "tool_use_id": "t1", "content": "ok"}
+                                {
+                                    "type": "tool_result",
+                                    "tool_use_id": "t1",
+                                    "content": json.dumps({"digest": digest}),
+                                }
                             ]
                         }
                     }
@@ -123,7 +166,7 @@ def test_claude_transcript_binds_its_single_bash_invocation(tmp_path: Path) -> N
     )
 
     manifest = {"parent_harness": "claude_code", "facade_command": command}
-    assert smoke._verify_real_parent(manifest, {"stdout_path": str(transcript)}) == []
+    assert smoke._verify_real_parent(manifest, {"stdout_path": str(transcript)}, digest) == []
 
 
 def test_a_parent_that_never_ran_the_facade_cannot_be_attested(tmp_path: Path) -> None:
@@ -142,7 +185,7 @@ def test_a_parent_that_never_ran_the_facade_cannot_be_attested(tmp_path: Path) -
     )
 
     manifest = {"parent_harness": "codex", "facade_command": "/abs/flow cognitive-worker run"}
-    errors = smoke._verify_real_parent(manifest, {"stdout_path": str(transcript)})
+    errors = smoke._verify_real_parent(manifest, {"stdout_path": str(transcript)}, "d" * 64)
     assert any("never executed the exact absolute facade command" in item for item in errors)
     assert any("outside its single allowed invocation" in item for item in errors)
 
