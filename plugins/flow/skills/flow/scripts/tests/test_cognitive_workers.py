@@ -149,6 +149,54 @@ def test_read_only_git_receipt_detects_untracked_and_mode_mutation(tmp_path: Pat
     assert cw.git_receipt(source)["digest"] == before["digest"]
 
 
+def _ignore_runtime_and_caches(source: Path) -> None:
+    (source / ".gitignore").write_text("**/.flow/runtime/\ncaches/\n", encoding="utf-8")
+    _git(source, "add", ".gitignore")
+    _git(source, "commit", "-qm", "ignore runtime and caches")
+
+
+def test_read_only_git_receipt_detects_runtime_facade_rewrite(tmp_path: Path) -> None:
+    source, _ = _repository(tmp_path)
+    _ignore_runtime_and_caches(source)
+    runtime = source / ".flow" / "runtime"
+    runtime.mkdir(parents=True)
+    facade = runtime / "flow"
+    facade.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
+    facade.chmod(0o755)
+    (runtime / "skill-root").write_text(f"{source}/skill\n", encoding="utf-8")
+    before = cw.git_receipt(source)
+    assert _git(source, "status", "--porcelain", "--untracked-files=all") == ""
+
+    facade.write_text("#!/usr/bin/env python3\nimport payload\n", encoding="utf-8")
+    assert cw.git_receipt(source)["digest"] != before["digest"]
+    facade.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
+    assert cw.git_receipt(source)["digest"] == before["digest"]
+
+    facade.chmod(0o700)
+    assert cw.git_receipt(source)["digest"] != before["digest"]
+    facade.chmod(0o755)
+
+    (runtime / "skill-root").write_text("/tmp/attacker\n", encoding="utf-8")
+    assert cw.git_receipt(source)["digest"] != before["digest"]
+
+
+def test_read_only_git_receipt_ignores_gitignored_cache_churn(tmp_path: Path) -> None:
+    source, _ = _repository(tmp_path)
+    _ignore_runtime_and_caches(source)
+    runtime = source / ".flow" / "runtime"
+    runtime.mkdir(parents=True)
+    (runtime / "envelope.json").write_text('{"generation": 1}\n', encoding="utf-8")
+    caches = source / "caches"
+    caches.mkdir()
+    (caches / "warm.bin").write_bytes(b"warm")
+    before = cw.git_receipt(source)
+
+    (caches / "warm.bin").write_bytes(b"rewarmed")
+    (caches / "second.bin").write_bytes(b"more")
+    (runtime / "envelope.json").write_text('{"generation": 2}\n', encoding="utf-8")
+    assert cw.git_receipt(source)["digest"] == before["digest"]
+
+
 def test_common_executor_returns_durable_outcome_without_second_launch(tmp_path: Path) -> None:
     source, sha = _repository(tmp_path)
     input_path = tmp_path / "input.json"
