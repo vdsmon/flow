@@ -75,6 +75,51 @@ def test_override_wins_and_codex_post_plan_route_is_shadowed(tmp_path: Path) -> 
     assert "cannot select model and effort" in resolved["reason"]
 
 
+def test_only_explicit_planner_override_activates_cross_harness_planning(tmp_path: Path) -> None:
+    root = _workspace(
+        tmp_path,
+        '\n[agents.planner]\nharness = "codex"\nmodel = "gpt-5.6-sol"\neffort = "xhigh"\n',
+    )
+    configured = agent_routes.resolve(root, "planner", "claude-code")
+    explicit = agent_routes.resolve(
+        root,
+        "planner",
+        "claude-code",
+        overrides=["planner=codex,gpt-5.6-sol,xhigh"],
+    )
+    assert configured["activation"] == "shadow"
+    assert explicit["activation"] == "pending"
+    assert "read-only planner CLI" in explicit["reason"]
+
+
+def test_explicit_planner_cli_attestation_proves_exact_execution(tmp_path: Path) -> None:
+    root = _workspace(tmp_path)
+    snap = agent_routes.snapshot(
+        root,
+        "claude-code",
+        overrides=["planner=codex,gpt-5.6-sol,xhigh"],
+    )
+    request = dict(snap["routes"]["planner"]["desired"])
+    receipt = agent_routes.attest(
+        snap,
+        "planner",
+        {
+            "request": request,
+            "response": {
+                "accepted": True,
+                **request,
+                "transport": "cli",
+                "adapter_version": "codex-cli/test",
+                "canonical_model": "gpt-5.6-sol-2026-07-01",
+            },
+            "prompt_hash": "prompt",
+            "schema_hash": "schema",
+        },
+    )
+    assert receipt["activation"] == "active"
+    assert receipt["effective"] == request
+
+
 def test_legacy_models_are_classified_without_becoming_agent_routes(tmp_path: Path) -> None:
     root = _workspace(tmp_path, '\n[models]\nwork_model = "opus"\ne2e = "off"\n')
     implement = agent_routes.resolve(root, "implementer", "claude-code")
@@ -136,6 +181,14 @@ def test_snapshot_is_canonical_stable_and_round_trips(
         agent_routes.load_snapshot(path)
 
 
+def test_snapshot_can_resolve_exact_fetched_configuration_bytes(tmp_path: Path) -> None:
+    root = _workspace(tmp_path)
+    raw = (root / ".flow" / "workspace.toml").read_bytes()
+    from_checkout = agent_routes.snapshot(root, "claude-code")
+    from_base = agent_routes.snapshot_config(raw, "claude-code")
+    assert from_base == from_checkout
+
+
 def test_attestation_requires_structured_exact_native_acceptance(tmp_path: Path) -> None:
     snap = agent_routes.snapshot(_workspace(tmp_path), "claude-code")
     with pytest.raises(agent_routes.RouteError, match="structured"):
@@ -153,6 +206,7 @@ def test_attestation_requires_structured_exact_native_acceptance(tmp_path: Path)
                 "transport": "native",
                 "adapter_version": "claude-code/test",
                 "canonical_model": "claude-sonnet-test",
+                "worker_id": "agent-42",
             },
             "prompt_hash": "prompt-1",
             "schema_hash": "schema-1",
@@ -162,6 +216,10 @@ def test_attestation_requires_structured_exact_native_acceptance(tmp_path: Path)
     assert receipt["effective"] == request
     assert receipt["source"] == "built_in"
     assert receipt["canonical_model"] == "claude-sonnet-test"
+    assert receipt["worker_id"] == "agent-42"
+    assert agent_routes.verify_receipt(receipt) == receipt
+    with pytest.raises(agent_routes.RouteError, match="digest"):
+        agent_routes.verify_receipt({**receipt, "worker_id": "tampered"})
 
     mismatch = agent_routes.attest(
         snap,

@@ -306,12 +306,17 @@ def _builtin_route(profile: str, owner_harness: str) -> dict[str, str] | None:
 
 
 def _activation(
-    profile: str, desired: dict[str, str] | None, owner_harness: str
+    profile: str,
+    desired: dict[str, str] | None,
+    owner_harness: str,
+    source: str,
 ) -> tuple[str, str]:
     if desired is None:
         return "unrouted", "no exact route exists for this owner harness"
+    if profile == "planner" and source == "override":
+        return "pending", "explicit override may activate an exact read-only planner CLI route"
     if profile in {"planner", "plan_assessor"}:
-        return "shadow", "cross-harness planning execution is introduced in the next increment"
+        return "shadow", "configured planning routes remain non-activating until rollout"
     if owner_harness == "generic":
         return "shadow", "the generic adapter has no structured model and effort selector"
     if desired["harness"] != owner_harness:
@@ -354,7 +359,7 @@ def _resolve_data(
     if desired is None:
         desired = _builtin_route(profile, owner_harness)
         source = "built_in" if desired is not None else "generic_legacy"
-    activation, reason = _activation(profile, desired, owner_harness)
+    activation, reason = _activation(profile, desired, owner_harness, source)
     return {
         "schema": SCHEMA,
         "profile": profile,
@@ -389,8 +394,30 @@ def snapshot(
 ) -> dict[str, Any]:
     """Build and optionally persist the canonical route snapshot."""
     root = workspace_root.expanduser().resolve()
-    owner = normalize_owner_harness(owner_harness)
     data, raw = _load_workspace(root)
+    return snapshot_config(
+        raw,
+        owner_harness,
+        overrides=overrides,
+        output_path=output_path,
+        parsed_data=data,
+    )
+
+
+def snapshot_config(
+    raw: bytes,
+    owner_harness: str,
+    *,
+    overrides: list[str] | tuple[str, ...] = (),
+    output_path: Path | None = None,
+    parsed_data: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build a snapshot from exact fetched workspace configuration bytes."""
+    try:
+        data = parsed_data if parsed_data is not None else tomllib.loads(raw.decode())
+    except (UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
+        raise RouteError(f"cannot parse fetched workspace routes: {exc}") from exc
+    owner = normalize_owner_harness(owner_harness)
     parsed = _parse_override_values(overrides)
     routes = {profile: _resolve_data(data, profile, owner, parsed) for profile in _PROFILES}
     stage_execution = json.loads(json.dumps(_STAGE_EXECUTION))
@@ -434,6 +461,17 @@ def load_snapshot(path: Path) -> dict[str, Any]:
     return _verified_snapshot(value)
 
 
+def verify_receipt(value: dict[str, Any]) -> dict[str, Any]:
+    """Digest-check one persisted launch receipt before another module trusts it."""
+    digest = value.get("digest")
+    body = {key: item for key, item in value.items() if key != "digest"}
+    if value.get("schema") != RECEIPT_SCHEMA:
+        raise RouteError(f"unsupported route receipt schema {value.get('schema')!r}")
+    if not isinstance(digest, str) or digest != _digest(body):
+        raise RouteError("route receipt digest does not match its canonical content")
+    return value
+
+
 def resolve_snapshot(path: Path, profile: str) -> dict[str, Any]:
     """Return one frozen profile from a persisted canonical snapshot."""
     snap = load_snapshot(path)
@@ -465,10 +503,13 @@ def attest(route_snapshot: dict[str, Any], profile: str, acceptance: object) -> 
         raise RouteError("structured launch request does not match the frozen desired route")
 
     exact_response = all(response.get(key) == desired[key] for key in desired)
-    native = response.get("transport") == "native"
-    active = response.get("accepted") is True and exact_response and native and can_activate
+    transport = response.get("transport")
+    supported_transport = transport == "native" or (profile == "planner" and transport == "cli")
+    active = (
+        response.get("accepted") is True and exact_response and supported_transport and can_activate
+    )
     reason = (
-        "structured native launch accepted the exact desired route"
+        "structured launch accepted the exact desired route"
         if active
         else "launch response did not prove exact supported native execution"
     )
@@ -487,6 +528,7 @@ def attest(route_snapshot: dict[str, Any], profile: str, acceptance: object) -> 
         "transport": response.get("transport", "unknown"),
         "adapter_version": response.get("adapter_version", "unknown"),
         "canonical_model": response.get("canonical_model"),
+        "worker_id": response.get("worker_id"),
         "prompt_hash": acceptance.get("prompt_hash"),
         "schema_hash": acceptance.get("schema_hash"),
     }
@@ -581,6 +623,7 @@ def _parser() -> argparse.ArgumentParser:
 
     snapshot_parser = sub.add_parser("snapshot")
     _add_resolution_args(snapshot_parser)
+    snapshot_parser.add_argument("--workspace-config")
     snapshot_parser.add_argument("--output")
 
     attest_parser = sub.add_parser("attest")
@@ -620,11 +663,20 @@ def cli_main(argv: list[str]) -> int:
                     overrides=args.route,
                 )
         elif args.operation == "snapshot":
-            result = snapshot(
-                Path(args.workspace_root),
-                args.owner_harness,
-                overrides=args.route,
-                output_path=Path(args.output) if args.output else None,
+            result = (
+                snapshot_config(
+                    Path(args.workspace_config).read_bytes(),
+                    args.owner_harness,
+                    overrides=args.route,
+                    output_path=Path(args.output) if args.output else None,
+                )
+                if args.workspace_config
+                else snapshot(
+                    Path(args.workspace_root),
+                    args.owner_harness,
+                    overrides=args.route,
+                    output_path=Path(args.output) if args.output else None,
+                )
             )
         elif args.operation == "attest":
             snap = load_snapshot(Path(args.snapshot))
@@ -641,7 +693,7 @@ def cli_main(argv: list[str]) -> int:
             result = migrate(
                 Path(args.workspace_root), apply=bool(args.apply), confirm=bool(args.confirm)
             )
-    except RouteError as exc:
+    except (OSError, RouteError) as exc:
         sys.stderr.write(f"agent-route: {exc}\n")
         return 2
     sys.stdout.write(json.dumps(result, indent=2, sort_keys=True) + "\n")
@@ -665,4 +717,6 @@ __all__ = [
     "resolve",
     "resolve_snapshot",
     "snapshot",
+    "snapshot_config",
+    "verify_receipt",
 ]

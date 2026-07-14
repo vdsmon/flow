@@ -53,7 +53,14 @@ Before approval, Flow has an attempt-scoped coordinator rather than a run, lease
 worktree. The human talks only to the owner cockpit. The owner relays planner
 questions and human feedback verbatim, with its own synthesis separately labeled.
 Every planner response is a complete versioned plan; hidden conversation is never
-required to reconstruct the reviewed result.
+required to reconstruct the reviewed result. The canonical plan requires motivation,
+goal, before/after scenarios, architecture, decisions, acceptance outcomes, ordered
+steps, files and context, verification and e2e recipe, lane, compatibility, rollout,
+and risks. The worker binds the envelope author to the harness/model it actually
+launched rather than trusting agent-authored provenance text.
+Each accepted version also binds a unique active planner launch receipt. The gate
+includes the current receipt digest, so a caller cannot bypass worker attestation by
+submitting only a self-declared author.
 
 The same logical planner thread resumes through feedback. It rotates before the
 fourth revision or earlier under context pressure. Owner loss starts a new attempt
@@ -61,6 +68,8 @@ and a fresh planner rehydrated from the complete plan and feedback ledger; appro
 does not transfer. A planner has a ten-minute soft deadline and a forty-minute hard
 deadline. One fresh retry receives a new budget, but it cannot start until process
 termination and output closure are proven.
+When the failed launch was a resumed thread, the retry receives a separate complete
+rehydration prompt; the feedback delta alone is never reused as fresh context.
 
 Lavish is the preferred ephemeral local review surface. It emphasizes motivation,
 before/after scenarios, system relationships, routes, tests, risks, and the revision
@@ -70,7 +79,10 @@ authorizes implementation. Markdown is the visible correctness-preserving fallba
 The owner assesses every externally authored revision. A fresh separate assessor is
 reserved for inline owner-authored, unattended, hot/guard-sensitive, or explicitly
 escalated plans. Author and assessor must differ, and assessment findings return to
-the planner rather than being edited into the plan by the assessor.
+the planner rather than being edited into the plan by the assessor. Each verdict also
+binds the exact current plan digest and its actual author id.
+A policy-fresh verdict additionally binds a structured `plan_assessor` launch receipt
+whose distinct worker id matches the assessor identity.
 
 ## Gate, bootstrap, and provenance
 
@@ -79,11 +91,17 @@ planned, evidence, and route/configuration paths. Relevant or ambiguous movement
 requires a fresh plan and renewed review. Proven-disjoint movement receives a
 revalidation receipt. Native approval binds the exact plan digest, approved base
 SHA, feedback watermark, route digest, assessment verdict, and revalidation receipt.
+The native-gate plan file is the deterministic rendering of that same envelope;
+arbitrary bytes cannot be paired with its digest.
 
 Bootstrap uses the approved SHA even if the remote default advances afterward. Its
 ticket claim covers exact tuple validation, worktree creation, state seeding, and
-route-snapshot persistence. A concurrent loser cannot expose a partial run. Later
-increments add a recoverable prepared/committed bootstrap journal around this claim.
+route-snapshot persistence. A prepared/worktree-intended/worktree-created/run-seeded/committed journal
+lets the same tuple finish or retry after interruption. A concurrent
+loser cannot expose a partial run or substitute a different tuple. Journal filenames
+derive from the verified approval digest, never a planner-provided attempt id, and a
+committed recovery re-verifies state, route, approval, and plan artifacts before return.
+The intended phase records rollback coordinates before `git worktree add`.
 
 Route provenance pairs a frozen desired-state snapshot with per-launch receipts.
 Together they record desired and effective routes separately, activation, source,
@@ -107,6 +125,8 @@ one human revision, planner-thread resume, Lavish freeze, native approval, and e
 SHA bootstrap. Run reports separate planner activity, owner assessment, and human
 review idle time so latency remains explainable.
 
-Until the planning-loop increment lands, planner and assessor routes are desired
-shadow state only. Setup may materialize those defaults so configuration and
-provenance stabilize early, but no pre-approval worker claims to have executed them.
+During the opt-in planning-loop rollout, configured planner and assessor routes remain
+desired shadow state. An explicit per-run planner override may activate after its
+structured receipt proves the exact read-only CLI launch. This keeps the fallback
+unchanged while the next increment runs fault tests and a real Flow ticket before
+flipping the default.
