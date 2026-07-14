@@ -191,11 +191,16 @@ def transcript_invocations(path: Path, parent_harness: str) -> list[dict[str, An
 def _verify_real_parent(
     manifest: dict[str, Any], outer: dict[str, Any], outcome_digest: object
 ) -> list[str]:
-    """Bind the facade invocation, and the outcome it produced, to the parent's own transcript.
+    """Check the parent's own transcript for the facade invocation and the nested outcome digest.
 
-    The parent must have run the exact facade command and no other, and the output it recorded
-    for that command must carry the digest of the nested outcome. Without the second half the
-    outer and inner evidence stand apart and either could be forged alone.
+    The facade command must appear in the parent's transcript, and no other command may. The
+    matched invocation must not have failed. The digest of the nested outcome must appear in the
+    output the parent recorded for that invocation.
+
+    Command attribution is a substring match on the recorded command line, so these checks do not
+    yet exclude a forged parent: a command that prints the facade command text and then reads a
+    pre-existing outcome.json off disk satisfies both halves without running the facade. Tightening
+    the match to real execution is filed as flow-zzdd.
     """
     errors: list[str] = []
     stdout_path = Path(str(outer.get("stdout_path", "")))
@@ -206,7 +211,8 @@ def _verify_real_parent(
     except OSError as exc:
         return [f"parent transcript is unreadable: {exc}"]
     expected = str(manifest.get("facade_command"))
-    # A harness may wrap the approved command in its own login shell; it may not alter it.
+    # A harness may wrap the approved command in its own login shell, so this is a substring match.
+    # A command that only contains the text also matches; see flow-zzdd.
     matched = [item for item in invocations if expected in str(item.get("command", ""))]
     if not matched:
         errors.append("the parent transcript never executed the exact absolute facade command")
