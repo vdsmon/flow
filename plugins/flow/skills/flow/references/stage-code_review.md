@@ -7,10 +7,11 @@ stage generation, source SHA, route digest, owner, and lease fence. Build one im
 `flow.review-input-bundle/v1` from the authoritative tree. `code_reviewer` receives the
 accepted plan and ticket; `diff_reviewer` receives only source identity, the bundle, and
 its fixed plan-blind rubric. Both return typed findings ONLY: a reviewer that finds an
-issue never fixes it and never gains write authority. The `primary_review` and
-`plan_blind_review` substeps run in their recorded native reader path (the exact-route
-default is unflipped in this increment), so each is recorded as a reasoned skip at the
-terminal advance.
+issue never fixes it and never gains write authority. `primary_review` is a non-conditional
+reader, satisfied by a matching successful outcome; `plan_blind_review` is conditional so
+the cheap lanes can reasoned-skip it. The routed readers run through `cognitive-worker
+run-stage` like every other activated substep (`references/delivery-loop.md`, "Activated
+cognitive substeps").
 
 Any fix routes through the `review_fixer` capsule, a separate importing writer, NOT the
 reviewer. When the classified findings carry an auto-fix, drive the `review_fix` substep
@@ -27,10 +28,11 @@ Review the implement-stage diff through the frozen exact reader routes when acti
 Historical, generic, and legacy snapshots retain their recorded inline behavior.
 
 The route snapshot records the primary pass as `code_reviewer`, the plan-blind pass as
-`diff_reviewer`, and any mutation as the conditional `review_fixer` substep. All three
-substeps are conditional: the two reader substeps take a reasoned skip while they run the
-recorded native reader path, and `review_fix` runs the `review_fixer` capsule when a
-finding is auto-fixable, else takes a reasoned skip.
+`diff_reviewer`, and any mutation as the conditional `review_fixer` substep. `code_reviewer`,
+`diff_reviewer`, and `review_fixer` all activate from a new exact snapshot. `primary_review`
+returns a findings outcome; `plan_blind_review` returns a findings outcome on the full lane
+and a reasoned skip on the cheap lanes; `review_fix` runs the `review_fixer` capsule when a
+finding is auto-fixable, else a reasoned skip.
 
 This is the lowest-cost gate against regressions.
 The routed readers are isolated from the implementation context. A historical shadow
@@ -58,7 +60,7 @@ run may still use the inline compatibility path recorded in its snapshot.
 
    **Empty `files_touched` is expected, not "nothing to review".** `since-stage` diffs the committed range `started_at_sha..HEAD`, but implement leaves its work UNCOMMITTED (the commit stage runs later), so `started_at_sha == HEAD` and the committed range is empty. The real change is in the working tree. When `files_touched` is empty, get the actual file list from the working tree instead: `git diff HEAD --name-only` (or `git status --porcelain`). Only treat the stage as a genuine no-op if the working tree is also clean.
 
-2. For each file (from `files_touched`, or the working-tree list above when `since-stage` was empty), Read the file and read the diff via `git diff <started_at_sha> -- <path>` (no `..HEAD`, so it includes the uncommitted working tree).
+2. **Primary review.** For each file (from `files_touched`, or the working-tree list above when `since-stage` was empty), Read the file and read the diff via `git diff <started_at_sha> -- <path>` (no `..HEAD`, so it includes the uncommitted working tree). This is the rubric the `primary_review` (`code_reviewer`) pass carries; its findings outcome is required before completion.
    Assess for:
    - Obvious bugs (off-by-one, null-deref, missing await, etc.).
    - Regressions in nearby tests not updated by implement stage.
@@ -106,7 +108,7 @@ run may still use the inline compatibility path recorded in its snapshot.
    LANE=$(FLOW_HARNESS="<harness>" "<facade>" frontmatter read .flow/tickets/<KEY>.md \
      | python3 -c "import json,sys; print(json.load(sys.stdin).get('lane') or 'full')")
    ```
-   Run the reader only when `LANE` is `full` (absent frontmatter reads as `full`). Gate on the LANE, never on route activation: a full-lane run whose reader route is legacy, shadowed, or opted out still carries the planner-bias window. Every full-lane run gets one; execution provenance is a separate question.
+   Run the reader only when `LANE` is `full` (absent frontmatter reads as `full`). On `express` / `light`, take a reasoned skip for `plan_blind_review` at the terminal (step 9) — the conditional substep exists for exactly this lane skip. Gate on the LANE, never on route activation: a full-lane run whose reader route is legacy, shadowed, or opted out still carries the planner-bias window. Every full-lane run gets one; execution provenance is a separate question.
 
    **Route.** Resolve `diff_reviewer` from the frozen snapshot and follow the
    structured launch and attestation contract in `references/delivery-loop.md`:
@@ -114,12 +116,10 @@ run may still use the inline compatibility path recorded in its snapshot.
    FLOW_HARNESS="<harness>" "<facade>" agent-route resolve \
      --snapshot "$TICKET_DIR/route-snapshot.json" --profile diff_reviewer
    ```
-   The reader runs its recorded native path in this increment (the exact-route default is
-   unflipped). A matching native response records the desired route with `effective: null`,
-   the existing owner-native reader still runs and never claims the configured route
-   executed, and the `plan_blind_review` substep takes a reasoned skip at the terminal.
-
-   **Spawn: the diff, and only the diff.** Capture the implement-stage working-tree diff (`git diff <started_at_sha>`, no `..HEAD`, so it includes the uncommitted implement work; this is the change under review), then spawn ONE fresh independent agent with the compatible model behavior above. Include `Harness: <claude-code|codex|generic>` in its prompt, then carry ONLY that diff embedded verbatim plus the fixed question: *what does this change do; what looks wrong or surprising*. Instruct it to review ONLY the shown diff and NOT read any file, open the ticket or plan, or run any command; its value is that it is blind to the intent. If the protocol ever permits a Flow command later, the harness identity requires the same-call `FLOW_HARNESS=<Harness>` prefix. Embedding the diff rather than telling it to run `git` is load-bearing: a fresh subagent could otherwise wander into `.flow/tickets/` or `plan.out` and lose the plan-blindness that is the whole point.
+   On the full lane the `plan_blind_review` substep returns a findings outcome, plan-blind by
+   construction: the `diff_reviewer` bundle carries source identity and the diff, never the
+   plan or ticket, so the route itself is the plan-blindness. Follow the "Activated cognitive
+   substeps" launch in `references/delivery-loop.md`.
 
    **Triage — advisory only, no blocking power.** The reader's observations are candidates, not findings. Classify each through step 3's two-axis taxonomy, folding its catches into the same auto-fix / no-op / ask-user sets the step-5 fixer draws from, plus one reader-only disposition:
    - **dismissed** — a hallucinated or irrelevant observation, or one the primary pass already recorded (any owner — do not render the same decision twice): drop it, or record it as a `## no-op` with a verbatim `plan.out` citation when it names a choice the plan made deliberately AND you have independently confirmed the choice is correct. Deliberate is not correct — the reader exists because plan-faithful can be plan-flawed, so a reader observation contradicting a deliberate plan choice that you can NOT independently confirm fails safe: ask-user for a Major/Minor, and for a Critical the step-6 gate (ask-user is banned for Criticals). A fourth disposition, NOT a new `.out` section.
@@ -144,7 +144,7 @@ run may still use the inline compatibility path recorded in its snapshot.
 
 9. **Write `code_review.out`** (see Outputs), keep reporting findings inline as today, then satisfy the cognitive outcome fence before `advance --status completed` (below).
 
-   **Satisfy the cognitive outcome fence on EVERY path.** The frozen snapshot seals `primary_review`, `plan_blind_review`, and `review_fix` as `pending` conditional substeps, so completion requires an outcome-or-skip for each. The two reader substeps run natively in this increment and launch no capsule, so BOTH always take a reasoned skip; `review_fix` takes a reasoned skip whenever the auto-fix set was empty (step 5), or its capsule already wrote its outcome when a fix imported (the fence reads that first and ignores a skip for it). Emit a reasoned skip for every substep that did NOT launch a capsule this run through the `cognitive-worker run-stage` skip input, then pass the executor's `cognitive_skips` as the advance skill output (`--skill-output-from`). Without this the terminal advance fails closed — `activated cognitive substep 'plan_blind_review' has no successful outcome or valid skip` — the green-first-poll wedge class `review_loop` §5 closes, checked here the same way. Then `status=completed` when no unresolved Critical remains.
+   **Satisfy the cognitive outcome fence on EVERY path.** The frozen snapshot seals `primary_review` (non-conditional), `plan_blind_review` (conditional), and `review_fix` (conditional). `primary_review` is satisfied by its findings outcome; it cannot be skipped, so this stage does not complete without it. `plan_blind_review` returns an outcome on the full lane and needs a reasoned skip only on `express` / `light`. `review_fix` is satisfied by its capsule outcome when a fix imported (the fence reads that first and ignores a skip for it), and needs a reasoned skip whenever the auto-fix set was empty. Emit a reasoned skip for every conditional substep that did NOT launch a capsule this run through the `cognitive-worker run-stage` skip input, then pass the executor's `cognitive_skips` as the advance skill output (`--skill-output-from`). Without the no-fix `review_fix` skip the terminal advance fails closed — `activated cognitive substep 'review_fix' has no successful outcome or valid skip` — the green-first-poll wedge class `review_loop` §5 closes, checked here the same way. Then `status=completed` when no unresolved Critical remains.
 
 ## Outputs
 

@@ -2128,9 +2128,10 @@ def test_review_loop_green_first_poll_completes_via_reasoned_fixer_skips(
 def _code_review_workspace(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> tuple[Path, dict[str, Any]]:
-    """Drive real dispatch to a sealed code_review with its three conditional substeps.
+    """Drive real dispatch to a sealed code_review.
 
-    Returns (ticket_dir, code_review descriptor).
+    primary_review is a non-conditional activated reader (satisfied by an outcome);
+    plan_blind_review and review_fix are conditional. Returns (ticket_dir, descriptor).
     """
     _write_workspace(
         tmp_path,
@@ -2150,51 +2151,86 @@ def _code_review_workspace(
     return td, descriptor
 
 
-def test_code_review_completes_via_reasoned_skips_for_the_native_readers_and_no_fix(
+def test_code_review_completes_on_reader_outcomes_plus_a_review_fix_skip_no_fix(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """code_review must complete though no capsule ran: native readers + no auto-fix.
+    """code_review with no auto-fixable finding completes via a reasoned review_fix skip.
 
-    Every code_review substep is a pending conditional (the two reader passes run natively
-    and launch no capsule; review_fix launches only when a finding is auto-fixable), so the
-    terminal advance needs an outcome-or-skip for each. Without the step-9 reasoned skips the
-    stage wedges on the first sealed reader substep (the green-first-poll wedge class); with
-    them it completes. Reverting the step-9 terminal-skip wiring drops the skips, which is the
-    no-skips wedge branch asserted first here.
+    The two readers are activated substeps satisfied by findings OUTCOMES (primary_review is
+    non-conditional, so it cannot be skipped by construction; plan_blind_review is conditional
+    only for its express/light lane skip). review_fix is the conditional writer: it launches
+    only when a finding is auto-fixable, so on the no-fix path the step-9 terminal must carry a
+    reasoned review_fix skip or the advance wedges. Dropping that skip is the no-skips wedge
+    branch asserted first here (the green-first-poll wedge class review_loop closed in #504).
     """
-    td, descriptor = _code_review_workspace(tmp_path, monkeypatch)
+    td, _descriptor = _code_review_workspace(tmp_path, monkeypatch)
 
     sealed = _sealed(td, "code_review")
     assert set(sealed) == {"primary_review", "plan_blind_review", "review_fix"}
-    for name in ("primary_review", "plan_blind_review", "review_fix"):
+    for name in sealed:
         assert sealed[name]["activation"] == "pending"
-        assert sealed[name]["conditional"] is True, name
+    assert sealed["primary_review"]["conditional"] is False  # reader -> outcome, never a skip
+    assert sealed["plan_blind_review"]["conditional"] is True  # lane-skippable
+    assert sealed["review_fix"]["conditional"] is True  # the writer -> fixer or skip
 
-    # No capsule ran and no reasoned skip emitted: the fail-closed cognitive fence (the wedge).
+    # The two readers ran through run-stage and produced their findings outcomes.
+    _publish_outcome(sealed["primary_review"])
+    _publish_outcome(sealed["plan_blind_review"])
+
+    # No auto-fix finding and no review_fix skip in the advance: the fence wedges on review_fix.
     rc, wedged = ds.cmd_finish(tmp_path, "FT-1", "code_review", "completed")
     assert rc == 1
     assert wedged["error"] == (
-        "activated cognitive substep 'plan_blind_review' has no successful outcome or valid skip"
+        "activated cognitive substep 'review_fix' has no successful outcome or valid skip"
     )
 
-    # Step 9 emits a reasoned skip for every un-run substep through the REAL executor: both
-    # native readers always, and review_fix because no finding was auto-fixable this run.
-    body = cw.run_stage(
-        descriptor,
-        {
-            "primary_review": {"skip": {"reason": "primary review ran natively"}},
-            "plan_blind_review": {"skip": {"reason": "plan-blind reader ran natively"}},
-            "review_fix": {"skip": {"reason": "no auto-fixable findings"}},
-        },
-        source_root=tmp_path,
-        artifact_root=td / "cognitive" / "code_review",
-        capsule_root=td / "cognitive" / "capsules",
-        owner_id="owner",
-        owner_harness="codex",
-    )
-    assert set(body["cognitive_skips"]) == {"primary_review", "plan_blind_review", "review_fix"}
+    # Step 9 carries the reasoned review_fix skip (run_stage's cognitive_skips shape); the
+    # readers' outcomes satisfy their fence, so the stage completes.
+    skip_output = {
+        "cognitive_skips": {
+            "review_fix": {
+                "substep": "review_fix",
+                "stage_generation": sealed["review_fix"]["stage_generation"],
+                "reason": "no auto-fixable findings this run",
+            }
+        }
+    }
+    rc, done = ds.cmd_finish(tmp_path, "FT-1", "code_review", "completed", skill_output=skip_output)
+    assert rc == 0, done
+    ts, _ = state.read(td)
+    assert ts is not None
+    assert ts.stages["code_review"].status == "completed"
 
-    rc, done = ds.cmd_finish(tmp_path, "FT-1", "code_review", "completed", skill_output=body)
+
+def test_code_review_reasoned_skips_plan_blind_review_on_the_cheap_lanes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """plan_blind_review is conditional so express/light can reasoned-skip it.
+
+    The plan-blind reader is a full-lane-only pass (step 4). On express/light it takes a
+    reasoned skip, which the completion fence accepts ONLY because plan_blind_review is
+    conditional. Reverting the agent_routes conditional flag makes the skip invalid and the
+    stage wedges on plan_blind_review (a non-conditional substep cannot be reasoned-skipped).
+    """
+    td, _descriptor = _code_review_workspace(tmp_path, monkeypatch)
+    sealed = _sealed(td, "code_review")
+
+    # primary_review still produces its outcome; the cheap lane skips the plan-blind reader.
+    _publish_outcome(sealed["primary_review"])
+    skip_output = {
+        "cognitive_skips": {
+            name: {
+                "substep": name,
+                "stage_generation": sealed[name]["stage_generation"],
+                "reason": reason,
+            }
+            for name, reason in (
+                ("plan_blind_review", "express lane: no plan-blind reader pass"),
+                ("review_fix", "no auto-fixable findings this run"),
+            )
+        }
+    }
+    rc, done = ds.cmd_finish(tmp_path, "FT-1", "code_review", "completed", skill_output=skip_output)
     assert rc == 0, done
     ts, _ = state.read(td)
     assert ts is not None

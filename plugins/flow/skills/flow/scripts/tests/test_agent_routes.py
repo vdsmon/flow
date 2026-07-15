@@ -201,7 +201,7 @@ def test_stage_execution_records_complete_composite_provenance(tmp_path: Path) -
         "owner": {"model": "unknown", "effort": "unknown", "harness": "codex"},
         "profile": "diff_reviewer",
         "substeps": {
-            "primary_review": {"profile": "code_reviewer", "conditional": True},
+            "primary_review": {"profile": "code_reviewer"},
             "plan_blind_review": {"profile": "diff_reviewer", "conditional": True},
             "review_fix": {"profile": "review_fixer", "conditional": True},
         },
