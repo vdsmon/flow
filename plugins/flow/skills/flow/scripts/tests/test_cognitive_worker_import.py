@@ -835,6 +835,32 @@ def test_observe_live_dispatch_reads_disk_values_not_the_order(tmp_path: Path) -
     assert observed["lease_fence"] == nonce != order.lease_fence
 
 
+def test_import_refuses_when_live_state_is_corrupt_recovered_from_bak(tmp_path: Path) -> None:
+    # Fail-open killer: live state.json corrupts, its newest .bak still holds the pre-bump
+    # generation the order froze, so a read that discards the recovery exit_code reports the stale
+    # generation, it matches the order, and the CAS wrongly applies over real drift. Generation is
+    # the only guard that moves on a pending->in_progress re-dispatch, so this is a true fail-open.
+    source, sha = _baseline_repo(tmp_path)
+    digest, nonce = _seed_run_state(source, run_id="run-1", stage="implement", generation=2)
+    order = dataclasses.replace(
+        _order(source, sha),
+        stage_generation=1,  # frozen at G; the newest .bak holds this pre-bump value
+        route_snapshot_digest=digest,
+        lease_fence=nonce,
+    )
+    state_json = source / ".flow" / "runs" / "TICKET" / "state.json"
+
+    def corrupt_live_state() -> None:
+        state_json.write_text("{ not json", encoding="utf-8")
+
+    with pytest.raises(cw.WorkerFailure) as err:
+        _drive_after_validation(
+            tmp_path, source, order, cw.observe_live_dispatch, before_import=corrupt_live_state
+        )
+    assert err.value.code == "baseline_mismatch"
+    assert "dispatch_generation" in str(err.value)  # pins the refusal to the generation dimension
+
+
 # ─── flow-xvhd: owned-baseline excludes gitignored content the patch can never carry ─────────
 
 
@@ -849,6 +875,19 @@ def test_owned_baseline_digest_excludes_gitignored_churn(tmp_path: Path) -> None
     assert cw._owned_baseline_digest(source, ("src",)) == base  # ignored churn does not drift
     (source / "src" / "tomodify.txt").write_text("real edit\n", encoding="utf-8")  # tracked owned
     assert cw._owned_baseline_digest(source, ("src",)) != base  # a real tracked change still drifts
+
+
+def test_owned_baseline_digest_skips_submodule_gitlink(tmp_path: Path) -> None:
+    # A submodule gitlink lists (via ls-files --cached) as a directory path, so read_bytes() on it
+    # raises IsADirectoryError and crashes the CAS observation unless the gitlink is skipped.
+    source, _ = _baseline_repo(tmp_path)
+    (source / "src" / "sub").mkdir()  # the submodule's on-disk working dir
+    commit = _git(source, "rev-parse", "HEAD")
+    _git(source, "update-index", "--add", "--cacheinfo", f"160000,{commit},src/sub")
+    assert "src/sub" in cw._tracked_capturable_paths(source)
+    digest = cw._owned_baseline_digest(source, ("src",))  # must not raise IsADirectoryError
+    assert isinstance(digest, str)
+    assert len(digest) == 64
 
 
 def test_import_after_validation_survives_gitignored_churn(tmp_path: Path) -> None:

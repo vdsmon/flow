@@ -1918,6 +1918,10 @@ def _owned_baseline_digest(root: Path, allowed_mutation_paths: Sequence[str]) ->
             info = path.lstat()
             if stat.S_ISLNK(info.st_mode):
                 content = os.readlink(path).encode(errors="surrogateescape")
+            elif stat.S_ISDIR(info.st_mode):
+                # A submodule gitlink lists as a directory path; its commit pointer is not part of
+                # the patch the writer can carry, so it never belongs in this baseline.
+                continue
             else:
                 content = path.read_bytes()
             hasher.update(relative.encode())
@@ -2460,7 +2464,11 @@ def observe_live_dispatch(order: WorkOrder, source: Path) -> dict[str, Any]:
     dispatcher may have bumped the stage generation, rotated the route snapshot, or moved the
     lease. These live values become the observed side of the CAS, so any that drifted from the
     order refuses the import. The run is located by run_id under the worktree's .flow/runs tree;
-    a missing or unreadable state fails closed.
+    a missing, unreadable, or .bak-recovered state fails the generation dimension closed, since a
+    value recovered from a stale backup may pre-date a re-dispatch bump. state.read heals a corrupt
+    state.json from its newest .bak as it reads; that recovery is state's own flock-serialized
+    path, and the recovered generation is refused regardless, so no healed-from-stale value ever
+    passes the CAS.
     """
     unobserved = {
         "dispatch_generation": _UNOBSERVED,
@@ -2479,13 +2487,14 @@ def observe_live_dispatch(order: WorkOrder, source: Path) -> dict[str, Any]:
         return unobserved
     matched_dir: Path | None = None
     matched_state: Any = None
+    matched_exit = 0
     for state_path in candidates:
         try:
-            ticket_state, _ = state.read(state_path.parent)
+            ticket_state, exit_code = state.read(state_path.parent)
         except OSError:
             continue
         if ticket_state is not None and ticket_state.run_id == order.run_id:
-            matched_dir, matched_state = state_path.parent, ticket_state
+            matched_dir, matched_state, matched_exit = state_path.parent, ticket_state, exit_code
             break
     if matched_dir is None or matched_state is None:
         return unobserved
@@ -2498,8 +2507,12 @@ def observe_live_dispatch(order: WorkOrder, source: Path) -> dict[str, Any]:
         route_snapshot = agent_routes.load_snapshot(matched_dir / "route-snapshot.json")["digest"]
     except agent_routes.RouteError:
         route_snapshot = _UNOBSERVED
+    # A non-zero exit_code means state.read served a value recovered from a stale .bak (or could
+    # not read at all), so the generation may pre-date a re-dispatch bump; leave it unobserved so
+    # the CAS fails closed rather than passing over recovered drift.
+    generation = record.generation if record is not None and matched_exit == 0 else _UNOBSERVED
     return {
-        "dispatch_generation": record.generation if record is not None else _UNOBSERVED,
+        "dispatch_generation": generation,
         "route_snapshot": route_snapshot,
         "lease_fence": run_lease.session_nonce if run_lease is not None else _UNOBSERVED,
     }
