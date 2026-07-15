@@ -1160,15 +1160,17 @@ def _revision_fixer_facts(sha: str) -> dict:
     }
 
 
-def _fixer_descriptor(sha: str, ticket_dir: Path, profile: str, substep: str) -> dict:
+def _fixer_descriptor(
+    sha: str, ticket_dir: Path, profile: str, substep: str, stage: str = "review_loop"
+) -> dict:
     return {
-        "stage": "review_loop",
+        "stage": stage,
         "generation": 1,
         "cognitive_substeps": {
             substep: {
-                "logical_invocation_id": f"run-1:review_loop:{substep}:1",
+                "logical_invocation_id": f"run-1:{stage}:{substep}:1",
                 "run_id": "run-1",
-                "stage": "review_loop",
+                "stage": stage,
                 "substep": substep,
                 "stage_generation": 1,
                 "source_sha": sha,
@@ -1193,11 +1195,12 @@ def _prepare_fixer(
     profile: str,
     facts: dict,
     substep: str,
+    stage: str = "review_loop",
 ) -> cw.WorkOrder:
     ticket_dir = tmp_path / "td"
     _write_baseline(ticket_dir, planned)
     return cw.prepare_work_order(
-        _fixer_descriptor(sha, ticket_dir, profile, substep),
+        _fixer_descriptor(sha, ticket_dir, profile, substep, stage),
         substep=substep,
         source_root=source,
         input_bundle=source / "src" / "keep.txt",
@@ -1352,6 +1355,56 @@ def test_seeded_fixer_imports_only_its_own_delta_not_the_seed(tmp_path: Path) ->
     # The writer's delta LANDED; the authoritative worktree keeps its uncommitted seed intact.
     assert (source / "src" / "fix.txt").read_text() == "impl\n"
     assert (source / "src" / "tomodify.txt").read_text() == "seeded ticket edit\n"
+
+
+def test_code_review_review_fixer_seeds_pre_commit_and_imports_only_its_delta(
+    tmp_path: Path,
+) -> None:
+    # flow-7yjk: code_review routes its fix through the review_fixer capsule PRE-COMMIT, so the
+    # worktree carries implement's uncommitted edits (the seed). The fixer's patch is captured
+    # against the seeded baseline, so ONLY its own delta imports; without the SEED_BASELINE_REF
+    # capture (flow-wtm4) the seed double-counts and re-applying it fails "does not match index"
+    # -> patch_import_conflict. Same seed+CAS machinery as review_loop, driven from code_review.
+    source, sha = _baseline_repo(tmp_path)
+    # implement's uncommitted edit on a PLANNED file, unstaged (the pre-commit working state).
+    (source / "src" / "tomodify.txt").write_text("implement's uncommitted edit\n", encoding="utf-8")
+
+    order = _prepare_fixer(
+        tmp_path,
+        source,
+        sha,
+        ["src"],
+        profile="review_fixer",
+        facts=_review_fixer_facts(sha),
+        substep="review_fix",
+        stage="code_review",
+    )
+    assert order.stage == "code_review"
+    assert order.authority == "capsule_writer"
+    # The pre-commit dirty worktree seals the uncommitted delta as a digest-bound seed.
+    assert order.seed_patch is not None
+    assert hashlib.sha256(Path(order.seed_patch).read_bytes()).hexdigest() == order.seed_digest
+
+    adapter = _ReportWriterAdapter("src/fix.txt")  # writes ONE new planned file on top of the seed
+    workers = cw.CognitiveWorkers(
+        artifact_root=tmp_path / "artifacts",
+        capsule_root=tmp_path / "capsules",
+        adapters={"codex": adapter},
+        dispatch_observer=_frozen_observer,
+    )
+
+    outcome = workers.run(order, _owner())
+
+    assert outcome.status == "succeeded"
+    change = outcome.receipts["change"]
+    assert change["import_result"] == "applied"
+    # ONLY the fixer's own file imports; implement's seeded edit is never re-imported.
+    assert change["touched_paths"] == ["src/fix.txt"]
+    allowed = frozenset(change["allowed_paths"])
+    assert all(cw._within_allowed(t, allowed) for t in change["touched_paths"])  # touched ⊆ allowed
+    assert (source / "src" / "fix.txt").read_text() == "impl\n"  # the fix LANDED
+    assert (source / "src" / "tomodify.txt").read_text() == "implement's uncommitted edit\n"
+    assert outcome.receipts["disposal"]["absent"] is True  # capsule disposed after import
 
 
 def _dispatch_git_workspace(tmp_path: Path) -> tuple[Path, str]:

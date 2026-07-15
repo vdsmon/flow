@@ -1,29 +1,36 @@
 # Stage: code_review
 
-## Routed read-only reviews
+## Routed reviews and the fix writer
 
 When the frozen route marks a reviewer pending, dispatch seals its logical invocation,
 stage generation, source SHA, route digest, owner, and lease fence. Build one immutable
 `flow.review-input-bundle/v1` from the authoritative tree. `code_reviewer` receives the
-accepted plan and ticket; `diff_reviewer` receives only source identity, the bundle,
-and its fixed plan-blind rubric. Both return typed findings only. A matching successful
-outcome is required before completion. `review_fixer` is now an activated importing writer,
-but replacing this stage's inline auto-fix with an explicit `review_fixer` invocation is a
-follow-up (flow-7yjk); until then the auto-fix disposition below runs inline and the
-conditional `review_fix` substep is recorded as a reasoned skip. Review findings never
-grant write authority or trigger a fallback review.
+accepted plan and ticket; `diff_reviewer` receives only source identity, the bundle, and
+its fixed plan-blind rubric. Both return typed findings ONLY: a reviewer that finds an
+issue never fixes it and never gains write authority. The `primary_review` and
+`plan_blind_review` substeps run in their recorded native reader path (the exact-route
+default is unflipped in this increment), so each is recorded as a reasoned skip at the
+terminal advance.
+
+Any fix routes through the `review_fixer` capsule, a separate importing writer, NOT the
+reviewer. When the classified findings carry an auto-fix, drive the `review_fix` substep
+through `cognitive-worker run-stage` exactly as `review_loop` drives its fixer
+(`references/stage-review_loop.md` §2): the writer edits inside a private capsule seeded
+with the ticket's uncommitted working state, and Flow captures its binary-aware patch and
+compare-and-swaps it into the authoritative worktree under a sole-writer claim. When no
+finding is auto-fixable, `review_fix` is a reasoned skip. Review findings never grant write
+authority or trigger a fallback review.
 
 ## Purpose
 
 Review the implement-stage diff through the frozen exact reader routes when active.
 Historical, generic, and legacy snapshots retain their recorded inline behavior.
 
-The route snapshot records the inline primary pass as `code_reviewer`, the plan-blind
-pass as `diff_reviewer`, and any mutation as the conditional `review_fixer` substep.
-`code_reviewer`, `diff_reviewer`, and `review_fixer` all activate from a new exact
-snapshot. The conditional `review_fix` substep runs the `review_fixer` capsule once
-flow-7yjk wires its explicit invocation; until then the existing sole-writer repair path
-holds and the substep is a reasoned skip.
+The route snapshot records the primary pass as `code_reviewer`, the plan-blind pass as
+`diff_reviewer`, and any mutation as the conditional `review_fixer` substep. All three
+substeps are conditional: the two reader substeps take a reasoned skip while they run the
+recorded native reader path, and `review_fix` runs the `review_fixer` capsule when a
+finding is auto-fixable, else takes a reasoned skip.
 
 This is the lowest-cost gate against regressions.
 The routed readers are isolated from the implementation context. A historical shadow
@@ -82,7 +89,7 @@ run may still use the inline compatibility path recorded in its snapshot.
 3. **Classify each finding on two axes**, after the step-2 assessment:
    - **Severity** (unchanged) — **Critical** blocks the stage; **Major** should fix but not blocking; **Minor** nitpick / style.
    - **Decision owner** — who disposes of the finding:
-     - **auto-fix** — the agent fixes it in the working tree before commit.
+     - **auto-fix** — routed through the `review_fixer` capsule (step 5), never an inline edit by the reviewer.
      - **no-op** — a deliberate non-fix; cite the verbatim `plan.out` line that makes it deliberate.
      - **ask-user** — the human's call; parked on the PR, never silently dropped.
 
@@ -90,15 +97,9 @@ run may still use the inline compatibility path recorded in its snapshot.
 
    A Critical's ONLY non-failing decision owner is auto-fix — never record a Critical as no-op or ask-user. A real bug is not the human's "your call" to make, and disposition is not a way to punt one.
 
-   **code_review becomes a writing stage here.** Today's review only flags; the auto-fix disposition below means it now mutates the working tree before commit runs. The human-facing Critical floor (step 6) is unchanged.
+   **code_review causes a pre-commit mutation here.** Today's review only flags; the auto-fix disposition means it now mutates the working tree before commit runs. The write is the `review_fixer` capsule's, not the reviewer's, and the human-facing Critical floor (step 6) is unchanged.
 
-4. **Apply auto-fixes** to the working tree (inline `Edit`/`Write`), then re-assess ONCE. This is a single verification pass, not an unbounded re-review loop — do not iterate past it. Because code_review is the same biased context that just wrote the code, only fix what is confident/local/obvious; a Critical needing a design rethink is not auto-fixable and falls through to the gate below unresolved.
-
-   **Auto-fix confinement to `planned_files`.** The commit stage stages only `planned_files` from `baseline.json`; a fix touching a file outside that set does not ride into the commit. A finding whose fix would touch an out-of-set file is NOT auto-fixable: downgrade it to ask-user, or, if Critical, leave it unresolved (it fails the stage at the gate below — the correct rerun-implement escape hatch, not a `planned_files` widening here).
-
-   **Auto-fix edit-path discipline.** These edits follow the same "Inline-edit path discipline" as the review_loop fix edits (`references/delivery-loop.md`, flow-cjgy): a worktree-absolute (or worktree-relative) path only — a main-checkout-absolute path silently escapes the worktree and writes main. In a backgrounded unattended run the bg-isolation guard forces the heredoc/Bash string-replace fallback for these edits, same as any other inline write in that mode.
-
-5. **Plan-blind reader pass (full lane only).** A second review by a fresh mind that has never seen the plan, closing the residual planner-bias window this same context cannot: a flawed plan faithfully implemented reads clean to the reviewer who shares the planner's assumptions. It is a DISTINCT single pass, NOT a re-entry of step 4's loop — step 4's "re-assess ONCE" guards the biased context from iterating on itself, while a plan-blind reader is categorically a different reviewer. One inline pass + one reader pass = two single passes, no loop.
+4. **Plan-blind reader pass (full lane only).** A second review by a fresh mind that has never seen the plan, closing the residual planner-bias window this same context cannot: a flawed plan faithfully implemented reads clean to the reviewer who shares the planner's assumptions. It is a DISTINCT single pass over the implement diff, NOT a re-review loop. It runs BEFORE the step-5 fix so its catches ride the same single fixer invocation.
 
    **Gate on the lane — full only.** Read the run's lane from frontmatter and SKIP this entire step on the cheap lanes (`express` / `light`), which already traded away this depth:
    ```bash
@@ -113,26 +114,37 @@ run may still use the inline compatibility path recorded in its snapshot.
    FLOW_HARNESS="<harness>" "<facade>" agent-route resolve \
      --snapshot "$TICKET_DIR/route-snapshot.json" --profile diff_reviewer
    ```
-   Every non-planner route remains shadowed in this increment. A matching native
-   response records the desired route with `effective: null`, and the existing
-   owner-native reader still runs and never claims the configured route executed.
+   The reader runs its recorded native path in this increment (the exact-route default is
+   unflipped). A matching native response records the desired route with `effective: null`,
+   the existing owner-native reader still runs and never claims the configured route
+   executed, and the `plan_blind_review` substep takes a reasoned skip at the terminal.
 
-   **Spawn: the diff, and only the diff.** Capture the post-auto-fix working-tree diff (`git diff <started_at_sha>`, no `..HEAD`, so it includes the uncommitted implement work and any step-4 auto-fixes; this is the diff that will actually ship), then spawn ONE fresh independent agent with the compatible model behavior above. Include `Harness: <claude-code|codex|generic>` in its prompt, then carry ONLY that diff embedded verbatim plus the fixed question: *what does this change do; what looks wrong or surprising*. Instruct it to review ONLY the shown diff and NOT read any file, open the ticket or plan, or run any command; its value is that it is blind to the intent. If the protocol ever permits a Flow command later, the harness identity requires the same-call `FLOW_HARNESS=<Harness>` prefix. Embedding the diff rather than telling it to run `git` is load-bearing: a fresh subagent could otherwise wander into `.flow/tickets/` or `plan.out` and lose the plan-blindness that is the whole point.
+   **Spawn: the diff, and only the diff.** Capture the implement-stage working-tree diff (`git diff <started_at_sha>`, no `..HEAD`, so it includes the uncommitted implement work; this is the change under review), then spawn ONE fresh independent agent with the compatible model behavior above. Include `Harness: <claude-code|codex|generic>` in its prompt, then carry ONLY that diff embedded verbatim plus the fixed question: *what does this change do; what looks wrong or surprising*. Instruct it to review ONLY the shown diff and NOT read any file, open the ticket or plan, or run any command; its value is that it is blind to the intent. If the protocol ever permits a Flow command later, the harness identity requires the same-call `FLOW_HARNESS=<Harness>` prefix. Embedding the diff rather than telling it to run `git` is load-bearing: a fresh subagent could otherwise wander into `.flow/tickets/` or `plan.out` and lose the plan-blindness that is the whole point.
 
-   **Triage — advisory only, no blocking power.** The reader's observations are candidates, not findings. Classify each through step 3's two-axis taxonomy, plus one reader-only disposition:
-   - **dismissed** — a hallucinated or irrelevant observation, one the inline pass already recorded (any owner — do not render the same decision twice), or one an auto-fix already resolved: drop it, or record it as a `## no-op` with a verbatim `plan.out` citation when it names a choice the plan made deliberately AND you have independently confirmed the choice is correct. Deliberate is not correct — the reader exists because plan-faithful can be plan-flawed, so a reader observation contradicting a deliberate plan choice that you can NOT independently confirm fails safe: ask-user for a Major/Minor, and for a Critical the step-6 gate (ask-user is banned for Criticals). A fourth disposition, NOT a new `.out` section.
-   - a real catch routes exactly as an inline finding — **auto-fix** (confident and confined to `planned_files`: apply it in this pass's single auto-fix application, same confinement + edit-path discipline as step 4, no reader re-spawn) or **ask-user** (uncertain, or the fix falls outside `planned_files`).
+   **Triage — advisory only, no blocking power.** The reader's observations are candidates, not findings. Classify each through step 3's two-axis taxonomy, folding its catches into the same auto-fix / no-op / ask-user sets the step-5 fixer draws from, plus one reader-only disposition:
+   - **dismissed** — a hallucinated or irrelevant observation, or one the primary pass already recorded (any owner — do not render the same decision twice): drop it, or record it as a `## no-op` with a verbatim `plan.out` citation when it names a choice the plan made deliberately AND you have independently confirmed the choice is correct. Deliberate is not correct — the reader exists because plan-faithful can be plan-flawed, so a reader observation contradicting a deliberate plan choice that you can NOT independently confirm fails safe: ask-user for a Major/Minor, and for a Critical the step-6 gate (ask-user is banned for Criticals). A fourth disposition, NOT a new `.out` section.
+   - a real catch routes exactly as a primary finding — **auto-fix** (confident and confined to `planned_files`: it joins the step-5 auto-fix set) or **ask-user** (uncertain, or the fix falls outside `planned_files`).
    - the reader has NO independent blocking power: a reader-surfaced Critical fails the stage (step 6) ONLY on independent orchestrator agreement, after which it routes like any Critical (auto-fix if confined, else left unresolved). Step 3's invariant holds — a Critical's only non-failing owner is auto-fix.
 
-   **Fail-open.** A spawn or return failure never fails the stage; the reader is advisory. Log one line and proceed to the gate with the inline findings only.
+   **Fail-open.** A spawn or return failure never fails the stage; the reader is advisory. Log one line and proceed with the primary findings only.
 
-6. **Critical gate.** After the auto-fix pass, any unresolved Critical finding (inline, or a reader-surfaced Critical the orchestrator has independently agreed is real) aborts the stage with status=failed. Surface the finding so the user can decide between rerunning implement vs overriding — unchanged from before.
+5. **Route the auto-fix set through the `review_fixer` capsule, never an inline edit.** The reviewer is findings-only; the fix is a separate writer invocation. When the classified auto-fix set (primary pass plus any full-lane reader catches) is non-empty, drive the `review_fix` substep through `cognitive-worker run-stage` (`references/delivery-loop.md`, "Activated cognitive substeps"), exactly as `review_loop` §2 drives its fixer: build the fixer's closed facts — the auto-fix findings as `review_findings`, plus `ticket`, `source_sha`, `planned_files`, and the report contract — and its immutable input bundle, and hand both to the executor for the sealed `review_fix` substep. Flow — not the model — captures the writer's binary-aware patch and compare-and-swap imports it under a sole-writer claim; the worker returns only a typed report (`summary`, `evidence`, `source_sha`) and never serializes a diff. After the import lands, re-assess ONCE. This is a single verification pass, not an unbounded re-review loop — do not iterate past it. Because code_review is the same biased context that just wrote the code, only route findings that are confident/local/obvious; a Critical needing a design rethink is not auto-fixable and falls through to the gate below unresolved.
+
+   **Pre-commit seed, own-delta capture.** code_review runs after implement and BEFORE commit, so the working tree carries implement's uncommitted changes. Dispatch seeds the `review_fixer` capsule with that working-state delta and captures the fixer's patch against the seeded baseline, so ONLY the fixer's own change imports — implement's edits are the seed, never re-imported (no double-count, no `patch_import_conflict`). This is the same pre-commit-seeded importing-writer path the E2E capsule uses.
+
+   **Confinement to `planned_files` is sealed, not advisory.** The order's `allowed_mutation_paths` is sealed to the run's `planned_files` (from `baseline.json`, the same set the commit stage stages and the content-ownership gate re-scans), so a fix touching any path outside that set makes the whole capsule patch an `ownership_violation` and nothing imports. A finding whose fix would touch an out-of-set file is NOT auto-fixable: downgrade it to ask-user, or, if Critical, leave it unresolved (it fails the stage at the gate below — the rerun-implement escape hatch, not a `planned_files` widening here). There is no inline reviewer edit here, so the old worktree-absolute-path and bg-isolation edit discipline no longer applies; the capsule owns the write.
+
+   **No auto-fix findings → a reasoned skip.** When the auto-fix set is empty, do NOT launch the fixer: record a reasoned skip for the `review_fix` substep through the same `cognitive-worker run-stage` skip input (`references/delivery-loop.md`). The terminal advance (step 9) carries that skip.
+
+6. **Critical gate.** After the step-5 fix pass, any unresolved Critical finding (a primary or a reader-surfaced Critical the orchestrator has independently agreed is real) aborts the stage with status=failed. Surface the finding so the user can decide between rerunning implement vs overriding — unchanged from before.
 
 7. **Record no-ops** — Major/Minor findings left as deliberate non-fixes, each with a verbatim citation of the `plan.out` line that justifies it.
 
 8. **Record ask-user items** — Major/Minor findings that are the human's call. Never fire an `AskUserQuestion` for these, even in an attended run; they ride to the PR as flagged decisions, not a mid-run blocker.
 
-9. **Write `code_review.out`** (see Outputs), keep reporting findings inline as today, then `status=completed` when no unresolved Critical remains.
+9. **Write `code_review.out`** (see Outputs), keep reporting findings inline as today, then satisfy the cognitive outcome fence before `advance --status completed` (below).
+
+   **Satisfy the cognitive outcome fence on EVERY path.** The frozen snapshot seals `primary_review`, `plan_blind_review`, and `review_fix` as `pending` conditional substeps, so completion requires an outcome-or-skip for each. The two reader substeps run natively in this increment and launch no capsule, so BOTH always take a reasoned skip; `review_fix` takes a reasoned skip whenever the auto-fix set was empty (step 5), or its capsule already wrote its outcome when a fix imported (the fence reads that first and ignores a skip for it). Emit a reasoned skip for every substep that did NOT launch a capsule this run through the `cognitive-worker run-stage` skip input, then pass the executor's `cognitive_skips` as the advance skill output (`--skill-output-from`). Without this the terminal advance fails closed — `activated cognitive substep 'plan_blind_review' has no successful outcome or valid skip` — the green-first-poll wedge class `review_loop` §5 closes, checked here the same way. Then `status=completed` when no unresolved Critical remains.
 
 ## Outputs
 
@@ -152,7 +164,7 @@ run may still use the inline compatibility path recorded in its snapshot.
   - [Major] <finding> — fixed in <file>:<loc>
   ```
 
-  Bullets are plain `- [Major] ...`, no `**bold:**` lead — `pr_body.py::scrub` flattens a bold bullet lead, so a bold render would be mangled when `create_pr` lifts these into the PR body. A section is omitted entirely when its finding list is empty, EXCEPT `## auto-fixed`, which is never optional when non-empty: it is the run's only durable ANNOTATION of a pre-commit mutation it made on its own, a silently auto-fixed Critical most of all (the fixed code itself is reviewer-visible in the draft-PR diff; this out-file section is run-state for downstream consumers like P2d, not part of the PR body).
+  Bullets are plain `- [Major] ...`, no `**bold:**` lead — `pr_body.py::scrub` flattens a bold bullet lead, so a bold render would be mangled when `create_pr` lifts these into the PR body. A section is omitted entirely when its finding list is empty, EXCEPT `## auto-fixed`, which is never optional when non-empty: it is the run's only durable ANNOTATION of a pre-commit mutation the `review_fixer` capsule imported on its behalf, a silently auto-fixed Critical most of all (the fixed code itself is reviewer-visible in the draft-PR diff; this out-file section is run-state for downstream consumers like P2d, not part of the PR body).
 
 ## Errors
 
