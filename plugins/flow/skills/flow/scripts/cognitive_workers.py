@@ -975,7 +975,7 @@ def preflight_route(
     if authority != "read_only":
         # A writer route is only provable if the CLI also documents its writable mode. The
         # read-only probe above cannot green-light a workspace-write launch.
-        writable = "workspace-write" if executable == "codex" else "acceptEdits"
+        writable = "workspace-write" if executable == "codex" else "bypassPermissions"
         if writable not in help_text:
             missing.append(writable)
     if version.returncode or any(result.returncode for result in help_results) or missing:
@@ -1079,7 +1079,11 @@ class ClaudeCodeCliAdapter:
         capsule: Path,
         authority: str = "read_only",
     ) -> list[str]:
-        permission = "plan" if authority == "read_only" else "acceptEdits"
+        # A writer must run its recipe (builds/tests), which acceptEdits blocks at Bash exec;
+        # bypassPermissions is the claude analog of codex workspace-write. The confinement is the
+        # isolated capsule clone, the authoritative-source read-only postcondition, and the CAS
+        # ownership check (touched subset of allowed_mutation_paths), not the permission mode.
+        permission = "plan" if authority == "read_only" else "bypassPermissions"
         return [
             "claude",
             "--print",
