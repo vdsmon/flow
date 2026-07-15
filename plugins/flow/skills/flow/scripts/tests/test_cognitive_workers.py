@@ -57,21 +57,33 @@ def test_catalog_activates_readers_e2e_and_the_importing_fixers() -> None:
         "review_brief_author",
         "reflector",
     }
-    assert active == readers | {"e2e", "implementer", "review_fixer", "revision_fixer"}
+    assert active == readers | {
+        "e2e",
+        "implementer",
+        "review_fixer",
+        "revision_fixer",
+        "machinery_fixer",
+    }
     assert all(cw.ROLE_CATALOG[name].authority == "read_only" for name in readers)
     assert cw.ROLE_CATALOG["e2e"].authority == "disposable_writer"
     # The implementer and the two review-loop fixers are activated importing capsule_writers.
     for name in ("implementer", "review_fixer", "revision_fixer"):
         assert cw.ROLE_CATALOG[name].authority == "capsule_writer", name
         assert cw.ROLE_CATALOG[name].active is True, name
-    # machinery_fixer stays shadowed (still a capsule_writer) for Phase 5.
-    assert cw.ROLE_CATALOG["machinery_fixer"].authority == "capsule_writer"
-    assert cw.ROLE_CATALOG["machinery_fixer"].active is False
+    # machinery_fixer is an active read_only capsule; reflect applies its report via the guard.
+    assert cw.ROLE_CATALOG["machinery_fixer"].authority == "read_only"
+    assert cw.ROLE_CATALOG["machinery_fixer"].active is True
 
 
-def test_shadow_writer_is_refused_before_capsule_allocation(tmp_path: Path) -> None:
+def test_inactive_profile_is_refused_before_capsule_allocation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Every catalog profile is active now, so the defensive not-active guard has no natural
+    # subject; force one inactive to prove the guard still refuses before any capsule is cut.
+    inactive = dataclasses.replace(cw.ROLE_CATALOG["machinery_fixer"], active=False)
+    monkeypatch.setitem(cw.ROLE_CATALOG, "machinery_fixer", inactive)
     order = cw.WorkOrder(
-        logical_invocation_id="writer-1",
+        logical_invocation_id="inactive-1",
         generation=1,
         profile="machinery_fixer",
         source_root=str(tmp_path),
@@ -1407,3 +1419,244 @@ def test_a_partial_clone_never_occupies_the_capsule_path(tmp_path: Path, monkeyp
     assert not capsule.exists()
     receipt = cw.create_private_clone(source, sha, capsule)
     assert receipt["source_sha"] == sha
+
+
+# --- machinery_fixer: a read_only capsule whose report reflect applies via machinery_edit ---
+
+_MACHINERY_FACTS = {
+    "stage_reflect": "Diagnose the harness friction and return anchored edits only.",
+    "friction": [{"anchor": "planned_files", "severity": "major"}],
+    "source_sha": "a" * 40,
+    "harness_files": ["references/stage-reflect.md"],
+    "report_contract": {"schema": "machinery-fix-report/v1"},
+}
+
+
+def _machinery_order(source: Path, sha: str, input_path: Path, logical_id: str) -> cw.WorkOrder:
+    import hashlib
+
+    return cw.WorkOrder(
+        logical_invocation_id=logical_id,
+        generation=1,
+        profile="machinery_fixer",
+        source_root=str(source),
+        source_sha=sha,
+        route={"harness": "codex", "model": "gpt-5.6-luna", "effort": "high"},
+        route_snapshot_digest="b" * 64,
+        input_bundle=str(input_path),
+        input_digest=hashlib.sha256(input_path.read_bytes()).hexdigest(),
+        facts={**_MACHINERY_FACTS, "source_sha": sha},
+    )
+
+
+def _machinery_report(sha: str) -> dict[str, Any]:
+    return {
+        "summary": "Scan owned files with --untracked-files=all.",
+        "source_sha": sha,
+        "edits": [
+            {
+                "file": "references/stage-reflect.md",
+                "old": "OLD ANCHOR",
+                "new": "NEW ANCHOR",
+                "rationale": "the bare status collapses a fully-untracked dir",
+            }
+        ],
+    }
+
+
+def test_machinery_fixer_order_binds_read_only_and_builds_its_prompt(tmp_path: Path) -> None:
+    input_path = tmp_path / "input.json"
+    input_path.write_text("{}\n", encoding="utf-8")
+    order = _machinery_order(tmp_path, "a" * 40, input_path, "m-order")
+    # A read_only order carries no writer surface: no allowed paths, no seed.
+    assert order.authority == "read_only"
+    assert order.allowed_mutation_paths == ()
+    assert order.seed_patch is None
+    material = cw.build_machinery_fixer_prompt(order.facts)
+    assert material.builder_id == "machinery_fixer/v1"
+    assert "FLOW COGNITIVE ROLE: machinery_fixer" in material.prompt
+    # The closed fact set is enforced: a missing fact is refused.
+    with pytest.raises(cw.WorkerFailure, match="missing facts"):
+        cw.build_machinery_fixer_prompt({"friction": []})
+
+
+def test_machinery_fix_report_rejects_malformed_edits() -> None:
+    good = {
+        "summary": "s",
+        "source_sha": "a" * 40,
+        "edits": [{"file": "f", "old": "O", "new": "N", "rationale": "r"}],
+    }
+    assert cw.validate_typed_result("machinery_fixer", good)["summary"] == "s"
+    malformed = (
+        # missing the rationale anchor field
+        {"summary": "s", "source_sha": "a" * 40, "edits": [{"file": "f", "old": "O", "new": "N"}]},
+        # old == new is a no-op the guard would reject
+        {
+            "summary": "s",
+            "source_sha": "a" * 40,
+            "edits": [{"file": "f", "old": "X", "new": "X", "rationale": "r"}],
+        },
+        # an extra key breaks the closed edit shape
+        {
+            "summary": "s",
+            "source_sha": "a" * 40,
+            "edits": [{"file": "f", "old": "O", "new": "N", "rationale": "r", "extra": 1}],
+        },
+        # an empty anchor string
+        {
+            "summary": "s",
+            "source_sha": "a" * 40,
+            "edits": [{"file": "", "old": "O", "new": "N", "rationale": "r"}],
+        },
+        # source_sha is not a 40-char SHA
+        {"summary": "s", "source_sha": "short", "edits": []},
+        # the edits field is absent
+        {"summary": "s", "source_sha": "a" * 40},
+    )
+    for bad in malformed:
+        with pytest.raises(cw.WorkerFailure, match=r"contract|no-op|SHA"):
+            cw.validate_typed_result("machinery_fixer", bad)
+
+
+def test_machinery_fix_report_edits_apply_through_the_machinery_edit_guard(tmp_path: Path) -> None:
+    import machinery_edit
+
+    # The report's edit shape is exactly machinery_edit.py's {file, old, new} payload.
+    edit_props = set(
+        cw.provider_schema("machinery_fixer")["properties"]["edits"]["items"]["properties"]
+    )
+    assert {"file", "old", "new"} <= edit_props
+
+    report = cw.validate_typed_result("machinery_fixer", _machinery_report("a" * 40))
+    edit = report["edits"][0]
+    skill_root = tmp_path / "skill"
+    (skill_root / "references").mkdir(parents=True)
+    target = skill_root / edit["file"]
+    target.write_text("intro OLD ANCHOR outro\n", encoding="utf-8")
+
+    # Happy path: reflect applies the report edit through the guard (skill_root is not a repo, so
+    # it resolves to no branch and the apply is allowed).
+    applied, code = machinery_edit.apply_edit(
+        skill_root, Path(edit["file"]), edit["old"], edit["new"]
+    )
+    assert code == 0
+    assert applied["status"] == "applied"
+    assert "NEW ANCHOR" in target.read_text(encoding="utf-8")
+
+    # Refusal honored: a protected-branch skill root refuses (exit 2 -> PROPOSE + RECORD).
+    refused, rc = machinery_edit.apply_edit(
+        skill_root,
+        Path(edit["file"]),
+        "NEW ANCHOR",
+        "OTHER",
+        branch_resolver=lambda _root: "main",
+    )
+    assert rc == 2
+    assert refused["status"] == "refused"
+
+    # anchor_not_found: the anchor is gone and the replacement absent -> the agent re-derives.
+    gone, rc2 = machinery_edit.apply_edit(skill_root, Path(edit["file"]), "MISSING ANCHOR", "X")
+    assert rc2 == 3
+    assert gone["status"] == "anchor_not_found"
+
+
+def test_machinery_fixer_runs_read_only_and_never_enters_the_cas_import(tmp_path: Path) -> None:
+    source, sha = _repository(tmp_path)
+    input_path = tmp_path / "input.json"
+    input_path.write_text("{}\n", encoding="utf-8")
+    report = _machinery_report(sha)
+    body = f"import json,sys; sys.stdout.write(json.dumps({{'result': {report!r}}}))"
+    order = _machinery_order(source, sha, input_path, "machinery-read-only")
+
+    outcome = _workers(tmp_path, _ScriptedAdapter(body)).run(
+        order, cw.OwnerProof(owner_id="owner", harness="codex")
+    )
+    assert outcome.status == "succeeded"
+    assert outcome.result is not None
+    assert outcome.result["edits"][0]["file"] == "references/stage-reflect.md"
+    # read_only: the capsule is disposed and no capsule-writer change receipt was produced, so the
+    # capsule stayed byte-identical and the CAS import branch was never entered.
+    assert outcome.receipts["disposal"]["absent"] is True
+    assert "change" not in outcome.receipts
+
+    # The report is bound to the capsule SHA: a report citing the wrong source SHA is refused.
+    wrong = {**report, "source_sha": "0" * 40}
+    wrong_body = f"import json,sys; sys.stdout.write(json.dumps({{'result': {wrong!r}}}))"
+    wrong_order = _machinery_order(source, sha, input_path, "machinery-wrong-sha")
+    with pytest.raises(cw.WorkerFailure, match="exact capsule source SHA"):
+        _workers(tmp_path, _ScriptedAdapter(wrong_body)).run(
+            wrong_order, cw.OwnerProof(owner_id="owner", harness="codex")
+        )
+
+
+def test_run_stage_launches_machinery_fixer_and_records_a_reasoned_skip(tmp_path: Path) -> None:
+    source, sha = _repository(tmp_path)
+    ticket_dir = tmp_path / "td"
+    ticket_dir.mkdir()
+    input_path = ticket_dir / "machinery_fix.input.json"
+    input_path.write_text("{}\n", encoding="utf-8")
+
+    def sealed(logical: str) -> dict[str, Any]:
+        return {
+            "logical_invocation_id": logical,
+            "run_id": "0123456789abcdef",
+            "stage": "reflect",
+            "substep": "machinery_fix",
+            "stage_generation": 1,
+            "source_sha": sha,
+            "route_snapshot_digest": "b" * 64,
+            "profile": "machinery_fixer",
+            "desired_route": {"harness": "codex", "model": "gpt-5.6-luna", "effort": "high"},
+            "activation": "pending",
+            "conditional": True,
+            "ticket_dir": str(ticket_dir),
+            "lease_fence": None,
+            "artifact_root": str(ticket_dir / "cognitive" / "reflect"),
+        }
+
+    report = _machinery_report(sha)
+    body = f"import json,sys; sys.stdout.write(json.dumps({{'result': {report!r}}}))"
+    workers = _workers(tmp_path, _ScriptedAdapter(body))
+
+    # Routed derivation: run_stage launches the machinery_fixer capsule and publishes its report.
+    launched = cw.run_stage(
+        {
+            "stage": "reflect",
+            "generation": 1,
+            "cognitive_substeps": {"machinery_fix": sealed("run-launch")},
+        },
+        {
+            "machinery_fix": {
+                "facts": {**_MACHINERY_FACTS, "source_sha": sha},
+                "input_bundle": str(input_path),
+            }
+        },
+        source_root=source,
+        artifact_root=ticket_dir / "cognitive" / "reflect",
+        capsule_root=ticket_dir / "cognitive" / "capsules",
+        owner_id="owner",
+        owner_harness="codex",
+        workers=workers,
+    )
+    assert launched["cognitive_outcomes"]["machinery_fix"]["status"] == "succeeded"
+    published = json.loads(Path(launched["results"]["machinery_fix"]).read_text(encoding="utf-8"))
+    assert published["edits"][0]["file"] == "references/stage-reflect.md"
+    assert launched["cognitive_skips"] == {}
+
+    # No-fix path: the conditional machinery_fix substep satisfies the fence with a reasoned skip.
+    skipped = cw.run_stage(
+        {
+            "stage": "reflect",
+            "generation": 1,
+            "cognitive_substeps": {"machinery_fix": sealed("run-skip")},
+        },
+        {"machinery_fix": {"skip": {"reason": "machinery reflection off; no anchored fix"}}},
+        source_root=source,
+        artifact_root=ticket_dir / "cognitive" / "reflect",
+        capsule_root=ticket_dir / "cognitive" / "capsules",
+        owner_id="owner",
+        owner_harness="codex",
+        workers=workers,
+    )
+    assert set(skipped["cognitive_skips"]) == {"machinery_fix"}
+    assert skipped["cognitive_outcomes"] == {}

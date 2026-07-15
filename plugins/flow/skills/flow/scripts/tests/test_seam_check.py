@@ -410,23 +410,25 @@ def test_live_post_init_prose_has_no_bare_script_invocation() -> None:
     assert escaped == []
 
 
-def test_live_importing_writers_activate_machinery_fixer_stays_shadowed() -> None:
+def test_live_all_exact_post_plan_routes_activate_only_generic_stays_shadow() -> None:
     # Flatten whitespace so markdown hard-wrapping cannot break a multi-word assertion.
     def _flat(rel: str) -> str:
         return " ".join((seam_check.SKILL_ROOT / rel).read_text(encoding="utf-8").split())
 
     skill = _flat("SKILL.md")
     do_ref = _flat("references/delivery-loop.md")
-    # The disposable E2E capsule and the importing writers (implementer, review_fixer,
-    # revision_fixer) activate; only machinery_fixer stays shadowed with a null effective route.
+    # The importing writers and the read-only machinery_fixer all activate; nothing is shadowed
+    # anymore except under the generic owner adapter.
     assert (
-        "importing writers (implementer, review_fixer, revision_fixer) may become active" in skill
+        "importing writers (implementer, review_fixer, revision_fixer), and the read-only "
+        "machinery_fixer all become active on an exact CLI receipt" in skill
     )
-    assert "write-import" in skill
-    assert "(machinery_fixer) remains shadowed" in skill
-    assert "`effective: null`" in skill
-    assert "importing writers (implementer, review_fixer, revision_fixer) may have" in do_ref
-    assert "(machinery_fixer) stays shadow" in do_ref
+    assert "generic owner adapter a route stays shadowed with `effective: null`" in skill
+    assert (
+        "importing writers (implementer, review_fixer, revision_fixer), and the read-only "
+        "machinery_fixer have `activation: pending`" in do_ref
+    )
+    assert "generic owner adapter a route stays shadow" in do_ref
     assert "A shadow receipt" in do_ref
     assert "Do not retry" in do_ref
     assert "never fall back to a native" in do_ref

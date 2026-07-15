@@ -94,9 +94,10 @@ FLOW_HARNESS="<harness>" "<facade>" agent-route resolve \
   --snapshot "$TICKET_DIR/route-snapshot.json" --profile "<profile>"
 ```
 
-The read-only profiles, the disposable E2E capsule, and the importing writers (implementer,
-review_fixer, revision_fixer) may have `activation: pending`; the remaining write-import
-route (machinery_fixer) stays shadow. A shadow desired route is provenance for a future
+The read-only profiles, the disposable E2E capsule, the importing writers (implementer,
+review_fixer, revision_fixer), and the read-only machinery_fixer have `activation: pending`
+on an exact route; under the generic owner adapter a route stays shadow. A shadow desired
+route is provenance for a future
 execution capsule and
 does not change the current native launch. Capture the native tool request and response
 as JSON, and never use the worker's prose as acceptance evidence. Attest and persist it:

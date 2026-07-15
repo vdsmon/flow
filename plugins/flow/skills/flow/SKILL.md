@@ -13,12 +13,14 @@ author, and reflector through exact Codex or Claude Code CLI routes inside stand
 read-only capsules, E2E through a disposable write-capable capsule that imports nothing
 and discards every mutation, and the importing writers (implementer, review_fixer,
 revision_fixer) through a write-capable capsule whose validated binary-aware patch Flow
-captures and imports into the authoritative worktree under a sole-writer claim. The owner
-conversation remains the single human cockpit and the dispatcher remains the only stage
-authority. Each activated substep is bound to its stage generation and must return a
-matching typed outcome. The remaining write-import profile (machinery_fixer) stays
-shadowed until its guarded import proof lands. An exact-route failure stops visibly; it
-never selects a native or alternate-model fallback.
+captures and imports into the authoritative worktree under a sole-writer claim. The
+machinery_fixer also runs in a read-only capsule: it derives a report of anchored
+{file, old, new} edits, mutates nothing, and reflect applies each edit through the
+machinery_edit guard. The owner conversation remains the single human cockpit and the
+dispatcher remains the only stage authority. Each activated substep is bound to its stage
+generation and must return a matching typed outcome. Every exact post-plan route is now
+active; only the generic owner adapter leaves a route shadowed. An exact-route failure
+stops visibly; it never selects a native or alternate-model fallback.
 
 Flow is one state-aware path from a tracker ticket to a reviewable pull request.
 The user owns intent, plan approval, and PR review. Flow owns the isolated worktree
@@ -240,10 +242,10 @@ capture the owned-file baseline before the handler. When
 `descriptor.roles` includes `"agent_routed"`, resolve the frozen profile from the
 run's route snapshot. The snapshot covers all twelve cognitive profiles and records
 composite substeps separately from deterministic stage execution. The read-only profiles,
-the disposable E2E capsule, and the importing writers (implementer, review_fixer,
-revision_fixer) may become active in this increment. The remaining write-import route
-(machinery_fixer) remains shadowed with `effective: null`, including a matching native
-launch acceptance.
+the disposable E2E capsule, the importing writers (implementer, review_fixer,
+revision_fixer), and the read-only machinery_fixer all become active on an exact CLI
+receipt. Under the generic owner adapter a route stays shadowed with `effective: null`,
+including a matching native launch acceptance.
 An activated substep runs through `cognitive-worker run-stage`; the configured or
 built-in planner follows the strict pre-approval CLI contract in
 `references/delivery-plan.md`. A per-run override may replace its complete route.
@@ -261,10 +263,12 @@ Reference path: <absolute reference, or none>
 Artifact path: <absolute output_path>
 ```
 
-Handlers may be inline, independent subagents, installed skills, or no-ops. Existing
-post-plan handlers keep their current owner-native or inline execution and record
-desired route provenance without activating a new worker. Every agent receives
-absolute workspace, skill, ticket, reference, and artifact paths plus the harness identity.
+Handlers may be inline, independent subagents, installed skills, or no-ops. A post-plan
+handler with an active exact route launches its worker through `cognitive-worker
+run-stage`; a handler on a shadow route (the generic owner adapter, or a historical
+snapshot) keeps its owner-native or inline execution and records desired route provenance
+only. Every agent receives absolute workspace, skill, ticket, reference, and artifact
+paths plus the harness identity.
 Read `references/delivery-loop.md` before starting or continuing a run.
 
 ## Internal delivery references

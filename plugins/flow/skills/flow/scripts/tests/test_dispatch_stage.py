@@ -2237,6 +2237,89 @@ def test_code_review_reasoned_skips_plan_blind_review_on_the_cheap_lanes(
     assert ts.stages["code_review"].status == "completed"
 
 
+def _reflect_workspace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[Path, dict[str, Any]]:
+    """Drive real dispatch to a sealed reflect with the machinery_fixer active.
+
+    reflection is a non-conditional activated reader (satisfied by the reflector's outcome);
+    machinery_fix is the conditional writer. reflect is required_when_compounding, so the
+    workspace opts into compounding. Returns (ticket_dir, descriptor).
+    """
+    _write_workspace(
+        tmp_path,
+        handlers={"ticket": "inline", "reflect": "inline"},
+        stages=["ticket", "reflect"],
+        compounding=True,
+    )
+    _stub_git_head(monkeypatch, "a" * 40)
+    ds.cmd_init(tmp_path, "FT-1")
+    td = tmp_path / ".flow" / "runs" / "FT-1"
+    agent_routes.snapshot(tmp_path, "codex", output_path=td / "route-snapshot.json")
+    ds.cmd_next(tmp_path, "FT-1")
+    ds.cmd_finish(tmp_path, "FT-1", "ticket", "completed")
+    rc, descriptor = ds.cmd_next(tmp_path, "FT-1")
+    assert rc == 0, descriptor
+    assert descriptor["stage"] == "reflect", descriptor
+    return td, descriptor
+
+
+def test_reflect_completes_on_reflector_outcome_plus_a_machinery_fix_skip_default_off(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Default machinery-OFF reflect completes via a reasoned machinery_fix skip.
+
+    Activating machinery_fixer seals reflection (non-conditional reader) and machinery_fix
+    (conditional writer) as pending substeps, so the terminal advance needs an
+    outcome-or-skip for each on every path. reflection cannot be skipped, so it produces its
+    outcome; machinery_fix launches a capsule only when a fix runs, so on the DEFAULT
+    machinery-OFF path (every stranger's run, reflect_config.machinery false) Step 7's
+    terminal must carry a reasoned machinery_fix skip or the advance wedges. Dropping that
+    skip is the no-skip wedge branch asserted first here; the same fence wedge review_loop
+    closed in #504 and code_review closed in #506, now on reflect's default closing path.
+
+    Structurally this mirrors code_review's no-fix step-9 test rather than #504's review_loop
+    test: reflection is non-conditional, and run_stage refuses to skip a non-conditional
+    substep, so the reader is published as an outcome (never a run-stage skip) exactly as
+    code_review publishes primary_review.
+    """
+    td, _descriptor = _reflect_workspace(tmp_path, monkeypatch)
+
+    sealed = _sealed(td, "reflect")
+    assert set(sealed) == {"reflection", "machinery_fix"}
+    for name in sealed:
+        assert sealed[name]["activation"] == "pending"
+    assert sealed["reflection"]["conditional"] is False  # reader -> outcome, never a skip
+    assert sealed["machinery_fix"]["conditional"] is True  # the writer -> fixer or skip
+
+    # The reflector ran through run-stage and produced its findings outcome.
+    _publish_outcome(sealed["reflection"])
+
+    # No machinery fix ran and no machinery_fix skip in the advance: the fence wedges.
+    rc, wedged = ds.cmd_finish(tmp_path, "FT-1", "reflect", "completed")
+    assert rc == 1
+    assert wedged["error"] == (
+        "activated cognitive substep 'machinery_fix' has no successful outcome or valid skip"
+    )
+
+    # Step 7 carries the reasoned machinery_fix skip (run_stage's cognitive_skips shape); the
+    # reflector's outcome satisfies its fence, so the stage completes.
+    skip_output = {
+        "cognitive_skips": {
+            "machinery_fix": {
+                "substep": "machinery_fix",
+                "stage_generation": sealed["machinery_fix"]["stage_generation"],
+                "reason": "machinery lens off by default; no machinery fix this run",
+            }
+        }
+    }
+    rc, done = ds.cmd_finish(tmp_path, "FT-1", "reflect", "completed", skill_output=skip_output)
+    assert rc == 0, done
+    ts, _ = state.read(td)
+    assert ts is not None
+    assert ts.stages["reflect"].status == "completed"
+
+
 def _publish_outcome(facts: dict[str, Any], *, generation: int | None = None) -> dict[str, Any]:
     """Write the worker's receipt where the dispatcher seals it, as the engine would."""
     outcome = _outcome(facts, generation=generation)

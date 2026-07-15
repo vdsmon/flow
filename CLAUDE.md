@@ -7,10 +7,12 @@ disposable-capsule writer: it clones the sealed `source_sha`, is seeded with the
 uncommitted working state, runs the recipe there, captures the recipe's mutations as
 evidence, imports nothing, and discards the capsule. The importing writers (implementer,
 review_fixer, revision_fixer) also launch as capsule writers whose validated binary-aware
-patch is compare-and-swap imported under a sole-writer claim, then disposed; only
-machinery_fixer remains shadowed in this increment. Keep the owner as the single human
-cockpit, pass exact typed outcomes back to dispatch, and never treat an environment-only
-harness label as cross-harness execution proof.
+patch is compare-and-swap imported under a sole-writer claim, then disposed. The
+machinery_fixer also launches, as a read-only capsule: it derives a report of anchored
+`{file, old, new}` edits and reflect applies each through the untouched `machinery_edit`
+guard (never the CAS import path). No exact post-plan route remains shadowed. Keep the
+owner as the single human cockpit, pass exact typed outcomes back to dispatch, and never
+treat an environment-only harness label as cross-harness execution proof.
 
 Guide for Claude Code or Codex working in the `flow` repo.
 

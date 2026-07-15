@@ -3,10 +3,11 @@
 The module owns route precedence and provenance. Callers work with complete
 ``harness/model/effort`` routes and never need to interpret workspace TOML,
 activation capability, or digest rules themselves. Exact CLI receipts activate the
-planner, the read-only post-plan profiles, the disposable-capsule E2E writer, and the
-importing writers (implementer, review_fixer, revision_fixer), whose validated patch is
-imported under a sole-writer claim. machinery_fixer remains shadowed until its capsule
-import proof lands.
+planner, the read-only post-plan profiles, the disposable-capsule E2E writer, the
+importing writers (implementer, review_fixer, revision_fixer) whose validated patch is
+imported under a sole-writer claim, and the read-only machinery_fixer whose report reflect
+applies through the machinery_edit guard. Every exact post-plan route is active; no route
+is shadowed except under the generic owner adapter.
 """
 
 from __future__ import annotations
@@ -181,8 +182,15 @@ _ACTIVE_READ_ONLY = frozenset(
 # capsule writers, not read-only, but their lifecycle is disposal-terminal exactly like the readers:
 # E2E discards its capsule and imports nothing, and an importing writer disposes its capsule AFTER a
 # successful import, so all prove capsule_absent and activate on the same exact-CLI-receipt path.
-# machinery_fixer stays out of this set until its import proof lands.
-_ACTIVATABLE = _ACTIVE_READ_ONLY | {"e2e", "implementer", "review_fixer", "revision_fixer"}
+# machinery_fixer is a read_only capsule (reflect applies its report through the machinery_edit
+# guard), disposal-terminal like the readers, so it activates on the same exact-CLI-receipt path.
+_ACTIVATABLE = _ACTIVE_READ_ONLY | {
+    "e2e",
+    "implementer",
+    "review_fixer",
+    "revision_fixer",
+    "machinery_fixer",
+}
 
 
 class RouteError(ValueError):
@@ -429,9 +437,17 @@ def _activation(
         return "pending", "strict disposable-capsule E2E activation requires an exact CLI receipt"
     if profile in {"implementer", "review_fixer", "revision_fixer"}:
         return "pending", "strict capsule-writer import activation requires an exact CLI receipt"
+    if profile == "machinery_fixer":
+        return (
+            "pending",
+            "strict read-only machinery_fixer capsule activation requires an exact CLI receipt; "
+            "reflect applies its report through the machinery_edit guard",
+        )
     if profile in _ACTIVE_READ_ONLY:
         return "pending", "strict read-only capsule activation requires an exact CLI receipt"
-    return "shadow", "write-capable import routes remain shadowed until guarded import lands"
+    # Every routable profile now resolves to a pending exact route above; nothing write-capable
+    # remains shadowed. This defensive fallback only catches an unrouted future profile.
+    return "shadow", "no activation branch claims this profile"
 
 
 def _resolve_data(

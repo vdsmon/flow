@@ -72,9 +72,10 @@ effort = "high"
         agent_routes.resolve(root, "implementer", "claude-code")
 
 
-def test_override_wins_and_writer_route_remains_shadowed(tmp_path: Path) -> None:
+def test_override_wins_and_machinery_fixer_enters_strict_cli_activation(tmp_path: Path) -> None:
     root = _workspace(tmp_path)
-    # machinery_fixer is the last shadowed importing writer (the fixers activated, it did not).
+    # machinery_fixer is the last activation: a read_only capsule whose report reflect applies
+    # through the machinery_edit guard. Nothing write-capable stays shadowed anymore.
     resolved = agent_routes.resolve(
         root,
         "machinery_fixer",
@@ -87,9 +88,9 @@ def test_override_wins_and_writer_route_remains_shadowed(tmp_path: Path) -> None
         "model": "gpt-5.6-sol",
         "effort": "xhigh",
     }
-    assert resolved["activation"] == "shadow"
+    assert resolved["activation"] == "pending"
     assert resolved["effective"] is None
-    assert "write-capable" in resolved["reason"]
+    assert "machinery_edit guard" in resolved["reason"]
 
 
 @pytest.mark.parametrize("owner", ["claude-code", "codex"])
@@ -116,8 +117,21 @@ def test_snapshot_contains_the_complete_cognitive_profile_catalog(
         "review_brief_author",
         "reflector",
         "e2e",
+        "machinery_fixer",
     }
     assert all(route["effective"] is None for route in snapshot["routes"].values())
+
+
+def test_no_exact_post_plan_route_is_shadowed_except_generic(tmp_path: Path) -> None:
+    # machinery_fixer was the last non-generic shadow; the else->shadow branch is now dead for
+    # every routed profile under a public owner. The generic adapter keeps its defensive shadow.
+    root = _workspace(tmp_path)
+    for owner in ("claude-code", "codex"):
+        routes = agent_routes.snapshot(root, owner)["routes"]
+        shadowed = sorted(p for p, route in routes.items() if route["activation"] == "shadow")
+        assert shadowed == [], (owner, shadowed)
+    generic = agent_routes.snapshot(root, "generic")["routes"]
+    assert generic["planner"]["activation"] == "shadow"
 
 
 @pytest.mark.parametrize(
@@ -404,7 +418,7 @@ def test_read_only_receipt_activates_only_with_capsule_proof(tmp_path: Path, pro
     assert receipt["cleanup"]["capsule_absent"] is True
 
 
-def test_importing_writers_stamp_active_on_receipt_machinery_fixer_stays_shadow(
+def test_importing_writers_and_machinery_fixer_stamp_active_on_receipt(
     tmp_path: Path,
 ) -> None:
     snap = agent_routes.snapshot(_workspace(tmp_path), "codex")
@@ -431,15 +445,12 @@ def test_importing_writers_stamp_active_on_receipt_machinery_fixer_stays_shadow(
             },
         )
 
-    # The implementer and both review-loop fixers activate on an exact CLI receipt.
-    for writer in ("implementer", "review_fixer", "revision_fixer"):
-        receipt = cli_receipt(writer)
-        assert receipt["activation"] == "active", writer
-        assert receipt["effective"] == snap["routes"][writer]["desired"], writer
-    # machinery_fixer stays shadow under the same exact CLI proof.
-    machinery = cli_receipt("machinery_fixer")
-    assert machinery["activation"] == "shadow"
-    assert machinery["effective"] is None
+    # The implementer, both review-loop fixers, and the read-only machinery_fixer all activate
+    # on an exact CLI receipt; each is disposal-terminal so lifecycle_proven passes.
+    for profile in ("implementer", "review_fixer", "revision_fixer", "machinery_fixer"):
+        receipt = cli_receipt(profile)
+        assert receipt["activation"] == "active", profile
+        assert receipt["effective"] == snap["routes"][profile]["desired"], profile
 
 
 def test_read_only_receipt_without_terminal_cleanup_proof_stays_shadow(tmp_path: Path) -> None:
@@ -586,20 +597,22 @@ def test_attestation_requires_structured_exact_native_acceptance(tmp_path: Path)
     assert mismatch["effective"] is None
 
 
-def test_codex_attestation_cannot_promote_a_shadow_route(tmp_path: Path) -> None:
-    snap = agent_routes.snapshot(_workspace(tmp_path), "codex")
-    # machinery_fixer stays shadowed, so an empty-request native acceptance cannot promote it.
+def test_attestation_cannot_promote_a_generic_owner_shadow_route(tmp_path: Path) -> None:
+    # Every exact post-plan route is active now, so the only shadow left is the generic owner
+    # adapter; not even an exact CLI acceptance can promote it.
+    snap = agent_routes.snapshot(_workspace(tmp_path), "generic")
+    assert snap["routes"]["planner"]["activation"] == "shadow"
+    request = dict(snap["routes"]["planner"]["desired"])
     receipt = agent_routes.attest(
         snap,
-        "machinery_fixer",
+        "planner",
         {
-            "request": {},
-            "response": {"accepted": True, "transport": "native"},
+            "request": request,
+            "response": {"accepted": True, **request, "transport": "cli"},
         },
     )
     assert receipt["activation"] == "shadow"
     assert receipt["effective"] is None
-    assert receipt["launch_request"] == {}
 
 
 def test_unknown_agent_route_fields_are_rejected(tmp_path: Path) -> None:
