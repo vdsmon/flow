@@ -87,12 +87,15 @@ _READERS = {
     "guard_reviewer": ("guard_reviewer", "guard-verdict/v1"),
     "review_brief_author": ("review_brief_author", "review-brief-content/v1"),
     "reflector": ("reflector", "reflection-actions/v1"),
+    # machinery_fixer is read_only like the reflector: it derives a typed report of anchored
+    # {file, old, new} edits and mutates nothing. Reflect applies each edit through the
+    # machinery_edit.py guard, so it never takes the capsule_writer CAS import path.
+    "machinery_fixer": ("machinery_fixer", "machinery-fix-report/v1"),
 }
 _WRITERS = {
     "implementer": "implementation-report/v1",
     "review_fixer": "fix-report/v1",
     "revision_fixer": "revision-report/v1",
-    "machinery_fixer": "machinery-fix-report/v1",
 }
 
 ROLE_CATALOG: dict[str, RolePolicy] = {
@@ -108,7 +111,7 @@ ROLE_CATALOG.update(
 ROLE_CATALOG["e2e"] = RolePolicy("e2e", "disposable_writer", True, "e2e", "e2e-report/v1", 0)
 # The implementer, review_fixer, and revision_fixer are activated importing writers: each
 # validated capsule patch is imported into the authoritative worktree under the sole-writer
-# claim. machinery_fixer stays shadowed (active=False) for Phase 5.
+# claim. machinery_fixer is not here: it is an active read_only role (see _READERS).
 ROLE_CATALOG["implementer"] = RolePolicy(
     "implementer", "capsule_writer", True, "implementer", "implementation-report/v1", 0
 )
@@ -453,6 +456,9 @@ _FACT_KEYS: dict[str, frozenset[str]] = {
         {"ticket", "plan", "pr", "review", "e2e", "ci", "content_contract"}
     ),
     "reflector": frozenset({"reflection_input", "stage_reflect", "action_contract"}),
+    "machinery_fixer": frozenset(
+        {"stage_reflect", "friction", "source_sha", "harness_files", "report_contract"}
+    ),
     "e2e": frozenset({"stage_e2e", "ticket", "source_sha", "e2e_recipe", "evidence_contract"}),
     "implementer": frozenset(
         {"stage_implement", "ticket", "source_sha", "plan", "planned_files", "report_contract"}
@@ -548,6 +554,10 @@ def build_reflector_prompt(facts: Mapping[str, Any]) -> PromptMaterial:
     return _build_prompt("reflector", facts)
 
 
+def build_machinery_fixer_prompt(facts: Mapping[str, Any]) -> PromptMaterial:
+    return _build_prompt("machinery_fixer", facts)
+
+
 def build_e2e_prompt(facts: Mapping[str, Any]) -> PromptMaterial:
     return _build_prompt("e2e", facts)
 
@@ -595,6 +605,7 @@ PROMPT_BUILDERS: dict[str, Callable[[Mapping[str, Any]], PromptMaterial]] = {
     "guard_reviewer": build_guard_reviewer_prompt,
     "review_brief_author": build_review_brief_author_prompt,
     "reflector": build_reflector_prompt,
+    "machinery_fixer": build_machinery_fixer_prompt,
     "e2e": build_e2e_prompt,
     "implementer": build_implementer_prompt,
     "review_fixer": build_review_fixer_prompt,
@@ -741,6 +752,22 @@ def provider_schema(profile: str) -> dict[str, Any]:
             {"summary": _TEXT, "actions": {"type": "array", "items": action}},
             ["summary", "actions"],
         )
+    if profile == "machinery_fixer":
+        # Each edit mirrors machinery_edit.py's {file, old, new} payload so reflect can apply it
+        # directly through the guard; rationale is the human-facing MACHINERY: entry text. The
+        # worker mutates nothing here: Flow applies the report outside run() via machinery-edit.
+        edit = _closed_object(
+            {"file": _TEXT, "old": _TEXT, "new": _TEXT, "rationale": _TEXT},
+            ["file", "old", "new", "rationale"],
+        )
+        return _closed_object(
+            {
+                "summary": _TEXT,
+                "edits": {"type": "array", "items": edit},
+                "source_sha": _TEXT,
+            },
+            ["summary", "edits", "source_sha"],
+        )
     raise WorkerFailure(f"profile {profile!r} has no active provider schema")
 
 
@@ -775,6 +802,7 @@ def validate_typed_result(profile: str, value: object) -> dict[str, Any]:  # noq
             {"verdict": {"clean", "block"}},
         ),
         "reflector": ({"summary", "actions"}, {}),
+        "machinery_fixer": ({"summary", "edits", "source_sha"}, {}),
         "e2e": (
             {"verdict", "summary", "evidence", "source_sha"},
             {"verdict": {"pass", "fail"}},
@@ -826,7 +854,7 @@ def validate_typed_result(profile: str, value: object) -> dict[str, Any]:  # noq
                 raise WorkerFailure(
                     "finding fields do not match the closed contract", code="invalid_result"
                 )
-    if profile in {"e2e", "implementer", "review_fixer", "revision_fixer"}:
+    if profile in {"e2e", "implementer", "review_fixer", "revision_fixer", "machinery_fixer"}:
         source_sha = value.get("source_sha")
         if not isinstance(source_sha, str) or len(source_sha) != 40:
             raise WorkerFailure(
@@ -858,6 +886,29 @@ def validate_typed_result(profile: str, value: object) -> dict[str, Any]:  # noq
             ):
                 raise WorkerFailure(
                     "reflection action is outside the closed contract", code="invalid_result"
+                )
+    if profile == "machinery_fixer":
+        edits = value.get("edits")
+        if not isinstance(edits, list):
+            raise WorkerFailure("machinery-fix edits must be an array", code="invalid_result")
+        for edit in edits:
+            # The anchored shape must match machinery_edit.py's {file, old, new} payload so reflect
+            # applies each edit directly; old != new mirrors that guard's own no-op refusal.
+            if (
+                not isinstance(edit, dict)
+                or set(edit) != {"file", "old", "new", "rationale"}
+                or not all(
+                    isinstance(edit.get(key), str) and edit.get(key)
+                    for key in ("file", "old", "new", "rationale")
+                )
+            ):
+                raise WorkerFailure(
+                    "machinery-fix edit is outside the closed {file, old, new, rationale} contract",
+                    code="invalid_result",
+                )
+            if edit.get("old") == edit.get("new"):
+                raise WorkerFailure(
+                    "machinery-fix edit old equals new (no-op)", code="invalid_result"
                 )
     if profile == "review_brief_author":
         import review_brief
@@ -3137,7 +3188,8 @@ class CognitiveWorkers:
                         code="invalid_result",
                     )
                 if (
-                    order.profile in {"e2e", "implementer", "review_fixer", "revision_fixer"}
+                    order.profile
+                    in {"e2e", "implementer", "review_fixer", "revision_fixer", "machinery_fixer"}
                     and result.get("source_sha") != order.source_sha
                 ):
                     raise WorkerFailure(
@@ -3654,6 +3706,7 @@ __all__ = [
     "build_e2e_prompt",
     "build_guard_reviewer_prompt",
     "build_implementer_prompt",
+    "build_machinery_fixer_prompt",
     "build_plan_assessor_prompt",
     "build_planner_prompt",
     "build_reflector_prompt",

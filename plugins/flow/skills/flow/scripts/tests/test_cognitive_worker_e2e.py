@@ -426,7 +426,7 @@ def _workspace(tmp_path: Path) -> Path:
     return tmp_path
 
 
-def test_e2e_route_activates_on_a_cli_receipt_while_machinery_fixer_stays_shadow(
+def test_e2e_and_machinery_fixer_routes_activate_on_a_cli_receipt(
     tmp_path: Path,
 ) -> None:
     snap = agent_routes.snapshot(_workspace(tmp_path), "codex")
@@ -454,8 +454,7 @@ def test_e2e_route_activates_on_a_cli_receipt_while_machinery_fixer_stays_shadow
 
     # E2E is disposal-terminal like the readers, so an exact CLI receipt activates it.
     assert _attest("e2e", "cli")["activation"] == "active"
-    # Each importing writer disposes its capsule after import, so it activates on the same proof;
-    # only machinery_fixer stays shadow.
-    for writer in ("implementer", "review_fixer", "revision_fixer"):
-        assert _attest(writer, "cli")["activation"] == "active", writer
-    assert _attest("machinery_fixer", "cli")["activation"] == "shadow"
+    # Each importing writer disposes its capsule after import, and machinery_fixer is a read_only
+    # capsule, so all activate on the same exact CLI proof.
+    for profile in ("implementer", "review_fixer", "revision_fixer", "machinery_fixer"):
+        assert _attest(profile, "cli")["activation"] == "active", profile

@@ -29,6 +29,10 @@
       "version": 1,
       "instruction": "Derive typed reflection actions from the immutable run evidence. Return proposals only. Persistence and machinery edits belong to deterministic Flow code and separate writer roles."
     },
+    "machinery_fixer": {
+      "version": 1,
+      "instruction": "Diagnose the harness friction in the immutable run evidence by re-reading the named harness files, then return a report of anchored edits to flow's own scripts and reference docs. Each edit carries file, a unique old anchor found verbatim in that file, its new replacement, and a rationale; old must occur exactly once so the applier is unambiguous. Return the exact source SHA. Do NOT apply anything and do NOT modify any file: this capsule is read-only and Flow applies each edit through the serialized machinery-edit guard, honoring its protected-branch, snapshot, and ambiguity refusals."
+    },
     "e2e": {
       "version": 1,
       "instruction": "Run the supplied e2e recipe exactly inside this disposable capsule and report whether it passed. You may write freely here (fixtures, caches, snapshots, build products); nothing is imported and the whole capsule is discarded after this run. Return only the typed verdict, the evidence the recipe produced, and the exact source SHA. Flow captures what the capsule mutated; do not enumerate it yourself."

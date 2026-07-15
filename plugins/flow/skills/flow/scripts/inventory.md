@@ -236,9 +236,10 @@ primary and plan-blind review, ordinary and revision fixes, review-brief authors
 reflection, optional machinery fixes, and merge guarding. Ticket, commit, PR creation,
 and merge retain `model: none` at stage level. Exact CLI receipts may activate the
 planner, plan assessor, code and plan-blind reviewers, guard reviewer, review-brief
-author, reflector, the disposable-capsule E2E writer, and the importing writers
-(implementer, review_fixer, revision_fixer). machinery_fixer remains shadowed with
-`effective: null` while its current owner-native path continues.
+author, reflector, the disposable-capsule E2E writer, the importing writers
+(implementer, review_fixer, revision_fixer), and the read-only machinery_fixer. Every
+exact post-plan route is active; only the generic owner adapter leaves a route shadowed
+with `effective: null`.
 
 `agent_routes.py` owns resolution, snapshot digests, attestations, and the surgical
 `migrate --check|--apply` operation. Migration leaves `[models]` bytes intact so
@@ -259,8 +260,10 @@ The implementer and the two review-loop fixers (review_fixer, revision_fixer) ru
 write-capable capsule whose validated binary-aware patch is imported into the authoritative
 worktree under a sole-writer claim, then disposed; each order's `allowed_mutation_paths` is
 sealed to the run's `planned_files`, and a seeded writer's patch is captured against the
-seeded baseline so the seed is not double-counted. machinery_fixer requests fail before
-capsule allocation.
+seeded baseline so the seed is not double-counted. machinery_fixer runs as a read-only
+capsule: it derives a `machinery-fix-report/v1` of anchored `{file, old, new, rationale}`
+edits, mutates nothing, and never enters the capsule-writer import path; reflect applies
+each edit through the `machinery_edit.py` guard.
 `cognitive_worker_smoke.py` verifies a fresh challenge from a real
 Codex or Claude Code parent through the nested exact route, terminal, Git, and disposal
 receipts. Setting `FLOW_HARNESS` without the real outer executable cannot satisfy it.
