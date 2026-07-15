@@ -106,6 +106,12 @@ ROLE_CATALOG.update(
     }
 )
 ROLE_CATALOG["e2e"] = RolePolicy("e2e", "disposable_writer", True, "e2e", "e2e-report/v1", 0)
+# The implementer is the first activated importing writer: its validated capsule patch is
+# imported into the authoritative worktree under the sole-writer claim. review_fixer,
+# revision_fixer, and machinery_fixer stay shadowed (active=False) for their follow-up.
+ROLE_CATALOG["implementer"] = RolePolicy(
+    "implementer", "capsule_writer", True, "implementer", "implementation-report/v1", 0
+)
 
 # Preserve the public profile order used by agent_routes.py.
 ROLE_CATALOG = {
@@ -442,6 +448,9 @@ _FACT_KEYS: dict[str, frozenset[str]] = {
     ),
     "reflector": frozenset({"reflection_input", "stage_reflect", "action_contract"}),
     "e2e": frozenset({"stage_e2e", "ticket", "source_sha", "e2e_recipe", "evidence_contract"}),
+    "implementer": frozenset(
+        {"stage_implement", "ticket", "source_sha", "plan", "planned_files", "report_contract"}
+    ),
 }
 
 
@@ -517,6 +526,10 @@ def build_e2e_prompt(facts: Mapping[str, Any]) -> PromptMaterial:
     return _build_prompt("e2e", facts)
 
 
+def build_implementer_prompt(facts: Mapping[str, Any]) -> PromptMaterial:
+    return _build_prompt("implementer", facts)
+
+
 def _bound_provider_prompt(
     prompt: str, *, facts: Mapping[str, Any], schema: Mapping[str, Any]
 ) -> PromptMaterial:
@@ -549,6 +562,7 @@ PROMPT_BUILDERS: dict[str, Callable[[Mapping[str, Any]], PromptMaterial]] = {
     "review_brief_author": build_review_brief_author_prompt,
     "reflector": build_reflector_prompt,
     "e2e": build_e2e_prompt,
+    "implementer": build_implementer_prompt,
 }
 
 
@@ -625,6 +639,19 @@ def provider_schema(profile: str) -> dict[str, Any]:
                 "source_sha": _TEXT,
             },
             ["verdict", "summary", "evidence", "source_sha"],
+        )
+    if profile == "implementer":
+        # The importing implementer authors only a report: a summary, the evidence of what it
+        # built (files, tests, green result), and a binding source SHA. The change receipt (patch
+        # digest, touched paths, import result) is Flow-captured by _import_after_validation, never
+        # model-authored, so it is deliberately absent from this model-facing schema.
+        return _closed_object(
+            {
+                "summary": _TEXT,
+                "evidence": _TEXT,
+                "source_sha": _TEXT,
+            },
+            ["summary", "evidence", "source_sha"],
         )
     if profile == "review_brief_author":
         import review_brief
@@ -703,6 +730,7 @@ def validate_typed_result(profile: str, value: object) -> dict[str, Any]:  # noq
             {"verdict", "summary", "evidence", "source_sha"},
             {"verdict": {"pass", "fail"}},
         ),
+        "implementer": ({"summary", "evidence", "source_sha"}, {}),
     }
     contract = contracts.get(profile)
     if contract is not None:
@@ -747,11 +775,11 @@ def validate_typed_result(profile: str, value: object) -> dict[str, Any]:  # noq
                 raise WorkerFailure(
                     "finding fields do not match the closed contract", code="invalid_result"
                 )
-    if profile == "e2e":
+    if profile in {"e2e", "implementer"}:
         source_sha = value.get("source_sha")
         if not isinstance(source_sha, str) or len(source_sha) != 40:
             raise WorkerFailure(
-                "e2e result must cite its 40-char source SHA", code="invalid_result"
+                f"{profile} result must cite its 40-char source SHA", code="invalid_result"
             )
     if profile == "reflector":
         actions = value.get("actions")
@@ -3039,9 +3067,12 @@ class CognitiveWorkers:
                         f"{order.profile} verdict does not cite the exact review bundle",
                         code="invalid_result",
                     )
-                if order.profile == "e2e" and result.get("source_sha") != order.source_sha:
+                if (
+                    order.profile in {"e2e", "implementer"}
+                    and result.get("source_sha") != order.source_sha
+                ):
                     raise WorkerFailure(
-                        "e2e verdict does not cite the exact capsule source SHA",
+                        f"{order.profile} result does not cite the exact capsule source SHA",
                         code="invalid_result",
                     )
             except WorkerFailure as exc:
@@ -3250,6 +3281,33 @@ def _load_order(path: Path) -> WorkOrder:
     return WorkOrder.from_mapping(value)
 
 
+def _sealed_planned_files(sealed: Mapping[str, Any]) -> tuple[str, ...]:
+    """Read the ticket's planned files (a writer's allowed-mutation boundary) from baseline.json.
+
+    The dispatcher seals the run's ticket_dir into every cognitive substep; the implement stage's
+    records_diff_baseline pre-hook has written baseline.json by the time this order is prepared, so
+    its planned_files is exactly the set the content-ownership commit gate re-scans. A missing or
+    malformed baseline yields an empty set, which fails the writer's touched-subset-of-allowed check
+    closed rather than importing an unbounded change.
+    """
+    ticket_dir = sealed.get("ticket_dir")
+    if not isinstance(ticket_dir, str) or not ticket_dir:
+        return ()
+    try:
+        raw = json.loads((Path(ticket_dir) / "baseline.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return ()
+    planned = raw.get("planned_files") if isinstance(raw, dict) else None
+    if not isinstance(planned, list):
+        return ()
+    ordered: dict[str, None] = {}
+    for entry in planned:
+        normalized = str(entry).removeprefix("./").replace("\\", "/").strip()
+        if normalized:
+            ordered.setdefault(normalized, None)
+    return tuple(ordered)
+
+
 def prepare_work_order(
     descriptor: Mapping[str, Any],
     *,
@@ -3275,12 +3333,20 @@ def prepare_work_order(
         raise WorkerFailure("dispatch cognitive source SHA is stale", code="stale_order")
     bundle = input_bundle.expanduser().resolve()
     order_path = output.expanduser().resolve()
+    authority = ROLE_CATALOG[str(sealed["profile"])].authority
+    # An importing writer may touch only the ticket's planned files: seal that set as the order's
+    # allowed_mutation_paths so the capture's touched-subset-of-allowed check refuses an import of
+    # any path the commit gate would reject. A disposable writer (E2E) imports nothing, so it keeps
+    # the empty set and enforces no ownership boundary.
+    allowed_mutation_paths: tuple[str, ...] = (
+        _sealed_planned_files(sealed) if authority == "capsule_writer" else ()
+    )
     seed_patch_path: str | None = None
     seed_digest: str | None = None
     # A pre-commit writer (E2E today) must run the recipe against the ticket's real code, whose
     # implement/code_review edits are still uncommitted at dispatch. Seal that delta as an
     # immutable, digest-bound patch so the seed is fixed at capture time and cannot drift.
-    if ROLE_CATALOG[str(sealed["profile"])].authority != "read_only":
+    if authority != "read_only":
         seed = _capture_working_delta(source, head)
         if seed:
             seed_file = order_path.with_name(f"{order_path.stem}.seed.patch")
@@ -3298,6 +3364,7 @@ def prepare_work_order(
         input_bundle=str(bundle),
         input_digest=_input_digest(bundle),
         facts=facts,
+        allowed_mutation_paths=allowed_mutation_paths,
         seed_patch=seed_patch_path,
         seed_digest=seed_digest,
         run_id=str(sealed["run_id"]),
@@ -3517,6 +3584,7 @@ __all__ = [
     "build_diff_reviewer_prompt",
     "build_e2e_prompt",
     "build_guard_reviewer_prompt",
+    "build_implementer_prompt",
     "build_plan_assessor_prompt",
     "build_planner_prompt",
     "build_reflector_prompt",

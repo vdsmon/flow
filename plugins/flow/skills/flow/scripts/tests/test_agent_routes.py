@@ -73,11 +73,12 @@ effort = "high"
 
 def test_override_wins_and_writer_route_remains_shadowed(tmp_path: Path) -> None:
     root = _workspace(tmp_path)
+    # review_fixer is still a shadowed importing writer (the implementer activated, it did not).
     resolved = agent_routes.resolve(
         root,
-        "implementer",
+        "review_fixer",
         "codex",
-        overrides=["implementer=codex,gpt-5.6-sol,xhigh"],
+        overrides=["review_fixer=codex,gpt-5.6-sol,xhigh"],
     )
     assert resolved["source"] == "override"
     assert resolved["desired"] == {
@@ -105,6 +106,7 @@ def test_snapshot_contains_the_complete_cognitive_profile_catalog(
     assert pending == {
         "planner",
         "plan_assessor",
+        "implementer",
         "code_reviewer",
         "diff_reviewer",
         "guard_reviewer",
@@ -387,6 +389,43 @@ def test_read_only_receipt_activates_only_with_capsule_proof(tmp_path: Path, pro
     assert receipt["cleanup"]["capsule_absent"] is True
 
 
+def test_implementer_route_stamps_active_on_receipt_other_writers_stay_shadow(
+    tmp_path: Path,
+) -> None:
+    snap = agent_routes.snapshot(_workspace(tmp_path), "codex")
+
+    def cli_receipt(profile: str) -> dict:
+        request = dict(snap["routes"][profile]["desired"])
+        return agent_routes.attest(
+            snap,
+            profile,
+            {
+                "request": request,
+                "response": {
+                    "accepted": True,
+                    **request,
+                    "transport": "cli",
+                    "adapter_version": "codex/1",
+                },
+                "prompt_hash": "a" * 64,
+                "schema_hash": "b" * 64,
+                "physical_attempt": {"pid": 9, "terminal_acknowledged": True},
+                # capsule_absent holds: a capsule_writer disposes its capsule after a
+                # successful import, so lifecycle_proven passes as it does for readers and E2E.
+                "cleanup": {"capsule_absent": True, "quarantined": False},
+            },
+        )
+
+    implementer = cli_receipt("implementer")
+    assert implementer["activation"] == "active"
+    assert implementer["effective"] == snap["routes"]["implementer"]["desired"]
+    # The other three importing writers stay shadow under the same exact CLI proof.
+    for writer in ("review_fixer", "revision_fixer", "machinery_fixer"):
+        receipt = cli_receipt(writer)
+        assert receipt["activation"] == "shadow", writer
+        assert receipt["effective"] is None, writer
+
+
 def test_read_only_receipt_without_terminal_cleanup_proof_stays_shadow(tmp_path: Path) -> None:
     snap = agent_routes.snapshot(_workspace(tmp_path), "codex")
     request = dict(snap["routes"]["diff_reviewer"]["desired"])
@@ -533,9 +572,10 @@ def test_attestation_requires_structured_exact_native_acceptance(tmp_path: Path)
 
 def test_codex_attestation_cannot_promote_a_shadow_route(tmp_path: Path) -> None:
     snap = agent_routes.snapshot(_workspace(tmp_path), "codex")
+    # review_fixer stays shadowed, so an empty-request native acceptance cannot promote it.
     receipt = agent_routes.attest(
         snap,
-        "implementer",
+        "review_fixer",
         {
             "request": {},
             "response": {"accepted": True, "transport": "native"},

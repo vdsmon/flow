@@ -3,8 +3,10 @@
 The module owns route precedence and provenance. Callers work with complete
 ``harness/model/effort`` routes and never need to interpret workspace TOML,
 activation capability, or digest rules themselves. Exact CLI receipts activate the
-planner, the read-only post-plan profiles, and the disposable-capsule E2E writer. The
-four importing writer routes remain shadowed until their capsule import contract lands.
+planner, the read-only post-plan profiles, the disposable-capsule E2E writer, and the
+implementer (the first importing writer, whose validated patch is imported under a
+sole-writer claim). review_fixer, revision_fixer, and machinery_fixer remain shadowed
+until their capsule import proofs land.
 """
 
 from __future__ import annotations
@@ -175,10 +177,12 @@ _ACTIVE_READ_ONLY = frozenset(
     }
 )
 
-# E2E is a disposable-capsule writer, not read-only, but its lifecycle is disposal-terminal
-# exactly like the readers (capsule always discarded, nothing imported), so it activates on the
-# same exact-CLI-receipt path. The four importing writers stay out of this set.
-_ACTIVATABLE = _ACTIVE_READ_ONLY | {"e2e"}
+# E2E (disposable) and the implementer (importing) are capsule writers, not read-only, but their
+# lifecycle is disposal-terminal exactly like the readers: E2E discards its capsule and imports
+# nothing, and the implementer disposes its capsule AFTER a successful import, so both prove
+# capsule_absent and activate on the same exact-CLI-receipt path. review_fixer, revision_fixer,
+# and machinery_fixer stay out of this set until their import proofs land.
+_ACTIVATABLE = _ACTIVE_READ_ONLY | {"e2e", "implementer"}
 
 
 class RouteError(ValueError):
@@ -423,6 +427,8 @@ def _activation(
         return "pending", "strict read-only planner CLI activation requires an exact receipt"
     if profile == "e2e":
         return "pending", "strict disposable-capsule E2E activation requires an exact CLI receipt"
+    if profile == "implementer":
+        return "pending", "strict capsule-writer import activation requires an exact CLI receipt"
     if profile in _ACTIVE_READ_ONLY:
         return "pending", "strict read-only capsule activation requires an exact CLI receipt"
     return "shadow", "write-capable import routes remain shadowed until guarded import lands"

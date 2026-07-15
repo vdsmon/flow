@@ -118,6 +118,11 @@ def _cognitive_substeps(
             "conditional": raw.get("conditional") is True,
             "owner_harness": snapshot.get("owner_harness"),
             "lease_fence": lease_fence,
+            # An importing writer's order seals allowed_mutation_paths from this run's
+            # baseline.json planned_files; prepare_work_order reads it from here. The baseline is
+            # written by the records_diff_baseline pre-hook AFTER this seal, so the paths cannot be
+            # read now, only the ticket_dir that will hold them.
+            "ticket_dir": str(ticket_dir),
             # The dispatcher, not the agent, decides where the worker's receipt lands, and
             # reads it back from there. An outcome passed in through the stage's structured
             # output would be an agent-authored JSON blob, which is trivially fabricable.
