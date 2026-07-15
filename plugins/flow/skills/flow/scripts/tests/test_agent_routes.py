@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 import agent_routes
+import cognitive_workers as cw
 
 PROFILES = (
     "planner",
@@ -201,7 +202,7 @@ def test_stage_execution_records_complete_composite_provenance(tmp_path: Path) -
         "profile": "diff_reviewer",
         "substeps": {
             "primary_review": {"profile": "code_reviewer"},
-            "plan_blind_review": {"profile": "diff_reviewer"},
+            "plan_blind_review": {"profile": "diff_reviewer", "conditional": True},
             "review_fix": {"profile": "review_fixer", "conditional": True},
         },
     }
@@ -240,6 +241,18 @@ def test_stage_execution_records_complete_composite_provenance(tmp_path: Path) -
         "create_pr",
         "merge",
     }
+
+
+def test_code_review_reviewers_stay_read_only_and_only_the_fixer_writes(tmp_path: Path) -> None:
+    # flow-7yjk invariant: a code_review reviewer NEVER gains write authority because it found an
+    # issue. The two reader substeps map to read_only profiles; the write is a SEPARATE review_fixer
+    # capsule_writer. (Making the readers conditional must not touch their authority.)
+    substeps = agent_routes.snapshot(_workspace(tmp_path), "codex")["stage_execution"][
+        "code_review"
+    ]["substeps"]
+    assert cw.ROLE_CATALOG[substeps["primary_review"]["profile"]].authority == "read_only"
+    assert cw.ROLE_CATALOG[substeps["plan_blind_review"]["profile"]].authority == "read_only"
+    assert cw.ROLE_CATALOG[substeps["review_fix"]["profile"]].authority == "capsule_writer"
 
 
 def test_stage_execution_keeps_original_v1_fields_while_adding_substeps(

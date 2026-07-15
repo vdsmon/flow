@@ -118,7 +118,7 @@ _STAGE_EXECUTION = {
         "profile": "diff_reviewer",
         "substeps": {
             "primary_review": {"profile": "code_reviewer"},
-            "plan_blind_review": {"profile": "diff_reviewer"},
+            "plan_blind_review": {"profile": "diff_reviewer", "conditional": True},
             "review_fix": {"profile": "review_fixer", "conditional": True},
         },
     },

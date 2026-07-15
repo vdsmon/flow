@@ -2125,6 +2125,118 @@ def test_review_loop_green_first_poll_completes_via_reasoned_fixer_skips(
     assert ts.stages["review_loop"].status == "completed"
 
 
+def _code_review_workspace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[Path, dict[str, Any]]:
+    """Drive real dispatch to a sealed code_review.
+
+    primary_review is a non-conditional activated reader (satisfied by an outcome);
+    plan_blind_review and review_fix are conditional. Returns (ticket_dir, descriptor).
+    """
+    _write_workspace(
+        tmp_path,
+        handlers={"ticket": "inline", "code_review": "inline"},
+        stages=["ticket", "code_review"],
+        compounding=False,
+    )
+    _stub_git_head(monkeypatch, "a" * 40)
+    ds.cmd_init(tmp_path, "FT-1")
+    td = tmp_path / ".flow" / "runs" / "FT-1"
+    agent_routes.snapshot(tmp_path, "codex", output_path=td / "route-snapshot.json")
+    ds.cmd_next(tmp_path, "FT-1")
+    ds.cmd_finish(tmp_path, "FT-1", "ticket", "completed")
+    rc, descriptor = ds.cmd_next(tmp_path, "FT-1")
+    assert rc == 0, descriptor
+    assert descriptor["stage"] == "code_review", descriptor
+    return td, descriptor
+
+
+def test_code_review_completes_on_reader_outcomes_plus_a_review_fix_skip_no_fix(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """code_review with no auto-fixable finding completes via a reasoned review_fix skip.
+
+    The two readers are activated substeps satisfied by findings OUTCOMES (primary_review is
+    non-conditional, so it cannot be skipped by construction; plan_blind_review is conditional
+    only for its express/light lane skip). review_fix is the conditional writer: it launches
+    only when a finding is auto-fixable, so on the no-fix path the step-9 terminal must carry a
+    reasoned review_fix skip or the advance wedges. Dropping that skip is the no-skips wedge
+    branch asserted first here (the green-first-poll wedge class review_loop closed in #504).
+    """
+    td, _descriptor = _code_review_workspace(tmp_path, monkeypatch)
+
+    sealed = _sealed(td, "code_review")
+    assert set(sealed) == {"primary_review", "plan_blind_review", "review_fix"}
+    for name in sealed:
+        assert sealed[name]["activation"] == "pending"
+    assert sealed["primary_review"]["conditional"] is False  # reader -> outcome, never a skip
+    assert sealed["plan_blind_review"]["conditional"] is True  # lane-skippable
+    assert sealed["review_fix"]["conditional"] is True  # the writer -> fixer or skip
+
+    # The two readers ran through run-stage and produced their findings outcomes.
+    _publish_outcome(sealed["primary_review"])
+    _publish_outcome(sealed["plan_blind_review"])
+
+    # No auto-fix finding and no review_fix skip in the advance: the fence wedges on review_fix.
+    rc, wedged = ds.cmd_finish(tmp_path, "FT-1", "code_review", "completed")
+    assert rc == 1
+    assert wedged["error"] == (
+        "activated cognitive substep 'review_fix' has no successful outcome or valid skip"
+    )
+
+    # Step 9 carries the reasoned review_fix skip (run_stage's cognitive_skips shape); the
+    # readers' outcomes satisfy their fence, so the stage completes.
+    skip_output = {
+        "cognitive_skips": {
+            "review_fix": {
+                "substep": "review_fix",
+                "stage_generation": sealed["review_fix"]["stage_generation"],
+                "reason": "no auto-fixable findings this run",
+            }
+        }
+    }
+    rc, done = ds.cmd_finish(tmp_path, "FT-1", "code_review", "completed", skill_output=skip_output)
+    assert rc == 0, done
+    ts, _ = state.read(td)
+    assert ts is not None
+    assert ts.stages["code_review"].status == "completed"
+
+
+def test_code_review_reasoned_skips_plan_blind_review_on_the_cheap_lanes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """plan_blind_review is conditional so express/light can reasoned-skip it.
+
+    The plan-blind reader is a full-lane-only pass (step 4). On express/light it takes a
+    reasoned skip, which the completion fence accepts ONLY because plan_blind_review is
+    conditional. Reverting the agent_routes conditional flag makes the skip invalid and the
+    stage wedges on plan_blind_review (a non-conditional substep cannot be reasoned-skipped).
+    """
+    td, _descriptor = _code_review_workspace(tmp_path, monkeypatch)
+    sealed = _sealed(td, "code_review")
+
+    # primary_review still produces its outcome; the cheap lane skips the plan-blind reader.
+    _publish_outcome(sealed["primary_review"])
+    skip_output = {
+        "cognitive_skips": {
+            name: {
+                "substep": name,
+                "stage_generation": sealed[name]["stage_generation"],
+                "reason": reason,
+            }
+            for name, reason in (
+                ("plan_blind_review", "express lane: no plan-blind reader pass"),
+                ("review_fix", "no auto-fixable findings this run"),
+            )
+        }
+    }
+    rc, done = ds.cmd_finish(tmp_path, "FT-1", "code_review", "completed", skill_output=skip_output)
+    assert rc == 0, done
+    ts, _ = state.read(td)
+    assert ts is not None
+    assert ts.stages["code_review"].status == "completed"
+
+
 def _publish_outcome(facts: dict[str, Any], *, generation: int | None = None) -> dict[str, Any]:
     """Write the worker's receipt where the dispatcher seals it, as the engine would."""
     outcome = _outcome(facts, generation=generation)
