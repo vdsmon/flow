@@ -123,6 +123,33 @@ ROLE_CATALOG = {
 ACTIVE_READ_ONLY_PROFILES = tuple(name for name, policy in ROLE_CATALOG.items() if policy.active)
 
 
+def _resolve_authority(
+    profile: str, authority: str, allowed: tuple[str, ...]
+) -> tuple[str, tuple[str, ...]]:
+    """Pin an order's authority to its profile and vet its writer mutation paths.
+
+    An empty authority resolves to the catalog value; a non-empty one that disagrees is a
+    forgery. Allowed paths must be empty for a read_only order, and every writer entry must be
+    a repo-relative POSIX path with no leading slash and no ``..`` segment. Paths are never
+    resolved or touched on disk here.
+    """
+    expected = ROLE_CATALOG[profile].authority
+    resolved = authority or expected
+    if resolved != expected:
+        raise WorkerFailure(
+            f"work-order authority {authority!r} does not match profile {profile!r}"
+        )
+    paths = tuple(allowed)
+    if resolved == "read_only" and paths:
+        raise WorkerFailure("a read-only work order cannot allow mutation paths")
+    for entry in paths:
+        if not isinstance(entry, str) or not entry or entry.startswith("/"):
+            raise WorkerFailure(f"allowed mutation path {entry!r} is not repo-relative")
+        if ".." in entry.split("/"):
+            raise WorkerFailure(f"allowed mutation path {entry!r} escapes the repository")
+    return resolved, paths
+
+
 @dataclass(frozen=True)
 class OwnerProof:
     owner_id: str
@@ -147,6 +174,8 @@ class WorkOrder:
     input_bundle: str
     input_digest: str
     facts: dict[str, Any]
+    authority: str = ""
+    allowed_mutation_paths: tuple[str, ...] = ()
     schema: str = WORK_ORDER_SCHEMA
     run_id: str | None = None
     stage: str | None = None
@@ -167,6 +196,11 @@ class WorkOrder:
             raise WorkerFailure("work order requires an invocation ID and positive generation")
         if self.profile not in ROLE_CATALOG:
             raise WorkerFailure(f"unknown cognitive profile {self.profile!r}")
+        authority, paths = _resolve_authority(
+            self.profile, self.authority, self.allowed_mutation_paths
+        )
+        object.__setattr__(self, "authority", authority)
+        object.__setattr__(self, "allowed_mutation_paths", paths)
         if not Path(self.source_root).is_absolute() or not Path(self.input_bundle).is_absolute():
             raise WorkerFailure("work-order source and input paths must be absolute")
         if len(self.source_sha) != 40 or len(self.route_snapshot_digest) != 64:
@@ -216,6 +250,8 @@ class WorkOrder:
         optional = {
             key: value[key]
             for key in (
+                "authority",
+                "allowed_mutation_paths",
                 "schema",
                 "run_id",
                 "stage",
@@ -701,7 +737,12 @@ class CliAdapter(Protocol):
     harness: str
 
     def command(
-        self, route: Mapping[str, str], prompt: str, schema_path: Path, capsule: Path
+        self,
+        route: Mapping[str, str],
+        prompt: str,
+        schema_path: Path,
+        capsule: Path,
+        authority: str = "read_only",
     ) -> list[str]: ...
 
     def session_command(
@@ -714,7 +755,9 @@ class CliAdapter(Protocol):
         new_thread_id: str | None,
     ) -> list[str]: ...
 
-    def preflight(self, route: Mapping[str, str]) -> dict[str, str]: ...
+    def preflight(
+        self, route: Mapping[str, str], authority: str = "read_only"
+    ) -> dict[str, str]: ...
 
 
 def preflight_route(
@@ -723,6 +766,7 @@ def preflight_route(
     runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
     timeout: float = 5.0,
     require_resume: bool = False,
+    authority: str = "read_only",
 ) -> dict[str, str]:
     """Probe one exact provider route, including planner resume when requested.
 
@@ -790,6 +834,12 @@ def preflight_route(
         else ("--model", "--effort", "--permission-mode", "--json-schema", "--verbose")
     )
     missing = [flag for flag in flags if flag not in help_text]
+    if authority != "read_only":
+        # A writer route is only provable if the CLI also documents its writable mode. The
+        # read-only probe above cannot green-light a workspace-write launch.
+        writable = "workspace-write" if executable == "codex" else "acceptEdits"
+        if writable not in help_text:
+            missing.append(writable)
     if version.returncode or any(result.returncode for result in help_results) or missing:
         raise WorkerFailure(
             "worker CLI lacks required capabilities"
@@ -815,17 +865,28 @@ def preflight_route(
     }
 
 
-def _probe_cli(executable: str, route: Mapping[str, str], flags: tuple[str, ...]) -> dict[str, str]:
+def _probe_cli(
+    executable: str,
+    route: Mapping[str, str],
+    flags: tuple[str, ...],
+    authority: str = "read_only",
+) -> dict[str, str]:
     del executable, flags
-    return preflight_route(route)
+    return preflight_route(route, authority=authority)
 
 
 class CodexCliAdapter:
     harness = "codex"
 
     def command(
-        self, route: Mapping[str, str], prompt: str, schema_path: Path, capsule: Path
+        self,
+        route: Mapping[str, str],
+        prompt: str,
+        schema_path: Path,
+        capsule: Path,
+        authority: str = "read_only",
     ) -> list[str]:
+        sandbox = "read-only" if authority == "read_only" else "workspace-write"
         return [
             "codex",
             "exec",
@@ -834,7 +895,7 @@ class CodexCliAdapter:
             "-c",
             f'model_reasoning_effort="{route["effort"]}"',
             "--sandbox",
-            "read-only",
+            sandbox,
             "--json",
             "--output-schema",
             str(schema_path.resolve()),
@@ -860,9 +921,12 @@ class CodexCliAdapter:
             new_thread_id=new_thread_id,
         )
 
-    def preflight(self, route: Mapping[str, str]) -> dict[str, str]:
+    def preflight(self, route: Mapping[str, str], authority: str = "read_only") -> dict[str, str]:
         return _probe_cli(
-            "codex", route, ("--model", "--sandbox", "--output-schema", "--json", "--cd")
+            "codex",
+            route,
+            ("--model", "--sandbox", "--output-schema", "--json", "--cd"),
+            authority=authority,
         )
 
 
@@ -870,8 +934,14 @@ class ClaudeCodeCliAdapter:
     harness = "claude_code"
 
     def command(
-        self, route: Mapping[str, str], prompt: str, schema_path: Path, capsule: Path
+        self,
+        route: Mapping[str, str],
+        prompt: str,
+        schema_path: Path,
+        capsule: Path,
+        authority: str = "read_only",
     ) -> list[str]:
+        permission = "plan" if authority == "read_only" else "acceptEdits"
         return [
             "claude",
             "--print",
@@ -880,7 +950,7 @@ class ClaudeCodeCliAdapter:
             "--effort",
             route["effort"],
             "--permission-mode",
-            "plan",
+            permission,
             "--output-format",
             "stream-json",
             # --print with stream-json is rejected outright unless --verbose is also present.
@@ -908,7 +978,7 @@ class ClaudeCodeCliAdapter:
             new_thread_id=new_thread_id,
         )
 
-    def preflight(self, route: Mapping[str, str]) -> dict[str, str]:
+    def preflight(self, route: Mapping[str, str], authority: str = "read_only") -> dict[str, str]:
         return _probe_cli(
             "claude",
             route,
@@ -919,6 +989,7 @@ class ClaudeCodeCliAdapter:
                 "--json-schema",
                 "--no-session-persistence",
             ),
+            authority=authority,
         )
 
 
@@ -1893,6 +1964,20 @@ def _extract_typed_result(stdout: str) -> tuple[dict[str, Any], str | None]:
     raise WorkerFailure("worker output contained no typed result", code="invalid_result")
 
 
+def _capsule_postcondition_ok(
+    authority: str, before: Mapping[str, Any], after: Mapping[str, Any]
+) -> bool:
+    """Decide whether the capsule receipts satisfy an authority's mutation contract.
+
+    A read_only worker must leave its capsule byte-identical. A capsule_writer or
+    disposable_writer is expected to mutate its capsule, so a changed capsule is not a
+    violation. The authoritative-source guard is enforced separately for every authority.
+    """
+    if authority == "read_only":
+        return before["digest"] == after["digest"]
+    return True
+
+
 class CognitiveWorkers:
     """Deep execution boundary for independently routed cognitive roles."""
 
@@ -2040,7 +2125,7 @@ class CognitiveWorkers:
         ):
             capability = preflight_route(order.route, require_resume=True)
         else:
-            capability = adapter.preflight(order.route)
+            capability = adapter.preflight(order.route, order.authority)
         prompt = (
             _bound_provider_prompt(order.provider_prompt, facts=order.facts, schema=schema)
             if order.provider_prompt is not None
@@ -2133,7 +2218,9 @@ class CognitiveWorkers:
                             else session.get("initial_session_id")
                         ),
                     )
-                return adapter.command(order.route, prompt.prompt, schema_path, capsule)
+                return adapter.command(
+                    order.route, prompt.prompt, schema_path, capsule, order.authority
+                )
 
             first_command = build_command(False)
 
@@ -2238,7 +2325,7 @@ class CognitiveWorkers:
                     "worker invocation changed the authoritative repository",
                     code="read_only_violation",
                 )
-            if capsule_before["digest"] != capsule_after["digest"]:
+            if not _capsule_postcondition_ok(order.authority, capsule_before, capsule_after):
                 journal.transition(
                     "quarantined",
                     failure={"code": "read_only_violation"},

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
+
+import pytest
 
 import cognitive_workers as cw
 
@@ -60,3 +63,76 @@ def test_claude_worker_command_is_accepted_by_the_real_cli_contract(tmp_path: Pa
     ):
         assert command[command.index("--output-format") + 1] == "stream-json"
         assert "--verbose" in command
+
+
+def test_codex_adapter_command_branches_the_sandbox_on_authority(tmp_path: Path) -> None:
+    schema = tmp_path / "schema.json"
+    schema.write_text("{}", encoding="utf-8")
+    route = {"harness": "codex", "model": "gpt-5.6-sol", "effort": "high"}
+    reader = cw.CodexCliAdapter().command(route, "prompt", schema, tmp_path, "read_only")
+    writer = cw.CodexCliAdapter().command(route, "prompt", schema, tmp_path, "capsule_writer")
+    assert reader[reader.index("--sandbox") + 1] == "read-only"
+    assert writer[writer.index("--sandbox") + 1] == "workspace-write"
+
+
+def test_claude_adapter_command_branches_the_permission_mode_on_authority(tmp_path: Path) -> None:
+    schema = tmp_path / "schema.json"
+    schema.write_text('{"type":"object"}', encoding="utf-8")
+    route = {"harness": "claude_code", "model": "opus", "effort": "high"}
+    reader = cw.ClaudeCodeCliAdapter().command(route, "prompt", schema, tmp_path, "read_only")
+    writer = cw.ClaudeCodeCliAdapter().command(
+        route, "prompt", schema, tmp_path, "disposable_writer"
+    )
+    assert reader[reader.index("--permission-mode") + 1] == "plan"
+    assert writer[writer.index("--permission-mode") + 1] == "acceptEdits"
+
+
+def _probe_runner(auth_verb: str, help_text: str):
+    def run(command, **kwargs):
+        tail = command[1:]
+        if tail == ["--version"]:
+            return subprocess.CompletedProcess(command, 0, f"{command[0]} 1.0", "")
+        if tail == [auth_verb, "status"]:
+            return subprocess.CompletedProcess(command, 0, "ok", "")
+        return subprocess.CompletedProcess(command, 0, help_text, "")
+
+    return run
+
+
+_CODEX_FLAGS = "--model --sandbox --output-schema --json"
+_CLAUDE_FLAGS = "--model --effort --permission-mode --json-schema --verbose"
+
+
+def test_codex_writer_preflight_requires_the_writable_sandbox(monkeypatch) -> None:
+    monkeypatch.setattr(cw.shutil, "which", lambda name: f"/usr/bin/{name}")
+    route = {"harness": "codex", "model": "gpt-5.6-sol", "effort": "high"}
+    read_only_evidence = _probe_runner("login", _CODEX_FLAGS)
+    with pytest.raises(cw.WorkerFailure, match="workspace-write") as error:
+        cw.preflight_route(route, runner=read_only_evidence, authority="capsule_writer")
+    assert error.value.code == "capability_missing"
+    # The same read-only evidence still clears a read_only route unchanged.
+    assert cw.preflight_route(route, runner=read_only_evidence, authority="read_only")[
+        "harness"
+    ] == ("codex")
+    writable = _probe_runner("login", _CODEX_FLAGS + " workspace-write")
+    assert cw.preflight_route(route, runner=writable, authority="capsule_writer")["harness"] == (
+        "codex"
+    )
+
+
+def test_claude_writer_preflight_requires_accept_edits(monkeypatch) -> None:
+    monkeypatch.setattr(cw.shutil, "which", lambda name: f"/usr/bin/{name}")
+    route = {"harness": "claude_code", "model": "opus", "effort": "high"}
+    read_only_evidence = _probe_runner("auth", _CLAUDE_FLAGS)
+    with pytest.raises(cw.WorkerFailure, match="acceptEdits") as error:
+        cw.preflight_route(route, runner=read_only_evidence, authority="disposable_writer")
+    assert error.value.code == "capability_missing"
+    assert (
+        cw.preflight_route(route, runner=read_only_evidence, authority="read_only")["harness"]
+        == "claude_code"
+    )
+    writable = _probe_runner("auth", _CLAUDE_FLAGS + " acceptEdits")
+    assert (
+        cw.preflight_route(route, runner=writable, authority="disposable_writer")["harness"]
+        == "claude_code"
+    )
