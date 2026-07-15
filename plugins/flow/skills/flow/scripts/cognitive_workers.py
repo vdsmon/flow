@@ -911,6 +911,14 @@ def preflight_route(
     The probe runs in the same narrowed environment the worker will get. Probing the owner's
     full environment instead would green-light an authentication the launch cannot reproduce.
     """
+    if route["harness"] == "claude_code" and authority == "disposable_writer":
+        raise WorkerFailure(
+            "claude has no confined write-exec sandbox headless: --permission-mode "
+            "bypassPermissions escapes the OS sandbox, and the claude sandbox settings deny "
+            "all writes including the allowlisted directory. A disposable_writer (e2e) route "
+            "must run its recipe under codex --sandbox workspace-write.",
+            code="unsupported_writer_harness",
+        )
     executable = "codex" if route["harness"] == "codex" else "claude"
     resolved = shutil.which(executable)
     if resolved is None:
@@ -975,7 +983,7 @@ def preflight_route(
     if authority != "read_only":
         # A writer route is only provable if the CLI also documents its writable mode. The
         # read-only probe above cannot green-light a workspace-write launch.
-        writable = "workspace-write" if executable == "codex" else "bypassPermissions"
+        writable = "workspace-write" if executable == "codex" else "acceptEdits"
         if writable not in help_text:
             missing.append(writable)
     if version.returncode or any(result.returncode for result in help_results) or missing:
@@ -1079,11 +1087,10 @@ class ClaudeCodeCliAdapter:
         capsule: Path,
         authority: str = "read_only",
     ) -> list[str]:
-        # A writer must run its recipe (builds/tests), which acceptEdits blocks at Bash exec;
-        # bypassPermissions is the claude analog of codex workspace-write. The confinement is the
-        # isolated capsule clone, the authoritative-source read-only postcondition, and the CAS
-        # ownership check (touched subset of allowed_mutation_paths), not the permission mode.
-        permission = "plan" if authority == "read_only" else "bypassPermissions"
+        # acceptEdits lets a claude capsule_writer edit via Edit/Write but blocks bash-exec; a
+        # writer that must run a shell recipe with writes confined (disposable_writer/e2e) has no
+        # such mode on claude headless and is refused at preflight, routing to codex instead.
+        permission = "plan" if authority == "read_only" else "acceptEdits"
         return [
             "claude",
             "--print",
