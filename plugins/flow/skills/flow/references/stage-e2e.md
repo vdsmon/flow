@@ -1,5 +1,34 @@
 # Stage: e2e
 
+## Routed disposable-capsule e2e
+
+When the frozen route marks `e2e` pending, dispatch seals its cognitive substep (logical
+invocation, stage generation, source SHA, route digest, owner, and lease fence) and the
+executor launches it through `cognitive-worker run-stage` (`references/delivery-loop.md`),
+never by hand. The capsule is a private standalone clone at the sealed `source_sha`, and
+unlike every read-only role it is write-capable (`authority: disposable_writer`): a recipe
+run legitimately writes fixtures, caches, snapshots, and build products, so the recipe
+executes INSIDE the capsule with a writable sandbox.
+
+Nothing the capsule writes reaches the authoritative worktree. Flow, not the model,
+captures what the capsule mutated (touched paths and a diffstat) into the result's
+`capsule_mutations`, takes no writer import lock, and then discards the whole capsule. The
+read-only-violation guard proves the authoritative worktree is byte-identical across the
+run, so "every source mutation discarded" holds by construction. The worker returns the
+recipe verdict (`pass`/`fail`), the evidence the recipe produced, and the exact
+`source_sha`; Flow attaches the mutation summary as report evidence.
+
+The routed capsule is cloned at the sealed `source_sha` and then **seeded** with the
+ticket's uncommitted working state: implement and code_review run before commit, so their
+edits are still uncommitted in the authoritative worktree at e2e time. Dispatch captures
+that delta as an immutable, digest-bound seed patch and the executor applies it into the
+capsule, so the recipe runs against the ticket's real changed code, not the bare base
+commit. The recipe's own mutations are then measured against that seeded baseline, so the
+`capsule_mutations` evidence reflects what the recipe wrote and never the seeded ticket
+diff. This substep is non-conditional: an activated e2e route always runs the seeded
+capsule, never a `subagent:general-purpose` fallback. The two paths share the recipe and
+evidence contract the rest of this doc defines.
+
 ## Purpose
 
 Execute the **e2e recipe the plan declared** and surface any failure.
@@ -21,8 +50,10 @@ Your job is to run it exactly, not to reinterpret it.
   fixture, and the expected pass signal.
 - `.flow/runs/<KEY>/ticket.json` — ticket context, for understanding what the
   recipe is verifying.
-- The current repository, including the implement-stage changes in the working
-  tree.
+- The recipe's code under test: the live working tree (including the uncommitted
+  implement-stage changes) under the default `subagent:general-purpose` handler, or the
+  disposable capsule cloned at the sealed `source_sha` and seeded with those same
+  uncommitted changes under an activated routed run.
 
 ## Steps
 

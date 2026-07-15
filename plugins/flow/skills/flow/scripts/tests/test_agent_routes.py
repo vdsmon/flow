@@ -110,6 +110,7 @@ def test_snapshot_contains_the_complete_cognitive_profile_catalog(
         "guard_reviewer",
         "review_brief_author",
         "reflector",
+        "e2e",
     }
     assert all(route["effective"] is None for route in snapshot["routes"].values())
 

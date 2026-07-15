@@ -6,9 +6,11 @@ invocation. Route resolution, prompts, provider commands, process lifecycle,
 typed validation, Git guards, journals, and capsule disposal remain private to
 this module.
 
-Increment two activates read-only roles only. Writer and E2E policies are
-present so route snapshots can be complete, but requests for them fail before a
-capsule directory is allocated.
+Read-only roles and the disposable E2E writer are active. The E2E writer runs in a
+write-capable capsule seeded with the ticket's uncommitted working state, captures the
+recipe's own mutations as report evidence, imports nothing, and discards the capsule. The
+four importing writer policies are present so route snapshots stay complete, but requests
+for them fail before a capsule directory is allocated.
 """
 
 from __future__ import annotations
@@ -44,6 +46,7 @@ STAGE_OUTCOMES_SCHEMA = "flow.cognitive-stage-outcomes/v1"
 CHANGE_RECEIPT_SCHEMA = "flow.cognitive-change-receipt/v1"
 WRITER_IMPORT_LOCK_NAME = "flow-writer-import.lock"
 JOURNAL_SCHEMA = "flow.cognitive-worker-journal/v1"
+SEED_BASELINE_REF = "refs/flow/seed-baseline"
 SOFT_TIMEOUT_SECONDS = 10 * 60
 HARD_TIMEOUT_SECONDS = 40 * 60
 TERMINATION_GRACE_SECONDS = 5.0
@@ -102,7 +105,7 @@ ROLE_CATALOG.update(
         for name, schema in _WRITERS.items()
     }
 )
-ROLE_CATALOG["e2e"] = RolePolicy("e2e", "disposable_writer", False, "e2e", "e2e-report/v1", 0)
+ROLE_CATALOG["e2e"] = RolePolicy("e2e", "disposable_writer", True, "e2e", "e2e-report/v1", 0)
 
 # Preserve the public profile order used by agent_routes.py.
 ROLE_CATALOG = {
@@ -152,6 +155,25 @@ def _resolve_authority(
     return resolved, paths
 
 
+def _validate_seed(authority: str, seed_patch: str | None, seed_digest: str | None) -> None:
+    """Vet an optional seed patch reference against its authority; nothing is read here.
+
+    Only a writer order may seed its capsule with the ticket's uncommitted working state. The
+    patch path must be absolute and pinned by an exact digest, so the seed sealed at dispatch
+    cannot be swapped before the executor applies it.
+    """
+    if seed_patch is None:
+        if seed_digest is not None:
+            raise WorkerFailure("work-order seed digest requires a seed patch")
+        return
+    if authority == "read_only":
+        raise WorkerFailure("a read-only work order cannot carry a seed patch")
+    if not Path(seed_patch).is_absolute():
+        raise WorkerFailure("work-order seed patch path must be absolute")
+    if not isinstance(seed_digest, str) or len(seed_digest) != 64:
+        raise WorkerFailure("a seeded work order requires an exact seed digest")
+
+
 @dataclass(frozen=True)
 class OwnerProof:
     owner_id: str
@@ -178,6 +200,8 @@ class WorkOrder:
     facts: dict[str, Any]
     authority: str = ""
     allowed_mutation_paths: tuple[str, ...] = ()
+    seed_patch: str | None = None
+    seed_digest: str | None = None
     schema: str = WORK_ORDER_SCHEMA
     run_id: str | None = None
     stage: str | None = None
@@ -205,6 +229,7 @@ class WorkOrder:
         object.__setattr__(self, "allowed_mutation_paths", paths)
         if not Path(self.source_root).is_absolute() or not Path(self.input_bundle).is_absolute():
             raise WorkerFailure("work-order source and input paths must be absolute")
+        _validate_seed(authority, self.seed_patch, self.seed_digest)
         if len(self.source_sha) != 40 or len(self.route_snapshot_digest) != 64:
             raise WorkerFailure("work order requires exact source and route digests")
         if len(self.input_digest) != 64:
@@ -254,6 +279,8 @@ class WorkOrder:
             for key in (
                 "authority",
                 "allowed_mutation_paths",
+                "seed_patch",
+                "seed_digest",
                 "schema",
                 "run_id",
                 "stage",
@@ -414,6 +441,7 @@ _FACT_KEYS: dict[str, frozenset[str]] = {
         {"ticket", "plan", "pr", "review", "e2e", "ci", "content_contract"}
     ),
     "reflector": frozenset({"reflection_input", "stage_reflect", "action_contract"}),
+    "e2e": frozenset({"stage_e2e", "ticket", "source_sha", "e2e_recipe", "evidence_contract"}),
 }
 
 
@@ -485,6 +513,10 @@ def build_reflector_prompt(facts: Mapping[str, Any]) -> PromptMaterial:
     return _build_prompt("reflector", facts)
 
 
+def build_e2e_prompt(facts: Mapping[str, Any]) -> PromptMaterial:
+    return _build_prompt("e2e", facts)
+
+
 def _bound_provider_prompt(
     prompt: str, *, facts: Mapping[str, Any], schema: Mapping[str, Any]
 ) -> PromptMaterial:
@@ -516,6 +548,7 @@ PROMPT_BUILDERS: dict[str, Callable[[Mapping[str, Any]], PromptMaterial]] = {
     "guard_reviewer": build_guard_reviewer_prompt,
     "review_brief_author": build_review_brief_author_prompt,
     "reflector": build_reflector_prompt,
+    "e2e": build_e2e_prompt,
 }
 
 
@@ -578,6 +611,20 @@ def provider_schema(profile: str) -> dict[str, Any]:
                 "guard_digest": _TEXT,
             },
             ["verdict", "summary", "findings", "guard_digest"],
+        )
+    if profile == "e2e":
+        # The disposable E2E writer authors only the recipe verdict, its evidence, and a binding
+        # source SHA. Flow, not the model, captures the capsule mutation summary and attaches it
+        # to the result after validation, so it is deliberately absent from this model-facing
+        # schema (see _run_locked's disposable_writer branch).
+        return _closed_object(
+            {
+                "verdict": {"type": "string", "enum": ["pass", "fail"]},
+                "summary": _TEXT,
+                "evidence": _TEXT,
+                "source_sha": _TEXT,
+            },
+            ["verdict", "summary", "evidence", "source_sha"],
         )
     if profile == "review_brief_author":
         import review_brief
@@ -652,6 +699,10 @@ def validate_typed_result(profile: str, value: object) -> dict[str, Any]:  # noq
             {"verdict": {"clean", "block"}},
         ),
         "reflector": ({"summary", "actions"}, {}),
+        "e2e": (
+            {"verdict", "summary", "evidence", "source_sha"},
+            {"verdict": {"pass", "fail"}},
+        ),
     }
     contract = contracts.get(profile)
     if contract is not None:
@@ -696,6 +747,12 @@ def validate_typed_result(profile: str, value: object) -> dict[str, Any]:  # noq
                 raise WorkerFailure(
                     "finding fields do not match the closed contract", code="invalid_result"
                 )
+    if profile == "e2e":
+        source_sha = value.get("source_sha")
+        if not isinstance(source_sha, str) or len(source_sha) != 40:
+            raise WorkerFailure(
+                "e2e result must cite its 40-char source SHA", code="invalid_result"
+            )
     if profile == "reflector":
         actions = value.get("actions")
         if not isinstance(actions, list):
@@ -1277,12 +1334,69 @@ def git_receipt(root: Path) -> dict[str, Any]:
     return {**body, "digest": _digest(body)}
 
 
-def create_private_clone(source_root: Path, source_sha: str, capsule: Path) -> dict[str, Any]:
+def _load_seed(order: WorkOrder) -> bytes:
+    """Read and digest-verify the order's sealed seed patch; empty when the order carries none.
+
+    The seed is only needed when a fresh capsule is cloned, so it is read here rather than at
+    order validation, and a completed invocation replayed from its durable outcome never touches
+    it. A digest mismatch means the sealed seed drifted since dispatch and is a hard failure.
+    """
+    if order.seed_patch is None:
+        return b""
+    try:
+        seed = Path(order.seed_patch).resolve().read_bytes()
+    except OSError as exc:
+        raise WorkerFailure(
+            f"work-order seed patch is unreadable: {exc}", code="invalid_order"
+        ) from exc
+    if hashlib.sha256(seed).hexdigest() != order.seed_digest:
+        raise WorkerFailure("work-order seed digest does not match", code="invalid_order")
+    return seed
+
+
+def _seed_capsule_working_state(capsule: Path, seed_patch: bytes) -> str | None:
+    """Apply a captured working-state delta into a pristine capsule; non-empty seeds only.
+
+    The capsule is a fresh clone at the base SHA and the patch was captured against that same
+    SHA, so it applies deterministically; a patch that will not apply raises ``seed_apply_failed``
+    and is never silently dropped. The seeded tree is recorded under SEED_BASELINE_REF (no
+    commit, so HEAD stays the base SHA) so later evidence capture measures the recipe's own
+    mutations against base+seed. Reusable by any writer that must run against the ticket's
+    uncommitted working tree; returns the seeded tree oid, or None for an empty seed.
+    """
+    if not seed_patch:
+        return None
+    root = capsule.resolve()
+    env = {**os.environ, "GIT_OPTIONAL_LOCKS": "0"}
+
+    def git(*args: str, stdin: bytes | None = None) -> bytes:
+        result = subprocess.run(
+            ["git", *args], cwd=root, input=stdin, capture_output=True, check=False, env=env
+        )
+        if result.returncode != 0:
+            detail = result.stderr.decode(errors="replace").strip()
+            raise WorkerFailure(
+                f"capsule seed failed: git {' '.join(args)}: {detail}", code="seed_apply_failed"
+            )
+        return result.stdout
+
+    git("apply", "--binary", "--whitespace=nowarn", stdin=seed_patch)
+    git("add", "-A")
+    seed_tree = git("write-tree").strip().decode()
+    git("update-ref", SEED_BASELINE_REF, seed_tree)
+    return seed_tree
+
+
+def create_private_clone(
+    source_root: Path, source_sha: str, capsule: Path, seed: bytes = b""
+) -> dict[str, Any]:
     """Create a standalone exact-SHA clone without linked mutable Git metadata.
 
     The clone is built beside its final path and installed with one rename. A crash mid-clone
     would otherwise leave a partial repository at the capsule path, and recovery reads that
-    path as an existing capsule it cannot inspect, wedging the invocation for good.
+    path as an existing capsule it cannot inspect, wedging the invocation for good. A non-empty
+    ``seed`` is applied into the staging clone before the rename, so an installed capsule is
+    always fully seeded and recovery never sees a half-seeded tree.
     """
     source = source_root.resolve()
     target = capsule.resolve()
@@ -1327,6 +1441,7 @@ def create_private_clone(source_root: Path, source_sha: str, capsule: Path) -> d
             raise WorkerFailure(
                 "private clone did not resolve the exact source SHA", code="artifact_failure"
             )
+        _seed_capsule_working_state(build, seed)
         os.replace(build, target)
         body = {
             "schema": "flow.cognitive-capsule/v1",
@@ -1664,6 +1779,100 @@ def _capture_capsule_patch(
         "metadata": _change_metadata(changes, patch),
         "empty": not patch,
     }
+
+
+def _capsule_mutation_summary(capsule: Path, source_sha: str) -> dict[str, Any]:
+    """Summarize every disposable-capsule change as E2E evidence, with no ownership enforcement.
+
+    A disposable writer discards its whole capsule and imports nothing, so every touched path is
+    evidence rather than an owned change: unlike _capture_capsule_patch this enforces no allowed
+    set and never raises ownership_violation. The baseline is the seeded tree when the capsule
+    carries one (SEED_BASELINE_REF), so a seeded run reports only what the recipe wrote rather
+    than conflating the recipe's mutations with the ticket's in-flight changes; an unseeded
+    capsule falls back to the bare source SHA. The patch is captured only to derive the diffstat
+    and digest, then dropped with the capsule; the bytes are never retained or replayed.
+    """
+    root = capsule.resolve()
+    env = {**os.environ, "GIT_OPTIONAL_LOCKS": "0"}
+
+    def git(*args: str, allow: tuple[int, ...] = (0,)) -> bytes:
+        result = subprocess.run(["git", *args], cwd=root, capture_output=True, check=False, env=env)
+        if result.returncode not in allow:
+            detail = result.stderr.decode(errors="replace").strip()
+            raise WorkerFailure(
+                f"capsule evidence capture failed: git {' '.join(args)}: {detail}",
+                code="patch_capture_failed",
+            )
+        return result.stdout
+
+    seed_tree = git("rev-parse", "--verify", "--quiet", SEED_BASELINE_REF, allow=(0, 1))
+    baseline = seed_tree.strip().decode() or source_sha
+    git("add", "-A")
+    patch = git(
+        "diff",
+        "--binary",
+        "--full-index",
+        "--no-ext-diff",
+        "--no-textconv",
+        "-M",
+        "--cached",
+        baseline,
+    )
+    raw = git("diff", "--raw", "-z", "-M", "--cached", baseline)
+    changes = _parse_raw_diff(raw)
+    touched: set[str] = set()
+    for change in changes:
+        sides = [change["path"], *([change["destination"]] if "destination" in change else [])]
+        touched.update(side["path"] for side in sides)
+    return {
+        "schema": "flow.e2e-capsule-mutations/v1",
+        "touched": sorted(touched),
+        "diffstat": _change_metadata(changes, patch),
+        "patch_digest": hashlib.sha256(patch).hexdigest(),
+        "empty": not patch,
+        "seeded": bool(seed_tree.strip()),
+    }
+
+
+def _capture_working_delta(source_root: Path, source_sha: str) -> bytes:
+    """Capture the authoritative worktree's uncommitted delta as one applicable seed patch.
+
+    Tracked edits, new untracked files, deletions, and mode changes are staged into a throwaway
+    index (GIT_INDEX_FILE), so the authoritative worktree's real index is never touched and this
+    dispatch-time capture stays read-only on the worktree. The returned bytes apply to a pristine
+    checkout at source_sha with ``git apply --binary``; an empty delta returns empty bytes.
+    """
+    root = source_root.resolve()
+    handle, index_path = tempfile.mkstemp(prefix="flow-seed-index.")
+    os.close(handle)
+    try:
+        env = {**os.environ, "GIT_OPTIONAL_LOCKS": "0", "GIT_INDEX_FILE": index_path}
+
+        def git(*args: str) -> bytes:
+            result = subprocess.run(
+                ["git", *args], cwd=root, capture_output=True, check=False, env=env
+            )
+            if result.returncode != 0:
+                detail = result.stderr.decode(errors="replace").strip()
+                raise WorkerFailure(
+                    f"seed capture failed: git {' '.join(args)}: {detail}", code="artifact_failure"
+                )
+            return result.stdout
+
+        git("read-tree", source_sha)
+        git("add", "-A")
+        return git(
+            "diff",
+            "--binary",
+            "--full-index",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--cached",
+            source_sha,
+        )
+    finally:
+        with contextlib.suppress(OSError):
+            os.unlink(index_path)
 
 
 def _owned_baseline_digest(root: Path, allowed_mutation_paths: Sequence[str]) -> str:
@@ -2456,7 +2665,7 @@ class CognitiveWorkers:
         policy = ROLE_CATALOG[order.profile]
         if not policy.active:
             raise WorkerFailure(
-                f"cognitive profile {order.profile!r} is not active in increment two",
+                f"cognitive profile {order.profile!r} is not active yet",
                 code="capability_missing",
             )
         source = Path(order.source_root).resolve()
@@ -2596,7 +2805,9 @@ class CognitiveWorkers:
                 }
                 capsule_receipt = {**capsule_body, "digest": _digest(capsule_body)}
         else:
-            capsule_receipt = create_private_clone(source, order.source_sha, capsule)
+            capsule_receipt = create_private_clone(
+                source, order.source_sha, capsule, seed=_load_seed(order)
+            )
 
         current = journal.read() or {}
         execution: ProviderExecution | None = None
@@ -2733,6 +2944,11 @@ class CognitiveWorkers:
                         f"{order.profile} verdict does not cite the exact review bundle",
                         code="invalid_result",
                     )
+                if order.profile == "e2e" and result.get("source_sha") != order.source_sha:
+                    raise WorkerFailure(
+                        "e2e verdict does not cite the exact capsule source SHA",
+                        code="invalid_result",
+                    )
             except WorkerFailure as exc:
                 journal.transition(
                     "blocked",
@@ -2761,13 +2977,21 @@ class CognitiveWorkers:
                 raise WorkerFailure(
                     "read-only worker changed its capsule", code="read_only_violation"
                 )
-            journal.transition(
-                "validated",
-                result_digest=_digest(result),
-                result=result,
-                worker_id=worker_id,
-                authoritative_after=authoritative_after,
-            )
+            validated_fields: dict[str, Any] = {
+                "result_digest": _digest(result),
+                "result": result,
+                "worker_id": worker_id,
+                "authoritative_after": authoritative_after,
+            }
+            if policy.authority == "disposable_writer":
+                # Capture the disposable capsule's mutations before disposal and persist them here:
+                # a crash before completion re-creates a CLEAN capsule at the source SHA (the clone
+                # branch above), so a later re-capture would falsely read zero mutations. This
+                # summary is the only durable evidence of what the recipe wrote.
+                validated_fields["capsule_mutations"] = _capsule_mutation_summary(
+                    capsule, order.source_sha
+                )
+            journal.transition("validated", **validated_fields)
         if order.session is not None and not worker_id:
             journal.transition(
                 "blocked",
@@ -2784,6 +3008,15 @@ class CognitiveWorkers:
             # importing (or validated) and we raise before disposal, so the capsule and patch
             # survive as recovery evidence and a repeat run resumes without re-invoking the model.
             change_receipt = self._import_after_validation(order, source, capsule, journal)
+        elif policy.authority == "disposable_writer":
+            # E2E imports nothing and takes no writer lock: the capsule mutation summary captured
+            # at the validated transition becomes report evidence, while the capsule and every
+            # source mutation in it are discarded below. The authoritative worktree is proven
+            # untouched by the read_only_violation guard above, which fires for every authority.
+            result = {
+                **result,
+                "capsule_mutations": (journal.read() or {}).get("capsule_mutations"),
+            }
         if capsule.exists():
             shutil.rmtree(capsule)
         disposal = {
@@ -2946,6 +3179,19 @@ def prepare_work_order(
     if head != sealed.get("source_sha"):
         raise WorkerFailure("dispatch cognitive source SHA is stale", code="stale_order")
     bundle = input_bundle.expanduser().resolve()
+    order_path = output.expanduser().resolve()
+    seed_patch_path: str | None = None
+    seed_digest: str | None = None
+    # A pre-commit writer (E2E today) must run the recipe against the ticket's real code, whose
+    # implement/code_review edits are still uncommitted at dispatch. Seal that delta as an
+    # immutable, digest-bound patch so the seed is fixed at capture time and cannot drift.
+    if ROLE_CATALOG[str(sealed["profile"])].authority != "read_only":
+        seed = _capture_working_delta(source, head)
+        if seed:
+            seed_file = order_path.with_name(f"{order_path.stem}.seed.patch")
+            atomic_write_bytes(seed_file, seed, mode=0o400)
+            seed_patch_path = str(seed_file)
+            seed_digest = hashlib.sha256(seed).hexdigest()
     order = WorkOrder(
         logical_invocation_id=str(sealed["logical_invocation_id"]),
         generation=int(sealed["stage_generation"]),
@@ -2957,6 +3203,8 @@ def prepare_work_order(
         input_bundle=str(bundle),
         input_digest=_input_digest(bundle),
         facts=facts,
+        seed_patch=seed_patch_path,
+        seed_digest=seed_digest,
         run_id=str(sealed["run_id"]),
         stage=str(sealed["stage"]),
         substep=str(sealed["substep"]),
@@ -2964,7 +3212,7 @@ def prepare_work_order(
         expected_state="in_progress",
         lease_fence=cast(str | None, sealed.get("lease_fence")),
     )
-    _atomic_json(output.expanduser().resolve(), order.to_mapping(), mode=0o400)
+    _atomic_json(order_path, order.to_mapping(), mode=0o400)
     return order
 
 
@@ -3171,6 +3419,7 @@ __all__ = [
     "WorkerFailure",
     "build_code_reviewer_prompt",
     "build_diff_reviewer_prompt",
+    "build_e2e_prompt",
     "build_guard_reviewer_prompt",
     "build_plan_assessor_prompt",
     "build_planner_prompt",
