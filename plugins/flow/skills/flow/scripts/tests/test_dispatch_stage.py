@@ -2275,7 +2275,7 @@ def test_reflect_completes_on_reflector_outcome_plus_a_machinery_fix_skip_defaul
     outcome; machinery_fix launches a capsule only when a fix runs, so on the DEFAULT
     machinery-OFF path (every stranger's run, reflect_config.machinery false) Step 7's
     terminal must carry a reasoned machinery_fix skip or the advance wedges. Dropping that
-    skip is the no-skip wedge branch asserted first here — the same fence wedge review_loop
+    skip is the no-skip wedge branch asserted first here; the same fence wedge review_loop
     closed in #504 and code_review closed in #506, now on reflect's default closing path.
 
     Structurally this mirrors code_review's no-fix step-9 test rather than #504's review_loop
