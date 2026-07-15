@@ -63,10 +63,8 @@ def _repository(tmp_path: Path) -> Path:
 
 
 def test_review_bundle_never_applies_a_patch_or_touches_the_index(tmp_path: Path) -> None:
-    source = Path(cw.__file__).read_text(encoding="utf-8")
-    assert "git apply" not in source
-    assert '"apply"' not in source
-
+    # git apply now exists in the module for the writer capsule import, but the read-only review
+    # bundle path must still leave the source byte-identical: prove it behaviorally.
     root = _repository(tmp_path)
     (root / "staged.txt").write_text("staged\n", encoding="utf-8")
     _git(root, "add", "staged.txt")
