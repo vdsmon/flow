@@ -10,11 +10,12 @@ allowed-tools: Bash(.flow/runtime/flow:*), Bash(*/.flow/runtime/flow:*), Bash(py
 
 New route snapshots may execute the planner, plan assessor, reviewers, review-brief
 author, and reflector through exact Codex or Claude Code CLI routes inside standalone
-read-only capsules. The owner conversation remains the single human cockpit and the
-dispatcher remains the only stage authority. Each activated substep is bound to its
-stage generation and must return a matching typed outcome. Writer and E2E profiles
-remain shadowed until guarded patch import lands. An exact-route failure stops visibly;
-it never selects a native or alternate-model fallback.
+read-only capsules, and E2E through a disposable write-capable capsule that imports
+nothing and discards every mutation. The owner conversation remains the single human
+cockpit and the dispatcher remains the only stage authority. Each activated substep is
+bound to its stage generation and must return a matching typed outcome. The four
+write-import profiles remain shadowed until guarded patch import lands. An exact-route
+failure stops visibly; it never selects a native or alternate-model fallback.
 
 Flow is one state-aware path from a tracker ticket to a reviewable pull request.
 The user owns intent, plan approval, and PR review. Flow owns the isolated worktree
@@ -235,9 +236,9 @@ stop. Otherwise expect a handler descriptor with `stage`, `handler_type`, `head_
 capture the owned-file baseline before the handler. When
 `descriptor.roles` includes `"agent_routed"`, resolve the frozen profile from the
 run's route snapshot. The snapshot covers all twelve cognitive profiles and records
-composite substeps separately from deterministic stage execution. Only the seven
-read-only profiles may become active in this increment. Every writer and E2E route
-remains shadowed with `effective: null`, including a matching native launch acceptance.
+composite substeps separately from deterministic stage execution. The read-only profiles
+and the disposable E2E capsule may become active in this increment. Every write-import
+route remains shadowed with `effective: null`, including a matching native launch acceptance.
 An activated substep runs through `cognitive-worker run-stage`; the configured or
 built-in planner follows the strict pre-approval CLI contract in
 `references/delivery-plan.md`. A per-run override may replace its complete route.

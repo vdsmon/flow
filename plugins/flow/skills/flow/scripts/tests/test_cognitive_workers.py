@@ -32,7 +32,7 @@ def _repository(tmp_path: Path) -> tuple[Path, str]:
     return root, _git(root, "rev-parse", "HEAD")
 
 
-def test_catalog_activates_only_increment_two_readers() -> None:
+def test_catalog_activates_readers_and_the_disposable_e2e_writer() -> None:
     assert set(cw.ROLE_CATALOG) == {
         "planner",
         "plan_assessor",
@@ -48,7 +48,7 @@ def test_catalog_activates_only_increment_two_readers() -> None:
         "machinery_fixer",
     }
     active = {name for name, policy in cw.ROLE_CATALOG.items() if policy.active}
-    assert active == {
+    readers = {
         "planner",
         "plan_assessor",
         "code_reviewer",
@@ -57,7 +57,14 @@ def test_catalog_activates_only_increment_two_readers() -> None:
         "review_brief_author",
         "reflector",
     }
-    assert all(cw.ROLE_CATALOG[name].authority == "read_only" for name in active)
+    assert active == readers | {"e2e"}
+    assert all(cw.ROLE_CATALOG[name].authority == "read_only" for name in readers)
+    assert cw.ROLE_CATALOG["e2e"].authority == "disposable_writer"
+    # The four importing writers stay shadowed for Phase 3.
+    assert not any(
+        cw.ROLE_CATALOG[name].active
+        for name in ("implementer", "review_fixer", "revision_fixer", "machinery_fixer")
+    )
 
 
 def test_shadow_writer_is_refused_before_capsule_allocation(tmp_path: Path) -> None:

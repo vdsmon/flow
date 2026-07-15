@@ -94,8 +94,9 @@ FLOW_HARNESS="<harness>" "<facade>" agent-route resolve \
   --snapshot "$TICKET_DIR/route-snapshot.json" --profile "<profile>"
 ```
 
-The seven read-only profiles may have `activation: pending`; every writer and E2E route
-stays shadow. A shadow desired route is provenance for a future execution capsule and
+The read-only profiles and the disposable E2E capsule may have `activation: pending`;
+every write-import route stays shadow. A shadow desired route is provenance for a future
+execution capsule and
 does not change the current native launch. Capture the native tool request and response
 as JSON, and never use the worker's prose as acceptance evidence. Attest and persist it:
 
@@ -151,6 +152,15 @@ key is refused rather than ignored, so a prompt can never be extended from the o
 | `guard_reviewer` | `probe`, `guard_diff`, `guard_properties` |
 | `review_brief_author` | `ticket`, `plan`, `pr`, `review`, `e2e`, `ci`, `content_contract` |
 | `reflector` | `reflection_input`, `stage_reflect`, `action_contract` |
+| `e2e` | `stage_e2e`, `ticket`, `source_sha`, `e2e_recipe`, `evidence_contract` |
+
+`e2e` is the one activated substep that launches through a write-capable capsule
+(`authority: disposable_writer`), because a recipe run legitimately writes fixtures,
+caches, snapshots, and build products. It imports nothing and takes no writer lock: Flow
+captures what the capsule mutated (touched paths and diffstat) into the result's
+`capsule_mutations`, then discards the whole capsule, so the authoritative worktree is
+provably untouched. Its `input_bundle` may be any immutable evidence path the recipe
+needs; no `bundle-review` call is required.
 
 Build the reviewers' `input_bundle` from the authoritative tree first. The bundle is
 immutable, content-addressed evidence, never an appliable patch:

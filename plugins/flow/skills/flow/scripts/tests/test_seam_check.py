@@ -410,14 +410,15 @@ def test_live_post_init_prose_has_no_bare_script_invocation() -> None:
     assert escaped == []
 
 
-def test_live_writer_and_e2e_routes_stay_shadowed() -> None:
+def test_live_writer_routes_stay_shadowed_and_e2e_activates() -> None:
     skill = (seam_check.SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
     do_ref = (seam_check.SKILL_ROOT / "references" / "delivery-loop.md").read_text(encoding="utf-8")
-    assert "Only the seven" in skill
-    assert "read-only profiles may become active" in skill
-    assert "writer and E2E route" in skill
+    assert "disposable E2E capsule may become active" in skill
+    assert "write-import" in skill
+    assert "remains shadowed" in skill
     assert "`effective: null`" in skill
-    assert "every writer and E2E route\nstays shadow" in do_ref
+    assert "disposable E2E capsule may have" in do_ref
+    assert "every write-import route stays shadow" in do_ref
     assert "A shadow receipt" in do_ref
     assert "Do not retry" in do_ref
     assert "never fall back to a native" in do_ref

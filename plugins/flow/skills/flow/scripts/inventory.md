@@ -236,8 +236,9 @@ primary and plan-blind review, ordinary and revision fixes, review-brief authors
 reflection, optional machinery fixes, and merge guarding. Ticket, commit, PR creation,
 and merge retain `model: none` at stage level. Exact CLI receipts may activate the
 planner, plan assessor, code and plan-blind reviewers, guard reviewer, review-brief
-author, and reflector. Writer and E2E profiles remain shadowed with `effective: null`
-while their current owner-native paths continue.
+author, reflector, and the disposable-capsule E2E writer. The four importing writer
+profiles remain shadowed with `effective: null` while their current owner-native paths
+continue.
 
 `agent_routes.py` owns resolution, snapshot digests, attestations, and the surgical
 `migrate --check|--apply` operation. Migration leaves `[models]` bytes intact so
@@ -252,8 +253,10 @@ base SHA instead of ambient checkout state.
 `cognitive_workers.py` is the common exact-route boundary. It owns the closed role
 catalog, prompt and schema digests, standalone exact-SHA clones, immutable dirty-review
 bundles, durable invocation journals, provider commands, process-group terminal proof,
-typed results, Git guards, cleanup, and quarantine. Writer and E2E requests fail before
-capsule allocation. `cognitive_worker_smoke.py` verifies a fresh challenge from a real
+typed results, Git guards, cleanup, and quarantine. The E2E writer runs in a write-capable
+capsule that captures its mutations as report evidence, imports nothing, and is discarded;
+the four importing writer requests fail before capsule allocation.
+`cognitive_worker_smoke.py` verifies a fresh challenge from a real
 Codex or Claude Code parent through the nested exact route, terminal, Git, and disposal
 receipts. Setting `FLOW_HARNESS` without the real outer executable cannot satisfy it.
 

@@ -3,8 +3,8 @@
 The module owns route precedence and provenance. Callers work with complete
 ``harness/model/effort`` routes and never need to interpret workspace TOML,
 activation capability, or digest rules themselves. Exact CLI receipts activate the
-planner and read-only post-plan profiles. Writer and E2E routes remain shadowed until
-their capsule import contract lands.
+planner, the read-only post-plan profiles, and the disposable-capsule E2E writer. The
+four importing writer routes remain shadowed until their capsule import contract lands.
 """
 
 from __future__ import annotations
@@ -174,6 +174,11 @@ _ACTIVE_READ_ONLY = frozenset(
         "reflector",
     }
 )
+
+# E2E is a disposable-capsule writer, not read-only, but its lifecycle is disposal-terminal
+# exactly like the readers (capsule always discarded, nothing imported), so it activates on the
+# same exact-CLI-receipt path. The four importing writers stay out of this set.
+_ACTIVATABLE = _ACTIVE_READ_ONLY | {"e2e"}
 
 
 class RouteError(ValueError):
@@ -416,9 +421,11 @@ def _activation(
         return "shadow", "the generic adapter has no structured model and effort selector"
     if profile == "planner":
         return "pending", "strict read-only planner CLI activation requires an exact receipt"
+    if profile == "e2e":
+        return "pending", "strict disposable-capsule E2E activation requires an exact CLI receipt"
     if profile in _ACTIVE_READ_ONLY:
         return "pending", "strict read-only capsule activation requires an exact CLI receipt"
-    return "shadow", "write-capable and E2E routes remain shadowed until guarded import lands"
+    return "shadow", "write-capable import routes remain shadowed until guarded import lands"
 
 
 def _resolve_data(
@@ -598,7 +605,7 @@ def attest(route_snapshot: dict[str, Any], profile: str, acceptance: object) -> 
 
     exact_response = all(response.get(key) == desired[key] for key in desired)
     transport = response.get("transport")
-    supported_transport = profile in _ACTIVE_READ_ONLY and transport == "cli"
+    supported_transport = profile in _ACTIVATABLE and transport == "cli"
     physical_attempt = acceptance.get("physical_attempt")
     cleanup = acceptance.get("cleanup")
     lifecycle_proven = (

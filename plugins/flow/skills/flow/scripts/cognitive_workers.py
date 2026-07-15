@@ -6,9 +6,10 @@ invocation. Route resolution, prompts, provider commands, process lifecycle,
 typed validation, Git guards, journals, and capsule disposal remain private to
 this module.
 
-Increment two activates read-only roles only. Writer and E2E policies are
-present so route snapshots can be complete, but requests for them fail before a
-capsule directory is allocated.
+Read-only roles and the disposable E2E writer are active. The E2E writer runs in a
+write-capable capsule, captures its mutations as report evidence, imports nothing, and
+discards the capsule. The four importing writer policies are present so route snapshots
+stay complete, but requests for them fail before a capsule directory is allocated.
 """
 
 from __future__ import annotations
@@ -102,7 +103,7 @@ ROLE_CATALOG.update(
         for name, schema in _WRITERS.items()
     }
 )
-ROLE_CATALOG["e2e"] = RolePolicy("e2e", "disposable_writer", False, "e2e", "e2e-report/v1", 0)
+ROLE_CATALOG["e2e"] = RolePolicy("e2e", "disposable_writer", True, "e2e", "e2e-report/v1", 0)
 
 # Preserve the public profile order used by agent_routes.py.
 ROLE_CATALOG = {
@@ -414,6 +415,7 @@ _FACT_KEYS: dict[str, frozenset[str]] = {
         {"ticket", "plan", "pr", "review", "e2e", "ci", "content_contract"}
     ),
     "reflector": frozenset({"reflection_input", "stage_reflect", "action_contract"}),
+    "e2e": frozenset({"stage_e2e", "ticket", "source_sha", "e2e_recipe", "evidence_contract"}),
 }
 
 
@@ -485,6 +487,10 @@ def build_reflector_prompt(facts: Mapping[str, Any]) -> PromptMaterial:
     return _build_prompt("reflector", facts)
 
 
+def build_e2e_prompt(facts: Mapping[str, Any]) -> PromptMaterial:
+    return _build_prompt("e2e", facts)
+
+
 def _bound_provider_prompt(
     prompt: str, *, facts: Mapping[str, Any], schema: Mapping[str, Any]
 ) -> PromptMaterial:
@@ -516,6 +522,7 @@ PROMPT_BUILDERS: dict[str, Callable[[Mapping[str, Any]], PromptMaterial]] = {
     "guard_reviewer": build_guard_reviewer_prompt,
     "review_brief_author": build_review_brief_author_prompt,
     "reflector": build_reflector_prompt,
+    "e2e": build_e2e_prompt,
 }
 
 
@@ -578,6 +585,20 @@ def provider_schema(profile: str) -> dict[str, Any]:
                 "guard_digest": _TEXT,
             },
             ["verdict", "summary", "findings", "guard_digest"],
+        )
+    if profile == "e2e":
+        # The disposable E2E writer authors only the recipe verdict, its evidence, and a binding
+        # source SHA. Flow, not the model, captures the capsule mutation summary and attaches it
+        # to the result after validation, so it is deliberately absent from this model-facing
+        # schema (see _run_locked's disposable_writer branch).
+        return _closed_object(
+            {
+                "verdict": {"type": "string", "enum": ["pass", "fail"]},
+                "summary": _TEXT,
+                "evidence": _TEXT,
+                "source_sha": _TEXT,
+            },
+            ["verdict", "summary", "evidence", "source_sha"],
         )
     if profile == "review_brief_author":
         import review_brief
@@ -652,6 +673,10 @@ def validate_typed_result(profile: str, value: object) -> dict[str, Any]:  # noq
             {"verdict": {"clean", "block"}},
         ),
         "reflector": ({"summary", "actions"}, {}),
+        "e2e": (
+            {"verdict", "summary", "evidence", "source_sha"},
+            {"verdict": {"pass", "fail"}},
+        ),
     }
     contract = contracts.get(profile)
     if contract is not None:
@@ -696,6 +721,12 @@ def validate_typed_result(profile: str, value: object) -> dict[str, Any]:  # noq
                 raise WorkerFailure(
                     "finding fields do not match the closed contract", code="invalid_result"
                 )
+    if profile == "e2e":
+        source_sha = value.get("source_sha")
+        if not isinstance(source_sha, str) or len(source_sha) != 40:
+            raise WorkerFailure(
+                "e2e result must cite its 40-char source SHA", code="invalid_result"
+            )
     if profile == "reflector":
         actions = value.get("actions")
         if not isinstance(actions, list):
@@ -1666,6 +1697,53 @@ def _capture_capsule_patch(
     }
 
 
+def _capsule_mutation_summary(capsule: Path, source_sha: str) -> dict[str, Any]:
+    """Summarize every disposable-capsule change as E2E evidence, with no ownership enforcement.
+
+    A disposable writer discards its whole capsule and imports nothing, so every touched path is
+    evidence rather than an owned change: unlike _capture_capsule_patch this enforces no allowed
+    set and never raises ownership_violation. The patch is captured only to derive the diffstat
+    and digest, then dropped with the capsule; the bytes are never retained or replayed.
+    """
+    root = capsule.resolve()
+    env = {**os.environ, "GIT_OPTIONAL_LOCKS": "0"}
+
+    def git(*args: str) -> bytes:
+        result = subprocess.run(["git", *args], cwd=root, capture_output=True, check=False, env=env)
+        if result.returncode != 0:
+            detail = result.stderr.decode(errors="replace").strip()
+            raise WorkerFailure(
+                f"capsule evidence capture failed: git {' '.join(args)}: {detail}",
+                code="patch_capture_failed",
+            )
+        return result.stdout
+
+    git("add", "-A")
+    patch = git(
+        "diff",
+        "--binary",
+        "--full-index",
+        "--no-ext-diff",
+        "--no-textconv",
+        "-M",
+        "--cached",
+        source_sha,
+    )
+    raw = git("diff", "--raw", "-z", "-M", "--cached", source_sha)
+    changes = _parse_raw_diff(raw)
+    touched: set[str] = set()
+    for change in changes:
+        sides = [change["path"], *([change["destination"]] if "destination" in change else [])]
+        touched.update(side["path"] for side in sides)
+    return {
+        "schema": "flow.e2e-capsule-mutations/v1",
+        "touched": sorted(touched),
+        "diffstat": _change_metadata(changes, patch),
+        "patch_digest": hashlib.sha256(patch).hexdigest(),
+        "empty": not patch,
+    }
+
+
 def _owned_baseline_digest(root: Path, allowed_mutation_paths: Sequence[str]) -> str:
     """Digest the current content of the owned paths in the authoritative worktree.
 
@@ -2456,7 +2534,7 @@ class CognitiveWorkers:
         policy = ROLE_CATALOG[order.profile]
         if not policy.active:
             raise WorkerFailure(
-                f"cognitive profile {order.profile!r} is not active in increment two",
+                f"cognitive profile {order.profile!r} is not active yet",
                 code="capability_missing",
             )
         source = Path(order.source_root).resolve()
@@ -2733,6 +2811,11 @@ class CognitiveWorkers:
                         f"{order.profile} verdict does not cite the exact review bundle",
                         code="invalid_result",
                     )
+                if order.profile == "e2e" and result.get("source_sha") != order.source_sha:
+                    raise WorkerFailure(
+                        "e2e verdict does not cite the exact capsule source SHA",
+                        code="invalid_result",
+                    )
             except WorkerFailure as exc:
                 journal.transition(
                     "blocked",
@@ -2761,13 +2844,21 @@ class CognitiveWorkers:
                 raise WorkerFailure(
                     "read-only worker changed its capsule", code="read_only_violation"
                 )
-            journal.transition(
-                "validated",
-                result_digest=_digest(result),
-                result=result,
-                worker_id=worker_id,
-                authoritative_after=authoritative_after,
-            )
+            validated_fields: dict[str, Any] = {
+                "result_digest": _digest(result),
+                "result": result,
+                "worker_id": worker_id,
+                "authoritative_after": authoritative_after,
+            }
+            if policy.authority == "disposable_writer":
+                # Capture the disposable capsule's mutations before disposal and persist them here:
+                # a crash before completion re-creates a CLEAN capsule at the source SHA (the clone
+                # branch above), so a later re-capture would falsely read zero mutations. This
+                # summary is the only durable evidence of what the recipe wrote.
+                validated_fields["capsule_mutations"] = _capsule_mutation_summary(
+                    capsule, order.source_sha
+                )
+            journal.transition("validated", **validated_fields)
         if order.session is not None and not worker_id:
             journal.transition(
                 "blocked",
@@ -2784,6 +2875,15 @@ class CognitiveWorkers:
             # importing (or validated) and we raise before disposal, so the capsule and patch
             # survive as recovery evidence and a repeat run resumes without re-invoking the model.
             change_receipt = self._import_after_validation(order, source, capsule, journal)
+        elif policy.authority == "disposable_writer":
+            # E2E imports nothing and takes no writer lock: the capsule mutation summary captured
+            # at the validated transition becomes report evidence, while the capsule and every
+            # source mutation in it are discarded below. The authoritative worktree is proven
+            # untouched by the read_only_violation guard above, which fires for every authority.
+            result = {
+                **result,
+                "capsule_mutations": (journal.read() or {}).get("capsule_mutations"),
+            }
         if capsule.exists():
             shutil.rmtree(capsule)
         disposal = {
@@ -3171,6 +3271,7 @@ __all__ = [
     "WorkerFailure",
     "build_code_reviewer_prompt",
     "build_diff_reviewer_prompt",
+    "build_e2e_prompt",
     "build_guard_reviewer_prompt",
     "build_plan_assessor_prompt",
     "build_planner_prompt",

@@ -1,5 +1,29 @@
 # Stage: e2e
 
+## Routed disposable-capsule e2e
+
+When the frozen route marks `e2e` pending, dispatch seals its cognitive substep (logical
+invocation, stage generation, source SHA, route digest, owner, and lease fence) and the
+executor launches it through `cognitive-worker run-stage` (`references/delivery-loop.md`),
+never by hand. The capsule is a private standalone clone at the sealed `source_sha`, and
+unlike every read-only role it is write-capable (`authority: disposable_writer`): a recipe
+run legitimately writes fixtures, caches, snapshots, and build products, so the recipe
+executes INSIDE the capsule with a writable sandbox.
+
+Nothing the capsule writes reaches the authoritative worktree. Flow, not the model,
+captures what the capsule mutated (touched paths and a diffstat) into the result's
+`capsule_mutations`, takes no writer import lock, and then discards the whole capsule. The
+read-only-violation guard proves the authoritative worktree is byte-identical across the
+run, so "every source mutation discarded" holds by construction. The worker returns the
+recipe verdict (`pass`/`fail`), the evidence the recipe produced, and the exact
+`source_sha`; Flow attaches the mutation summary as report evidence.
+
+The routed capsule runs the recipe against the sealed committed `source_sha`. Seeding it
+with a change still uncommitted in the authoritative worktree (implement runs before
+commit) is not part of this path; a run that needs the pre-commit working tree keeps the
+default `subagent:general-purpose` handler below, which executes in the live worktree. The
+two paths share the recipe and evidence contract the rest of this doc defines.
+
 ## Purpose
 
 Execute the **e2e recipe the plan declared** and surface any failure.
@@ -21,8 +45,9 @@ Your job is to run it exactly, not to reinterpret it.
   fixture, and the expected pass signal.
 - `.flow/runs/<KEY>/ticket.json` — ticket context, for understanding what the
   recipe is verifying.
-- The current repository, including the implement-stage changes in the working
-  tree.
+- The recipe's code under test: the live working tree (including the uncommitted
+  implement-stage changes) under the default `subagent:general-purpose` handler, or the
+  disposable capsule cloned at the sealed `source_sha` under an activated routed run.
 
 ## Steps
 

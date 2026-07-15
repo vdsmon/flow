@@ -28,6 +28,10 @@
     "reflector": {
       "version": 1,
       "instruction": "Derive typed reflection actions from the immutable run evidence. Return proposals only. Persistence and machinery edits belong to deterministic Flow code and separate writer roles."
+    },
+    "e2e": {
+      "version": 1,
+      "instruction": "Run the supplied e2e recipe exactly inside this disposable capsule and report whether it passed. You may write freely here (fixtures, caches, snapshots, build products); nothing is imported and the whole capsule is discarded after this run. Return only the typed verdict, the evidence the recipe produced, and the exact source SHA. Flow captures what the capsule mutated; do not enumerate it yourself."
     }
   }
 }
