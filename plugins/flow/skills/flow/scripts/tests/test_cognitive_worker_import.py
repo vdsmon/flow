@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import dataclasses
 import hashlib
+import json
+import socket
 import subprocess
 import sys
 import threading
@@ -73,6 +75,20 @@ def _order(source: Path, sha: str, *, allowed: tuple[str, ...] = ("src",)) -> cw
         stage_generation=1,
         lease_fence="fence-1",
     )
+
+
+def _frozen_observer(order: cw.WorkOrder, source: Path) -> dict:
+    """A DispatchObserver that echoes the order's frozen values, so no external CAS dim drifts.
+
+    The capture/apply/resume mechanics under test do not exercise dispatch drift; the live-drift
+    coverage lives in the observer tests below. This keeps those mechanical tests isolated from
+    the (now required) live-dispatch observation seam.
+    """
+    return {
+        "dispatch_generation": order.stage_generation,
+        "route_snapshot": order.route_snapshot_digest,
+        "lease_fence": order.lease_fence,
+    }
 
 
 # ─── path normalization + ownership ──────────────────────────────────────────
@@ -494,7 +510,9 @@ def test_import_after_validation_wires_capture_and_import(tmp_path: Path) -> Non
     (capsule / "src" / "tomodify.txt").write_text("changed\n", encoding="utf-8")
 
     workers = cw.CognitiveWorkers(
-        artifact_root=tmp_path / "artifacts", capsule_root=tmp_path / "capsules"
+        artifact_root=tmp_path / "artifacts",
+        capsule_root=tmp_path / "capsules",
+        dispatch_observer=_frozen_observer,
     )
     invocation = workers._invocation_dir(order.logical_invocation_id)
     journal = cw.InvocationJournal(invocation / "journal.json", order.logical_invocation_id)
@@ -605,6 +623,7 @@ def test_active_writer_captures_and_imports_through_run(tmp_path: Path, monkeypa
         artifact_root=tmp_path / "artifacts",
         capsule_root=tmp_path / "capsules",
         adapters={"codex": adapter},
+        dispatch_observer=_frozen_observer,
     )
 
     outcome = workers.run(order, _owner())
@@ -630,6 +649,7 @@ def test_run_resumes_an_importing_journal_without_relaunch(tmp_path: Path, monke
         artifact_root=tmp_path / "artifacts",
         capsule_root=tmp_path / "capsules",
         adapters={"codex": _RelaunchGuard()},
+        dispatch_observer=_frozen_observer,
     )
     invocation = workers._invocation_dir(order.logical_invocation_id)
     capsule = (tmp_path / "capsules") / hashlib.sha256(
@@ -700,3 +720,216 @@ class _RelaunchGuard:
 
     def session_command(self, *args, **kwargs):
         raise AssertionError("a writer order never carries a provider session")
+
+
+# ─── flow-lhjs: live-dispatch CAS (dispatch_generation, route_snapshot, lease_fence) ─────────
+
+
+def _drive_after_validation(
+    tmp_path: Path,
+    source: Path,
+    order: cw.WorkOrder,
+    observer,
+    *,
+    before_import=None,
+) -> dict:
+    """Set up a validated capsule_writer journal, then run _import_after_validation."""
+    capsule = tmp_path / "capsule"
+    cw.create_private_clone(source, order.source_sha, capsule)
+    (capsule / "src" / "tomodify.txt").write_text("changed\n", encoding="utf-8")
+    workers = cw.CognitiveWorkers(
+        artifact_root=tmp_path / "artifacts",
+        capsule_root=tmp_path / "capsules",
+        dispatch_observer=observer,
+    )
+    invocation = workers._invocation_dir(order.logical_invocation_id)
+    journal = cw.InvocationJournal(invocation / "journal.json", order.logical_invocation_id)
+    for st in ("prepared", "cloning"):
+        journal.transition(st)
+    journal.transition(
+        "running",
+        authoritative_before=cw.git_receipt(source),
+        owned_baseline_before=cw._owned_baseline_digest(source, order.allowed_mutation_paths),
+    )
+    journal.transition("terminal")
+    journal.transition("validated")
+    if before_import is not None:
+        before_import()
+    return workers._import_after_validation(order, source, capsule, journal)
+
+
+@pytest.mark.parametrize("field", ["dispatch_generation", "route_snapshot", "lease_fence"])
+def test_import_after_validation_refuses_on_observed_dispatch_drift(
+    tmp_path: Path, field: str
+) -> None:
+    source, sha = _baseline_repo(tmp_path)
+    order = _order(source, sha)
+    frozen = _frozen_observer(order, source)
+    before = (source / "src" / "tomodify.txt").read_text()
+
+    def drifted_observer(_order: cw.WorkOrder, _source: Path) -> dict:
+        return {**frozen, field: "DRIFTED"}
+
+    with pytest.raises(cw.WorkerFailure) as err:
+        _drive_after_validation(tmp_path, source, order, drifted_observer)
+    assert err.value.code == "baseline_mismatch"
+    assert field in str(err.value)  # the drifted dimension is named
+    assert (source / "src" / "tomodify.txt").read_text() == before  # owned file untouched
+
+
+def test_import_after_validation_applies_when_observed_dispatch_matches(tmp_path: Path) -> None:
+    # Over-refusal guard: a matching live observation must not block a legitimate import. (Reverting
+    # the observer wiring also returns the order's values, so this succeeds either way; it is not a
+    # killer, unlike the drift and disk-read tests.)
+    source, sha = _baseline_repo(tmp_path)
+    order = _order(source, sha)
+    receipt = _drive_after_validation(tmp_path, source, order, _frozen_observer)
+    assert receipt["import_result"] == "applied"
+    assert (source / "src" / "tomodify.txt").read_text() == "changed\n"
+
+
+def _seed_run_state(source: Path, *, run_id: str, stage: str, generation: int) -> tuple[str, str]:
+    """Write a real state.json/run.lock/route-snapshot under .flow/runs; return (digest, nonce)."""
+    import agent_routes
+    import lease
+    import state
+    from _timeutil import utcnow_iso
+
+    td = source / ".flow" / "runs" / "TICKET"
+    td.mkdir(parents=True, exist_ok=True)
+    head = _git(source, "rev-parse", "HEAD")
+    state.init(td, "TICKET", "beads", [stage], run_id=run_id)
+    for step in range(generation):
+        state.begin_stage(td, stage, head)
+        if step + 1 < generation:
+            state.force_stage_status(td, stage, "pending")
+    run_lease = lease.acquire(
+        td,
+        run_id,
+        3600,
+        utcnow_iso(),
+        current_boot="boot",
+        hostname=socket.gethostname(),
+        cwd=str(source),
+    )
+    body = {
+        "schema": agent_routes.SCHEMA,
+        "owner_harness": "codex",
+        "routes": {},
+        "stage_execution": {},
+    }
+    snapshot = {**body, "digest": agent_routes.canonical_digest(body)}
+    (td / "route-snapshot.json").write_text(json.dumps(snapshot), encoding="utf-8")
+    return snapshot["digest"], run_lease.session_nonce
+
+
+def test_observe_live_dispatch_reads_disk_values_not_the_order(tmp_path: Path) -> None:
+    # Kills the "default observer is genuinely live" hunk: the run on disk holds values the order
+    # never froze, so a stub echoing the order would return the order's values and fail here.
+    source, sha = _baseline_repo(tmp_path)
+    digest, nonce = _seed_run_state(source, run_id="run-1", stage="implement", generation=2)
+    order = dataclasses.replace(_order(source, sha), stage_generation=1)
+    observed = cw.observe_live_dispatch(order, source)
+    assert observed["dispatch_generation"] == 2 != order.stage_generation
+    assert observed["route_snapshot"] == digest != order.route_snapshot_digest
+    assert observed["lease_fence"] == nonce != order.lease_fence
+
+
+def test_import_refuses_when_live_state_is_corrupt_recovered_from_bak(tmp_path: Path) -> None:
+    # Fail-open killer: live state.json corrupts, its newest .bak still holds the pre-bump
+    # generation the order froze, so a read that discards the recovery exit_code reports the stale
+    # generation, it matches the order, and the CAS wrongly applies over real drift. Generation is
+    # the only guard that moves on a pending->in_progress re-dispatch, so this is a true fail-open.
+    source, sha = _baseline_repo(tmp_path)
+    digest, nonce = _seed_run_state(source, run_id="run-1", stage="implement", generation=2)
+    order = dataclasses.replace(
+        _order(source, sha),
+        stage_generation=1,  # frozen at G; the newest .bak holds this pre-bump value
+        route_snapshot_digest=digest,
+        lease_fence=nonce,
+    )
+    state_json = source / ".flow" / "runs" / "TICKET" / "state.json"
+
+    def corrupt_live_state() -> None:
+        state_json.write_text("{ not json", encoding="utf-8")
+
+    with pytest.raises(cw.WorkerFailure) as err:
+        _drive_after_validation(
+            tmp_path, source, order, cw.observe_live_dispatch, before_import=corrupt_live_state
+        )
+    assert err.value.code == "baseline_mismatch"
+    assert "dispatch_generation" in str(err.value)  # pins the refusal to the generation dimension
+
+
+# ─── flow-xvhd: owned-baseline excludes gitignored content the patch can never carry ─────────
+
+
+def test_owned_baseline_digest_excludes_gitignored_churn(tmp_path: Path) -> None:
+    source, _ = _baseline_repo(tmp_path)
+    (source / "src" / ".gitignore").write_text("cache/\n", encoding="utf-8")
+    (source / "src" / "cache").mkdir()
+    _git(source, "add", "-A")
+    _git(source, "commit", "-qm", "ignore cache")
+    base = cw._owned_baseline_digest(source, ("src",))
+    (source / "src" / "cache" / "junk.bin").write_bytes(b"\x00" * 4096)  # gitignored churn
+    assert cw._owned_baseline_digest(source, ("src",)) == base  # ignored churn does not drift
+    (source / "src" / "tomodify.txt").write_text("real edit\n", encoding="utf-8")  # tracked owned
+    assert cw._owned_baseline_digest(source, ("src",)) != base  # a real tracked change still drifts
+
+
+def test_owned_baseline_digest_skips_submodule_gitlink(tmp_path: Path) -> None:
+    # A submodule gitlink lists (via ls-files --cached) as a directory path, so read_bytes() on it
+    # raises IsADirectoryError and crashes the CAS observation unless the gitlink is skipped.
+    source, _ = _baseline_repo(tmp_path)
+    (source / "src" / "sub").mkdir()  # the submodule's on-disk working dir
+    commit = _git(source, "rev-parse", "HEAD")
+    _git(source, "update-index", "--add", "--cacheinfo", f"160000,{commit},src/sub")
+    assert "src/sub" in cw._tracked_capturable_paths(source)
+    digest = cw._owned_baseline_digest(source, ("src",))  # must not raise IsADirectoryError
+    assert isinstance(digest, str)
+    assert len(digest) == 64
+
+
+def test_import_after_validation_survives_gitignored_churn(tmp_path: Path) -> None:
+    source, _ = _baseline_repo(tmp_path)
+    (source / "src" / ".gitignore").write_text("cache/\n", encoding="utf-8")
+    (source / "src" / "cache").mkdir()
+    _git(source, "add", "-A")
+    _git(source, "commit", "-qm", "ignore cache")
+    order = _order(source, _git(source, "rev-parse", "HEAD"))
+
+    def churn() -> None:
+        (source / "src" / "cache" / "churn.bin").write_bytes(b"\xff" * 2048)
+
+    receipt = _drive_after_validation(
+        tmp_path, source, order, _frozen_observer, before_import=churn
+    )
+    assert receipt["import_result"] == "applied"  # ignored churn did not trip baseline_mismatch
+    assert (source / "src" / "tomodify.txt").read_text() == "changed\n"
+
+
+# ─── flow-c71o: git_receipt covers the seed machinery's refs/flow/ namespace ─────────────────
+
+
+def test_git_receipt_detects_a_stray_flow_ref(tmp_path: Path) -> None:
+    source, _ = _baseline_repo(tmp_path)
+    before = cw.git_receipt(source)
+    assert "flow_refs" in before
+    # The read_only_violation guard trips on authoritative_before['digest'] != authoritative_after,
+    # so a stray refs/flow/* in the authoritative repo must move that digest to stay caught.
+    tree = _git(source, "write-tree")
+    _git(source, "update-ref", cw.SEED_BASELINE_REF, tree)
+    after = cw.git_receipt(source)
+    assert before["digest"] != after["digest"]
+
+
+def test_seed_helper_writes_its_ref_only_in_the_capsule(tmp_path: Path) -> None:
+    source, sha = _baseline_repo(tmp_path)
+    (source / "src" / "tomodify.txt").write_text("seed change\n", encoding="utf-8")
+    seed = cw._capture_working_delta(source, sha)
+    _git(source, "checkout", "--", "src/tomodify.txt")  # restore the authoritative worktree
+    assert seed  # a non-empty seed patch, so the helper writes the ref
+    capsule = tmp_path / "capsule"
+    cw.create_private_clone(source, sha, capsule, seed=seed)
+    assert _git(capsule, "for-each-ref", cw.SEED_BASELINE_REF)  # seeded in the capsule
+    assert not _git(source, "for-each-ref", "refs/flow/")  # authoritative repo has no refs/flow/*
