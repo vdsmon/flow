@@ -216,7 +216,11 @@ def test_stage_execution_records_complete_composite_provenance(tmp_path: Path) -
         "profile": "diff_reviewer",
         "substeps": {
             "primary_review": {"profile": "code_reviewer"},
-            "plan_blind_review": {"profile": "diff_reviewer", "conditional": True},
+            "plan_blind_review": {
+                "profile": "diff_reviewer",
+                "conditional": True,
+                "lane_gated": True,
+            },
             "review_fix": {"profile": "review_fixer", "conditional": True},
         },
     }

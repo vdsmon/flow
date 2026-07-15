@@ -44,6 +44,7 @@ import fleet
 import lease
 import recall_pending
 import state
+import ticket_frontmatter
 import validate_workspace as vw
 from _atomicio import atomic_write_text
 from _registry import StageEntry, registry_by_name
@@ -68,8 +69,23 @@ _INIT_TTL_S = 600
 # (review_loop, 60min -> 120min), bounded and recoverable via FLOW workspace repair.
 _LEASE_TTL_MULTIPLIER = 2
 
+# Lanes that already traded away the plan-blind reader depth; the full lane (the safe default for
+# an absent/unknown frontmatter lane) keeps it mandatory.
+_CHEAP_LANES = frozenset({"express", "light"})
+
+
+def _run_lane(workspace_root: Path, ticket: str) -> str:
+    """The run's verification lane from the ticket frontmatter; absent/unknown reads as full."""
+    try:
+        fm = ticket_frontmatter.read(workspace_root / ".flow" / "tickets" / f"{ticket}.md")
+    except Exception:
+        return "full"
+    lane = fm.get("lane")
+    return lane if isinstance(lane, str) and lane in _CHEAP_LANES else "full"
+
 
 def _cognitive_substeps(
+    workspace_root: Path,
     ticket_dir: Path,
     ticket_state: state.TicketState,
     stage_name: str,
@@ -96,6 +112,7 @@ def _cognitive_substeps(
     routes = snapshot.get("routes")
     if not isinstance(routes, dict):
         return {}
+    lane: str | None = None
     result: dict[str, dict[str, Any]] = {}
     for substep, raw in candidates.items():
         if not isinstance(raw, dict) or not isinstance(raw.get("profile"), str):
@@ -104,7 +121,7 @@ def _cognitive_substeps(
         route = routes.get(profile)
         if not isinstance(route, dict):
             continue
-        result[str(substep)] = {
+        facts: dict[str, Any] = {
             "logical_invocation_id": (f"{ticket_state.run_id}:{stage_name}:{substep}:{generation}"),
             "run_id": ticket_state.run_id,
             "stage": stage_name,
@@ -128,6 +145,13 @@ def _cognitive_substeps(
             # output would be an agent-authored JSON blob, which is trivially fabricable.
             "artifact_root": str(ticket_dir / "cognitive" / stage_name),
         }
+        # Seal the run's lane onto a lane-gated substep so the completion fence, which never reads
+        # the plan frontmatter, can refuse a full-lane skip of the mandatory reader (flow-ijyh).
+        if raw.get("lane_gated") is True:
+            if lane is None:
+                lane = _run_lane(workspace_root, ticket_state.ticket)
+            facts["lane"] = lane
+        result[str(substep)] = facts
     return result
 
 
@@ -212,7 +236,14 @@ def _validate_cognitive_completion(
             return f"cognitive outcome for {name!r} does not match the sealed stage generation"
         skip = skips.get(name)
         if expected.get("conditional") and isinstance(skip, dict) and skip.get("reason"):
-            continue
+            # A lane-gated substep (only plan_blind_review today) carries the run's sealed lane; on
+            # the full lane its reader is mandatory, so its reasoned skip is refused (flow-ijyh). A
+            # non-lane-gated conditional substep (review_fix/revision_fix/machinery_fix) has no
+            # sealed lane and its skip is still accepted.
+            lane = expected.get("lane")
+            if lane is None or lane in _CHEAP_LANES:
+                continue
+            return f"lane-gated cognitive substep {name!r} cannot be skipped on the {lane!r} lane"
         return f"activated cognitive substep {name!r} has no successful outcome or valid skip"
     return None
 
@@ -845,7 +876,7 @@ def cmd_next(
     # that moved mid-stage would contradict the seal and strand the stage permanently.
     sealed = current_record.cognitive_substeps
     cognitive = (
-        _cognitive_substeps(td, ts, next_stage, generation, head_sha, session_nonce)
+        _cognitive_substeps(workspace_root, td, ts, next_stage, generation, head_sha, session_nonce)
         if current_record.status == "pending"
         else (sealed or {})
     )

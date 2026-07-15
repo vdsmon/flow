@@ -119,7 +119,14 @@ _STAGE_EXECUTION = {
         "profile": "diff_reviewer",
         "substeps": {
             "primary_review": {"profile": "code_reviewer"},
-            "plan_blind_review": {"profile": "diff_reviewer", "conditional": True},
+            # lane_gated: mandatory on the full lane, reasoned-skippable only on express/light.
+            # dispatch seals the resolved lane onto this substep so the completion fence refuses
+            # a full-lane skip; a bare conditional flag left that gate prose-only (flow-ijyh).
+            "plan_blind_review": {
+                "profile": "diff_reviewer",
+                "conditional": True,
+                "lane_gated": True,
+            },
             "review_fix": {"profile": "review_fixer", "conditional": True},
         },
     },
