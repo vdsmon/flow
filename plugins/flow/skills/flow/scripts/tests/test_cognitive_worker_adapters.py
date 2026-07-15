@@ -80,9 +80,7 @@ def test_claude_adapter_command_branches_the_permission_mode_on_authority(tmp_pa
     schema.write_text('{"type":"object"}', encoding="utf-8")
     route = {"harness": "claude_code", "model": "opus", "effort": "high"}
     reader = cw.ClaudeCodeCliAdapter().command(route, "prompt", schema, tmp_path, "read_only")
-    writer = cw.ClaudeCodeCliAdapter().command(
-        route, "prompt", schema, tmp_path, "disposable_writer"
-    )
+    writer = cw.ClaudeCodeCliAdapter().command(route, "prompt", schema, tmp_path, "capsule_writer")
     assert reader[reader.index("--permission-mode") + 1] == "plan"
     assert writer[writer.index("--permission-mode") + 1] == "acceptEdits"
 
@@ -120,12 +118,12 @@ def test_codex_writer_preflight_requires_the_writable_sandbox(monkeypatch) -> No
     )
 
 
-def test_claude_writer_preflight_requires_accept_edits(monkeypatch) -> None:
+def test_claude_capsule_writer_preflight_requires_accept_edits(monkeypatch) -> None:
     monkeypatch.setattr(cw.shutil, "which", lambda name: f"/usr/bin/{name}")
     route = {"harness": "claude_code", "model": "opus", "effort": "high"}
     read_only_evidence = _probe_runner("auth", _CLAUDE_FLAGS)
     with pytest.raises(cw.WorkerFailure, match="acceptEdits") as error:
-        cw.preflight_route(route, runner=read_only_evidence, authority="disposable_writer")
+        cw.preflight_route(route, runner=read_only_evidence, authority="capsule_writer")
     assert error.value.code == "capability_missing"
     assert (
         cw.preflight_route(route, runner=read_only_evidence, authority="read_only")["harness"]
@@ -133,6 +131,26 @@ def test_claude_writer_preflight_requires_accept_edits(monkeypatch) -> None:
     )
     writable = _probe_runner("auth", _CLAUDE_FLAGS + " acceptEdits")
     assert (
-        cw.preflight_route(route, runner=writable, authority="disposable_writer")["harness"]
+        cw.preflight_route(route, runner=writable, authority="capsule_writer")["harness"]
         == "claude_code"
+    )
+
+
+def test_claude_disposable_writer_route_is_refused(monkeypatch) -> None:
+    monkeypatch.setattr(cw.shutil, "which", lambda name: f"/usr/bin/{name}")
+    route = {"harness": "claude_code", "model": "opus", "effort": "high"}
+    # Fully write-capable evidence still refuses: claude headless has no confined write-exec
+    # sandbox, so the disposable (e2e) writer is blocked before any launch, not on a missing flag.
+    evidence = _probe_runner("auth", _CLAUDE_FLAGS + " acceptEdits")
+    with pytest.raises(cw.WorkerFailure, match="codex") as error:
+        cw.preflight_route(route, runner=evidence, authority="disposable_writer")
+    assert error.value.code == "unsupported_writer_harness"
+    # The guard is claude-specific: a codex disposable writer clears preflight.
+    codex_route = {"harness": "codex", "model": "gpt-5.6-sol", "effort": "high"}
+    codex_evidence = _probe_runner("login", _CODEX_FLAGS + " workspace-write")
+    assert (
+        cw.preflight_route(codex_route, runner=codex_evidence, authority="disposable_writer")[
+            "harness"
+        ]
+        == "codex"
     )
