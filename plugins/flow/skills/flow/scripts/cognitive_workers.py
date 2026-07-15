@@ -1307,6 +1307,12 @@ def git_receipt(root: Path) -> dict[str, Any]:
             metadata[relative] = {"length": len(data), "sha256": hashlib.sha256(data).hexdigest()}
         else:
             metadata[relative] = None
+    # HEAD/config/packed-refs miss a loose ref, and the writer seed machinery records the seeded
+    # tree under refs/flow/seed-baseline. Scoped to refs/flow/ so a stray such ref in the
+    # AUTHORITATIVE repo trips the read-only postcondition; that namespace is empty there, so
+    # before==after and no live behavior changes. A full-refs digest would false-trip on
+    # refs/remotes and refs/dolt that legitimately move during a run.
+    flow_refs = _git_bytes(resolved, "for-each-ref", "refs/flow/")
     body = {
         "schema": "flow.git-receipt/v1",
         "root": str(resolved),
@@ -1325,6 +1331,7 @@ def git_receipt(root: Path) -> dict[str, Any]:
             "sha256": hashlib.sha256(worktree_diff).hexdigest(),
         },
         "submodules": {"length": len(submodules), "sha256": hashlib.sha256(submodules).hexdigest()},
+        "flow_refs": {"length": len(flow_refs), "sha256": hashlib.sha256(flow_refs).hexdigest()},
         "metadata": metadata,
         "hooks": hooks,
         "runtime_surface": _runtime_surface(resolved),
@@ -1875,30 +1882,39 @@ def _capture_working_delta(source_root: Path, source_sha: str) -> bytes:
             os.unlink(index_path)
 
 
+def _tracked_capturable_paths(root: Path) -> set[str]:
+    """Repo-relative POSIX paths ``git add -A`` would stage: tracked plus untracked-non-ignored.
+
+    The owned-file baseline must enumerate the same set the captured patch can carry. ``git add
+    -A`` skips gitignored files, so hashing them (a nested .flow/runtime, __pycache__, build
+    output under an allowed dir) would drift the baseline against a patch that never carries them.
+    """
+    listing = _git_bytes(root, "ls-files", "-z", "--cached", "--others", "--exclude-standard")
+    return {name for name in listing.decode(errors="surrogateescape").split("\0") if name}
+
+
 def _owned_baseline_digest(root: Path, allowed_mutation_paths: Sequence[str]) -> str:
     """Digest the current content of the owned paths in the authoritative worktree.
 
     A change to an owned file by anything other than this import drifts the digest, so the CAS
     refuses rather than clobbering an external edit. Symlinks are hashed by their target string,
-    not followed, so an owned symlink cannot smuggle outside content into the baseline.
+    not followed, so an owned symlink cannot smuggle outside content into the baseline. The file
+    set is exactly what ``git add -A`` stages, so gitignored churn the patch cannot carry never
+    drifts the baseline.
     """
     resolved = root.resolve()
     allowed = sorted(frozenset(_normalize_repo_path(entry) for entry in allowed_mutation_paths))
+    listed = _tracked_capturable_paths(resolved)
     hasher = hashlib.sha256()
     for entry in allowed:
-        base = resolved / entry
-        targets: list[Path] = []
-        if base.is_symlink() or base.is_file():
-            targets = [base]
-        elif base.is_dir():
-            for directory, dirs, files in os.walk(base, followlinks=False):
-                dirs.sort()
-                targets.extend(Path(directory) / name for name in sorted(files))
-        if not targets:
+        owned = sorted(p for p in listed if p == entry or p.startswith(f"{entry}/"))
+        if not owned:
             hasher.update(f"{entry}\0absent\0".encode())
             continue
-        for path in targets:
-            relative = path.relative_to(resolved).as_posix()
+        for relative in owned:
+            path = resolved / relative
+            if not path.is_symlink() and not path.exists():
+                continue
             info = path.lstat()
             if stat.S_ISLNK(info.st_mode):
                 content = os.readlink(path).encode(errors="surrogateescape")
@@ -2422,6 +2438,73 @@ def _writer_import_lock_path(source_root: Path) -> Path:
     return common_path.resolve() / WRITER_IMPORT_LOCK_NAME
 
 
+class DispatchObserver(Protocol):
+    """Reads the run's live dispatch generation, route-snapshot digest, and lease fence.
+
+    Injected so a test can drive divergence with a fake; the default reads the authoritative run
+    state at import time. Narrow by design so CognitiveWorkers never couples to dispatch internals.
+    """
+
+    def __call__(self, order: WorkOrder, source: Path) -> Mapping[str, Any]: ...
+
+
+# A live dispatch value that cannot be read must never compare equal to the order's frozen value,
+# so an unlocatable or unreadable run state fails the CAS closed rather than importing over drift.
+_UNOBSERVED: Any = object()
+
+
+def observe_live_dispatch(order: WorkOrder, source: Path) -> dict[str, Any]:
+    """Observe the run's current dispatch generation, route-snapshot digest, and lease fence.
+
+    The order freezes these at issue time; the import runs well after the worker did, by when the
+    dispatcher may have bumped the stage generation, rotated the route snapshot, or moved the
+    lease. These live values become the observed side of the CAS, so any that drifted from the
+    order refuses the import. The run is located by run_id under the worktree's .flow/runs tree;
+    a missing or unreadable state fails closed.
+    """
+    unobserved = {
+        "dispatch_generation": _UNOBSERVED,
+        "route_snapshot": _UNOBSERVED,
+        "lease_fence": _UNOBSERVED,
+    }
+    if order.run_id is None or order.stage is None:
+        return unobserved
+    import agent_routes
+    import lease
+    import state
+
+    try:
+        candidates = sorted((source / ".flow" / "runs").rglob("state.json"))
+    except OSError:
+        return unobserved
+    matched_dir: Path | None = None
+    matched_state: Any = None
+    for state_path in candidates:
+        try:
+            ticket_state, _ = state.read(state_path.parent)
+        except OSError:
+            continue
+        if ticket_state is not None and ticket_state.run_id == order.run_id:
+            matched_dir, matched_state = state_path.parent, ticket_state
+            break
+    if matched_dir is None or matched_state is None:
+        return unobserved
+    record = matched_state.stages.get(order.stage)
+    try:
+        run_lease = lease.read_lease(matched_dir)
+    except lease.LeaseError:
+        run_lease = None
+    try:
+        route_snapshot = agent_routes.load_snapshot(matched_dir / "route-snapshot.json")["digest"]
+    except agent_routes.RouteError:
+        route_snapshot = _UNOBSERVED
+    return {
+        "dispatch_generation": record.generation if record is not None else _UNOBSERVED,
+        "route_snapshot": route_snapshot,
+        "lease_fence": run_lease.session_nonce if run_lease is not None else _UNOBSERVED,
+    }
+
+
 def _import_capsule_patch(
     source: Path,
     *,
@@ -2570,10 +2653,12 @@ class CognitiveWorkers:
         artifact_root: Path,
         capsule_root: Path,
         adapters: Mapping[str, CliAdapter] | None = None,
+        dispatch_observer: DispatchObserver | None = None,
     ) -> None:
         self.artifact_root = artifact_root.expanduser().resolve()
         self.capsule_root = capsule_root.expanduser().resolve()
         self.adapters = dict(adapters or ADAPTERS)
+        self._dispatch_observer: DispatchObserver = dispatch_observer or observe_live_dispatch
 
     def _invocation_dir(self, logical_id: str) -> Path:
         token = hashlib.sha256(logical_id.encode()).hexdigest()
@@ -2631,14 +2716,11 @@ class CognitiveWorkers:
             "route_snapshot": order.route_snapshot_digest,
             "lease_fence": order.lease_fence,
         }
-        # Phase 3 reads the live generation/route/lease from dispatch state; until then the order
-        # is both the expected and the observed value for those three, so only the git-derived
-        # HEAD/index/owned-baseline can drift here.
-        observed_external = {
-            "dispatch_generation": order.stage_generation,
-            "route_snapshot": order.route_snapshot_digest,
-            "lease_fence": order.lease_fence,
-        }
+        # The dispatch generation, route snapshot, and lease fence are observed LIVE at import
+        # time (the injected DispatchObserver), not read back off the order that froze them: the
+        # dispatcher may have bumped the generation, rotated the route, or moved the lease between
+        # order issue and import, and importing over any of those would re-baseline external drift.
+        observed_external = self._dispatch_observer(order, source)
         return _import_capsule_patch(
             source,
             order=order,
@@ -3410,6 +3492,7 @@ __all__ = [
     "ClaudeCodeCliAdapter",
     "CodexCliAdapter",
     "CognitiveWorkers",
+    "DispatchObserver",
     "InvocationJournal",
     "OwnerProof",
     "PromptMaterial",
@@ -3429,6 +3512,7 @@ __all__ = [
     "cli_main",
     "create_private_clone",
     "git_receipt",
+    "observe_live_dispatch",
     "prepare_work_order",
     "provider_schema",
     "run_stage",
