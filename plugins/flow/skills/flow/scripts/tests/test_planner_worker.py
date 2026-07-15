@@ -65,10 +65,10 @@ class _FakeAdapter:
         self.prompts: list[str] = []
         self.thread_ids: list[str | None] = []
 
-    def preflight(self, route):
+    def preflight(self, route, authority="read_only"):
         return {"executable": "/usr/bin/codex", "version": "codex 1", "harness": "codex"}
 
-    def command(self, route, prompt, schema_path, capsule):
+    def command(self, route, prompt, schema_path, capsule, authority="read_only"):
         raise AssertionError("the planner compatibility order must use the session command")
 
     def session_command(self, route, prompt, schema_path, *, thread_id, new_thread_id):

@@ -81,6 +81,64 @@ def test_shadow_writer_is_refused_before_capsule_allocation(tmp_path: Path) -> N
     assert not (tmp_path / "capsules").exists()
 
 
+def _order(tmp_path: Path, **overrides: Any) -> cw.WorkOrder:
+    fields: dict[str, Any] = {
+        "logical_invocation_id": "authority-order",
+        "generation": 1,
+        "profile": "implementer",
+        "source_root": str(tmp_path),
+        "source_sha": "a" * 40,
+        "route": {"harness": "codex", "model": "gpt-5.6-luna", "effort": "high"},
+        "route_snapshot_digest": "b" * 64,
+        "input_bundle": str(tmp_path / "input.json"),
+        "input_digest": "c" * 64,
+        "facts": {},
+    }
+    fields.update(overrides)
+    return cw.WorkOrder(**fields)
+
+
+def test_work_order_authority_is_pinned_to_its_profile(tmp_path: Path) -> None:
+    assert _order(tmp_path, profile="plan_assessor").authority == "read_only"
+    assert _order(tmp_path, profile="implementer").authority == "capsule_writer"
+    assert _order(tmp_path, profile="e2e").authority == "disposable_writer"
+    with pytest.raises(cw.WorkerFailure, match="does not match"):
+        _order(tmp_path, profile="code_reviewer", authority="capsule_writer")
+
+
+def test_read_only_order_forbids_allowed_mutation_paths(tmp_path: Path) -> None:
+    with pytest.raises(cw.WorkerFailure, match="cannot allow mutation paths"):
+        _order(tmp_path, profile="code_reviewer", allowed_mutation_paths=("src/a.py",))
+
+
+def test_writer_allowed_mutation_paths_reject_escapes(tmp_path: Path) -> None:
+    allowed = _order(tmp_path, allowed_mutation_paths=("src/a.py", "pkg/b.py"))
+    assert allowed.allowed_mutation_paths == ("src/a.py", "pkg/b.py")
+    with pytest.raises(cw.WorkerFailure, match="escapes"):
+        _order(tmp_path, allowed_mutation_paths=("../escape.py",))
+    with pytest.raises(cw.WorkerFailure, match="repo-relative"):
+        _order(tmp_path, allowed_mutation_paths=("/abs/path.py",))
+
+
+def test_work_order_round_trips_authority_and_paths_and_binds_the_digest(tmp_path: Path) -> None:
+    order = _order(tmp_path, allowed_mutation_paths=("src/a.py",))
+    mapping = order.to_mapping()
+    assert mapping["authority"] == "capsule_writer"
+    assert mapping["allowed_mutation_paths"] == ("src/a.py",)
+    assert cw.WorkOrder.from_mapping(mapping) == order
+    # A JSON hop turns the tuple into a list; the contract re-freezes it on the way back.
+    assert cw.WorkOrder.from_mapping(json.loads(json.dumps(mapping))) == order
+    assert cw._digest(_order(tmp_path).to_mapping()) != cw._digest(mapping)
+
+
+def test_capsule_postcondition_is_authority_aware() -> None:
+    mutated = ({"digest": "a"}, {"digest": "b"})
+    assert cw._capsule_postcondition_ok("capsule_writer", *mutated)
+    assert cw._capsule_postcondition_ok("disposable_writer", *mutated)
+    assert not cw._capsule_postcondition_ok("read_only", *mutated)
+    assert cw._capsule_postcondition_ok("read_only", {"digest": "a"}, {"digest": "a"})
+
+
 def test_standalone_clone_is_exact_and_has_no_shared_git_metadata(tmp_path: Path) -> None:
     source, sha = _repository(tmp_path)
     capsule = tmp_path / "capsule"
@@ -326,13 +384,13 @@ def test_unreadable_git_receipt_quarantines_instead_of_escaping(
     class Adapter:
         harness = "codex"
 
-        def preflight(self, route):
+        def preflight(self, route, authority="read_only"):
             return {"executable": sys.executable, "version": "fake/1", "harness": "codex"}
 
         def session_command(self, route, prompt, schema_path, *, thread_id, new_thread_id):
             raise AssertionError("a reader order never carries a provider session")
 
-        def command(self, route, prompt, schema_path, capsule):
+        def command(self, route, prompt, schema_path, capsule, authority="read_only"):
             nonlocal launched
             launched = True
             result = {
@@ -402,13 +460,13 @@ def test_common_executor_returns_durable_outcome_without_second_launch(tmp_path:
     class Adapter:
         harness = "codex"
 
-        def preflight(self, route):
+        def preflight(self, route, authority="read_only"):
             return {"executable": sys.executable, "version": "fake/1", "harness": "codex"}
 
         def session_command(self, route, prompt, schema_path, *, thread_id, new_thread_id):
             raise AssertionError("a reader order never carries a provider session")
 
-        def command(self, route, prompt, schema_path, capsule):
+        def command(self, route, prompt, schema_path, capsule, authority="read_only"):
             nonlocal launches
             launches += 1
             result = {
@@ -501,13 +559,13 @@ def test_terminal_journal_recovery_validates_without_relaunch(tmp_path: Path) ->
     class Adapter:
         harness = "codex"
 
-        def preflight(self, route):
+        def preflight(self, route, authority="read_only"):
             return {"executable": "fake", "version": "fake/1", "harness": "codex"}
 
         def session_command(self, route, prompt, schema_path, *, thread_id, new_thread_id):
             raise AssertionError("a reader order never carries a provider session")
 
-        def command(self, route, prompt, schema_path, capsule):
+        def command(self, route, prompt, schema_path, capsule, authority="read_only"):
             raise AssertionError("terminal recovery must not relaunch")
 
     order = cw.WorkOrder(
@@ -760,10 +818,10 @@ class _ScriptedAdapter:
         self.body = body
         self.launches = 0
 
-    def preflight(self, route):
+    def preflight(self, route, authority="read_only"):
         return {"executable": "/usr/bin/codex", "version": "codex 1", "harness": "codex"}
 
-    def command(self, route, prompt, schema_path, capsule):
+    def command(self, route, prompt, schema_path, capsule, authority="read_only"):
         self.launches += 1
         return [sys.executable, "-c", self.body]
 
