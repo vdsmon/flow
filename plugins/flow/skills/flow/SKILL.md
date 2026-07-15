@@ -11,14 +11,14 @@ allowed-tools: Bash(.flow/runtime/flow:*), Bash(*/.flow/runtime/flow:*), Bash(py
 New route snapshots may execute the planner, plan assessor, reviewers, review-brief
 author, and reflector through exact Codex or Claude Code CLI routes inside standalone
 read-only capsules, E2E through a disposable write-capable capsule that imports nothing
-and discards every mutation, and the implementer through a write-capable capsule whose
-validated binary-aware patch Flow captures and imports into the authoritative worktree
-under a sole-writer claim. The owner conversation remains the single human cockpit and the
-dispatcher remains the only stage authority. Each activated substep is bound to its stage
-generation and must return a matching typed outcome. The remaining write-import profiles
-(review_fixer, revision_fixer, machinery_fixer) stay shadowed until their guarded import
-proofs land. An exact-route failure stops visibly; it never selects a native or
-alternate-model fallback.
+and discards every mutation, and the importing writers (implementer, review_fixer,
+revision_fixer) through a write-capable capsule whose validated binary-aware patch Flow
+captures and imports into the authoritative worktree under a sole-writer claim. The owner
+conversation remains the single human cockpit and the dispatcher remains the only stage
+authority. Each activated substep is bound to its stage generation and must return a
+matching typed outcome. The remaining write-import profile (machinery_fixer) stays
+shadowed until its guarded import proof lands. An exact-route failure stops visibly; it
+never selects a native or alternate-model fallback.
 
 Flow is one state-aware path from a tracker ticket to a reviewable pull request.
 The user owns intent, plan approval, and PR review. Flow owns the isolated worktree
@@ -240,9 +240,10 @@ capture the owned-file baseline before the handler. When
 `descriptor.roles` includes `"agent_routed"`, resolve the frozen profile from the
 run's route snapshot. The snapshot covers all twelve cognitive profiles and records
 composite substeps separately from deterministic stage execution. The read-only profiles,
-the disposable E2E capsule, and the importing implementer may become active in this
-increment. The remaining write-import routes (review_fixer, revision_fixer, machinery_fixer)
-remain shadowed with `effective: null`, including a matching native launch acceptance.
+the disposable E2E capsule, and the importing writers (implementer, review_fixer,
+revision_fixer) may become active in this increment. The remaining write-import route
+(machinery_fixer) remains shadowed with `effective: null`, including a matching native
+launch acceptance.
 An activated substep runs through `cognitive-worker run-stage`; the configured or
 built-in planner follows the strict pre-approval CLI contract in
 `references/delivery-plan.md`. A per-run override may replace its complete route.

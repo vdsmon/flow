@@ -47,9 +47,12 @@ review, e2e, commit, review-loop, review-brief regeneration, and reflection stag
 PR creation is absent.
 
 Implementation and review consume the persisted instruction/dispositions or forge
-threads as their fix set. The same baseline, artifact, friction, snapshot, lost-lease,
-and rooted-execution rules apply. Resolve addressed threads through the forge seam
-only after their fixes are verified.
+threads as their fix set. A revision's fixes route through the `revision_fixer` capsule
+writer (`references/stage-review_loop.md` §2): it applies the instruction inside a private
+capsule and Flow compare-and-swap imports its patch under a sole-writer claim, keeping a
+human-requested revision distinct from ordinary pipeline remediation (`review_fixer`). The
+same baseline, artifact, friction, snapshot, lost-lease, and rooted-execution rules apply.
+Resolve addressed threads through the forge seam only after their fixes are verified.
 
 Release the revision lease on every post-open exit. Surface the updated existing PR
 as the final link. Preserve the terminal base receipt and earlier revision receipts.

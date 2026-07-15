@@ -20,7 +20,9 @@ from pathlib import Path
 
 import pytest
 
+import agent_routes
 import cognitive_workers as cw
+import dispatch_stage as ds
 from _locking import LOCK_RETRY_DELAY_S, flock_blocking, flock_retry
 
 
@@ -1127,3 +1129,314 @@ def test_active_implementer_refuses_import_outside_allowed_paths(tmp_path: Path)
         f"{order.logical_invocation_id}:{order.generation}".encode()
     ).hexdigest()
     assert capsule.exists()
+
+
+# ─── flow-jrv4: the LIVE review-loop fixers (review_fixer, revision_fixer) ─────────────────────
+#
+# The two review-loop fixers activate in this increment. They share the implementer's closed
+# report contract ({summary, evidence, source_sha}) and its allowed-paths-from-planned_files seal,
+# but run post-implement over the ticket's uncommitted edits, so a seed applies.
+
+
+def _review_fixer_facts(sha: str) -> dict:
+    return {
+        "stage_review_loop": "Address the review findings.",
+        "ticket": {"key": "T-1"},
+        "source_sha": sha,
+        "review_findings": "CI failed on src/impl.txt; fix it",
+        "planned_files": ["src"],
+        "report_contract": "summary + evidence + exact source_sha",
+    }
+
+
+def _revision_fixer_facts(sha: str) -> dict:
+    return {
+        "stage_review_loop": "Apply the requested revision.",
+        "ticket": {"key": "T-1"},
+        "source_sha": sha,
+        "revision_instruction": "rename the label in src/impl.txt",
+        "planned_files": ["src"],
+        "report_contract": "summary + evidence + exact source_sha",
+    }
+
+
+def _fixer_descriptor(sha: str, ticket_dir: Path, profile: str, substep: str) -> dict:
+    return {
+        "stage": "review_loop",
+        "generation": 1,
+        "cognitive_substeps": {
+            substep: {
+                "logical_invocation_id": f"run-1:review_loop:{substep}:1",
+                "run_id": "run-1",
+                "stage": "review_loop",
+                "substep": substep,
+                "stage_generation": 1,
+                "source_sha": sha,
+                "route_snapshot_digest": "b" * 64,
+                "profile": profile,
+                "desired_route": {"harness": "codex", "model": "fake", "effort": "high"},
+                "activation": "pending",
+                "conditional": True,
+                "lease_fence": "fence-1",
+                "ticket_dir": str(ticket_dir),
+            }
+        },
+    }
+
+
+def _prepare_fixer(
+    tmp_path: Path,
+    source: Path,
+    sha: str,
+    planned: list[str],
+    *,
+    profile: str,
+    facts: dict,
+    substep: str,
+) -> cw.WorkOrder:
+    ticket_dir = tmp_path / "td"
+    _write_baseline(ticket_dir, planned)
+    return cw.prepare_work_order(
+        _fixer_descriptor(sha, ticket_dir, profile, substep),
+        substep=substep,
+        source_root=source,
+        input_bundle=source / "src" / "keep.txt",
+        facts=facts,
+        output=tmp_path / "orders" / f"{substep}.json",
+    )
+
+
+def test_active_review_fixer_imports_a_planned_file_change_via_cas(tmp_path: Path) -> None:
+    # KILLER for the review_fixer catalog activation: strip it and run() raises capability_missing.
+    source, sha = _baseline_repo(tmp_path)
+    order = _prepare_fixer(
+        tmp_path,
+        source,
+        sha,
+        ["src"],
+        profile="review_fixer",
+        facts=_review_fixer_facts(sha),
+        substep="review_fix",
+    )
+    assert order.profile == "review_fixer"
+    assert order.authority == "capsule_writer"
+    assert order.allowed_mutation_paths == ("src",)
+    adapter = _ReportWriterAdapter("src/impl.txt")
+    workers = cw.CognitiveWorkers(
+        artifact_root=tmp_path / "artifacts",
+        capsule_root=tmp_path / "capsules",
+        adapters={"codex": adapter},
+        dispatch_observer=_frozen_observer,
+    )
+
+    outcome = workers.run(order, _owner())
+
+    assert outcome.status == "succeeded"
+    assert adapter.launched_authority == "capsule_writer"
+    assert outcome.result is not None
+    assert set(outcome.result) == {"summary", "evidence", "source_sha"}
+    assert outcome.result["source_sha"] == sha
+
+    change = outcome.receipts["change"]
+    assert change["schema"] == cw.CHANGE_RECEIPT_SCHEMA
+    assert change["import_result"] == "applied"
+    assert change["touched_paths"] == ["src/impl.txt"]
+    assert change["allowed_paths"] == ["src"]
+    allowed = frozenset(change["allowed_paths"])
+    assert all(cw._within_allowed(t, allowed) for t in change["touched_paths"])  # touched ⊆ allowed
+    assert (source / "src" / "impl.txt").read_text() == "impl\n"  # change LANDED
+    assert "src/impl.txt" in _git(source, "diff", "--cached", "--name-only")
+    assert outcome.receipts["disposal"]["absent"] is True  # capsule disposed after import
+
+
+def test_active_revision_fixer_imports_a_planned_file_change_via_cas(tmp_path: Path) -> None:
+    # KILLER for the revision_fixer activation: strip it and run() raises capability_missing.
+    source, sha = _baseline_repo(tmp_path)
+    order = _prepare_fixer(
+        tmp_path,
+        source,
+        sha,
+        ["src"],
+        profile="revision_fixer",
+        facts=_revision_fixer_facts(sha),
+        substep="revision_fix",
+    )
+    assert order.profile == "revision_fixer"
+    assert order.authority == "capsule_writer"
+    adapter = _ReportWriterAdapter("src/impl.txt")
+    workers = cw.CognitiveWorkers(
+        artifact_root=tmp_path / "artifacts",
+        capsule_root=tmp_path / "capsules",
+        adapters={"codex": adapter},
+        dispatch_observer=_frozen_observer,
+    )
+
+    outcome = workers.run(order, _owner())
+
+    assert outcome.status == "succeeded"
+    change = outcome.receipts["change"]
+    assert change["import_result"] == "applied"
+    assert change["touched_paths"] == ["src/impl.txt"]
+    assert (source / "src" / "impl.txt").read_text() == "impl\n"
+    assert outcome.receipts["disposal"]["absent"] is True
+
+
+def test_active_fixer_refuses_import_outside_allowed_paths(tmp_path: Path) -> None:
+    # A fixer touching a path outside planned_files is an ownership_violation; nothing is imported.
+    source, sha = _baseline_repo(tmp_path)
+    order = _prepare_fixer(
+        tmp_path,
+        source,
+        sha,
+        ["src"],
+        profile="review_fixer",
+        facts=_review_fixer_facts(sha),
+        substep="review_fix",
+    )
+    before = cw.git_receipt(source)["digest"]
+    adapter = _ReportWriterAdapter("other/outside.txt")  # OUTSIDE the allowed set
+    workers = cw.CognitiveWorkers(
+        artifact_root=tmp_path / "artifacts",
+        capsule_root=tmp_path / "capsules",
+        adapters={"codex": adapter},
+        dispatch_observer=_frozen_observer,
+    )
+
+    with pytest.raises(cw.WorkerFailure) as err:
+        workers.run(order, _owner())
+
+    assert err.value.code == "ownership_violation"
+    assert cw.git_receipt(source)["digest"] == before  # authoritative worktree untouched
+    assert not _git(source, "diff", "--cached", "--name-only")  # nothing staged
+
+
+def test_seeded_fixer_imports_only_its_own_delta_not_the_seed(tmp_path: Path) -> None:
+    # KILLER for the seed-baseline capture fix (flow-wtm4): a fixer runs post-implement over the
+    # ticket's uncommitted edits (the seed). WITHOUT the fix, _capture_capsule_patch diffs against
+    # source_sha and double-counts the seed; re-applying the seed hunk onto the authoritative
+    # worktree that already carries it fails "does not match index" -> patch_import_conflict.
+    source, sha = _baseline_repo(tmp_path)
+    # The ticket's uncommitted implement edit on a PLANNED file, unstaged (so the authoritative
+    # index still holds the base and a double-counted seed hunk cannot apply).
+    (source / "src" / "tomodify.txt").write_text("seeded ticket edit\n", encoding="utf-8")
+
+    order = _prepare_fixer(
+        tmp_path,
+        source,
+        sha,
+        ["src"],
+        profile="review_fixer",
+        facts=_review_fixer_facts(sha),
+        substep="review_fix",
+    )
+    # A dirty authoritative worktree seals the uncommitted delta as a digest-bound seed.
+    assert order.seed_patch is not None
+    assert hashlib.sha256(Path(order.seed_patch).read_bytes()).hexdigest() == order.seed_digest
+
+    # The fixer writes ONE new planned file on top of the seed; it never touches the seeded file.
+    adapter = _ReportWriterAdapter("src/fix.txt")
+    workers = cw.CognitiveWorkers(
+        artifact_root=tmp_path / "artifacts",
+        capsule_root=tmp_path / "capsules",
+        adapters={"codex": adapter},
+        dispatch_observer=_frozen_observer,
+    )
+
+    outcome = workers.run(order, _owner())
+
+    assert outcome.status == "succeeded"
+    change = outcome.receipts["change"]
+    assert change["import_result"] == "applied"
+    # Captured against the SEEDED baseline: ONLY the writer's own file, never the seeded edit.
+    assert change["touched_paths"] == ["src/fix.txt"]
+    # The writer's delta LANDED; the authoritative worktree keeps its uncommitted seed intact.
+    assert (source / "src" / "fix.txt").read_text() == "impl\n"
+    assert (source / "src" / "tomodify.txt").read_text() == "seeded ticket edit\n"
+
+
+def _dispatch_git_workspace(tmp_path: Path) -> tuple[Path, str]:
+    """A real git repo that is also a Flow workspace, so cmd_next seals over a real HEAD."""
+    root, sha = _baseline_repo(tmp_path, name="ws")
+    flow = root / ".flow"
+    flow.mkdir()
+    (flow / ".initialized").touch()
+    (flow / "workspace.toml").write_text(
+        "[tracker]\n"
+        'backend = "beads"\n'
+        "[tracker.beads]\n"
+        'prefix = "T"\n'
+        "[pipeline]\n"
+        'stages = ["ticket", "implement"]\n'
+        "[pipeline.handlers]\n"
+        'ticket = "inline"\n'
+        'implement = "subagent:general-purpose"\n'
+        "[memory]\n"
+        'namespace = "T"\n'
+        "auto_recall = true\n"
+        "compounding = false\n"
+        'recall_by = ["branch"]\n'
+        "recall_top_n = 5\n",
+        encoding="utf-8",
+    )
+    return root, sha
+
+
+def test_real_dispatch_seals_ticket_dir_through_prepare_into_run(tmp_path: Path) -> None:
+    # KILLER for the dispatch_stage ticket_dir seal (flow-p9o5): real dispatch keys the implement
+    # substep 'main' and seals ticket_dir; prepare reads planned_files THROUGH that ticket_dir.
+    # Revert the seal and _sealed_planned_files returns () -> the planned change is refused
+    # ownership_violation. Every other live import test hand-builds substep/baseline and misses it.
+    source, sha = _dispatch_git_workspace(tmp_path)
+    ds.cmd_init(source, "T-1")
+    td = source / ".flow" / "runs" / "T-1"
+    agent_routes.snapshot(source, "codex", output_path=td / "route-snapshot.json")
+
+    ds.cmd_next(source, "T-1")  # ticket stage
+    ds.cmd_finish(source, "T-1", "ticket", "completed")
+    rc, descriptor = ds.cmd_next(source, "T-1")  # implement stage
+    assert rc == 0, descriptor
+    assert descriptor["stage"] == "implement"
+
+    sealed = descriptor["cognitive_substeps"]
+    assert set(sealed) == {"main"}  # real dispatch keys a non-composite agent stage 'main'
+    main = sealed["main"]
+    assert main["profile"] == "implementer"
+    assert main["source_sha"] == sha
+    assert main["ticket_dir"] == str(td)  # the seal under revert
+
+    # records_diff_baseline pre-hook writes baseline.json under the SEALED ticket_dir.
+    (td / "baseline.json").write_text(
+        json.dumps({"head_sha": sha, "planned_files": ["src"], "blobs": {}}),
+        encoding="utf-8",
+    )
+
+    order = cw.prepare_work_order(
+        descriptor,
+        substep="main",
+        source_root=source,
+        input_bundle=source / "src" / "keep.txt",
+        facts=_impl_facts(sha),
+        output=tmp_path / "orders" / "main.json",
+    )
+    # prepare located planned_files ONLY via the sealed ticket_dir; reverting the seal empties this.
+    assert order.allowed_mutation_paths == ("src",)
+
+    adapter = _ReportWriterAdapter("src/impl.txt")
+    workers = cw.CognitiveWorkers(
+        artifact_root=tmp_path / "artifacts",
+        capsule_root=tmp_path / "capsules",
+        adapters={"codex": adapter},
+        dispatch_observer=_frozen_observer,
+    )
+    # The owner proof carries the run's real dispatch-minted run_id and lease fence.
+    owner = cw.OwnerProof(
+        owner_id="owner", harness="codex", run_id=order.run_id, lease_fence=order.lease_fence
+    )
+
+    outcome = workers.run(order, owner)
+
+    assert outcome.status == "succeeded"
+    change = outcome.receipts["change"]
+    assert change["import_result"] == "applied"
+    assert change["touched_paths"] == ["src/impl.txt"]
+    assert (source / "src" / "impl.txt").read_text() == "impl\n"  # planned change imported

@@ -7,8 +7,11 @@ stage generation, source SHA, route digest, owner, and lease fence. Build one im
 `flow.review-input-bundle/v1` from the authoritative tree. `code_reviewer` receives the
 accepted plan and ticket; `diff_reviewer` receives only source identity, the bundle,
 and its fixed plan-blind rubric. Both return typed findings only. A matching successful
-outcome is required before completion. `review_fixer` remains a separate shadow writer;
-review findings never grant write authority or trigger a fallback review.
+outcome is required before completion. `review_fixer` is now an activated importing writer,
+but replacing this stage's inline auto-fix with an explicit `review_fixer` invocation is a
+follow-up (flow-7yjk); until then the auto-fix disposition below runs inline and the
+conditional `review_fix` substep is recorded as a reasoned skip. Review findings never
+grant write authority or trigger a fallback review.
 
 ## Purpose
 
@@ -17,8 +20,10 @@ Historical, generic, and legacy snapshots retain their recorded inline behavior.
 
 The route snapshot records the inline primary pass as `code_reviewer`, the plan-blind
 pass as `diff_reviewer`, and any mutation as the conditional `review_fixer` substep.
-`code_reviewer` and `diff_reviewer` activate from a new exact snapshot. The conditional
-`review_fixer` stays shadowed, preserving the existing sole-writer repair path.
+`code_reviewer`, `diff_reviewer`, and `review_fixer` all activate from a new exact
+snapshot. The conditional `review_fix` substep runs the `review_fixer` capsule once
+flow-7yjk wires its explicit invocation; until then the existing sole-writer repair path
+holds and the substep is a reasoned skip.
 
 This is the lowest-cost gate against regressions.
 The routed readers are isolated from the implementation context. A historical shadow
