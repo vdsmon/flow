@@ -241,6 +241,136 @@ def test_worker_environment_carries_the_sandbox_egress_proxy(monkeypatch) -> Non
     assert "AWS_SECRET_ACCESS_KEY" not in environment
 
 
+def _wrap_proof(
+    tmp_path: Path,
+    source: Path,
+    order: cognitive_workers.WorkOrder,
+    outcome: cognitive_workers.WorkOutcome,
+    before: dict,
+) -> dict:
+    """Persist an order and outcome under a codex parent transcript; return the smoke manifest."""
+    artifact_root = tmp_path / "artifacts"
+    capsule_root = tmp_path / "capsules"
+    capsule_root.mkdir()
+    invocation = (
+        artifact_root
+        / "invocations"
+        / hashlib.sha256(order.logical_invocation_id.encode()).hexdigest()
+    )
+    invocation.mkdir(parents=True)
+    outcome_mapping = outcome.to_mapping()
+    (invocation / "outcome.json").write_text(json.dumps(outcome_mapping), encoding="utf-8")
+    order_path = tmp_path / "work-order.json"
+    order_path.write_text(json.dumps(order.to_mapping()), encoding="utf-8")
+
+    facade_command = "FLOW_HARNESS=codex /abs/flow cognitive-worker run --work-order /abs/o.json"
+    transcript = _codex_transcript(
+        tmp_path / "codex.jsonl",
+        facade_command,
+        json.dumps({"digest": outcome_mapping["digest"], "status": "succeeded"}),
+    )
+    stderr_path = tmp_path / "codex.stderr"
+    stderr_path.write_text("", encoding="utf-8")
+    outer_path = tmp_path / "outer.json"
+    outer_path.write_text(
+        json.dumps(
+            {
+                "executable": "/usr/bin/codex",
+                "version": "1.2.3",
+                "exit_code": 0,
+                "facade_command": facade_command,
+                "stdout_path": str(transcript),
+                "stderr_path": str(stderr_path),
+            }
+        ),
+        encoding="utf-8",
+    )
+    body = {
+        "schema": smoke.SCHEMA,
+        "direction": "codex-parent",
+        "parent_harness": "codex",
+        "worker_harness": "claude_code",
+        "challenge_digest": order.challenge_digest,
+        "work_order": str(order_path),
+        "artifact_root": str(artifact_root),
+        "capsule_root": str(capsule_root),
+        "facade_command": facade_command,
+        "source_receipt_before": before,
+        "outer_evidence": str(outer_path),
+        "source_root": str(source),
+    }
+    return {**body, "digest": cognitive_workers._digest(body)}
+
+
+def _disposable_proof(tmp_path: Path) -> dict:
+    """Synthesize a leased disposable (e2e) proof: unchanged worktree, no imported change.
+
+    A disposable writer imports nothing, so the authoritative worktree stays byte-identical and the
+    outcome carries no change receipt. The order is still leased (run_id + lease_fence), so the
+    smoke replay must present the order's own owner to reach the durable-outcome path.
+    """
+    source = tmp_path / "source"
+    source.mkdir()
+    _git(source, "init", "-q")
+    _git(source, "config", "user.email", "flow@example.test")
+    _git(source, "config", "user.name", "Flow Test")
+    (source / "app.py").write_text("print('base')\n", encoding="utf-8")
+    _git(source, "add", "app.py")
+    _git(source, "commit", "-qm", "base")
+    source_sha = _git(source, "rev-parse", "HEAD")
+    before = cognitive_workers.git_receipt(source)
+
+    route = {"harness": "claude_code", "model": "opus", "effort": "high"}
+    route_digest = hashlib.sha256(
+        json.dumps(route, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    input_path = tmp_path / "input.json"
+    input_path.write_text(json.dumps({"challenge": "disposable"}), encoding="utf-8")
+    order = cognitive_workers.WorkOrder(
+        logical_invocation_id="smoke:e2e:1",
+        generation=1,
+        profile="e2e",
+        source_root=str(source),
+        source_sha=source_sha,
+        route=route,
+        route_snapshot_digest=route_digest,
+        input_bundle=str(input_path),
+        input_digest=hashlib.sha256(input_path.read_bytes()).hexdigest(),
+        facts={"base_sha": source_sha},
+        authority="disposable_writer",
+        run_id="run-1",
+        stage="e2e",
+        lease_fence="fence-1",
+        challenge_digest="d" * 64,
+    )
+    outcome = cognitive_workers.WorkOutcome(
+        logical_invocation_id=order.logical_invocation_id,
+        generation=order.generation,
+        profile=order.profile,
+        status="succeeded",
+        result={"report": "done"},
+        receipts={
+            "route": {"activation": "active", "effective": order.route},
+            "process": {
+                "child_reaped": True,
+                "process_group_absent": True,
+                "stdout_eof": True,
+                "stderr_eof": True,
+            },
+            "disposal": {"absent": True, "quarantined": False},
+        },
+        run_id=order.run_id,
+        stage=order.stage,
+        stage_generation=order.stage_generation,
+        route_snapshot_digest=order.route_snapshot_digest,
+        source_sha=order.source_sha,
+        lease_fence=order.lease_fence,
+        input_bundle=order.input_bundle,
+        input_digest=order.input_digest,
+    )
+    return _wrap_proof(tmp_path, source, order, outcome, before)
+
+
 def _writer_proof(
     tmp_path: Path,
     *,
@@ -248,6 +378,7 @@ def _writer_proof(
     touched: list[str] | None = None,
     allowed: list[str] | None = None,
     stage: bool = True,
+    extra_staged: list[str] | None = None,
     diff_digest_override: str | None = None,
 ) -> dict:
     """Synthesize a full capsule_writer (importing) proof: staged source, outcome, and manifest.
@@ -271,6 +402,9 @@ def _writer_proof(
     if stage:
         (source / "app.py").write_text("print('imported')\n", encoding="utf-8")
         _git(source, "add", "app.py")
+    for extra in extra_staged or []:
+        (source / extra).write_text("escaped\n", encoding="utf-8")
+        _git(source, "add", extra)
     staged = cognitive_workers._git_bytes(
         source,
         "diff",
@@ -324,15 +458,6 @@ def _writer_proof(
         lease_fence="fence-1",
         challenge_digest=challenge_digest,
     )
-    artifact_root = tmp_path / "artifacts"
-    capsule_root = tmp_path / "capsules"
-    capsule_root.mkdir()
-    invocation = (
-        artifact_root
-        / "invocations"
-        / hashlib.sha256(order.logical_invocation_id.encode()).hexdigest()
-    )
-    invocation.mkdir(parents=True)
     outcome = cognitive_workers.WorkOutcome(
         logical_invocation_id=order.logical_invocation_id,
         generation=order.generation,
@@ -359,48 +484,7 @@ def _writer_proof(
         input_bundle=order.input_bundle,
         input_digest=order.input_digest,
     )
-    outcome_mapping = outcome.to_mapping()
-    (invocation / "outcome.json").write_text(json.dumps(outcome_mapping), encoding="utf-8")
-    order_path = tmp_path / "work-order.json"
-    order_path.write_text(json.dumps(order.to_mapping()), encoding="utf-8")
-
-    facade_command = "FLOW_HARNESS=codex /abs/flow cognitive-worker run --work-order /abs/o.json"
-    transcript = _codex_transcript(
-        tmp_path / "codex.jsonl",
-        facade_command,
-        json.dumps({"digest": outcome_mapping["digest"], "status": "succeeded"}),
-    )
-    stderr_path = tmp_path / "codex.stderr"
-    stderr_path.write_text("", encoding="utf-8")
-    outer_path = tmp_path / "outer.json"
-    outer_path.write_text(
-        json.dumps(
-            {
-                "executable": "/usr/bin/codex",
-                "version": "1.2.3",
-                "exit_code": 0,
-                "facade_command": facade_command,
-                "stdout_path": str(transcript),
-                "stderr_path": str(stderr_path),
-            }
-        ),
-        encoding="utf-8",
-    )
-    body = {
-        "schema": smoke.SCHEMA,
-        "direction": "codex-parent",
-        "parent_harness": "codex",
-        "worker_harness": "claude_code",
-        "challenge_digest": challenge_digest,
-        "work_order": str(order_path),
-        "artifact_root": str(artifact_root),
-        "capsule_root": str(capsule_root),
-        "facade_command": facade_command,
-        "source_receipt_before": before,
-        "outer_evidence": str(outer_path),
-        "source_root": str(source),
-    }
-    return {**body, "digest": cognitive_workers._digest(body)}
+    return _wrap_proof(tmp_path, source, order, outcome, before)
 
 
 def test_writer_proof_with_matching_import_verifies(tmp_path: Path) -> None:
@@ -425,6 +509,30 @@ def test_writer_proof_touched_outside_allowed_fails(tmp_path: Path) -> None:
     result = smoke.verify_manifest(manifest)
     assert result["verified"] is False
     assert "capsule_writer imported outside its allowed mutation paths" in result["errors"]
+
+
+def test_writer_proof_hidden_escape_staged_but_trimmed_receipt_fails(tmp_path: Path) -> None:
+    """A worktree that staged an out-of-allowed path fails even when touched_paths hides it.
+
+    The receipt declares only app.py touched and allowed, so its own touched<=allowed holds, but the
+    authoritative index also staged escape.py. Confinement must be read from the observed worktree.
+    """
+    manifest = _writer_proof(tmp_path, extra_staged=["escape.py"])
+    result = smoke.verify_manifest(manifest)
+    assert result["verified"] is False
+    assert "capsule_writer staged a path outside its allowed mutation paths" in result["errors"]
+    assert "capsule_writer imported outside its allowed mutation paths" not in result["errors"]
+
+
+def test_leased_disposable_proof_replays_without_owner_mismatch(tmp_path: Path) -> None:
+    """A leased disposable (e2e) order reaches the durable-outcome replay without owner mismatch."""
+    manifest = _disposable_proof(tmp_path)
+    result = smoke.verify_manifest(manifest)
+    assert not any("owner proof does not match" in item for item in result["errors"]), result[
+        "errors"
+    ]
+    assert not any("logical replay" in item for item in result["errors"]), result["errors"]
+    assert result["verified"] is True, result["errors"]
 
 
 def test_writer_proof_authoritative_state_diverging_from_receipt_fails(tmp_path: Path) -> None:

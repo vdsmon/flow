@@ -277,9 +277,28 @@ def _verify_imported_change(
         errors.append("capsule_writer imported outside its allowed mutation paths")
     if after["digest"] == before_digest:
         errors.append("capsule_writer left the authoritative worktree unchanged")
+    source_root = Path(str(manifest["source_root"]))
+    # Confinement is read from the paths the authoritative worktree actually staged. A forged
+    # outcome can trim touched_paths to hide an escaped path while its full-diff digest still
+    # matches the observed worktree, so the observed set is the authority for the allowed check.
+    try:
+        names = cognitive_workers._git_bytes(
+            source_root,
+            "diff",
+            "--name-only",
+            "--no-ext-diff",
+            "--cached",
+            order.source_sha,
+        )
+    except cognitive_workers.WorkerFailure:
+        errors.append("authoritative staged path list is unavailable")
+    else:
+        observed = {line for line in names.decode().splitlines() if line}
+        if not observed <= allowed:
+            errors.append("capsule_writer staged a path outside its allowed mutation paths")
     try:
         staged = cognitive_workers._git_bytes(
-            Path(str(manifest["source_root"])),
+            source_root,
             "diff",
             "--binary",
             "--full-index",
@@ -372,10 +391,11 @@ def verify_manifest(manifest: dict[str, Any]) -> dict[str, Any]:  # noqa: C901
             if outcome.get("digest") != cognitive_workers._digest(body):
                 errors.append("nested outcome digest is invalid")
             else:
-                # A leased capsule_writer order binds run()'s owner check to its run and lease.
+                # Any dispatched (leased) order binds run()'s owner check to its run and lease.
                 # Replaying with the order's own run/lease reaches the idempotent durable-outcome
-                # path (no re-import, no re-invoke) rather than a false owner-mismatch.
-                writer = authority == "capsule_writer"
+                # path (no re-import, no re-invoke) rather than a false owner-mismatch, whether the
+                # leased order is a capsule_writer or a disposable writer.
+                leased = order.run_id is not None
                 try:
                     replay = cognitive_workers.CognitiveWorkers(
                         artifact_root=Path(str(manifest["artifact_root"])),
@@ -385,8 +405,8 @@ def verify_manifest(manifest: dict[str, Any]) -> dict[str, Any]:  # noqa: C901
                         cognitive_workers.OwnerProof(
                             owner_id="smoke-verifier",
                             harness=str(manifest["parent_harness"]),
-                            run_id=order.run_id if writer else None,
-                            lease_fence=order.lease_fence if writer else None,
+                            run_id=order.run_id if leased else None,
+                            lease_fence=order.lease_fence if leased else None,
                         ),
                     )
                     if replay.to_mapping().get("digest") != outcome.get("digest"):
