@@ -962,14 +962,6 @@ def preflight_route(
     The probe runs in the same narrowed environment the worker will get. Probing the owner's
     full environment instead would green-light an authentication the launch cannot reproduce.
     """
-    if route["harness"] == "claude_code" and authority == "disposable_writer":
-        raise WorkerFailure(
-            "claude has no confined write-exec sandbox headless: --permission-mode "
-            "bypassPermissions escapes the OS sandbox, and the claude sandbox settings deny "
-            "all writes including the allowlisted directory. A disposable_writer (e2e) route "
-            "must run its recipe under codex --sandbox workspace-write.",
-            code="unsupported_writer_harness",
-        )
     executable = "codex" if route["harness"] == "codex" else "claude"
     resolved = shutil.which(executable)
     if resolved is None:
@@ -1031,12 +1023,12 @@ def preflight_route(
         else ("--model", "--effort", "--permission-mode", "--json-schema", "--verbose")
     )
     missing = [flag for flag in flags if flag not in help_text]
-    if authority != "read_only":
-        # A writer route is only provable if the CLI also documents its writable mode. The
-        # read-only probe above cannot green-light a workspace-write launch.
-        writable = "workspace-write" if executable == "codex" else "acceptEdits"
-        if writable not in help_text:
-            missing.append(writable)
+    # A codex writer route is only provable if the CLI documents its writable sandbox value; the
+    # read-only probe proves --sandbox exists but not that workspace-write is supported. Claude
+    # needs no equivalent token: its writable auto mode is a value of the --permission-mode flag
+    # already checked above, and "auto" is too generic to gate a version reliably.
+    if authority != "read_only" and executable == "codex" and "workspace-write" not in help_text:
+        missing.append("workspace-write")
     if version.returncode or any(result.returncode for result in help_results) or missing:
         raise WorkerFailure(
             "worker CLI lacks required capabilities"
@@ -1138,10 +1130,11 @@ class ClaudeCodeCliAdapter:
         capsule: Path,
         authority: str = "read_only",
     ) -> list[str]:
-        # acceptEdits lets a claude capsule_writer edit via Edit/Write but blocks bash-exec; a
-        # writer that must run a shell recipe with writes confined (disposable_writer/e2e) has no
-        # such mode on claude headless and is refused at preflight, routing to codex instead.
-        permission = "plan" if authority == "read_only" else "acceptEdits"
+        # Writers run in auto mode: it honors the owner's sandbox settings, where
+        # autoAllowBashIfSandboxed auto-approves Bash under the OS sandbox (auto and default
+        # honor it, acceptEdits does not) and filesystem.denyWrite bounds any escape. Readers run
+        # in plan mode, which cannot write.
+        permission = "plan" if authority == "read_only" else "auto"
         return [
             "claude",
             "--print",
