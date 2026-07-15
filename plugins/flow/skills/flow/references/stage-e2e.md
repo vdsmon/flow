@@ -18,11 +18,16 @@ run, so "every source mutation discarded" holds by construction. The worker retu
 recipe verdict (`pass`/`fail`), the evidence the recipe produced, and the exact
 `source_sha`; Flow attaches the mutation summary as report evidence.
 
-The routed capsule runs the recipe against the sealed committed `source_sha`. Seeding it
-with a change still uncommitted in the authoritative worktree (implement runs before
-commit) is not part of this path; a run that needs the pre-commit working tree keeps the
-default `subagent:general-purpose` handler below, which executes in the live worktree. The
-two paths share the recipe and evidence contract the rest of this doc defines.
+The routed capsule is cloned at the sealed `source_sha` and then **seeded** with the
+ticket's uncommitted working state: implement and code_review run before commit, so their
+edits are still uncommitted in the authoritative worktree at e2e time. Dispatch captures
+that delta as an immutable, digest-bound seed patch and the executor applies it into the
+capsule, so the recipe runs against the ticket's real changed code, not the bare base
+commit. The recipe's own mutations are then measured against that seeded baseline, so the
+`capsule_mutations` evidence reflects what the recipe wrote and never the seeded ticket
+diff. This substep is non-conditional: an activated e2e route always runs the seeded
+capsule, never a `subagent:general-purpose` fallback. The two paths share the recipe and
+evidence contract the rest of this doc defines.
 
 ## Purpose
 
@@ -47,7 +52,8 @@ Your job is to run it exactly, not to reinterpret it.
   recipe is verifying.
 - The recipe's code under test: the live working tree (including the uncommitted
   implement-stage changes) under the default `subagent:general-purpose` handler, or the
-  disposable capsule cloned at the sealed `source_sha` under an activated routed run.
+  disposable capsule cloned at the sealed `source_sha` and seeded with those same
+  uncommitted changes under an activated routed run.
 
 ## Steps
 

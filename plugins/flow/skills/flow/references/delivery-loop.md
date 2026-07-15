@@ -156,11 +156,14 @@ key is refused rather than ignored, so a prompt can never be extended from the o
 
 `e2e` is the one activated substep that launches through a write-capable capsule
 (`authority: disposable_writer`), because a recipe run legitimately writes fixtures,
-caches, snapshots, and build products. It imports nothing and takes no writer lock: Flow
-captures what the capsule mutated (touched paths and diffstat) into the result's
-`capsule_mutations`, then discards the whole capsule, so the authoritative worktree is
-provably untouched. Its `input_bundle` may be any immutable evidence path the recipe
-needs; no `bundle-review` call is required.
+caches, snapshots, and build products. Delivery runs implement -> code_review -> e2e ->
+commit, so the ticket's changes are still uncommitted at e2e time; dispatch seals that
+working-state delta as an immutable seed patch and the executor seeds the capsule with it,
+so the recipe runs against the ticket's real code. It imports nothing and takes no writer
+lock: Flow captures what the recipe mutated on top of that seeded baseline (touched paths
+and diffstat) into the result's `capsule_mutations`, then discards the whole capsule, so
+the authoritative worktree is provably untouched. Its `input_bundle` may be any immutable
+evidence path the recipe needs; no `bundle-review` call is required.
 
 Build the reviewers' `input_bundle` from the authoritative tree first. The bundle is
 immutable, content-addressed evidence, never an appliable patch:

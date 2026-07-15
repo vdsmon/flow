@@ -99,8 +99,169 @@ class _E2EAdapter:
         raise AssertionError("an e2e order never carries a provider session")
 
 
+def _e2e_facts(sha: str) -> dict:
+    return {
+        "stage_e2e": "Run the recipe.",
+        "ticket": {"key": "F-1"},
+        "source_sha": sha,
+        "e2e_recipe": "run the suite",
+        "evidence_contract": "rung 1 only",
+    }
+
+
+def _e2e_descriptor(sha: str) -> dict:
+    return {
+        "stage": "e2e",
+        "generation": 1,
+        "cognitive_substeps": {
+            "main": {
+                "logical_invocation_id": "run-1:e2e:main:1",
+                "run_id": "run-1",
+                "stage": "e2e",
+                "substep": "main",
+                "stage_generation": 1,
+                "source_sha": sha,
+                "route_snapshot_digest": "b" * 64,
+                "profile": "e2e",
+                "desired_route": {"harness": "codex", "model": "fake", "effort": "medium"},
+                "activation": "pending",
+                "conditional": False,
+                "lease_fence": "fence-1",
+            }
+        },
+    }
+
+
+class _SeedProbeAdapter:
+    """Reads the seeded working tree, writes only its own build product, reports what it saw."""
+
+    harness = "codex"
+
+    def __init__(self) -> None:
+        self.launches = 0
+
+    def preflight(self, route, authority="read_only"):
+        return {"executable": "/usr/bin/codex", "version": "codex 1", "harness": "codex"}
+
+    def command(self, route, prompt, schema_path, capsule, authority="read_only"):
+        self.launches += 1
+        body = (
+            "import json,sys,subprocess,pathlib;"
+            "tracked=pathlib.Path('tracked.txt').read_text().strip();"
+            "newfile=pathlib.Path('newfile.txt').exists();"
+            "pathlib.Path('build').mkdir(exist_ok=True);"
+            "pathlib.Path('build/artifact.bin').write_bytes(bytes(range(64)));"
+            "sha=subprocess.run(['git','rev-parse','HEAD'],capture_output=True,text=True)"
+            ".stdout.strip();"
+            "sys.stdout.write(json.dumps({'result':{'verdict':'pass','summary':'recipe green',"
+            "'evidence':'tracked='+tracked+';newfile='+('yes' if newfile else 'no'),"
+            "'source_sha':sha}}))"
+        )
+        return [sys.executable, "-c", body]
+
+    def session_command(self, *args, **kwargs):
+        raise AssertionError("an e2e order never carries a provider session")
+
+
 def _no_import(*_args, **_kwargs):
     raise AssertionError("a disposable E2E writer must never enter the import path")
+
+
+def test_dispatch_seeds_capsule_with_uncommitted_working_state(tmp_path: Path, monkeypatch) -> None:
+    """dispatch -> seed -> run: the recipe sees the ticket's uncommitted code, not the base."""
+    source, sha = _baseline_repo(tmp_path)
+    # The ticket's implement/code_review edits, still uncommitted in the authoritative worktree.
+    (source / "tracked.txt").write_text("ticket change\n", encoding="utf-8")
+    (source / "newfile.txt").write_text("ticket added this\n", encoding="utf-8")
+    bundle = tmp_path / "bundle.json"
+    bundle.write_text("{}\n", encoding="utf-8")
+
+    order = cw.prepare_work_order(
+        _e2e_descriptor(sha),
+        substep="main",
+        source_root=source,
+        input_bundle=bundle,
+        facts=_e2e_facts(sha),
+        output=tmp_path / "orders" / "main.json",
+    )
+    # Dispatch sealed the seed as an immutable, digest-bound patch.
+    assert order.seed_patch is not None
+    assert hashlib.sha256(Path(order.seed_patch).read_bytes()).hexdigest() == order.seed_digest
+
+    adapter = _SeedProbeAdapter()
+    monkeypatch.setattr(cw.CognitiveWorkers, "_import_after_validation", _no_import)
+    workers = cw.CognitiveWorkers(
+        artifact_root=tmp_path / "artifacts",
+        capsule_root=tmp_path / "capsules",
+        adapters={"codex": adapter},
+    )
+    before = cw.git_receipt(source)["digest"]
+
+    outcome = workers.run(order, _owner())
+
+    assert outcome.status == "succeeded"
+    assert adapter.launches == 1
+    # The recipe ran against the ticket's real code: the seeded tracked edit and the seeded
+    # new untracked file were both present in the capsule.
+    assert outcome.result is not None
+    assert outcome.result["evidence"] == "tracked=ticket change;newfile=yes"
+
+    # Evidence is measured against the seeded baseline, so it reports only what the RECIPE
+    # wrote, never the seeded ticket diff.
+    mutations = outcome.result["capsule_mutations"]
+    assert mutations["seeded"] is True
+    assert mutations["touched"] == ["build/artifact.bin"]
+
+    # The authoritative worktree is byte-identical and still carries its uncommitted work.
+    assert cw.git_receipt(source)["digest"] == before
+    assert (source / "tracked.txt").read_text() == "ticket change\n"
+    assert (source / "newfile.txt").read_text() == "ticket added this\n"
+    assert not (source / "build").exists()
+
+    # Nothing imported; the capsule (and every mutation in it) is disposed.
+    assert "change" not in outcome.receipts
+    assert outcome.receipts["disposal"]["absent"] is True
+    capsule = (tmp_path / "capsules") / hashlib.sha256(
+        f"{order.logical_invocation_id}:{order.generation}".encode()
+    ).hexdigest()
+    assert not capsule.exists()
+
+
+def test_empty_working_delta_seeds_a_clean_base(tmp_path: Path, monkeypatch) -> None:
+    """A clean authoritative worktree seals no seed; the capsule stays at the bare base SHA."""
+    source, sha = _baseline_repo(tmp_path)
+    bundle = tmp_path / "bundle.json"
+    bundle.write_text("{}\n", encoding="utf-8")
+
+    order = cw.prepare_work_order(
+        _e2e_descriptor(sha),
+        substep="main",
+        source_root=source,
+        input_bundle=bundle,
+        facts=_e2e_facts(sha),
+        output=tmp_path / "orders" / "main.json",
+    )
+    assert order.seed_patch is None
+    assert order.seed_digest is None
+
+    adapter = _SeedProbeAdapter()
+    monkeypatch.setattr(cw.CognitiveWorkers, "_import_after_validation", _no_import)
+    workers = cw.CognitiveWorkers(
+        artifact_root=tmp_path / "artifacts",
+        capsule_root=tmp_path / "capsules",
+        adapters={"codex": adapter},
+    )
+
+    outcome = workers.run(order, _owner())
+
+    assert outcome.status == "succeeded"
+    assert outcome.result is not None
+    # The capsule is the bare base: the tracked file is unchanged and no seeded file exists.
+    assert outcome.result["evidence"] == "tracked=base;newfile=no"
+    mutations = outcome.result["capsule_mutations"]
+    assert mutations["seeded"] is False
+    assert mutations["touched"] == ["build/artifact.bin"]
+    assert outcome.receipts["disposal"]["absent"] is True
 
 
 def test_active_e2e_captures_evidence_discards_capsule_and_never_imports(
