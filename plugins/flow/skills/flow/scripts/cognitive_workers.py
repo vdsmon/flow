@@ -106,11 +106,17 @@ ROLE_CATALOG.update(
     }
 )
 ROLE_CATALOG["e2e"] = RolePolicy("e2e", "disposable_writer", True, "e2e", "e2e-report/v1", 0)
-# The implementer is the first activated importing writer: its validated capsule patch is
-# imported into the authoritative worktree under the sole-writer claim. review_fixer,
-# revision_fixer, and machinery_fixer stay shadowed (active=False) for their follow-up.
+# The implementer, review_fixer, and revision_fixer are activated importing writers: each
+# validated capsule patch is imported into the authoritative worktree under the sole-writer
+# claim. machinery_fixer stays shadowed (active=False) for Phase 5.
 ROLE_CATALOG["implementer"] = RolePolicy(
     "implementer", "capsule_writer", True, "implementer", "implementation-report/v1", 0
+)
+ROLE_CATALOG["review_fixer"] = RolePolicy(
+    "review_fixer", "capsule_writer", True, "review_fixer", "fix-report/v1", 0
+)
+ROLE_CATALOG["revision_fixer"] = RolePolicy(
+    "revision_fixer", "capsule_writer", True, "revision_fixer", "revision-report/v1", 0
 )
 
 # Preserve the public profile order used by agent_routes.py.
@@ -451,6 +457,26 @@ _FACT_KEYS: dict[str, frozenset[str]] = {
     "implementer": frozenset(
         {"stage_implement", "ticket", "source_sha", "plan", "planned_files", "report_contract"}
     ),
+    "review_fixer": frozenset(
+        {
+            "stage_review_loop",
+            "ticket",
+            "source_sha",
+            "review_findings",
+            "planned_files",
+            "report_contract",
+        }
+    ),
+    "revision_fixer": frozenset(
+        {
+            "stage_review_loop",
+            "ticket",
+            "source_sha",
+            "revision_instruction",
+            "planned_files",
+            "report_contract",
+        }
+    ),
 }
 
 
@@ -530,6 +556,14 @@ def build_implementer_prompt(facts: Mapping[str, Any]) -> PromptMaterial:
     return _build_prompt("implementer", facts)
 
 
+def build_review_fixer_prompt(facts: Mapping[str, Any]) -> PromptMaterial:
+    return _build_prompt("review_fixer", facts)
+
+
+def build_revision_fixer_prompt(facts: Mapping[str, Any]) -> PromptMaterial:
+    return _build_prompt("revision_fixer", facts)
+
+
 def _bound_provider_prompt(
     prompt: str, *, facts: Mapping[str, Any], schema: Mapping[str, Any]
 ) -> PromptMaterial:
@@ -563,6 +597,8 @@ PROMPT_BUILDERS: dict[str, Callable[[Mapping[str, Any]], PromptMaterial]] = {
     "reflector": build_reflector_prompt,
     "e2e": build_e2e_prompt,
     "implementer": build_implementer_prompt,
+    "review_fixer": build_review_fixer_prompt,
+    "revision_fixer": build_revision_fixer_prompt,
 }
 
 
@@ -653,6 +689,19 @@ def provider_schema(profile: str) -> dict[str, Any]:
             },
             ["summary", "evidence", "source_sha"],
         )
+    if profile in {"review_fixer", "revision_fixer"}:
+        # An importing fixer (a review finding fix or a revision instruction) authors only a
+        # report: a summary, the evidence of what it changed, and a binding source SHA. Flow, not
+        # the model, captures the change receipt, so it stays out of this model-facing schema, the
+        # same closed report shape as the implementer.
+        return _closed_object(
+            {
+                "summary": _TEXT,
+                "evidence": _TEXT,
+                "source_sha": _TEXT,
+            },
+            ["summary", "evidence", "source_sha"],
+        )
     if profile == "review_brief_author":
         import review_brief
 
@@ -731,6 +780,8 @@ def validate_typed_result(profile: str, value: object) -> dict[str, Any]:  # noq
             {"verdict": {"pass", "fail"}},
         ),
         "implementer": ({"summary", "evidence", "source_sha"}, {}),
+        "review_fixer": ({"summary", "evidence", "source_sha"}, {}),
+        "revision_fixer": ({"summary", "evidence", "source_sha"}, {}),
     }
     contract = contracts.get(profile)
     if contract is not None:
@@ -775,7 +826,7 @@ def validate_typed_result(profile: str, value: object) -> dict[str, Any]:  # noq
                 raise WorkerFailure(
                     "finding fields do not match the closed contract", code="invalid_result"
                 )
-    if profile in {"e2e", "implementer"}:
+    if profile in {"e2e", "implementer", "review_fixer", "revision_fixer"}:
         source_sha = value.get("source_sha")
         if not isinstance(source_sha, str) or len(source_sha) != 40:
             raise WorkerFailure(
@@ -1753,20 +1804,25 @@ def _change_metadata(changes: list[dict[str, Any]], patch: bytes) -> dict[str, A
 def _capture_capsule_patch(
     capsule: Path, source_sha: str, allowed_mutation_paths: Sequence[str]
 ) -> dict[str, Any]:
-    """Stage every capsule change and produce one binary-safe patch against the baseline SHA.
+    """Stage every capsule change and produce one binary-safe patch against the writer's baseline.
 
-    The capsule is disposable, so ``git add -A`` is safe and lets a single diff against
-    source_sha carry tracked edits, additions, deletions, renames, and mode changes in one
-    replayable patch. Every touched path (both sides of a rename) must fall inside
-    allowed_mutation_paths or the capture is an ownership_violation; a git failure is a
-    patch_capture_failed and the caller keeps the capsule as recovery evidence.
+    The capsule is disposable, so ``git add -A`` is safe and lets a single diff carry tracked
+    edits, additions, deletions, renames, and mode changes in one replayable patch. The baseline
+    is the seeded tree when the capsule carries one (SEED_BASELINE_REF): a seeded capsule_writer
+    runs on top of the ticket's uncommitted working state, which the authoritative worktree
+    already holds, so diffing against the seed yields ONLY the writer's own delta. Diffing against
+    source_sha would double-count the seed and collide on import (patch_import_conflict, flow-wtm4).
+    An unseeded writer (a clean base, e.g. the implementer) has no ref and falls back to source SHA.
+    Every touched path (both sides of a rename) must fall inside allowed_mutation_paths or the
+    capture is an ownership_violation; a git failure is a patch_capture_failed and the caller keeps
+    the capsule as recovery evidence.
     """
     root = capsule.resolve()
     env = {**os.environ, "GIT_OPTIONAL_LOCKS": "0"}
 
-    def git(*args: str) -> bytes:
+    def git(*args: str, allow: tuple[int, ...] = (0,)) -> bytes:
         result = subprocess.run(["git", *args], cwd=root, capture_output=True, check=False, env=env)
-        if result.returncode != 0:
+        if result.returncode not in allow:
             detail = result.stderr.decode(errors="replace").strip()
             raise WorkerFailure(
                 f"capsule patch capture failed: git {' '.join(args)}: {detail}",
@@ -1774,6 +1830,8 @@ def _capture_capsule_patch(
             )
         return result.stdout
 
+    seed_tree = git("rev-parse", "--verify", "--quiet", SEED_BASELINE_REF, allow=(0, 1))
+    baseline = seed_tree.strip().decode() or source_sha
     git("add", "-A")
     patch = git(
         "diff",
@@ -1783,9 +1841,9 @@ def _capture_capsule_patch(
         "--no-textconv",
         "-M",
         "--cached",
-        source_sha,
+        baseline,
     )
-    raw = git("diff", "--raw", "-z", "-M", "--cached", source_sha)
+    raw = git("diff", "--raw", "-z", "-M", "--cached", baseline)
     changes = _parse_raw_diff(raw)
     allowed = frozenset(_normalize_repo_path(entry) for entry in allowed_mutation_paths)
     touched: set[str] = set()
@@ -3068,7 +3126,7 @@ class CognitiveWorkers:
                         code="invalid_result",
                     )
                 if (
-                    order.profile in {"e2e", "implementer"}
+                    order.profile in {"e2e", "implementer", "review_fixer", "revision_fixer"}
                     and result.get("source_sha") != order.source_sha
                 ):
                     raise WorkerFailure(
@@ -3589,7 +3647,9 @@ __all__ = [
     "build_planner_prompt",
     "build_reflector_prompt",
     "build_review_brief_author_prompt",
+    "build_review_fixer_prompt",
     "build_review_input_bundle",
+    "build_revision_fixer_prompt",
     "cli_main",
     "create_private_clone",
     "git_receipt",

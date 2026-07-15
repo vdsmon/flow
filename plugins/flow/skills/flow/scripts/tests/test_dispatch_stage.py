@@ -18,6 +18,7 @@ from typing import Any
 import pytest
 
 import agent_routes
+import cognitive_workers as cw
 import dispatch_stage as ds
 import lease
 import snapshot
@@ -2049,6 +2050,79 @@ def test_a_resumed_cognitive_stage_keeps_its_seal_when_head_moves(
     assert second["generation"] == first["generation"]
     assert _sealed(td) == sealed_before
     assert second["cognitive_substeps"] == sealed_before
+
+
+def _review_loop_workspace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[Path, dict[str, Any]]:
+    """Drive real dispatch to a sealed review_loop with the fixers active.
+
+    Returns (ticket_dir, review_loop descriptor).
+    """
+    _write_workspace(
+        tmp_path,
+        handlers={"ticket": "inline", "review_loop": "inline"},
+        stages=["ticket", "review_loop"],
+        compounding=False,
+    )
+    _stub_git_head(monkeypatch, "a" * 40)
+    ds.cmd_init(tmp_path, "FT-1")
+    td = tmp_path / ".flow" / "runs" / "FT-1"
+    agent_routes.snapshot(tmp_path, "codex", output_path=td / "route-snapshot.json")
+    ds.cmd_next(tmp_path, "FT-1")
+    ds.cmd_finish(tmp_path, "FT-1", "ticket", "completed")
+    rc, descriptor = ds.cmd_next(tmp_path, "FT-1")
+    assert rc == 0, descriptor
+    assert descriptor["stage"] == "review_loop", descriptor
+    return td, descriptor
+
+
+def test_review_loop_green_first_poll_completes_via_reasoned_fixer_skips(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A CI-green-first-poll review_loop must complete though no fixer ran.
+
+    Activating review_fixer/revision_fixer seals review_fix/revision_fix as pending
+    conditional substeps, so the terminal advance needs an outcome-or-skip for each on
+    every path — the green-first-poll included, where §2 never runs and neither fixer
+    launches. Without §5's reasoned skips the stage wedges (the closed defect); with them
+    it completes. Reverting §5 drops the skills, which is the no-skips wedge branch here.
+    """
+    td, descriptor = _review_loop_workspace(tmp_path, monkeypatch)
+
+    sealed = _sealed(td, "review_loop")
+    assert set(sealed) == {"review_fix", "revision_fix"}
+    for name in ("review_fix", "revision_fix"):
+        assert sealed[name]["activation"] == "pending"
+        assert sealed[name]["conditional"] is True
+
+    # No fixer ran and no reasoned skip emitted: the fail-closed cognitive fence (the wedge).
+    rc, wedged = ds.cmd_finish(tmp_path, "FT-1", "review_loop", "completed")
+    assert rc == 1
+    assert wedged["error"] == (
+        "activated cognitive substep 'review_fix' has no successful outcome or valid skip"
+    )
+
+    # §5 emits a reasoned skip for each un-run fixer substep through the REAL executor.
+    body = cw.run_stage(
+        descriptor,
+        {
+            "review_fix": {"skip": {"reason": "CI green on the first poll; no fix needed"}},
+            "revision_fix": {"skip": {"reason": "not a revision sub-run"}},
+        },
+        source_root=tmp_path,
+        artifact_root=td / "cognitive" / "review_loop",
+        capsule_root=td / "cognitive" / "capsules",
+        owner_id="owner",
+        owner_harness="codex",
+    )
+    assert set(body["cognitive_skips"]) == {"review_fix", "revision_fix"}
+
+    rc, done = ds.cmd_finish(tmp_path, "FT-1", "review_loop", "completed", skill_output=body)
+    assert rc == 0, done
+    ts, _ = state.read(td)
+    assert ts is not None
+    assert ts.stages["review_loop"].status == "completed"
 
 
 def _publish_outcome(facts: dict[str, Any], *, generation: int | None = None) -> dict[str, Any]:

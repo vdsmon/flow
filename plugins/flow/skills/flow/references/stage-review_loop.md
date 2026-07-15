@@ -112,8 +112,10 @@ case "$mg" in
     if git merge --no-edit "$DEFAULT"; then    # PLAIN merge; never rebase, never force-push mid-run
       git push                                 # clean merge: plain push, so checks register on the new head
     else
-      # merge left conflicts (the witnessed case): delegate to §2's pinned fix subagent, which resolves,
-      # `git add`, commits the merge, and pushes. NEVER push the half-merged tree, and never `git merge --abort`.
+      # merge left conflicts (the witnessed case): resolve them directly in the authoritative
+      # worktree (NOT the §2 capsule path: a half-merged tree cannot be reproduced in a fresh
+      # clone at source_sha), `git add`, commit the merge, and push. NEVER push the half-merged
+      # tree, and never `git merge --abort`.
       :
     fi
     ;;                                         # then re-arm the CI poll (step 1)
@@ -130,22 +132,37 @@ esac
 
 The base-merge commit legitimately pulls in `origin/<default>` content; it is a post-`commit`-stage push (like §2's CI-fix commits), so the content-ownership gate — which runs only at the `commit` stage (`references/stage-commit.md` §2b) — does NOT re-fire on it. Surface a one-line note in `review_loop.out` (e.g. `base-merged origin/<default> to clear CONFLICTING; CI re-armed`). This counts against §2's 3-fix-cycle cap. Bitbucket conflict detection (its own conflict signal) is a follow-up; the raw `gh` probe here is GitHub-specific, and the degrade path leaves gh-less hosts behaving exactly as before.
 
-## 2. On CI failed — drive fixes (delegated, bounded)
+## 2. On CI failed — drive fixes (routed capsule writer, bounded)
 
-Do NOT invent inline edit logic. Delegate the fix to a rooted subagent (the same way
-the `implement` stage uses `subagent:general-purpose`): include absolute `Workspace
-root`, `Skill root`, `Ticket dir`, this `Reference path`, the review-loop `Artifact
-path`, and `Harness`, plus the failing-check logs. State that inherited cwd is
-non-authoritative and every facade command carries the call-local
-`FLOW_HARNESS=<Harness>` prefix. Have
-it apply the fix, commit with the existing commit machinery, and `git push`. Then
-re-arm the adapter's CI wait (step 1).
-Resolve `review_fixer` from the frozen route snapshot for ordinary CI or bot-review
-fixes. A revision sub-run resolves `revision_fixer` instead, preserving the difference
-between pipeline remediation and a human-requested revision. Apply the structured
-launch and attestation contract in `references/delivery-loop.md`. Both profiles remain
-desired shadow routes in this increment and inherit the active owner model. Legacy
-`[models]` retains its existing lane, OFF, and fail-open behavior.
+Do NOT invent inline edit logic and do NOT hand the fix to a subagent that edits the
+worktree directly. A fix routes through an activated importing writer: `review_fixer` for
+ordinary CI or bot-review fixes, `revision_fixer` for a human-requested revision sub-run
+(the two profiles keep pipeline remediation and a revision distinct). Both activate on an
+exact CLI receipt in this increment.
+
+Drive the fix through the cognitive-substep executor exactly as the `implement` stage's
+importing writer (`references/delivery-loop.md`, "Activated cognitive substeps"): build the
+fixer's closed facts — the failing-check logs / unresolved findings as `review_findings`,
+or the human's revision as `revision_instruction` — plus its immutable input bundle, and
+hand them to `cognitive-worker run-stage` for the sealed `review_fix` / `revision_fix`
+substep. The writer edits and tests inside a private capsule seeded with the ticket's
+uncommitted working state; Flow — not the model — captures the binary-aware patch and
+compare-and-swap imports it into the authoritative worktree under a sole-writer claim. The
+order's `allowed_mutation_paths` is sealed to the run's `planned_files`, so a touch outside
+that set is an `ownership_violation` and nothing imports; there is no flag-and-widen escape
+hatch (widen through the ownership reconcile before re-recording the baseline). The worker
+returns only a typed report (`summary`, `evidence`, `source_sha`) and never serializes a
+diff. After the import lands, commit with the existing commit machinery and `git push`,
+then re-arm the adapter's CI wait (step 1). An exact-route failure stops the step visibly
+rather than falling back to a native edit; legacy `[models]` retains its existing lane,
+OFF, and fail-open behavior.
+
+When this pass launches a fixer, only that substep's outcome is written; the sibling
+conditional substep (`revision_fix` on a CI/bot fix, `review_fix` on a revision sub-run)
+never ran and still needs a reasoned skip. §5 emits the skips for every un-run fixer
+substep at the terminal advance, so the outcome fence is satisfied on this fix path and on
+the green-first-poll path alike (`references/delivery-loop.md`, the per-substep
+facts-or-skip contract).
 
 **Hard cap: 3 fix cycles total** across CI + review combined (human-requested revision triage-board rounds do NOT count — a present human is the judgment the cap substitutes for, so the cap bounds unattended loops only; see `references/revision-triage-board.md`). If CI is still red after 3, set `STATUS=failed` and surface the last failing logs — do not loop forever.
 
@@ -208,6 +225,19 @@ FLOW_HARNESS="<harness>" "<facade>" forge --workspace-root . resolve-thread \
 ## 5. Terminal
 
 `STATUS=completed` when **CI is green AND zero unresolved Major+ threads remain**, with the review-clean claim gated by §3: the bot-completion gate is satisfied when the review bot has finished, OR the host exposes no completion signal AND no bot runs there (`{"supported": false}`, first §3 bullet). When the gate is NOT satisfied at §3's cap (the bot never finished — disabled, or deferring a draft) and the thread list stayed empty, the stage still completes on CI-green but as **not-reviewed, never review-clean** (flow-enr8): the stage report AND the user-facing completion message carry §3's warning verbatim — "proceeding on CI-green only — automated review did not happen". An empty thread list only means "clean" once the gate passed; never terminate review-clean on an empty list the bot did not produce. Remaining Minor/nit threads are reported open with one-line reasons, not chased. Respect the 3-cycle cap. **Stop every Monitor on exit** (a leaked Monitor keeps the shell alive). The PR-ready notification fires exactly once at the normal do-loop step-e delivery point once this stage is `completed`; only when the handler is `none` does that notification fall back to firing at `create_pr` instead.
+
+**Satisfy the cognitive outcome fence before `advance --status completed`.** Activating the
+review-loop fixers seals `review_fix` and `revision_fix` as `pending` conditional substeps,
+so completion requires an outcome-or-skip for each — on EVERY exit path, the green-first-poll
+included (§1 broke on green, so §2 never ran and neither fixer launched). Emit a reasoned
+skip for each fixer substep that did NOT launch a capsule this run through the same
+`cognitive-worker run-stage` skip input as §2 (`references/delivery-loop.md`, "Activated
+cognitive substeps"), then pass the executor's `cognitive_skips` as the advance skill output.
+A fixer that DID run already wrote its outcome to disk (the fence reads that first and ignores
+a skip for it), so only the un-run substeps skip: green-first-poll skips both; a CI/bot fix
+pass skips `revision_fix`; a revision sub-run skips `review_fix`. Without this the terminal
+advance fails closed — `activated cognitive substep 'review_fix' has no successful outcome or
+valid skip`.
 
 This stage MAY write a short report (cycles run, threads resolved/skipped, final CI state) to `$TICKET_DIR/stages/review_loop.out`; pass `--output-path` on `advance` if it does.
 

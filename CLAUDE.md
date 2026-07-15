@@ -5,10 +5,12 @@ snapshots may launch read-only planning, assessment, review, review-brief author
 and reflection through either Claude Code or Codex capsules. E2E is also activated, as a
 disposable-capsule writer: it clones the sealed `source_sha`, is seeded with the ticket's
 uncommitted working state, runs the recipe there, captures the recipe's mutations as
-evidence, imports nothing, and discards the capsule. The four importing writer routes
-remain shadowed in this increment. Keep the owner as the single human cockpit, pass exact
-typed outcomes back to dispatch, and never treat an environment-only harness label as
-cross-harness execution proof.
+evidence, imports nothing, and discards the capsule. The importing writers (implementer,
+review_fixer, revision_fixer) also launch as capsule writers whose validated binary-aware
+patch is compare-and-swap imported under a sole-writer claim, then disposed; only
+machinery_fixer remains shadowed in this increment. Keep the owner as the single human
+cockpit, pass exact typed outcomes back to dispatch, and never treat an environment-only
+harness label as cross-harness execution proof.
 
 Guide for Claude Code or Codex working in the `flow` repo.
 

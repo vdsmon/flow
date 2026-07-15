@@ -94,9 +94,9 @@ FLOW_HARNESS="<harness>" "<facade>" agent-route resolve \
   --snapshot "$TICKET_DIR/route-snapshot.json" --profile "<profile>"
 ```
 
-The read-only profiles, the disposable E2E capsule, and the importing implementer may have
-`activation: pending`; the remaining write-import routes (review_fixer, revision_fixer,
-machinery_fixer) stay shadow. A shadow desired route is provenance for a future
+The read-only profiles, the disposable E2E capsule, and the importing writers (implementer,
+review_fixer, revision_fixer) may have `activation: pending`; the remaining write-import
+route (machinery_fixer) stays shadow. A shadow desired route is provenance for a future
 execution capsule and
 does not change the current native launch. Capture the native tool request and response
 as JSON, and never use the worker's prose as acceptance evidence. Attest and persist it:
@@ -155,6 +155,8 @@ key is refused rather than ignored, so a prompt can never be extended from the o
 | `reflector` | `reflection_input`, `stage_reflect`, `action_contract` |
 | `e2e` | `stage_e2e`, `ticket`, `source_sha`, `e2e_recipe`, `evidence_contract` |
 | `implementer` | `stage_implement`, `ticket`, `source_sha`, `plan`, `planned_files`, `report_contract` |
+| `review_fixer` | `stage_review_loop`, `ticket`, `source_sha`, `review_findings`, `planned_files`, `report_contract` |
+| `revision_fixer` | `stage_review_loop`, `ticket`, `source_sha`, `revision_instruction`, `planned_files`, `report_contract` |
 
 Two activated substeps launch through a write-capable capsule. `e2e`
 (`authority: disposable_writer`) writes fixtures, caches, snapshots, and build products
@@ -167,13 +169,16 @@ and diffstat) into the result's `capsule_mutations`, then discards the whole cap
 the authoritative worktree is provably untouched. Its `input_bundle` may be any immutable
 evidence path the recipe needs; no `bundle-review` call is required.
 
-`implementer` (`authority: capsule_writer`) is the first importing writer: it edits and
-tests inside its private capsule, then Flow, not the model, captures the binary-aware Git
-patch and imports it into the authoritative worktree under a sole-writer, compare-and-swap
-claim. The order's `allowed_mutation_paths` is sealed to the run's `planned_files` (from
-`baseline.json`, the same set the content-ownership commit gate re-scans), so touching any
-path outside that set makes the whole change an `ownership_violation` and nothing is
-imported. The worker returns only a typed report (`summary`, `evidence`, `source_sha`); it
+The importing writers (`authority: capsule_writer`) — `implementer` at implement, and
+`review_fixer` / `revision_fixer` at the review-loop fix step — edit and test inside a
+private capsule, then Flow, not the model, captures the binary-aware Git patch and imports
+it into the authoritative worktree under a sole-writer, compare-and-swap claim. Each order's
+`allowed_mutation_paths` is sealed to the run's `planned_files` (from `baseline.json`, the
+same set the content-ownership commit gate re-scans), so touching any path outside that set
+makes the whole change an `ownership_violation` and nothing is imported. A fixer runs over
+the ticket's uncommitted edits, so dispatch seeds its capsule with that working-state delta
+and Flow captures the writer's own change against the seeded baseline (never double-counting
+the seed). The worker returns only a typed report (`summary`, `evidence`, `source_sha`); it
 never serializes a diff. On a successful import the capsule is disposed and the change
 receipt records the patch digest, touched paths, and import result.
 

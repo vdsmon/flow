@@ -73,12 +73,12 @@ effort = "high"
 
 def test_override_wins_and_writer_route_remains_shadowed(tmp_path: Path) -> None:
     root = _workspace(tmp_path)
-    # review_fixer is still a shadowed importing writer (the implementer activated, it did not).
+    # machinery_fixer is the last shadowed importing writer (the fixers activated, it did not).
     resolved = agent_routes.resolve(
         root,
-        "review_fixer",
+        "machinery_fixer",
         "codex",
-        overrides=["review_fixer=codex,gpt-5.6-sol,xhigh"],
+        overrides=["machinery_fixer=codex,gpt-5.6-sol,xhigh"],
     )
     assert resolved["source"] == "override"
     assert resolved["desired"] == {
@@ -110,6 +110,8 @@ def test_snapshot_contains_the_complete_cognitive_profile_catalog(
         "code_reviewer",
         "diff_reviewer",
         "guard_reviewer",
+        "review_fixer",
+        "revision_fixer",
         "review_brief_author",
         "reflector",
         "e2e",
@@ -389,7 +391,7 @@ def test_read_only_receipt_activates_only_with_capsule_proof(tmp_path: Path, pro
     assert receipt["cleanup"]["capsule_absent"] is True
 
 
-def test_implementer_route_stamps_active_on_receipt_other_writers_stay_shadow(
+def test_importing_writers_stamp_active_on_receipt_machinery_fixer_stays_shadow(
     tmp_path: Path,
 ) -> None:
     snap = agent_routes.snapshot(_workspace(tmp_path), "codex")
@@ -416,14 +418,15 @@ def test_implementer_route_stamps_active_on_receipt_other_writers_stay_shadow(
             },
         )
 
-    implementer = cli_receipt("implementer")
-    assert implementer["activation"] == "active"
-    assert implementer["effective"] == snap["routes"]["implementer"]["desired"]
-    # The other three importing writers stay shadow under the same exact CLI proof.
-    for writer in ("review_fixer", "revision_fixer", "machinery_fixer"):
+    # The implementer and both review-loop fixers activate on an exact CLI receipt.
+    for writer in ("implementer", "review_fixer", "revision_fixer"):
         receipt = cli_receipt(writer)
-        assert receipt["activation"] == "shadow", writer
-        assert receipt["effective"] is None, writer
+        assert receipt["activation"] == "active", writer
+        assert receipt["effective"] == snap["routes"][writer]["desired"], writer
+    # machinery_fixer stays shadow under the same exact CLI proof.
+    machinery = cli_receipt("machinery_fixer")
+    assert machinery["activation"] == "shadow"
+    assert machinery["effective"] is None
 
 
 def test_read_only_receipt_without_terminal_cleanup_proof_stays_shadow(tmp_path: Path) -> None:
@@ -572,10 +575,10 @@ def test_attestation_requires_structured_exact_native_acceptance(tmp_path: Path)
 
 def test_codex_attestation_cannot_promote_a_shadow_route(tmp_path: Path) -> None:
     snap = agent_routes.snapshot(_workspace(tmp_path), "codex")
-    # review_fixer stays shadowed, so an empty-request native acceptance cannot promote it.
+    # machinery_fixer stays shadowed, so an empty-request native acceptance cannot promote it.
     receipt = agent_routes.attest(
         snap,
-        "review_fixer",
+        "machinery_fixer",
         {
             "request": {},
             "response": {"accepted": True, "transport": "native"},
