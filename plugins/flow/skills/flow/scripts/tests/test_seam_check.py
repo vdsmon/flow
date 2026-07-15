@@ -410,15 +410,21 @@ def test_live_post_init_prose_has_no_bare_script_invocation() -> None:
     assert escaped == []
 
 
-def test_live_writer_routes_stay_shadowed_and_e2e_activates() -> None:
-    skill = (seam_check.SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
-    do_ref = (seam_check.SKILL_ROOT / "references" / "delivery-loop.md").read_text(encoding="utf-8")
-    assert "disposable E2E capsule may become active" in skill
+def test_live_implementer_and_e2e_activate_other_writers_stay_shadowed() -> None:
+    # Flatten whitespace so markdown hard-wrapping cannot break a multi-word assertion.
+    def _flat(rel: str) -> str:
+        return " ".join((seam_check.SKILL_ROOT / rel).read_text(encoding="utf-8").split())
+
+    skill = _flat("SKILL.md")
+    do_ref = _flat("references/delivery-loop.md")
+    # The disposable E2E capsule and the importing implementer activate; review_fixer,
+    # revision_fixer, and machinery_fixer stay shadowed with a null effective route.
+    assert "importing implementer may become active" in skill
     assert "write-import" in skill
-    assert "remains shadowed" in skill
+    assert "(review_fixer, revision_fixer, machinery_fixer) stay shadowed" in skill
     assert "`effective: null`" in skill
-    assert "disposable E2E capsule may have" in do_ref
-    assert "every write-import route stays shadow" in do_ref
+    assert "importing implementer may have" in do_ref
+    assert "(review_fixer, revision_fixer, machinery_fixer) stay shadow" in do_ref
     assert "A shadow receipt" in do_ref
     assert "Do not retry" in do_ref
     assert "never fall back to a native" in do_ref

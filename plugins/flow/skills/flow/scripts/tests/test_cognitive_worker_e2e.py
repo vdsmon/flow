@@ -452,6 +452,8 @@ def test_e2e_route_activates_on_a_cli_receipt_while_writers_stay_shadow(tmp_path
 
     # E2E is disposal-terminal like the readers, so an exact CLI receipt activates it.
     assert _attest("e2e", "cli")["activation"] == "active"
-    # The four importing writers stay shadow even with the same exact CLI proof.
-    for writer in ("implementer", "review_fixer", "revision_fixer", "machinery_fixer"):
+    # The implementer disposes its capsule after import, so it also activates on the same proof;
+    # the other three importing writers stay shadow.
+    assert _attest("implementer", "cli")["activation"] == "active"
+    for writer in ("review_fixer", "revision_fixer", "machinery_fixer"):
         assert _attest(writer, "cli")["activation"] == "shadow", writer

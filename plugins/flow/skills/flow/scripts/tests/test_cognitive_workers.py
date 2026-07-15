@@ -32,7 +32,7 @@ def _repository(tmp_path: Path) -> tuple[Path, str]:
     return root, _git(root, "rev-parse", "HEAD")
 
 
-def test_catalog_activates_readers_and_the_disposable_e2e_writer() -> None:
+def test_catalog_activates_readers_e2e_and_the_implementer_writer() -> None:
     assert set(cw.ROLE_CATALOG) == {
         "planner",
         "plan_assessor",
@@ -57,13 +57,20 @@ def test_catalog_activates_readers_and_the_disposable_e2e_writer() -> None:
         "review_brief_author",
         "reflector",
     }
-    assert active == readers | {"e2e"}
+    assert active == readers | {"e2e", "implementer"}
     assert all(cw.ROLE_CATALOG[name].authority == "read_only" for name in readers)
     assert cw.ROLE_CATALOG["e2e"].authority == "disposable_writer"
-    # The four importing writers stay shadowed for Phase 3.
+    # The implementer is the first activated importing (capsule_writer) writer.
+    assert cw.ROLE_CATALOG["implementer"].authority == "capsule_writer"
+    assert cw.ROLE_CATALOG["implementer"].active is True
+    # The other three importing writers stay shadowed for this increment.
     assert not any(
         cw.ROLE_CATALOG[name].active
-        for name in ("implementer", "review_fixer", "revision_fixer", "machinery_fixer")
+        for name in ("review_fixer", "revision_fixer", "machinery_fixer")
+    )
+    assert all(
+        cw.ROLE_CATALOG[name].authority == "capsule_writer"
+        for name in ("review_fixer", "revision_fixer", "machinery_fixer")
     )
 
 
@@ -71,7 +78,7 @@ def test_shadow_writer_is_refused_before_capsule_allocation(tmp_path: Path) -> N
     order = cw.WorkOrder(
         logical_invocation_id="writer-1",
         generation=1,
-        profile="implementer",
+        profile="review_fixer",
         source_root=str(tmp_path),
         source_sha="a" * 40,
         route={"harness": "codex", "model": "gpt-5.6-luna", "effort": "high"},

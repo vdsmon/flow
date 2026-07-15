@@ -1,8 +1,10 @@
 """Fault suite for the writer capture + compare-and-swap import machinery (flow-d8am).
 
-Every writer profile stays active=False, so none of this runs through a live run(); the
-helpers are driven directly against real git worktrees and fake clock/lock inputs. Each test
-fails when its load-bearing source hunk is stripped (verified by surgical revert).
+The mechanical helpers are driven directly against real git worktrees and fake clock/lock
+inputs. The implementer is now an active importing writer (flow-jrv4), so the live-run
+section at the tail exercises it end to end through run() and prepare_work_order; the other
+three writers stay active=False. Each test fails when its load-bearing source hunk is
+stripped (verified by surgical revert).
 """
 
 from __future__ import annotations
@@ -584,7 +586,13 @@ def _writer_order(source: Path, sha: str, logical_id: str) -> cw.WorkOrder:
     )
 
 
-_WRITER_RESULT = {"summary": "implemented", "changed_files": ["src/impl.txt"]}
+def _writer_result(sha: str) -> dict:
+    """A valid implementation-report/v1 body: the closed contract Flow now validates."""
+    return {
+        "summary": "implemented",
+        "evidence": "wrote src/impl.txt; tests green",
+        "source_sha": sha,
+    }
 
 
 class _WriterAdapter:
@@ -599,10 +607,13 @@ class _WriterAdapter:
     def command(self, route, prompt, schema_path, capsule, authority="read_only"):
         self.launches += 1
         body = (
-            "import json,sys,pathlib;"
+            "import json,sys,pathlib,subprocess;"
             "pathlib.Path('src').mkdir(exist_ok=True);"
             "pathlib.Path('src/impl.txt').write_text('impl\\n');"
-            f"sys.stdout.write(json.dumps({{'result': {_WRITER_RESULT!r}}}))"
+            "sha=subprocess.run(['git','rev-parse','HEAD'],capture_output=True,text=True)"
+            ".stdout.strip();"
+            "sys.stdout.write(json.dumps({'result':{'summary':'implemented',"
+            "'evidence':'wrote src/impl.txt; tests green','source_sha':sha}}))"
         )
         return [sys.executable, "-c", body]
 
@@ -689,7 +700,7 @@ def test_run_resumes_an_importing_journal_without_relaunch(tmp_path: Path, monke
     journal.transition("terminal", process=process.__dict__)
     journal.transition(
         "validated",
-        result=_WRITER_RESULT,
+        result=_writer_result(sha),
         worker_id=None,
         authoritative_after=cw.git_receipt(source),
     )
@@ -933,3 +944,186 @@ def test_seed_helper_writes_its_ref_only_in_the_capsule(tmp_path: Path) -> None:
     cw.create_private_clone(source, sha, capsule, seed=seed)
     assert _git(capsule, "for-each-ref", cw.SEED_BASELINE_REF)  # seeded in the capsule
     assert not _git(source, "for-each-ref", "refs/flow/")  # authoritative repo has no refs/flow/*
+
+
+# ─── flow-jrv4: the LIVE implementer through the real activated catalog ───────────────────────
+#
+# Unlike the run()-wiring tests above (which monkeypatch active + a fake prompt/schema), these
+# drive the real activated implementer end to end: prepare_work_order seals allowed_mutation_paths
+# from baseline.json, and run() launches through the real ROLE_CATALOG, prompt, and schema.
+
+
+def _impl_facts(sha: str) -> dict:
+    return {
+        "stage_implement": "Implement the ticket with TDD.",
+        "ticket": {"key": "T-1"},
+        "source_sha": sha,
+        "plan": "add src/impl.txt and its test",
+        "planned_files": ["src"],
+        "report_contract": "summary + evidence + exact source_sha",
+    }
+
+
+def _write_baseline(ticket_dir: Path, planned: list[str]) -> None:
+    ticket_dir.mkdir(parents=True, exist_ok=True)
+    (ticket_dir / "baseline.json").write_text(
+        json.dumps({"head_sha": "x", "planned_files": planned, "blobs": {}}),
+        encoding="utf-8",
+    )
+
+
+def _implement_descriptor(sha: str, ticket_dir: Path) -> dict:
+    return {
+        "stage": "implement",
+        "generation": 1,
+        "cognitive_substeps": {
+            "implement": {
+                "logical_invocation_id": "run-1:implement:implement:1",
+                "run_id": "run-1",
+                "stage": "implement",
+                "substep": "implement",
+                "stage_generation": 1,
+                "source_sha": sha,
+                "route_snapshot_digest": "b" * 64,
+                "profile": "implementer",
+                "desired_route": {"harness": "codex", "model": "fake", "effort": "high"},
+                "activation": "pending",
+                "conditional": False,
+                "lease_fence": "fence-1",
+                "ticket_dir": str(ticket_dir),
+            }
+        },
+    }
+
+
+def _prepare_implementer(
+    tmp_path: Path, source: Path, sha: str, planned: list[str]
+) -> cw.WorkOrder:
+    ticket_dir = tmp_path / "td"
+    _write_baseline(ticket_dir, planned)
+    return cw.prepare_work_order(
+        _implement_descriptor(sha, ticket_dir),
+        substep="implement",
+        source_root=source,
+        input_bundle=source / "src" / "keep.txt",
+        facts=_impl_facts(sha),
+        output=tmp_path / "orders" / "implement.json",
+    )
+
+
+class _ReportWriterAdapter:
+    """Writes one file and returns a valid implementation-report/v1 citing the capsule HEAD."""
+
+    harness = "codex"
+
+    def __init__(self, relpath: str) -> None:
+        self.relpath = relpath
+        self.launches = 0
+        self.launched_authority: str | None = None
+
+    def preflight(self, route, authority="read_only"):
+        self.launched_authority = authority
+        return {"executable": "/usr/bin/codex", "version": "codex 1", "harness": "codex"}
+
+    def command(self, route, prompt, schema_path, capsule, authority="read_only"):
+        self.launches += 1
+        # A capsule_writer launches with the WRITABLE sandbox, not the read-only planning mode.
+        assert authority == "capsule_writer"
+        parent = str(Path(self.relpath).parent)
+        body = (
+            "import json,sys,pathlib,subprocess;"
+            f"pathlib.Path({parent!r}).mkdir(parents=True,exist_ok=True);"
+            f"pathlib.Path({self.relpath!r}).write_text('impl\\n');"
+            "sha=subprocess.run(['git','rev-parse','HEAD'],capture_output=True,text=True)"
+            ".stdout.strip();"
+            "sys.stdout.write(json.dumps({'result':{'summary':'built it',"
+            "'evidence':'wrote a planned file; tests green','source_sha':sha}}))"
+        )
+        return [sys.executable, "-c", body]
+
+    def session_command(self, *args, **kwargs):
+        raise AssertionError("an implementer order never carries a provider session")
+
+
+def test_prepare_work_order_seals_planned_files_as_allowed_mutation_paths(tmp_path: Path) -> None:
+    # KILLER for the prepare_work_order sealing hunk: strip it and allowed_mutation_paths is empty.
+    source, sha = _baseline_repo(tmp_path)
+    order = _prepare_implementer(tmp_path, source, sha, ["src/impl.txt", "./src/impl.txt", "pkg/x"])
+    assert order.profile == "implementer"
+    assert order.authority == "capsule_writer"
+    # planned_files became the order's allowed set: normalized (./ stripped) and de-duplicated.
+    assert order.allowed_mutation_paths == ("src/impl.txt", "pkg/x")
+    # A clean authoritative worktree seals no seed patch (the implementer double-counts otherwise).
+    assert order.seed_patch is None
+    assert order.seed_digest is None
+
+
+def test_active_implementer_imports_a_planned_file_change_end_to_end(tmp_path: Path) -> None:
+    # KILLER for the ROLE_CATALOG activation flip: strip it and run() raises capability_missing.
+    source, sha = _baseline_repo(tmp_path)
+    order = _prepare_implementer(tmp_path, source, sha, ["src"])
+    assert order.allowed_mutation_paths == ("src",)
+    adapter = _ReportWriterAdapter("src/impl.txt")
+    workers = cw.CognitiveWorkers(
+        artifact_root=tmp_path / "artifacts",
+        capsule_root=tmp_path / "capsules",
+        adapters={"codex": adapter},
+        dispatch_observer=_frozen_observer,
+    )
+
+    outcome = workers.run(order, _owner())
+
+    assert outcome.status == "succeeded"
+    assert adapter.launches == 1
+    assert adapter.launched_authority == "capsule_writer"  # preflighted the writable sandbox
+    # The real model-facing contract validated (no monkeypatched prompt or schema).
+    assert outcome.result is not None
+    assert set(outcome.result) == {"summary", "evidence", "source_sha"}
+    assert outcome.result["source_sha"] == sha
+
+    change = outcome.receipts["change"]
+    assert change["schema"] == cw.CHANGE_RECEIPT_SCHEMA
+    assert change["import_result"] == "applied"
+    assert change["touched_paths"] == ["src/impl.txt"]
+    assert change["allowed_paths"] == ["src"]
+    allowed = frozenset(change["allowed_paths"])
+    assert all(cw._within_allowed(t, allowed) for t in change["touched_paths"])  # touched ⊆ allowed
+    # The change LANDED in the authoritative worktree, staged for the commit stage.
+    assert (source / "src" / "impl.txt").read_text() == "impl\n"
+    assert "src/impl.txt" in _git(source, "diff", "--cached", "--name-only")
+    # The capsule is disposed after a successful import.
+    assert outcome.receipts["disposal"]["absent"] is True
+    capsule = (tmp_path / "capsules") / hashlib.sha256(
+        f"{order.logical_invocation_id}:{order.generation}".encode()
+    ).hexdigest()
+    assert not capsule.exists()
+
+
+def test_active_implementer_refuses_import_outside_allowed_paths(tmp_path: Path) -> None:
+    # Hole-closing safety test: a worker that touches a path outside allowed_mutation_paths is an
+    # ownership_violation and NOTHING is imported. (Also fails on the catalog flip: without it run()
+    # raises capability_missing, not ownership_violation.)
+    source, sha = _baseline_repo(tmp_path)
+    order = _prepare_implementer(tmp_path, source, sha, ["src"])  # only src/ is allowed
+    before = cw.git_receipt(source)["digest"]
+    adapter = _ReportWriterAdapter("other/outside.txt")  # writes OUTSIDE the allowed set
+    workers = cw.CognitiveWorkers(
+        artifact_root=tmp_path / "artifacts",
+        capsule_root=tmp_path / "capsules",
+        adapters={"codex": adapter},
+        dispatch_observer=_frozen_observer,
+    )
+
+    with pytest.raises(cw.WorkerFailure) as err:
+        workers.run(order, _owner())
+
+    assert err.value.code == "ownership_violation"
+    # The authoritative worktree is byte-identical: the unowned change never reached it.
+    assert cw.git_receipt(source)["digest"] == before
+    assert (source / "other" / "outside.txt").read_text() == "outside\n"  # source copy untouched
+    assert not _git(source, "diff", "--cached", "--name-only")  # nothing staged
+    # The capsule is preserved as recovery evidence (a capture failure never disposes it).
+    capsule = (tmp_path / "capsules") / hashlib.sha256(
+        f"{order.logical_invocation_id}:{order.generation}".encode()
+    ).hexdigest()
+    assert capsule.exists()
