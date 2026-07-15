@@ -252,6 +252,70 @@ def _verify_real_parent(
     return errors
 
 
+def _verify_imported_change(
+    manifest: dict[str, Any],
+    order: cognitive_workers.WorkOrder,
+    outcome: dict[str, Any],
+    after: dict[str, Any],
+    before_digest: object,
+) -> list[str]:
+    """Attest that a capsule_writer's authoritative worktree holds exactly its imported patch.
+
+    A read_only or disposable worker must leave the authoritative worktree byte-identical, but an
+    importing writer changes it by design: the change is the import. It is valid only when the
+    nested change receipt is an applied import within its allowed mutation paths and the staged
+    diff against the baseline is byte-identical to the receipt's ``authoritative_diff_digest``. A
+    worktree left unchanged imported nothing and is not a proof.
+    """
+    errors: list[str] = []
+    change = outcome.get("receipts", {}).get("change", {})
+    if change.get("import_result") != "applied":
+        errors.append("capsule_writer change receipt is not an applied import")
+    touched = set(change.get("touched_paths") or [])
+    allowed = set(change.get("allowed_paths") or [])
+    if not touched <= allowed:
+        errors.append("capsule_writer imported outside its allowed mutation paths")
+    if after["digest"] == before_digest:
+        errors.append("capsule_writer left the authoritative worktree unchanged")
+    source_root = Path(str(manifest["source_root"]))
+    # Confinement is read from the paths the authoritative worktree actually staged. A forged
+    # outcome can trim touched_paths to hide an escaped path while its full-diff digest still
+    # matches the observed worktree, so the observed set is the authority for the allowed check.
+    try:
+        names = cognitive_workers._git_bytes(
+            source_root,
+            "diff",
+            "--name-only",
+            "--no-ext-diff",
+            "--cached",
+            order.source_sha,
+        )
+    except cognitive_workers.WorkerFailure:
+        errors.append("authoritative staged path list is unavailable")
+    else:
+        observed = {line for line in names.decode().splitlines() if line}
+        if not observed <= allowed:
+            errors.append("capsule_writer staged a path outside its allowed mutation paths")
+    try:
+        staged = cognitive_workers._git_bytes(
+            source_root,
+            "diff",
+            "--binary",
+            "--full-index",
+            "--no-ext-diff",
+            "--no-textconv",
+            "-M",
+            "--cached",
+            order.source_sha,
+        )
+    except cognitive_workers.WorkerFailure:
+        errors.append("authoritative staged diff is unavailable")
+    else:
+        if hashlib.sha256(staged).hexdigest() != change.get("authoritative_diff_digest"):
+            errors.append("authoritative worktree does not match the imported change receipt")
+    return errors
+
+
 def verify_manifest(manifest: dict[str, Any]) -> dict[str, Any]:  # noqa: C901
     """Verify outer parent authority and the complete nested receipt chain."""
     errors: list[str] = []
@@ -291,6 +355,11 @@ def verify_manifest(manifest: dict[str, Any]) -> dict[str, Any]:  # noqa: C901
         order = None
     if order is not None and order.challenge_digest != manifest.get("challenge_digest"):
         errors.append("work order challenge does not match the manifest")
+    authority = (
+        cognitive_workers.ROLE_CATALOG[order.profile].authority
+        if order is not None
+        else "read_only"
+    )
     if order is not None:
         outcome_path = (
             Path(str(manifest["artifact_root"]))
@@ -322,6 +391,11 @@ def verify_manifest(manifest: dict[str, Any]) -> dict[str, Any]:  # noqa: C901
             if outcome.get("digest") != cognitive_workers._digest(body):
                 errors.append("nested outcome digest is invalid")
             else:
+                # Any dispatched (leased) order binds run()'s owner check to its run and lease.
+                # Replaying with the order's own run/lease reaches the idempotent durable-outcome
+                # path (no re-import, no re-invoke) rather than a false owner-mismatch, whether the
+                # leased order is a capsule_writer or a disposable writer.
+                leased = order.run_id is not None
                 try:
                     replay = cognitive_workers.CognitiveWorkers(
                         artifact_root=Path(str(manifest["artifact_root"])),
@@ -331,6 +405,8 @@ def verify_manifest(manifest: dict[str, Any]) -> dict[str, Any]:  # noqa: C901
                         cognitive_workers.OwnerProof(
                             owner_id="smoke-verifier",
                             harness=str(manifest["parent_harness"]),
+                            run_id=order.run_id if leased else None,
+                            lease_fence=order.lease_fence if leased else None,
                         ),
                     )
                     if replay.to_mapping().get("digest") != outcome.get("digest"):
@@ -340,10 +416,14 @@ def verify_manifest(manifest: dict[str, Any]) -> dict[str, Any]:  # noqa: C901
     errors.extend(_verify_real_parent(manifest, outer, outcome.get("digest")))
     try:
         after = cognitive_workers.git_receipt(Path(str(manifest["source_root"])))
-        if after["digest"] != manifest.get("source_receipt_before", {}).get("digest"):
-            errors.append("authoritative repository changed during the smoke")
     except (OSError, KeyError, cognitive_workers.WorkerFailure):
         errors.append("authoritative post-Git receipt is unavailable")
+    else:
+        before_digest = manifest.get("source_receipt_before", {}).get("digest")
+        if authority == "capsule_writer" and order is not None:
+            errors.extend(_verify_imported_change(manifest, order, outcome, after, before_digest))
+        elif after["digest"] != before_digest:
+            errors.append("authoritative repository changed during the smoke")
     return {
         "schema": "flow.cognitive-worker-smoke-verification/v1",
         "verified": not errors,
