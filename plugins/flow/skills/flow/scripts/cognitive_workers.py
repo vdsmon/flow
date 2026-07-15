@@ -28,12 +28,12 @@ import sys
 import tempfile
 import time
 import uuid
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Literal, Protocol, cast
 
-from _atomicio import atomic_write_text
+from _atomicio import atomic_write_bytes, atomic_write_text
 from _locking import LockContention, flock_blocking, flock_retry
 
 PROMPTS_PATH = Path(__file__).with_name("cognitive_worker_prompts.json")
@@ -41,6 +41,8 @@ WORK_ORDER_SCHEMA = "flow.cognitive-work-order/v1"
 OUTCOME_SCHEMA = "flow.cognitive-work-outcome/v1"
 REVIEW_BUNDLE_SCHEMA = "flow.review-input-bundle/v1"
 STAGE_OUTCOMES_SCHEMA = "flow.cognitive-stage-outcomes/v1"
+CHANGE_RECEIPT_SCHEMA = "flow.cognitive-change-receipt/v1"
+WRITER_IMPORT_LOCK_NAME = "flow-writer-import.lock"
 JOURNAL_SCHEMA = "flow.cognitive-worker-journal/v1"
 SOFT_TIMEOUT_SECONDS = 10 * 60
 HARD_TIMEOUT_SECONDS = 40 * 60
@@ -1535,6 +1537,223 @@ def build_review_input_bundle(
         raise
 
 
+def _normalize_repo_path(raw: str) -> str:
+    """Normalize a repo-relative POSIX path for byte-exact ownership comparison.
+
+    Rejects the odd forms _resolve_authority accepts but never consumes: an empty or absolute
+    path, a backslash (a separator that would read as one component here), a NUL, and a "." or
+    ".." segment. Redundant separators collapse and a trailing slash is dropped so a directory
+    prefix compares identically on both the allowed and the touched side.
+    """
+    if not isinstance(raw, str) or not raw or raw.startswith("/") or "\\" in raw or "\x00" in raw:
+        raise WorkerFailure(
+            f"mutation path {raw!r} is not a safe repo-relative path", code="ownership_violation"
+        )
+    parts = [segment for segment in raw.split("/") if segment and segment != "."]
+    if not parts or any(segment == ".." for segment in parts):
+        raise WorkerFailure(
+            f"mutation path {raw!r} escapes the repository", code="ownership_violation"
+        )
+    return "/".join(parts)
+
+
+def _within_allowed(touched: str, allowed: frozenset[str]) -> bool:
+    """True when a touched path equals or sits under an allowed path or directory."""
+    return touched in allowed or any(touched.startswith(f"{prefix}/") for prefix in allowed)
+
+
+def _change_metadata(changes: list[dict[str, Any]], patch: bytes) -> dict[str, Any]:
+    """Summarize the touched paths' binary, rename, delete, add, and mode facts for the receipt."""
+    additions = deletions = renames = copies = mode_changes = 0
+    entries: list[dict[str, Any]] = []
+    for change in changes:
+        status = str(change["status"])
+        old_mode = str(change["old_mode"])
+        new_mode = str(change["new_mode"])
+        entry: dict[str, Any] = {
+            "status": status,
+            "path": change["path"],
+            "old_mode": old_mode,
+            "new_mode": new_mode,
+        }
+        if "destination" in change:
+            entry["destination"] = change["destination"]
+        entries.append(entry)
+        if status.startswith("A"):
+            additions += 1
+        elif status.startswith("D"):
+            deletions += 1
+        elif status.startswith("R"):
+            renames += 1
+        elif status.startswith("C"):
+            copies += 1
+        if old_mode not in {new_mode, "000000"} and new_mode != "000000":
+            mode_changes += 1
+    return {
+        "binary": b"GIT binary patch" in patch,
+        "additions": additions,
+        "deletions": deletions,
+        "renames": renames,
+        "copies": copies,
+        "mode_changes": mode_changes,
+        "changes": entries,
+    }
+
+
+def _capture_capsule_patch(
+    capsule: Path, source_sha: str, allowed_mutation_paths: Sequence[str]
+) -> dict[str, Any]:
+    """Stage every capsule change and produce one binary-safe patch against the baseline SHA.
+
+    The capsule is disposable, so ``git add -A`` is safe and lets a single diff against
+    source_sha carry tracked edits, additions, deletions, renames, and mode changes in one
+    replayable patch. Every touched path (both sides of a rename) must fall inside
+    allowed_mutation_paths or the capture is an ownership_violation; a git failure is a
+    patch_capture_failed and the caller keeps the capsule as recovery evidence.
+    """
+    root = capsule.resolve()
+    env = {**os.environ, "GIT_OPTIONAL_LOCKS": "0"}
+
+    def git(*args: str) -> bytes:
+        result = subprocess.run(["git", *args], cwd=root, capture_output=True, check=False, env=env)
+        if result.returncode != 0:
+            detail = result.stderr.decode(errors="replace").strip()
+            raise WorkerFailure(
+                f"capsule patch capture failed: git {' '.join(args)}: {detail}",
+                code="patch_capture_failed",
+            )
+        return result.stdout
+
+    git("add", "-A")
+    patch = git(
+        "diff",
+        "--binary",
+        "--full-index",
+        "--no-ext-diff",
+        "--no-textconv",
+        "-M",
+        "--cached",
+        source_sha,
+    )
+    raw = git("diff", "--raw", "-z", "-M", "--cached", source_sha)
+    changes = _parse_raw_diff(raw)
+    allowed = frozenset(_normalize_repo_path(entry) for entry in allowed_mutation_paths)
+    touched: set[str] = set()
+    for change in changes:
+        sides = [change["path"]]
+        if "destination" in change:
+            sides.append(change["destination"])
+        for side in sides:
+            if side["path_encoding"] != "utf8":
+                raise WorkerFailure(
+                    "capsule mutated a non-UTF-8 path outside its allowed set",
+                    code="ownership_violation",
+                )
+            normalized = _normalize_repo_path(side["path"])
+            if not _within_allowed(normalized, allowed):
+                raise WorkerFailure(
+                    f"capsule mutated {normalized!r} outside its allowed paths",
+                    code="ownership_violation",
+                )
+            touched.add(normalized)
+    return {
+        "patch": patch,
+        "patch_digest": hashlib.sha256(patch).hexdigest(),
+        "touched": sorted(touched),
+        "allowed": sorted(allowed),
+        "metadata": _change_metadata(changes, patch),
+        "empty": not patch,
+    }
+
+
+def _owned_baseline_digest(root: Path, allowed_mutation_paths: Sequence[str]) -> str:
+    """Digest the current content of the owned paths in the authoritative worktree.
+
+    A change to an owned file by anything other than this import drifts the digest, so the CAS
+    refuses rather than clobbering an external edit. Symlinks are hashed by their target string,
+    not followed, so an owned symlink cannot smuggle outside content into the baseline.
+    """
+    resolved = root.resolve()
+    allowed = sorted(frozenset(_normalize_repo_path(entry) for entry in allowed_mutation_paths))
+    hasher = hashlib.sha256()
+    for entry in allowed:
+        base = resolved / entry
+        targets: list[Path] = []
+        if base.is_symlink() or base.is_file():
+            targets = [base]
+        elif base.is_dir():
+            for directory, dirs, files in os.walk(base, followlinks=False):
+                dirs.sort()
+                targets.extend(Path(directory) / name for name in sorted(files))
+        if not targets:
+            hasher.update(f"{entry}\0absent\0".encode())
+            continue
+        for path in targets:
+            relative = path.relative_to(resolved).as_posix()
+            info = path.lstat()
+            if stat.S_ISLNK(info.st_mode):
+                content = os.readlink(path).encode(errors="surrogateescape")
+            else:
+                content = path.read_bytes()
+            hasher.update(relative.encode())
+            hasher.update(b"\0")
+            hasher.update(hashlib.sha256(content).digest())
+    return hasher.hexdigest()
+
+
+def _patch_application_state(target: Path, patch: bytes) -> str:
+    """Classify a captured patch as unapplied, applied, or partial at the authoritative target.
+
+    ``git apply --index --check`` succeeds only when the whole patch still applies; the same
+    check reversed succeeds only when it is already fully applied. Neither succeeding on a
+    non-empty patch is a partial or conflicting tree that must never be silently re-baselined.
+    """
+    if not patch:
+        return "applied"
+    env = {**os.environ, "GIT_OPTIONAL_LOCKS": "0"}
+
+    def check(*flags: str) -> bool:
+        result = subprocess.run(
+            ["git", "apply", "--index", "--check", *flags],
+            cwd=target,
+            input=patch,
+            capture_output=True,
+            check=False,
+            env=env,
+        )
+        return result.returncode == 0
+
+    if check():
+        return "unapplied"
+    if check("--reverse"):
+        return "applied"
+    return "partial"
+
+
+_CAS_FIELDS = (
+    "head",
+    "index",
+    "owned_baseline",
+    "dispatch_generation",
+    "route_snapshot",
+    "lease_fence",
+)
+# On an already-applied resume the index and owned files legitimately reflect this import, so
+# only the invariants an external actor could still move are re-checked.
+_EXTERNAL_CAS = ("head", "dispatch_generation", "route_snapshot", "lease_fence")
+
+
+def _cas_refusals(
+    expected: Mapping[str, Any], observed: Mapping[str, Any], fields: Sequence[str] = _CAS_FIELDS
+) -> tuple[str, ...]:
+    """Return the CAS fields that drifted between order issuance and import.
+
+    Any drift means the authoritative worktree is no longer the one the order was validated
+    against, so importing would re-baseline over an external change.
+    """
+    return tuple(field for field in fields if expected.get(field) != observed.get(field))
+
+
 _JOURNAL_ORDER = {
     "prepared": 0,
     "cloning": 1,
@@ -1542,9 +1761,10 @@ _JOURNAL_ORDER = {
     "cancelling": 3,
     "terminal": 4,
     "validated": 5,
-    "completed": 6,
-    "blocked": 6,
-    "quarantined": 6,
+    "importing": 6,
+    "completed": 7,
+    "blocked": 7,
+    "quarantined": 7,
 }
 
 
@@ -1978,6 +2198,160 @@ def _capsule_postcondition_ok(
     return True
 
 
+def _writer_import_lock_path(source_root: Path) -> Path:
+    """Locate the sole-writer import lock for a mutation domain.
+
+    The mutation domain is the authoritative worktree; the lock lives in its git-common-dir so
+    two processes importing into the same worktree serialize, and the lock file never appears in
+    the worktree's own git status.
+    """
+    resolved = source_root.resolve()
+    common = _git_bytes(resolved, "rev-parse", "--git-common-dir").strip()
+    common_path = Path(os.fsdecode(common))
+    if not common_path.is_absolute():
+        common_path = resolved / common_path
+    return common_path.resolve() / WRITER_IMPORT_LOCK_NAME
+
+
+def _import_capsule_patch(
+    source: Path,
+    *,
+    order: WorkOrder,
+    capture: Mapping[str, Any],
+    patch_path: Path,
+    expected: Mapping[str, Any],
+    observed_external: Mapping[str, Any],
+    journal: InvocationJournal,
+    lock_path: Path | None = None,
+) -> dict[str, Any]:
+    """Compare-and-swap the captured patch into the authoritative worktree.
+
+    Runs under the mutation domain's sole-writer lock (contention is writer_busy, never a
+    full-run block).
+
+    A fresh import (journal at validated) refuses with baseline_mismatch when any of the six
+    order invariants drifted, then applies the patch all-or-nothing with ``git apply --index``.
+    git apply validates every hunk before writing, so a rejected hunk leaves the worktree
+    byte-identical and is patch_import_conflict, and the capsule and patch survive as recovery
+    evidence.
+
+    Resuming an interrupted import (journal already at importing) never re-invokes the model and
+    is deterministic: an already-applied tree finalizes (re-checking only the external HEAD,
+    generation, route, and lease invariants, since the index and owned files legitimately reflect
+    this import), an unapplied tree rolls forward under the full CAS, and a genuinely partial tree
+    is indeterminate_write and is never re-baselined.
+    """
+    source = source.resolve()
+    patch = capture["patch"] if isinstance(capture["patch"], bytes) else bytes(capture["patch"])
+    lock = lock_path or _writer_import_lock_path(source)
+    env = {**os.environ, "GIT_OPTIONAL_LOCKS": "0"}
+    resuming = str((journal.read() or {}).get("state")) == "importing"
+    before = git_receipt(source)
+
+    def apply_patch() -> None:
+        if not patch:
+            return
+        applied = subprocess.run(
+            ["git", "apply", "--index"],
+            cwd=source,
+            input=patch,
+            capture_output=True,
+            check=False,
+            env=env,
+        )
+        if applied.returncode != 0:
+            raise WorkerFailure(
+                "captured patch does not apply cleanly: "
+                f"{applied.stderr.decode(errors='replace').strip()}",
+                code="patch_import_conflict",
+            )
+
+    try:
+        with flock_retry(lock):
+            journal.transition(
+                "importing",
+                import_lock=str(lock),
+                patch=str(patch_path),
+                capture={
+                    key: capture[key]
+                    for key in ("patch_digest", "touched", "allowed", "metadata", "empty")
+                },
+            )
+            observed = {
+                "head": _git_bytes(source, "rev-parse", "HEAD").strip().decode(),
+                "index": git_receipt(source)["index"]["sha256"],
+                "owned_baseline": _owned_baseline_digest(source, order.allowed_mutation_paths),
+                **{key: observed_external.get(key) for key in observed_external},
+            }
+            if not resuming:
+                drift = _cas_refusals(expected, observed)
+                if drift:
+                    raise WorkerFailure(
+                        f"authoritative {drift[0]} drifted since the order was issued",
+                        code="baseline_mismatch",
+                    )
+                apply_patch()
+                import_result = "applied"
+            else:
+                state = _patch_application_state(source, patch)
+                if state == "partial":
+                    raise WorkerFailure(
+                        "authoritative worktree holds a partially applied import",
+                        code="indeterminate_write",
+                    )
+                fields = _EXTERNAL_CAS if state == "applied" else _CAS_FIELDS
+                drift = _cas_refusals(expected, observed, fields)
+                if drift:
+                    raise WorkerFailure(
+                        f"authoritative {drift[0]} drifted since the order was issued",
+                        code="baseline_mismatch",
+                    )
+                if state == "applied":
+                    import_result = "resumed"
+                else:
+                    apply_patch()
+                    import_result = "applied"
+            after = git_receipt(source)
+            imported = subprocess.run(
+                [
+                    "git",
+                    "diff",
+                    "--binary",
+                    "--full-index",
+                    "--no-ext-diff",
+                    "--no-textconv",
+                    "-M",
+                    "--cached",
+                    order.source_sha,
+                ],
+                cwd=source,
+                capture_output=True,
+                check=False,
+                env=env,
+            )
+            receipt_body = {
+                "schema": CHANGE_RECEIPT_SCHEMA,
+                "baseline_digest": order.source_sha,
+                "patch": {
+                    "path": str(patch_path),
+                    "sha256": capture["patch_digest"],
+                    "length": len(patch),
+                },
+                "allowed_paths": list(capture["allowed"]),
+                "touched_paths": list(capture["touched"]),
+                "metadata": capture["metadata"],
+                "import_target": {"head_before": before["head"], "head_after": after["head"]},
+                "import_result": import_result,
+                "authoritative_diff_digest": hashlib.sha256(imported.stdout).hexdigest(),
+            }
+            return {**receipt_body, "digest": _digest(receipt_body)}
+    except LockContention as exc:
+        raise WorkerFailure(
+            "another writer holds the sole-writer import lock for this mutation domain",
+            code="writer_busy",
+        ) from exc
+
+
 class CognitiveWorkers:
     """Deep execution boundary for independently routed cognitive roles."""
 
@@ -2018,6 +2392,53 @@ class CognitiveWorkers:
             "quarantined": True,
             "quarantine_path": str(held),
         }
+
+    def _import_after_validation(
+        self, order: WorkOrder, source: Path, capsule: Path, journal: InvocationJournal
+    ) -> dict[str, Any]:
+        """Capture the capsule patch and compare-and-swap it into the authoritative worktree.
+
+        The captured patch is persisted next to the journal so an importing-state resume replays
+        the same bytes without the capsule; the commit-gate consumption of the returned change
+        receipt is a later phase, this only emits it.
+        """
+        invocation = self._invocation_dir(order.logical_invocation_id)
+        patch_path = invocation / "capsule-patch.bin"
+        current = journal.read() or {}
+        stored = current.get("capture")
+        if isinstance(stored, dict) and patch_path.exists():
+            capture = {**stored, "patch": patch_path.read_bytes()}
+        else:
+            capture = _capture_capsule_patch(
+                capsule, order.source_sha, order.allowed_mutation_paths
+            )
+            atomic_write_bytes(patch_path, capture["patch"], mode=0o400)
+        authoritative_before = cast(dict[str, Any], current.get("authoritative_before") or {})
+        expected = {
+            "head": order.source_sha,
+            "index": cast(dict[str, Any], authoritative_before.get("index", {})).get("sha256"),
+            "owned_baseline": current.get("owned_baseline_before"),
+            "dispatch_generation": order.stage_generation,
+            "route_snapshot": order.route_snapshot_digest,
+            "lease_fence": order.lease_fence,
+        }
+        # Phase 3 reads the live generation/route/lease from dispatch state; until then the order
+        # is both the expected and the observed value for those three, so only the git-derived
+        # HEAD/index/owned-baseline can drift here.
+        observed_external = {
+            "dispatch_generation": order.stage_generation,
+            "route_snapshot": order.route_snapshot_digest,
+            "lease_fence": order.lease_fence,
+        }
+        return _import_capsule_patch(
+            source,
+            order=order,
+            capture=capture,
+            patch_path=patch_path,
+            expected=expected,
+            observed_external=observed_external,
+            journal=journal,
+        )
 
     def run(self, order: WorkOrder, owner: OwnerProof) -> WorkOutcome:
         """Execute or recover one idempotent logical invocation.
@@ -2179,7 +2600,7 @@ class CognitiveWorkers:
 
         current = journal.read() or {}
         execution: ProviderExecution | None = None
-        if recovery_state in {"terminal", "validated"}:
+        if recovery_state in {"terminal", "validated", "importing"}:
             process_raw = current.get("process")
             if not isinstance(process_raw, dict):
                 journal.transition("quarantined", failure={"code": "recovery_required"})
@@ -2227,13 +2648,19 @@ class CognitiveWorkers:
             def command_factory(fresh: bool) -> list[str]:
                 return build_command(True) if fresh else first_command
 
-            journal.transition(
-                "running",
-                command_digest=_digest(first_command),
-                authoritative_before=authoritative_before,
-                capsule_before=capsule_before,
-                capsule_receipt=capsule_receipt,
-            )
+            running_fields: dict[str, Any] = {
+                "command_digest": _digest(first_command),
+                "authoritative_before": authoritative_before,
+                "capsule_before": capsule_before,
+                "capsule_receipt": capsule_receipt,
+            }
+            if policy.authority == "capsule_writer":
+                # The owned-file baseline is the CAS reference the import re-checks; capture it at
+                # launch, before the worker runs, so a later external edit to an owned file drifts.
+                running_fields["owned_baseline_before"] = _owned_baseline_digest(
+                    source, order.allowed_mutation_paths
+                )
+            journal.transition("running", **running_fields)
             try:
                 execution = run_provider_with_retry(
                     command_factory,
@@ -2271,7 +2698,7 @@ class CognitiveWorkers:
             )
 
         current = journal.read() or {}
-        if recovery_state == "validated":
+        if recovery_state in {"validated", "importing"}:
             raw_result = current.get("result")
             if not isinstance(raw_result, dict):
                 journal.transition("quarantined", failure={"code": "recovery_required"})
@@ -2350,7 +2777,15 @@ class CognitiveWorkers:
             raise WorkerFailure(
                 "planner output carried no worker session id", code="invalid_result"
             )
-        shutil.rmtree(capsule)
+        change_receipt: dict[str, Any] | None = None
+        if policy.authority == "capsule_writer":
+            # Dormant until a writer profile activates: the active gate above refuses every writer
+            # before this runs. On a capture/import failure the helper leaves the journal in
+            # importing (or validated) and we raise before disposal, so the capsule and patch
+            # survive as recovery evidence and a repeat run resumes without re-invoking the model.
+            change_receipt = self._import_after_validation(order, source, capsule, journal)
+        if capsule.exists():
+            shutil.rmtree(capsule)
         disposal = {
             "capsule": str(capsule),
             "absent": not capsule.exists(),
@@ -2399,24 +2834,27 @@ class CognitiveWorkers:
                 "quarantined": disposal["quarantined"],
             },
         }
+        receipts: dict[str, Any] = {
+            "route": route_receipt,
+            "route_acceptance": route_acceptance,
+            "capability": capability,
+            "capsule": capsule_receipt,
+            "process": asdict(process),
+            "physical_attempts": physical_attempts,
+            "command": cast(list[str], (journal.read() or {}).get("command", [])),
+            "authoritative_before": authoritative_before,
+            "authoritative_after": authoritative_after,
+            "disposal": disposal,
+        }
+        if change_receipt is not None:
+            receipts["change"] = change_receipt
         outcome = WorkOutcome(
             logical_invocation_id=order.logical_invocation_id,
             generation=order.generation,
             profile=order.profile,
             status="succeeded",
             result=result,
-            receipts={
-                "route": route_receipt,
-                "route_acceptance": route_acceptance,
-                "capability": capability,
-                "capsule": capsule_receipt,
-                "process": asdict(process),
-                "physical_attempts": physical_attempts,
-                "command": cast(list[str], (journal.read() or {}).get("command", [])),
-                "authoritative_before": authoritative_before,
-                "authoritative_after": authoritative_after,
-                "disposal": disposal,
-            },
+            receipts=receipts,
             run_id=order.run_id,
             stage=order.stage,
             substep=order.substep,
