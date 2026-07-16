@@ -1,6 +1,6 @@
 {
   "name": "flow",
-  "version": "0.111.10",
+  "version": "0.111.11",
   "description": "State-aware ticket-to-PR delivery for Claude Code. Bare /flow shows the cockpit; /flow <ticket|pr> starts, resumes, repairs, revises, or reports from durable evidence. Includes Jira or beads tracking, isolated worktrees, pluggable stages, compounding memory, and native collaboration-worker maintenance.",
   "author": {
     "name": "Victor De Simone",
