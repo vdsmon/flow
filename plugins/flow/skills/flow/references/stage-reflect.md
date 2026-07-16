@@ -182,7 +182,7 @@ The taxonomy is closed:
 
 3. For EACH extracted entry (0 or more), append to knowledge.jsonl:
    ```bash
-   .flow/runtimeFLOW memory-append \
+   FLOW_HARNESS="<harness>" "<facade>" memory-append \
      --type <LEARNED|DECISION|FACT|PATTERN|INVESTIGATION|DEVIATION> \
      --text "<entry body>" \
      --branch "$(git rev-parse --abbrev-ref HEAD)" \
@@ -204,7 +204,7 @@ The taxonomy is closed:
 
    - **AUTO-supersede ONLY when the disproof is ground truth** — the contradicting change is PRESENT in `final_diff` (this run itself changed the behavior the entry describes, not merely a guess that it looks stale). Append a NEW entry that cites this run / PR and states what is now true, supersedes-targeting the dead entry by its exact id:
      ```bash
-     .flow/runtimeFLOW memory-append        --type <FACT|LEARNED|DEVIATION>        --text "<what is now true; cite this run/PR>"        --branch "$(git rev-parse --abbrev-ref HEAD)"        --ticket <KEY>        --supersedes <recalled_entries[i].id>        --workspace-root .
+     FLOW_HARNESS="<harness>" "<facade>" memory-append        --type <FACT|LEARNED|DEVIATION>        --text "<what is now true; cite this run/PR>"        --branch "$(git rev-parse --abbrev-ref HEAD)"        --ticket <KEY>        --supersedes <recalled_entries[i].id>        --workspace-root .
      ```
      Use the exact `recalled_entries[i].id` for `--supersedes`. The `--type` respects the closed taxonomy — typically `FACT`/`LEARNED` for the corrected truth, or `DEVIATION` when the point is that the old entry was disproven.
    - **Anything ambiguous, indirect, or inference-based** — the entry merely looks stale, or the contradiction is NOT in `final_diff` — do NOT auto-supersede. Surface a one-line proposal note in the human-facing reflect output instead (`Proposed supersede: <id> — <why it may be stale>`), a binding skeptic correction the maintainer adjudicates. The auto path is reserved for diff-grounded disproof.

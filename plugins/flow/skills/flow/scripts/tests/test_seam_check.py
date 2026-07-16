@@ -287,6 +287,82 @@ def test_bare_script_filename_without_an_executable_surface_is_ignored() -> None
     assert seam_check.find_bare_script_invocations("t.md", text) == []
 
 
+# --- malformed runtime-facade token near-miss gate ---------------------------
+
+
+def test_malformed_runtime_token_flagged_in_shell_fence() -> None:
+    # The flow-lhhn corruption shape: a rename sweep mangled the facade path into
+    # `.flow/runtimeFLOW`, which `_FACADE_RE` cannot match, so the recipe silently dropped out of
+    # validation.
+    text = (
+        "```bash\n   .flow/runtimeFLOW memory-append --type FACT --text x --workspace-root .\n```\n"
+    )
+    problems = seam_check.malformed_runtime_token_problems("fixture.md", text)
+    assert len(problems) == 1
+    assert problems[0].level == "ERROR"
+    assert problems[0].doc == "fixture.md"
+    assert problems[0].line == 2
+    assert ".flow/runtimeFLOW" in problems[0].msg
+
+
+def test_malformed_runtime_token_narrative_prose_is_accepted() -> None:
+    text = "Adopt `<run_root>` as the run root and its `<run_root>/.flow/runtime/flow` facade.\n"
+    assert seam_check.malformed_runtime_token_problems("fixture.md", text) == []
+
+
+def test_malformed_runtime_token_text_layout_fence_is_accepted() -> None:
+    text = "```text\n.flow/runtime/{flow,skill-root,memory-root,layout-version}\n```\n"
+    assert seam_check.malformed_runtime_token_problems("fixture.md", text) == []
+
+
+def test_malformed_runtime_token_valid_facade_recipe_is_accepted() -> None:
+    text = (
+        "```bash\n"
+        'FLOW_HARNESS="<harness>" "<facade>" memory-append --type FACT --text x '
+        "--workspace-root .\n"
+        "```\n"
+    )
+    assert seam_check.malformed_runtime_token_problems("fixture.md", text) == []
+
+
+def test_malformed_runtime_token_second_token_on_same_line_is_not_hidden() -> None:
+    # _FACADE_RE's optional command group captures only the single token immediately after the
+    # facade path, so a runtime token further down the same line sits outside that match span and is
+    # still checked independently, regardless of any shell operator between them.
+    text = (
+        "```bash\n"
+        'FLOW_HARNESS="<harness>" "<facade>" dispatch next --ticket X '
+        ".flow/runtimeFLOW memory-append --type FACT\n"
+        "```\n"
+    )
+    problems = seam_check.malformed_runtime_token_problems("fixture.md", text)
+    assert len(problems) == 1
+    assert ".flow/runtimeFLOW" in problems[0].msg
+
+
+def test_malformed_runtime_token_sibling_runtime_file_in_shell_fence_is_accepted() -> None:
+    # Sibling runtime-surface files (skill-root, memory-root, layout-version) contain the
+    # runtime-directory substring but are not facade paths and can never match `_FACADE_RE`;
+    # only a glued-suffix corruption like `.flow/runtimeFLOW` is a real error.
+    text = (
+        "```bash\n"
+        'cat "<run_root>/.flow/runtime/skill-root"\n'
+        "VER=$(cat .flow/runtime/layout-version)\n"
+        "```\n"
+    )
+    assert seam_check.malformed_runtime_token_problems("fixture.md", text) == []
+
+
+def test_main_flags_malformed_runtime_token(monkeypatch, tmp_path) -> None:
+    fixture = tmp_path / "fixture.md"
+    fixture.write_text(
+        "```bash\n.flow/runtimeFLOW memory-append --type FACT --workspace-root .\n```\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(seam_check, "docs_to_check", lambda: [fixture])
+    assert seam_check.main([]) == 1
+
+
 def test_surface_of_real_script_has_subcommands_and_flags() -> None:
     surface = seam_check.surface_of("dispatch_stage.py")
     assert surface is not None

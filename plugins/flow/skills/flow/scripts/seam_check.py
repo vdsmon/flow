@@ -150,6 +150,18 @@ _ROLE_MEMBERSHIP_RE = re.compile(r"roles[`\s]*(?:includes?|contains?|has)\b")
 _ROLE_LITERAL_RE = re.compile(r"[\"']+([a-z][a-z0-9_]+)[\"']+")
 # An inline-code span: text between a pair of backticks on one line.
 _INLINE_SPAN_RE = re.compile(r"`([^`]*)`")
+# A whitespace-delimited token inside an executable recipe span (see _executable_recipe_spans). Only
+# a glued-suffix corruption of the runtime-directory substring (extra text pasted directly after
+# `.flow/runtime` with no separator, e.g. `.flow/runtimeFLOW`) is flagged; legitimate sibling
+# runtime files (`skill-root`, `memory-root`, `layout-version`) and bare directory mentions keep a
+# separator right after the substring and are never flagged.
+_RECIPE_TOKEN_RE = re.compile(r"\S+")
+_RUNTIME_SUBSTRING = ".flow/runtime"
+# Characters that may legitimately follow `_RUNTIME_SUBSTRING` inside a token: a path separator (a
+# sibling runtime file or a subdirectory), a closing quote/paren, or nothing (end of token).
+# Anything else means text was glued directly onto the runtime-dir substring with no separator, the
+# flow-lhhn corruption shape (`.flow/runtimeFLOW`).
+_RUNTIME_SUBSTRING_SEPARATORS = frozenset({"/", '"', "'", ")"})
 # A fenced-code block delimiter (``` or ~~~), ignoring leading whitespace.
 _FENCE_RE = re.compile(r"^\s*(```|~~~)")
 # Reusable docs use logical FLOW. Host-specific invocations belong only at the
@@ -410,6 +422,86 @@ def find_bare_script_invocations(doc_name: str, text: str) -> list[Invocation]:
                 )
             )
     return invocations
+
+
+def _executable_recipe_spans(text: str) -> list[tuple[int, str]]:
+    """Lines this checker treats as executable shell recipes.
+
+    A fenced ``bash``/``sh``/``shell``/``zsh`` line is a recipe by construction, the same convention
+    `find_bare_script_invocations` uses. An inline-code span outside any fence counts only when it
+    carries a long option, which keeps a bare citation like ``<run_root>/.flow/runtime/flow`` and a
+    non-shell text-layout fence out of the executable set.
+    """
+    spans: list[tuple[int, str]] = []
+    in_fence = False
+    shell_fence = False
+    for lineno, line in enumerate(text.splitlines(), start=1):
+        if _FENCE_RE.match(line):
+            if not in_fence:
+                marker = _FENCE_RE.match(line)
+                assert marker is not None
+                language = line[marker.end() :].strip().lower()
+                shell_fence = language in {"bash", "sh", "shell", "zsh"}
+                in_fence = True
+            else:
+                in_fence = False
+                shell_fence = False
+            continue
+        if in_fence and shell_fence:
+            spans.append((lineno, line))
+        elif not in_fence:
+            for match in _INLINE_SPAN_RE.finditer(line):
+                span = match.group(1)
+                if _FLAG_RE.search(span) is not None:
+                    spans.append((lineno, span))
+    return spans
+
+
+def _is_glued_runtime_corruption(token: str) -> bool:
+    """Whether `token` glues text directly onto the runtime-dir substring with no separator."""
+    start = token.find(_RUNTIME_SUBSTRING)
+    if start == -1:
+        return False
+    end = start + len(_RUNTIME_SUBSTRING)
+    if end == len(token):
+        return False
+    return token[end] not in _RUNTIME_SUBSTRING_SEPARATORS
+
+
+def malformed_runtime_token_problems(doc_name: str, text: str) -> list[Problem]:
+    """ERROR on a glued-suffix runtime-facade corruption in an executable recipe.
+
+    Scoped to `_executable_recipe_spans` so narrative prose and non-shell layout examples never
+    enter the scan. A candidate token must both glue text directly onto `.flow/runtime` with no
+    separator (`_is_glued_runtime_corruption`, the flow-lhhn shape: `.flow/runtimeFLOW`) and fall
+    outside every `_FACADE_RE` match span on the same line. Coverage is per match span, which
+    extends past the path to include an optional trailing `command` token; a runtime token separated
+    from a valid facade call by a shell operator (`&&`, `||`, `|`, `;`) or by more than one token of
+    whitespace still falls outside that span and is checked independently. Legitimate sibling
+    runtime files (`skill-root`, `memory-root`, `layout-version`) and bare directory mentions keep a
+    separator right after the substring, so `_is_glued_runtime_corruption` never flags them, even
+    when no facade match covers them.
+    """
+    problems: list[Problem] = []
+    for lineno, span in _executable_recipe_spans(text):
+        covered = [match.span() for match in _FACADE_RE.finditer(span)]
+        for token_match in _RECIPE_TOKEN_RE.finditer(span):
+            token = token_match.group(0)
+            if not _is_glued_runtime_corruption(token):
+                continue
+            start, end = token_match.span()
+            if any(cov_start <= start and end <= cov_end for cov_start, cov_end in covered):
+                continue
+            problems.append(
+                Problem(
+                    doc=doc_name,
+                    line=lineno,
+                    level="ERROR",
+                    msg=f"malformed runtime facade token (text glued onto .flow/runtime): {token}",
+                    raw=span.strip(),
+                )
+            )
+    return problems
 
 
 def stale_direct_invocation_problems(invocations: list[Invocation]) -> list[Problem]:
@@ -1536,6 +1628,7 @@ def main(argv: list[str]) -> int:
         problems.extend(host_specific_invocation_problems(doc.name, text))
         problems.extend(stale_direct_invocation_problems(direct))
         problems.extend(facade_context_problems(facade))
+        problems.extend(malformed_runtime_token_problems(doc.name, text))
 
     for inv in all_invs:
         problems.extend(validate(inv))
