@@ -808,6 +808,27 @@ def test_reap_red_main_holds_and_files_p0(tmp_path):
     assert "deadbeef" in title
     assert "lint-and-test" in title
     assert "P0" in creates[0]
+    assert out["main_red_p0"]["action"] == "filed"
+
+
+def test_reap_dry_run_red_main_reports_would_file_and_writes_nothing(tmp_path):
+    # dry-run gates the whole filing call (dedup scan included, mirroring senses_deadman.deadman)
+    # and returns the would-file record instead; classification and the main-CI probe are
+    # unaffected.
+    ws = _marked_ws(tmp_path)
+    run, calls = _red_main_runner(
+        prs=[_pr(1, "flow-a")],
+        evolve_list=[{"id": "flow-a", "labels": ["evolve"]}],
+        open_beads=[],
+    )
+    out = er.reap(ws, runner=run, dry_run=True)
+    assert [a for a in calls if a[:2] == ["bd", "create"]] == []
+    assert out["main_red_p0"] == {
+        "action": "would_file",
+        "sha": "deadbeef",
+        "failing_checks": ["lint-and-test"],
+    }
+    assert {e["key"] for e in out["held_main_red"]} == {"flow-a"}
 
 
 def test_reap_red_main_dedups_when_p0_already_open(tmp_path):
@@ -821,6 +842,7 @@ def test_reap_red_main_dedups_when_p0_already_open(tmp_path):
     assert {e["key"] for e in out["held_main_red"]} == {"flow-a"}
     creates = [a for a in calls if a[:2] == ["bd", "create"]]
     assert creates == []  # an open P0 already covers this; do not refile
+    assert out["main_red_p0"]["action"] == "skipped_open"
 
 
 def test_reap_green_main_files_no_p0_and_merges(tmp_path):
@@ -835,6 +857,7 @@ def test_reap_green_main_files_no_p0_and_merges(tmp_path):
     assert {e["key"] for e in out["merge"]} == {"flow-a"}
     assert out["held_main_red"] == []
     assert [a for a in calls if a[:2] == ["bd", "create"]] == []
+    assert out["main_red_p0"]["action"] == "none"
 
 
 # ---- _labels_index: no silent truncation to bd's default --limit 50 (flow-8zdy) ----
@@ -902,7 +925,10 @@ def test_reap_does_not_truncate_label_index_orphan(tmp_path):
     # green non-hot DIRTY -> blocked (reason "DIRTY"); the orphan must not vanish
     # from every bucket (the reap safety-net must still classify it).
     assert {e["key"] for e in out["blocked"]} == {"flow-orph"}
-    assert "flow-orph" in {e["key"] for bucket in out.values() for e in bucket}
+    # only list values are PR buckets; main_red_p0 is a dict-valued report key.
+    assert "flow-orph" in {
+        e["key"] for bucket in out.values() if isinstance(bucket, list) for e in bucket
+    }
 
 
 def test_file_main_red_p0_dedup_scan_is_unlimited():
