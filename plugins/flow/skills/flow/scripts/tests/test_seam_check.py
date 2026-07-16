@@ -559,6 +559,44 @@ def test_live_all_exact_post_plan_routes_activate_only_generic_stays_shadow() ->
     assert "never fall back to a native" in do_ref
 
 
+def _evolution_drain_section() -> str:
+    text = (seam_check.SKILL_ROOT / "references" / "command-maintain.md").read_text(
+        encoding="utf-8"
+    )
+    start = text.index("## `FLOW maintain evolution drain")
+    end = text.index("\n## `FLOW maintain worktrees clean")
+    return text[start:end]
+
+
+def test_live_evolution_drain_section_invokes_both_evolution_facades() -> None:
+    """`FLOW maintain evolution drain` must call both the reap and the decide seam,
+    each resolving to its actual script, with zero facade-context errors."""
+    section = _evolution_drain_section()
+    invocations = seam_check.find_facade_invocations("command-maintain.md", section)
+    by_command = {inv.facade_command: inv for inv in invocations}
+
+    assert "evolve-reap" in by_command
+    assert "evolve-drain" in by_command
+    assert by_command["evolve-reap"].script == "evolve_reap.py"
+    assert by_command["evolve-drain"].script == "evolve_drain.py"
+
+    for inv in invocations:
+        assert [p for p in seam_check.validate(inv) if p.level == "ERROR"] == []
+    assert seam_check.facade_context_problems(invocations) == []
+
+
+def test_live_evolution_drain_section_pins_dry_run_boundary_and_main_red_exception() -> None:
+    """Dry-run must stop after reporting classifications; the reaper's existing
+    best-effort deduplicated main-red P0 alert is the sole permitted write."""
+    flat = " ".join(_evolution_drain_section().split())
+
+    assert "would-merge" in flat
+    assert "would-launch" in flat
+    assert "would-recover" in flat
+    assert "main-ci-red" in flat
+    assert "no merge, tracker" in flat.lower()
+
+
 def test_live_init_carries_an_absolute_answers_path_across_calls() -> None:
     init_ref = (seam_check.SKILL_ROOT / "references" / "command-workspace.md").read_text(
         encoding="utf-8"

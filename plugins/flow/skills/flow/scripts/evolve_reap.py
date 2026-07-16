@@ -12,10 +12,14 @@ rather than trusting GitHub. CI runs on `push` + every `pull_request`, so a PR's
 while it is still a draft. This classify can confirm green here, and the verb marks the PR ready
 right before merging.
 
-This module is pure classification (no side effects). The
-`FLOW maintain evolution drain` reap step performs the merge: `gh pr ready` (if draft) then
-`gh pr merge --squash` over the `merge` set. The remote branch is deleted separately via
-`git push origin --delete`. `--delete-branch` is dropped because
+`classify` is pure (no side effects). `reap()` is the CLI-side read: it gathers PR/lease/main-CI
+evidence via `gh`/`bd` and may file the deduplicated main-red P0 (see `_file_main_red_p0`), and that
+alert fires from inside `reap()` itself, including when the public dry-run classification path
+calls it, since it lives in the read side, not behind a delivery-mutation gate. The restored
+`FLOW maintain evolution drain` owner loop (`references/command-maintain.md`) consumes the `merge`
+bucket and performs the actual side effects: `forge mark-ready` (if draft) then `forge merge
+--squash` over each entry, then closes the bead + covers through the tracker seam and deletes the
+remote branch through the forge seam. `--delete-branch` is dropped from the merge call because
 the still-registered worktree holds the local branch checked out, which makes gh's branch-delete
 step fail and an otherwise-clean merge exit 1.
 
@@ -36,7 +40,7 @@ probe error all resume normally. Anything else lands in not_green / skipped_hot 
 blocked / held_main_red / ignored.
 
 CLI:
-  evolve_reap.py --workspace-root <dir>
+  evolve_reap.py --workspace-root <dir> [--include-proposals]
 
 Exit codes:
   0 = ok (prints the classification JSON)

@@ -210,13 +210,132 @@ hot work.
 
 Each bounded loop turn:
 
-1. classify existing PRs for merge, hold, failure, or main-branch-red;
-2. re-check lease liveness immediately before every merge or reap;
-3. merge only green, permitted evolution PRs; preserve hot/guard holds for review;
-4. checkpoint and recover stranded pre-PR work as in backlog drain;
-5. classify the next launch batch, register fleet entries, launch host-native workers,
-   and wait/reclassify;
-6. stop at `done` or the configured iteration bound and report all residual work.
+1. Reap-classify existing PRs through the reap seam, forwarding `--include-proposals`
+   whenever the public invocation carries it — both classifiers MUST see the same
+   flag, or the launch and reap populations diverge:
+
+   ```bash
+   FLOW_HARNESS="<harness>" "<facade>" evolve-reap --workspace-root . [--include-proposals]
+   ```
+
+   Buckets: `merge`, `not_green`, `skipped_hot`, `skipped_live`, `blocked`,
+   `held_main_red`. `evolve-reap` probes main's OWN CI health every turn and, when main
+   is genuinely red, routes every would-be merge into `held_main_red` and may file its
+   existing best-effort, deduplicated `main-ci-red` P0 tracker alert — this lives
+   inside the classification call itself, so it fires on the dry-run path too (see
+   Dry-run below).
+
+2. Decide the launch/recover/wait/done action through the drain seam (`evolve-drain`,
+   same `--include-proposals` forwarding). On `--dry-run` this runs right here, after
+   step 1 (see Dry-run below). On a real turn it instead runs after the merge set is
+   fully processed (see "Non-dry-run: decide the launch/recover/wait/done action")
+   — a merge executed this turn frees the PR-cap backpressure `evolve-drain` counts
+   against, and deciding on the pre-merge open-PR count could return `done` while
+   that freed capacity sits unused.
+
+### Dry-run
+
+`--dry-run` runs both classifications: step 1 above, then step 2 immediately:
+
+```bash
+FLOW_HARNESS="<harness>" "<facade>" evolve-drain --workspace-root . [--include-proposals]
+```
+
+Reports `action` (`launch`/`recover`/`wait`/`done`), `launch`, `stranded_pre_pr`, and
+`parked`. Dry-run then reports the would-merge set (the reap `merge` bucket), the
+would-launch set (the drain `launch` batch), and the would-recover set (the drain
+`stranded_pre_pr` list), then stops. It performs NO merge, tracker write, fleet
+registration, worktree reaping, or worker launch. The one exception, unchanged from
+step 1, is `evolve-reap`'s own best-effort, deduplicated `main-ci-red` P0 alert when
+main CI is genuinely red — every other write below belongs to the non-dry-run branch
+only.
+
+### Non-dry-run: reap the `merge` set
+
+For each entry:
+
+1. Re-check its lease liveness immediately before mutating anything — a classification
+   goes stale the instant a parked run resumes:
+
+   ```bash
+   FLOW_HARNESS="<harness>" "<facade>" fleet is-live --key "<key>" --workspace-root .
+   ```
+
+   Exit 0 (live) withdraws the candidate for this turn, the same as `skipped_live`.
+
+2. When `is_hot`, first quiesce every other evolve run: `evolve-reap`'s isolation only
+   serializes hot PRs within one classification pass, not across concurrent
+   maintenance drains, so the operator must confirm no sibling drain is mid-hot-pass
+   before merging. Report an inability to quiesce as a hold; never merge past it.
+
+3. When `is_hot`, run the independent guard-property review exactly as
+   `references/stage-merge.md` §2 describes: a fresh reviewer, not the diff's author,
+   asked to REFUTE against the same guard properties. A `property_removed: true`
+   verdict, or any reviewer failure, holds the PR (report it `held_guard`); only a
+   clean verdict proceeds.
+
+4. Mark a draft ready, then squash-merge, through the forge seam:
+
+   ```bash
+   FLOW_HARNESS="<harness>" "<facade>" forge --workspace-root . mark-ready --pr "<pr>"
+   FLOW_HARNESS="<harness>" "<facade>" forge --workspace-root . merge --pr "<pr>" --squash
+   ```
+
+5. Only once the merge call reports success: close the lead ticket and every key in
+   `covers` through the tracker seam,
+
+   ```bash
+   FLOW_HARNESS="<harness>" "<facade>" tracker --workspace-root . transition --key "<key>" --to-state closed
+   ```
+
+   observe the ship event exactly as `references/stage-reflect.md` §Step 6 describes
+   when the orphaned run's own reflect stage never recorded it, delete the remote
+   branch,
+
+   ```bash
+   FLOW_HARNESS="<harness>" "<facade>" forge --workspace-root . delete-branch --branch "<branch>"
+   ```
+
+   and reap the local worktree:
+
+   ```bash
+   FLOW_HARNESS="<harness>" "<facade>" worktree reap --ticket "<key>" --main-root .
+   ```
+
+   A merge-tool failure closes nothing and leaves the PR for a later turn. A
+   post-merge close/observe/branch-delete/reap hiccup is best-effort — warn and
+   continue, since the diff is already merged and none of these steps is what makes
+   that safe.
+
+Leave `not_green`, `blocked`, `skipped_live`, `skipped_hot`, and `held_main_red`
+untouched; they are not this turn's problem.
+
+### Non-dry-run: decide the launch/recover/wait/done action
+
+Run step 2 now, only after the merge set above is fully processed, so a productive
+merge turn cannot report `done` on backpressure the merges just freed:
+
+```bash
+FLOW_HARNESS="<harness>" "<facade>" evolve-drain --workspace-root . [--include-proposals]
+```
+
+Reports `action` (`launch`/`recover`/`wait`/`done`), `launch`, `stranded_pre_pr`, and
+`parked`.
+
+### Non-dry-run: consume the drain decision
+
+- `launch`: register every key in the durable fleet before creating its worker, then
+  launch exactly as `FLOW maintain backlog drain` step 3, scoped to the evolution
+  batch the classifier chose.
+- `recover`: for each key in `stranded_pre_pr`, re-check its lease liveness, then reap
+  its dirty worktree (the reap facade checkpoints uncommitted work to a
+  `flow-rescue/*` ref before removing anything) only after the checkpoint succeeds,
+  then reopen the bead for one fresh launch next turn — the same shape as backlog
+  drain step 4. A repeated deterministic strand becomes blocked with evidence rather
+  than looping forever.
+- `wait`: wait on owner handles when available and durable lease/fleet/PR changes in
+  all cases, exactly as backlog drain step 5.
+- `done`: report merged, delivered, parked, recovered, blocked, and held work.
 
 Tier and model hints are policy inputs, not worker identity. Claude Code may apply a
 supported Claude model hint; Codex inherits the active model while preserving the
@@ -225,8 +344,7 @@ one hot slot.
 
 `--include-proposals` deliberately widens the ready set to proposal tickets and thus
 permits unattended delivery of judgment work. Surface that risk in the initial and
-final report. `--dry-run` performs classification and shows merge/launch/recovery
-sets, but performs no merge, tracker write, fleet registration, reaping, or launch.
+final report.
 
 Do not update an installed plugin or advance the maintainer checkout while any base
 or revision run is live. The scheduler proves this with
