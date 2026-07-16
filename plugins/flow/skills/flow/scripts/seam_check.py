@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import ast
 import hashlib
+import os
 import re
 import shlex
 import subprocess
@@ -471,6 +472,13 @@ def _run_help(script: Path, sub: str | None) -> str | None:
     if sub:
         argv.append(sub)
     argv.append("--help")
+    # argparse colorizes --help on 3.14+ (PYTHON_COLORS/FORCE_COLOR win over a piped
+    # stdout) and ANSI defeats _VALUE_OPTION_RE, so probes force a plain-text child
+    # (flow-nmnb).
+    env = os.environ.copy()
+    for var in ("FORCE_COLOR", "PYTHON_COLORS", "CLICOLOR_FORCE", "CLICOLOR"):
+        env.pop(var, None)
+    env["NO_COLOR"] = "1"
     try:
         cp = subprocess.run(
             argv,
@@ -479,6 +487,7 @@ def _run_help(script: Path, sub: str | None) -> str | None:
             text=True,
             timeout=30,
             check=False,
+            env=env,
         )
     except (OSError, subprocess.TimeoutExpired):
         return None

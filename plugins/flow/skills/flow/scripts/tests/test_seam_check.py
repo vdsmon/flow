@@ -9,6 +9,11 @@ relies on.
 from __future__ import annotations
 
 import copy
+import os
+import shutil
+import subprocess
+
+import pytest
 
 import agent_routes
 import seam_check
@@ -296,6 +301,50 @@ def test_surface_of_global_flag_before_subcommand() -> None:
     assert surface is not None
     assert "get" in surface.subcommands
     assert "--key" in surface.all_sub_flags()
+
+
+def test_value_flag_probe_ignores_force_color() -> None:
+    # The pytest process interpreter is not necessarily the pinned Python 3.14+ that
+    # argparse colorizes --help under; resolve the PATH-pinned interpreter directly
+    # (mise carries 3.14.6) instead of gating on sys.version_info, which is always
+    # <3.14 under the pipx-pytest venv and would permanently skip this test (flow-nmnb).
+    python3 = shutil.which("python3")
+    if python3 is None:
+        pytest.skip("no python3 on PATH")
+        return
+    probe = subprocess.run(
+        [python3, "-c", "import sys; print(f'{sys.version_info[0]}.{sys.version_info[1]}')"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if probe.returncode != 0:
+        pytest.skip("could not determine PATH python3 version")
+    major, minor = (int(part) for part in probe.stdout.strip().split("."))
+    if (major, minor) < (3, 14):
+        pytest.skip("PATH python3 is older than 3.14; argparse does not colorize --help")
+
+    # Runs seam_check.value_flags_of in-process under the 3.14+ interpreter so its
+    # own _run_help subprocess call inherits sys.executable == this interpreter, and
+    # the env scrub inside _run_help (not this test's env) is what makes it pass.
+    snippet = (
+        "import seam_check\n"
+        "print('--workspace-root' in seam_check.value_flags_of('tracker_cli.py'))\n"
+    )
+    env = dict(os.environ)
+    env.pop("NO_COLOR", None)
+    env["FORCE_COLOR"] = "1"
+    env["PYTHON_COLORS"] = "1"
+    result = subprocess.run(
+        [python3, "-c", snippet],
+        cwd=seam_check.SCRIPTS_DIR,
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "True"
 
 
 def test_validate_flags_unknown_flag_as_error() -> None:
