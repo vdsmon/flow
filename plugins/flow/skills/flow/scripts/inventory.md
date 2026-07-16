@@ -209,7 +209,9 @@ Every explicit route is a complete `harness`, `model`, and `effort` triple. Publ
 harness values are `claude_code` and `codex`. A profile defines either one common
 route or a `by_owner` table; mixing them or omitting a field is invalid.
 
+<!-- flow:agent-route-profiles:begin -->
 Agent route profiles: `planner`, `plan_assessor`, `implementer`, `e2e`, `code_reviewer`, `diff_reviewer`, `guard_reviewer`, `review_fixer`, `revision_fixer`, `review_brief_author`, `reflector`, `machinery_fixer`
+<!-- flow:agent-route-profiles:end -->
 
 ```toml
 [agents.planner]

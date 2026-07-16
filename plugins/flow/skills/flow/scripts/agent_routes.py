@@ -747,6 +747,20 @@ def render_default_routes_toml() -> str:
     return render_route_config(default_route_config())
 
 
+INVENTORY_PROFILES_BEGIN = "<!-- flow:agent-route-profiles:begin -->"
+INVENTORY_PROFILES_END = "<!-- flow:agent-route-profiles:end -->"
+
+
+def render_inventory_profiles_block() -> str:
+    """Render the marker-delimited inventory.md profile enumeration."""
+    enumeration = ", ".join(f"`{profile}`" for profile in PROFILES)
+    return (
+        f"{INVENTORY_PROFILES_BEGIN}\n"
+        f"Agent route profiles: {enumeration}\n"
+        f"{INVENTORY_PROFILES_END}\n"
+    )
+
+
 def migrate(workspace_root: Path, *, apply: bool, confirm: bool = False) -> dict[str, Any]:
     """Propose or atomically append explicit routes for a legacy workspace."""
     root = workspace_root.expanduser().resolve()
@@ -882,6 +896,8 @@ if __name__ == "__main__":
 
 __all__ = [
     "EFFORTS",
+    "INVENTORY_PROFILES_BEGIN",
+    "INVENTORY_PROFILES_END",
     "PROFILES",
     "PUBLIC_HARNESSES",
     "RouteError",
@@ -896,6 +912,7 @@ __all__ = [
     "normalize_owner_harness",
     "parse_route_overrides",
     "render_default_routes_toml",
+    "render_inventory_profiles_block",
     "render_migration_routes_toml",
     "render_route_config",
     "resolve",

@@ -8,10 +8,10 @@ relies on.
 
 from __future__ import annotations
 
-import copy
 import os
 import shutil
 import subprocess
+import tomllib
 
 import pytest
 
@@ -1338,7 +1338,7 @@ def test_live_role_citations_all_in_registry() -> None:
     assert seam_check.role_literal_drift() == []
 
 
-# --- universal route-contract gate -----------------------------------------
+# --- committed route-surface staleness gate ---------------------------------
 
 
 def test_live_route_contract_surfaces_are_aligned() -> None:
@@ -1349,19 +1349,15 @@ def test_cognitive_worker_design_provenance_is_exact() -> None:
     assert seam_check.cognitive_worker_design_drift() == []
 
 
-def test_route_contract_flags_a_profile_missing_from_stage_composition() -> None:
-    execution = copy.deepcopy(agent_routes.stage_execution_contract())
-    del execution["reflect"]["substeps"]["machinery_fix"]
-
-    drift = seam_check.route_contract_drift(stage_execution=execution)
-
-    assert any("machinery_fixer" in problem and "stage composition" in problem for problem in drift)
+def test_live_inventory_block_equals_its_renderer() -> None:
+    inventory = (seam_check.SCRIPTS_DIR / "inventory.md").read_text(encoding="utf-8")
+    assert agent_routes.render_inventory_profiles_block().rstrip("\n") in inventory
 
 
-def test_route_contract_treats_an_explicit_empty_stage_map_as_empty() -> None:
-    drift = seam_check.route_contract_drift(stage_execution={})
-
-    assert any("absent from stage composition" in problem for problem in drift)
+def test_live_workspace_agents_pin_the_rendered_defaults() -> None:
+    workspace_path = seam_check.SKILL_ROOT.parents[3] / ".flow" / "workspace.toml"
+    agents = tomllib.loads(workspace_path.read_text(encoding="utf-8"))["agents"]
+    assert agent_routes.render_route_config(agents) == agent_routes.render_default_routes_toml()
 
 
 def test_route_contract_rejects_partial_self_workspace_after_capsule_activation() -> None:
@@ -1376,20 +1372,54 @@ effort = "xhigh"
     assert any("self-workspace route catalog mismatch" in detail for detail in drift)
 
 
-def test_route_contract_flags_a_deterministic_stage_with_a_model() -> None:
-    execution = copy.deepcopy(agent_routes.stage_execution_contract())
-    execution["commit"]["model"] = "opus"
-
-    drift = seam_check.route_contract_drift(stage_execution=execution)
-
-    assert any("commit" in problem and "model=none" in problem for problem in drift)
-
-
-def test_route_contract_flags_inventory_catalog_drift() -> None:
-    inventory = "Agent route profiles: " + ", ".join(
-        profile for profile in agent_routes.PROFILES if profile != "reflector"
+def test_route_contract_rejects_an_unknown_workspace_profile() -> None:
+    extra = (
+        agent_routes.render_default_routes_toml()
+        + '\n[agents.mystery]\nharness = "codex"\nmodel = "gpt-5.6-sol"\neffort = "high"\n'
     )
 
-    drift = seam_check.route_contract_drift(inventory_text=inventory)
+    drift = seam_check.route_contract_drift(workspace_toml=extra)
 
-    assert any("inventory" in problem and "reflector" in problem for problem in drift)
+    assert any("mystery" in detail and "not a known profile" in detail for detail in drift)
+
+
+def test_route_contract_flags_a_changed_workspace_default_value() -> None:
+    edited = agent_routes.render_default_routes_toml().replace(
+        'model = "gpt-5.6-sol"', 'model = "gpt-5.6-luna"', 1
+    )
+
+    drift = seam_check.route_contract_drift(workspace_toml=edited)
+
+    assert drift == ["self-workspace routes do not canonicalize to the rendered defaults"]
+
+
+def test_route_contract_flags_a_hand_edited_inventory_block() -> None:
+    stale = agent_routes.render_inventory_profiles_block().replace("`reflector`, ", "")
+
+    drift = seam_check.route_contract_drift(inventory_text="# inventory\n\n" + stale)
+
+    assert any("inventory" in detail and "stale" in detail for detail in drift)
+
+
+def test_route_contract_fails_closed_on_missing_inventory_markers() -> None:
+    drift = seam_check.route_contract_drift(inventory_text="Agent route profiles: `planner`\n")
+
+    assert any("marker" in detail for detail in drift)
+
+
+def test_route_contract_fails_closed_on_duplicate_inventory_markers() -> None:
+    block = agent_routes.render_inventory_profiles_block()
+
+    drift = seam_check.route_contract_drift(inventory_text=block + "\n" + block)
+
+    assert any("marker" in detail for detail in drift)
+
+
+def test_route_contract_gate_never_mutates_the_committed_surfaces() -> None:
+    inventory_path = seam_check.SCRIPTS_DIR / "inventory.md"
+    workspace_path = seam_check.SKILL_ROOT.parents[3] / ".flow" / "workspace.toml"
+    before = (inventory_path.read_bytes(), workspace_path.read_bytes())
+
+    assert seam_check.route_contract_drift() == []
+
+    assert (inventory_path.read_bytes(), workspace_path.read_bytes()) == before
