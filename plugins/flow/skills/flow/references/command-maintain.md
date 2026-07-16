@@ -211,18 +211,20 @@ hot work.
 Each bounded loop turn:
 
 1. Reap-classify existing PRs through the reap seam, forwarding `--include-proposals`
-   whenever the public invocation carries it — both classifiers MUST see the same
-   flag, or the launch and reap populations diverge:
+   whenever the public invocation carries it (both classifiers MUST see the same
+   flag, or the launch and reap populations diverge) and forwarding `--dry-run` the
+   same way:
 
    ```bash
-   FLOW_HARNESS="<harness>" "<facade>" evolve-reap --workspace-root . [--include-proposals]
+   FLOW_HARNESS="<harness>" "<facade>" evolve-reap --workspace-root . [--include-proposals] [--dry-run]
    ```
 
    Buckets: `merge`, `not_green`, `skipped_hot`, `skipped_live`, `blocked`,
-   `held_main_red`. `evolve-reap` probes main's OWN CI health every turn and, when main
-   is genuinely red, routes every would-be merge into `held_main_red` and may file its
-   existing best-effort, deduplicated `main-ci-red` P0 tracker alert — this lives
-   inside the classification call itself, so it fires on the dry-run path too (see
+   `held_main_red`, plus the `main_red_p0` record. `evolve-reap` probes main's OWN CI
+   health every turn and, when main is genuinely red, routes every would-be merge into
+   `held_main_red`. Without `--dry-run` it also files its best-effort, deduplicated
+   `main-ci-red` P0 tracker alert; with `--dry-run` it files nothing and `main_red_p0`
+   instead carries the would-file record naming the failing sha + check(s) (see
    Dry-run below).
 
 2. Decide the launch/recover/wait/done action through the drain seam (`evolve-drain`,
@@ -243,12 +245,11 @@ FLOW_HARNESS="<harness>" "<facade>" evolve-drain --workspace-root . [--include-p
 
 Reports `action` (`launch`/`recover`/`wait`/`done`), `launch`, `stranded_pre_pr`, and
 `parked`. Dry-run then reports the would-merge set (the reap `merge` bucket), the
-would-launch set (the drain `launch` batch), and the would-recover set (the drain
-`stranded_pre_pr` list), then stops. It performs NO merge, tracker write, fleet
-registration, worktree reaping, or worker launch. The one exception, unchanged from
-step 1, is `evolve-reap`'s own best-effort, deduplicated `main-ci-red` P0 alert when
-main CI is genuinely red — every other write below belongs to the non-dry-run branch
-only.
+would-launch set (the drain `launch` batch), the would-recover set (the drain
+`stranded_pre_pr` list), and, when main CI is genuinely red, "would file P0:
+<sha> <failing checks>" (from the reap `main_red_p0` record), then stops. It performs
+NO merge, tracker write, fleet registration, worktree reaping, or worker launch, with
+no exceptions: every write belongs to the non-dry-run branches below.
 
 ### Non-dry-run: reap the `merge` set
 

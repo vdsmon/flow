@@ -585,16 +585,21 @@ def test_live_evolution_drain_section_invokes_both_evolution_facades() -> None:
     assert seam_check.facade_context_problems(invocations) == []
 
 
-def test_live_evolution_drain_section_pins_dry_run_boundary_and_main_red_exception() -> None:
-    """Dry-run must stop after reporting classifications; the reaper's existing
-    best-effort deduplicated main-red P0 alert is the sole permitted write."""
+def test_live_evolution_drain_section_pins_dry_run_boundary_and_would_file_report() -> None:
+    """Dry-run must stop after reporting classifications with NO tracker write: `--dry-run` gets
+    forwarded to `evolve-reap`, which reports the would-file main-red P0 instead of filing it. The
+    old documented exception wording must be gone."""
     flat = " ".join(_evolution_drain_section().split())
 
     assert "would-merge" in flat
     assert "would-launch" in flat
     assert "would-recover" in flat
     assert "main-ci-red" in flat
+    assert "would file P0" in flat
+    assert "evolve-reap --workspace-root . [--include-proposals] [--dry-run]" in flat
     assert "no merge, tracker" in flat.lower()
+    assert "fires on the dry-run path too" not in flat
+    assert "one exception" not in flat.lower()
 
 
 def test_live_init_carries_an_absolute_answers_path_across_calls() -> None:
