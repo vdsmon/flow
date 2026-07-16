@@ -44,7 +44,7 @@ roots, stop for authorization rather than escaping the sandbox.
 | Trigger | `/flow` | `$flow:flow` | installed skill equivalent |
 | Plan gate | native plan mode | native Plan mode when active, else turn boundary | turn boundary |
 | Workspace | native switch plus absolute binding | explicit absolute binding | native switch if real, else explicit binding |
-| Worker | native collaboration agent, plus the exact read-only CLI planner route | native collaboration agent, plus the exact read-only CLI planner route | independent call or documented inline behavior |
+| Worker | native collaboration agent, plus every exact CLI route (planner, read-only post-plan profiles, disposable-capsule E2E writer, importing writers, read-only machinery_fixer) | native collaboration agent, plus every exact CLI route (planner, read-only post-plan profiles, disposable-capsule E2E writer, importing writers, read-only machinery_fixer) | independent call or documented inline behavior |
 | Exact write | native file writer | rooted safe edit/write | exact writer or collision-safe fallback |
 | Wait | native owning-session wait | native owning-session wait | bounded foreground poll |
 | Input | native question surface | plain question and wait | plain question and wait |
@@ -53,11 +53,10 @@ roots, stop for authorization rather than escaping the sandbox.
 
 Do not infer the harness from ambient environment. The adapter supplies it. Public
 route configuration uses `claude_code` and `codex`; Flow normalizes the ambient
-`claude-code` adapter name at the boundary. The configured, built-in, or overridden
-planner may activate through an exact structured CLI receipt on either owner harness.
-Every non-planner profile remains a desired shadow route in this increment, on both
-owner harnesses, even when a native response matches its model and effort. Existing
-post-plan handlers continue to inherit the active owner model or run inline.
+`claude-code` adapter name at the boundary. Every exact route, planner and post-plan
+alike, activates through an exact structured CLI receipt on either owner harness. Only
+the generic adapter leaves a route shadowed, its native response never substituting
+for a receipt-bound worker.
 
 ## Discovery and runtime
 

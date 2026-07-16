@@ -3,9 +3,11 @@
 ## Agent-route workspace contract
 
 Initialized workspaces carry all twelve explicit route profiles. New exact snapshots
-can activate the seven read-only profiles; generic owners and every writer/E2E profile
-remain shadowed. Repair and validation reject a partial self-workspace catalog because
-route resolution, dispatch composition, prompt entries, and receipts must agree.
+activate every read-only profile, the disposable E2E writer, and the three importing
+writers (implementer, review_fixer, revision_fixer) on Claude Code and Codex; only
+the generic owner adapter leaves a route shadowed. Repair and validation reject a
+partial self-workspace catalog because route resolution, dispatch composition,
+prompt entries, and receipts must agree.
 
 Workspace commands manage Flow's local installation, health, repairs, queued tracker
 writes, and runtime layout. The loaded skill directory is the only trusted source for
@@ -95,7 +97,8 @@ Implementation, fixes, and review-brief authorship use its faster tier, while E2
 uses that tier at medium effort. Configured and built-in planner routes enter the strict
 read-only CLI path without a per-run override. Exact capability, authentication,
 schema, and launch-receipt evidence is required. A failure stops the attempt and does
-not select another harness or model. Every non-planner profile remains shadowed.
+not select another harness or model. Every exact post-plan route is now active on
+Claude Code and Codex; only the generic owner adapter leaves a route shadowed.
 
 Review migration before applying it:
 

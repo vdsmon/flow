@@ -1,4 +1,4 @@
-"""Execute exact routed cognition inside isolated read-only capsules.
+"""Execute exact routed cognition inside isolated capsules.
 
 The public seam intentionally stays small: callers submit a closed ``WorkOrder``
 and an ``OwnerProof`` to ``CognitiveWorkers.run`` or cancel the logical
@@ -6,11 +6,13 @@ invocation. Route resolution, prompts, provider commands, process lifecycle,
 typed validation, Git guards, journals, and capsule disposal remain private to
 this module.
 
-Read-only roles and the disposable E2E writer are active. The E2E writer runs in a
-write-capable capsule seeded with the ticket's uncommitted working state, captures the
-recipe's own mutations as report evidence, imports nothing, and discards the capsule. The
-four importing writer policies are present so route snapshots stay complete, but requests
-for them fail before a capsule directory is allocated.
+Read-only roles, the disposable E2E writer, and the three importing writers
+(implementer, review_fixer, revision_fixer) are all active. The E2E writer runs
+in a write-capable capsule seeded with the ticket's uncommitted working state,
+captures the recipe's own mutations as report evidence, imports nothing, and
+discards the capsule. Each importing writer runs in a write-capable capsule
+whose validated binary-aware patch is compare-and-swap imported into the
+authoritative worktree under a sole-writer claim, then disposed.
 """
 
 from __future__ import annotations
@@ -3254,8 +3256,8 @@ class CognitiveWorkers:
             )
         change_receipt: dict[str, Any] | None = None
         if policy.authority == "capsule_writer":
-            # Dormant until a writer profile activates: the active gate above refuses every writer
-            # before this runs. On a capture/import failure the helper leaves the journal in
+            # Runs for the three active importing writers (implementer, review_fixer,
+            # revision_fixer). On a capture/import failure the helper leaves the journal in
             # importing (or validated) and we raise before disposal, so the capsule and patch
             # survive as recovery evidence and a repeat run resumes without re-invoking the model.
             change_receipt = self._import_after_validation(order, source, capsule, journal)
