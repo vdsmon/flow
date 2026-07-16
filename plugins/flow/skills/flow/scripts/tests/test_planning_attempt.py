@@ -805,3 +805,110 @@ def test_cli_round_trip_reaches_exact_approval_receipt(tmp_path: Path, capsys) -
         == 0
     )
     assert json.loads(capsys.readouterr().out)["native_gate_id"] == "gate-1"
+
+
+def _cli_create_attempt(tmp_path: Path, capsys) -> Path:
+    attempt_dir = tmp_path / "attempt"
+    assert (
+        pa.cli_main(
+            [
+                "create",
+                "--attempt-dir",
+                str(attempt_dir),
+                "--attempt-id",
+                "attempt-1",
+                "--base-sha",
+                "a" * 40,
+                "--route-digest",
+                "b" * 64,
+                "--owner-identity",
+                "owner",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    return attempt_dir
+
+
+def _feedback_cli(attempt_dir: Path, payload: object, path: Path) -> int:
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return pa.cli_main(
+        [
+            "feedback",
+            "--attempt-dir",
+            str(attempt_dir),
+            "--feedback-from",
+            str(path),
+        ]
+    )
+
+
+def test_cli_feedback_array_records_all_entries(tmp_path: Path, capsys) -> None:
+    attempt_dir = _cli_create_attempt(tmp_path, capsys)
+    payload = [
+        {"id": "F-1", "verbatim": "First finding.", "anchors": [], "owner_synthesis": ""},
+        {"id": "F-2", "verbatim": "Second finding.", "anchors": ["src/planning.py"]},
+    ]
+    assert _feedback_cli(attempt_dir, payload, tmp_path / "feedback.json") == 0
+    output = json.loads(capsys.readouterr().out)
+    assert isinstance(output, list)
+    assert [entry["id"] for entry in output] == ["F-1", "F-2"]
+    loaded = pa.PlanningAttempt.load_bundle(attempt_dir)
+    assert set(loaded.feedback) == {"F-1", "F-2"}
+
+
+def test_cli_feedback_array_malformed_entry_records_nothing(tmp_path: Path, capsys) -> None:
+    attempt_dir = _cli_create_attempt(tmp_path, capsys)
+    payload = [
+        {"id": "F-1", "verbatim": "First finding.", "anchors": [], "owner_synthesis": ""},
+        {"id": "F-2", "verbatim": "", "anchors": [], "owner_synthesis": ""},
+    ]
+    assert _feedback_cli(attempt_dir, payload, tmp_path / "feedback.json") == 2
+    assert pa.PlanningAttempt.load_bundle(attempt_dir).feedback == {}
+
+
+def test_cli_feedback_array_duplicate_id_records_nothing(tmp_path: Path, capsys) -> None:
+    attempt_dir = _cli_create_attempt(tmp_path, capsys)
+    payload = [
+        {"id": "F-1", "verbatim": "First finding.", "anchors": [], "owner_synthesis": ""},
+        {"id": "F-1", "verbatim": "Same id again.", "anchors": [], "owner_synthesis": ""},
+    ]
+    assert _feedback_cli(attempt_dir, payload, tmp_path / "feedback.json") == 2
+    assert pa.PlanningAttempt.load_bundle(attempt_dir).feedback == {}
+
+
+def test_cli_feedback_array_rejects_non_object_element(tmp_path: Path, capsys) -> None:
+    attempt_dir = _cli_create_attempt(tmp_path, capsys)
+    payload = [
+        {"id": "F-1", "verbatim": "First finding.", "anchors": [], "owner_synthesis": ""},
+        "not an object",
+    ]
+    assert _feedback_cli(attempt_dir, payload, tmp_path / "feedback.json") == 2
+    assert pa.PlanningAttempt.load_bundle(attempt_dir).feedback == {}
+
+
+def test_cli_feedback_empty_array_records_nothing_and_emits_empty_list(
+    tmp_path: Path, capsys
+) -> None:
+    attempt_dir = _cli_create_attempt(tmp_path, capsys)
+    assert _feedback_cli(attempt_dir, [], tmp_path / "feedback.json") == 0
+    assert json.loads(capsys.readouterr().out) == []
+    assert pa.PlanningAttempt.load_bundle(attempt_dir).feedback == {}
+
+
+def test_cli_feedback_single_object_shape_unchanged(tmp_path: Path, capsys) -> None:
+    attempt_dir = _cli_create_attempt(tmp_path, capsys)
+    payload = {"id": "F-1", "verbatim": "Only finding.", "anchors": [], "owner_synthesis": ""}
+    assert _feedback_cli(attempt_dir, payload, tmp_path / "feedback.json") == 0
+    output = json.loads(capsys.readouterr().out)
+    assert isinstance(output, dict)
+    assert output["id"] == "F-1"
+    loaded = pa.PlanningAttempt.load_bundle(attempt_dir)
+    assert set(loaded.feedback) == {"F-1"}
+
+
+def test_cli_feedback_rejects_non_object_non_array_input(tmp_path: Path, capsys) -> None:
+    attempt_dir = _cli_create_attempt(tmp_path, capsys)
+    assert _feedback_cli(attempt_dir, "a bare string", tmp_path / "feedback.json") == 2
+    assert pa.PlanningAttempt.load_bundle(attempt_dir).feedback == {}
