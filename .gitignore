@@ -34,9 +34,12 @@ plugins/flow/**/.venv/
 **/.flow/runs/
 **/.flow/worktrees/
 **/.flow/*.lock
-# bootstrap claim flock targets (tickets/<key>.md stays tracked; *.lock above
-# does not reach the subdir)
+# flock targets under tickets/ (tickets/<key>.md stays tracked; *.lock above
+# does not reach the subdir). The .lock line also keeps frontmatter .md.lock
+# churn out of git_receipt's guarded status, which quarantines in-flight
+# read-only capsules otherwise (flow-5ymw).
 **/.flow/tickets/*.claim
+**/.flow/tickets/*.lock
 **/.flow/runtime/
 **/.flow/memory/
 # pre-v2 migration inputs remain ignored until the journaled move verifies them
