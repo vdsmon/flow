@@ -1130,10 +1130,12 @@ class ClaudeCodeCliAdapter:
         capsule: Path,
         authority: str = "read_only",
     ) -> list[str]:
-        # Writers run in auto mode: it honors the owner's sandbox settings, where
-        # autoAllowBashIfSandboxed auto-approves Bash under the OS sandbox (auto and default
-        # honor it, acceptEdits does not) and filesystem.denyWrite bounds any escape. Readers run
-        # in plan mode, which cannot write.
+        # Writers run in auto mode. A headless --print worker has no human to answer tool
+        # approvals, so a mode that would prompt instead auto-denies: acceptEdits auto-approves
+        # Edit/Write but not Bash, blocking a writer that must run a recipe. Auto mode
+        # auto-approves the worker's commands so the recipe runs, and the owner's sandbox
+        # settings plus capsule disposal bound what a write can reach. Readers run in plan mode,
+        # which cannot write.
         permission = "plan" if authority == "read_only" else "auto"
         return [
             "claude",
