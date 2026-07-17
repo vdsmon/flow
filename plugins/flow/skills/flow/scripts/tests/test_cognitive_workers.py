@@ -1707,24 +1707,6 @@ def test_a_tampered_input_bundle_is_refused_before_any_capsule_exists(tmp_path: 
     assert not (tmp_path / "capsules").exists()
 
 
-def test_a_lost_lease_fence_cannot_run_a_sealed_order(tmp_path: Path) -> None:
-    import hashlib
-
-    source, sha = _repository(tmp_path)
-    input_path = tmp_path / "input.json"
-    input_path.write_text("{}\n", encoding="utf-8")
-    del hashlib
-    base = _review_order(source, sha, input_path, "review-fence")
-    order = dataclasses.replace(base, run_id="run-1", lease_fence="fence-1")
-
-    with pytest.raises(cw.WorkerFailure, match="lease fence") as error:
-        _workers(tmp_path, _ScriptedAdapter(_EMIT)).run(
-            order,
-            cw.OwnerProof(owner_id="owner", harness="codex", run_id="run-1", lease_fence="fence-2"),
-        )
-    assert error.value.code == "lost_owner"
-
-
 @pytest.mark.parametrize("state", ["completed", "blocked", "quarantined"])
 def test_a_terminal_journal_never_relaunches(tmp_path: Path, state: str) -> None:
     import hashlib

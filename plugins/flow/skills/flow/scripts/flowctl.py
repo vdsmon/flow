@@ -18,8 +18,6 @@ COMMANDS = {
     "cockpit": "cockpit_cli.py",
     "compose-commit": "compose_commit.py",
     "cognitive-worker": "cognitive_workers.py",
-    "cognitive-worker-smoke": "cognitive_worker_smoke.py",
-    "commands": "public_commands_cli.py",
     "create-pr": "create_pr.py",
     "diff": "diff_extract.py",
     "dispatch": "dispatch_stage.py",

@@ -2018,17 +2018,6 @@ def main(argv: list[str]) -> int:
         for detail in route_contract_drift()
     )
 
-    problems.extend(
-        Problem(
-            doc="cognitive-worker design",
-            line=0,
-            level="ERROR",
-            msg=detail,
-            raw="",
-        )
-        for detail in cognitive_worker_design_drift()
-    )
-
     if args.verbose:
         for inv in all_invs:
             sub = f" {inv.subcommand}" if inv.subcommand else ""

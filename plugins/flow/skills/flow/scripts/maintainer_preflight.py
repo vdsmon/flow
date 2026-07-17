@@ -236,11 +236,6 @@ def render_preflight(report: PreflightReport) -> str:
     )
 
 
-def staleness_block(record_path: Path, now: datetime) -> str:
-    """Return the pure deadman rendering for a run-record ledger."""
-    return render_preflight(evaluate_run_records(record_path, now))
-
-
 def evaluate_maintenance_boundary(
     workspace_root: Path, now: datetime | None = None
 ) -> MaintenanceBoundaryReport:
@@ -358,5 +353,4 @@ __all__ = [
     "evaluate_maintenance_boundary",
     "evaluate_run_records",
     "render_preflight",
-    "staleness_block",
 ]

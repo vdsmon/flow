@@ -260,35 +260,6 @@ def _argv(tmp_path: Path, source: Path, *extra: str) -> list[str]:
     ]
 
 
-def test_codex_command_is_exact_read_only_and_resumable(tmp_path: Path) -> None:
-    schema = tmp_path / "schema.json"
-    command = pw.build_command(_route(), "prompt", schema_path=schema, thread_id="thread-7")
-    assert command[:3] == ["codex", "exec", "resume"]
-    assert command[3:5] == ["--model", "gpt-5.6-sol"]
-    assert 'sandbox_mode="read-only"' in command
-    assert 'model_reasoning_effort="xhigh"' in command
-    assert "--json" in command
-    assert command[-2:] == ["thread-7", "-"]
-    assert "prompt" not in command
-
-
-def test_claude_command_is_exact_read_only_and_resumable(tmp_path: Path) -> None:
-    schema = tmp_path / "schema.json"
-    schema.write_text('{"type":"object"}', encoding="utf-8")
-    command = pw.build_command(
-        _route("claude_code"), "prompt", schema_path=schema, thread_id="session-7"
-    )
-    assert command[0] == "claude"
-    assert command[command.index("--model") + 1] == "opus"
-    assert command[command.index("--effort") + 1] == "high"
-    assert command[command.index("--permission-mode") + 1] == "plan"
-    assert command[command.index("--resume") + 1] == "session-7"
-    assert command[command.index("--output-format") + 1] == "stream-json"
-    assert command[command.index("--json-schema") + 1] == '{"type":"object"}'
-    # The real CLI rejects --print with stream-json unless --verbose is present.
-    assert "--verbose" in command
-
-
 def test_planning_owns_no_second_process_lifecycle() -> None:
     source = Path(pw.__file__).read_text(encoding="utf-8")
     assert "Popen" not in source
@@ -296,36 +267,6 @@ def test_planning_owns_no_second_process_lifecycle() -> None:
     assert "communicate" not in source
     assert not hasattr(pw, "run_process")
     assert not hasattr(pw, "run_with_retry")
-
-
-def test_rotation_after_three_revisions_or_context_pressure() -> None:
-    assert not pw.should_rotate(revision_rounds=2, context_pressure=False)
-    assert pw.should_rotate(revision_rounds=3, context_pressure=False)
-    assert pw.should_rotate(revision_rounds=0, context_pressure=True)
-
-
-def test_rehydration_contains_complete_plan_and_verbatim_ledger() -> None:
-    prompt = pw.rehydration_prompt(
-        current_plan={"motivation": "why", "files": ["a.py"]},
-        feedback=[
-            {
-                "id": "F-1",
-                "verbatim": "Do not hide the fallback.",
-                "anchors": ["review:fallback"],
-                "owner_synthesis": "Preserve behavior.",
-            }
-        ],
-    )
-    assert '"motivation":"why"' in prompt
-    assert "Do not hide the fallback." in prompt
-    assert "OWNER SYNTHESIS" in prompt
-
-
-def test_contradictory_relay_fails_closed() -> None:
-    with pytest.raises(pw.WorkerError, match="clarification"):
-        pw.feedback_relay(
-            verbatim="Use Codex.", owner_synthesis="Use Claude.", anchors=[], contradiction=True
-        )
 
 
 def test_typed_worker_result_must_match_the_actual_route_identity() -> None:

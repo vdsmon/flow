@@ -46,7 +46,8 @@ def _ts(now: datetime, **delta: float) -> str:
 
 
 def test_staleness_absent_file_is_silent(tmp_path: Path) -> None:
-    assert preflight.staleness_block(tmp_path / "missing.jsonl", _now()) == ""
+    path = tmp_path / "missing.jsonl"
+    assert preflight.render_preflight(preflight.evaluate_run_records(path, _now())) == ""
 
 
 def test_staleness_unreadable_ledger_is_unavailable_not_healthy(tmp_path: Path) -> None:
@@ -65,7 +66,7 @@ def test_staleness_fresh_runs_are_silent(tmp_path: Path) -> None:
         {"schedule": "nightly", "phase": "end", "ts": _ts(now, hours=10), "outcome": "ok"},
         {"schedule": "weekly", "phase": "end", "ts": _ts(now, days=3), "outcome": "ok"},
     )
-    assert preflight.staleness_block(rec, now) == ""
+    assert preflight.render_preflight(preflight.evaluate_run_records(rec, now)) == ""
 
 
 def test_staleness_nightly_stale_warns(tmp_path: Path) -> None:
@@ -74,7 +75,7 @@ def test_staleness_nightly_stale_warns(tmp_path: Path) -> None:
     _write_record(
         rec, {"schedule": "nightly", "phase": "end", "ts": _ts(now, hours=40), "outcome": "ok"}
     )
-    block = preflight.staleness_block(rec, now)
+    block = preflight.render_preflight(preflight.evaluate_run_records(rec, now))
     assert block.startswith("Flow maintainer preflight")
     assert "nightly evolve loop stale" in block
     assert ">36h" in block
@@ -86,7 +87,7 @@ def test_staleness_weekly_stale_warns(tmp_path: Path) -> None:
     _write_record(
         rec, {"schedule": "weekly", "phase": "end", "ts": _ts(now, days=9), "outcome": "ok"}
     )
-    block = preflight.staleness_block(rec, now)
+    block = preflight.render_preflight(preflight.evaluate_run_records(rec, now))
     assert "weekly epic loop stale" in block
     assert ">8d" in block
 
@@ -100,7 +101,7 @@ def test_staleness_uses_latest_record_per_schedule(tmp_path: Path) -> None:
         {"schedule": "nightly", "phase": "start", "ts": _ts(now, hours=50), "outcome": ""},
         {"schedule": "nightly", "phase": "end", "ts": _ts(now, hours=2), "outcome": "ok"},
     )
-    assert preflight.staleness_block(rec, now) == ""
+    assert preflight.render_preflight(preflight.evaluate_run_records(rec, now)) == ""
 
 
 def test_staleness_tolerates_garbage_lines(tmp_path: Path) -> None:
@@ -114,7 +115,7 @@ def test_staleness_tolerates_garbage_lines(tmp_path: Path) -> None:
         + "\n",
         encoding="utf-8",
     )
-    block = preflight.staleness_block(rec, now)
+    block = preflight.render_preflight(preflight.evaluate_run_records(rec, now))
     assert "nightly evolve loop stale" in block
 
 
@@ -127,7 +128,7 @@ def test_staleness_fail_outcome_warns(tmp_path: Path) -> None:
         {"schedule": "nightly", "phase": "start", "ts": _ts(now, hours=2), "outcome": ""},
         {"schedule": "nightly", "phase": "end", "ts": _ts(now, hours=1), "outcome": "fail"},
     )
-    block = preflight.staleness_block(rec, now)
+    block = preflight.render_preflight(preflight.evaluate_run_records(rec, now))
     assert block.startswith("Flow maintainer preflight")
     assert "nightly evolve" in block
     assert "fail" in block
@@ -140,7 +141,7 @@ def test_staleness_hung_start_no_end_warns(tmp_path: Path) -> None:
     _write_record(
         rec, {"schedule": "nightly", "phase": "start", "ts": _ts(now, hours=4), "outcome": ""}
     )
-    block = preflight.staleness_block(rec, now)
+    block = preflight.render_preflight(preflight.evaluate_run_records(rec, now))
     assert block.startswith("Flow maintainer preflight")
     assert "nightly evolve" in block
     assert "hung" in block
@@ -153,7 +154,7 @@ def test_staleness_hung_within_grace_is_silent(tmp_path: Path) -> None:
     _write_record(
         rec, {"schedule": "nightly", "phase": "start", "ts": _ts(now, hours=1), "outcome": ""}
     )
-    assert preflight.staleness_block(rec, now) == ""
+    assert preflight.render_preflight(preflight.evaluate_run_records(rec, now)) == ""
 
 
 def test_staleness_hung_discriminates_from_pr266_dead_branch(tmp_path: Path) -> None:
@@ -172,7 +173,7 @@ def test_staleness_hung_discriminates_from_pr266_dead_branch(tmp_path: Path) -> 
         {"schedule": "nightly", "phase": "end", "ts": _ts(now, hours=49), "outcome": "ok"},
         {"schedule": "nightly", "phase": "start", "ts": _ts(now, hours=4), "outcome": ""},
     )
-    block = preflight.staleness_block(rec, now)
+    block = preflight.render_preflight(preflight.evaluate_run_records(rec, now))
     assert "hung" in block
     assert "stale" not in block
 
@@ -184,7 +185,7 @@ def test_staleness_weekly_hung_grace_is_separate(tmp_path: Path) -> None:
     _write_record(
         rec, {"schedule": "weekly", "phase": "start", "ts": _ts(now, hours=7), "outcome": ""}
     )
-    block = preflight.staleness_block(rec, now)
+    block = preflight.render_preflight(preflight.evaluate_run_records(rec, now))
     assert "weekly epic" in block
     assert "hung" in block
 
@@ -195,7 +196,7 @@ def test_staleness_weekly_hung_within_grace_is_silent(tmp_path: Path) -> None:
     _write_record(
         rec, {"schedule": "weekly", "phase": "start", "ts": _ts(now, hours=5), "outcome": ""}
     )
-    assert preflight.staleness_block(rec, now) == ""
+    assert preflight.render_preflight(preflight.evaluate_run_records(rec, now)) == ""
 
 
 def test_staleness_disarmed_suppresses_stale(tmp_path: Path) -> None:
@@ -205,7 +206,7 @@ def test_staleness_disarmed_suppresses_stale(tmp_path: Path) -> None:
         rec, {"schedule": "nightly", "phase": "end", "ts": _ts(now, hours=40), "outcome": "ok"}
     )
     (tmp_path / "disarmed-nightly").touch()
-    block = preflight.staleness_block(rec, now)
+    block = preflight.render_preflight(preflight.evaluate_run_records(rec, now))
     assert "nightly evolve loop disarmed" in block
     assert "⚠️" not in block
 
@@ -218,7 +219,7 @@ def test_staleness_disarmed_suppresses_hung(tmp_path: Path) -> None:
         {"schedule": "nightly", "phase": "start", "ts": _ts(now, hours=5), "outcome": ""},
     )
     (tmp_path / "disarmed-nightly").touch()
-    block = preflight.staleness_block(rec, now)
+    block = preflight.render_preflight(preflight.evaluate_run_records(rec, now))
     assert "nightly evolve loop disarmed" in block
     assert "⚠️" not in block
 
@@ -230,7 +231,7 @@ def test_staleness_disarmed_suppresses_fail(tmp_path: Path) -> None:
         rec, {"schedule": "nightly", "phase": "end", "ts": _ts(now, hours=5), "outcome": "fail"}
     )
     (tmp_path / "disarmed-nightly").touch()
-    block = preflight.staleness_block(rec, now)
+    block = preflight.render_preflight(preflight.evaluate_run_records(rec, now))
     assert "nightly evolve loop disarmed" in block
     assert "⚠️" not in block
 
@@ -244,7 +245,7 @@ def test_staleness_disarmed_per_schedule_independent(tmp_path: Path) -> None:
         {"schedule": "weekly", "phase": "end", "ts": _ts(now, days=9), "outcome": "ok"},
     )
     (tmp_path / "disarmed-nightly").touch()
-    block = preflight.staleness_block(rec, now)
+    block = preflight.render_preflight(preflight.evaluate_run_records(rec, now))
     assert "nightly evolve loop disarmed" in block
     assert "weekly epic loop stale" in block
     assert "nightly evolve loop stale" not in block
@@ -255,7 +256,7 @@ def test_staleness_disarmed_no_record_silent(tmp_path: Path) -> None:
     rec = tmp_path / "run-record.jsonl"
     rec.write_text("", encoding="utf-8")
     (tmp_path / "disarmed-nightly").touch()
-    block = preflight.staleness_block(rec, now)
+    block = preflight.render_preflight(preflight.evaluate_run_records(rec, now))
     assert "nightly evolve loop disarmed" in block
 
 

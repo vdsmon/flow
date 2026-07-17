@@ -12,7 +12,6 @@ from public_commands import (
     check_generated_block,
     load_registry,
     render_grammar_block,
-    render_help,
     render_router_block,
     render_trigger_description,
 )
@@ -83,15 +82,6 @@ def check(
             problems.append(
                 "SKILL.md public grammar block is stale relative to public-commands.toml"
             )
-
-    help_path = skill_root / "references" / "public-help.md"
-    try:
-        help_document = help_path.read_text(encoding="utf-8")
-    except OSError as exc:
-        problems.append(f"cannot read {help_path}: {exc}")
-    else:
-        if help_document != render_help(registry):
-            problems.append("references/public-help.md is stale relative to public-commands.toml")
 
     if require_references:
         for command in registry.commands:

@@ -1,11 +1,9 @@
 """Planning compatibility surface over the common read-only capsule contract.
 
-Only planning-specific behavior lives here: route-bound author validation, feedback
-relay, thread rotation, and rehydration. The exact CLI, private clone, process
-supervision, journal, typed validation, Git guards, receipts, and disposal belong to
-``cognitive_workers`` and are reached through one ``CognitiveWorkers.run`` call. The
-returned thread identifier belongs only to the live owner and is never written to a
-Flow run or planning bundle.
+Only planning-specific behavior lives here: route-bound author validation. The exact CLI, private
+clone, process supervision, journal, typed validation, Git guards, receipts, and disposal belong to
+``cognitive_workers`` and are reached through one ``CognitiveWorkers.run`` call. The returned thread
+identifier belongs only to the live owner and is never written to a Flow run or planning bundle.
 """
 
 from __future__ import annotations
@@ -57,36 +55,6 @@ class PlannerRoute:
         return {"harness": self.harness, "model": self.model, "effort": self.effort}
 
 
-def should_rotate(*, revision_rounds: int, context_pressure: bool) -> bool:
-    """Rotate the physical thread before its fourth revision round."""
-    return context_pressure or revision_rounds >= 3
-
-
-def feedback_relay(
-    *,
-    verbatim: str,
-    owner_synthesis: str,
-    anchors: list[str] | tuple[str, ...],
-    contradiction: bool = False,
-) -> str:
-    """Build a lossless relay, stopping when the owner flags a contradiction."""
-    if contradiction:
-        raise WorkerError("verbatim feedback and owner synthesis conflict; ask for clarification")
-    payload = {
-        "verbatim": verbatim,
-        "anchors": list(anchors),
-        "owner_synthesis": owner_synthesis,
-    }
-    return (
-        "USER FEEDBACK (VERBATIM)\n"
-        + json.dumps(payload["verbatim"], ensure_ascii=False)
-        + "\nANCHORS\n"
-        + json.dumps(payload["anchors"], ensure_ascii=False)
-        + "\nOWNER SYNTHESIS\n"
-        + json.dumps(payload["owner_synthesis"], ensure_ascii=False)
-    )
-
-
 def validate_envelope(route: PlannerRoute, value: Mapping[str, Any] | None) -> dict[str, Any]:
     """Validate provider output and bind its author to the route the adapter launched."""
     if value is None:
@@ -105,43 +73,6 @@ def validate_envelope(route: PlannerRoute, value: Mapping[str, Any] | None) -> d
             f"the launched route requires author id {route.author_id!r}"
         )
     return envelope.to_mapping()
-
-
-def rehydration_prompt(*, current_plan: dict[str, Any], feedback: list[dict[str, Any]]) -> str:
-    """Return all canonical review state needed by a fresh physical worker."""
-    relay = [
-        feedback_relay(
-            verbatim=str(item.get("verbatim", "")),
-            anchors=list(item.get("anchors", [])),
-            owner_synthesis=str(item.get("owner_synthesis", "")),
-        )
-        for item in feedback
-    ]
-    return (
-        "Rehydrate the logical planner from this complete plan and feedback ledger. "
-        "Return a complete typed plan envelope, never a prose delta.\nCURRENT PLAN\n"
-        + json.dumps(current_plan, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-        + "\nFEEDBACK LEDGER\n"
-        + "\n\n".join(relay)
-    )
-
-
-def build_command(
-    route: PlannerRoute,
-    prompt: str,
-    *,
-    schema_path: Path,
-    thread_id: str | None = None,
-    new_thread_id: str | None = None,
-) -> list[str]:
-    """Build the exact read-only command for one supported planner harness."""
-    return cognitive_workers.build_planner_command(
-        route.to_mapping(),
-        prompt,
-        schema_path=schema_path,
-        thread_id=thread_id,
-        new_thread_id=new_thread_id,
-    )
 
 
 def preflight(route: PlannerRoute, **kwargs: Any) -> dict[str, str]:
@@ -443,11 +374,7 @@ __all__ = [
     "SOFT_TIMEOUT_SECONDS",
     "PlannerRoute",
     "WorkerError",
-    "build_command",
     "cli_main",
-    "feedback_relay",
     "preflight",
-    "rehydration_prompt",
-    "should_rotate",
     "validate_envelope",
 ]
