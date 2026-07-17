@@ -1379,16 +1379,34 @@ def cli_main(argv: list[str]) -> int:  # noqa: C901
                     result = envelope.to_mapping()
                 elif args.operation == "feedback":
                     value = json.loads(Path(args.feedback_from).read_text(encoding="utf-8"))
-                    if not isinstance(value, dict):
-                        raise AttemptError("feedback input must be a JSON object")
-                    entry = attempt.add_feedback(
-                        feedback_id=value.get("id"),
-                        verbatim=value.get("verbatim"),
-                        anchors=value.get("anchors", []),
-                        owner_synthesis=value.get("owner_synthesis", ""),
-                    )
-                    attempt.save_bundle(directory)
-                    result = entry.to_mapping()
+                    if isinstance(value, dict):
+                        entry = attempt.add_feedback(
+                            feedback_id=value.get("id"),
+                            verbatim=value.get("verbatim"),
+                            anchors=value.get("anchors", []),
+                            owner_synthesis=value.get("owner_synthesis", ""),
+                        )
+                        attempt.save_bundle(directory)
+                        result = entry.to_mapping()
+                    elif isinstance(value, list):
+                        entries = []
+                        for item in value:
+                            if not isinstance(item, dict):
+                                raise AttemptError("feedback array elements must be JSON objects")
+                            entries.append(
+                                attempt.add_feedback(
+                                    feedback_id=item.get("id"),
+                                    verbatim=item.get("verbatim"),
+                                    anchors=item.get("anchors", []),
+                                    owner_synthesis=item.get("owner_synthesis", ""),
+                                )
+                            )
+                        attempt.save_bundle(directory)
+                        result = [entry.to_mapping() for entry in entries]
+                    else:
+                        raise AttemptError(
+                            "feedback input must be a JSON object or an array of JSON objects"
+                        )
                 elif args.operation == "reject-feedback":
                     entry = attempt.reject_feedback(args.feedback_id, args.reason)
                     attempt.save_bundle(directory)
