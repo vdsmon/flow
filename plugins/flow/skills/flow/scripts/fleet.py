@@ -64,14 +64,26 @@ from maintainer import resolve_maintainer_repo
 
 # A run that stops refreshing for longer than this ages out of live_keys even if it never
 # deregistered (the staleness fallback). CAVEAT, load-bearing for child-3: the heartbeat fires only
-# at cmd_next (stage TRANSITIONS), so a long intra-stage gap with no transition can exceed this flat
-# window and read a LIVE run as dead, notably the merge stage's CI re-wait, which holds a session
-# 20-40+ min between dispatch calls (flow-72d9, the bug this epic exists to kill). So child-3 must
-# reconcile live_keys against the lease, never trust it alone; the real fix is an expiry-based
-# staleness (lease's stage_timeout*60 + buffer) or an intra-stage heartbeat. 1800 also bounds the
-# launch->init window now that the retired launch_ledger no longer carries its own TTL for it
-# (flow-8by2.5).
-STALE_AFTER_S = 1800
+# at cmd_next (stage TRANSITIONS), so a long intra-stage gap with no transition still erodes this
+# window; at 22500s the merge stage's CI re-wait (20-40 min between dispatch calls, flow-72d9, the
+# bug this epic exists to kill) now sits comfortably inside it. But child-3 must reconcile live_keys
+# against the lease, never trust it alone, regardless of any single gap's size.
+#
+# Sized to the accurate per-stage lease model: dispatch_stage._stage_ttl_seconds sums
+# cognitive_workers.cumulative_role_budget(profile) over a sealed stage's pending launchable
+# substeps (each role's (1 + retry_limit) * hard_budget_seconds) and applies a 1.5 margin over the
+# doubled-timeout floor. code_review is the current worst case: two retryable readers
+# (code_reviewer, diff_reviewer) at 2 * 2400s each plus one non-retrying writer (review_fixer) at
+# 1 * 5400s, so ceil((2 * 2400 + 2 * 2400 + 1 * 5400) * 1.5) = 22500. fleet has no stage context to
+# compute that figure itself (see the module docstring), so this is a static fallback tracking its
+# current worst case; a stage composition that grows past it needs this constant raised alongside.
+#
+# Also bounds the launch->init window now that the retired launch_ledger no longer carries its own
+# TTL for it (flow-8by2.5): a launch that crashes before registering a lease is held 22500s before
+# live_keys drops it, 12.5x longer than the prior 1800s. That is the safe direction, fleet
+# over-holds a dead launch rather than freeing a live one, and live_keys is always reconciled
+# against the lease, never trusted alone (the CAVEAT above).
+STALE_AFTER_S = 22500
 
 
 class NotMaintainer(Exception):
@@ -314,9 +326,10 @@ def is_live(workspace_root: Path, key: str) -> bool:
     LEASE-ONLY by design (NOT lease|fleet). The reap (merge a dead orphan) and cleanup (stop a done
     session) sites are always POST-lease, so the only liveness fleet adds over the lease is the
     launch->init window, which neither site is ever in. What an OR with the fleet term WOULD add
-    here is harm: fleet's flat staleness (1800s) lingers long after a dead orphan's lease expired
-    (~stage_timeout+buffer, ~900s), so it would read a reapable dead orphan as live and skip the
-    very reap that exists to merge it.
+    here is harm: fleet's flat staleness window (STALE_AFTER_S, sized to the worst-case per-stage
+    lease TTL so it never expires early) far outlasts an ordinary dead orphan's much shorter
+    accurate per-stage lease, so it would read a reapable dead orphan as live and skip the very
+    reap that exists to merge it.
     The lease's per-stage TTL is the accurate signal: a run that went live in the gap has
     a fresh lease and is caught here. (True atomic read+act under one flock is impossible
     for a prose `gh pr merge`; the child-4 merge-token that would have closed it was
