@@ -170,7 +170,31 @@ Your job is to run it exactly, not to reinterpret it.
 ## Errors
 
 - Recipe runs and fails → report the failure and return with the stage
-  unfinished. A failing e2e recipe is a failed stage.
+  unfinished. A failing e2e recipe is a failed stage, with one exception: a
+  failure confirmed as a known sandbox-blocked-subprocess artifact (below).
+- **Known sandbox-blocked-subprocess false-fails, the one exception to the rule
+  above.** Two probes in this repo's own suite can fail inside the e2e capsule
+  sandbox for a reason unrelated to the ticket's change: the sandbox blocks or
+  kills a subprocess the probe depends on. `tests/test_recover.py::test_detect_holder_liveness_alive_end_to_end`
+  exercises `recover._holder_liveness`, which shells out to `ps -p <pid>`; when
+  the sandbox blocks that subprocess the call raises inside the surrounding
+  try/except and `_holder_liveness` returns `{"probe": "error", "alive": None}`
+  instead of a real `ps` result. Any test that calls `cognitive_workers.git_receipt`
+  unmocked (several files under `tests/test_cognitive_worker*.py`) exercises its
+  `git submodule status --recursive` call, made through `_git_bytes` with the
+  default `allow_returncodes=(0,)`; when the sandbox kills that subprocess with
+  SIGPIPE the process exits 141 (128 plus signal 13), a code `_git_bytes` does
+  not allow, so it raises. Both belong to the same class: the sandbox blocking
+  or killing a subprocess the probe shells out to. Apply one rule whenever
+  these are the only failures in an e2e run: isolate each failing test and
+  rerun it with the sandbox disabled. Treat a failure as a known sandbox
+  artifact only when it passes sandbox-disabled and the test does not touch a
+  file the ticket changed; that confirmed case does NOT fail the stage, record
+  it in the rung-1 evidence block as a known sandbox artifact with the
+  sandbox-disabled rerun as evidence, and the stage completes. If it still
+  fails sandbox-disabled, or it touches a changed file, treat the ticket's
+  change as implicated instead, and the stage stays failed per the rule above.
+  The same rule covers any future probe in this class.
 - `e2e_recipe` missing/empty → workspace misconfiguration (e2e is running without a
   recipe; the bootstrap gate normally prevents this). Report it as failed so the
   user supplies a recipe or explicitly disables e2e (`e2e = "none"`).
