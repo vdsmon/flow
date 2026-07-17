@@ -250,6 +250,178 @@ def test_facade_global_flag_before_subcommand_remains_valid() -> None:
     assert inv.subcommand == "get"
 
 
+# --- post-subcommand parent-flag position (flow-285k) ------------------------
+
+
+def test_surface_parent_usage_flags_derived_from_usage_prefix_only() -> None:
+    # tracker_cli.py, forge_cli.py, and pending_mutations.py declare --workspace-root before `{...}
+    # ...` in their top-level usage. review_brief.py declares no top-level parent flag; its
+    # docstring prose merely mentions a wrapped `--ticket-dir` (the over-capture regression
+    # `global_flags`, which scans the WHOLE help text, is prone to). The `[: um.start()]` slice at
+    # the `{subcommands} ...` marker is what excludes it here (see test_usage_block_* below for
+    # what _usage_block itself actually contributes: wrap-continuation capture).
+    tracker = seam_check.surface_of("tracker_cli.py")
+    forge = seam_check.surface_of("forge_cli.py")
+    pending_mutations = seam_check.surface_of("pending_mutations.py")
+    review_brief = seam_check.surface_of("review_brief.py")
+    assert tracker is not None
+    assert forge is not None
+    assert pending_mutations is not None
+    assert review_brief is not None
+    assert tracker.parent_usage_flags == {"--workspace-root"}
+    assert forge.parent_usage_flags == {"--workspace-root"}
+    assert pending_mutations.parent_usage_flags == {"--workspace-root"}
+    assert review_brief.parent_usage_flags == frozenset()
+
+
+def test_usage_block_captures_wrap_continuation_and_excludes_description_only_flag() -> None:
+    # Direct probe of _usage_block itself, independent of the `{subcommands} ...` slice the
+    # test above exercises. A synthetic multi-line usage: block whose flags wrap past line 3,
+    # followed by a blank line then a description mentioning an unrelated flag.
+    help_text = (
+        "usage: foo.py [-h] --workspace-root WORKSPACE_ROOT\n"
+        "                    [--wrapped-flag VALUE]\n"
+        "                    [--another-wrapped-flag VALUE]\n"
+        "                    {sub1,sub2} ...\n"
+        "\n"
+        "Does something. Mentions --description-only-flag in prose here.\n"
+    )
+    block = seam_check._usage_block(help_text)
+    um = seam_check._USAGE_SUBCMD_RE.search(block)
+    assert um is not None
+    parent_usage_flags = frozenset(seam_check._FLAG_RE.findall(block[: um.start()]))
+    assert parent_usage_flags == {"--workspace-root", "--wrapped-flag", "--another-wrapped-flag"}
+    assert "--description-only-flag" not in seam_check._FLAG_RE.findall(block)
+
+
+@pytest.mark.parametrize(
+    ("facade_command", "subcommand", "extra"),
+    [
+        ("tracker", "is-shipped", "--key K"),
+        ("forge", "detect-pr", "--branch B"),
+        ("pending-mutations", "compact", ""),
+    ],
+)
+def test_facade_parent_flag_after_subcommand_is_rejected(
+    facade_command: str, subcommand: str, extra: str
+) -> None:
+    # The repro shape: a real parent-parser flag placed AFTER the subcommand. seam_check must reject
+    # it exactly as the real argparse parser would ("unrecognized arguments").
+    text = (
+        f'FLOW_HARNESS="<harness>" "<facade>" {facade_command} {subcommand} '
+        f"{extra} --workspace-root .".replace("  ", " ")
+    )
+    inv = seam_check.find_facade_invocations("t.md", text)[0]
+    errors = [problem for problem in seam_check.validate(inv) if problem.level == "ERROR"]
+    assert len(errors) == 1
+    assert "--workspace-root" in errors[0].msg
+    assert "must precede" in errors[0].msg
+
+
+@pytest.mark.parametrize(
+    ("facade_command", "subcommand", "extra"),
+    [
+        ("tracker", "is-shipped", "--key K"),
+        ("forge", "detect-pr", "--branch B"),
+        ("pending-mutations", "compact", ""),
+    ],
+)
+def test_facade_parent_flag_before_subcommand_remains_green(
+    facade_command: str, subcommand: str, extra: str
+) -> None:
+    # The equivalent correctly ordered form must stay green.
+    text = (
+        f'FLOW_HARNESS="<harness>" "<facade>" {facade_command} --workspace-root . '
+        f"{subcommand} {extra}".rstrip()
+    )
+    inv = seam_check.find_facade_invocations("t.md", text)[0]
+    assert [problem for problem in seam_check.validate(inv) if problem.level == "ERROR"] == []
+
+
+def test_facade_other_subcommand_flag_keeps_existing_diagnostic_not_relabeled() -> None:
+    # `--kind` is a real flag of tracker_cli.py's `link` subcommand, not `get`, and is not a
+    # usage-prefix parent flag. It must keep the existing "valid elsewhere" diagnostic and must NOT
+    # receive the new parent-only-position message.
+    inv = seam_check.find_facade_invocations(
+        "t.md", 'FLOW_HARNESS="<harness>" "<facade>" tracker get --key FT-1 --kind blocks'
+    )[0]
+    errors = [problem for problem in seam_check.validate(inv) if problem.level == "ERROR"]
+    assert len(errors) == 1
+    assert "--kind" in errors[0].msg
+    assert "not for this subcommand" in errors[0].msg
+    assert "must precede" not in errors[0].msg
+
+
+def test_facade_shape_after_subcommand_uses_resolved_subcommand_value_flags(monkeypatch) -> None:
+    # CR-1: a flag that is store_true in the RESOLVED subcommand but value-taking in some other
+    # subcommand must not be treated as value-consuming after the subcommand. The post-subcommand
+    # scan must resolve value flags from the invoked subcommand only, not the all-subcommand union
+    # (which the pre-subcommand scan legitimately uses, since the subcommand isn't known yet there).
+    def fake_value_flags_of(script_name: str, subcommand: str | None = None) -> frozenset[str]:
+        if subcommand == "sub-b":
+            return frozenset({"--flag"})
+        return frozenset()
+
+    monkeypatch.setattr(seam_check, "value_flags_of", fake_value_flags_of)
+    surface = seam_check.Surface(
+        subcommands=frozenset({"sub-a", "sub-b"}),
+        global_flags=frozenset(),
+        sub_flags={"sub-a": frozenset({"--flag"}), "sub-b": frozenset({"--flag"})},
+        parent_usage_flags=frozenset({"--workspace-root"}),
+    )
+    inv = seam_check.Invocation(
+        doc="t.md",
+        line=1,
+        script="foo.py",
+        subcommand="sub-a",
+        flags=[],
+        raw="",
+        facade_command="foo",
+        argv=("sub-a", "--flag", "--workspace-root", "."),
+    )
+    candidate, _before, after = seam_check._facade_shape(inv, surface)
+    assert candidate == "sub-a"
+    # --flag is store_true in sub-a: it must not swallow --workspace-root as its value.
+    assert after == ["--flag", "--workspace-root"]
+
+
+def test_facade_parent_position_check_skipped_on_empty_sub_probe() -> None:
+    # A degenerate/failed subcommand help probe (empty flag set) means ownership is unknown for that
+    # pair; the new position check must stay silent rather than treat every usage-proven parent flag
+    # as parent-only.
+    surface = seam_check.Surface(
+        subcommands=frozenset({"is-shipped"}),
+        global_flags=frozenset({"--workspace-root"}),
+        sub_flags={"is-shipped": frozenset()},
+        parent_usage_flags=frozenset({"--workspace-root"}),
+    )
+    inv = seam_check.Invocation(
+        doc="t.md",
+        line=1,
+        script="tracker_cli.py",
+        subcommand=None,
+        flags=["--key", "--workspace-root"],
+        raw="tracker is-shipped --key K --workspace-root .",
+        facade_command="tracker",
+        argv=("is-shipped", "--key", "K", "--workspace-root", "."),
+        facade_path="<facade>",
+        call_local_harness=True,
+    )
+    subcommand, problems = seam_check._validate_facade_shape(inv, surface)
+    assert subcommand == "is-shipped"
+    assert problems == []
+
+
+def test_facade_parent_flag_after_end_of_options_sentinel_is_not_flagged() -> None:
+    # `--` ends option parsing; a token after it is a positional, not a misplaced parent-parser
+    # flag, even though it spells a real parent flag name.
+    inv = seam_check.find_facade_invocations(
+        "t.md",
+        'FLOW_HARNESS="<harness>" "<facade>" tracker is-shipped --key K -- --workspace-root',
+    )[0]
+    assert [problem for problem in seam_check.validate(inv) if problem.level == "ERROR"] == []
+
+
 def test_direct_launcher_repair_is_parsed_from_flow_skill_variable() -> None:
     text = 'python3 "${FLOW_SKILL_DIR}/scripts/flow_launcher.py" --workspace-root .'
     invs = seam_check.find_invocations("t.md", text)

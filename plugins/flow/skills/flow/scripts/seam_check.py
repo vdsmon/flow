@@ -175,6 +175,11 @@ class Surface:
     subcommands: frozenset[str]
     global_flags: frozenset[str]
     sub_flags: dict[str, frozenset[str]]
+    # Long flags rendered before the `{subcommands} ...` positional in the top-level USAGE block
+    # only (never the full help text, which over-captures flags merely mentioned in a docstring).
+    # This is the ownership evidence for the post-subcommand parent-flag position check; do not use
+    # `global_flags` for that purpose.
+    parent_usage_flags: frozenset[str] = frozenset()
 
     def all_sub_flags(self) -> frozenset[str]:
         out: set[str] = set()
@@ -585,6 +590,26 @@ def _run_help(script: Path, sub: str | None) -> str | None:
     return cp.stdout or None
 
 
+def _usage_block(help_text: str) -> str:
+    """The argparse `usage:` line plus its indented wrap-continuation lines, joined.
+
+    Bounded at the first blank line, which always precedes the description/positional-arguments
+    sections. Callers additionally slice at the `{subcommands} ...` marker to keep the subcommand
+    list and anything past it (including a script's docstring prose) out of parent-flag ownership
+    derivation; this function only trims the usage block itself, capturing wrap-continuation lines
+    that a plain first-N-lines join would miss.
+    """
+    lines = help_text.splitlines()
+    if not lines or not lines[0].startswith("usage:"):
+        return ""
+    block = [lines[0]]
+    for line in lines[1:]:
+        if not line.strip() or not line[:1].isspace():
+            break
+        block.append(line)
+    return " ".join(block)
+
+
 @cache
 def surface_of(script_name: str) -> Surface | None:
     script = SCRIPTS_DIR / script_name
@@ -594,16 +619,23 @@ def surface_of(script_name: str) -> Surface | None:
     if top is None:
         return None
     subs: frozenset[str] = frozenset()
-    usage_oneline = " ".join(top.splitlines()[:3])
-    um = _USAGE_SUBCMD_RE.search(usage_oneline)
+    parent_usage_flags: frozenset[str] = frozenset()
+    usage_block = _usage_block(top)
+    um = _USAGE_SUBCMD_RE.search(usage_block)
     if um:
         subs = frozenset(s.strip() for s in um.group(1).split(",") if s.strip())
+        parent_usage_flags = frozenset(_FLAG_RE.findall(usage_block[: um.start()]))
     global_flags = frozenset(_FLAG_RE.findall(top))
     sub_flags: dict[str, frozenset[str]] = {}
     for s in subs:
         sh = _run_help(script, s)
         sub_flags[s] = frozenset(_FLAG_RE.findall(sh)) if sh else frozenset()
-    return Surface(subcommands=subs, global_flags=global_flags, sub_flags=sub_flags)
+    return Surface(
+        subcommands=subs,
+        global_flags=global_flags,
+        sub_flags=sub_flags,
+        parent_usage_flags=parent_usage_flags,
+    )
 
 
 @cache
@@ -620,12 +652,18 @@ def value_flags_of(script_name: str, subcommand: str | None = None) -> frozenset
     return frozenset(flags)
 
 
-def _facade_shape(inv: Invocation, surface: Surface) -> tuple[str | None, list[str]]:
-    """Return the first positional subcommand and flags that precede it.
+def _facade_shape(inv: Invocation, surface: Surface) -> tuple[str | None, list[str], list[str]]:
+    """Return the first positional subcommand, flags before it, and flags after it.
 
     Global options may legally precede a subcommand. Their values are skipped using the real
     argparse help surface. A subcommand-only option in that slot is returned for a placement error
     instead of being allowed to disguise its value as the command token.
+
+    Scanning continues past the subcommand so a parent-parser flag placed after it can be caught by
+    the position check. A `--` end-of-options sentinel only takes effect in the phase it appears in:
+    in the pre-subcommand phase it consumes the very next token as the candidate and scanning then
+    resumes in the post-subcommand phase; in the post-subcommand phase it ends scanning outright, so
+    a token after it there is a positional, never a misplaced flag.
     """
     tokens = list(inv.argv or ())
     all_value_flags = set(value_flags_of(inv.script))
@@ -633,27 +671,50 @@ def _facade_shape(inv: Invocation, surface: Surface) -> tuple[str | None, list[s
         all_value_flags.update(value_flags_of(inv.script, subcommand))
 
     before: list[str] = []
+    after: list[str] = []
     index = 0
+    candidate: str | None = None
     while index < len(tokens):
         token = tokens[index]
         if token == "--":
             index += 1
-            return (_clean(tokens[index]), before) if index < len(tokens) else (None, before)
+            candidate = _clean(tokens[index]) if index < len(tokens) else None
+            index += 1
+            break
         if token.startswith("-"):
             flag = token.split("=", 1)[0]
             before.append(flag)
             consumes_next = "=" not in token and flag in all_value_flags
             index += 2 if consumes_next else 1
             continue
-        return _clean(token), before
-    return None, before
+        candidate = _clean(token)
+        index += 1
+        break
+
+    resolved_value_flags = set(value_flags_of(inv.script))
+    if candidate is not None:
+        resolved_value_flags.update(value_flags_of(inv.script, candidate))
+
+    while index < len(tokens):
+        token = tokens[index]
+        if token == "--":
+            break
+        if token.startswith("-"):
+            flag = token.split("=", 1)[0]
+            after.append(flag)
+            consumes_next = "=" not in token and flag in resolved_value_flags
+            index += 2 if consumes_next else 1
+            continue
+        index += 1
+
+    return candidate, before, after
 
 
 def _resolve_subcommand(inv: Invocation, surface: Surface) -> str | None:
     if not surface.subcommands:
         return None
     if inv.facade_command is not None:
-        candidate, _ = _facade_shape(inv, surface)
+        candidate, _, _ = _facade_shape(inv, surface)
         return candidate if candidate in surface.subcommands else None
     args = inv.raw.split(inv.script, 1)[-1]
     for tok in (_clean(t) for t in args.split()):
@@ -667,7 +728,7 @@ def _resolve_subcommand(inv: Invocation, surface: Surface) -> str | None:
 
 def _validate_facade_shape(inv: Invocation, surface: Surface) -> tuple[str | None, list[Problem]]:
     """Validate the structural subcommand slot of one facade invocation."""
-    candidate, before_flags = _facade_shape(inv, surface)
+    candidate, before_flags, after_flags = _facade_shape(inv, surface)
     subcommand = candidate if candidate in surface.subcommands else None
     problems: list[Problem] = []
     if candidate is None:
@@ -703,6 +764,27 @@ def _validate_facade_shape(inv: Invocation, surface: Surface) -> tuple[str | Non
         for flag in before_flags
         if flag not in surface.global_flags and flag != "--help"
     )
+    if subcommand is not None:
+        # Real argparse rejects a parent-parser flag placed after the subcommand (`unrecognized
+        # arguments`). Ownership evidence is the usage-derived parent set, never `global_flags`
+        # (which over-captures docstring mentions). Skip when the subcommand's own probe came back
+        # empty: an unknown/degenerate sub-surface would otherwise make every parent option look
+        # parent-only.
+        sub_flags = surface.sub_flags.get(subcommand, frozenset())
+        if sub_flags:
+            parent_only = surface.parent_usage_flags - sub_flags
+            problems.extend(
+                Problem(
+                    inv.doc,
+                    inv.line,
+                    "ERROR",
+                    f"{inv.script}: flag {flag} is a parent-parser option and must precede "
+                    f"{subcommand}, not follow it",
+                    inv.raw,
+                )
+                for flag in after_flags
+                if flag in parent_only
+            )
     return subcommand, problems
 
 
