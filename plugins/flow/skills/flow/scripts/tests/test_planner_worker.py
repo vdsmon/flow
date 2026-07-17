@@ -253,7 +253,8 @@ def test_codex_command_is_exact_read_only_and_resumable(tmp_path: Path) -> None:
     assert 'sandbox_mode="read-only"' in command
     assert 'model_reasoning_effort="xhigh"' in command
     assert "--json" in command
-    assert command[-2:] == ["thread-7", "prompt"]
+    assert command[-2:] == ["thread-7", "-"]
+    assert "prompt" not in command
 
 
 def test_claude_command_is_exact_read_only_and_resumable(tmp_path: Path) -> None:
@@ -347,7 +348,8 @@ def test_initial_launch_reports_capsule_disposal_and_terminal_acceptance(
     result = json.loads(capsys.readouterr().out)
     assert result["envelope"]["author"]["id"] == "codex:gpt-5.6-sol"
     assert result["thread_id"]
-    assert result["command"][-1] == "<prompt>"
+    # The prompt rides stdin, never argv, so the journaled command carries none of its bytes.
+    assert "plan the ticket" not in json.dumps(result["command"])
     assert result["acceptance"]["response"]["accepted"] is True
     assert result["acceptance"]["physical_attempt"]["terminal_acknowledged"] is True
     assert result["acceptance"]["cleanup"] == {
