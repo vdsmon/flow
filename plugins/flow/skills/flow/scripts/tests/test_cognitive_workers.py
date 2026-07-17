@@ -663,9 +663,11 @@ class _FakeProcess:
         self.pid = pid
         self.returncode: int | None = None
         self.timeouts: list[float | None] = []
+        self.inputs: list[str | None] = []
 
-    def communicate(self, timeout: float | None = None):
+    def communicate(self, timeout: float | None = None, input: str | None = None):
         self.timeouts.append(timeout)
+        self.inputs.append(input)
         outcome = self.outcomes.pop(0)
         if isinstance(outcome, BaseException):
             raise outcome
@@ -719,7 +721,10 @@ def test_hard_timeout_retries_once_only_after_terminal_acknowledgement() -> None
         first.outcomes.append(("", ""))
 
     execution = cw.run_provider_with_retry(
-        lambda fresh: ["provider", "fresh" if fresh else "initial"],
+        lambda fresh: (
+            ["provider", "fresh" if fresh else "initial"],
+            "fresh prompt" if fresh else "initial prompt",
+        ),
         cwd=Path.cwd(),
         environment={},
         retry_limit=1,
@@ -732,6 +737,8 @@ def test_hard_timeout_retries_once_only_after_terminal_acknowledgement() -> None
     assert execution.attempt == 2
     assert execution.command[-1] == "fresh"
     assert [item["outcome"] for item in execution.attempts] == ["hard_timeout", "success"]
+    assert first.inputs == ["initial prompt", None, None]
+    assert second.inputs == ["fresh prompt"]
 
 
 def test_ambiguous_termination_forbids_any_replacement() -> None:
@@ -752,7 +759,7 @@ def test_ambiguous_termination_forbids_any_replacement() -> None:
 
     with pytest.raises(cw.WorkerFailure, match="terminal acknowledgement") as error:
         cw.run_provider_with_retry(
-            lambda fresh: ["provider"],
+            lambda fresh: (["provider"], None),
             cwd=Path.cwd(),
             environment={},
             retry_limit=1,
@@ -815,7 +822,7 @@ def test_second_hard_timeout_never_starts_a_third_launch() -> None:
 
     with pytest.raises(cw.WorkerFailure, match="retry budget") as error:
         cw.run_provider_with_retry(
-            lambda fresh: ["provider"],
+            lambda fresh: (["provider"], None),
             cwd=Path.cwd(),
             environment={},
             retry_limit=1,
@@ -827,6 +834,217 @@ def test_second_hard_timeout_never_starts_a_third_launch() -> None:
         )
     assert launches == 2
     assert [item["attempt"] for item in error.value.attempts] == [1, 2]
+
+
+# ─── stdin transport (ARG_MAX) ────────────────────────────────────────────────
+
+
+def test_run_provider_process_pipes_a_huge_prompt_via_stdin_only_on_the_first_call() -> None:
+    huge_prompt = "P" * (3 * 1024 * 1024)
+    process = _FakeProcess([(json.dumps({"thread_id": "T-1", "result": {"summary": "ok"}}), "")])
+    captured_kwargs: dict[str, Any] = {}
+
+    def popen(command: list[str], **kwargs: Any) -> _FakeProcess:
+        captured_kwargs.update(kwargs)
+        return process
+
+    execution = cw.run_provider_process(
+        ["provider", "-"],
+        cwd=Path.cwd(),
+        environment={},
+        stdin_payload=huge_prompt,
+        popen=popen,
+        group_absent=lambda pid: True,
+        soft_timeout=10,
+        hard_timeout=40,
+    )
+    assert captured_kwargs["stdin"] == subprocess.PIPE
+    assert process.inputs == [huge_prompt]
+    assert execution.worker_id == "T-1"
+
+
+def test_run_provider_process_never_resends_input_after_a_soft_timeout() -> None:
+    process = _FakeProcess(
+        [
+            subprocess.TimeoutExpired(["provider"], 10),
+            (json.dumps({"thread_id": "T-1", "result": {"summary": "ok"}}), ""),
+        ]
+    )
+    execution = _run(process, stdin_payload="prompt bytes")
+    assert process.inputs == ["prompt bytes", None]
+    assert execution.worker_id == "T-1"
+
+
+def test_run_provider_process_omits_input_through_every_hard_deadline_continuation() -> None:
+    process = _FakeProcess(
+        [
+            subprocess.TimeoutExpired(["provider"], 10),
+            subprocess.TimeoutExpired(["provider"], 30),
+            ("tail stdout", "tail stderr"),
+        ]
+    )
+    with pytest.raises(cw.WorkerFailure, match="hard deadline"):
+        _run(process, stdin_payload="prompt bytes", killpg=lambda pid, sig: None)
+    assert process.inputs == ["prompt bytes", None, None]
+
+
+def test_run_provider_process_legacy_call_never_pipes_stdin() -> None:
+    """Callers that omit ``stdin_payload`` keep today's no-stdin Popen and communicate shape."""
+    process = _FakeProcess([(json.dumps({"thread_id": "T-1", "result": {"summary": "ok"}}), "")])
+    captured_kwargs: dict[str, Any] = {}
+
+    def popen(command: list[str], **kwargs: Any) -> _FakeProcess:
+        captured_kwargs.update(kwargs)
+        return process
+
+    execution = cw.run_provider_process(
+        ["provider"],
+        cwd=Path.cwd(),
+        environment={},
+        popen=popen,
+        group_absent=lambda pid: True,
+        soft_timeout=10,
+        hard_timeout=40,
+    )
+    assert "stdin" not in captured_kwargs
+    assert process.inputs == [None]
+    assert execution.worker_id == "T-1"
+
+
+def test_full_run_fresh_retry_pairs_the_fresh_prompt_and_keeps_command_digest_on_the_first(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The retry factory pairs each attempt's own prompt with its own argv end to end.
+
+    A forced fresh retry must reach the second process's stdin with
+    ``order.fresh_provider_prompt``, never the initial prompt, while the journal's
+    ``command_digest`` stays pinned to the first attempt's argv even though the
+    second attempt's argv differs (a distinct session id per attempt).
+    """
+    source, sha = _repository(tmp_path)
+    input_path = tmp_path / "input.json"
+    input_path.write_text("{}\n", encoding="utf-8")
+
+    envelope = {
+        "attempt_id": "attempt-1",
+        "version": 1,
+        "parent_digest": None,
+        "base_sha": sha,
+        "route_digest": "b" * 64,
+        "author": {"id": "codex:fake", "harness": "codex", "model": "fake"},
+        "status": "PLAN_READY",
+        "plan": {
+            "motivation": "m",
+            "goal": "g",
+            "scenarios": [{"before": "b", "after": "a"}],
+            "architecture": ["x"],
+            "decisions": ["d"],
+            "acceptance_outcomes": ["o"],
+            "steps": ["s"],
+            "files": ["f.py"],
+            "context_paths": [],
+            "verification": ["v"],
+            "e2e_recipe": "run",
+            "lane": "full",
+            "compatibility": [],
+            "rollout": "r",
+            "risks": ["r"],
+        },
+        "questions": [],
+        "incorporated_feedback_ids": [],
+    }
+
+    processes: list[_FakeProcess] = []
+    launched_commands: list[list[str]] = []
+    real_popen = cw.subprocess.Popen
+
+    def fake_popen(command: list[str], **kwargs: Any) -> Any:
+        # Only the fake provider launch is faked; every git subprocess this run makes
+        # (clone, receipts, HEAD checks) must reach the real Popen unchanged.
+        if not command or command[0] != "fake-codex":
+            return real_popen(command, **kwargs)
+        launched_commands.append(list(command))
+        if not processes:
+            process = _FakeProcess(
+                [
+                    subprocess.TimeoutExpired(command, 1),
+                    subprocess.TimeoutExpired(command, 1),
+                    ("", ""),
+                ],
+                pid=900001,
+            )
+        else:
+            process = _FakeProcess(
+                [(json.dumps({"thread_id": "fresh-thread", "result": envelope}), "")],
+                pid=900002,
+            )
+        processes.append(process)
+        return process
+
+    monkeypatch.setattr(cw.subprocess, "Popen", fake_popen)
+
+    class Adapter:
+        harness = "codex"
+
+        def preflight(self, route: Any, authority: str = "read_only") -> dict[str, str]:
+            return {"executable": "fake", "version": "fake/1", "harness": "codex"}
+
+        def command(self, *args: Any, **kwargs: Any) -> list[str]:
+            raise AssertionError("a planner order never uses the plain capsule command")
+
+        def session_command(
+            self, route: Any, prompt: str, schema_path: Path, *, thread_id: Any, new_thread_id: Any
+        ) -> list[str]:
+            return ["fake-codex", "exec", "--session-id", str(new_thread_id), "-"]
+
+    order = cw.WorkOrder(
+        logical_invocation_id="planner-fresh-retry",
+        generation=1,
+        profile="planner",
+        source_root=str(source),
+        source_sha=sha,
+        route={"harness": "codex", "model": "fake", "effort": "high"},
+        route_snapshot_digest="b" * 64,
+        input_bundle=str(input_path),
+        input_digest=hashlib.sha256(input_path.read_bytes()).hexdigest(),
+        facts={},
+        provider_prompt="INITIAL PLANNER PROMPT",
+        fresh_provider_prompt="FRESH REHYDRATION PROMPT",
+        session={
+            "thread_id": None,
+            "initial_session_id": "initial-session",
+            "fresh_session_id": "fresh-session",
+        },
+    )
+    workers = cw.CognitiveWorkers(
+        artifact_root=tmp_path / "artifacts",
+        capsule_root=tmp_path / "capsules",
+        adapters={"codex": Adapter()},
+    )
+
+    outcome = workers.run(order, cw.OwnerProof(owner_id="owner", harness="codex"))
+
+    assert outcome.status == "succeeded"
+    first_command = ["fake-codex", "exec", "--session-id", "initial-session", "-"]
+    fresh_command = ["fake-codex", "exec", "--session-id", "fresh-session", "-"]
+    assert launched_commands == [first_command, fresh_command]
+    assert processes[0].inputs == ["INITIAL PLANNER PROMPT", None, None]
+    assert processes[1].inputs == ["FRESH REHYDRATION PROMPT"]
+    assert outcome.receipts["command"] == fresh_command
+
+    invocation = (
+        tmp_path / "artifacts" / "invocations" / hashlib.sha256(b"planner-fresh-retry").hexdigest()
+    )
+    journal_value = json.loads((invocation / "journal.json").read_text(encoding="utf-8"))
+    assert journal_value["command_digest"] == cw._digest(first_command)
+    assert journal_value["command_digest"] != cw._digest(fresh_command)
+    assert journal_value["command"] == fresh_command
+
+    # The journaled and returned command evidence is exactly the executed argv: no prompt
+    # bytes ride either, since both attempts' prompts went out over stdin instead.
+    command_evidence = json.dumps([journal_value["command"], outcome.receipts["command"]])
+    assert "INITIAL PLANNER PROMPT" not in command_evidence
+    assert "FRESH REHYDRATION PROMPT" not in command_evidence
 
 
 # ─── failure-tail retention ──────────────────────────────────────────────────
@@ -880,8 +1098,8 @@ def test_hard_timeout_retention_falls_back_to_timeoutexpired_bytes_when_streams_
 def test_worker_exited_retains_the_captured_streams() -> None:
     class _Failing(_FakeProcess):
         @override
-        def communicate(self, timeout: float | None = None):
-            result = super().communicate(timeout)
+        def communicate(self, timeout: float | None = None, input: str | None = None):
+            result = super().communicate(timeout, input)
             self.returncode = 7
             return result
 
@@ -924,7 +1142,7 @@ def test_retention_failure_never_blocks_the_acknowledged_fresh_retry() -> None:
         raise RuntimeError("disk full")
 
     execution = cw.run_provider_with_retry(
-        lambda fresh: ["provider", "fresh" if fresh else "initial"],
+        lambda fresh: (["provider", "fresh" if fresh else "initial"], None),
         cwd=Path.cwd(),
         environment={},
         retry_limit=1,
@@ -964,8 +1182,8 @@ def test_invocation_failure_tail_writes_both_streams(tmp_path: Path) -> None:
 def test_cli_failure_prefers_the_structured_stdout_error() -> None:
     class _Failing(_FakeProcess):
         @override
-        def communicate(self, timeout: float | None = None):
-            result = super().communicate(timeout)
+        def communicate(self, timeout: float | None = None, input: str | None = None):
+            result = super().communicate(timeout, input)
             self.returncode = 1
             return result
 
@@ -1060,6 +1278,55 @@ def _workers(tmp_path: Path, adapter) -> cw.CognitiveWorkers:
         capsule_root=tmp_path / "capsules",
         adapters={"codex": adapter},
     )
+
+
+def test_full_run_capsule_branch_pairs_the_bundle_prompt_with_its_argv(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The capsule branch of build_invocation (a non-session order) must reach stdin too.
+
+    Every implementer, review_fixer, revision_fixer, E2E, and read-only capsule worker
+    takes this branch, unlike the session branch already covered by
+    ``test_full_run_fresh_retry_pairs_the_fresh_prompt_and_keeps_command_digest_on_the_first``.
+    """
+    source, sha = _repository(tmp_path)
+    input_path = tmp_path / "input.json"
+    input_path.write_text("{}\n", encoding="utf-8")
+
+    captured_prompts: list[str] = []
+    process = _FakeProcess([(json.dumps({"thread_id": "worker-1", "result": _REVIEW_RESULT}), "")])
+    real_popen = cw.subprocess.Popen
+
+    def fake_popen(command: list[str], **kwargs: Any) -> Any:
+        # subprocess.run() is implemented on top of Popen, so every git subprocess this
+        # run makes (clone, receipts, HEAD checks) must reach the real Popen unchanged.
+        if not command or command[0] != "fake-reviewer":
+            return real_popen(command, **kwargs)
+        return process
+
+    monkeypatch.setattr(cw.subprocess, "Popen", fake_popen)
+
+    class Adapter:
+        harness = "codex"
+
+        def preflight(self, route, authority="read_only"):
+            return {"executable": "/usr/bin/codex", "version": "codex 1", "harness": "codex"}
+
+        def command(self, route, prompt, schema_path, capsule, authority="read_only"):
+            captured_prompts.append(prompt)
+            return ["fake-reviewer", "-"]
+
+        def session_command(self, route, prompt, schema_path, *, thread_id, new_thread_id):
+            raise AssertionError("a capsule order never carries a provider session")
+
+    order = _review_order(source, sha, input_path, "review-capsule-branch")
+    workers = _workers(tmp_path, Adapter())
+
+    outcome = workers.run(order, cw.OwnerProof(owner_id="owner", harness="codex"))
+
+    assert outcome.status == "succeeded"
+    assert captured_prompts
+    assert process.inputs == [captured_prompts[0]]
 
 
 def test_a_reader_that_writes_to_its_capsule_is_a_read_only_violation(tmp_path: Path) -> None:

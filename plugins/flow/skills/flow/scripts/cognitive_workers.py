@@ -1163,7 +1163,9 @@ class CodexCliAdapter:
             str(schema_path.resolve()),
             "-C",
             str(capsule.resolve()),
-            prompt,
+            # "-" is codex exec's documented stdin marker; supplying a real prompt token here
+            # too would make codex append the piped stdin after it instead of reading from it.
+            "-",
         ]
 
     def session_command(
@@ -1226,7 +1228,7 @@ class ClaudeCodeCliAdapter:
             "--json-schema",
             schema_path.read_text(encoding="utf-8"),
             "--no-session-persistence",
-            prompt,
+            # No positional prompt: --print reads it from stdin when none is given.
         ]
 
     def session_command(
@@ -1296,7 +1298,9 @@ def build_planner_command(
         command.extend(["--json", "--output-schema", schema])
         if thread_id:
             command.append(thread_id)
-        command.append(prompt)
+        # "-" is codex exec's documented stdin marker; supplying a real prompt token here
+        # too would make codex append the piped stdin after it instead of reading from it.
+        command.append("-")
         return command
     if route["harness"] != "claude_code":
         raise WorkerFailure("planner route names an unsupported harness")
@@ -1320,7 +1324,7 @@ def build_planner_command(
         command.extend(["--resume", thread_id])
     else:
         command.extend(["--session-id", new_thread_id or str(uuid.uuid4())])
-    command.append(prompt)
+    # No positional prompt: --print reads it from stdin when none is given.
     return command
 
 
@@ -2390,11 +2394,41 @@ def _retain_failure_tail(
         callback(attempt_number, _normalize_stream(stdout), _normalize_stream(stderr))
 
 
+def _provider_popen_kwargs(
+    cwd: Path, environment: Mapping[str, str], stdin_payload: str | None
+) -> dict[str, Any]:
+    kwargs: dict[str, Any] = {
+        "cwd": cwd,
+        "env": dict(environment),
+        "stdout": subprocess.PIPE,
+        "stderr": subprocess.PIPE,
+        "text": True,
+        "start_new_session": True,
+    }
+    if stdin_payload is not None:
+        kwargs["stdin"] = subprocess.PIPE
+    return kwargs
+
+
+def _initial_communicate(
+    process: Any, stdin_payload: str | None, soft_timeout: float
+) -> tuple[str, str]:
+    """Feed the prompt on the one communicate() call that can still deliver it.
+
+    Every continuation after this (soft-to-hard, post-SIGTERM, post-SIGKILL) omits
+    input, so the prompt is never resent once the process has already read it.
+    """
+    if stdin_payload is not None:
+        return process.communicate(input=stdin_payload, timeout=soft_timeout)
+    return process.communicate(timeout=soft_timeout)
+
+
 def run_provider_process(
     command: list[str],
     *,
     cwd: Path,
     environment: Mapping[str, str],
+    stdin_payload: str | None = None,
     popen: Callable[..., Any] = _default_popen,
     killpg: Callable[[int, int], None] = os.killpg,
     group_absent: Callable[[int], bool] = _process_group_absent,
@@ -2408,20 +2442,12 @@ def run_provider_process(
     """Run one provider process group and retain typed output plus terminal proof."""
     if soft_timeout <= 0 or hard_timeout <= soft_timeout:
         raise WorkerFailure("worker deadlines require 0 < soft < hard")
-    process = popen(
-        command,
-        cwd=cwd,
-        env=dict(environment),
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        start_new_session=True,
-    )
+    process = popen(command, **_provider_popen_kwargs(cwd, environment, stdin_payload))
     started = time.monotonic()
     soft = False
     deadline_events: list[str] = []
     try:
-        stdout, stderr = process.communicate(timeout=soft_timeout)
+        stdout, stderr = _initial_communicate(process, stdin_payload, soft_timeout)
     except subprocess.TimeoutExpired:
         soft = True
         deadline_events.append("soft_deadline")
@@ -2563,7 +2589,7 @@ def run_provider_process(
 
 
 def run_provider_with_retry(
-    command_factory: Callable[[bool], list[str]],
+    command_factory: Callable[[bool], tuple[list[str], str | None]],
     *,
     cwd: Path,
     environment: Mapping[str, str],
@@ -2584,11 +2610,13 @@ def run_provider_with_retry(
     metrics: list[dict[str, Any]] = []
     attempts = 1 + retry_limit
     for attempt in range(1, attempts + 1):
+        command, stdin_payload = command_factory(attempt > 1)
         try:
             result = run_provider_process(
-                command_factory(attempt > 1),
+                command,
                 cwd=cwd,
                 environment=environment,
+                stdin_payload=stdin_payload,
                 popen=popen,
                 killpg=killpg,
                 group_absent=group_absent,
@@ -3208,7 +3236,7 @@ class CognitiveWorkers:
             authoritative_before = guarded_receipt(source)
             capsule_before = guarded_receipt(capsule)
 
-            def build_command(fresh: bool) -> list[str]:
+            def build_invocation(fresh: bool) -> tuple[list[str], str | None]:
                 if order.provider_prompt is not None:
                     session = order.session or {}
                     selected_prompt = (
@@ -3216,7 +3244,7 @@ class CognitiveWorkers:
                         if fresh
                         else order.provider_prompt
                     )
-                    return adapter.session_command(
+                    command = adapter.session_command(
                         order.route,
                         selected_prompt,
                         schema_path,
@@ -3227,14 +3255,16 @@ class CognitiveWorkers:
                             else session.get("initial_session_id")
                         ),
                     )
-                return adapter.command(
+                    return command, selected_prompt
+                command = adapter.command(
                     order.route, prompt.prompt, schema_path, capsule, order.authority
                 )
+                return command, prompt.prompt
 
-            first_command = build_command(False)
+            first_command, first_stdin_payload = build_invocation(False)
 
-            def command_factory(fresh: bool) -> list[str]:
-                return build_command(True) if fresh else first_command
+            def command_factory(fresh: bool) -> tuple[list[str], str | None]:
+                return build_invocation(True) if fresh else (first_command, first_stdin_payload)
 
             running_fields: dict[str, Any] = {
                 "command_digest": _digest(first_command),
@@ -3284,7 +3314,9 @@ class CognitiveWorkers:
                 "terminal",
                 process=asdict(process),
                 physical_attempts=list(execution.attempts),
-                command=[*execution.command[:-1], "<prompt>"],
+                # The executed argv is prompt-free by construction (stdin carries it instead),
+                # so it needs no redaction before it becomes durable journal/receipt evidence.
+                command=list(execution.command),
                 worker_id=execution.worker_id,
             )
 
