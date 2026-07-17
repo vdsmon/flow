@@ -18,6 +18,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -31,6 +32,9 @@ SOFT_TIMEOUT_SECONDS = cognitive_workers.SOFT_TIMEOUT_SECONDS
 HARD_TIMEOUT_SECONDS = cognitive_workers.HARD_TIMEOUT_SECONDS
 
 WorkerError = cognitive_workers.WorkerFailure
+
+# Retention window for the failed-launch evidence _launch reaps under ~/.cache.
+_EPHEMERAL_REAP_AGE_S = 7 * 86400
 
 
 @dataclass(frozen=True)
@@ -286,15 +290,39 @@ def _work_order(args: argparse.Namespace, route: PlannerRoute) -> cognitive_work
     )
 
 
+def _reap_stale_ephemeral_siblings(cache_parent: Path) -> None:
+    """Best-effort removal of failed-launch evidence older than _EPHEMERAL_REAP_AGE_S."""
+    try:
+        now = time.time()
+        for sibling in cache_parent.glob("flow-planner-worker-*"):
+            try:
+                if now - sibling.stat().st_mtime > _EPHEMERAL_REAP_AGE_S:
+                    shutil.rmtree(sibling)
+            except OSError:
+                continue
+    except OSError:
+        pass
+
+
 def _launch(args: argparse.Namespace, route: PlannerRoute) -> dict[str, Any]:
     """Run one logical pre-approval invocation through the common capsule executor."""
     order = _work_order(args, route)
     owner = _owner_proof()
     ephemeral = args.invocation_root is None
-    invocation_root = Path(
-        args.invocation_root
-        or tempfile.mkdtemp(prefix="flow-planner-worker-", dir=os.environ.get("TMPDIR"))
-    ).resolve()
+    if ephemeral:
+        # mise's trusted_config_paths is ['~/'], so the cloned capsule's mise.toml must land under
+        # HOME; TMPDIR (e.g. macOS /var/folders) is untrusted and must not be used here. A failed
+        # launch keeps its invocation root here as forensic evidence (see below), so siblings past
+        # _EPHEMERAL_REAP_AGE_S are best-effort reaped on every ephemeral launch to bound growth
+        # while keeping recent forensics.
+        cache_parent = Path.home() / ".cache" / "flow-planner-worker"
+        cache_parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        _reap_stale_ephemeral_siblings(cache_parent)
+        invocation_root = Path(
+            tempfile.mkdtemp(prefix="flow-planner-worker-", dir=str(cache_parent))
+        ).resolve()
+    else:
+        invocation_root = Path(args.invocation_root).resolve()
     outcome = cognitive_workers.CognitiveWorkers(
         artifact_root=invocation_root / "artifacts",
         capsule_root=invocation_root / "capsules",

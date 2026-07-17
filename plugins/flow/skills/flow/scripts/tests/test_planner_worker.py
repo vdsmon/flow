@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -194,6 +197,18 @@ def _assessor_argv(
         str(tmp_path / "invocation"),
         *extra,
     ]
+
+
+def _home(tmp_path: Path, monkeypatch) -> Path:
+    """Point HOME at a controlled directory and return its resolved path."""
+    home_dir = tmp_path / "home"
+    home_dir.mkdir()
+    monkeypatch.setenv("HOME", str(home_dir))
+    return home_dir.resolve()
+
+
+def _planner_worker_cache(home: Path) -> Path:
+    return home / ".cache" / "flow-planner-worker"
 
 
 def _git(root: Path, *args: str) -> str:
@@ -452,6 +467,7 @@ def test_result_output_persists_the_result_before_ephemeral_disposal(
     adapter = _FakeAdapter(_envelope())
     monkeypatch.setattr(cw, "ADAPTERS", {"codex": adapter})
     monkeypatch.setenv("FLOW_HARNESS", "codex")
+    home = _home(tmp_path, monkeypatch)
     tmp_root = tmp_path / "tmproot"
     tmp_root.mkdir()
     monkeypatch.setenv("TMPDIR", str(tmp_root))
@@ -467,6 +483,7 @@ def test_result_output_persists_the_result_before_ephemeral_disposal(
     assert emitted["thread_id"]
     assert emitted["acceptance"]["cleanup"]["invocation_root_absent"] is True
     assert not list(tmp_root.glob("flow-planner-worker-*"))
+    assert not list(_planner_worker_cache(home).glob("flow-planner-worker-*"))
     persisted_text = result_path.read_text(encoding="utf-8")
     # The live session id doubles as worker_id and rides the command argv, so the
     # planner-profile file copy must carry it nowhere in the serialized bytes.
@@ -490,6 +507,7 @@ def test_failed_launch_keeps_evidence_and_fabricates_no_result_file(
     )
     monkeypatch.setattr(cw, "ADAPTERS", {"codex": adapter})
     monkeypatch.setenv("FLOW_HARNESS", "codex")
+    home = _home(tmp_path, monkeypatch)
     tmp_root = tmp_path / "tmproot"
     tmp_root.mkdir()
     monkeypatch.setenv("TMPDIR", str(tmp_root))
@@ -503,7 +521,111 @@ def test_failed_launch_keeps_evidence_and_fabricates_no_result_file(
 
     assert "exited 1" in capsys.readouterr().err
     assert not result_path.exists()
-    assert len(list(tmp_root.glob("flow-planner-worker-*"))) == 1
+    assert not list(tmp_root.glob("flow-planner-worker-*"))
+    assert len(list(_planner_worker_cache(home).glob("flow-planner-worker-*"))) == 1
+
+
+def test_ephemeral_invocation_root_is_rooted_under_home_not_tmpdir(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    adapter = _FakeAdapter(_envelope())
+    monkeypatch.setattr(cw, "ADAPTERS", {"codex": adapter})
+    monkeypatch.setenv("FLOW_HARNESS", "codex")
+    home = _home(tmp_path, monkeypatch)
+    tmp_root = tmp_path / "tmproot"
+    tmp_root.mkdir()
+    monkeypatch.setenv("TMPDIR", str(tmp_root))
+    assert not tmp_root.resolve().is_relative_to(home)
+    source = _source(tmp_path)
+    argv = _argv(tmp_path, source)
+    root_flag = argv.index("--invocation-root")
+    del argv[root_flag : root_flag + 2]
+
+    assert pw.cli_main(argv) == 0
+
+    result = json.loads(capsys.readouterr().out)
+    invocation_root = Path(result["acceptance"]["cleanup"]["invocation_root"]).resolve()
+    capsule_root = Path(result["acceptance"]["capsule"]["capsule"]).resolve().parent
+    assert invocation_root.is_relative_to(_planner_worker_cache(home))
+    assert capsule_root == invocation_root / "capsules"
+    assert capsule_root.is_relative_to(_planner_worker_cache(home))
+
+
+def test_explicit_invocation_root_ignores_conflicting_home_and_tmpdir(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    adapter = _FakeAdapter(_envelope())
+    monkeypatch.setattr(cw, "ADAPTERS", {"codex": adapter})
+    monkeypatch.setenv("FLOW_HARNESS", "codex")
+    home = _home(tmp_path, monkeypatch)
+    tmp_root = tmp_path / "tmproot"
+    tmp_root.mkdir()
+    monkeypatch.setenv("TMPDIR", str(tmp_root))
+    source = _source(tmp_path)
+    explicit_root = tmp_path / "invocation"
+
+    assert pw.cli_main(_argv(tmp_path, source)) == 0
+
+    result = json.loads(capsys.readouterr().out)
+    assert result["acceptance"]["cleanup"]["invocation_root"] == str(explicit_root.resolve())
+    assert not _planner_worker_cache(home).exists()
+    assert not list(tmp_root.glob("flow-planner-worker-*"))
+
+
+def test_ephemeral_launch_reaps_stale_siblings_but_keeps_recent_ones(
+    tmp_path: Path, monkeypatch
+) -> None:
+    adapter = _FakeAdapter(_envelope())
+    monkeypatch.setattr(cw, "ADAPTERS", {"codex": adapter})
+    monkeypatch.setenv("FLOW_HARNESS", "codex")
+    home = _home(tmp_path, monkeypatch)
+    monkeypatch.delenv("TMPDIR", raising=False)
+    source = _source(tmp_path)
+    cache_parent = _planner_worker_cache(home)
+    cache_parent.mkdir(parents=True)
+    old_sibling = cache_parent / "flow-planner-worker-old"
+    old_sibling.mkdir()
+    old_mtime = time.time() - pw._EPHEMERAL_REAP_AGE_S - 3600
+    os.utime(old_sibling, (old_mtime, old_mtime))
+    young_sibling = cache_parent / "flow-planner-worker-young"
+    young_sibling.mkdir()
+    argv = _argv(tmp_path, source)
+    root_flag = argv.index("--invocation-root")
+    del argv[root_flag : root_flag + 2]
+
+    assert pw.cli_main(argv) == 0
+
+    assert not old_sibling.exists()
+    assert young_sibling.exists()
+
+
+def test_ephemeral_launch_survives_a_reap_failure(tmp_path: Path, monkeypatch) -> None:
+    adapter = _FakeAdapter(_envelope())
+    monkeypatch.setattr(cw, "ADAPTERS", {"codex": adapter})
+    monkeypatch.setenv("FLOW_HARNESS", "codex")
+    home = _home(tmp_path, monkeypatch)
+    monkeypatch.delenv("TMPDIR", raising=False)
+    source = _source(tmp_path)
+    cache_parent = _planner_worker_cache(home)
+    cache_parent.mkdir(parents=True)
+    old_sibling = cache_parent / "flow-planner-worker-old"
+    old_sibling.mkdir()
+    old_mtime = time.time() - pw._EPHEMERAL_REAP_AGE_S - 3600
+    os.utime(old_sibling, (old_mtime, old_mtime))
+    real_rmtree = shutil.rmtree
+
+    def _rmtree_refusing_the_sibling(path, *args, **kwargs):
+        if Path(path) == old_sibling:
+            raise OSError("locked")
+        return real_rmtree(path, *args, **kwargs)
+
+    monkeypatch.setattr(shutil, "rmtree", _rmtree_refusing_the_sibling)
+    argv = _argv(tmp_path, source)
+    root_flag = argv.index("--invocation-root")
+    del argv[root_flag : root_flag + 2]
+
+    assert pw.cli_main(argv) == 0
+    assert old_sibling.exists()
 
 
 def test_defaulted_source_root_is_refused_for_both_profiles(
