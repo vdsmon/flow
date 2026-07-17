@@ -11,6 +11,7 @@ from types import SimpleNamespace
 
 import pytest
 
+import flow_friction
 import lease
 import recover
 import state
@@ -18,6 +19,13 @@ import state
 
 def _now() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _friction_rows(root: Path) -> list[dict]:
+    fpath = root / ".flow" / "FT" / "friction.jsonl"
+    if not fpath.exists():
+        return []
+    return [json.loads(line) for line in fpath.read_text(encoding="utf-8").splitlines()]
 
 
 def _identity() -> tuple[str, str]:
@@ -71,6 +79,63 @@ def test_takeover_clears_expired_lease_and_resets(tmp_path: Path) -> None:
     assert rc == 0
     assert payload["took_over"] is True
     assert "ticket" in payload["reset_stages"]
+    assert not lease.run_lock_path(td).exists()
+    ts, _ = state.read(td)
+    assert ts is not None
+    assert ts.stages["ticket"].status == "pending"
+
+
+def test_takeover_appends_lease_loss_friction(tmp_path: Path) -> None:
+    td = _ws(tmp_path)
+    ts_before, _ = state.read(td)
+    assert ts_before is not None
+    boot, host = _identity()
+    lease.acquire(
+        td, "old-run", 1, "2020-01-01T00:00:00Z", current_boot=boot, hostname=host, cwd=str(td)
+    )
+    state.begin_stage(td, "ticket", "sha")
+    rc, payload = recover.takeover(tmp_path, "T-1", now_iso=_now())
+    assert rc == 0
+    rows = _friction_rows(tmp_path)
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["run_id"] == ts_before.run_id
+    assert row["ticket"] == "T-1"
+    assert row["type"] == "LEASE_LOSS"
+    assert row["stage"] == "recover"
+    assert "expired_foreign" in row["body"]
+    assert "ticket" in row["body"]
+    assert payload["took_over"] is True
+    assert payload["reset_stages"] == ["ticket"]
+
+
+def test_takeover_free_lease_appends_no_friction(tmp_path: Path) -> None:
+    td = _ws(tmp_path)
+    assert td is not None
+    rc, payload = recover.takeover(tmp_path, "T-1", now_iso=_now())
+    assert rc == 0
+    assert payload["took_over"] is True
+    assert payload["reset_stages"] == []
+    assert _friction_rows(tmp_path) == []
+
+
+def test_takeover_friction_append_failure_is_swallowed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    td = _ws(tmp_path)
+    boot, host = _identity()
+    lease.acquire(
+        td, "old-run", 1, "2020-01-01T00:00:00Z", current_boot=boot, hostname=host, cwd=str(td)
+    )
+    state.begin_stage(td, "ticket", "sha")
+
+    def _boom(*args: object, **kwargs: object) -> None:
+        raise OSError("friction log unreachable")
+
+    monkeypatch.setattr(flow_friction, "append", _boom)
+    rc, payload = recover.takeover(tmp_path, "T-1", now_iso=_now())
+    assert rc == 0
+    assert payload["took_over"] is True
     assert not lease.run_lock_path(td).exists()
     ts, _ = state.read(td)
     assert ts is not None
@@ -190,6 +255,55 @@ def test_retry_resets_failed_to_pending(tmp_path: Path) -> None:
     ts, _ = state.read(td)
     assert ts is not None
     assert ts.stages["plan"].status == "pending"
+
+
+def test_retry_appends_retry_friction(tmp_path: Path) -> None:
+    td = _ws(tmp_path)
+    ts_before, _ = state.read(td)
+    assert ts_before is not None
+    state.force_stage_status(td, "plan", "failed")
+    rc = recover.cli_main(
+        ["retry", "--ticket", "T-1", "--workspace-root", str(tmp_path), "--stage", "plan"]
+    )
+    assert rc == 0
+    rows = _friction_rows(tmp_path)
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["run_id"] == ts_before.run_id
+    assert row["ticket"] == "T-1"
+    assert row["stage"] == "plan"
+    assert row["type"] == "RETRY"
+    assert "failed" in row["body"]
+    assert "pending" in row["body"]
+
+
+def test_retry_friction_append_failure_is_swallowed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    td = _ws(tmp_path)
+    state.force_stage_status(td, "plan", "failed")
+
+    def _boom(*args: object, **kwargs: object) -> None:
+        raise OSError("friction log unreachable")
+
+    monkeypatch.setattr(flow_friction, "append", _boom)
+    rc = recover.cli_main(
+        ["retry", "--ticket", "T-1", "--workspace-root", str(tmp_path), "--stage", "plan"]
+    )
+    assert rc == 0
+    ts, _ = state.read(td)
+    assert ts is not None
+    assert ts.stages["plan"].status == "pending"
+
+
+def test_skip_does_not_append_friction(tmp_path: Path) -> None:
+    td = _ws(tmp_path)
+    state.force_stage_status(td, "plan", "failed")
+    rc = recover.cli_main(
+        ["skip", "--ticket", "T-1", "--workspace-root", str(tmp_path), "--stage", "plan"]
+    )
+    assert rc == 0
+    assert _friction_rows(tmp_path) == []
 
 
 def test_skip_marks_completed(tmp_path: Path) -> None:
