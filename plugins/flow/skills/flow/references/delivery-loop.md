@@ -138,6 +138,12 @@ FLOW_HARNESS="<harness>" "<facade>" cognitive-worker run-stage \
   --output "$TICKET_DIR/stages/<stage>.cognitive.json"
 ```
 
+Between launching this command and reading its receipt, the owner must run nothing that
+touches the authoritative worktree, including a bare `python3` or `mise` invocation: a shim
+can silently mutate it (an untracked `uv.lock` write is enough). Any such touch races the
+executor's before/after Git receipts and turns into a misleading `read_only_violation` naming
+a path the owner wrote, attributed to the worker (`references/troubleshooting.md`).
+
 Each `--inputs-from` entry is keyed by substep and holds either `facts` plus an
 `input_bundle` path, or a `skip` with an exact `reason` when a conditional substep does
 not apply. An exact-route failure stops the stage visibly: never fall back to a native

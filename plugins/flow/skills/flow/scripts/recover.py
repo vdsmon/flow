@@ -194,6 +194,28 @@ def _force(
     return 0, {"ticket": ticket, "stage": stage, "status": status}
 
 
+def _retry_substep(
+    workspace_root: Path, ticket: str, stage: str, substep: str
+) -> tuple[int, dict[str, Any]]:
+    td = _ticket_dir(workspace_root, ticket)
+    ts, _ = state.read(td)
+    if ts is None:
+        return 2, {"error": f"no state.json at {td}"}
+    try:
+        new_state = state.retry_cognitive_substep(td, stage, substep)
+    except ValueError as exc:
+        return 1, {"error": str(exc)}
+    sealed = (new_state.stages[stage].cognitive_substeps or {}).get(substep, {})
+    return 0, {
+        "ticket": ticket,
+        "stage": stage,
+        "substep": substep,
+        "status": new_state.stages[stage].status,
+        "generation": sealed.get("generation"),
+        "logical_invocation_id": sealed.get("logical_invocation_id"),
+    }
+
+
 def abort(workspace_root: Path, ticket: str, *, force: bool = False) -> tuple[int, dict[str, Any]]:
     td = _ticket_dir(workspace_root, ticket)
     result = lease.takeover_clear(
@@ -256,6 +278,10 @@ def cli_main(argv: list[str]) -> int:
     sub.add_parser("reload-snapshot", parents=[common], help="Accept current config (clear drift).")
     p_retry = sub.add_parser("retry", parents=[common], help="Reset a stage to pending.")
     p_retry.add_argument("--stage", required=True)
+    p_retry.add_argument(
+        "--substep",
+        help="Retry only this sealed cognitive substep in place, preserving completed siblings.",
+    )
     p_skip = sub.add_parser("skip", parents=[common], help="Mark a stage completed.")
     p_skip.add_argument("--stage", required=True)
     args = parser.parse_args(argv)
@@ -266,7 +292,10 @@ def cli_main(argv: list[str]) -> int:
     elif args.cmd == "takeover":
         rc, payload = takeover(workspace_root, args.ticket, force=args.force)
     elif args.cmd == "retry":
-        rc, payload = _force(workspace_root, args.ticket, args.stage, "pending", log_retry=True)
+        if args.substep:
+            rc, payload = _retry_substep(workspace_root, args.ticket, args.stage, args.substep)
+        else:
+            rc, payload = _force(workspace_root, args.ticket, args.stage, "pending", log_retry=True)
     elif args.cmd == "skip":
         rc, payload = _force(workspace_root, args.ticket, args.stage, "completed")
     elif args.cmd == "abort":

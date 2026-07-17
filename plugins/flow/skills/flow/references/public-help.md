@@ -42,5 +42,7 @@ Flow commands
       Run ready evolution work through the bounded worker pool.
   FLOW maintain worktrees clean [--dry-run]
       Remove safe stale Flow worktrees from the invoking workspace.
+  FLOW maintain quarantine clean [--dry-run]
+      Archive workspace-owned quarantined cognitive capsules.
   FLOW help [ticket|memory|measure|workspace|maintain]
       Show all commands or help for one namespace.

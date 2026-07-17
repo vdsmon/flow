@@ -122,14 +122,18 @@ FLOW_HARNESS="<harness>" "<facade>" planner-worker \
   --route-digest "<route digest>" \
   --source-root "<dedicated pristine mirror clone>" \
   --result-output "<attempt-dir>/planner-result.json" \
-  [--thread-id "<live thread>" --fresh-prompt-from "<attempt-dir>/rehydrate.txt"]
+  [--thread-id "<live thread>" --fresh-prompt-from "<attempt-dir>/rehydrate.txt"] \
+  [--invocation-root "<private ephemeral scratch outside the source repo>"]
 ```
 
 `--source-root` must be a dedicated pristine mirror clone for every pre-approval
 capsule, never the shared cockpit checkout: concurrent cockpit actors (parallel
 ticket drivers fetching, tracker writes) mutate the shared checkout between the
 before/after receipt captures, making a read-only violation unavoidable, and the
-worker refuses a defaulted source root. `--result-output` atomically persists the
+worker refuses a defaulted source root. `--invocation-root` defaults to a fresh
+tmpdir under `~/.cache/flow-planner-worker` and must lie outside `--source-root`;
+an explicit root equal to or nested inside the source repo is refused before the
+capsule executor is constructed. `--result-output` atomically persists the
 result JSON before the ephemeral invocation root is disposed, so the envelope and
 acceptance survive a truncated or mangled stdout. The planner-profile file copy is
 fully redacted of the live thread/session id (the top-level `thread_id`, the
@@ -177,7 +181,8 @@ FLOW_HARNESS="<harness>" "<facade>" planner-worker --profile plan_assessor \
   --attempt-dir "<attempt-dir>" --route-digest "<route digest>" \
   --facts-from "<attempt-dir>/assessor-facts.json" \
   --source-root "<dedicated pristine mirror clone>" \
-  --result-output "<attempt-dir>/assessor-result.json"
+  --result-output "<attempt-dir>/assessor-result.json" \
+  [--invocation-root "<private ephemeral scratch outside the source repo>"]
 FLOW_HARNESS="<harness>" "<facade>" agent-route attest \
   --snapshot "<attempt-dir>/route.json" --profile plan_assessor \
   --acceptance-from "<result acceptance>" --output "<attempt-dir>/assessor-receipt.json"

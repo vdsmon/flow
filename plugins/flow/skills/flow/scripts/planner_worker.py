@@ -323,6 +323,12 @@ def _launch(args: argparse.Namespace, route: PlannerRoute) -> dict[str, Any]:
         ).resolve()
     else:
         invocation_root = Path(args.invocation_root).resolve()
+        source_root = Path(order.source_root).resolve()
+        if invocation_root == source_root or invocation_root.is_relative_to(source_root):
+            raise WorkerError(
+                f"--invocation-root {invocation_root} lies inside --source-root {source_root}; "
+                "pass a private scratch dir outside the repo"
+            )
     outcome = cognitive_workers.CognitiveWorkers(
         artifact_root=invocation_root / "artifacts",
         capsule_root=invocation_root / "capsules",
@@ -402,7 +408,10 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--attempt-dir")
     parser.add_argument("--facts-from")
     parser.add_argument("--source-root")
-    parser.add_argument("--invocation-root")
+    parser.add_argument(
+        "--invocation-root",
+        help="private ephemeral scratch dir, must lie outside the repo; default = fresh tmpdir",
+    )
     parser.add_argument("--result-output")
     parser.add_argument("--preflight-only", action="store_true")
     return parser

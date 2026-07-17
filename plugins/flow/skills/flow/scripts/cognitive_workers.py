@@ -38,6 +38,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Literal, Protocol, cast
 
+import lease
 from _atomicio import atomic_write_bytes, atomic_write_text
 from _locking import LockContention, flock_blocking, flock_retry
 
@@ -2424,7 +2425,7 @@ def _initial_communicate(
     return process.communicate(timeout=soft_timeout)
 
 
-def run_provider_process(
+def run_provider_process(  # noqa: C901
     command: list[str],
     *,
     cwd: Path,
@@ -2445,6 +2446,57 @@ def run_provider_process(
         raise WorkerFailure("worker deadlines require 0 < soft < hard")
     process = popen(command, **_provider_popen_kwargs(cwd, environment, stdin_payload))
     started = time.monotonic()
+    if on_event is not None:
+        # The launch event is the durable proof a caller needs to recover a wedged
+        # invocation (pid/pgid/started_at), so it fires synchronously, before any
+        # output is read. A callback failure here cannot leave an unjournaled orphan:
+        # the group is torn down and drained with the same bounded TERM/KILL protocol
+        # the hard-timeout path uses, before the original failure propagates.
+        try:
+            on_event(
+                {
+                    "type": "launch",
+                    "attempt": attempt_number,
+                    # start_new_session=True makes this process its own session/group leader.
+                    "pid": process.pid,
+                    "pgid": process.pid,
+                    "started_at": time.time(),
+                }
+            )
+        except Exception as callback_exc:
+            with contextlib.suppress(OSError, ProcessLookupError):
+                killpg(process.pid, signal.SIGTERM)
+            drained_stdout, drained_stderr, streams_closed = "", "", False
+            try:
+                drained_stdout, drained_stderr = process.communicate(timeout=grace)
+                streams_closed = True
+            except subprocess.TimeoutExpired:
+                with contextlib.suppress(OSError, ProcessLookupError):
+                    killpg(process.pid, signal.SIGKILL)
+                try:
+                    drained_stdout, drained_stderr = process.communicate(timeout=grace)
+                    streams_closed = True
+                except subprocess.TimeoutExpired:
+                    pass
+            child_reaped = process.poll() is not None
+            absent = group_absent(process.pid)
+            _retain_failure_tail(retain_failure, attempt_number, drained_stdout, drained_stderr)
+            if child_reaped and absent and streams_closed:
+                # The group is provably dead, so this is a normal launch failure, not an
+                # unconfirmed termination. It still must surface as a WorkerFailure -- a bare
+                # exception here (e.g. OSError from a journal write) would escape every
+                # WorkerFailure handler upstream and leave the invocation unjournaled and
+                # its capsule undisposed.
+                if isinstance(callback_exc, WorkerFailure):
+                    raise callback_exc
+                raise WorkerFailure(
+                    f"launch callback failed: {callback_exc}", code="launch_callback_failed"
+                ) from callback_exc
+            raise WorkerFailure(
+                "worker termination lacks child or process-group acknowledgement after a "
+                "launch-journaling failure",
+                code="termination_unconfirmed",
+            ) from callback_exc
     soft = False
     deadline_events: list[str] = []
     try:
@@ -2720,6 +2772,111 @@ def _capsule_postcondition_ok(
     if authority == "read_only":
         return before["digest"] == after["digest"]
     return True
+
+
+_PORCELAIN_V2_FIELD_COUNTS = {"1": 7, "2": 8, "u": 9}
+
+
+def _live_dirty_paths(root: Path) -> list[str]:
+    """Best-effort live `git status --porcelain=v2` probe of a target root's dirty paths.
+
+    Violation-time forensics only, run after a stored receipt digest already proved the root
+    changed: an empty result here means the drift is in an index flag or ref, not tracked or
+    untracked file content, since neither shows up in `git status`.
+    """
+    try:
+        raw = _git_bytes(root, "status", "--porcelain=v2", "--untracked-files=all")
+    except (WorkerFailure, OSError):
+        return []
+    paths: list[str] = []
+    for line in raw.decode(errors="surrogateescape").splitlines():
+        if not line:
+            continue
+        kind, _, rest = line.partition(" ")
+        if kind in ("?", "!"):
+            paths.append(rest)
+        elif kind in _PORCELAIN_V2_FIELD_COUNTS:
+            tail = rest.split(" ", _PORCELAIN_V2_FIELD_COUNTS[kind])[-1]
+            paths.append(tail.split("\t", 1)[0])
+    return sorted(set(paths))
+
+
+_DIRTY_PATHS_DISPLAY_LIMIT = 50
+
+
+def _capped_dirty_paths(paths: list[str], limit: int = _DIRTY_PATHS_DISPLAY_LIMIT) -> list[str]:
+    """Cap a diagnostic path list the same way `_retain_failure_tail` caps output bytes.
+
+    A shim (mise/uv) can materialize tens of thousands of untracked paths in one violation;
+    without a cap this list is written verbatim into a `WorkerFailure` message and the digest-
+    verified journal record, which is re-read and re-digested on every later transition.
+    """
+    if len(paths) <= limit:
+        return paths
+    return [*paths[:limit], f"... (+{len(paths) - limit} more, {len(paths)} total)"]
+
+
+def _untracked_content_index(entries: object) -> dict[tuple[str, str], list[Any]]:
+    if not isinstance(entries, list):
+        return {}
+    return {(str(entry[0]), str(entry[1])): entry for entry in entries if isinstance(entry, list)}
+
+
+def _read_only_violation_diagnostics(
+    target: str, before: Mapping[str, Any], after: Mapping[str, Any], root: Path
+) -> tuple[str, dict[str, Any]]:
+    """Build the read_only_violation message and journal data naming what changed.
+
+    Both read_only_violation guard sites (the authoritative repository and a read-only
+    worker's own capsule) share this diagnostic, differing only in which receipt pair and
+    root are probed. Reuses `_cas_refusals` for top-level receipt drift and `_encoded_path`'s
+    normalized (path, path_encoding) identity for the per-path untracked_content diff, so a
+    dirty path names consistently whether it came from the receipt or the live probe.
+    """
+    changed_fields = _cas_refusals(before, after, tuple(key for key in before if key != "digest"))
+    before_untracked = _untracked_content_index(before.get("untracked_content"))
+    after_untracked = _untracked_content_index(after.get("untracked_content"))
+    before_keys = set(before_untracked)
+    after_keys = set(after_untracked)
+    added = sorted(path for path, _encoding in after_keys - before_keys)
+    removed = sorted(path for path, _encoding in before_keys - after_keys)
+    changed_paths = sorted(
+        path
+        for path, encoding in before_keys & after_keys
+        if before_untracked[(path, encoding)] != after_untracked[(path, encoding)]
+    )
+    dirty_paths = _capped_dirty_paths(_live_dirty_paths(root))
+    parts = []
+    if changed_fields:
+        parts.append(f"changed receipt fields: {', '.join(changed_fields)}")
+    if added:
+        parts.append(f"added untracked paths: {', '.join(added)}")
+    if removed:
+        parts.append(f"removed untracked paths: {', '.join(removed)}")
+    if changed_paths:
+        parts.append(f"changed untracked paths: {', '.join(changed_paths)}")
+    # The live re-probe always reports something: dirty paths it found, or, when a receipt
+    # field still drifted but nothing shows up in a fresh `git status` (an index flag or ref
+    # moved with no working-tree effect), the documented fallback wording.
+    parts.append(
+        f"live git status dirty paths: {', '.join(dirty_paths)}"
+        if dirty_paths
+        else "no visible dirt; index-flag/ref drift"
+    )
+    detail = "; ".join(parts)
+    label = (
+        "worker invocation changed the authoritative repository"
+        if target == "authoritative_repository"
+        else "read-only worker changed its capsule"
+    )
+    journal_data: dict[str, Any] = {
+        "target": target,
+        "changed_fields": list(changed_fields),
+        "untracked_content": {"added": added, "removed": removed, "changed": changed_paths},
+        "live_status_dirty_paths": dirty_paths,
+        "detail": detail,
+    }
+    return f"{label}: {detail}", journal_data
 
 
 def _writer_import_lock_path(source_root: Path) -> Path:
@@ -3272,6 +3429,11 @@ class CognitiveWorkers:
                 "authoritative_before": authoritative_before,
                 "capsule_before": capsule_before,
                 "capsule_receipt": capsule_receipt,
+                # Boot evidence pre-spawn, so every journal that reaches "running" carries it even
+                # if the process crashes before the launch callback fires -- a prior-boot journal
+                # without a "launch" record is thereby provably from a dead boot.
+                "hostname": lease.hostname(),
+                "boot_id": lease.boot_id(),
             }
             if policy.authority == "capsule_writer":
                 # The owned-file baseline is the CAS reference the import re-checks; capture it at
@@ -3280,6 +3442,27 @@ class CognitiveWorkers:
                     source, order.allowed_mutation_paths
                 )
             journal.transition("running", **running_fields)
+
+            def on_launch(event: dict[str, Any]) -> None:
+                # Journaled synchronously per physical attempt, under the invocation lock this
+                # whole method already holds: a wedged supervisor leaves this evidence behind,
+                # which is what makes the invocation externally recoverable (CognitiveWorkers.cancel
+                # / recover-invocation). Every attempt's launch is retained; "launch" alone is the
+                # current attempt's identity, the one recovery evidence gates on.
+                if event.get("type") != "launch":
+                    return
+                launch_record = {
+                    "attempt": event["attempt"],
+                    "pid": event["pid"],
+                    "pgid": event["pgid"],
+                    "hostname": lease.hostname(),
+                    "boot_id": lease.boot_id(),
+                    "started_at": event["started_at"],
+                }
+                launches = list((journal.read() or {}).get("launches") or [])
+                launches.append(launch_record)
+                journal.transition("running", launch=launch_record, launches=launches)
+
             try:
                 execution = run_provider_with_retry(
                     command_factory,
@@ -3291,6 +3474,7 @@ class CognitiveWorkers:
                     soft_timeout=policy.soft_budget_seconds,
                     hard_timeout=policy.hard_budget_seconds,
                     retain_failure=_invocation_failure_tail(invocation),
+                    on_event=on_launch,
                 )
             except WorkerFailure as exc:
                 quarantine = exc.code == "termination_unconfirmed"
@@ -3376,24 +3560,25 @@ class CognitiveWorkers:
             authoritative_after = guarded_receipt(source)
             capsule_after = guarded_receipt(capsule)
             if authoritative_before["digest"] != authoritative_after["digest"]:
+                message, diagnostics = _read_only_violation_diagnostics(
+                    "authoritative_repository", authoritative_before, authoritative_after, source
+                )
                 journal.transition(
                     "quarantined",
-                    failure={"code": "read_only_violation"},
+                    failure={"code": "read_only_violation", **diagnostics},
                     disposal=self._dispose_failed_capsule(capsule, quarantine=True),
                 )
-                raise WorkerFailure(
-                    "worker invocation changed the authoritative repository",
-                    code="read_only_violation",
-                )
+                raise WorkerFailure(message, code="read_only_violation")
             if not _capsule_postcondition_ok(order.authority, capsule_before, capsule_after):
+                message, diagnostics = _read_only_violation_diagnostics(
+                    "capsule", capsule_before, capsule_after, capsule
+                )
                 journal.transition(
                     "quarantined",
-                    failure={"code": "read_only_violation"},
+                    failure={"code": "read_only_violation", **diagnostics},
                     disposal=self._dispose_failed_capsule(capsule, quarantine=True),
                 )
-                raise WorkerFailure(
-                    "read-only worker changed its capsule", code="read_only_violation"
-                )
+                raise WorkerFailure(message, code="read_only_violation")
             validated_fields: dict[str, Any] = {
                 "result_digest": _digest(result),
                 "result": result,
@@ -3539,27 +3724,88 @@ class CognitiveWorkers:
     def _cancel_locked(
         self, logical_invocation_id: str, owner: OwnerProof, reason: str
     ) -> dict[str, Any]:
-        del owner
         invocation = self._invocation_dir(logical_invocation_id)
         journal = InvocationJournal(invocation / "journal.json", logical_invocation_id)
         value = journal.read()
         if value is None:
             raise WorkerFailure("cannot cancel an unknown invocation", code="invalid_order")
-        if value["state"] in {"completed", "blocked", "quarantined"}:
+        state = str(value["state"])
+        if state in {"completed", "blocked", "quarantined"}:
             return {
                 "schema": "flow.cognitive-cancellation/v1",
                 "logical_invocation_id": logical_invocation_id,
-                "state": value["state"],
+                "state": state,
                 "idempotent": True,
             }
-        # A recovered PID without live pipe ownership cannot prove output EOF.
+        if state in {"running", "cancelling"} and value.get("launch") is not None:
+            # A launch record proves the process was actually spawned, so its evidence can be
+            # gated on (see _require_dead_launch). A running/cancelling journal WITHOUT one --
+            # every journal written before launch evidence existed, or a supervisor that died
+            # before the launch callback fired -- can never produce that evidence, so it takes
+            # the prior unconditional-quarantine path instead (the old cancel semantic, and
+            # exactly the witnessed wedged-journal incidents this recovery path exists for).
+            self._require_dead_launch(value.get("launch"))
+        # A recovered PID without live pipe ownership cannot prove output EOF. The owner mapping
+        # is provenance recorded on the quarantine record; the launch-evidence gate above (or its
+        # absence for prepared/cloning) is what actually authorizes the recovery.
+        disposal: dict[str, Any] | None = None
+        capsule_path = value.get("capsule")
+        if isinstance(capsule_path, str):
+            resolved_capsule = Path(capsule_path).resolve()
+            if resolved_capsule.is_relative_to(self.capsule_root):
+                disposal = self._dispose_failed_capsule(resolved_capsule, quarantine=True)
+        extra: dict[str, Any] = {"disposal": disposal} if disposal is not None else {}
         journal.transition(
-            "quarantined", failure={"code": "termination_unconfirmed", "reason": reason}
+            "quarantined",
+            failure={
+                "code": "termination_unconfirmed",
+                "reason": reason,
+                "owner": {"owner_id": owner.owner_id, "harness": owner.harness},
+            },
+            **extra,
         )
-        raise WorkerFailure(
-            "cannot prove terminal output closure after owner recovery",
-            code="termination_unconfirmed",
-        )
+        return {
+            "schema": "flow.cognitive-cancellation/v1",
+            "logical_invocation_id": logical_invocation_id,
+            "state": "quarantined",
+            "idempotent": False,
+        }
+
+    def _require_dead_launch(self, launch: object) -> None:
+        """Fail closed unless the recorded launch evidence proves the process is dead.
+
+        A same-host boot_id mismatch is definitive death: the recorded process tree belonged to
+        a prior boot, so any currently live process at that numeric pgid is an unrelated reuse,
+        not the original worker. Only a same-boot pgid must actually be proven absent, and a
+        live or permission-denied group refuses recovery outright, with no force and no signal.
+        lease.boot_id() can return "" when unavailable; an empty boot_id is absent evidence, not
+        an incomplete field, so it neither wedges the completeness check below nor satisfies the
+        mismatch shortcut -- it falls back to the pgid-only gate like a same-boot launch would.
+        """
+        if not isinstance(launch, dict) or not all(
+            launch.get(field) for field in ("pid", "pgid", "hostname", "started_at")
+        ):
+            raise WorkerFailure(
+                "cannot recover a running invocation without complete launch evidence",
+                code="recovery_required",
+            )
+        evidence = cast(dict[str, Any], launch)
+        if evidence["hostname"] != lease.hostname():
+            raise WorkerFailure(
+                "cannot recover a running invocation launched on a different host",
+                code="recovery_required",
+            )
+        current_boot = lease.boot_id()
+        evidence_boot = evidence.get("boot_id")
+        if current_boot and evidence_boot and evidence_boot != current_boot:
+            return
+        # _process_group_absent already folds a PermissionError (group exists, owned by someone
+        # else) into "not absent", so a live or permission-denied group both refuse here.
+        if not _process_group_absent(int(evidence["pgid"])):
+            raise WorkerFailure(
+                "cannot recover a running invocation whose process group is still live",
+                code="execution_busy",
+            )
 
 
 def _load_order(path: Path) -> WorkOrder:
@@ -3646,7 +3892,9 @@ def prepare_work_order(
             seed_digest = hashlib.sha256(seed).hexdigest()
     order = WorkOrder(
         logical_invocation_id=str(sealed["logical_invocation_id"]),
-        generation=int(sealed["stage_generation"]),
+        # Legacy seals predating per-substep retry have no "generation" key; they fall back to
+        # stage_generation, the value the substep's generation was always implicitly equal to.
+        generation=int(sealed.get("generation", sealed["stage_generation"])),
         profile=str(sealed["profile"]),
         source_root=str(source),
         source_sha=head,
@@ -3787,6 +4035,12 @@ def _parser() -> argparse.ArgumentParser:
     bundle_parser = sub.add_parser("bundle-review")
     bundle_parser.add_argument("--source-root", required=True)
     bundle_parser.add_argument("--output", required=True)
+    recover_parser = sub.add_parser("recover-invocation")
+    recover_parser.add_argument("--logical-invocation-id", required=True)
+    recover_parser.add_argument("--artifact-root", required=True)
+    recover_parser.add_argument("--capsule-root", required=True)
+    recover_parser.add_argument("--owner-id", default="facade-owner")
+    recover_parser.add_argument("--reason", required=True)
     return parser
 
 
@@ -3828,6 +4082,14 @@ def cli_main(argv: list[str]) -> int:
             )
             _atomic_json(Path(args.output).expanduser().resolve(), body)
             sys.stdout.write(json.dumps(body, indent=2, sort_keys=True) + "\n")
+            return 0
+        if args.operation == "recover-invocation":
+            workers = CognitiveWorkers(
+                artifact_root=Path(args.artifact_root), capsule_root=Path(args.capsule_root)
+            )
+            owner = OwnerProof(owner_id=args.owner_id, harness=_owner_harness())
+            receipt = workers.cancel(args.logical_invocation_id, owner, args.reason)
+            sys.stdout.write(json.dumps(receipt, indent=2, sort_keys=True) + "\n")
             return 0
         order = _load_order(Path(args.work_order).expanduser().resolve())
         owner = OwnerProof(

@@ -132,6 +132,7 @@ FLOW maintain evolution epic
 FLOW maintain evolution expand <epic>
 FLOW maintain evolution drain [--dry-run] [--include-proposals]
 FLOW maintain worktrees clean [--dry-run]
+FLOW maintain quarantine clean [--dry-run]
 FLOW help [ticket|memory|measure|workspace|maintain]
 ```
 <!-- flow:public-grammar:end -->
