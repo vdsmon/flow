@@ -13,7 +13,7 @@
       "name": "flow",
       "source": "./plugins/flow",
       "description": "State-aware Flow adapter for Claude Code and Codex: a ticket or PR target starts, resumes, repairs, revises, or reports from durable evidence, then runs the approved plan→draft-PR tail in an isolated worktree. Includes portable maintenance, pluggable handlers, immutable ship-event evidence, and compounding memory.",
-      "version": "0.113.6"
+      "version": "0.113.7"
     }
   ]
 }
