@@ -1,3 +1,4 @@
+<!-- flow:activation-truth:begin -->
 # Delivery planning and approval
 
 ## Cognitive execution boundary
@@ -88,9 +89,14 @@ FLOW_HARNESS="<harness>" "<facade>" agent-route resolve \
 
 Proceed only when the planner has `source: override`, `source: workspace`, or
 `source: built_in`, together with `activation: pending` and an exact desired route.
+The route snapshot is immutable for the attempt's lifetime: choose every route the
+attempt needs, including the assessor's, via `--route` before `planning-attempt
+create`; a mid-attempt model swap means a fresh attempt.
 Then emit the provider schema and initialize the ephemeral attempt with the fetched
 base SHA and route-snapshot digest. The emitted schema is the provider input: do not
-normalize or rewrite a copy. Every object is closed with
+normalize or rewrite a copy; the worker itself strips the top-level draft `$schema`
+marker before handing the schema to the provider, so drivers never edit the emitted
+file. Every object is closed with
 `additionalProperties: false`; array uniqueness remains a Python validation rule
 because Codex structured output does not accept `uniqueItems`.
 
@@ -114,11 +120,30 @@ FLOW_HARNESS="<harness>" "<facade>" planner-worker \
   --schema "<attempt-dir>/plan-envelope.schema.json" \
   --attempt-id "<attempt id>" --plan-version "<next version>" \
   --route-digest "<route digest>" \
-  [--thread-id "<live thread>" --fresh-prompt-from "<attempt-dir>/rehydrate.txt"]
+  --source-root "<dedicated pristine mirror clone>" \
+  --result-output "<attempt-dir>/planner-result.json" \
+  [--thread-id "<live thread>" --fresh-prompt-from "<attempt-dir>/rehydrate.txt"] \
+  [--invocation-root "<private ephemeral scratch outside the source repo>"]
 ```
 
+`--source-root` must be a dedicated pristine mirror clone for every pre-approval
+capsule, never the shared cockpit checkout: concurrent cockpit actors (parallel
+ticket drivers fetching, tracker writes) mutate the shared checkout between the
+before/after receipt captures, making a read-only violation unavoidable, and the
+worker refuses a defaulted source root. `--invocation-root` defaults to a fresh
+tmpdir under `~/.cache/flow-planner-worker` and must lie outside `--source-root`;
+an explicit root equal to or nested inside the source repo is refused before the
+capsule executor is constructed. `--result-output` atomically persists the
+result JSON before the ephemeral invocation root is disposed, so the envelope and
+acceptance survive a truncated or mangled stdout. The planner-profile file copy is
+fully redacted of the live thread/session id (the top-level `thread_id`, the
+acceptance response `worker_id`, and the launch command argv all stay out); the
+assessor-profile copy retains its `worker_id`, the durable attested assessor
+identity.
+
 The prompt includes the exact attempt id, owner-allocated next version, parent digest,
-base SHA, route digest, ticket intent, current complete plan when revising, feedback
+base SHA, route digest, the exact envelope author identity (`<harness>:<model>`),
+ticket intent, current complete plan when revising, feedback
 ledger, and required plan sections. The envelope author id is
 `<harness>:<model>`; the worker validates that id, harness, and model against the
 route it actually launched before it reports acceptance. Read the structured result
@@ -146,11 +171,33 @@ Every revision is a complete plan version. Record human annotations through
 `planning-attempt feedback`; every id must be incorporated by a later envelope or
 rejected with a visible reason. The owner assesses externally authored attended plans.
 Use a fresh physical assessor for owner-authored, unattended, hot, or explicitly
-escalated plans, and pass `--require-fresh` when recording that verdict. Findings go
+escalated plans, and pass `--require-fresh` when recording that verdict. Launch the
+fresh assessor through the same worker surface, from the saved attempt bundle plus an
+owner-authored facts file containing exactly `ticket` and `assessment_rubric`:
+
+```bash
+FLOW_HARNESS="<harness>" "<facade>" planner-worker --profile plan_assessor \
+  --harness "<harness>" --model "<model>" --effort "<effort>" \
+  --attempt-dir "<attempt-dir>" --route-digest "<route digest>" \
+  --facts-from "<attempt-dir>/assessor-facts.json" \
+  --source-root "<dedicated pristine mirror clone>" \
+  --result-output "<attempt-dir>/assessor-result.json" \
+  [--invocation-root "<private ephemeral scratch outside the source repo>"]
+FLOW_HARNESS="<harness>" "<facade>" agent-route attest \
+  --snapshot "<attempt-dir>/route.json" --profile plan_assessor \
+  --acceptance-from "<result acceptance>" --output "<attempt-dir>/assessor-receipt.json"
+```
+
+The worker reads the candidate plan, base SHA, and planner receipt from the bundle,
+cross-checks the frozen route digest, and refuses a launch whose provider emitted no
+distinct worker session id. Map the typed `assessment` verdict `approve` to `pass` and
+`revise` to `fail`, and create the verdict with the receipt's `worker_id` as the
+assessor id. Findings go
 back to the planner; the assessor never edits the plan. Every verdict includes the
 exact plan digest and author id, and a stale or differently authored verdict is refused.
 A required-fresh verdict also includes the `plan_assessor` launch-receipt digest and
-is recorded with `assess --launch-receipt <receipt>`; the receipt's distinct worker id
+is recorded with `assess --require-fresh --launch-receipt <receipt>`; the receipt's
+distinct worker id
 must match the assessor id. The route receipt records `plan_assessor` as active on an
 exact CLI receipt: a fresh, distinctly identified worker, bound to the assessed plan
 digest, with a terminal physical attempt and a disposed capsule.

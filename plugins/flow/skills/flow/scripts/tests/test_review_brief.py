@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 import review_brief as rb
+import state
 
 SHA_A = "a" * 40
 SHA_B = "b" * 40
@@ -278,3 +279,175 @@ def test_full_mode_requires_orientation_beyond_code(tmp_path):
 
     with pytest.raises(rb.ValidationError, match="orient a cold reviewer"):
         rb.validate_content(content)
+
+
+# ─── unattended skip authorization (flow-rptq) ─────────────────────────────────
+
+_KEY = "flow-x"
+
+
+def _seed_frontmatter(tmp_path: Path, *, unattended) -> None:
+    tickets = tmp_path / ".flow" / "tickets"
+    tickets.mkdir(parents=True, exist_ok=True)
+    if unattended is None:
+        body = "+++\n+++\n"
+    elif isinstance(unattended, bool):
+        body = f"+++\nunattended = {'true' if unattended else 'false'}\n+++\n"
+    else:
+        body = f'+++\nunattended = "{unattended}"\n+++\n'
+    (tickets / f"{_KEY}.md").write_text(body, encoding="utf-8")
+
+
+def _seed_review_brief_skip(
+    tmp_path: Path,
+    *,
+    generation: int = 1,
+    reason: str = rb.CANONICAL_UNATTENDED_SKIP_REASON,
+    competing_outcome: bool = False,
+) -> Path:
+    ticket_dir = tmp_path / ".flow" / "runs" / _KEY
+    state.init(ticket_dir, _KEY, "jira", ["review_brief"])
+    state.begin_stage(ticket_dir, "review_brief", "a" * 40)
+    skill_output: dict = {
+        "cognitive_skips": {
+            "main": {"substep": "main", "stage_generation": generation, "reason": reason}
+        }
+    }
+    if competing_outcome:
+        skill_output["cognitive_outcomes"] = {"main": {"status": "succeeded"}}
+    state.finish_stage(ticket_dir, "review_brief", "completed", "a" * 40, skill_output=skill_output)
+    return ticket_dir
+
+
+def _freshness_request(tmp_path: Path, ticket_dir: Path) -> rb.FreshnessRequest:
+    return rb.FreshnessRequest(workspace_root=tmp_path, ticket_dir=ticket_dir, pr_id="42")
+
+
+def test_unattended_canonical_skip_is_authorized_as_disabled(tmp_path: Path):
+    ticket_dir = _seed_review_brief_skip(tmp_path)
+    _seed_frontmatter(tmp_path, unattended=True)
+
+    result = rb.freshness(_freshness_request(tmp_path, ticket_dir))
+
+    assert result.status == "disabled"
+
+
+def test_attended_canonical_skip_is_blocking_missing(tmp_path: Path):
+    ticket_dir = _seed_review_brief_skip(tmp_path)
+    _seed_frontmatter(tmp_path, unattended=False)
+
+    result = rb.freshness(
+        _freshness_request(tmp_path, ticket_dir), forge=FakeForge(), runner=GitRunner()
+    )
+
+    assert result.status == "missing"
+    assert "no review brief exists" in result.reason
+
+
+@pytest.mark.parametrize("unattended", [None, "yes", 1])
+def test_absent_or_non_boolean_unattended_fails_closed(tmp_path: Path, unattended):
+    ticket_dir = _seed_review_brief_skip(tmp_path)
+    _seed_frontmatter(tmp_path, unattended=unattended)
+
+    result = rb.freshness(
+        _freshness_request(tmp_path, ticket_dir), forge=FakeForge(), runner=GitRunner()
+    )
+
+    assert result.status == "missing"
+
+
+def test_stale_generation_skip_fails_closed_even_when_unattended(tmp_path: Path):
+    ticket_dir = _seed_review_brief_skip(tmp_path, generation=1)
+    # init seals generation 0; begin_stage bumps it to 1, finish_stage's canonical skip
+    # claims 1 and matches. force_stage_status back to pending keeps the sealed generation
+    # at 1, and the second begin_stage below bumps it to 2 - the skip re-recorded below still
+    # claims generation 1, which is now the STALE one.
+    state.force_stage_status(ticket_dir, "review_brief", "pending")
+    state.begin_stage(ticket_dir, "review_brief", "b" * 40)
+    state.finish_stage(
+        ticket_dir,
+        "review_brief",
+        "completed",
+        "b" * 40,
+        skill_output={
+            "cognitive_skips": {
+                "main": {
+                    "substep": "main",
+                    "stage_generation": 1,
+                    "reason": rb.CANONICAL_UNATTENDED_SKIP_REASON,
+                }
+            }
+        },
+    )
+    _seed_frontmatter(tmp_path, unattended=True)
+
+    result = rb.freshness(
+        _freshness_request(tmp_path, ticket_dir), forge=FakeForge(), runner=GitRunner()
+    )
+
+    assert result.status == "missing"
+
+
+def test_noncanonical_skip_reason_fails_closed_even_when_unattended(tmp_path: Path):
+    ticket_dir = _seed_review_brief_skip(tmp_path, reason="not the canonical reason")
+    _seed_frontmatter(tmp_path, unattended=True)
+
+    result = rb.freshness(
+        _freshness_request(tmp_path, ticket_dir), forge=FakeForge(), runner=GitRunner()
+    )
+
+    assert result.status == "missing"
+
+
+def test_outcome_conflicting_skip_fails_closed_even_when_unattended(tmp_path: Path):
+    ticket_dir = _seed_review_brief_skip(tmp_path, competing_outcome=True)
+    _seed_frontmatter(tmp_path, unattended=True)
+
+    result = rb.freshness(
+        _freshness_request(tmp_path, ticket_dir), forge=FakeForge(), runner=GitRunner()
+    )
+
+    assert result.status == "missing"
+
+
+def test_attended_normal_render_remains_current(tmp_path: Path):
+    """Positive path: an attended run's authored, rendered brief still reports current.
+
+    Seeds a completed review_brief record whose skill_output carries an OUTCOME-ONLY
+    'main' (no cognitive_skips), so _skip_authorization actually runs its logic
+    (skips.get('main') is None) and returns None, falling through to the ordinary
+    render-freshness path instead of trivially short-circuiting on no run state at all.
+    """
+    _seed_frontmatter(tmp_path, unattended=False)
+    ticket_dir = tmp_path / ".flow" / "runs" / _KEY
+    state.init(ticket_dir, _KEY, "jira", ["review_brief"])
+    state.begin_stage(ticket_dir, "review_brief", "a" * 40)
+    state.finish_stage(
+        ticket_dir,
+        "review_brief",
+        "completed",
+        "a" * 40,
+        skill_output={"cognitive_outcomes": {"main": {"status": "succeeded"}}},
+    )
+    request = _request(tmp_path, _write_content(tmp_path, _content()))
+    rb.render(request, forge=FakeForge(SHA_A), runner=GitRunner(SHA_A))
+
+    result = rb.freshness(
+        rb.FreshnessRequest(request.workspace_root, request.ticket_dir, "42"),
+        forge=FakeForge(SHA_A),
+        runner=GitRunner(SHA_A),
+    )
+
+    assert result.status == "current"
+
+
+def test_freshness_disabled_flag_unaffected_by_skip_authorization(tmp_path: Path):
+    # The `enabled=False` shape (workspace mode=off) short-circuits before the skip
+    # cross-check even when a completed review_brief skip receipt exists on disk.
+    ticket_dir = _seed_review_brief_skip(tmp_path)
+    _seed_frontmatter(tmp_path, unattended=False)
+
+    result = rb.freshness(rb.FreshnessRequest(tmp_path, ticket_dir, "42", enabled=False))
+
+    assert result.status == "disabled"
+    assert result.reason == "review brief is disabled"

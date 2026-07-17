@@ -293,6 +293,19 @@ options = [
 ]
 
 [[command]]
+id = "maintain.quarantine.clean"
+path = ["maintain", "quarantine", "clean"]
+usage = "FLOW maintain quarantine clean [--dry-run]"
+summary = "Archive workspace-owned quarantined cognitive capsules."
+effect = "confirm"
+workspace = "required"
+reference = "references/command-maintain.md"
+harnesses = ["claude-code", "codex"]
+options = [
+  { name = "--dry-run", value_type = "boolean", cardinality = "zero_or_one" },
+]
+
+[[command]]
 id = "help"
 path = ["help"]
 usage = "FLOW help [ticket|memory|measure|workspace|maintain]"

@@ -30,6 +30,7 @@ import argparse
 import contextlib
 import hashlib
 import json
+import math
 import secrets
 import socket
 import subprocess
@@ -40,6 +41,7 @@ from typing import Any, cast
 
 import _locking
 import agent_routes
+import cognitive_workers
 import fleet
 import lease
 import recall_pending
@@ -126,6 +128,10 @@ def _cognitive_substeps(
             "run_id": ticket_state.run_id,
             "stage": stage_name,
             "substep": str(substep),
+            # Initial seal sets the substep's own generation equal to the stage-wide seal; a
+            # later per-substep retry (state.retry_cognitive_substep) advances only this field
+            # while stage_generation stays the unchanged stage-wide seal both substeps share.
+            "generation": generation,
             "stage_generation": generation,
             "source_sha": head_sha,
             "route_snapshot_digest": snapshot["digest"],
@@ -192,7 +198,9 @@ def _outcome_matches(outcome: dict[str, Any], expected: dict[str, Any]) -> bool:
     return (
         outcome.get("status") == "succeeded"
         and outcome.get("logical_invocation_id") == expected["logical_invocation_id"]
-        and outcome.get("generation") == expected["stage_generation"]
+        # A legacy seal from before per-substep retry has no "generation" key of its own; it
+        # falls back to stage_generation, the value it was always implicitly equal to.
+        and outcome.get("generation") == expected.get("generation", expected["stage_generation"])
         and outcome.get("profile") == expected["profile"]
         and outcome.get("run_id") == expected["run_id"]
         and outcome.get("stage") == expected["stage"]
@@ -267,9 +275,88 @@ def _begin_and_seal(
     return None
 
 
-def _stage_ttl_seconds(stage_meta: StageEntry | None) -> int:
+# Margin applied on top of the sealed stage's cumulative provider-deadline allowance (every
+# launchable substep's hard budget, across its permitted retries) so the lease outlives the
+# worst-case sequential runtime run_stage may still be executing when the doubled-timeout floor
+# would already have expired it (flow-euzu forensics: a writer's TDD sweep outran a reader lease).
+_CUMULATIVE_TTL_MARGIN = 1.5
+
+
+def _stage_ttl_seconds(
+    stage_meta: StageEntry | None, cognitive: dict[str, dict[str, Any]] | None = None
+) -> int:
     timeout_min = stage_meta.default_timeout_min if stage_meta else 10
-    return timeout_min * 60 * _LEASE_TTL_MULTIPLIER
+    floor = timeout_min * 60 * _LEASE_TTL_MULTIPLIER
+    if not cognitive:
+        return floor
+    cumulative = 0
+    for substep in cognitive.values():
+        if not isinstance(substep, dict) or substep.get("activation") != "pending":
+            continue
+        profile = substep.get("profile")
+        if not isinstance(profile, str) or profile not in cognitive_workers.ROLE_CATALOG:
+            raise cognitive_workers.WorkerFailure(
+                f"sealed cognitive substep names an unknown profile {profile!r}",
+                code="invalid_order",
+            )
+        cumulative += cognitive_workers.cumulative_role_budget(profile)
+    return max(floor, math.ceil(cumulative * _CUMULATIVE_TTL_MARGIN))
+
+
+def _stage_ttl_or_error(
+    stage_meta: StageEntry | None,
+    cognitive: dict[str, dict[str, Any]] | None,
+    stage_name: str,
+) -> tuple[int, None] | tuple[None, dict[str, Any]]:
+    """Compute the refreshed lease TTL, or the typed error an unknown profile raises."""
+    try:
+        return _stage_ttl_seconds(stage_meta, cognitive), None
+    except cognitive_workers.WorkerFailure as exc:
+        return None, {"error": str(exc), "stage": stage_name}
+
+
+def _refresh_stage_lease(
+    td: Path,
+    run_id: str,
+    stage_meta: StageEntry | None,
+    cognitive: dict[str, dict[str, Any]] | None,
+    stage_name: str,
+    *,
+    boot: str,
+    host: str,
+    workspace_root: Path,
+    session_nonce: str | None,
+) -> tuple[int, dict[str, Any]] | None:
+    """Refresh the run's lease to cover the sealed stage's TTL before it opens.
+
+    A no-op when no lease exists yet. An unknown launchable profile in the sealed cognitive
+    descriptor fails closed here, before the caller opens the stage, rather than refreshing
+    an under-sized lease.
+    """
+    if lease.read_lease(td) is None:
+        return None
+    ttl, ttl_error = _stage_ttl_or_error(stage_meta, cognitive, stage_name)
+    if ttl_error is not None:
+        return 1, ttl_error
+    try:
+        lease.refresh(
+            td,
+            run_id,
+            cast(int, ttl),
+            utcnow_iso(),
+            stage=stage_name,
+            current_boot=boot,
+            hostname=host,
+            cwd=str(workspace_root),
+            session_nonce=session_nonce,
+        )
+    except lease.LeaseLost as exc:
+        return lease.EXIT_LEASE_LOST, {
+            "error": "lost lease",
+            "detail": str(exc),
+            "hint": "FLOW workspace repair",
+        }
+    return None
 
 
 # A revision sub-run's default stage subset (flow-kx17.2): the PR is already open
@@ -913,26 +1000,19 @@ def cmd_next(
 
     # Refresh the lease to cover this stage's timeout window before marking it
     # in_progress, so a multi-minute stage does not self-expire the lease.
-    if lease.read_lease(td) is not None:
-        ttl = _stage_ttl_seconds(stage_meta)
-        try:
-            lease.refresh(
-                td,
-                ts.run_id,
-                ttl,
-                utcnow_iso(),
-                stage=next_stage,
-                current_boot=boot,
-                hostname=host,
-                cwd=str(workspace_root),
-                session_nonce=session_nonce,
-            )
-        except lease.LeaseLost as exc:
-            return lease.EXIT_LEASE_LOST, {
-                "error": "lost lease",
-                "detail": str(exc),
-                "hint": "FLOW workspace repair",
-            }
+    lease_error = _refresh_stage_lease(
+        td,
+        ts.run_id,
+        stage_meta,
+        cognitive,
+        next_stage,
+        boot=boot,
+        host=host,
+        workspace_root=workspace_root,
+        session_nonce=session_nonce,
+    )
+    if lease_error is not None:
+        return lease_error
 
     # Shadow-write the fleet liveness ledger (epic flow-8by2.2): an upsert that
     # registers + heartbeats this run under the shared .flow/fleet/. Maintainer-

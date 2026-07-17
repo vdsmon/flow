@@ -51,6 +51,10 @@ from tracker_cli import _read_tracker_config, _WorkspaceConfigError
 
 _P0_STEM = "senses-deadman"
 _TREND_WINDOW_DAYS = 14
+_TREND_UNAVAILABLE_READONLY = "read-only dry-run omits quarantine-on-malformed metric readers"
+_TREND_UNAVAILABLE_NO_PRODUCER = (
+    "the scheduled nightly trend producer is not deployed or has never run"
+)
 _SHIP_EVENT_SKIP_INFIXES = (".dupe.", ".corrupt.", ".quarantine-intent.")
 _PR_SUFFIX_RE = re.compile(r"\(#\d+\)")
 
@@ -443,6 +447,18 @@ def _gather_trend(repo: Path, namespace: str, now_iso: str) -> dict[str, Any]:
     return trend
 
 
+def _dry_run_trend_unavailable(liveness: dict[str, Any]) -> str:
+    """Neutral read-only clause, plus the producer-absence clause iff no `nightly` schedule ran.
+
+    Schedule presence alone is the signal: an existing `nightly` entry is sufficient evidence the
+    producer was deployed or attempted, regardless of its age or outcome (maintainer_preflight owns
+    stale/failed/hung/disarmed classification).
+    """
+    if "nightly" in liveness.get("schedules", {}):
+        return _TREND_UNAVAILABLE_READONLY
+    return f"{_TREND_UNAVAILABLE_READONLY}; {_TREND_UNAVAILABLE_NO_PRODUCER}"
+
+
 # ─── P0 filing ───────────────────────────────────────────────────────────────
 
 
@@ -563,7 +579,7 @@ def deadman(
         },
         "freshness": freshness,
         "trend": (
-            {"unavailable": "read-only dry-run omits quarantine-on-malformed metric readers"}
+            {"unavailable": _dry_run_trend_unavailable(liveness)}
             if dry_run
             else _gather_trend(repo, namespace, now)
         ),

@@ -182,9 +182,11 @@ reflect = "inline"
 merge = "inline"
 
 [review_brief]
-# Generate a local, self-contained reviewer companion and open it when the host
-# has a browser. It never blocks reflect; Forge remains the formal review gate.
-mode = "auto"
+# Off in this repo: runs here are unattended fleet deliveries, so no reviewer is
+# present when the PR parks and an authored brief goes unread. Forge remains the
+# formal review gate. flow-rptq tracks the conditional unattended-only skip for
+# user projects.
+mode = "off"
 open = true
 
 [reflect]

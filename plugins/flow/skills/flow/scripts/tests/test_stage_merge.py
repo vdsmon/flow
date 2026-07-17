@@ -280,6 +280,90 @@ def test_probe_does_not_require_brief_when_workspace_mode_is_off(tmp_path):
     assert not any(_is_script("review_brief.py", "freshness")(call) for call in rec.calls)
 
 
+def test_probe_blocks_attended_canonical_skip_conflict(tmp_path):
+    # review_brief.freshness() returns blocking "missing" when an attended run's receipt
+    # carries the canonical unattended skip; the merge probe must still refresh, not merge.
+    ticket_dir = tmp_path / "run"
+    _create_pr_out(ticket_dir)
+    _enable_review_brief(tmp_path)
+    rec = _probe_recorder()
+    rec.when(
+        _is_script("review_brief.py", "freshness"),
+        _cp(
+            0,
+            json.dumps(
+                {
+                    "status": "missing",
+                    "reason": "review_brief was skipped but the run is not authorized "
+                    "as unattended; the brief is required",
+                    "html_path": None,
+                }
+            ),
+        ),
+    )
+
+    result = sm.probe(tmp_path, ticket_dir, "flow-x", runner=rec)
+
+    assert result["action"] == "refresh_review_brief"
+    assert result["review_brief_status"] == "missing"
+    assert not any(_is_script("forge_cli.py", "ci-rollup")(call) for call in rec.calls)
+
+
+def test_probe_authorized_unattended_skip_is_non_blocking(tmp_path):
+    # An authorized unattended skip reports "disabled" from freshness() itself (distinct from
+    # the mode=off bypass above, which never calls freshness at all); the probe must continue
+    # through the remaining eligibility gates rather than refresh the brief.
+    ticket_dir = tmp_path / "run"
+    _create_pr_out(ticket_dir)
+    _enable_review_brief(tmp_path)
+    rec = _probe_recorder()
+    rec.when(
+        _is_script("review_brief.py", "freshness"),
+        _cp(
+            0,
+            json.dumps(
+                {
+                    "status": "disabled",
+                    "reason": "unattended run authorized the canonical review-brief skip",
+                    "html_path": None,
+                }
+            ),
+        ),
+    )
+
+    result = sm.probe(tmp_path, ticket_dir, "flow-x", runner=rec)
+
+    assert result["action"] == "merge"
+    assert result["review_brief_status"] == "disabled"
+    assert any(_is_script("forge_cli.py", "ci-rollup")(call) for call in rec.calls)
+
+
+def test_probe_attended_current_review_brief_continues(tmp_path):
+    ticket_dir = tmp_path / "run"
+    _create_pr_out(ticket_dir)
+    _enable_review_brief(tmp_path)
+    rec = _probe_recorder()
+    rec.when(
+        _is_script("review_brief.py", "freshness"),
+        _cp(
+            0,
+            json.dumps(
+                {
+                    "status": "current",
+                    "reason": "brief matches local and PR heads",
+                    "html_path": "/tmp/brief.html",
+                }
+            ),
+        ),
+    )
+
+    result = sm.probe(tmp_path, ticket_dir, "flow-x", runner=rec)
+
+    assert result["action"] == "merge"
+    assert result["review_brief_status"] == "current"
+    assert any(_is_script("forge_cli.py", "ci-rollup")(call) for call in rec.calls)
+
+
 def test_probe_gh_view_state_failure_treated_as_not_merged(tmp_path):
     ticket_dir = tmp_path / "run"
     _create_pr_out(ticket_dir)

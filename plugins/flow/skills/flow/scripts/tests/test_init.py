@@ -231,7 +231,8 @@ def test_native_setup_emits_explicit_owner_relative_agent_routes(tmp_path: Path)
     assert data["agents"]["review_brief_author"]["by_owner"]["codex"]["model"] == ("gpt-5.6-luna")
     assert data["agents"]["reflector"]["by_owner"]["claude_code"]["model"] == "opus"
     assert data["agents"]["machinery_fixer"]["by_owner"]["codex"]["model"] == ("gpt-5.6-luna")
-    assert initmod._default_agent_routes_toml() == agent_routes.render_default_routes_toml()
+    assert data["agents"] == agent_routes.default_route_config()
+    assert data["agents"] == tomllib.loads(agent_routes.render_default_routes_toml())["agents"]
     resolved = agent_routes.resolve(tmp_path, "planner", "codex")
     assert resolved["desired"] == data["agents"]["planner"]
     assert resolved["source"] == "workspace"

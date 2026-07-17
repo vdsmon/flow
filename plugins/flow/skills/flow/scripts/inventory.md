@@ -1,3 +1,4 @@
+<!-- flow:activation-truth:begin -->
 # inventory: API/contract reference + build log
 
 > **Navigation.** The CURRENT script map is `MODULE.md`. Build status / release notes are in `dev-history.md`. This file keeps the API/contract tables (Jira REST mapping, beads CLI surface, `.flow-bundle.toml` schema, `state.json` schema) plus the phase-by-phase build narrative. The "Phase X" / "Known holes" sections below are archived history, not current status — read them as the build log, not as a description of how flow works today.
@@ -209,7 +210,9 @@ Every explicit route is a complete `harness`, `model`, and `effort` triple. Publ
 harness values are `claude_code` and `codex`. A profile defines either one common
 route or a `by_owner` table; mixing them or omitting a field is invalid.
 
+<!-- flow:agent-route-profiles:begin -->
 Agent route profiles: `planner`, `plan_assessor`, `implementer`, `e2e`, `code_reviewer`, `diff_reviewer`, `guard_reviewer`, `review_fixer`, `revision_fixer`, `review_brief_author`, `reflector`, `machinery_fixer`
+<!-- flow:agent-route-profiles:end -->
 
 ```toml
 [agents.planner]

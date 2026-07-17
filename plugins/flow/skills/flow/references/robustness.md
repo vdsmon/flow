@@ -1,3 +1,4 @@
+<!-- flow:activation-truth:begin -->
 # Robustness: the load-bearing safety machinery
 
 ## Cognitive-worker failure containment

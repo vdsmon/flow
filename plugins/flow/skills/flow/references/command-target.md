@@ -1,3 +1,4 @@
+<!-- flow:activation-truth:begin -->
 # Cockpit and target commands
 
 ## Routed cognitive substeps

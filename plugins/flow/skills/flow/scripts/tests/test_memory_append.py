@@ -131,6 +131,111 @@ def test_no_memory_block_raises(tmp_path: Path) -> None:
         memory_append.append(tmp_path, "LEARNED", "x", "main", "FT-1")
 
 
+# ─── body sanitization (ANSI strip + length cap) ─────────────────────────────
+
+
+def test_clean_body_round_trips_unchanged_with_stable_id(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path)
+    entry = memory_append.append(tmp_path, "LEARNED", "Clean BODY with   spacing.", "main", "FT-1")
+    assert entry["body"] == "Clean BODY with   spacing."
+    assert entry["id"] == "b241037142c7057d"
+    entries = _read_jsonl(_memory_paths.knowledge_path(tmp_path, "demo"))
+    assert entries[0]["body"] == "Clean BODY with   spacing."
+
+
+def test_ansi_stripped_from_storage_but_id_stays_raw_based(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path)
+    raw = "\x1b[31mred\x1b[0m"
+    entry = memory_append.append(tmp_path, "LEARNED", raw, "main", "FT-1")
+    assert entry["body"] == "red"
+    assert entry["id"] == "34953967a0bdbd45"
+    entries = _read_jsonl(_memory_paths.knowledge_path(tmp_path, "demo"))
+    assert entries[0]["body"] == "red"
+
+
+def test_c1_csi_and_osc_sequences_stripped(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path)
+    # C1 CSI (single byte 0x9b) and OSC (ESC ] ... BEL) around visible text.
+    raw = "before\x9b31mmiddle\x9b0mafter" + "\x1b]0;title\x07tail"
+    entry = memory_append.append(tmp_path, "LEARNED", raw, "main", "FT-1")
+    assert "\x9b" not in entry["body"]
+    assert "\x1b]" not in entry["body"]
+    assert "\x07" not in entry["body"]
+    assert entry["body"] == "beforemiddleaftertail"
+
+
+def test_ansi_stripped_before_truncation_no_marker_at_exact_cap(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path)
+    visible = "a" * memory_append._MAX_BODY_LENGTH
+    raw = "\x1b[31m" + visible + "\x1b[0m"
+    entry = memory_append.append(tmp_path, "LEARNED", raw, "main", "FT-1")
+    assert entry["body"] == visible
+    assert len(entry["body"]) == memory_append._MAX_BODY_LENGTH
+    assert not entry["body"].endswith(memory_append._TRUNCATION_MARKER)
+
+
+@pytest.mark.parametrize(
+    "length", [memory_append._MAX_BODY_LENGTH - 1, memory_append._MAX_BODY_LENGTH]
+)
+def test_body_at_or_below_cap_not_truncated(tmp_path: Path, length: int) -> None:
+    _seed_workspace(tmp_path)
+    body = "b" * length
+    entry = memory_append.append(tmp_path, "LEARNED", body, "main", "FT-1")
+    assert entry["body"] == body
+    assert len(entry["body"]) == length
+
+
+def test_body_over_cap_truncated_with_marker(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path)
+    body = "c" * (memory_append._MAX_BODY_LENGTH + 1)
+    entry = memory_append.append(tmp_path, "LEARNED", body, "main", "FT-1")
+    marker = memory_append._TRUNCATION_MARKER
+    assert len(entry["body"]) == memory_append._MAX_BODY_LENGTH
+    assert entry["body"].endswith(marker)
+    prefix_len = memory_append._MAX_BODY_LENGTH - len(marker)
+    assert entry["body"] == "c" * prefix_len + marker
+    entries = _read_jsonl(_memory_paths.knowledge_path(tmp_path, "demo"))
+    assert entries[0]["body"] == entry["body"]
+
+
+def _has_control_byte(s: str) -> bool:
+    return any(
+        (0x00 <= ord(c) <= 0x08) or (0x0B <= ord(c) <= 0x1F) or (0x7F <= ord(c) <= 0x9F) for c in s
+    )
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "\x1b",  # lone ESC, no bracket/final byte for the CSI/OSC regex to anchor on
+        "before\x1bcafter",  # RIS (ESC c): not a CSI or OSC, regex-invisible
+        "before\rafter",  # bare CR
+        "before\x07after",  # bare BEL
+        "before\x08after",  # bare BS
+        "\x1b]0;unterminated",  # OSC with no BEL/ST terminator
+        "\x1b]0;ti\ntle\x07rest",  # OSC terminator present, but a \n splits it, `.` won't cross
+    ],
+)
+def test_control_bytes_neutralized_even_when_ansi_regex_does_not_match(
+    tmp_path: Path, raw: str
+) -> None:
+    _seed_workspace(tmp_path)
+    entry = memory_append.append(tmp_path, "LEARNED", raw, "main", "FT-1")
+    assert not _has_control_byte(entry["body"])
+    entries = _read_jsonl(_memory_paths.knowledge_path(tmp_path, "demo"))
+    assert not _has_control_byte(entries[0]["body"])
+
+
+def test_non_ascii_body_round_trips_unchanged_with_raw_id(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path)
+    raw = "Café façade note 日本語 sample"
+    entry = memory_append.append(tmp_path, "LEARNED", raw, "main", "FT-1")
+    assert entry["body"] == raw
+    assert entry["id"] == memory_append.compute_id("demo", "FT-1", "LEARNED", raw)
+    entries = _read_jsonl(_memory_paths.knowledge_path(tmp_path, "demo"))
+    assert entries[0]["body"] == raw
+
+
 # ─── Quarantine on malformed scan ────────────────────────────────────────────
 
 
@@ -251,6 +356,8 @@ def test_cli_duplicate_returns_1(tmp_path: Path, capsys: pytest.CaptureFixture[s
     )
     assert rc == 1
     assert "duplicate" in capsys.readouterr().err
+    entries = _read_jsonl(_memory_paths.knowledge_path(tmp_path, "demo"))
+    assert len(entries) == 1
 
 
 def test_cli_invalid_type_returns_3(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

@@ -4,6 +4,7 @@ description: State-aware ticket-to-PR delivery and workspace operations. Use FLO
 allowed-tools: Bash(.flow/runtime/flow:*), Bash(*/.flow/runtime/flow:*), Bash(python3:*), Bash(git:*), Bash(bd:*), Bash(jq:*), Bash(gh:*), Read, Write, Edit, Agent, Skill, AskUserQuestion, PushNotification, EnterWorktree
 ---
 
+<!-- flow:activation-truth:begin -->
 # Flow
 
 ## Routed cognition
@@ -131,6 +132,7 @@ FLOW maintain evolution epic
 FLOW maintain evolution expand <epic>
 FLOW maintain evolution drain [--dry-run] [--include-proposals]
 FLOW maintain worktrees clean [--dry-run]
+FLOW maintain quarantine clean [--dry-run]
 FLOW help [ticket|memory|measure|workspace|maintain]
 ```
 <!-- flow:public-grammar:end -->
@@ -231,6 +233,7 @@ The hot path is:
 3. Request the first descriptor.
 4. For each descriptor, run its pre-hook, execute exactly its declared handler,
    capture the artifact, then atomically advance and receive the next descriptor.
+   Log any workaround as best-effort friction (`references/delivery-loop.md`).
 5. Release the lease on every post-acquisition exit path.
 6. Surface the durable result and PR URL.
 

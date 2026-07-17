@@ -3,27 +3,13 @@
 from __future__ import annotations
 
 import json
+import tomllib
 from pathlib import Path
 
 import pytest
 
 import agent_routes
 import cognitive_workers as cw
-
-PROFILES = (
-    "planner",
-    "plan_assessor",
-    "implementer",
-    "e2e",
-    "code_reviewer",
-    "diff_reviewer",
-    "guard_reviewer",
-    "review_fixer",
-    "revision_fixer",
-    "review_brief_author",
-    "reflector",
-    "machinery_fixer",
-)
 
 
 def _workspace(tmp_path: Path, body: str = "") -> Path:
@@ -99,8 +85,7 @@ def test_snapshot_contains_the_complete_cognitive_profile_catalog(
 ) -> None:
     snapshot = agent_routes.snapshot(_workspace(tmp_path), owner)
 
-    assert agent_routes.PROFILES == PROFILES
-    assert tuple(snapshot["routes"]) == PROFILES
+    assert tuple(snapshot["routes"]) == agent_routes.PROFILES
     assert snapshot["routes"]["planner"]["activation"] == "pending"
     pending = {
         profile for profile, route in snapshot["routes"].items() if route["activation"] == "pending"
@@ -236,6 +221,7 @@ def test_stage_execution_records_complete_composite_provenance(tmp_path: Path) -
     assert execution["review_brief"] == {
         "kind": "agent",
         "profile": "review_brief_author",
+        "substeps": {"main": {"profile": "review_brief_author", "conditional": True}},
     }
     assert execution["reflect"] == {
         "kind": "owner",
@@ -733,7 +719,7 @@ def test_cli_snapshot_resolve_attest_round_trip(tmp_path: Path, capsys) -> None:
 def test_every_non_planner_exact_acceptance_remains_shadowed(tmp_path: Path) -> None:
     snapshot = agent_routes.snapshot(_workspace(tmp_path), "claude-code")
 
-    for profile in PROFILES:
+    for profile in agent_routes.PROFILES:
         if profile == "planner":
             continue
         desired = snapshot["routes"][profile]["desired"]
@@ -776,12 +762,91 @@ def test_migration_emits_the_complete_catalog(tmp_path: Path) -> None:
 
     appendix = agent_routes.migrate(root, apply=False)["appendix"]
 
-    assert all(f"[agents.{profile}" in appendix for profile in PROFILES)
+    assert all(f"[agents.{profile}" in appendix for profile in agent_routes.PROFILES)
     assert "[agents.code_reviewer]" in appendix
     assert "[agents.review_fixer]" in appendix
     assert "[agents.review_brief_author.by_owner.codex]" in appendix
     assert "[agents.reflector.by_owner.claude_code]" in appendix
     assert "[agents.machinery_fixer.by_owner.codex]" in appendix
+
+
+def test_default_route_renders_are_deterministic_and_follow_profile_order() -> None:
+    first = agent_routes.render_default_routes_toml()
+    second = agent_routes.render_default_routes_toml()
+
+    assert first == second
+    assert first.endswith("\n")
+    assert not first.endswith("\n\n")
+    parsed = tomllib.loads(first)["agents"]
+    assert set(parsed) == set(agent_routes.PROFILES)
+    assert parsed == agent_routes.default_route_config()
+    headings = [line for line in first.splitlines() if line.startswith("[agents.")]
+    heading_profiles = [
+        heading.removeprefix("[agents.").split(".")[0].removesuffix("]") for heading in headings
+    ]
+    deduped = list(dict.fromkeys(heading_profiles))
+    assert tuple(deduped) == agent_routes.PROFILES
+
+
+def test_migration_render_is_deterministic_and_covers_the_catalog() -> None:
+    models = {"work_model": "sonnet", "e2e": "opus"}
+    first = agent_routes.render_migration_routes_toml(models)
+
+    assert first == agent_routes.render_migration_routes_toml(models)
+    assert first.endswith("\n")
+    assert not first.endswith("\n\n")
+    parsed = tomllib.loads(first)["agents"]
+    assert set(parsed) == set(agent_routes.PROFILES)
+    assert parsed["implementer"] == {
+        "harness": "claude_code",
+        "model": "sonnet",
+        "effort": "high",
+    }
+    assert parsed["e2e"] == {"harness": "claude_code", "model": "opus", "effort": "medium"}
+
+
+def test_migration_appendix_bytes_come_from_the_migration_renderer(tmp_path: Path) -> None:
+    models = {"work_model": "sonnet", "e2e": "opus"}
+    root = _workspace(tmp_path, '\n[models]\nwork_model = "sonnet"\ne2e = "opus"\n')
+
+    appendix = agent_routes.migrate(root, apply=False)["appendix"]
+
+    assert appendix.endswith(agent_routes.render_migration_routes_toml(models))
+
+
+def test_inventory_profile_block_render_is_deterministic_and_marker_delimited() -> None:
+    first = agent_routes.render_inventory_profiles_block()
+
+    assert first == agent_routes.render_inventory_profiles_block()
+    lines = first.splitlines()
+    assert lines[0] == agent_routes.INVENTORY_PROFILES_BEGIN
+    assert lines[-1] == agent_routes.INVENTORY_PROFILES_END
+    assert first.endswith(agent_routes.INVENTORY_PROFILES_END + "\n")
+    expected = "Agent route profiles: " + ", ".join(
+        f"`{profile}`" for profile in agent_routes.PROFILES
+    )
+    assert lines[1:-1] == [expected]
+
+
+def test_stage_composition_covers_the_complete_profile_catalog() -> None:
+    contract = agent_routes.stage_execution_contract()
+    composed: set[str] = set()
+    for record in contract.values():
+        for key in ("profile", "guard_profile"):
+            value = record.get(key)
+            if isinstance(value, str):
+                composed.add(value)
+        for substep in (record.get("substeps") or {}).values():
+            profile = substep.get("profile") if isinstance(substep, dict) else None
+            if isinstance(profile, str):
+                composed.add(profile)
+    assert composed == set(agent_routes.PROFILES)
+
+
+def test_deterministic_tool_stages_retain_model_none() -> None:
+    contract = agent_routes.stage_execution_contract()
+    modelless = {stage for stage, record in contract.items() if record.get("model") == "none"}
+    assert modelless == {"ticket", "commit", "create_pr", "merge"}
 
 
 def test_old_v1_snapshot_retains_its_recorded_routes_without_synthesis(tmp_path: Path) -> None:

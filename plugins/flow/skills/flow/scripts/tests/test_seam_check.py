@@ -8,10 +8,10 @@ relies on.
 
 from __future__ import annotations
 
-import copy
 import os
 import shutil
 import subprocess
+import tomllib
 
 import pytest
 
@@ -248,6 +248,178 @@ def test_facade_global_flag_before_subcommand_remains_valid() -> None:
     )[0]
     assert [problem for problem in seam_check.validate(inv) if problem.level == "ERROR"] == []
     assert inv.subcommand == "get"
+
+
+# --- post-subcommand parent-flag position (flow-285k) ------------------------
+
+
+def test_surface_parent_usage_flags_derived_from_usage_prefix_only() -> None:
+    # tracker_cli.py, forge_cli.py, and pending_mutations.py declare --workspace-root before `{...}
+    # ...` in their top-level usage. review_brief.py declares no top-level parent flag; its
+    # docstring prose merely mentions a wrapped `--ticket-dir` (the over-capture regression
+    # `global_flags`, which scans the WHOLE help text, is prone to). The `[: um.start()]` slice at
+    # the `{subcommands} ...` marker is what excludes it here (see test_usage_block_* below for
+    # what _usage_block itself actually contributes: wrap-continuation capture).
+    tracker = seam_check.surface_of("tracker_cli.py")
+    forge = seam_check.surface_of("forge_cli.py")
+    pending_mutations = seam_check.surface_of("pending_mutations.py")
+    review_brief = seam_check.surface_of("review_brief.py")
+    assert tracker is not None
+    assert forge is not None
+    assert pending_mutations is not None
+    assert review_brief is not None
+    assert tracker.parent_usage_flags == {"--workspace-root"}
+    assert forge.parent_usage_flags == {"--workspace-root"}
+    assert pending_mutations.parent_usage_flags == {"--workspace-root"}
+    assert review_brief.parent_usage_flags == frozenset()
+
+
+def test_usage_block_captures_wrap_continuation_and_excludes_description_only_flag() -> None:
+    # Direct probe of _usage_block itself, independent of the `{subcommands} ...` slice the
+    # test above exercises. A synthetic multi-line usage: block whose flags wrap past line 3,
+    # followed by a blank line then a description mentioning an unrelated flag.
+    help_text = (
+        "usage: foo.py [-h] --workspace-root WORKSPACE_ROOT\n"
+        "                    [--wrapped-flag VALUE]\n"
+        "                    [--another-wrapped-flag VALUE]\n"
+        "                    {sub1,sub2} ...\n"
+        "\n"
+        "Does something. Mentions --description-only-flag in prose here.\n"
+    )
+    block = seam_check._usage_block(help_text)
+    um = seam_check._USAGE_SUBCMD_RE.search(block)
+    assert um is not None
+    parent_usage_flags = frozenset(seam_check._FLAG_RE.findall(block[: um.start()]))
+    assert parent_usage_flags == {"--workspace-root", "--wrapped-flag", "--another-wrapped-flag"}
+    assert "--description-only-flag" not in seam_check._FLAG_RE.findall(block)
+
+
+@pytest.mark.parametrize(
+    ("facade_command", "subcommand", "extra"),
+    [
+        ("tracker", "is-shipped", "--key K"),
+        ("forge", "detect-pr", "--branch B"),
+        ("pending-mutations", "compact", ""),
+    ],
+)
+def test_facade_parent_flag_after_subcommand_is_rejected(
+    facade_command: str, subcommand: str, extra: str
+) -> None:
+    # The repro shape: a real parent-parser flag placed AFTER the subcommand. seam_check must reject
+    # it exactly as the real argparse parser would ("unrecognized arguments").
+    text = (
+        f'FLOW_HARNESS="<harness>" "<facade>" {facade_command} {subcommand} '
+        f"{extra} --workspace-root .".replace("  ", " ")
+    )
+    inv = seam_check.find_facade_invocations("t.md", text)[0]
+    errors = [problem for problem in seam_check.validate(inv) if problem.level == "ERROR"]
+    assert len(errors) == 1
+    assert "--workspace-root" in errors[0].msg
+    assert "must precede" in errors[0].msg
+
+
+@pytest.mark.parametrize(
+    ("facade_command", "subcommand", "extra"),
+    [
+        ("tracker", "is-shipped", "--key K"),
+        ("forge", "detect-pr", "--branch B"),
+        ("pending-mutations", "compact", ""),
+    ],
+)
+def test_facade_parent_flag_before_subcommand_remains_green(
+    facade_command: str, subcommand: str, extra: str
+) -> None:
+    # The equivalent correctly ordered form must stay green.
+    text = (
+        f'FLOW_HARNESS="<harness>" "<facade>" {facade_command} --workspace-root . '
+        f"{subcommand} {extra}".rstrip()
+    )
+    inv = seam_check.find_facade_invocations("t.md", text)[0]
+    assert [problem for problem in seam_check.validate(inv) if problem.level == "ERROR"] == []
+
+
+def test_facade_other_subcommand_flag_keeps_existing_diagnostic_not_relabeled() -> None:
+    # `--kind` is a real flag of tracker_cli.py's `link` subcommand, not `get`, and is not a
+    # usage-prefix parent flag. It must keep the existing "valid elsewhere" diagnostic and must NOT
+    # receive the new parent-only-position message.
+    inv = seam_check.find_facade_invocations(
+        "t.md", 'FLOW_HARNESS="<harness>" "<facade>" tracker get --key FT-1 --kind blocks'
+    )[0]
+    errors = [problem for problem in seam_check.validate(inv) if problem.level == "ERROR"]
+    assert len(errors) == 1
+    assert "--kind" in errors[0].msg
+    assert "not for this subcommand" in errors[0].msg
+    assert "must precede" not in errors[0].msg
+
+
+def test_facade_shape_after_subcommand_uses_resolved_subcommand_value_flags(monkeypatch) -> None:
+    # CR-1: a flag that is store_true in the RESOLVED subcommand but value-taking in some other
+    # subcommand must not be treated as value-consuming after the subcommand. The post-subcommand
+    # scan must resolve value flags from the invoked subcommand only, not the all-subcommand union
+    # (which the pre-subcommand scan legitimately uses, since the subcommand isn't known yet there).
+    def fake_value_flags_of(script_name: str, subcommand: str | None = None) -> frozenset[str]:
+        if subcommand == "sub-b":
+            return frozenset({"--flag"})
+        return frozenset()
+
+    monkeypatch.setattr(seam_check, "value_flags_of", fake_value_flags_of)
+    surface = seam_check.Surface(
+        subcommands=frozenset({"sub-a", "sub-b"}),
+        global_flags=frozenset(),
+        sub_flags={"sub-a": frozenset({"--flag"}), "sub-b": frozenset({"--flag"})},
+        parent_usage_flags=frozenset({"--workspace-root"}),
+    )
+    inv = seam_check.Invocation(
+        doc="t.md",
+        line=1,
+        script="foo.py",
+        subcommand="sub-a",
+        flags=[],
+        raw="",
+        facade_command="foo",
+        argv=("sub-a", "--flag", "--workspace-root", "."),
+    )
+    candidate, _before, after = seam_check._facade_shape(inv, surface)
+    assert candidate == "sub-a"
+    # --flag is store_true in sub-a: it must not swallow --workspace-root as its value.
+    assert after == ["--flag", "--workspace-root"]
+
+
+def test_facade_parent_position_check_skipped_on_empty_sub_probe() -> None:
+    # A degenerate/failed subcommand help probe (empty flag set) means ownership is unknown for that
+    # pair; the new position check must stay silent rather than treat every usage-proven parent flag
+    # as parent-only.
+    surface = seam_check.Surface(
+        subcommands=frozenset({"is-shipped"}),
+        global_flags=frozenset({"--workspace-root"}),
+        sub_flags={"is-shipped": frozenset()},
+        parent_usage_flags=frozenset({"--workspace-root"}),
+    )
+    inv = seam_check.Invocation(
+        doc="t.md",
+        line=1,
+        script="tracker_cli.py",
+        subcommand=None,
+        flags=["--key", "--workspace-root"],
+        raw="tracker is-shipped --key K --workspace-root .",
+        facade_command="tracker",
+        argv=("is-shipped", "--key", "K", "--workspace-root", "."),
+        facade_path="<facade>",
+        call_local_harness=True,
+    )
+    subcommand, problems = seam_check._validate_facade_shape(inv, surface)
+    assert subcommand == "is-shipped"
+    assert problems == []
+
+
+def test_facade_parent_flag_after_end_of_options_sentinel_is_not_flagged() -> None:
+    # `--` ends option parsing; a token after it is a positional, not a misplaced parent-parser
+    # flag, even though it spells a real parent flag name.
+    inv = seam_check.find_facade_invocations(
+        "t.md",
+        'FLOW_HARNESS="<harness>" "<facade>" tracker is-shipped --key K -- --workspace-root',
+    )[0]
+    assert [problem for problem in seam_check.validate(inv) if problem.level == "ERROR"] == []
 
 
 def test_direct_launcher_repair_is_parsed_from_flow_skill_variable() -> None:
@@ -585,16 +757,21 @@ def test_live_evolution_drain_section_invokes_both_evolution_facades() -> None:
     assert seam_check.facade_context_problems(invocations) == []
 
 
-def test_live_evolution_drain_section_pins_dry_run_boundary_and_main_red_exception() -> None:
-    """Dry-run must stop after reporting classifications; the reaper's existing
-    best-effort deduplicated main-red P0 alert is the sole permitted write."""
+def test_live_evolution_drain_section_pins_dry_run_boundary_and_would_file_report() -> None:
+    """Dry-run must stop after reporting classifications with NO tracker write: `--dry-run` gets
+    forwarded to `evolve-reap`, which reports the would-file main-red P0 instead of filing it. The
+    old documented exception wording must be gone."""
     flat = " ".join(_evolution_drain_section().split())
 
     assert "would-merge" in flat
     assert "would-launch" in flat
     assert "would-recover" in flat
     assert "main-ci-red" in flat
+    assert "would file P0" in flat
+    assert "evolve-reap --workspace-root . [--include-proposals] [--dry-run]" in flat
     assert "no merge, tracker" in flat.lower()
+    assert "fires on the dry-run path too" not in flat
+    assert "one exception" not in flat.lower()
 
 
 def test_live_init_carries_an_absolute_answers_path_across_calls() -> None:
@@ -855,6 +1032,32 @@ def test_importer_drift_reverse_direction_guard(tmp_path) -> None:
     assert seam_check.module_md_importer_drift(scripts_dir=tmp_path, module_text=text) == []
 
 
+def test_importer_drift_natural_language_and_separator_matches_when_complete(tmp_path) -> None:
+    (tmp_path / "a.py").write_text("")
+    (tmp_path / "b.py").write_text("import a\n")
+    (tmp_path / "c.py").write_text("import a\n")
+    text = "| `a.py` (lib) | x | imported by b and c |\n"
+    assert seam_check.module_md_importer_drift(scripts_dir=tmp_path, module_text=text) == []
+
+
+def test_importer_drift_natural_language_and_separator_catches_missing_importer(tmp_path) -> None:
+    # Regression for the cognitive_workers.py row: "imported by cognitive_worker_smoke and
+    # planner_worker" was one unresolved token before the "and" separator was recognized, so
+    # dispatch_stage's real new import edge was silently invisible to this gate.
+    (tmp_path / "cognitive_workers.py").write_text("")
+    (tmp_path / "cognitive_worker_smoke.py").write_text("import cognitive_workers\n")
+    (tmp_path / "dispatch_stage.py").write_text("import cognitive_workers\n")
+    (tmp_path / "planner_worker.py").write_text("import cognitive_workers\n")
+    text = (
+        "| `cognitive_workers.py` (lib) | x | "
+        "imported by cognitive_worker_smoke and planner_worker |\n"
+    )
+    drifts = seam_check.module_md_importer_drift(scripts_dir=tmp_path, module_text=text)
+    assert len(drifts) == 1
+    assert drifts[0].missing == frozenset({"dispatch_stage"})
+    assert drifts[0].phantom == frozenset()
+
+
 def test_true_importers_captures_lazy_in_function_import(tmp_path) -> None:
     (tmp_path / "a.py").write_text("")
     (tmp_path / "b.py").write_text("def f():\n    from a import X\n    return X\n")
@@ -1020,6 +1223,7 @@ def test_surface_cell_under_enumerated_row() -> None:
     assert len(drifts) == 1
     assert drifts[0].module == "a"
     assert drifts[0].missing == frozenset({"reap"})
+    assert drifts[0].phantom == frozenset()
 
 
 def test_surface_cell_lib_row_skipped() -> None:
@@ -1045,6 +1249,73 @@ def test_surface_cell_boundary_list_assigned() -> None:
     drifts = seam_check.module_md_surface_cell_drift(module_text=text, surface_lookup=lookup)
     assert len(drifts) == 1
     assert drifts[0].missing == frozenset({"list"})
+    assert drifts[0].phantom == frozenset()
+
+
+def test_surface_cell_phantom_only_row() -> None:
+    # A stale `retired` citation alongside real `create` is a phantom, not a missing-only drift.
+    text = "| `a.py` | x | `create` / `retired` |\n"
+    lookup = lambda name: _surface("create")  # noqa: E731
+    drifts = seam_check.module_md_surface_cell_drift(module_text=text, surface_lookup=lookup)
+    assert len(drifts) == 1
+    assert drifts[0].missing == frozenset()
+    assert drifts[0].phantom == frozenset({"retired"})
+
+
+def test_surface_cell_missing_and_phantom_together() -> None:
+    text = "| `a.py` | x | `create` / `retired` |\n"
+    lookup = lambda name: _surface("create", "reap")  # noqa: E731
+    drifts = seam_check.module_md_surface_cell_drift(module_text=text, surface_lookup=lookup)
+    assert len(drifts) == 1
+    assert drifts[0].missing == frozenset({"reap"})
+    assert drifts[0].phantom == frozenset({"retired"})
+
+
+def test_surface_cell_all_phantom_row_not_masked_by_zero_real_skip() -> None:
+    # Every citation is stale: the zero-REAL-subcommand skip must not swallow this row, since it has
+    # citations (none real). Both directions surface.
+    text = "| `a.py` | x | `retired` |\n"
+    lookup = lambda name: _surface("create", "reap")  # noqa: E731
+    drifts = seam_check.module_md_surface_cell_drift(module_text=text, surface_lookup=lookup)
+    assert len(drifts) == 1
+    assert drifts[0].missing == frozenset({"create", "reap"})
+    assert drifts[0].phantom == frozenset({"retired"})
+
+
+def test_surface_cell_facade_name_annotation_not_a_phantom() -> None:
+    # "facade name `x`" documents the CLI's registered public alias, not a subcommand; it must never
+    # count as a stale citation.
+    text = "| `a.py` | x | `create` / `reap` subcommands; facade name `a-cli` |\n"
+    lookup = lambda name: _surface("create", "reap")  # noqa: E731
+    assert seam_check.module_md_surface_cell_drift(module_text=text, surface_lookup=lookup) == []
+
+
+def test_surface_cell_pipe_inside_backtick_span_not_a_cell_boundary() -> None:
+    # A `|` inside a backtick span (trace_mine.py-shaped: `extract (--transcript | --session)`)
+    # must not fracture the row into the wrong number of cells (flow-xm0x). If it did, citation
+    # extraction would collapse to near-empty and the row would be silently skipped as making
+    # "no enumerable surface claim" -- dropping it from coverage entirely rather than catching the
+    # real missing/phantom drift below.
+    text = (
+        "| `a.py` | x | `extract (--transcript | --session) --ticket` / "
+        "`cluster [--events-file]` / `retired-sub` |\n"
+    )
+    lookup = lambda name: _surface("extract", "cluster", "file")  # noqa: E731
+    drifts = seam_check.module_md_surface_cell_drift(module_text=text, surface_lookup=lookup)
+    assert len(drifts) == 1
+    assert drifts[0].missing == frozenset({"file"})
+    assert drifts[0].phantom == frozenset({"retired-sub"})
+
+
+def test_surface_cell_stray_pipe_in_prose_is_not_a_row() -> None:
+    # A `|` used as regex alternation inside prose, not a table row, must not be mistaken for one
+    # (flow-xm0x): the line does not start with `|`.
+    text = (
+        'Selected by `[forge] backend = "github" | "bitbucket"` in `a.py`, '
+        "the read `create` verb.\n"
+    )
+    lookup = lambda name: _surface("create", "reap")  # noqa: E731
+    assert seam_check.module_md_surface_cell_drift(module_text=text, surface_lookup=lookup) == []
 
 
 def test_main_fails_on_surface_cell_drift(monkeypatch) -> None:
@@ -1064,6 +1335,169 @@ def test_main_fails_on_surface_cell_drift(monkeypatch) -> None:
 def test_module_md_surface_cells_match_argparse() -> None:
     """Every live MODULE.md surface cell must fully enumerate the script's subcommands."""
     assert seam_check.module_md_surface_cell_drift() == []
+
+
+# --- activation-truth marker/pin parity --------------------------------------
+
+
+def test_discovered_activation_truth_markers_recognizes_python_marker(tmp_path) -> None:
+    f = tmp_path / "a.py"
+    f.write_text('# flow:activation-truth:begin\n"""doc"""\n', encoding="utf-8")
+    assert seam_check.discovered_activation_truth_markers([f], repo_root=tmp_path) == frozenset(
+        {"a.py"}
+    )
+
+
+def test_discovered_activation_truth_markers_recognizes_markdown_marker(tmp_path) -> None:
+    f = tmp_path / "a.md"
+    f.write_text("<!-- flow:activation-truth:begin -->\n# A\n", encoding="utf-8")
+    assert seam_check.discovered_activation_truth_markers([f], repo_root=tmp_path) == frozenset(
+        {"a.md"}
+    )
+
+
+def test_discovered_activation_truth_markers_requires_exact_marker_line(tmp_path) -> None:
+    # A prose MENTION of the marker string is not a marker line.
+    f = tmp_path / "a.md"
+    f.write_text("This doc mentions flow:activation-truth:begin in prose.\n", encoding="utf-8")
+    assert seam_check.discovered_activation_truth_markers([f], repo_root=tmp_path) == frozenset()
+
+
+def test_activation_truth_candidates_excludes_tests_dir() -> None:
+    # scripts/tests/*.py (fixtures, marker-shaped strings in the test source itself) must never
+    # enter the scanned universe.
+    candidates = seam_check.activation_truth_candidates()
+    assert not any(p.parent.name == "tests" for p in candidates)
+
+
+def test_activation_truth_candidates_includes_root_claude_and_skill() -> None:
+    names = {p.name for p in seam_check.activation_truth_candidates()}
+    assert "CLAUDE.md" in names
+    assert "SKILL.md" in names
+
+
+def test_activation_truth_drift_flags_marker_without_pin(tmp_path) -> None:
+    marked = tmp_path / "marked.md"
+    marked.write_text("<!-- flow:activation-truth:begin -->\n# Marked\n", encoding="utf-8")
+    drift = seam_check.activation_truth_drift(
+        candidates=[marked], pins=frozenset(), repo_root=tmp_path
+    )
+    assert drift.marker_without_pin == frozenset({"marked.md"})
+    assert drift.pin_without_marker == frozenset()
+
+
+def test_activation_truth_drift_flags_pin_without_marker(tmp_path) -> None:
+    unmarked = tmp_path / "unmarked.md"
+    unmarked.write_text("# No marker here\n", encoding="utf-8")
+    drift = seam_check.activation_truth_drift(
+        candidates=[unmarked], pins=frozenset({"unmarked.md"}), repo_root=tmp_path
+    )
+    assert drift.pin_without_marker == frozenset({"unmarked.md"})
+    assert drift.marker_without_pin == frozenset()
+
+
+def test_activation_truth_drift_flags_deleted_or_renamed_pinned_file(tmp_path) -> None:
+    # The pin references a path absent from the scanned candidate set entirely (deleted, or renamed
+    # away without moving the marker with it).
+    drift = seam_check.activation_truth_drift(
+        candidates=[], pins=frozenset({"gone.md"}), repo_root=tmp_path
+    )
+    assert drift.pin_without_marker == frozenset({"gone.md"})
+    assert drift.marker_without_pin == frozenset()
+
+
+def test_activation_truth_drift_clean_when_marker_and_pin_match(tmp_path) -> None:
+    marked = tmp_path / "marked.py"
+    marked.write_text('# flow:activation-truth:begin\n"""doc"""\n', encoding="utf-8")
+    drift = seam_check.activation_truth_drift(
+        candidates=[marked], pins=frozenset({"marked.py"}), repo_root=tmp_path
+    )
+    assert drift == seam_check.ActivationTruthDrift(frozenset(), frozenset())
+
+
+def test_main_fails_on_activation_truth_marker_without_pin(monkeypatch) -> None:
+    monkeypatch.setattr(seam_check, "scripts_missing_from_module_md", lambda *a, **k: set())
+    monkeypatch.setattr(
+        seam_check, "scripts_missing_from_registry_descriptions", lambda *a, **k: set()
+    )
+    monkeypatch.setattr(seam_check, "module_md_importer_drift", lambda *a, **k: [])
+    monkeypatch.setattr(seam_check, "module_md_surface_cell_drift", lambda *a, **k: [])
+    monkeypatch.setattr(
+        seam_check,
+        "activation_truth_drift",
+        lambda *a, **k: seam_check.ActivationTruthDrift(
+            marker_without_pin=frozenset({"stray.md"}), pin_without_marker=frozenset()
+        ),
+    )
+    assert seam_check.main([]) == 1
+
+
+def test_main_fails_on_activation_truth_pin_without_marker(monkeypatch) -> None:
+    monkeypatch.setattr(seam_check, "scripts_missing_from_module_md", lambda *a, **k: set())
+    monkeypatch.setattr(
+        seam_check, "scripts_missing_from_registry_descriptions", lambda *a, **k: set()
+    )
+    monkeypatch.setattr(seam_check, "module_md_importer_drift", lambda *a, **k: [])
+    monkeypatch.setattr(seam_check, "module_md_surface_cell_drift", lambda *a, **k: [])
+    monkeypatch.setattr(
+        seam_check,
+        "activation_truth_drift",
+        lambda *a, **k: seam_check.ActivationTruthDrift(
+            marker_without_pin=frozenset(), pin_without_marker=frozenset({"CLAUDE.md"})
+        ),
+    )
+    assert seam_check.main([]) == 1
+
+
+def test_live_activation_truth_markers_match_pins() -> None:
+    """The live discovered marker set has no omissions or extras vs. the pin registry."""
+    assert seam_check.activation_truth_drift() == seam_check.ActivationTruthDrift(
+        frozenset(), frozenset()
+    )
+
+
+# --- activation-truth reference-only tripwire ---------------------------------
+
+
+def test_activation_truth_tripwire_flags_unmarked_reference(tmp_path) -> None:
+    doc = tmp_path / "new-ref.md"
+    doc.write_text("# New reference\n\nThe capsule writer runs the recipe.\n", encoding="utf-8")
+    problems = seam_check.activation_truth_tripwire_problems(docs=[doc])
+    assert problems == [("new-ref.md", 3, "add the activation-truth marker or reword")]
+
+
+def test_activation_truth_tripwire_skips_marked_reference(tmp_path) -> None:
+    doc = tmp_path / "marked-ref.md"
+    doc.write_text(
+        "<!-- flow:activation-truth:begin -->\n# Marked\n\nThe capsule writer runs.\n",
+        encoding="utf-8",
+    )
+    assert seam_check.activation_truth_tripwire_problems(docs=[doc]) == []
+
+
+def test_activation_truth_tripwire_ignores_unrelated_prose(tmp_path) -> None:
+    doc = tmp_path / "unrelated.md"
+    doc.write_text("# Unrelated\n\nRun the tests before merging.\n", encoding="utf-8")
+    assert seam_check.activation_truth_tripwire_problems(docs=[doc]) == []
+
+
+def test_main_fails_on_activation_truth_tripwire(monkeypatch) -> None:
+    monkeypatch.setattr(seam_check, "scripts_missing_from_module_md", lambda *a, **k: set())
+    monkeypatch.setattr(
+        seam_check, "scripts_missing_from_registry_descriptions", lambda *a, **k: set()
+    )
+    monkeypatch.setattr(seam_check, "module_md_importer_drift", lambda *a, **k: [])
+    monkeypatch.setattr(seam_check, "module_md_surface_cell_drift", lambda *a, **k: [])
+    monkeypatch.setattr(
+        seam_check,
+        "activation_truth_tripwire_problems",
+        lambda *a, **k: [("new-ref.md", 3, "add the activation-truth marker or reword")],
+    )
+    assert seam_check.main([]) == 1
+
+
+def test_live_activation_truth_tripwire_has_no_hits() -> None:
+    assert seam_check.activation_truth_tripwire_problems() == []
 
 
 # --- stage->reference_doc map re-enumeration drift ---------------------------
@@ -1333,26 +1767,26 @@ def test_live_role_citations_all_in_registry() -> None:
     assert seam_check.role_literal_drift() == []
 
 
-# --- universal route-contract gate -----------------------------------------
+# --- committed route-surface staleness gate ---------------------------------
 
 
 def test_live_route_contract_surfaces_are_aligned() -> None:
     assert seam_check.route_contract_drift() == []
 
 
-def test_route_contract_flags_a_profile_missing_from_stage_composition() -> None:
-    execution = copy.deepcopy(agent_routes.stage_execution_contract())
-    del execution["reflect"]["substeps"]["machinery_fix"]
-
-    drift = seam_check.route_contract_drift(stage_execution=execution)
-
-    assert any("machinery_fixer" in problem and "stage composition" in problem for problem in drift)
+def test_cognitive_worker_design_provenance_is_exact() -> None:
+    assert seam_check.cognitive_worker_design_drift() == []
 
 
-def test_route_contract_treats_an_explicit_empty_stage_map_as_empty() -> None:
-    drift = seam_check.route_contract_drift(stage_execution={})
+def test_live_inventory_block_equals_its_renderer() -> None:
+    inventory = (seam_check.SCRIPTS_DIR / "inventory.md").read_text(encoding="utf-8")
+    assert agent_routes.render_inventory_profiles_block().rstrip("\n") in inventory
 
-    assert any("absent from stage composition" in problem for problem in drift)
+
+def test_live_workspace_agents_pin_the_rendered_defaults() -> None:
+    workspace_path = seam_check.SKILL_ROOT.parents[3] / ".flow" / "workspace.toml"
+    agents = tomllib.loads(workspace_path.read_text(encoding="utf-8"))["agents"]
+    assert agent_routes.render_route_config(agents) == agent_routes.render_default_routes_toml()
 
 
 def test_route_contract_rejects_partial_self_workspace_after_capsule_activation() -> None:
@@ -1367,20 +1801,122 @@ effort = "xhigh"
     assert any("self-workspace route catalog mismatch" in detail for detail in drift)
 
 
-def test_route_contract_flags_a_deterministic_stage_with_a_model() -> None:
-    execution = copy.deepcopy(agent_routes.stage_execution_contract())
-    execution["commit"]["model"] = "opus"
-
-    drift = seam_check.route_contract_drift(stage_execution=execution)
-
-    assert any("commit" in problem and "model=none" in problem for problem in drift)
-
-
-def test_route_contract_flags_inventory_catalog_drift() -> None:
-    inventory = "Agent route profiles: " + ", ".join(
-        profile for profile in agent_routes.PROFILES if profile != "reflector"
+def test_route_contract_rejects_an_unknown_workspace_profile() -> None:
+    extra = (
+        agent_routes.render_default_routes_toml()
+        + '\n[agents.mystery]\nharness = "codex"\nmodel = "gpt-5.6-sol"\neffort = "high"\n'
     )
 
-    drift = seam_check.route_contract_drift(inventory_text=inventory)
+    drift = seam_check.route_contract_drift(workspace_toml=extra)
 
-    assert any("inventory" in problem and "reflector" in problem for problem in drift)
+    assert any("mystery" in detail and "not a known profile" in detail for detail in drift)
+
+
+def test_route_contract_flags_a_changed_workspace_default_value() -> None:
+    edited = agent_routes.render_default_routes_toml().replace(
+        'model = "gpt-5.6-sol"', 'model = "gpt-5.6-luna"', 1
+    )
+
+    drift = seam_check.route_contract_drift(workspace_toml=edited)
+
+    assert drift == ["self-workspace routes do not canonicalize to the rendered defaults"]
+
+
+def test_route_contract_flags_a_hand_edited_inventory_block() -> None:
+    stale = agent_routes.render_inventory_profiles_block().replace("`reflector`, ", "")
+
+    drift = seam_check.route_contract_drift(inventory_text="# inventory\n\n" + stale)
+
+    assert any("inventory" in detail and "stale" in detail for detail in drift)
+
+
+def test_route_contract_fails_closed_on_missing_inventory_markers() -> None:
+    drift = seam_check.route_contract_drift(inventory_text="Agent route profiles: `planner`\n")
+
+    assert any("marker" in detail for detail in drift)
+
+
+def test_route_contract_fails_closed_on_duplicate_inventory_markers() -> None:
+    block = agent_routes.render_inventory_profiles_block()
+
+    drift = seam_check.route_contract_drift(inventory_text=block + "\n" + block)
+
+    assert any("marker" in detail for detail in drift)
+
+
+def test_route_contract_gate_never_mutates_the_committed_surfaces() -> None:
+    inventory_path = seam_check.SCRIPTS_DIR / "inventory.md"
+    workspace_path = seam_check.SKILL_ROOT.parents[3] / ".flow" / "workspace.toml"
+    before = (inventory_path.read_bytes(), workspace_path.read_bytes())
+
+    assert seam_check.route_contract_drift() == []
+
+    assert (inventory_path.read_bytes(), workspace_path.read_bytes()) == before
+
+
+# --- review_brief unattended skip prose seam (flow-rptq) ---------------------
+
+
+def test_review_brief_reads_unattended_frontmatter_through_allowlisted_facade_once() -> None:
+    # `frontmatter` is the allowlisted facade command for ticket_frontmatter.py (flowctl.py's
+    # command map). stage-review_brief.md must read the seeded `unattended` signal through it
+    # exactly once and bind it to one variable, not re-derive it ad hoc per decision point.
+    text = (seam_check.SKILL_ROOT / "references" / "stage-review_brief.md").read_text(
+        encoding="utf-8"
+    )
+    assert text.count('"<facade>" frontmatter read') == 1
+    assert 'UNATTENDED=$(FLOW_HARNESS="<harness>" "<facade>" frontmatter read' in text
+
+
+def test_review_brief_reuses_same_unattended_signal_for_skip_and_no_open() -> None:
+    # Both the §0 skip-or-author choice and the §4 `--no-open` choice must consume the same
+    # `UNATTENDED` variable seeded once in §0, never a fresh live judgment for either.
+    text = (
+        (seam_check.SKILL_ROOT / "references" / "stage-review_brief.md")
+        .read_text(encoding="utf-8")
+        .replace("\n", " ")
+    )
+    assert "When `UNATTENDED` is `true`, skip" in text
+    assert "`UNATTENDED` (§0) is `true`" in text
+
+
+def test_review_brief_canonical_skip_reason_matches_freshness_authorization() -> None:
+    # The exact string stage-review_brief.md instructs agents to emit must equal review_brief.py's
+    # CANONICAL_UNATTENDED_SKIP_REASON constant; a prose/code drift here fails freshness silently.
+    import review_brief
+
+    text = (seam_check.SKILL_ROOT / "references" / "stage-review_brief.md").read_text(
+        encoding="utf-8"
+    )
+    assert review_brief.CANONICAL_UNATTENDED_SKIP_REASON in text.replace("\n", " ")
+
+
+def test_review_brief_skip_receipt_flows_through_existing_run_stage_recipe() -> None:
+    # review_brief's unattended terminal names the same generic `cognitive-worker run-stage`
+    # recipe documented in delivery-loop.md ("Activated cognitive substeps"), carries the
+    # canonical skip reason, and hands its result to `advance` through `--skill-output-from` -
+    # the defined terminal peer stages (stage-code_review.md step 9, stage-reflect.md step 7)
+    # already use, not a bespoke facade call invented inside stage-review_brief.md.
+    stage_doc = (seam_check.SKILL_ROOT / "references" / "stage-review_brief.md").read_text(
+        encoding="utf-8"
+    )
+    delivery_loop = (seam_check.SKILL_ROOT / "references" / "delivery-loop.md").read_text(
+        encoding="utf-8"
+    )
+    assert "cognitive-worker run-stage" in stage_doc
+    assert "cognitive-worker run-stage" in delivery_loop
+    assert "--skill-output-from" in stage_doc
+    assert '--output "$TICKET_DIR/stages/<stage>.cognitive.json"' in delivery_loop
+
+
+def test_review_brief_treats_revision_sub_run_as_attended() -> None:
+    # A revision sub-run reuses the original launch's worktree, so its frontmatter
+    # `unattended` flag still reflects that ORIGINAL launch, not the revision itself - and a
+    # revision is opened by a human's `revise` action, so it must be treated as attended
+    # (flow-rptq CR-F5). Prose-only: a revision seals no cognitive substep and runs no merge
+    # stage, so there is no fence to code-seal this override against.
+    text = (seam_check.SKILL_ROOT / "references" / "stage-review_brief.md").read_text(
+        encoding="utf-8"
+    )
+    assert "/revisions/" in text
+    assert "ATTENDED" in text

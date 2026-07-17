@@ -1,7 +1,8 @@
 # Maintain commands
 
-Except for workspace-local worktree cleanup, maintenance is restricted to workspaces
-whose configuration identifies the current repository as Flow's maintainer target:
+Except for workspace-local worktree and quarantine cleanup, maintenance is restricted
+to workspaces whose configuration identifies the current repository as Flow's
+maintainer target:
 
 ```bash
 FLOW_HARNESS="<harness>" "<facade>" maintainer --workspace-root . --require-current
@@ -12,8 +13,9 @@ repository. Internal scheduling code may still resolve that target, but no publi
 maintenance command follows the pointer implicitly. Maintenance never assumes a
 particular host process, terminal, or background-job implementation.
 
-Before every maintenance operation except `FLOW maintain worktrees clean`, collect
-the host-neutral schedule and ship-event senses diagnostics:
+Before every maintenance operation except `FLOW maintain worktrees clean` and
+`FLOW maintain quarantine clean`, collect the host-neutral schedule and ship-event
+senses diagnostics:
 
 ```bash
 FLOW_HARNESS="<harness>" "<facade>" maintainer-preflight --json
@@ -211,18 +213,20 @@ hot work.
 Each bounded loop turn:
 
 1. Reap-classify existing PRs through the reap seam, forwarding `--include-proposals`
-   whenever the public invocation carries it — both classifiers MUST see the same
-   flag, or the launch and reap populations diverge:
+   whenever the public invocation carries it (both classifiers MUST see the same
+   flag, or the launch and reap populations diverge) and forwarding `--dry-run` the
+   same way:
 
    ```bash
-   FLOW_HARNESS="<harness>" "<facade>" evolve-reap --workspace-root . [--include-proposals]
+   FLOW_HARNESS="<harness>" "<facade>" evolve-reap --workspace-root . [--include-proposals] [--dry-run]
    ```
 
    Buckets: `merge`, `not_green`, `skipped_hot`, `skipped_live`, `blocked`,
-   `held_main_red`. `evolve-reap` probes main's OWN CI health every turn and, when main
-   is genuinely red, routes every would-be merge into `held_main_red` and may file its
-   existing best-effort, deduplicated `main-ci-red` P0 tracker alert — this lives
-   inside the classification call itself, so it fires on the dry-run path too (see
+   `held_main_red`, plus the `main_red_p0` record. `evolve-reap` probes main's OWN CI
+   health every turn and, when main is genuinely red, routes every would-be merge into
+   `held_main_red`. Without `--dry-run` it also files its best-effort, deduplicated
+   `main-ci-red` P0 tracker alert; with `--dry-run` it files nothing and `main_red_p0`
+   instead carries the would-file record naming the failing sha + check(s) (see
    Dry-run below).
 
 2. Decide the launch/recover/wait/done action through the drain seam (`evolve-drain`,
@@ -243,12 +247,11 @@ FLOW_HARNESS="<harness>" "<facade>" evolve-drain --workspace-root . [--include-p
 
 Reports `action` (`launch`/`recover`/`wait`/`done`), `launch`, `stranded_pre_pr`, and
 `parked`. Dry-run then reports the would-merge set (the reap `merge` bucket), the
-would-launch set (the drain `launch` batch), and the would-recover set (the drain
-`stranded_pre_pr` list), then stops. It performs NO merge, tracker write, fleet
-registration, worktree reaping, or worker launch. The one exception, unchanged from
-step 1, is `evolve-reap`'s own best-effort, deduplicated `main-ci-red` P0 alert when
-main CI is genuinely red — every other write below belongs to the non-dry-run branch
-only.
+would-launch set (the drain `launch` batch), the would-recover set (the drain
+`stranded_pre_pr` list), and, when main CI is genuinely red, "would file P0:
+<sha> <failing checks>" (from the reap `main_red_p0` record), then stops. It performs
+NO merge, tracker write, fleet registration, worktree reaping, or worker launch, with
+no exceptions: every write belongs to the non-dry-run branches below.
 
 ### Non-dry-run: reap the `merge` set
 
@@ -395,3 +398,44 @@ A dirty candidate is checkpointed to a rescue ref before removal. Capture failur
 leaves the worktree intact. `observe_at_close` runs inside the guarded teardown after checkpointing
 and immediately before each removal attempt; the preview never observes or reaps. Never remove an
 unrecognized worktree merely because its branch name resembles Flow.
+
+## `FLOW maintain quarantine clean [--dry-run]`
+
+Sweep quarantined cognitive capsules owned by the invoking workspace only: every
+`.flow/runs/<ticket>/cognitive/<stage>/invocations/*/journal.json` and its
+`revisions/<revision>/` sibling. Ephemeral planner and plan-assessor invocation roots
+live outside the workspace, under each launch's own private cache directory, and are
+bounded separately by that worker's own reaper; this command never touches them.
+
+A quarantined journal always records the capsule path `_dispose_failed_capsule` moved
+it to. Seven days since the journal's last transition is the default aged threshold; a
+candidate at or past it is listed as reapable without further acknowledgement. A
+younger candidate is listed too, but only an explicit confirmed candidate ID selects
+it for the real pass. A recorded quarantine path that does not exist on disk (a
+suppressed move failure) is reported as its own row rather than silently dropped or
+treated as an error.
+
+```bash
+FLOW_HARNESS="<harness>" "<facade>" worktree-janitor quarantine-clean --workspace-root . --dry-run
+```
+
+First show the absolute `target_root`, every aged candidate under `reapable`, every
+younger candidate under `younger`, and every recorded-but-absent path under
+`recorded_missing`, each with its `confirmation_id`. If the public invocation included
+`--dry-run`, stop there. Otherwise obtain confirmation for that exact target and
+candidate set. Then bind the destructive invocation to the preview values:
+
+```bash
+FLOW_HARNESS="<harness>" "<facade>" worktree-janitor quarantine-clean --workspace-root . \
+  --confirmed-target "<target_root>" \
+  --confirmed-candidate "<confirmation_id>" [...]
+```
+
+The second invocation re-reads each confirmed journal and re-checks containment and
+the digest-bound confirmation ID under the same per-invocation lock the cognitive
+executor itself uses, before it archives anything. A candidate whose journal changed
+since the preview (a fresh recovery, a concurrent annotation) has a different
+confirmation ID and is preserved. A confirmed, still-matching candidate is archived by
+rename into a sibling `archive/` directory next to `capsules/quarantine/`; this command
+never deletes a capsule. The still-quarantined journal is annotated with the archive
+path afterward; a failed annotation leaves a visible row but does not undo the rename.

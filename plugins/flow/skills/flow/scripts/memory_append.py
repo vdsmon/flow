@@ -10,6 +10,13 @@ Idempotency key formula (canonical for cross-run stability):
 The `ts` field is NOT in the formula so `FLOW workspace repair` reruns produce the
 same id, letting the dedup scan suppress re-writes.
 
+The stored body is sanitized before it is written: terminal control sequences
+(ANSI/C1 CSI, OSC) are stripped, then any remaining C0/C1 control bytes are
+stripped too (this catches escapes the CSI/OSC regex misses, e.g. unterminated
+or newline-split OSC), and the result is capped at `_MAX_BODY_LENGTH`
+characters, with `_TRUNCATION_MARKER` appended when the cap is hit. `compute_id`
+always runs on the raw caller input, never the sanitized/truncated storage form.
+
 Quarantine semantics (sidecar, main file untouched):
 - Malformed lines encountered during scan are APPENDED to
   `<file>.quarantine.<ts>` (one sidecar per invocation).
@@ -54,6 +61,24 @@ VALID_TYPES: tuple[str, ...] = (
 _WS_RE = re.compile(r"\s+")
 _TRAILING_PUNCT_RE = re.compile(r"[\.\,\;\:\!\?\-\—\s]+$")
 
+_MAX_BODY_LENGTH = 5_120
+_TRUNCATION_MARKER = "\n[truncated by memory_append]"
+
+# Terminal control sequences stripped from stored bodies before the length cap is
+# applied: standard ESC-bracket CSI, the single-byte C1 CSI (0x9b), and OSC (ESC ]
+# or 0x9d) terminated by BEL (0x07) or ST (ESC \ or 0x9c).
+_ANSI_RE = re.compile(
+    r"\x1b\[[0-?]*[ -/]*[@-~]"  # CSI: ESC [ ... final byte
+    r"|\x9b[0-?]*[ -/]*[@-~]"  # C1 CSI
+    r"|(?:\x1b\]|\x9d).*?(?:\x07|\x1b\\|\x9c)"  # OSC ... BEL/ST
+)
+
+# Backstop for every escape/control byte _ANSI_RE doesn't catch (a lone ESC, RIS
+# `\x1bc`, an unterminated or newline-split OSC, bare CR/BEL/BS, ...): any C0
+# control byte except newline/tab, plus DEL and the C1 range. Runs after _ANSI_RE
+# so it only ever removes leftover control bytes, never legitimate text.
+_CONTROL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
+
 
 # ─── Errors ──────────────────────────────────────────────────────────────────
 
@@ -82,6 +107,18 @@ def _normalize_body(body: str) -> str:
 def compute_id(namespace: str, ticket: str, type_: str, body: str) -> str:
     src = namespace + ticket + type_ + _normalize_body(body)
     return hashlib.sha256(src.encode("utf-8")).hexdigest()[:16]
+
+
+def _sanitize_body(body: str) -> str:
+    """Storage representation of `body`: ANSI/C1/OSC stripped, then any leftover
+    control bytes stripped, then capped at `_MAX_BODY_LENGTH`.
+    Never fed to `compute_id`, which stays on raw input."""
+    cleaned = _ANSI_RE.sub("", body)
+    cleaned = _CONTROL_RE.sub("", cleaned)
+    if len(cleaned) <= _MAX_BODY_LENGTH:
+        return cleaned
+    prefix_len = _MAX_BODY_LENGTH - len(_TRUNCATION_MARKER)
+    return cleaned[:prefix_len] + _TRUNCATION_MARKER
 
 
 def _scan_for_ids(
@@ -160,7 +197,7 @@ def append(
             "namespace": namespace,
             "branch": branch,
             "ticket": ticket,
-            "body": body,
+            "body": _sanitize_body(body),
         }
         # supersedes is a tombstone pointer (metadata like ts), NOT a hash input,
         # so a superseding entry's id stays stable across recover reruns. Only
@@ -185,7 +222,12 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         description="Single-writer append to .flow/<namespace>/knowledge.jsonl."
     )
     parser.add_argument("--type", dest="type_", required=True)
-    parser.add_argument("--text", required=True, help="entry body (raw text).")
+    parser.add_argument(
+        "--text",
+        required=True,
+        help="entry body (raw text); stored with terminal control sequences "
+        f"stripped and capped at {_MAX_BODY_LENGTH} characters.",
+    )
     parser.add_argument("--branch", required=True)
     parser.add_argument("--ticket", required=True)
     parser.add_argument("--supersedes", default=None)

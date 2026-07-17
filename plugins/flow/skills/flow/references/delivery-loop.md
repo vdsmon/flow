@@ -1,3 +1,4 @@
+<!-- flow:activation-truth:begin -->
 # Dispatcher delivery loop
 
 ## Cognitive outcome fence
@@ -137,6 +138,12 @@ FLOW_HARNESS="<harness>" "<facade>" cognitive-worker run-stage \
   --output "$TICKET_DIR/stages/<stage>.cognitive.json"
 ```
 
+Between launching this command and reading its receipt, the owner must run nothing that
+touches the authoritative worktree, including a bare `python3` or `mise` invocation: a shim
+can silently mutate it (an untracked `uv.lock` write is enough). Any such touch races the
+executor's before/after Git receipts and turns into a misleading `read_only_violation` naming
+a path the owner wrote, attributed to the worker (`references/troubleshooting.md`).
+
 Each `--inputs-from` entry is keyed by substep and holds either `facts` plus an
 `input_bundle` path, or a `skip` with an exact `reason` when a conditional substep does
 not apply. An exact-route failure stops the stage visibly: never fall back to a native
@@ -215,6 +222,25 @@ or launch one replacement against the same baseline and ownership boundary. Neve
 overlap the replacement with the original: two plausible writers turn a recoverable
 stall into ambiguous code ownership.
 
+### review_brief's unattended skip signal
+
+`review_brief_author`'s `main` substep is conditional. The bootstrapped `unattended`
+ticket-frontmatter boolean (stamped once at `worktree create`, from `auto` or a
+`@default` base) is the SOLE run-mode signal for whether it launches: never
+re-derive unattendedness from lane, route activation, browser/`--no-open`
+configuration, environment, or owner memory — `stage-review_brief.md` reads that one
+frontmatter value and reuses it for both the skip decision and `--no-open`.
+
+When `unattended` is `true`, the terminal `advance` for `review_brief` carries a
+`main` skip through `--skill-output-from` with the exact reason `unattended run has
+no live human reviewer`; the generic conditional fence accepts any reasoned skip
+here (it is not lane-gated), but that acceptance is not authorization. `merge`'s
+eligibility probe separately calls `review_brief.py freshness`, which re-reads this
+same run's `unattended` frontmatter and the persisted skip receipt, and returns
+`disabled` (non-blocking) only when both agree; an attended run whose tail emitted
+the canonical skip anyway gets blocking `missing` instead, so the brief is refreshed
+rather than silently lost.
+
 ### Installed skill
 
 Resolve the configured handler through the facade, then invoke it with the host's
@@ -262,6 +288,17 @@ reasoned conditional skip.
 Log friction before working around drift, lease loss, reconciliation, missing tools,
 blockers, failed stages, retries, and state rollback. Friction logging is best-effort
 and cannot fail the run.
+
+```bash
+FLOW_HARNESS="<harness>" "<facade>" friction \
+  --ticket <KEY> --run-id <run_id> --stage <stage> \
+  --type <TYPE> --severity <sev> \
+  --body "<what>" --detail "<why>" \
+  --workspace-root . || true
+```
+
+`<TYPE>` is one of `BLOCKER`, `RETRY`, `MISSING_TOOL`, `DRIFT`, `LEASE_LOSS`,
+`RECONCILE`, `STAGE_FAILED`, or `STATE_ROLLBACK`; `<sev>` is `major` or `minor`.
 
 ## Post-implementation ownership reconcile
 
