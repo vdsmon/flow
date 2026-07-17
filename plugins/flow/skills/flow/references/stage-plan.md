@@ -1,3 +1,4 @@
+<!-- flow:activation-truth:begin -->
 # Stage: plan
 
 ## Routed planning contract

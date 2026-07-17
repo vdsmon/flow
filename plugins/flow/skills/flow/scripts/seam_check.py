@@ -34,6 +34,7 @@ import flowctl
 
 SCRIPTS_DIR = Path(__file__).resolve().parent
 SKILL_ROOT = SCRIPTS_DIR.parent
+REPO_ROOT = SKILL_ROOT.parents[3]
 _COGNITIVE_WORKER_DESIGN_DIGEST = "36b2007e88e43cd99b6c1b3a99b7a4102ff6f099a9525f6a58854b01407f3a85"
 
 # A direct script reference inside prose, using a legacy child environment alias or the
@@ -1287,6 +1288,73 @@ def module_md_importer_drift(
 class SurfaceCellDrift:
     module: str
     missing: frozenset[str]  # real subcommands absent from the surface cell
+    phantom: frozenset[str] = frozenset()  # cited tokens that are not real subcommands
+
+
+# A facade-name annotation ("facade name `agent-route`") documents the CLI's registered public
+# alias, not one of its argparse subcommands. Strip the whole phrase before extracting citations so
+# the alias is never mistaken for a phantom subcommand.
+_FACADE_NAME_ANNOTATION_RE = re.compile(r"(?i)\bfacade name\s+`[^`]*`")
+# A bare command-shaped token: lowercase letters, digits, and hyphens only. Anchored with fullmatch
+# so a flag (`--foo`), a filename or path (`state.json`, `.flow/runtime`), a script-name annotation
+# (`recall.py`), a quoted JSON key (`"role"`), and an uppercase or bracketed placeholder (`<KEY>`,
+# `[args...]`) are never mistaken for a citation.
+_COMMAND_TOKEN_RE = re.compile(r"[a-z][a-z0-9-]*")
+
+
+def _split_table_row(line: str) -> list[str]:
+    """Split a markdown table row on `|`, but never inside a backtick span or a `\\|` escape.
+
+    A surface cell can itself contain a literal pipe (`` `extract (--transcript | --session)` ``,
+    a markdown-escaped `` `--state open\\|merged` ``); splitting on every raw `|` byte fractures
+    those spans and shifts cell boundaries.
+    """
+    cells: list[str] = []
+    current: list[str] = []
+    in_span = False
+    i = 0
+    n = len(line)
+    while i < n:
+        ch = line[i]
+        if ch == "\\" and i + 1 < n:
+            current.append(ch)
+            current.append(line[i + 1])
+            i += 2
+            continue
+        if ch == "`":
+            in_span = not in_span
+            current.append(ch)
+            i += 1
+            continue
+        if ch == "|" and not in_span:
+            cells.append("".join(current))
+            current = []
+            i += 1
+            continue
+        current.append(ch)
+        i += 1
+    cells.append("".join(current))
+    return cells
+
+
+def _cell_citations(cell: str) -> frozenset[str]:
+    """Command-shaped citation tokens inside one MODULE.md surface cell.
+
+    A citation is the first whitespace token of a backtick span (`` `advance --skill-output-from` ``
+    cites `advance`, its subcommand, not the flag that follows). Working from discrete extracted
+    tokens rather than a substring search over the whole cell is what keeps `list` from ever
+    matching inside a cited `list-assigned`.
+    """
+    cell = _FACADE_NAME_ANNOTATION_RE.sub(" ", cell)
+    citations: set[str] = set()
+    for span in _INLINE_SPAN_RE.finditer(cell):
+        content = span.group(1).strip()
+        if not content:
+            continue
+        token = content.split(maxsplit=1)[0]
+        if _COMMAND_TOKEN_RE.fullmatch(token):
+            citations.add(token)
+    return frozenset(citations)
 
 
 def module_md_surface_cell_drift(
@@ -1296,22 +1364,24 @@ def module_md_surface_cell_drift(
 ) -> list[SurfaceCellDrift]:
     """Drift between a MODULE.md surface cell and a script's real argparse subcommands.
 
-    Per table row (a line containing `|`): the module stem is the first backticked
-    *.py token in the first non-empty `|`-cell. `(lib)` rows are skipped (libs are
-    documented by their importer list, not a CLI surface). The surface cell is the
-    LAST non-empty `|`-cell; a real subcommand counts as enumerated only as a
-    standalone token (boundary regex, so `list` does not match inside
-    `list-assigned`). A row enumerating ZERO real subcommands is not claiming to be
-    a surface listing (e.g. metric.py's forwarded `(via recall.py --metric)`) and is
-    skipped. A row enumerating >=1 but not all yields one descriptor.
+    Per table row (a line whose first non-whitespace character is `|`; a stray `|` inside prose,
+    e.g. a regex-alternation example, must not be mistaken for a row): the module stem is the first
+    backticked *.py token in the first non-empty `|`-cell. `(lib)` rows are skipped (libs are
+    documented by their importer list, not a CLI surface). The surface cell is the LAST non-empty
+    `|`-cell; `_cell_citations` extracts every command-shaped citation from it. A row with ZERO
+    citations makes no enumerable surface claim (e.g. metric.py's forwarded `(via recall.py
+    --metric)`) and is skipped -- this is a stronger gate than "zero REAL subcommands cited", so a
+    row whose citations are all stale (all-phantom, zero real) is still caught rather than escaping
+    through the same skip. A row whose citations differ from the real set in either direction yields
+    one descriptor carrying both directions.
     """
     if module_text is None:
         module_text = (scripts_dir / "MODULE.md").read_text(encoding="utf-8")
     drifts: list[SurfaceCellDrift] = []
     for line in module_text.splitlines():
-        if "|" not in line:
+        if not line.strip().startswith("|"):
             continue
-        cells = [c for c in (c.strip() for c in line.split("|")) if c]
+        cells = [c for c in (c.strip() for c in _split_table_row(line)) if c]
         if not cells:
             continue
         first, last = cells[0], cells[-1]
@@ -1328,18 +1398,17 @@ def module_md_surface_cell_drift(
         surface = surface_lookup(module_stem + ".py")
         if surface is None or not surface.subcommands:
             continue
-        present = {
-            sub
-            for sub in surface.subcommands
-            if re.search(rf"(?<![A-Za-z0-9-]){re.escape(sub)}(?![A-Za-z0-9-])", last)
-        }
-        if not present:
+        citations = _cell_citations(last)
+        if not citations:
             continue
-        if present != surface.subcommands:
+        missing = surface.subcommands - citations
+        phantom = citations - surface.subcommands
+        if missing or phantom:
             drifts.append(
                 SurfaceCellDrift(
                     module=module_stem,
-                    missing=frozenset(surface.subcommands - present),
+                    missing=frozenset(missing),
+                    phantom=frozenset(phantom),
                 )
             )
     return drifts
@@ -1520,6 +1589,159 @@ def docs_to_check() -> list[Path]:
     return [d for d in docs if d.is_file()]
 
 
+# --- activation-truth marker/pin parity --------------------------------------
+
+# The marker identity every live claim-carrying surface pins itself with. A lone `:begin` (no
+# `:end`) is deliberate: this is a single-line presence pin, not a managed content block like the
+# AGENTS stanza or the inventory profile block, so there is nothing to delimit.
+_ACTIVATION_TRUTH_MARKER = "flow:activation-truth:begin"
+_ACTIVATION_TRUTH_MD_RE = re.compile(
+    r"(?m)^<!-- " + re.escape(_ACTIVATION_TRUTH_MARKER) + r" -->\s*$"
+)
+_ACTIVATION_TRUTH_PY_RE = re.compile(r"(?m)^# " + re.escape(_ACTIVATION_TRUTH_MARKER) + r"\s*$")
+
+# Repo-relative paths of every surface an author has declared to carry live activation-truth prose
+# (the exact post-plan route catalog, the generic-owner shadow rule, importing/capsule-writer
+# claims). Bidirectional parity with the discovered marker set (`activation_truth_drift`) is the
+# completeness guarantee: a marked file missing from this set, or a pinned file that lost its marker
+# (by edit, deletion, or rename), both fail the gate.
+ACTIVATION_TRUTH_PINS = frozenset(
+    {
+        "CLAUDE.md",
+        "plugins/flow/skills/flow/SKILL.md",
+        "plugins/flow/skills/flow/references/command-target.md",
+        "plugins/flow/skills/flow/references/command-workspace.md",
+        "plugins/flow/skills/flow/references/delivery-loop.md",
+        "plugins/flow/skills/flow/references/delivery-plan.md",
+        "plugins/flow/skills/flow/references/delivery-revision.md",
+        "plugins/flow/skills/flow/references/harness.md",
+        "plugins/flow/skills/flow/references/robustness.md",
+        "plugins/flow/skills/flow/references/stage-code_review.md",
+        "plugins/flow/skills/flow/references/stage-e2e.md",
+        "plugins/flow/skills/flow/references/stage-implement.md",
+        "plugins/flow/skills/flow/references/stage-merge.md",
+        "plugins/flow/skills/flow/references/stage-plan.md",
+        "plugins/flow/skills/flow/references/stage-reflect.md",
+        "plugins/flow/skills/flow/references/stage-review_brief.md",
+        "plugins/flow/skills/flow/references/stage-review_loop.md",
+        "plugins/flow/skills/flow/scripts/MODULE.md",
+        "plugins/flow/skills/flow/scripts/agent_routes.py",
+        "plugins/flow/skills/flow/scripts/cognitive_workers.py",
+        "plugins/flow/skills/flow/scripts/inventory.md",
+    }
+)
+
+
+def activation_truth_candidates(
+    repo_root: Path = REPO_ROOT, skill_root: Path = SKILL_ROOT, scripts_dir: Path = SCRIPTS_DIR
+) -> list[Path]:
+    """The live hand-authored surface universe scanned for activation-truth markers.
+
+    Root CLAUDE.md, SKILL.md, top-level references/*.md, and top-level scripts/*.md and
+    scripts/*.py. Every glob is non-recursive, which keeps scripts/tests/* (fixtures and
+    marker-shaped strings in the test source itself) and any nested doc directory out of the
+    universe with no explicit exclusion list; historical design records under docs/specs are never
+    scanned.
+    """
+    candidates: list[Path] = []
+    claude_md = repo_root / "CLAUDE.md"
+    if claude_md.is_file():
+        candidates.append(claude_md)
+    skill_md = skill_root / "SKILL.md"
+    if skill_md.is_file():
+        candidates.append(skill_md)
+    refs = skill_root / "references"
+    if refs.is_dir():
+        candidates.extend(sorted(refs.glob("*.md")))
+    if scripts_dir.is_dir():
+        candidates.extend(sorted(scripts_dir.glob("*.md")))
+        candidates.extend(sorted(scripts_dir.glob("*.py")))
+    return candidates
+
+
+def discovered_activation_truth_markers(
+    candidates: list[Path] | None = None, repo_root: Path = REPO_ROOT
+) -> frozenset[str]:
+    """Repo-relative paths of every candidate that carries the activation-truth marker."""
+    if candidates is None:
+        candidates = activation_truth_candidates(repo_root=repo_root)
+    found: set[str] = set()
+    for path in candidates:
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        if _ACTIVATION_TRUTH_MD_RE.search(text) or _ACTIVATION_TRUTH_PY_RE.search(text):
+            found.add(path.relative_to(repo_root).as_posix())
+    return frozenset(found)
+
+
+@dataclass(frozen=True)
+class ActivationTruthDrift:
+    marker_without_pin: frozenset[str]
+    pin_without_marker: frozenset[str]
+
+
+def activation_truth_drift(
+    candidates: list[Path] | None = None,
+    pins: frozenset[str] = ACTIVATION_TRUTH_PINS,
+    repo_root: Path = REPO_ROOT,
+) -> ActivationTruthDrift:
+    """Bidirectional parity between discovered markers and the pin registry.
+
+    A marker with no matching pin, and a pin whose file lost its marker (by edit, deletion, or
+    rename), both surface here; membership is the completeness contract, not a derived heuristic.
+    """
+    markers = discovered_activation_truth_markers(candidates, repo_root)
+    return ActivationTruthDrift(
+        marker_without_pin=frozenset(markers - pins),
+        pin_without_marker=frozenset(pins - markers),
+    )
+
+
+# One bounded authoring reminder, not a general claim-completeness scan: these four phrases anchor
+# the live exact post-plan route catalog, the generic-owner shadow rule, the importing-writer claim,
+# and the capsule-writer claim. Proven to have zero hits across every currently-unmarked
+# references/*.md at the base SHA; re-check that invariant before widening this set. The marker/pin
+# parity above is what actually closes the completeness gap; this tripwire is only a nudge toward
+# using it.
+_ACTIVATION_CLAIM_PHRASES = (
+    "exact post-plan",
+    "generic owner",
+    "importing writer",
+    "capsule writer",
+)
+
+
+def _reference_docs(skill_root: Path = SKILL_ROOT) -> list[Path]:
+    refs = skill_root / "references"
+    return sorted(refs.glob("*.md")) if refs.is_dir() else []
+
+
+def activation_truth_tripwire_problems(
+    docs: list[Path] | None = None,
+) -> list[tuple[str, int, str]]:
+    """Flag an unmarked reference doc that uses a live activation-claim phrase.
+
+    Scoped to references/*.md that do not already carry the marker: a marked file's completeness is
+    already covered by `activation_truth_drift`, so re-scanning it here would be redundant. Reports
+    at most one hit per doc.
+    """
+    if docs is None:
+        docs = _reference_docs()
+    problems: list[tuple[str, int, str]] = []
+    for doc in docs:
+        text = doc.read_text(encoding="utf-8")
+        if _ACTIVATION_TRUTH_MD_RE.search(text):
+            continue
+        for lineno, logical in _logical_lines(text):
+            lowered = logical.lower()
+            if any(phrase in lowered for phrase in _ACTIVATION_CLAIM_PHRASES):
+                problems.append((doc.name, lineno, "add the activation-truth marker or reword"))
+                break
+    return problems
+
+
 def _workspace_agents_drift(workspace_toml: str) -> list[str]:
     try:
         data = tomllib.loads(workspace_toml)
@@ -1573,7 +1795,7 @@ def route_contract_drift(
     [agents] configuration. Check-only, never writes.
     """
     if workspace_toml is None:
-        workspace_path = SKILL_ROOT.parents[3] / ".flow" / "workspace.toml"
+        workspace_path = REPO_ROOT / ".flow" / "workspace.toml"
         if workspace_path.is_file():
             workspace_toml = workspace_path.read_text(encoding="utf-8")
     drift = [] if workspace_toml is None else _workspace_agents_drift(workspace_toml)
@@ -1587,10 +1809,7 @@ def route_contract_drift(
 def cognitive_worker_design_drift(path: Path | None = None) -> list[str]:
     """Require the landed capsule design to match its approved source bytes."""
     design = path or (
-        SKILL_ROOT.parents[3]
-        / "docs"
-        / "specs"
-        / "2026-07-14-universal-cognitive-worker-routing-design.md"
+        REPO_ROOT / "docs" / "specs" / "2026-07-14-universal-cognitive-worker-routing-design.md"
     )
     try:
         digest = hashlib.sha256(design.read_bytes()).hexdigest()
@@ -1704,11 +1923,38 @@ def main(argv: list[str]) -> int:
             level="ERROR",
             msg=(
                 f"MODULE.md surface cell for {drift.module}: "
-                f"missing subcommand(s) {sorted(drift.missing)}"
+                f"missing {sorted(drift.missing)}, phantom {sorted(drift.phantom)}"
             ),
             raw="",
         )
         for drift in module_md_surface_cell_drift()
+    )
+
+    activation_drift = activation_truth_drift()
+    problems.extend(
+        Problem(
+            doc="activation-truth pins",
+            line=0,
+            level="ERROR",
+            msg=f"marker without pin: {name}",
+            raw="",
+        )
+        for name in sorted(activation_drift.marker_without_pin)
+    )
+    problems.extend(
+        Problem(
+            doc="activation-truth pins",
+            line=0,
+            level="ERROR",
+            msg=f"pin without marker: {name}",
+            raw="",
+        )
+        for name in sorted(activation_drift.pin_without_marker)
+    )
+
+    problems.extend(
+        Problem(doc=doc_name, line=lineno, level="ERROR", msg=msg, raw="")
+        for doc_name, lineno, msg in activation_truth_tripwire_problems()
     )
 
     for doc_name, count in sorted(docs_over_stage_doc_citation_limit().items()):

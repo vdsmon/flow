@@ -1,3 +1,4 @@
+<!-- flow:activation-truth:begin -->
 # Workspace commands
 
 ## Agent-route workspace contract

@@ -1,3 +1,4 @@
+<!-- flow:activation-truth:begin -->
 # Same-PR revision delivery
 
 A lifecycle `revise` action updates a delivered run's open PR. The terminal base run

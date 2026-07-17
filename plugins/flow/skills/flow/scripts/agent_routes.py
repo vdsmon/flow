@@ -1,3 +1,4 @@
+# flow:activation-truth:begin
 """Resolve, freeze, attest, and migrate Flow agent routes.
 
 The module owns route precedence and provenance. Callers work with complete

@@ -1,3 +1,4 @@
+<!-- flow:activation-truth:begin -->
 # Stage: reflect
 
 ## Routed reflection boundary
