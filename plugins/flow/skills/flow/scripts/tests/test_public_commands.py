@@ -86,14 +86,13 @@ def test_worktree_cleanup_is_documented_as_workspace_local_two_pass() -> None:
     )
 
 
-def test_every_command_declares_effect_workspace_reference_and_both_harnesses() -> None:
+def test_every_command_declares_effect_workspace_and_reference() -> None:
     registry = load_registry(REGISTRY)
 
     for command in registry.commands:
         assert command.effect in {"read", "confirm", "write"}
         assert command.workspace in {"none", "optional", "required"}
         assert command.reference.startswith("references/")
-        assert command.harnesses == frozenset({"claude-code", "codex"})
 
 
 def test_target_options_encode_conflicts_and_cardinality() -> None:
@@ -335,7 +334,6 @@ summary = "one"
 effect = "read"
 workspace = "none"
 reference = "references/help.md"
-harnesses = ["claude-code", "codex"]
 
 [[command]]
 id = "two"
@@ -344,7 +342,6 @@ summary = "two"
 effect = "read"
 workspace = "none"
 reference = "references/help.md"
-harnesses = ["claude-code", "codex"]
 """.strip()
         + "\n",
         encoding="utf-8",
@@ -368,7 +365,6 @@ summary = "help"
 effect = "read"
 workspace = "none"
 reference = "references/help.md"
-harnesses = ["claude-code", "codex"]
 """.strip()
         + "\n",
         encoding="utf-8",

@@ -1,10 +1,9 @@
 """Execute exact routed cognition inside isolated capsules.
 
 The public seam intentionally stays small: callers submit a closed ``WorkOrder``
-and an ``OwnerProof`` to ``CognitiveWorkers.run`` or cancel the logical
-invocation. Route resolution, prompts, provider commands, process lifecycle,
-typed validation, Git guards, journals, and capsule disposal remain private to
-this module.
+and an ``OwnerProof`` to ``CognitiveWorkers.run``. Route resolution, prompts,
+provider commands, process lifecycle, typed validation, Git guards, journals,
+and capsule disposal remain private to this module.
 
 Read-only roles, the disposable E2E writer, and the three importing writers
 (implementer, review_fixer, revision_fixer) are all active. The E2E writer runs
@@ -195,8 +194,6 @@ def _validate_seed(authority: str, seed_patch: str | None, seed_digest: str | No
 class OwnerProof:
     owner_id: str
     harness: str
-    run_id: str | None = None
-    lease_fence: str | None = None
 
     def __post_init__(self) -> None:
         if not self.owner_id.strip() or self.harness not in {"codex", "claude_code"}:
@@ -224,7 +221,6 @@ class WorkOrder:
     stage: str | None = None
     substep: str | None = None
     stage_generation: int = 0
-    expected_state: str | None = None
     lease_fence: str | None = None
     challenge_digest: str | None = None
     result_schema: dict[str, Any] | None = None
@@ -303,7 +299,6 @@ class WorkOrder:
                 "stage",
                 "substep",
                 "stage_generation",
-                "expected_state",
                 "lease_fence",
                 "challenge_digest",
                 "result_schema",
@@ -2141,7 +2136,6 @@ _JOURNAL_ORDER = {
     "prepared": 0,
     "cloning": 1,
     "running": 2,
-    "cancelling": 3,
     "terminal": 4,
     "validated": 5,
     "importing": 6,
@@ -2518,26 +2512,6 @@ def run_provider_with_retry(
             ),
         )
     raise AssertionError("bounded provider retry loop escaped")
-
-
-def supervise_process(
-    command: list[str],
-    *,
-    cwd: Path,
-    environment: Mapping[str, str],
-    soft_timeout: float = SOFT_TIMEOUT_SECONDS,
-    hard_timeout: float = HARD_TIMEOUT_SECONDS,
-    grace: float = TERMINATION_GRACE_SECONDS,
-) -> ProcessEvidence:
-    """Compatibility seam returning only terminal evidence for one provider call."""
-    return run_provider_process(
-        command,
-        cwd=cwd,
-        environment=environment,
-        soft_timeout=soft_timeout,
-        hard_timeout=hard_timeout,
-        grace=grace,
-    ).process
 
 
 def _extract_typed_result(stdout: str) -> tuple[dict[str, Any], str | None]:
@@ -2924,10 +2898,6 @@ class CognitiveWorkers:
         source_head = _git_bytes(source, "rev-parse", "HEAD").strip().decode()
         if source_head != order.source_sha:
             raise WorkerFailure("work-order source SHA is stale", code="stale_order")
-        if order.run_id is not None and owner.run_id != order.run_id:
-            raise WorkerFailure("owner proof does not match the work-order run", code="lost_owner")
-        if order.lease_fence is not None and owner.lease_fence != order.lease_fence:
-            raise WorkerFailure("owner proof does not match the lease fence", code="lost_owner")
 
         invocation = self._invocation_dir(order.logical_invocation_id)
         outcome_path = invocation / "outcome.json"
@@ -2978,7 +2948,7 @@ class CognitiveWorkers:
         existing = journal.read()
         recovery_state = str(existing["state"]) if existing is not None else "prepared"
         if existing is not None:
-            if recovery_state in {"running", "cancelling"}:
+            if recovery_state == "running":
                 raise WorkerFailure(
                     f"invocation recovery requires supervision from state {recovery_state}",
                     code="recovery_required",
@@ -3356,47 +3326,6 @@ class CognitiveWorkers:
         journal.transition("completed", outcome_digest=mapping["digest"])
         return WorkOutcome(**{**asdict(outcome), "digest": mapping["digest"]})
 
-    def cancel(self, logical_invocation_id: str, owner: OwnerProof, reason: str) -> dict[str, Any]:
-        """Idempotently cancel a known invocation or refuse ambiguous recovery.
-
-        Cancellation waits for the invocation lock only within the bounded retry budget: it exists
-        to stop a live run, so blocking for that run's whole duration would be indistinguishable
-        from a hang. A caller that loses the race is told the invocation is busy and can retry.
-        """
-        try:
-            with flock_retry(self._invocation_lock(logical_invocation_id)):
-                return self._cancel_locked(logical_invocation_id, owner, reason)
-        except LockContention as exc:
-            raise WorkerFailure(
-                "invocation is executing under another run; cancellation cannot mutate its journal",
-                code="execution_busy",
-            ) from exc
-
-    def _cancel_locked(
-        self, logical_invocation_id: str, owner: OwnerProof, reason: str
-    ) -> dict[str, Any]:
-        del owner
-        invocation = self._invocation_dir(logical_invocation_id)
-        journal = InvocationJournal(invocation / "journal.json", logical_invocation_id)
-        value = journal.read()
-        if value is None:
-            raise WorkerFailure("cannot cancel an unknown invocation", code="invalid_order")
-        if value["state"] in {"completed", "blocked", "quarantined"}:
-            return {
-                "schema": "flow.cognitive-cancellation/v1",
-                "logical_invocation_id": logical_invocation_id,
-                "state": value["state"],
-                "idempotent": True,
-            }
-        # A recovered PID without live pipe ownership cannot prove output EOF.
-        journal.transition(
-            "quarantined", failure={"code": "termination_unconfirmed", "reason": reason}
-        )
-        raise WorkerFailure(
-            "cannot prove terminal output closure after owner recovery",
-            code="termination_unconfirmed",
-        )
-
 
 def _load_order(path: Path) -> WorkOrder:
     try:
@@ -3498,7 +3427,6 @@ def prepare_work_order(
         stage=str(sealed["stage"]),
         substep=str(sealed["substep"]),
         stage_generation=int(sealed["stage_generation"]),
-        expected_state="in_progress",
         lease_fence=cast(str | None, sealed.get("lease_fence")),
     )
     _atomic_json(order_path, order.to_mapping(), mode=0o400)
@@ -3576,12 +3504,7 @@ def run_stage(
             facts=facts,
             output=root / "orders" / f"{substep}.json",
         )
-        owner = OwnerProof(
-            owner_id=owner_id,
-            harness=owner_harness,
-            run_id=order.run_id,
-            lease_fence=order.lease_fence,
-        )
+        owner = OwnerProof(owner_id=owner_id, harness=owner_harness)
         outcome = executor.run(order, owner).to_mapping()
         outcomes[substep] = outcome
         result_path = root / "results" / f"{substep}.json"
@@ -3666,12 +3589,7 @@ def cli_main(argv: list[str]) -> int:
             sys.stdout.write(json.dumps(body, indent=2, sort_keys=True) + "\n")
             return 0
         order = _load_order(Path(args.work_order).expanduser().resolve())
-        owner = OwnerProof(
-            owner_id=args.owner_id,
-            harness=_owner_harness(),
-            run_id=order.run_id,
-            lease_fence=order.lease_fence,
-        )
+        owner = OwnerProof(owner_id=args.owner_id, harness=_owner_harness())
         workers = CognitiveWorkers(
             artifact_root=Path(args.artifact_root), capsule_root=Path(args.capsule_root)
         )
@@ -3727,7 +3645,6 @@ __all__ = [
     "prepare_work_order",
     "provider_schema",
     "run_stage",
-    "supervise_process",
     "validate_typed_result",
     "worker_environment",
 ]

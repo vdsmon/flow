@@ -31,7 +31,6 @@ summary = "Show active work, decisions, and the most useful next action."
 effect = "read"
 workspace = "optional"
 reference = "references/command-target.md"
-harnesses = ["claude-code", "codex"]
 
 [[command]]
 id = "target"
@@ -41,7 +40,6 @@ summary = "Start, answer, resume, repair, revise, or show work from its current 
 effect = "confirm"
 workspace = "required"
 reference = "references/command-target.md"
-harnesses = ["claude-code", "codex"]
 arguments = [
   { name = "target", value_type = "target", cardinality = "one_or_more" },
 ]
@@ -62,7 +60,6 @@ summary = "Capture a problem, create a tracker ticket, and offer to run it."
 effect = "confirm"
 workspace = "required"
 reference = "references/command-ticket.md"
-harnesses = ["claude-code", "codex"]
 options = [
   { name = "--request", value_type = "text", cardinality = "zero_or_one" },
 ]
@@ -75,7 +72,6 @@ summary = "Propose a coherent ticket group before running or persisting it."
 effect = "confirm"
 workspace = "required"
 reference = "references/command-ticket.md"
-harnesses = ["claude-code", "codex"]
 arguments = [
   { name = "ticket", value_type = "ticket", cardinality = "zero_or_more" },
 ]
@@ -83,7 +79,6 @@ options = [
   { name = "--mine", value_type = "boolean", cardinality = "zero_or_one" },
   { name = "--state", value_type = "choice", cardinality = "zero_or_one", choices = ["open"] },
 ]
-constraints = ["exactly one of explicit tickets or --mine"]
 
 [[command]]
 id = "ticket.split"
@@ -93,7 +88,6 @@ summary = "Plan a parent-ticket decomposition, then create and migrate its child
 effect = "confirm"
 workspace = "required"
 reference = "references/command-ticket.md"
-harnesses = ["claude-code", "codex"]
 arguments = [
   { name = "ticket", value_type = "ticket", cardinality = "one" },
 ]
@@ -106,7 +100,6 @@ summary = "Search durable Flow memory with structured and semantic filters."
 effect = "read"
 workspace = "required"
 reference = "references/command-memory.md"
-harnesses = ["claude-code", "codex"]
 arguments = [
   { name = "query", value_type = "text", cardinality = "zero_or_one" },
 ]
@@ -128,7 +121,6 @@ summary = "Review and confirm removal of superseded memory."
 effect = "confirm"
 workspace = "required"
 reference = "references/command-memory.md"
-harnesses = ["claude-code", "codex"]
 
 [[command]]
 id = "memory.rebuild"
@@ -138,7 +130,6 @@ summary = "Rebuild the derived memory index."
 effect = "write"
 workspace = "required"
 reference = "references/command-memory.md"
-harnesses = ["claude-code", "codex"]
 options = [
   { name = "--full", value_type = "boolean", cardinality = "zero_or_one" },
 ]
@@ -154,7 +145,6 @@ summary = "Measure delivery, quality, experiment, or memory outcomes."
 effect = "read"
 workspace = "required"
 reference = "references/command-measure.md"
-harnesses = ["claude-code", "codex"]
 arguments = [
   { name = "metric", value_type = "choice", cardinality = "one", choices = ["throughput", "lead-time", "friction", "reverts", "experiment", "trend", "memory-health", "recall-quality", "fix-efficacy"] },
 ]
@@ -174,7 +164,6 @@ summary = "Initialize, resume, repair, or validate the current workspace."
 effect = "confirm"
 workspace = "optional"
 reference = "references/command-workspace.md"
-harnesses = ["claude-code", "codex"]
 options = [
   { name = "--guidance", value_type = "boolean", cardinality = "zero_or_one" },
 ]
@@ -187,7 +176,6 @@ summary = "Inspect workspace or target health without mutation."
 effect = "read"
 workspace = "required"
 reference = "references/command-workspace.md"
-harnesses = ["claude-code", "codex"]
 arguments = [
   { name = "target", value_type = "target", cardinality = "zero_or_one" },
 ]
@@ -203,7 +191,6 @@ summary = "Diagnose a workspace or run and confirm an applicable repair."
 effect = "confirm"
 workspace = "required"
 reference = "references/command-workspace.md"
-harnesses = ["claude-code", "codex"]
 arguments = [
   { name = "target", value_type = "target", cardinality = "zero_or_one" },
 ]
@@ -216,7 +203,6 @@ summary = "Drain queued tracker mutations."
 effect = "write"
 workspace = "required"
 reference = "references/command-workspace.md"
-harnesses = ["claude-code", "codex"]
 
 [[command]]
 id = "maintain.backlog.status"
@@ -226,7 +212,6 @@ summary = "Inspect backlog fleet state and the next drain decision."
 effect = "read"
 workspace = "required"
 reference = "references/command-maintain.md"
-harnesses = ["claude-code", "codex"]
 options = [
   { name = "--preview", value_type = "boolean", cardinality = "zero_or_one" },
 ]
@@ -239,7 +224,6 @@ summary = "Run ready backlog work through the bounded worker pool."
 effect = "write"
 workspace = "required"
 reference = "references/command-maintain.md"
-harnesses = ["claude-code", "codex"]
 options = [
   { name = "--dry-run", value_type = "boolean", cardinality = "zero_or_one" },
 ]
@@ -252,7 +236,6 @@ summary = "Audit Flow machinery and produce actionable evolution work."
 effect = "write"
 workspace = "required"
 reference = "references/command-maintain.md"
-harnesses = ["claude-code", "codex"]
 
 [[command]]
 id = "maintain.evolution.propose"
@@ -262,7 +245,6 @@ summary = "Turn observed friction into evolution proposals."
 effect = "write"
 workspace = "required"
 reference = "references/command-maintain.md"
-harnesses = ["claude-code", "codex"]
 
 [[command]]
 id = "maintain.evolution.epic"
@@ -272,7 +254,6 @@ summary = "Produce a weekly evolution epic from accepted proposals."
 effect = "write"
 workspace = "required"
 reference = "references/command-maintain.md"
-harnesses = ["claude-code", "codex"]
 
 [[command]]
 id = "maintain.evolution.expand"
@@ -282,7 +263,6 @@ summary = "Expand an accepted epic into runnable child work."
 effect = "confirm"
 workspace = "required"
 reference = "references/command-maintain.md"
-harnesses = ["claude-code", "codex"]
 arguments = [
   { name = "epic", value_type = "ticket", cardinality = "one" },
 ]
@@ -295,7 +275,6 @@ summary = "Run ready evolution work through the bounded worker pool."
 effect = "write"
 workspace = "required"
 reference = "references/command-maintain.md"
-harnesses = ["claude-code", "codex"]
 options = [
   { name = "--dry-run", value_type = "boolean", cardinality = "zero_or_one" },
   { name = "--include-proposals", value_type = "boolean", cardinality = "zero_or_one" },
@@ -309,7 +288,6 @@ summary = "Remove safe stale Flow worktrees from the invoking workspace."
 effect = "confirm"
 workspace = "required"
 reference = "references/command-maintain.md"
-harnesses = ["claude-code", "codex"]
 options = [
   { name = "--dry-run", value_type = "boolean", cardinality = "zero_or_one" },
 ]
@@ -322,7 +300,6 @@ summary = "Show all commands or help for one namespace."
 effect = "read"
 workspace = "none"
 reference = "references/command-target.md"
-harnesses = ["claude-code", "codex"]
 arguments = [
   { name = "topic", value_type = "choice", cardinality = "zero_or_one", choices = ["ticket", "memory", "measure", "workspace", "maintain"] },
 ]

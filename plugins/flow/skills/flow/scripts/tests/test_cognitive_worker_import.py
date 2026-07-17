@@ -624,7 +624,7 @@ class _WriterAdapter:
 
 
 def _owner() -> cw.OwnerProof:
-    return cw.OwnerProof(owner_id="owner", harness="codex", run_id="run-1", lease_fence="fence-1")
+    return cw.OwnerProof(owner_id="owner", harness="codex")
 
 
 def test_active_writer_captures_and_imports_through_run(tmp_path: Path, monkeypatch) -> None:
@@ -1481,10 +1481,7 @@ def test_real_dispatch_seals_ticket_dir_through_prepare_into_run(tmp_path: Path)
         adapters={"codex": adapter},
         dispatch_observer=_frozen_observer,
     )
-    # The owner proof carries the run's real dispatch-minted run_id and lease fence.
-    owner = cw.OwnerProof(
-        owner_id="owner", harness="codex", run_id=order.run_id, lease_fence=order.lease_fence
-    )
+    owner = cw.OwnerProof(owner_id="owner", harness="codex")
 
     outcome = workers.run(order, owner)
 

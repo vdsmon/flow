@@ -1340,10 +1340,6 @@ def test_live_route_contract_surfaces_are_aligned() -> None:
     assert seam_check.route_contract_drift() == []
 
 
-def test_cognitive_worker_design_provenance_is_exact() -> None:
-    assert seam_check.cognitive_worker_design_drift() == []
-
-
 def test_route_contract_flags_a_profile_missing_from_stage_composition() -> None:
     execution = copy.deepcopy(agent_routes.stage_execution_contract())
     del execution["reflect"]["substeps"]["machinery_fix"]

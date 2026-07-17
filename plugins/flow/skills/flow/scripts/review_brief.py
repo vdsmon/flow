@@ -102,12 +102,11 @@ class FreshnessRequest:
     workspace_root: Path
     ticket_dir: Path
     pr_id: str
-    enabled: bool = True
 
 
 @dataclass(frozen=True)
 class Freshness:
-    status: Literal["current", "stale", "missing", "disabled"]
+    status: Literal["current", "stale", "missing"]
     current_sha: str | None
     pr_head_sha: str | None
     receipt_sha: str | None
@@ -1029,8 +1028,6 @@ def freshness(
     runner: Runner | None = None,
 ) -> Freshness:
     """Return whether a current receipt exists for both local and PR heads."""
-    if not request.enabled:
-        return Freshness("disabled", None, None, None, None, "review brief is disabled")
     workspace_root = request.workspace_root.resolve()
     ticket_dir = request.ticket_dir.resolve()
     run = runner or cwd_default_runner(workspace_root)
@@ -1105,7 +1102,6 @@ def _parser() -> argparse.ArgumentParser:
     fresh_parser.add_argument("--workspace-root", type=Path, required=True)
     fresh_parser.add_argument("--ticket-dir", type=Path, required=True)
     fresh_parser.add_argument("--pr-id", required=True)
-    fresh_parser.add_argument("--disabled", action="store_true")
     return parser
 
 
@@ -1128,7 +1124,6 @@ def cli_main(argv: list[str]) -> int:
                     workspace_root=args.workspace_root,
                     ticket_dir=args.ticket_dir,
                     pr_id=args.pr_id,
-                    enabled=not args.disabled,
                 )
             )
     except ReviewBriefError as exc:

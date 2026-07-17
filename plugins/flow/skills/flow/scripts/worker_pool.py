@@ -21,47 +21,10 @@ import json
 import os
 import subprocess
 import sys
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import Literal, Protocol
-
-HostStatus = Literal["completed", "failed", "cancelled"]
-WorkerStatus = Literal["completed", "failed", "cancelled", "mutated"]
-
-
-@dataclass(frozen=True)
-class WorkerRequest:
-    """One native worker request.
-
-    ``key`` is the durable work identity (normally a ticket key; a discovery
-    label is also valid). ``task`` is opaque host prompt text. A read-only
-    request activates the pre/post git snapshot guard.
-    """
-
-    key: str
-    task: str
-    read_only: bool = False
-
-
-@dataclass(frozen=True)
-class WorkerHandle:
-    """Disposable host handle, scoped to exactly one owner session."""
-
-    owner_id: str
-    key: str
-    native_id: str
-    read_only: bool
-
-
-@dataclass(frozen=True)
-class HostCompletion:
-    """A native completion emitted by a harness adapter."""
-
-    native_id: str
-    status: HostStatus
-    detail: str = ""
 
 
 @dataclass(frozen=True)
@@ -96,28 +59,6 @@ class GitSnapshot:
 _GIT_FIELDS = ("head", "index_tree", "tracked_worktree", "untracked_worktree")
 
 
-@dataclass(frozen=True)
-class WorkerResult:
-    """Owner-visible outcome after native completion or cancellation."""
-
-    key: str
-    status: WorkerStatus
-    detail: str = ""
-    changed_git_fields: tuple[str, ...] = ()
-
-
-class WorkerHost(Protocol):
-    """Native collaboration seam supplied by a harness adapter."""
-
-    capacity: int
-
-    def launch(self, request: WorkerRequest) -> str: ...
-
-    def wait(self, handles: Sequence[str]) -> Sequence[HostCompletion]: ...
-
-    def cancel(self, handle: str) -> None: ...
-
-
 def effective_concurrency(*, configured: int, capacity: int) -> int:
     """Worker slots available while reserving one slot for the owner session."""
 
@@ -132,122 +73,6 @@ def changed_git_fields(before: GitSnapshot, after: GitSnapshot) -> tuple[str, ..
     """Snapshot fields changed by a supposedly read-only worker."""
 
     return tuple(field for field in _GIT_FIELDS if getattr(before, field) != getattr(after, field))
-
-
-class WorkerPool:
-    """Bounded worker handles owned by one live harness session."""
-
-    def __init__(
-        self,
-        *,
-        owner_id: str,
-        configured_concurrency: int,
-        host: WorkerHost,
-        git_snapshot: Callable[[], GitSnapshot] | None = None,
-    ) -> None:
-        if not owner_id:
-            raise ValueError("owner_id must be non-empty")
-        self.owner_id = owner_id
-        self.host = host
-        self.concurrency = effective_concurrency(
-            configured=configured_concurrency, capacity=host.capacity
-        )
-        self._git_snapshot = git_snapshot
-        self._active: dict[str, WorkerHandle] = {}
-        self._before: dict[str, GitSnapshot] = {}
-
-    @property
-    def active_handles(self) -> tuple[WorkerHandle, ...]:
-        """Active handles in native launch order."""
-
-        return tuple(self._active.values())
-
-    def launch(self, requests: Sequence[WorkerRequest]) -> list[WorkerHandle]:
-        """Launch up to the currently available owner-pool slots."""
-
-        available = self.concurrency - len(self._active)
-        if available <= 0:
-            return []
-        selected = list(requests[:available])
-        if any(request.read_only for request in selected) and self._git_snapshot is None:
-            raise ValueError("read-only discovery workers require a git snapshot provider")
-
-        launched: list[WorkerHandle] = []
-        for request in selected:
-            before = self._git_snapshot() if request.read_only and self._git_snapshot else None
-            native_id = self.host.launch(request)
-            if not native_id:
-                raise ValueError("host launch returned an empty worker handle")
-            if native_id in self._active:
-                raise ValueError(f"host launch returned duplicate worker handle {native_id!r}")
-            handle = WorkerHandle(
-                owner_id=self.owner_id,
-                key=request.key,
-                native_id=native_id,
-                read_only=request.read_only,
-            )
-            self._active[native_id] = handle
-            if before is not None:
-                self._before[native_id] = before
-            launched.append(handle)
-        return launched
-
-    def wait(self, handles: Sequence[WorkerHandle] | None = None) -> list[WorkerResult]:
-        """Wait through the host adapter and settle only handles it completes."""
-
-        selected = self._select(handles)
-        if not selected:
-            return []
-        completions = list(self.host.wait([handle.native_id for handle in selected]))
-        allowed = {handle.native_id for handle in selected}
-        seen: set[str] = set()
-        results: list[WorkerResult] = []
-        for completion in completions:
-            if completion.native_id not in allowed:
-                raise ValueError(f"host completed unknown worker handle {completion.native_id!r}")
-            if completion.native_id in seen:
-                raise ValueError(f"host completed worker handle twice: {completion.native_id!r}")
-            seen.add(completion.native_id)
-            handle = self._active[completion.native_id]
-            results.append(self._settle(handle, completion.status, completion.detail))
-        return results
-
-    def cancel(self, handles: Sequence[WorkerHandle] | None = None) -> list[WorkerResult]:
-        """Cancel selected native workers and release their owner-pool slots."""
-
-        selected = self._select(handles)
-        results: list[WorkerResult] = []
-        for handle in selected:
-            self.host.cancel(handle.native_id)
-            results.append(self._settle(handle, "cancelled", ""))
-        return results
-
-    def _select(self, handles: Sequence[WorkerHandle] | None) -> list[WorkerHandle]:
-        selected = list(self._active.values()) if handles is None else list(handles)
-        for handle in selected:
-            if handle.owner_id != self.owner_id:
-                raise ValueError(
-                    f"worker handle belongs to {handle.owner_id!r}, not owner {self.owner_id!r}"
-                )
-            if self._active.get(handle.native_id) != handle:
-                raise ValueError(f"worker handle is not active: {handle.native_id!r}")
-        return selected
-
-    def _settle(self, handle: WorkerHandle, status: HostStatus, detail: str) -> WorkerResult:
-        changed: tuple[str, ...] = ()
-        if handle.read_only:
-            before = self._before.get(handle.native_id)
-            if before is None or self._git_snapshot is None:
-                raise RuntimeError("read-only worker lost its pre-snapshot guard")
-            changed = changed_git_fields(before, self._git_snapshot())
-        self._active.pop(handle.native_id, None)
-        self._before.pop(handle.native_id, None)
-        return WorkerResult(
-            key=handle.key,
-            status="mutated" if changed else status,
-            detail=detail,
-            changed_git_fields=changed,
-        )
 
 
 class DurableRunState(StrEnum):
@@ -500,14 +325,8 @@ __all__ = [
     "DurableRunEvidence",
     "DurableRunState",
     "GitSnapshot",
-    "HostCompletion",
     "OwnerRecoveryOutcome",
     "RecoveryAction",
-    "WorkerHandle",
-    "WorkerHost",
-    "WorkerPool",
-    "WorkerRequest",
-    "WorkerResult",
     "capture_git_snapshot",
     "changed_git_fields",
     "cli_main",

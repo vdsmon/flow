@@ -14,7 +14,6 @@ import json
 import sys
 from collections.abc import Iterable, Mapping
 from pathlib import Path
-from typing import Any
 
 from _atomicio import atomic_write_text
 from planning_attempt import FeedbackEntry, PlanEnvelope
@@ -323,55 +322,6 @@ def write_review(path: Path, content: str) -> None:
     atomic_write_text(path.expanduser().resolve(), content)
 
 
-class ReviewController:
-    """Small in-memory queue that makes freeze/drain ordering explicit."""
-
-    def __init__(self) -> None:
-        self._feedback: dict[str, FeedbackEntry] = {}
-        self.frozen = False
-
-    def queue_feedback(
-        self,
-        feedback_id: str,
-        verbatim: str,
-        anchors: list[str] | tuple[str, ...],
-        owner_synthesis: str,
-    ) -> FeedbackEntry:
-        if self.frozen:
-            raise ReviewError("review surface is frozen")
-        entry = FeedbackEntry.create(
-            feedback_id=feedback_id,
-            verbatim=verbatim,
-            anchors=anchors,
-            owner_synthesis=owner_synthesis,
-        )
-        if entry.id in self._feedback:
-            raise ReviewError(f"duplicate feedback id {entry.id!r}")
-        self._feedback[entry.id] = entry
-        return entry
-
-    def freeze(self, *, final_batch: list[dict[str, Any]]) -> list[FeedbackEntry]:
-        if self.frozen:
-            raise ReviewError("review surface is already frozen")
-        staged = dict(self._feedback)
-        for item in final_batch:
-            anchors = item.get("anchors", [])
-            if not isinstance(anchors, list):
-                raise ReviewError("feedback anchors must be a list")
-            entry = FeedbackEntry.create(
-                feedback_id=str(item.get("id", "")),
-                verbatim=str(item.get("verbatim", "")),
-                anchors=anchors,
-                owner_synthesis=str(item.get("owner_synthesis", "")),
-            )
-            if entry.id in staged:
-                raise ReviewError(f"duplicate feedback id {entry.id!r}")
-            staged[entry.id] = entry
-        self._feedback = staged
-        self.frozen = True
-        return [self._feedback[key] for key in sorted(self._feedback)]
-
-
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Render a canonical planning review artifact.")
     parser.add_argument("--envelope", required=True)
@@ -438,7 +388,6 @@ if __name__ == "__main__":
 
 
 __all__ = [
-    "ReviewController",
     "ReviewError",
     "render_html",
     "render_markdown",

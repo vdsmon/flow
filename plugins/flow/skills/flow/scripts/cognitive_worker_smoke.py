@@ -391,11 +391,8 @@ def verify_manifest(manifest: dict[str, Any]) -> dict[str, Any]:  # noqa: C901
             if outcome.get("digest") != cognitive_workers._digest(body):
                 errors.append("nested outcome digest is invalid")
             else:
-                # Any dispatched (leased) order binds run()'s owner check to its run and lease.
-                # Replaying with the order's own run/lease reaches the idempotent durable-outcome
-                # path (no re-import, no re-invoke) rather than a false owner-mismatch, whether the
-                # leased order is a capsule_writer or a disposable writer.
-                leased = order.run_id is not None
+                # Replaying the order reaches the idempotent durable-outcome path (no re-import, no
+                # re-invoke), whether the order is a capsule_writer or a disposable writer.
                 try:
                     replay = cognitive_workers.CognitiveWorkers(
                         artifact_root=Path(str(manifest["artifact_root"])),
@@ -405,8 +402,6 @@ def verify_manifest(manifest: dict[str, Any]) -> dict[str, Any]:  # noqa: C901
                         cognitive_workers.OwnerProof(
                             owner_id="smoke-verifier",
                             harness=str(manifest["parent_harness"]),
-                            run_id=order.run_id if leased else None,
-                            lease_fence=order.lease_fence if leased else None,
                         ),
                     )
                     if replay.to_mapping().get("digest") != outcome.get("digest"):
