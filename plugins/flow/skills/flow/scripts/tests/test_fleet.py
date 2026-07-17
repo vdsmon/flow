@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import json
+import math
 import subprocess
 import sys
 from datetime import timedelta
 from pathlib import Path
 
+import cognitive_workers
+import dispatch_stage
 import fleet
 import lease
 from _timeutil import utcnow_iso
@@ -21,6 +24,24 @@ def _at(base: str, secs: int) -> str:
 
 def _fleet(tmp_path: Path) -> Path:
     return tmp_path / "fleet"
+
+
+# ─── STALE_AFTER_S: pinned to the worst-case per-role cumulative lease TTL ────
+
+
+def test_stale_after_s_pinned_to_code_review_worst_case():
+    # Derived from the model itself (dispatch_stage._stage_ttl_seconds /
+    # cognitive_workers.cumulative_role_budget), not re-hardcoded, so model drift
+    # propagates here instead of leaving fleet.STALE_AFTER_S silently stale.
+    code_review_worst_case = sum(
+        cognitive_workers.cumulative_role_budget(profile)
+        for profile in ("code_reviewer", "diff_reviewer", "review_fixer")
+    )
+    assert (
+        math.ceil(code_review_worst_case * dispatch_stage._CUMULATIVE_TTL_MARGIN)
+        == fleet.STALE_AFTER_S
+    )
+    assert fleet.STALE_AFTER_S == 22500
 
 
 # ─── register / upsert ────────────────────────────────────────────────────────
@@ -306,8 +327,9 @@ def _pool_lease(main: Path, key: str, *, expired: bool = False, prefix: str = "f
 
 def test_is_live_false_on_fresh_fleet_entry_no_lease(tmp_path):
     # is_live is LEASE-ONLY: a fresh fleet entry with no live lease is NOT live.
-    # This is the dead-orphan-reap case: fleet staleness (1800s) outlives the lease
-    # (~900s), so an OR-with-fleet would skip reaping a reapable dead orphan.
+    # This is the dead-orphan-reap case: fleet's flat staleness window far outlasts
+    # an ordinary dead orphan's much shorter lease, so an OR-with-fleet would skip
+    # reaping a reapable dead orphan.
     main = _marked(tmp_path, "flow")
     fleet.register(fleet.resolve_fleet_dir(main), "flow-x", "rid", now=utcnow_iso())
     assert fleet.is_live(main, "flow-x") is False

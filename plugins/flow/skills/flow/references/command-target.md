@@ -1,3 +1,4 @@
+<!-- flow:activation-truth:begin -->
 # Cockpit and target commands
 
 ## Routed cognitive substeps
@@ -179,8 +180,8 @@ force operation.
   targets use the configured or built-in strict read-only planner route before
   approval. An explicit `planner` override replaces that complete route for this
   attempt. Missing capability, authentication, schema acceptance, or exact receipt
-  evidence stops visibly, with no automatic fallback. Every non-planner route remains
-  desired but shadowed in this increment.
+  evidence stops visibly, with no automatic fallback. Every exact post-plan route is now
+  active; only the generic owner adapter leaves a route shadowed.
 
 For multiple targets without `--together`, attended mode asks whether to deliver
 sequentially or as one coherent group. Unattended mode errors because that choice

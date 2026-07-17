@@ -1,14 +1,19 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
 
+import agent_routes
 import cognitive_workers as cw
 import planner_worker as pw
+import planning_attempt as pa
 
 
 def _route(harness: str = "codex") -> pw.PlannerRoute:
@@ -81,6 +86,131 @@ class _FakeAdapter:
         return [sys.executable, "-c", script]
 
 
+class _FakeCapsuleAdapter:
+    """Stand in for a read-only capsule CLI emitting a typed result plus a session id."""
+
+    harness = "codex"
+
+    def __init__(self, payload: object, *, session_id: str | None = "assessor-thread-1") -> None:
+        self.payload = payload
+        self.session_id = session_id
+        self.prompts: list[str] = []
+
+    def preflight(self, route, authority="read_only"):
+        return {"executable": "/usr/bin/codex", "version": "codex 1", "harness": "codex"}
+
+    def session_command(self, route, prompt, schema_path, *, thread_id, new_thread_id):
+        raise AssertionError("a plan-assessor order must use the plain capsule command")
+
+    def command(self, route, prompt, schema_path, capsule, authority="read_only"):
+        self.prompts.append(prompt)
+        event: dict[str, object] = {"result": self.payload}
+        if self.session_id:
+            event["session_id"] = self.session_id
+        script = f"import json,sys; sys.stdout.write(json.dumps({event!r})); sys.exit(0)"
+        return [sys.executable, "-c", script]
+
+
+def _planner_receipt(snapshot_digest: str) -> dict[str, object]:
+    desired = {"harness": "codex", "model": "gpt-5.6-sol", "effort": "xhigh"}
+    body: dict[str, object] = {
+        "schema": "flow.agent-route-receipt/v1",
+        "snapshot_digest": snapshot_digest,
+        "profile": "planner",
+        "source": "built_in",
+        "desired": desired,
+        "effective": desired,
+        "activation": "active",
+        "reason": "test receipt",
+        "launch_request": desired,
+        "transport": "cli",
+        "adapter_version": "test",
+        "canonical_model": None,
+        "worker_id": None,
+        "prompt_hash": "c" * 64,
+        "schema_hash": "d" * 64,
+        "physical_attempt": {"pid": 17, "terminal_acknowledged": True},
+        "cleanup": {"capsule_absent": True, "quarantined": False},
+    }
+    return {**body, "digest": agent_routes.canonical_digest(body)}
+
+
+def _assessor_bundle(tmp_path: Path) -> tuple[dict[str, object], Path, dict[str, object]]:
+    """Build a saved planning bundle whose route digest is a real snapshot digest."""
+    snapshot = agent_routes.snapshot_config(
+        b"", "codex", overrides=["plan_assessor=codex,gpt-5.6-sol,xhigh"]
+    )
+    digest = str(snapshot["digest"])
+    attempt = pa.PlanningAttempt.create(
+        attempt_id="attempt-1", base_sha="a" * 40, route_digest=digest, owner_identity="owner"
+    )
+    envelope_value = _envelope()
+    envelope_value["route_digest"] = digest
+    envelope = attempt.accept(envelope_value, launch_receipt=_planner_receipt(digest))
+    attempt_dir = tmp_path / "attempt"
+    attempt.save_bundle(attempt_dir)
+    return snapshot, attempt_dir, envelope.to_mapping()
+
+
+def _assessment(plan_digest: str) -> dict[str, object]:
+    return {
+        "verdict": "approve",
+        "confidence": "high",
+        "summary": "The candidate plan is coherent and complete.",
+        "findings": [],
+        "assessed_plan_digest": plan_digest,
+    }
+
+
+def _assessor_argv(
+    tmp_path: Path,
+    source: Path,
+    attempt_dir: Path,
+    route_digest: str,
+    *extra: str,
+    facts_path: Path | None = None,
+) -> list[str]:
+    facts = facts_path or tmp_path / "assessor-facts.json"
+    if not facts.exists():
+        facts.write_text(
+            json.dumps({"ticket": {"key": "t-1"}, "assessment_rubric": "judge the plan"}),
+            encoding="utf-8",
+        )
+    return [
+        "--harness",
+        "codex",
+        "--model",
+        "gpt-5.6-sol",
+        "--effort",
+        "xhigh",
+        "--profile",
+        "plan_assessor",
+        "--attempt-dir",
+        str(attempt_dir),
+        "--facts-from",
+        str(facts),
+        "--route-digest",
+        route_digest,
+        "--source-root",
+        str(source),
+        "--invocation-root",
+        str(tmp_path / "invocation"),
+        *extra,
+    ]
+
+
+def _home(tmp_path: Path, monkeypatch) -> Path:
+    """Point HOME at a controlled directory and return its resolved path."""
+    home_dir = tmp_path / "home"
+    home_dir.mkdir()
+    monkeypatch.setenv("HOME", str(home_dir))
+    return home_dir.resolve()
+
+
+def _planner_worker_cache(home: Path) -> Path:
+    return home / ".cache" / "flow-planner-worker"
+
+
 def _git(root: Path, *args: str) -> str:
     return subprocess.run(
         ["git", *args], cwd=root, check=True, capture_output=True, text=True
@@ -130,34 +260,6 @@ def _argv(tmp_path: Path, source: Path, *extra: str) -> list[str]:
     ]
 
 
-def test_codex_command_is_exact_read_only_and_resumable(tmp_path: Path) -> None:
-    schema = tmp_path / "schema.json"
-    command = pw.build_command(_route(), "prompt", schema_path=schema, thread_id="thread-7")
-    assert command[:3] == ["codex", "exec", "resume"]
-    assert command[3:5] == ["--model", "gpt-5.6-sol"]
-    assert 'sandbox_mode="read-only"' in command
-    assert 'model_reasoning_effort="xhigh"' in command
-    assert "--json" in command
-    assert command[-2:] == ["thread-7", "prompt"]
-
-
-def test_claude_command_is_exact_read_only_and_resumable(tmp_path: Path) -> None:
-    schema = tmp_path / "schema.json"
-    schema.write_text('{"type":"object"}', encoding="utf-8")
-    command = pw.build_command(
-        _route("claude_code"), "prompt", schema_path=schema, thread_id="session-7"
-    )
-    assert command[0] == "claude"
-    assert command[command.index("--model") + 1] == "opus"
-    assert command[command.index("--effort") + 1] == "high"
-    assert command[command.index("--permission-mode") + 1] == "plan"
-    assert command[command.index("--resume") + 1] == "session-7"
-    assert command[command.index("--output-format") + 1] == "stream-json"
-    assert command[command.index("--json-schema") + 1] == '{"type":"object"}'
-    # The real CLI rejects --print with stream-json unless --verbose is present.
-    assert "--verbose" in command
-
-
 def test_planning_owns_no_second_process_lifecycle() -> None:
     source = Path(pw.__file__).read_text(encoding="utf-8")
     assert "Popen" not in source
@@ -167,39 +269,10 @@ def test_planning_owns_no_second_process_lifecycle() -> None:
     assert not hasattr(pw, "run_with_retry")
 
 
-def test_rotation_after_three_revisions_or_context_pressure() -> None:
-    assert not pw.should_rotate(revision_rounds=2, context_pressure=False)
-    assert pw.should_rotate(revision_rounds=3, context_pressure=False)
-    assert pw.should_rotate(revision_rounds=0, context_pressure=True)
-
-
-def test_rehydration_contains_complete_plan_and_verbatim_ledger() -> None:
-    prompt = pw.rehydration_prompt(
-        current_plan={"motivation": "why", "files": ["a.py"]},
-        feedback=[
-            {
-                "id": "F-1",
-                "verbatim": "Do not hide the fallback.",
-                "anchors": ["review:fallback"],
-                "owner_synthesis": "Preserve behavior.",
-            }
-        ],
-    )
-    assert '"motivation":"why"' in prompt
-    assert "Do not hide the fallback." in prompt
-    assert "OWNER SYNTHESIS" in prompt
-
-
-def test_contradictory_relay_fails_closed() -> None:
-    with pytest.raises(pw.WorkerError, match="clarification"):
-        pw.feedback_relay(
-            verbatim="Use Codex.", owner_synthesis="Use Claude.", anchors=[], contradiction=True
-        )
-
-
 def test_typed_worker_result_must_match_the_actual_route_identity() -> None:
-    with pytest.raises(pw.WorkerError, match="author identity"):
+    with pytest.raises(pw.WorkerError, match="author identity") as excinfo:
         pw.validate_envelope(_route(), _envelope(author_id="claude_code:opus"))
+    assert "codex:gpt-5.6-sol" in str(excinfo.value)
     validated = pw.validate_envelope(_route(), _envelope())
     assert validated["author"]["id"] == "codex:gpt-5.6-sol"
 
@@ -231,7 +304,8 @@ def test_initial_launch_reports_capsule_disposal_and_terminal_acceptance(
     result = json.loads(capsys.readouterr().out)
     assert result["envelope"]["author"]["id"] == "codex:gpt-5.6-sol"
     assert result["thread_id"]
-    assert result["command"][-1] == "<prompt>"
+    # The prompt rides stdin, never argv, so the journaled command carries none of its bytes.
+    assert "plan the ticket" not in json.dumps(result["command"])
     assert result["acceptance"]["response"]["accepted"] is True
     assert result["acceptance"]["physical_attempt"]["terminal_acknowledged"] is True
     assert result["acceptance"]["cleanup"] == {
@@ -328,3 +402,359 @@ def test_envelope_author_outside_the_launched_route_is_not_approvable(
 
     assert pw.cli_main(_argv(tmp_path, source)) == 2
     assert "author identity" in capsys.readouterr().err
+
+
+def test_result_output_persists_the_result_before_ephemeral_disposal(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    adapter = _FakeAdapter(_envelope())
+    monkeypatch.setattr(cw, "ADAPTERS", {"codex": adapter})
+    monkeypatch.setenv("FLOW_HARNESS", "codex")
+    home = _home(tmp_path, monkeypatch)
+    tmp_root = tmp_path / "tmproot"
+    tmp_root.mkdir()
+    monkeypatch.setenv("TMPDIR", str(tmp_root))
+    source = _source(tmp_path)
+    result_path = tmp_path / "result.json"
+    argv = _argv(tmp_path, source, "--result-output", str(result_path))
+    root_flag = argv.index("--invocation-root")
+    del argv[root_flag : root_flag + 2]
+
+    assert pw.cli_main(argv) == 0
+
+    emitted = json.loads(capsys.readouterr().out)
+    assert emitted["thread_id"]
+    assert emitted["acceptance"]["cleanup"]["invocation_root_absent"] is True
+    assert not list(tmp_root.glob("flow-planner-worker-*"))
+    assert not list(_planner_worker_cache(home).glob("flow-planner-worker-*"))
+    persisted_text = result_path.read_text(encoding="utf-8")
+    # The live session id doubles as worker_id and rides the command argv, so the
+    # planner-profile file copy must carry it nowhere in the serialized bytes.
+    assert emitted["thread_id"] not in persisted_text
+    persisted = json.loads(persisted_text)
+    expected = {key: value for key, value in emitted.items() if key not in {"thread_id", "command"}}
+    expected["acceptance"]["response"] = {
+        key: value
+        for key, value in expected["acceptance"]["response"].items()
+        if key != "worker_id"
+    }
+    del expected["acceptance"]["cleanup"]["invocation_root_absent"]
+    assert persisted == expected
+
+
+def test_failed_launch_keeps_evidence_and_fabricates_no_result_file(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    adapter = _FakeAdapter(
+        {"type": "error", "message": "You've hit your usage limit."}, returncode=1
+    )
+    monkeypatch.setattr(cw, "ADAPTERS", {"codex": adapter})
+    monkeypatch.setenv("FLOW_HARNESS", "codex")
+    home = _home(tmp_path, monkeypatch)
+    tmp_root = tmp_path / "tmproot"
+    tmp_root.mkdir()
+    monkeypatch.setenv("TMPDIR", str(tmp_root))
+    source = _source(tmp_path)
+    result_path = tmp_path / "result.json"
+    argv = _argv(tmp_path, source, "--result-output", str(result_path))
+    root_flag = argv.index("--invocation-root")
+    del argv[root_flag : root_flag + 2]
+
+    assert pw.cli_main(argv) == 2
+
+    assert "exited 1" in capsys.readouterr().err
+    assert not result_path.exists()
+    assert not list(tmp_root.glob("flow-planner-worker-*"))
+    assert len(list(_planner_worker_cache(home).glob("flow-planner-worker-*"))) == 1
+
+
+def test_ephemeral_invocation_root_is_rooted_under_home_not_tmpdir(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    adapter = _FakeAdapter(_envelope())
+    monkeypatch.setattr(cw, "ADAPTERS", {"codex": adapter})
+    monkeypatch.setenv("FLOW_HARNESS", "codex")
+    home = _home(tmp_path, monkeypatch)
+    tmp_root = tmp_path / "tmproot"
+    tmp_root.mkdir()
+    monkeypatch.setenv("TMPDIR", str(tmp_root))
+    assert not tmp_root.resolve().is_relative_to(home)
+    source = _source(tmp_path)
+    argv = _argv(tmp_path, source)
+    root_flag = argv.index("--invocation-root")
+    del argv[root_flag : root_flag + 2]
+
+    assert pw.cli_main(argv) == 0
+
+    result = json.loads(capsys.readouterr().out)
+    invocation_root = Path(result["acceptance"]["cleanup"]["invocation_root"]).resolve()
+    capsule_root = Path(result["acceptance"]["capsule"]["capsule"]).resolve().parent
+    assert invocation_root.is_relative_to(_planner_worker_cache(home))
+    assert capsule_root == invocation_root / "capsules"
+    assert capsule_root.is_relative_to(_planner_worker_cache(home))
+
+
+def test_explicit_invocation_root_ignores_conflicting_home_and_tmpdir(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    adapter = _FakeAdapter(_envelope())
+    monkeypatch.setattr(cw, "ADAPTERS", {"codex": adapter})
+    monkeypatch.setenv("FLOW_HARNESS", "codex")
+    home = _home(tmp_path, monkeypatch)
+    tmp_root = tmp_path / "tmproot"
+    tmp_root.mkdir()
+    monkeypatch.setenv("TMPDIR", str(tmp_root))
+    source = _source(tmp_path)
+    explicit_root = tmp_path / "invocation"
+
+    assert pw.cli_main(_argv(tmp_path, source)) == 0
+
+    result = json.loads(capsys.readouterr().out)
+    assert result["acceptance"]["cleanup"]["invocation_root"] == str(explicit_root.resolve())
+    assert not _planner_worker_cache(home).exists()
+    assert not list(tmp_root.glob("flow-planner-worker-*"))
+
+
+def test_ephemeral_launch_reaps_stale_siblings_but_keeps_recent_ones(
+    tmp_path: Path, monkeypatch
+) -> None:
+    adapter = _FakeAdapter(_envelope())
+    monkeypatch.setattr(cw, "ADAPTERS", {"codex": adapter})
+    monkeypatch.setenv("FLOW_HARNESS", "codex")
+    home = _home(tmp_path, monkeypatch)
+    monkeypatch.delenv("TMPDIR", raising=False)
+    source = _source(tmp_path)
+    cache_parent = _planner_worker_cache(home)
+    cache_parent.mkdir(parents=True)
+    old_sibling = cache_parent / "flow-planner-worker-old"
+    old_sibling.mkdir()
+    old_mtime = time.time() - pw._EPHEMERAL_REAP_AGE_S - 3600
+    os.utime(old_sibling, (old_mtime, old_mtime))
+    young_sibling = cache_parent / "flow-planner-worker-young"
+    young_sibling.mkdir()
+    argv = _argv(tmp_path, source)
+    root_flag = argv.index("--invocation-root")
+    del argv[root_flag : root_flag + 2]
+
+    assert pw.cli_main(argv) == 0
+
+    assert not old_sibling.exists()
+    assert young_sibling.exists()
+
+
+def test_ephemeral_launch_survives_a_reap_failure(tmp_path: Path, monkeypatch) -> None:
+    adapter = _FakeAdapter(_envelope())
+    monkeypatch.setattr(cw, "ADAPTERS", {"codex": adapter})
+    monkeypatch.setenv("FLOW_HARNESS", "codex")
+    home = _home(tmp_path, monkeypatch)
+    monkeypatch.delenv("TMPDIR", raising=False)
+    source = _source(tmp_path)
+    cache_parent = _planner_worker_cache(home)
+    cache_parent.mkdir(parents=True)
+    old_sibling = cache_parent / "flow-planner-worker-old"
+    old_sibling.mkdir()
+    old_mtime = time.time() - pw._EPHEMERAL_REAP_AGE_S - 3600
+    os.utime(old_sibling, (old_mtime, old_mtime))
+    real_rmtree = shutil.rmtree
+
+    def _rmtree_refusing_the_sibling(path, *args, **kwargs):
+        if Path(path) == old_sibling:
+            raise OSError("locked")
+        return real_rmtree(path, *args, **kwargs)
+
+    monkeypatch.setattr(shutil, "rmtree", _rmtree_refusing_the_sibling)
+    argv = _argv(tmp_path, source)
+    root_flag = argv.index("--invocation-root")
+    del argv[root_flag : root_flag + 2]
+
+    assert pw.cli_main(argv) == 0
+    assert old_sibling.exists()
+
+
+def test_defaulted_source_root_is_refused_for_both_profiles(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    monkeypatch.setattr(cw, "ADAPTERS", {"codex": _FakeAdapter(_envelope())})
+    monkeypatch.setenv("FLOW_HARNESS", "codex")
+    source = _source(tmp_path)
+    argv = _argv(tmp_path, source)
+    flag = argv.index("--source-root")
+    del argv[flag : flag + 2]
+
+    assert pw.cli_main(argv) == 2
+    err = capsys.readouterr().err
+    assert "shared" in err
+    assert "pristine mirror" in err
+
+    snapshot, attempt_dir, _ = _assessor_bundle(tmp_path)
+    assessor_argv = _assessor_argv(tmp_path, source, attempt_dir, str(snapshot["digest"]))
+    flag = assessor_argv.index("--source-root")
+    del assessor_argv[flag : flag + 2]
+
+    assert pw.cli_main(assessor_argv) == 2
+    assert "pristine mirror" in capsys.readouterr().err
+
+
+def test_invocation_root_equal_to_source_root_is_refused(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    monkeypatch.setattr(cw, "ADAPTERS", {"codex": _FakeAdapter(_envelope())})
+    monkeypatch.setenv("FLOW_HARNESS", "codex")
+    source = _source(tmp_path)
+    argv = _argv(tmp_path, source)
+    flag = argv.index("--invocation-root")
+    argv[flag + 1] = str(source)
+
+    assert pw.cli_main(argv) == 2
+    err = capsys.readouterr().err
+    assert str(source.resolve()) in err
+
+
+def test_invocation_root_nested_under_source_root_is_refused(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    monkeypatch.setattr(cw, "ADAPTERS", {"codex": _FakeAdapter(_envelope())})
+    monkeypatch.setenv("FLOW_HARNESS", "codex")
+    source = _source(tmp_path)
+    nested = source / "capsules" / "scratch"
+    argv = _argv(tmp_path, source)
+    flag = argv.index("--invocation-root")
+    argv[flag + 1] = str(nested)
+
+    assert pw.cli_main(argv) == 2
+    err = capsys.readouterr().err
+    assert str(nested.resolve()) in err
+    assert str(source.resolve()) in err
+
+
+def test_invocation_root_help_text_documents_the_containment_requirement() -> None:
+    """Pin the documented behavior, not the exact wording: the two adjacent tests already
+    cover the containment refusal itself, so this only needs the help text to still mention
+    that the flag must be kept outside the repo -- a rewording should not fail this test.
+    """
+    help_text = " ".join(pw._parser().format_help().split())
+    assert "--invocation-root" in help_text
+    assert "outside the repo" in help_text
+
+
+def test_schema_with_draft_marker_is_normalized_by_the_worker(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    adapter = _FakeAdapter(_envelope())
+    monkeypatch.setattr(cw, "ADAPTERS", {"codex": adapter})
+    monkeypatch.setenv("FLOW_HARNESS", "codex")
+    source = _source(tmp_path)
+    argv = _argv(tmp_path, source)
+    (tmp_path / "schema.json").write_text(
+        json.dumps({"$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object"}),
+        encoding="utf-8",
+    )
+
+    assert pw.cli_main(argv) == 0
+
+    capsys.readouterr()
+    emitted = list(
+        (tmp_path / "invocation" / "artifacts" / "invocations").glob("*/provider-schema.json")
+    )
+    assert len(emitted) == 1
+    handed = json.loads(emitted[0].read_text(encoding="utf-8"))
+    assert "$schema" not in handed
+    assert handed["type"] == "object"
+
+
+def test_plan_assessor_launch_satisfies_assess_require_fresh_end_to_end(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    snapshot, attempt_dir, envelope = _assessor_bundle(tmp_path)
+    adapter = _FakeCapsuleAdapter(_assessment(str(envelope["digest"])))
+    monkeypatch.setattr(cw, "ADAPTERS", {"codex": adapter})
+    monkeypatch.setenv("FLOW_HARNESS", "codex")
+    source = _source(tmp_path)
+    result_path = tmp_path / "assessor-result.json"
+    argv = _assessor_argv(
+        tmp_path, source, attempt_dir, str(snapshot["digest"]), "--result-output", str(result_path)
+    )
+
+    assert pw.cli_main(argv) == 0
+
+    result = json.loads(capsys.readouterr().out)
+    assert result["assessment"]["verdict"] == "approve"
+    assert result["thread_id"] == "assessor-thread-1"
+    persisted = json.loads(result_path.read_text(encoding="utf-8"))
+    assert "thread_id" not in persisted
+    # The assessor's worker_id is the durable attested identity and stays in the file copy.
+    assert persisted["acceptance"]["response"]["worker_id"] == "assessor-thread-1"
+    assert "FLOW COGNITIVE ROLE: plan_assessor" in adapter.prompts[-1]
+    assert "judge the plan" in adapter.prompts[-1]
+
+    receipt = agent_routes.attest(snapshot, "plan_assessor", result["acceptance"])
+    assert receipt["activation"] == "active"
+    assert receipt["worker_id"] == "assessor-thread-1"
+    verdict = pa.AssessorVerdict.create(
+        assessor_id=str(receipt["worker_id"]),
+        author_id="codex:gpt-5.6-sol",
+        plan_digest=str(envelope["digest"]),
+        outcome="pass",
+        findings=[],
+        fresh=True,
+        launch_receipt_digest=str(receipt["digest"]),
+    )
+    attempt = pa.PlanningAttempt.load_bundle(attempt_dir)
+    attempt.assess(verdict, require_fresh=True, launch_receipt=receipt)
+    assert attempt.assessment is not None
+    assert attempt.assessment_launch_receipt == receipt
+
+
+def test_plan_assessor_without_worker_session_id_fails_closed(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    snapshot, attempt_dir, envelope = _assessor_bundle(tmp_path)
+    adapter = _FakeCapsuleAdapter(_assessment(str(envelope["digest"])), session_id=None)
+    monkeypatch.setattr(cw, "ADAPTERS", {"codex": adapter})
+    monkeypatch.setenv("FLOW_HARNESS", "codex")
+    source = _source(tmp_path)
+    result_path = tmp_path / "result.json"
+    argv = _assessor_argv(
+        tmp_path,
+        source,
+        attempt_dir,
+        str(snapshot["digest"]),
+        "--result-output",
+        str(result_path),
+    )
+
+    assert pw.cli_main(argv) == 2
+
+    assert "worker session id" in capsys.readouterr().err
+    assert not result_path.exists()
+
+
+def test_plan_assessor_refuses_mismatched_or_incomplete_inputs(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    snapshot, attempt_dir, envelope = _assessor_bundle(tmp_path)
+    adapter = _FakeCapsuleAdapter(_assessment(str(envelope["digest"])))
+    monkeypatch.setattr(cw, "ADAPTERS", {"codex": adapter})
+    monkeypatch.setenv("FLOW_HARNESS", "codex")
+    source = _source(tmp_path)
+
+    assert pw.cli_main(_assessor_argv(tmp_path, source, attempt_dir, "f" * 64)) == 2
+    assert "does not match the planning attempt" in capsys.readouterr().err
+
+    empty_dir = tmp_path / "empty-attempt"
+    pa.PlanningAttempt.create(
+        attempt_id="attempt-2",
+        base_sha="a" * 40,
+        route_digest=str(snapshot["digest"]),
+        owner_identity="owner",
+    ).save_bundle(empty_dir)
+    assert pw.cli_main(_assessor_argv(tmp_path, source, empty_dir, str(snapshot["digest"]))) == 2
+    assert "no current complete plan" in capsys.readouterr().err
+
+    bad_facts = tmp_path / "bad-facts.json"
+    bad_facts.write_text(json.dumps({"ticket": {"key": "t-1"}, "extra": True}), encoding="utf-8")
+    argv = _assessor_argv(
+        tmp_path, source, attempt_dir, str(snapshot["digest"]), facts_path=bad_facts
+    )
+    assert pw.cli_main(argv) == 2
+    assert "exactly ticket and assessment_rubric" in capsys.readouterr().err

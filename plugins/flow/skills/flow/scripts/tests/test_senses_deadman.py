@@ -368,6 +368,21 @@ def test_p0_create_carries_priority_and_description(tmp_path, monkeypatch):
     assert "-d" in argv
 
 
+# The two independently readable dry-run unavailable clauses, pinned as literals rather than
+# imported from senses_deadman, so a production wording drift fails here rather than passing
+# tautologically against the same constant.
+_UNAVAILABLE_READONLY = "read-only dry-run omits quarantine-on-malformed metric readers"
+_UNAVAILABLE_NO_PRODUCER = "the scheduled nightly trend producer is not deployed or has never run"
+
+
+def _write_run_record(root: Path, entries: list[dict]) -> Path:
+    path = root / "run-record.jsonl"
+    with path.open("w", encoding="utf-8") as fh:
+        for entry in entries:
+            fh.write(json.dumps(entry) + "\n")
+    return path
+
+
 def test_dry_run_never_fetches_files_or_quarantines(tmp_path, monkeypatch):
     keys = ("flow-a", "flow-b")
     _seed_workspace(tmp_path)
@@ -380,8 +395,66 @@ def test_dry_run_never_fetches_files_or_quarantines(tmp_path, monkeypatch):
     assert runner.create_calls == []
     assert runner.fetch_calls == []
     assert not (tmp_path / ".flow" / "demo" / "ship-events.quarantine").exists()
-    assert "read-only dry-run" in digest["trend"]["unavailable"]
+    unavailable = digest["trend"]["unavailable"]
+    assert _UNAVAILABLE_READONLY in unavailable
+    assert _UNAVAILABLE_NO_PRODUCER in unavailable  # absent ledger: no nightly evidence
     assert code == 1  # still a detected divergence
+
+
+def test_dry_run_unavailable_omits_producer_clause_when_nightly_ran(tmp_path, monkeypatch):
+    keys = ("flow-a", "flow-b")
+    _seed_workspace(tmp_path)
+    _install_tracker(monkeypatch, _dark_ships(keys))
+    runner = _Runner(closed=_dark_closes(keys), bodies={"shaflow-a": "", "shaflow-b": ""})
+    record_path = _write_run_record(
+        tmp_path,
+        [
+            {"schedule": "nightly", "phase": "start", "ts": "2026-07-09T00:17:00Z", "outcome": ""},
+            {"schedule": "nightly", "phase": "end", "ts": "2026-07-09T00:30:00Z", "outcome": "ok"},
+        ],
+    )
+    digest, _ = _run(tmp_path, runner, dry_run=True, run_record_path=record_path)
+    unavailable = digest["trend"]["unavailable"]
+    assert unavailable == _UNAVAILABLE_READONLY
+    assert _UNAVAILABLE_NO_PRODUCER not in unavailable
+
+
+def test_dry_run_unavailable_ignores_armed_weekly_only_ledger(tmp_path, monkeypatch):
+    keys = ("flow-a", "flow-b")
+    _seed_workspace(tmp_path)
+    _install_tracker(monkeypatch, _dark_ships(keys))
+    runner = _Runner(closed=_dark_closes(keys), bodies={"shaflow-a": "", "shaflow-b": ""})
+    record_path = _write_run_record(
+        tmp_path,
+        [
+            {"schedule": "weekly", "phase": "start", "ts": "2026-07-09T00:17:00Z", "outcome": ""},
+            {"schedule": "weekly", "phase": "end", "ts": "2026-07-09T00:30:00Z", "outcome": "ok"},
+        ],
+    )
+    digest, _ = _run(tmp_path, runner, dry_run=True, run_record_path=record_path)
+    assert digest["liveness"]["armed"] is True  # armed does not imply a nightly producer exists
+    unavailable = digest["trend"]["unavailable"]
+    assert _UNAVAILABLE_READONLY in unavailable
+    assert _UNAVAILABLE_NO_PRODUCER in unavailable
+
+
+def test_dry_run_unavailable_ignores_stale_nightly_completion(tmp_path, monkeypatch):
+    keys = ("flow-a", "flow-b")
+    _seed_workspace(tmp_path)
+    _install_tracker(monkeypatch, _dark_ships(keys))
+    runner = _Runner(closed=_dark_closes(keys), bodies={"shaflow-a": "", "shaflow-b": ""})
+    # 40h before NOW: a maintainer-preflight staleness threshold senses must not duplicate.
+    record_path = _write_run_record(
+        tmp_path,
+        [
+            {"schedule": "nightly", "phase": "start", "ts": "2026-07-08T07:47:00Z", "outcome": ""},
+            {"schedule": "nightly", "phase": "end", "ts": "2026-07-08T08:00:00Z", "outcome": "ok"},
+        ],
+    )
+    digest, _ = _run(tmp_path, runner, dry_run=True, run_record_path=record_path)
+    unavailable = digest["trend"]["unavailable"]
+    assert unavailable == _UNAVAILABLE_READONLY
+    assert _UNAVAILABLE_NO_PRODUCER not in unavailable
 
 
 def test_digest_absent_inputs_and_revert_rate_never_called(tmp_path, monkeypatch):

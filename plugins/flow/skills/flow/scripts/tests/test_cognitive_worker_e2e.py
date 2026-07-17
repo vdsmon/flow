@@ -65,7 +65,7 @@ def _e2e_order(source: Path, sha: str, logical_id: str = "e2e-run-1") -> cw.Work
 
 
 def _owner() -> cw.OwnerProof:
-    return cw.OwnerProof(owner_id="owner", harness="codex", run_id="run-1", lease_fence="fence-1")
+    return cw.OwnerProof(owner_id="owner", harness="codex")
 
 
 class _E2EAdapter:

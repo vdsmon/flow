@@ -291,6 +291,47 @@ def seal_cognitive_substeps(
     return _update(ticket_dir, mutate)
 
 
+def retry_cognitive_substep(ticket_dir: Path, stage: str, substep: str) -> TicketState:
+    """Recovery-only: reseal one failed cognitive substep to a fresh generation in place.
+
+    Unlike force_stage_status("pending"), which discards the whole sealed substeps dict, this
+    rewrites only the selected substep's generation and logical_invocation_id. A completed
+    sibling keeps its sealed generation and outcome, so it still satisfies the completion
+    fence after the stage resumes.
+    """
+
+    def mutate(ticket_state: TicketState) -> TicketState:
+        if stage not in ticket_state.stages:
+            raise ValueError(f"stage {stage!r} not in state.stages")
+        record = ticket_state.stages[stage]
+        if record.status not in ("failed", "in_progress"):
+            raise ValueError(f"cannot retry substep for {stage!r} in status {record.status!r}")
+        substeps = record.cognitive_substeps
+        if not isinstance(substeps, dict) or substep not in substeps:
+            raise ValueError(f"stage {stage!r} has no sealed cognitive substep {substep!r}")
+        sealed = substeps[substep]
+        if not isinstance(sealed, dict):
+            raise ValueError(f"stage {stage!r} substep {substep!r} is not sealed")
+        current_generation = int(sealed.get("generation", sealed.get("stage_generation", 0)))
+        new_generation = current_generation + 1
+        new_sealed = {
+            **sealed,
+            "generation": new_generation,
+            "logical_invocation_id": f"{sealed.get('run_id')}:{stage}:{substep}:{new_generation}",
+        }
+        new_record = replace(
+            record,
+            status="in_progress",
+            finished_at_iso=None,
+            finished_at_sha=None,
+            failure_detail=None,
+            cognitive_substeps={**substeps, substep: new_sealed},
+        )
+        return replace(ticket_state, stages={**ticket_state.stages, stage: new_record})
+
+    return _update(ticket_dir, mutate)
+
+
 def force_stage_status(ticket_dir: Path, stage: str, status: StageStatus) -> TicketState:
     """Recovery-only: force a stage to a given status, outside begin/finish.
 
@@ -306,9 +347,21 @@ def force_stage_status(ticket_dir: Path, stage: str, status: StageStatus) -> Tic
             raise ValueError(f"stage {stage!r} not in state.stages")
         record = state.stages[stage]
         if status == "pending":
+            # A per-substep retry (retry_cognitive_substep) advances a substep's own
+            # generation past the stage record's generation without touching the latter.
+            # Folding the max sealed substep generation in here, before the seal is
+            # discarded below, means the next stage-wide remint (dispatch_stage.cmd_next's
+            # record.generation + 1) can never re-mint a logical id a substep retry already
+            # consumed.
+            substeps = record.cognitive_substeps or {}
+            max_substep_generation = max(
+                (int(v.get("generation", 0)) for v in substeps.values() if isinstance(v, dict)),
+                default=0,
+            )
             new_record = replace(
                 record,
                 status="pending",
+                generation=max(record.generation, max_substep_generation),
                 started_at_iso=None,
                 started_at_sha=None,
                 finished_at_iso=None,

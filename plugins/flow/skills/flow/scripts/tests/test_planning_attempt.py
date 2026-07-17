@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import json
+import re
 import threading
 from pathlib import Path
 
@@ -44,6 +45,11 @@ def _plan(*, version: int = 1, parent: str | None = None) -> dict[str, object]:
         "questions": [],
         "incorporated_feedback_ids": [],
     }
+
+
+def _write_json(path: Path, value: dict[str, object]) -> Path:
+    path.write_text(json.dumps(value), encoding="utf-8")
+    return path
 
 
 def _attempt() -> pa.PlanningAttempt:
@@ -160,6 +166,17 @@ def test_provider_schema_is_closed_without_provider_side_uniqueness() -> None:
         "model",
     }
     assert set(schema["properties"]["plan"]["properties"]) == set(pa._PLAN_REQUIRED)
+
+
+def test_envelope_schema_teaches_the_exact_author_identity() -> None:
+    author = pa.envelope_json_schema()["properties"]["author"]["properties"]
+    pattern = author["id"]["pattern"]
+    assert re.search(pattern, "codex:gpt-5.6-sol")
+    assert re.search(pattern, "claude_code:opus")
+    assert not re.search(pattern, "gpt-5.6-sol")
+    for field in ("id", "harness", "model"):
+        assert author[field]["description"]
+    assert "<harness>:<model>" in author["id"]["description"]
 
 
 @pytest.mark.parametrize(
@@ -498,6 +515,107 @@ def test_native_receipt_binds_exact_tuple_and_plan_bytes(tmp_path: Path) -> None
         attempt.add_feedback(feedback_id="F-late", verbatim="late", anchors=[], owner_synthesis="")
 
 
+def test_freeze_binds_the_approved_plan_lane_into_the_receipt(tmp_path: Path) -> None:
+    attempt = _attempt()
+    payload = _plan()
+    plan = payload["plan"]
+    assert isinstance(plan, dict)
+    payload["plan"] = {**plan, "lane": "light"}
+    attempt.accept(payload, launch_receipt=_launch_receipt(version=1))
+    attempt.assess(_verdict(attempt))
+    attempt.revalidate(
+        pa.RevalidationReceipt.create(
+            approved_base="a" * 40,
+            latest_base="a" * 40,
+            changed_paths=[],
+            planned_paths=["src/planning.py"],
+            context_paths=["src/routing.py", ".flow/workspace.toml"],
+        )
+    )
+    current = attempt.current
+    assert current is not None
+    plan_bytes = pa.approval_plan_bytes(current)
+    gate = attempt.gate_tuple()
+    receipt = attempt.freeze(
+        native_gate_id="gate-lane",
+        expected_gate_digest=gate.digest,
+        plan_bytes=plan_bytes,
+    )
+    assert receipt.plan_lane == "light"
+    path = tmp_path / "approval.json"
+    pa.write_approval_receipt(path, receipt)
+    loaded = pa.load_approval_receipt(path)
+    assert loaded.plan_lane == "light"
+
+    raw = json.loads(path.read_text())
+    raw["plan_lane"] = "full"
+    with pytest.raises(pa.AttemptError, match="canonical content"):
+        pa.load_approval_receipt(_write_json(tmp_path / "tampered.json", raw))
+
+
+def test_legacy_receipt_without_plan_lane_round_trips_its_digest(tmp_path: Path) -> None:
+    attempt = _attempt()
+    _ready_for_gate(attempt)
+    current = attempt.current
+    assert current is not None
+    plan_bytes = pa.approval_plan_bytes(current)
+    gate = attempt.gate_tuple()
+    receipt = attempt.freeze(
+        native_gate_id="gate-legacy",
+        expected_gate_digest=gate.digest,
+        plan_bytes=plan_bytes,
+    )
+    legacy_body = {
+        key: value
+        for key, value in receipt.to_mapping().items()
+        if key not in {"digest", "plan_lane"}
+    }
+    legacy_digest = pa.canonical_digest(legacy_body)
+    legacy = {**legacy_body, "digest": legacy_digest}
+    path = _write_json(tmp_path / "legacy.json", legacy)
+
+    loaded = pa.load_approval_receipt(path)
+    assert loaded.plan_lane is None
+
+    reserialized = {key: value for key, value in loaded.to_mapping().items() if key != "digest"}
+    assert "plan_lane" not in reserialized
+    assert pa.canonical_digest(reserialized) == legacy_digest
+
+
+def test_approval_receipt_rejects_explicit_null_and_invalid_plan_lane(tmp_path: Path) -> None:
+    attempt = _attempt()
+    _ready_for_gate(attempt)
+    current = attempt.current
+    assert current is not None
+    plan_bytes = pa.approval_plan_bytes(current)
+    gate = attempt.gate_tuple()
+    receipt = attempt.freeze(
+        native_gate_id="gate-invalid",
+        expected_gate_digest=gate.digest,
+        plan_bytes=plan_bytes,
+    )
+    legacy_body = {
+        key: value
+        for key, value in receipt.to_mapping().items()
+        if key not in {"digest", "plan_lane"}
+    }
+
+    null_body = {**legacy_body, "plan_lane": None}
+    null_receipt = {**null_body, "digest": pa.canonical_digest(null_body)}
+    with pytest.raises(pa.AttemptError, match="plan_lane must not be null"):
+        pa.load_approval_receipt(_write_json(tmp_path / "null.json", null_receipt))
+
+    invalid_body = {**legacy_body, "plan_lane": "sideways"}
+    invalid_receipt = {**invalid_body, "digest": pa.canonical_digest(invalid_body)}
+    with pytest.raises(pa.AttemptError, match="plan_lane must be one of"):
+        pa.load_approval_receipt(_write_json(tmp_path / "invalid.json", invalid_receipt))
+
+    unhashable_body = {**legacy_body, "plan_lane": []}
+    unhashable_receipt = {**unhashable_body, "digest": pa.canonical_digest(unhashable_body)}
+    with pytest.raises(pa.AttemptError, match="plan_lane must be one of"):
+        pa.load_approval_receipt(_write_json(tmp_path / "unhashable.json", unhashable_receipt))
+
+
 def test_native_approval_requires_the_exact_pre_gate_digest() -> None:
     attempt = _attempt()
     current = _ready_for_gate(attempt)
@@ -805,3 +923,110 @@ def test_cli_round_trip_reaches_exact_approval_receipt(tmp_path: Path, capsys) -
         == 0
     )
     assert json.loads(capsys.readouterr().out)["native_gate_id"] == "gate-1"
+
+
+def _cli_create_attempt(tmp_path: Path, capsys) -> Path:
+    attempt_dir = tmp_path / "attempt"
+    assert (
+        pa.cli_main(
+            [
+                "create",
+                "--attempt-dir",
+                str(attempt_dir),
+                "--attempt-id",
+                "attempt-1",
+                "--base-sha",
+                "a" * 40,
+                "--route-digest",
+                "b" * 64,
+                "--owner-identity",
+                "owner",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    return attempt_dir
+
+
+def _feedback_cli(attempt_dir: Path, payload: object, path: Path) -> int:
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return pa.cli_main(
+        [
+            "feedback",
+            "--attempt-dir",
+            str(attempt_dir),
+            "--feedback-from",
+            str(path),
+        ]
+    )
+
+
+def test_cli_feedback_array_records_all_entries(tmp_path: Path, capsys) -> None:
+    attempt_dir = _cli_create_attempt(tmp_path, capsys)
+    payload = [
+        {"id": "F-1", "verbatim": "First finding.", "anchors": [], "owner_synthesis": ""},
+        {"id": "F-2", "verbatim": "Second finding.", "anchors": ["src/planning.py"]},
+    ]
+    assert _feedback_cli(attempt_dir, payload, tmp_path / "feedback.json") == 0
+    output = json.loads(capsys.readouterr().out)
+    assert isinstance(output, list)
+    assert [entry["id"] for entry in output] == ["F-1", "F-2"]
+    loaded = pa.PlanningAttempt.load_bundle(attempt_dir)
+    assert set(loaded.feedback) == {"F-1", "F-2"}
+
+
+def test_cli_feedback_array_malformed_entry_records_nothing(tmp_path: Path, capsys) -> None:
+    attempt_dir = _cli_create_attempt(tmp_path, capsys)
+    payload = [
+        {"id": "F-1", "verbatim": "First finding.", "anchors": [], "owner_synthesis": ""},
+        {"id": "F-2", "verbatim": "", "anchors": [], "owner_synthesis": ""},
+    ]
+    assert _feedback_cli(attempt_dir, payload, tmp_path / "feedback.json") == 2
+    assert pa.PlanningAttempt.load_bundle(attempt_dir).feedback == {}
+
+
+def test_cli_feedback_array_duplicate_id_records_nothing(tmp_path: Path, capsys) -> None:
+    attempt_dir = _cli_create_attempt(tmp_path, capsys)
+    payload = [
+        {"id": "F-1", "verbatim": "First finding.", "anchors": [], "owner_synthesis": ""},
+        {"id": "F-1", "verbatim": "Same id again.", "anchors": [], "owner_synthesis": ""},
+    ]
+    assert _feedback_cli(attempt_dir, payload, tmp_path / "feedback.json") == 2
+    assert pa.PlanningAttempt.load_bundle(attempt_dir).feedback == {}
+
+
+def test_cli_feedback_array_rejects_non_object_element(tmp_path: Path, capsys) -> None:
+    attempt_dir = _cli_create_attempt(tmp_path, capsys)
+    payload = [
+        {"id": "F-1", "verbatim": "First finding.", "anchors": [], "owner_synthesis": ""},
+        "not an object",
+    ]
+    assert _feedback_cli(attempt_dir, payload, tmp_path / "feedback.json") == 2
+    assert pa.PlanningAttempt.load_bundle(attempt_dir).feedback == {}
+
+
+def test_cli_feedback_empty_array_records_nothing_and_emits_empty_list(
+    tmp_path: Path, capsys
+) -> None:
+    attempt_dir = _cli_create_attempt(tmp_path, capsys)
+    assert _feedback_cli(attempt_dir, [], tmp_path / "feedback.json") == 0
+    assert json.loads(capsys.readouterr().out) == []
+    assert pa.PlanningAttempt.load_bundle(attempt_dir).feedback == {}
+
+
+def test_cli_feedback_single_object_shape_unchanged(tmp_path: Path, capsys) -> None:
+    attempt_dir = _cli_create_attempt(tmp_path, capsys)
+    payload = {"id": "F-1", "verbatim": "Only finding.", "anchors": [], "owner_synthesis": ""}
+    assert _feedback_cli(attempt_dir, payload, tmp_path / "feedback.json") == 0
+    output = json.loads(capsys.readouterr().out)
+    assert isinstance(output, dict)
+    assert output["id"] == "F-1"
+    loaded = pa.PlanningAttempt.load_bundle(attempt_dir)
+    assert set(loaded.feedback) == {"F-1"}
+
+
+def test_cli_feedback_rejects_non_object_non_array_input(tmp_path: Path, capsys) -> None:
+    attempt_dir = _cli_create_attempt(tmp_path, capsys)
+    assert _feedback_cli(attempt_dir, "a bare string", tmp_path / "feedback.json") == 2
+    assert pa.PlanningAttempt.load_bundle(attempt_dir).feedback == {}

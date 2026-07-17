@@ -482,18 +482,16 @@ def _render_workspace_toml(
     )
     lines.append("")
     if routing_toml is None:
+        # Native setup embeds the canonical defaults, while generic setup intentionally omits them.
         routing_toml = (
-            _default_agent_routes_toml() if flow_harness() in {"claude-code", "codex"} else ""
+            agent_routes.render_default_routes_toml()
+            if flow_harness() in {"claude-code", "codex"}
+            else ""
         )
     if routing_toml:
         lines.extend(routing_toml.rstrip().splitlines())
         lines.append("")
     return "\n".join(lines)
-
-
-def _default_agent_routes_toml() -> str:
-    """Return the native setup defaults; generic setup intentionally omits them."""
-    return agent_routes.render_default_routes_toml()
 
 
 def _preserved_routing_toml(workspace_toml_text: str | None) -> str:
@@ -1042,7 +1040,11 @@ def run_init(
             routing_toml=(
                 existing_routing
                 if reconfigure
-                else (_default_agent_routes_toml() if selected_harness != "generic" else "")
+                else (
+                    agent_routes.render_default_routes_toml()
+                    if selected_harness != "generic"
+                    else ""
+                )
             )
             or "",
             init_run_id=init_run_id,

@@ -1,16 +1,18 @@
-"""Execute exact routed cognition inside isolated read-only capsules.
+# flow:activation-truth:begin
+"""Execute exact routed cognition inside isolated capsules.
 
 The public seam intentionally stays small: callers submit a closed ``WorkOrder``
-and an ``OwnerProof`` to ``CognitiveWorkers.run`` or cancel the logical
-invocation. Route resolution, prompts, provider commands, process lifecycle,
-typed validation, Git guards, journals, and capsule disposal remain private to
-this module.
+and an ``OwnerProof`` to ``CognitiveWorkers.run``. Route resolution, prompts,
+provider commands, process lifecycle, typed validation, Git guards, journals,
+and capsule disposal remain private to this module.
 
-Read-only roles and the disposable E2E writer are active. The E2E writer runs in a
-write-capable capsule seeded with the ticket's uncommitted working state, captures the
-recipe's own mutations as report evidence, imports nothing, and discards the capsule. The
-four importing writer policies are present so route snapshots stay complete, but requests
-for them fail before a capsule directory is allocated.
+Read-only roles, the disposable E2E writer, and the three importing writers
+(implementer, review_fixer, revision_fixer) are all active. The E2E writer runs
+in a write-capable capsule seeded with the ticket's uncommitted working state,
+captures the recipe's own mutations as report evidence, imports nothing, and
+discards the capsule. Each importing writer runs in a write-capable capsule
+whose validated binary-aware patch is compare-and-swap imported into the
+authoritative worktree under a sole-writer claim, then disposed.
 """
 
 from __future__ import annotations
@@ -35,6 +37,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Literal, Protocol, cast
 
+import lease
 from _atomicio import atomic_write_bytes, atomic_write_text
 from _locking import LockContention, flock_blocking, flock_retry
 
@@ -77,7 +80,17 @@ class RolePolicy:
     prompt_builder: str
     result_schema: str
     retry_limit: int
+    soft_budget_seconds: int
+    hard_budget_seconds: int
 
+
+# Writers run a TDD implementation loop or a wide fix sweep over an unknown-size diff; a
+# reader's fixed budget can hard-kill that mid-sweep before it ever reaches a stopping point
+# (flow-euzu forensics). e2e runs one bounded recipe, wider than a reader but short of a writer.
+_WRITER_SOFT_BUDGET_SECONDS = 20 * 60
+_WRITER_HARD_BUDGET_SECONDS = 90 * 60
+_E2E_SOFT_BUDGET_SECONDS = 15 * 60
+_E2E_HARD_BUDGET_SECONDS = 60 * 60
 
 _READERS = {
     "planner": ("planner", "plan-envelope/v1"),
@@ -99,27 +112,68 @@ _WRITERS = {
 }
 
 ROLE_CATALOG: dict[str, RolePolicy] = {
-    name: RolePolicy(name, "read_only", True, builder, schema, 1)
+    name: RolePolicy(
+        name, "read_only", True, builder, schema, 1, SOFT_TIMEOUT_SECONDS, HARD_TIMEOUT_SECONDS
+    )
     for name, (builder, schema) in _READERS.items()
 }
 ROLE_CATALOG.update(
     {
-        name: RolePolicy(name, "capsule_writer", False, name, schema, 0)
+        name: RolePolicy(
+            name,
+            "capsule_writer",
+            False,
+            name,
+            schema,
+            0,
+            _WRITER_SOFT_BUDGET_SECONDS,
+            _WRITER_HARD_BUDGET_SECONDS,
+        )
         for name, schema in _WRITERS.items()
     }
 )
-ROLE_CATALOG["e2e"] = RolePolicy("e2e", "disposable_writer", True, "e2e", "e2e-report/v1", 0)
+ROLE_CATALOG["e2e"] = RolePolicy(
+    "e2e",
+    "disposable_writer",
+    True,
+    "e2e",
+    "e2e-report/v1",
+    0,
+    _E2E_SOFT_BUDGET_SECONDS,
+    _E2E_HARD_BUDGET_SECONDS,
+)
 # The implementer, review_fixer, and revision_fixer are activated importing writers: each
 # validated capsule patch is imported into the authoritative worktree under the sole-writer
 # claim. machinery_fixer is not here: it is an active read_only role (see _READERS).
 ROLE_CATALOG["implementer"] = RolePolicy(
-    "implementer", "capsule_writer", True, "implementer", "implementation-report/v1", 0
+    "implementer",
+    "capsule_writer",
+    True,
+    "implementer",
+    "implementation-report/v1",
+    0,
+    _WRITER_SOFT_BUDGET_SECONDS,
+    _WRITER_HARD_BUDGET_SECONDS,
 )
 ROLE_CATALOG["review_fixer"] = RolePolicy(
-    "review_fixer", "capsule_writer", True, "review_fixer", "fix-report/v1", 0
+    "review_fixer",
+    "capsule_writer",
+    True,
+    "review_fixer",
+    "fix-report/v1",
+    0,
+    _WRITER_SOFT_BUDGET_SECONDS,
+    _WRITER_HARD_BUDGET_SECONDS,
 )
 ROLE_CATALOG["revision_fixer"] = RolePolicy(
-    "revision_fixer", "capsule_writer", True, "revision_fixer", "revision-report/v1", 0
+    "revision_fixer",
+    "capsule_writer",
+    True,
+    "revision_fixer",
+    "revision-report/v1",
+    0,
+    _WRITER_SOFT_BUDGET_SECONDS,
+    _WRITER_HARD_BUDGET_SECONDS,
 )
 
 # Preserve the public profile order used by agent_routes.py.
@@ -141,6 +195,17 @@ ROLE_CATALOG = {
     )
 }
 ACTIVE_READ_ONLY_PROFILES = tuple(name for name, policy in ROLE_CATALOG.items() if policy.active)
+
+
+def cumulative_role_budget(profile: str) -> int:
+    """One role's maximum cumulative provider hard-timeout allowance in seconds.
+
+    Covers every permitted attempt (the launch plus each fresh retry) at that role's
+    hard budget. dispatch_stage sums this once per launchable sealed substep to size a
+    stage's lease; the retry policy itself stays owned here, not duplicated there.
+    """
+    policy = ROLE_CATALOG[profile]
+    return (1 + policy.retry_limit) * policy.hard_budget_seconds
 
 
 def _resolve_authority(
@@ -193,8 +258,6 @@ def _validate_seed(authority: str, seed_patch: str | None, seed_digest: str | No
 class OwnerProof:
     owner_id: str
     harness: str
-    run_id: str | None = None
-    lease_fence: str | None = None
 
     def __post_init__(self) -> None:
         if not self.owner_id.strip() or self.harness not in {"codex", "claude_code"}:
@@ -222,7 +285,6 @@ class WorkOrder:
     stage: str | None = None
     substep: str | None = None
     stage_generation: int = 0
-    expected_state: str | None = None
     lease_fence: str | None = None
     challenge_digest: str | None = None
     result_schema: dict[str, Any] | None = None
@@ -301,7 +363,6 @@ class WorkOrder:
                 "stage",
                 "substep",
                 "stage_generation",
-                "expected_state",
                 "lease_fence",
                 "challenge_digest",
                 "result_schema",
@@ -1099,7 +1160,9 @@ class CodexCliAdapter:
             str(schema_path.resolve()),
             "-C",
             str(capsule.resolve()),
-            prompt,
+            # "-" is codex exec's documented stdin marker; supplying a real prompt token here
+            # too would make codex append the piped stdin after it instead of reading from it.
+            "-",
         ]
 
     def session_command(
@@ -1162,7 +1225,7 @@ class ClaudeCodeCliAdapter:
             "--json-schema",
             schema_path.read_text(encoding="utf-8"),
             "--no-session-persistence",
-            prompt,
+            # No positional prompt: --print reads it from stdin when none is given.
         ]
 
     def session_command(
@@ -1232,7 +1295,9 @@ def build_planner_command(
         command.extend(["--json", "--output-schema", schema])
         if thread_id:
             command.append(thread_id)
-        command.append(prompt)
+        # "-" is codex exec's documented stdin marker; supplying a real prompt token here
+        # too would make codex append the piped stdin after it instead of reading from it.
+        command.append("-")
         return command
     if route["harness"] != "claude_code":
         raise WorkerFailure("planner route names an unsupported harness")
@@ -1256,7 +1321,7 @@ def build_planner_command(
         command.extend(["--resume", thread_id])
     else:
         command.extend(["--session-id", new_thread_id or str(uuid.uuid4())])
-    command.append(prompt)
+    # No positional prompt: --print reads it from stdin when none is given.
     return command
 
 
@@ -2139,7 +2204,6 @@ _JOURNAL_ORDER = {
     "prepared": 0,
     "cloning": 1,
     "running": 2,
-    "cancelling": 3,
     "terminal": 4,
     "validated": 5,
     "importing": 6,
@@ -2288,11 +2352,79 @@ def _default_popen(command: list[str], **kwargs: Any) -> subprocess.Popen[str]:
     return subprocess.Popen(command, **kwargs)
 
 
-def run_provider_process(
+FailureTailCallback = Callable[[int, bytes, bytes], None]
+
+_FAILURE_TAIL_MAX_BYTES = 50 * 1024
+
+
+def _normalize_stream(value: str | bytes | None) -> bytes:
+    """Coerce one captured subprocess stream to bytes, decoding only str values.
+
+    A byte-valued ``TimeoutExpired.output``/``.stderr`` (the fallback used when the final
+    ``communicate()`` after a kill returns nothing) passes through unchanged: re-encoding an
+    already-decoded str is the only lossy step, so it happens at most once per stream.
+    """
+    if isinstance(value, bytes):
+        return value
+    if value is None:
+        return b""
+    return value.encode("utf-8", errors="replace")
+
+
+def _retain_failure_tail(
+    callback: FailureTailCallback | None,
+    attempt_number: int,
+    stdout: str | bytes | None,
+    stderr: str | bytes | None,
+) -> None:
+    """Best-effort failure-evidence retention: never lets a callback fault reach the caller.
+
+    Runs only on a controlled post-launch failure path (hard_timeout, termination_unconfirmed,
+    worker_exited, or an invalid provider result). Normalization and the callback itself are
+    swallowed under a broad exception boundary so a retention fault can never replace the
+    lifecycle error, suppress a fresh retry, or block terminal acknowledgement.
+    """
+    if callback is None:
+        return
+    with contextlib.suppress(Exception):
+        callback(attempt_number, _normalize_stream(stdout), _normalize_stream(stderr))
+
+
+def _provider_popen_kwargs(
+    cwd: Path, environment: Mapping[str, str], stdin_payload: str | None
+) -> dict[str, Any]:
+    kwargs: dict[str, Any] = {
+        "cwd": cwd,
+        "env": dict(environment),
+        "stdout": subprocess.PIPE,
+        "stderr": subprocess.PIPE,
+        "text": True,
+        "start_new_session": True,
+    }
+    if stdin_payload is not None:
+        kwargs["stdin"] = subprocess.PIPE
+    return kwargs
+
+
+def _initial_communicate(
+    process: Any, stdin_payload: str | None, soft_timeout: float
+) -> tuple[str, str]:
+    """Feed the prompt on the one communicate() call that can still deliver it.
+
+    Every continuation after this (soft-to-hard, post-SIGTERM, post-SIGKILL) omits
+    input, so the prompt is never resent once the process has already read it.
+    """
+    if stdin_payload is not None:
+        return process.communicate(input=stdin_payload, timeout=soft_timeout)
+    return process.communicate(timeout=soft_timeout)
+
+
+def run_provider_process(  # noqa: C901
     command: list[str],
     *,
     cwd: Path,
     environment: Mapping[str, str],
+    stdin_payload: str | None = None,
     popen: Callable[..., Any] = _default_popen,
     killpg: Callable[[int, int], None] = os.killpg,
     group_absent: Callable[[int], bool] = _process_group_absent,
@@ -2301,24 +2433,68 @@ def run_provider_process(
     grace: float = TERMINATION_GRACE_SECONDS,
     on_event: Callable[[dict[str, Any]], None] | None = None,
     attempt_number: int = 1,
+    retain_failure: FailureTailCallback | None = None,
 ) -> ProviderExecution:
     """Run one provider process group and retain typed output plus terminal proof."""
     if soft_timeout <= 0 or hard_timeout <= soft_timeout:
         raise WorkerFailure("worker deadlines require 0 < soft < hard")
-    process = popen(
-        command,
-        cwd=cwd,
-        env=dict(environment),
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        start_new_session=True,
-    )
+    process = popen(command, **_provider_popen_kwargs(cwd, environment, stdin_payload))
     started = time.monotonic()
+    if on_event is not None:
+        # The launch event is the durable proof a caller needs to recover a wedged
+        # invocation (pid/pgid/started_at), so it fires synchronously, before any
+        # output is read. A callback failure here cannot leave an unjournaled orphan:
+        # the group is torn down and drained with the same bounded TERM/KILL protocol
+        # the hard-timeout path uses, before the original failure propagates.
+        try:
+            on_event(
+                {
+                    "type": "launch",
+                    "attempt": attempt_number,
+                    # start_new_session=True makes this process its own session/group leader.
+                    "pid": process.pid,
+                    "pgid": process.pid,
+                    "started_at": time.time(),
+                }
+            )
+        except Exception as callback_exc:
+            with contextlib.suppress(OSError, ProcessLookupError):
+                killpg(process.pid, signal.SIGTERM)
+            drained_stdout, drained_stderr, streams_closed = "", "", False
+            try:
+                drained_stdout, drained_stderr = process.communicate(timeout=grace)
+                streams_closed = True
+            except subprocess.TimeoutExpired:
+                with contextlib.suppress(OSError, ProcessLookupError):
+                    killpg(process.pid, signal.SIGKILL)
+                try:
+                    drained_stdout, drained_stderr = process.communicate(timeout=grace)
+                    streams_closed = True
+                except subprocess.TimeoutExpired:
+                    pass
+            child_reaped = process.poll() is not None
+            absent = group_absent(process.pid)
+            _retain_failure_tail(retain_failure, attempt_number, drained_stdout, drained_stderr)
+            if child_reaped and absent and streams_closed:
+                # The group is provably dead, so this is a normal launch failure, not an
+                # unconfirmed termination. It still must surface as a WorkerFailure -- a bare
+                # exception here (e.g. OSError from a journal write) would escape every
+                # WorkerFailure handler upstream and leave the invocation unjournaled and
+                # its capsule undisposed.
+                if isinstance(callback_exc, WorkerFailure):
+                    raise callback_exc
+                raise WorkerFailure(
+                    f"launch callback failed: {callback_exc}", code="launch_callback_failed"
+                ) from callback_exc
+            raise WorkerFailure(
+                "worker termination lacks child or process-group acknowledgement after a "
+                "launch-journaling failure",
+                code="termination_unconfirmed",
+            ) from callback_exc
     soft = False
     deadline_events: list[str] = []
     try:
-        stdout, stderr = process.communicate(timeout=soft_timeout)
+        stdout, stderr = _initial_communicate(process, stdin_payload, soft_timeout)
     except subprocess.TimeoutExpired:
         soft = True
         deadline_events.append("soft_deadline")
@@ -2332,7 +2508,7 @@ def run_provider_process(
             )
         try:
             stdout, stderr = process.communicate(timeout=hard_timeout - soft_timeout)
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired as hard_exc:
             deadline_events.append("hard_deadline")
             with contextlib.suppress(OSError, ProcessLookupError):
                 killpg(process.pid, signal.SIGTERM)
@@ -2372,6 +2548,12 @@ def run_provider_process(
                         "terminal_acknowledged": acknowledged,
                     }
                 )
+            # The final communicate() after a kill can return nothing even though the process
+            # buffered output before it died; fall back to the hard-deadline TimeoutExpired's own
+            # captured streams, which may carry it as bytes straight from the pipe.
+            tail_stdout = stdout if streams_closed else (stdout or hard_exc.output)
+            tail_stderr = stderr if streams_closed else (stderr or hard_exc.stderr)
+            _retain_failure_tail(retain_failure, attempt_number, tail_stdout, tail_stderr)
             raise _ProviderHardTimeout(acknowledged, metric) from None
     elapsed = max(0.0, time.monotonic() - started)
     returncode = process.returncode
@@ -2392,6 +2574,7 @@ def run_provider_process(
                 time.sleep(0.05)
                 absent = group_absent(process.pid)
     if returncode is None or not absent:
+        _retain_failure_tail(retain_failure, attempt_number, stdout, stderr)
         raise WorkerFailure(
             "worker termination lacks child or process-group acknowledgement",
             code="termination_unconfirmed",
@@ -2429,6 +2612,7 @@ def run_provider_process(
         "terminal_acknowledged": evidence.terminal_acknowledged,
     }
     if returncode != 0:
+        _retain_failure_tail(retain_failure, attempt_number, stdout, stderr)
         raise WorkerFailure(
             f"worker CLI exited {returncode}: {_cli_error_detail(stdout, stderr)}",
             code="worker_exited",
@@ -2438,6 +2622,7 @@ def run_provider_process(
         payload, worker_id = _extract_typed_result(stdout)
     except WorkerFailure as exc:
         metric["outcome"] = "invalid_output"
+        _retain_failure_tail(retain_failure, attempt_number, stdout, stderr)
         raise WorkerFailure(str(exc), code=exc.code, attempts=(metric,)) from exc
     return ProviderExecution(
         payload=payload,
@@ -2451,7 +2636,7 @@ def run_provider_process(
 
 
 def run_provider_with_retry(
-    command_factory: Callable[[bool], list[str]],
+    command_factory: Callable[[bool], tuple[list[str], str | None]],
     *,
     cwd: Path,
     environment: Mapping[str, str],
@@ -2463,6 +2648,7 @@ def run_provider_with_retry(
     hard_timeout: float = HARD_TIMEOUT_SECONDS,
     grace: float = TERMINATION_GRACE_SECONDS,
     on_event: Callable[[dict[str, Any]], None] | None = None,
+    retain_failure: FailureTailCallback | None = None,
 ) -> ProviderExecution:
     """Run one logical provider request with at most one acknowledged fresh retry."""
     if retry_limit not in {0, 1}:
@@ -2471,11 +2657,13 @@ def run_provider_with_retry(
     metrics: list[dict[str, Any]] = []
     attempts = 1 + retry_limit
     for attempt in range(1, attempts + 1):
+        command, stdin_payload = command_factory(attempt > 1)
         try:
             result = run_provider_process(
-                command_factory(attempt > 1),
+                command,
                 cwd=cwd,
                 environment=environment,
+                stdin_payload=stdin_payload,
                 popen=popen,
                 killpg=killpg,
                 group_absent=group_absent,
@@ -2484,6 +2672,7 @@ def run_provider_with_retry(
                 grace=grace,
                 on_event=on_event,
                 attempt_number=attempt,
+                retain_failure=retain_failure,
             )
         except _ProviderHardTimeout as exc:
             metrics.extend(exc.attempts)
@@ -2516,26 +2705,6 @@ def run_provider_with_retry(
             ),
         )
     raise AssertionError("bounded provider retry loop escaped")
-
-
-def supervise_process(
-    command: list[str],
-    *,
-    cwd: Path,
-    environment: Mapping[str, str],
-    soft_timeout: float = SOFT_TIMEOUT_SECONDS,
-    hard_timeout: float = HARD_TIMEOUT_SECONDS,
-    grace: float = TERMINATION_GRACE_SECONDS,
-) -> ProcessEvidence:
-    """Compatibility seam returning only terminal evidence for one provider call."""
-    return run_provider_process(
-        command,
-        cwd=cwd,
-        environment=environment,
-        soft_timeout=soft_timeout,
-        hard_timeout=hard_timeout,
-        grace=grace,
-    ).process
 
 
 def _extract_typed_result(stdout: str) -> tuple[dict[str, Any], str | None]:
@@ -2577,6 +2746,111 @@ def _capsule_postcondition_ok(
     if authority == "read_only":
         return before["digest"] == after["digest"]
     return True
+
+
+_PORCELAIN_V2_FIELD_COUNTS = {"1": 7, "2": 8, "u": 9}
+
+
+def _live_dirty_paths(root: Path) -> list[str]:
+    """Best-effort live `git status --porcelain=v2` probe of a target root's dirty paths.
+
+    Violation-time forensics only, run after a stored receipt digest already proved the root
+    changed: an empty result here means the drift is in an index flag or ref, not tracked or
+    untracked file content, since neither shows up in `git status`.
+    """
+    try:
+        raw = _git_bytes(root, "status", "--porcelain=v2", "--untracked-files=all")
+    except (WorkerFailure, OSError):
+        return []
+    paths: list[str] = []
+    for line in raw.decode(errors="surrogateescape").splitlines():
+        if not line:
+            continue
+        kind, _, rest = line.partition(" ")
+        if kind in ("?", "!"):
+            paths.append(rest)
+        elif kind in _PORCELAIN_V2_FIELD_COUNTS:
+            tail = rest.split(" ", _PORCELAIN_V2_FIELD_COUNTS[kind])[-1]
+            paths.append(tail.split("\t", 1)[0])
+    return sorted(set(paths))
+
+
+_DIRTY_PATHS_DISPLAY_LIMIT = 50
+
+
+def _capped_dirty_paths(paths: list[str], limit: int = _DIRTY_PATHS_DISPLAY_LIMIT) -> list[str]:
+    """Cap a diagnostic path list the same way `_retain_failure_tail` caps output bytes.
+
+    A shim (mise/uv) can materialize tens of thousands of untracked paths in one violation;
+    without a cap this list is written verbatim into a `WorkerFailure` message and the digest-
+    verified journal record, which is re-read and re-digested on every later transition.
+    """
+    if len(paths) <= limit:
+        return paths
+    return [*paths[:limit], f"... (+{len(paths) - limit} more, {len(paths)} total)"]
+
+
+def _untracked_content_index(entries: object) -> dict[tuple[str, str], list[Any]]:
+    if not isinstance(entries, list):
+        return {}
+    return {(str(entry[0]), str(entry[1])): entry for entry in entries if isinstance(entry, list)}
+
+
+def _read_only_violation_diagnostics(
+    target: str, before: Mapping[str, Any], after: Mapping[str, Any], root: Path
+) -> tuple[str, dict[str, Any]]:
+    """Build the read_only_violation message and journal data naming what changed.
+
+    Both read_only_violation guard sites (the authoritative repository and a read-only
+    worker's own capsule) share this diagnostic, differing only in which receipt pair and
+    root are probed. Reuses `_cas_refusals` for top-level receipt drift and `_encoded_path`'s
+    normalized (path, path_encoding) identity for the per-path untracked_content diff, so a
+    dirty path names consistently whether it came from the receipt or the live probe.
+    """
+    changed_fields = _cas_refusals(before, after, tuple(key for key in before if key != "digest"))
+    before_untracked = _untracked_content_index(before.get("untracked_content"))
+    after_untracked = _untracked_content_index(after.get("untracked_content"))
+    before_keys = set(before_untracked)
+    after_keys = set(after_untracked)
+    added = sorted(path for path, _encoding in after_keys - before_keys)
+    removed = sorted(path for path, _encoding in before_keys - after_keys)
+    changed_paths = sorted(
+        path
+        for path, encoding in before_keys & after_keys
+        if before_untracked[(path, encoding)] != after_untracked[(path, encoding)]
+    )
+    dirty_paths = _capped_dirty_paths(_live_dirty_paths(root))
+    parts = []
+    if changed_fields:
+        parts.append(f"changed receipt fields: {', '.join(changed_fields)}")
+    if added:
+        parts.append(f"added untracked paths: {', '.join(added)}")
+    if removed:
+        parts.append(f"removed untracked paths: {', '.join(removed)}")
+    if changed_paths:
+        parts.append(f"changed untracked paths: {', '.join(changed_paths)}")
+    # The live re-probe always reports something: dirty paths it found, or, when a receipt
+    # field still drifted but nothing shows up in a fresh `git status` (an index flag or ref
+    # moved with no working-tree effect), the documented fallback wording.
+    parts.append(
+        f"live git status dirty paths: {', '.join(dirty_paths)}"
+        if dirty_paths
+        else "no visible dirt; index-flag/ref drift"
+    )
+    detail = "; ".join(parts)
+    label = (
+        "worker invocation changed the authoritative repository"
+        if target == "authoritative_repository"
+        else "read-only worker changed its capsule"
+    )
+    journal_data: dict[str, Any] = {
+        "target": target,
+        "changed_fields": list(changed_fields),
+        "untracked_content": {"added": added, "removed": removed, "changed": changed_paths},
+        "live_status_dirty_paths": dirty_paths,
+        "detail": detail,
+    }
+    return f"{label}: {detail}", journal_data
 
 
 def _writer_import_lock_path(source_root: Path) -> Path:
@@ -2809,6 +3083,22 @@ def _import_capsule_patch(
         ) from exc
 
 
+def _persist_failure_tail(invocation: Path, attempt_number: int, name: str, data: bytes) -> None:
+    """Write the final ~50 KiB of one failed attempt's stream beside the invocation journal."""
+    path = invocation / f"attempt-{attempt_number}-{name}.tail"
+    atomic_write_bytes(path, data[-_FAILURE_TAIL_MAX_BYTES:], mode=0o600)
+
+
+def _invocation_failure_tail(invocation: Path) -> FailureTailCallback:
+    """Bind a failure-tail callback to one invocation directory beside its journal.json."""
+
+    def _retain(attempt_number: int, stdout: bytes, stderr: bytes) -> None:
+        _persist_failure_tail(invocation, attempt_number, "stdout", stdout)
+        _persist_failure_tail(invocation, attempt_number, "stderr", stderr)
+
+    return _retain
+
+
 class CognitiveWorkers:
     """Deep execution boundary for independently routed cognitive roles."""
 
@@ -2922,10 +3212,6 @@ class CognitiveWorkers:
         source_head = _git_bytes(source, "rev-parse", "HEAD").strip().decode()
         if source_head != order.source_sha:
             raise WorkerFailure("work-order source SHA is stale", code="stale_order")
-        if order.run_id is not None and owner.run_id != order.run_id:
-            raise WorkerFailure("owner proof does not match the work-order run", code="lost_owner")
-        if order.lease_fence is not None and owner.lease_fence != order.lease_fence:
-            raise WorkerFailure("owner proof does not match the lease fence", code="lost_owner")
 
         invocation = self._invocation_dir(order.logical_invocation_id)
         outcome_path = invocation / "outcome.json"
@@ -2976,7 +3262,7 @@ class CognitiveWorkers:
         existing = journal.read()
         recovery_state = str(existing["state"]) if existing is not None else "prepared"
         if existing is not None:
-            if recovery_state in {"running", "cancelling"}:
+            if recovery_state == "running":
                 raise WorkerFailure(
                     f"invocation recovery requires supervision from state {recovery_state}",
                     code="recovery_required",
@@ -3078,7 +3364,7 @@ class CognitiveWorkers:
             authoritative_before = guarded_receipt(source)
             capsule_before = guarded_receipt(capsule)
 
-            def build_command(fresh: bool) -> list[str]:
+            def build_invocation(fresh: bool) -> tuple[list[str], str | None]:
                 if order.provider_prompt is not None:
                     session = order.session or {}
                     selected_prompt = (
@@ -3086,7 +3372,7 @@ class CognitiveWorkers:
                         if fresh
                         else order.provider_prompt
                     )
-                    return adapter.session_command(
+                    command = adapter.session_command(
                         order.route,
                         selected_prompt,
                         schema_path,
@@ -3097,20 +3383,27 @@ class CognitiveWorkers:
                             else session.get("initial_session_id")
                         ),
                     )
-                return adapter.command(
+                    return command, selected_prompt
+                command = adapter.command(
                     order.route, prompt.prompt, schema_path, capsule, order.authority
                 )
+                return command, prompt.prompt
 
-            first_command = build_command(False)
+            first_command, first_stdin_payload = build_invocation(False)
 
-            def command_factory(fresh: bool) -> list[str]:
-                return build_command(True) if fresh else first_command
+            def command_factory(fresh: bool) -> tuple[list[str], str | None]:
+                return build_invocation(True) if fresh else (first_command, first_stdin_payload)
 
             running_fields: dict[str, Any] = {
                 "command_digest": _digest(first_command),
                 "authoritative_before": authoritative_before,
                 "capsule_before": capsule_before,
                 "capsule_receipt": capsule_receipt,
+                # Boot evidence pre-spawn, so every journal that reaches "running" carries it even
+                # if the process crashes before the launch callback fires -- a prior-boot journal
+                # without a "launch" record is thereby provably from a dead boot.
+                "hostname": lease.hostname(),
+                "boot_id": lease.boot_id(),
             }
             if policy.authority == "capsule_writer":
                 # The owned-file baseline is the CAS reference the import re-checks; capture it at
@@ -3119,6 +3412,27 @@ class CognitiveWorkers:
                     source, order.allowed_mutation_paths
                 )
             journal.transition("running", **running_fields)
+
+            def on_launch(event: dict[str, Any]) -> None:
+                # Journaled synchronously per physical attempt, under the invocation lock this
+                # whole method already holds: a wedged supervisor leaves this evidence behind,
+                # which is what makes the invocation externally recoverable (CognitiveWorkers.cancel
+                # / recover-invocation). Every attempt's launch is retained; "launch" alone is the
+                # current attempt's identity, the one recovery evidence gates on.
+                if event.get("type") != "launch":
+                    return
+                launch_record = {
+                    "attempt": event["attempt"],
+                    "pid": event["pid"],
+                    "pgid": event["pgid"],
+                    "hostname": lease.hostname(),
+                    "boot_id": lease.boot_id(),
+                    "started_at": event["started_at"],
+                }
+                launches = list((journal.read() or {}).get("launches") or [])
+                launches.append(launch_record)
+                journal.transition("running", launch=launch_record, launches=launches)
+
             try:
                 execution = run_provider_with_retry(
                     command_factory,
@@ -3127,6 +3441,10 @@ class CognitiveWorkers:
                         {"FLOW_WORKER_INVOCATION": order.logical_invocation_id}
                     ),
                     retry_limit=policy.retry_limit,
+                    soft_timeout=policy.soft_budget_seconds,
+                    hard_timeout=policy.hard_budget_seconds,
+                    retain_failure=_invocation_failure_tail(invocation),
+                    on_event=on_launch,
                 )
             except WorkerFailure as exc:
                 quarantine = exc.code == "termination_unconfirmed"
@@ -3151,7 +3469,9 @@ class CognitiveWorkers:
                 "terminal",
                 process=asdict(process),
                 physical_attempts=list(execution.attempts),
-                command=[*execution.command[:-1], "<prompt>"],
+                # The executed argv is prompt-free by construction (stdin carries it instead),
+                # so it needs no redaction before it becomes durable journal/receipt evidence.
+                command=list(execution.command),
                 worker_id=execution.worker_id,
             )
 
@@ -3210,24 +3530,25 @@ class CognitiveWorkers:
             authoritative_after = guarded_receipt(source)
             capsule_after = guarded_receipt(capsule)
             if authoritative_before["digest"] != authoritative_after["digest"]:
+                message, diagnostics = _read_only_violation_diagnostics(
+                    "authoritative_repository", authoritative_before, authoritative_after, source
+                )
                 journal.transition(
                     "quarantined",
-                    failure={"code": "read_only_violation"},
+                    failure={"code": "read_only_violation", **diagnostics},
                     disposal=self._dispose_failed_capsule(capsule, quarantine=True),
                 )
-                raise WorkerFailure(
-                    "worker invocation changed the authoritative repository",
-                    code="read_only_violation",
-                )
+                raise WorkerFailure(message, code="read_only_violation")
             if not _capsule_postcondition_ok(order.authority, capsule_before, capsule_after):
+                message, diagnostics = _read_only_violation_diagnostics(
+                    "capsule", capsule_before, capsule_after, capsule
+                )
                 journal.transition(
                     "quarantined",
-                    failure={"code": "read_only_violation"},
+                    failure={"code": "read_only_violation", **diagnostics},
                     disposal=self._dispose_failed_capsule(capsule, quarantine=True),
                 )
-                raise WorkerFailure(
-                    "read-only worker changed its capsule", code="read_only_violation"
-                )
+                raise WorkerFailure(message, code="read_only_violation")
             validated_fields: dict[str, Any] = {
                 "result_digest": _digest(result),
                 "result": result,
@@ -3254,8 +3575,8 @@ class CognitiveWorkers:
             )
         change_receipt: dict[str, Any] | None = None
         if policy.authority == "capsule_writer":
-            # Dormant until a writer profile activates: the active gate above refuses every writer
-            # before this runs. On a capture/import failure the helper leaves the journal in
+            # Runs for the three active importing writers (implementer, review_fixer,
+            # revision_fixer). On a capture/import failure the helper leaves the journal in
             # importing (or validated) and we raise before disposal, so the capsule and patch
             # survive as recovery evidence and a repeat run resumes without re-invoking the model.
             change_receipt = self._import_after_validation(order, source, capsule, journal)
@@ -3373,27 +3694,88 @@ class CognitiveWorkers:
     def _cancel_locked(
         self, logical_invocation_id: str, owner: OwnerProof, reason: str
     ) -> dict[str, Any]:
-        del owner
         invocation = self._invocation_dir(logical_invocation_id)
         journal = InvocationJournal(invocation / "journal.json", logical_invocation_id)
         value = journal.read()
         if value is None:
             raise WorkerFailure("cannot cancel an unknown invocation", code="invalid_order")
-        if value["state"] in {"completed", "blocked", "quarantined"}:
+        state = str(value["state"])
+        if state in {"completed", "blocked", "quarantined"}:
             return {
                 "schema": "flow.cognitive-cancellation/v1",
                 "logical_invocation_id": logical_invocation_id,
-                "state": value["state"],
+                "state": state,
                 "idempotent": True,
             }
-        # A recovered PID without live pipe ownership cannot prove output EOF.
+        if state in {"running", "cancelling"} and value.get("launch") is not None:
+            # A launch record proves the process was actually spawned, so its evidence can be
+            # gated on (see _require_dead_launch). A running/cancelling journal WITHOUT one --
+            # every journal written before launch evidence existed, or a supervisor that died
+            # before the launch callback fired -- can never produce that evidence, so it takes
+            # the prior unconditional-quarantine path instead (the old cancel semantic, and
+            # exactly the witnessed wedged-journal incidents this recovery path exists for).
+            self._require_dead_launch(value.get("launch"))
+        # A recovered PID without live pipe ownership cannot prove output EOF. The owner mapping
+        # is provenance recorded on the quarantine record; the launch-evidence gate above (or its
+        # absence for prepared/cloning) is what actually authorizes the recovery.
+        disposal: dict[str, Any] | None = None
+        capsule_path = value.get("capsule")
+        if isinstance(capsule_path, str):
+            resolved_capsule = Path(capsule_path).resolve()
+            if resolved_capsule.is_relative_to(self.capsule_root):
+                disposal = self._dispose_failed_capsule(resolved_capsule, quarantine=True)
+        extra: dict[str, Any] = {"disposal": disposal} if disposal is not None else {}
         journal.transition(
-            "quarantined", failure={"code": "termination_unconfirmed", "reason": reason}
+            "quarantined",
+            failure={
+                "code": "termination_unconfirmed",
+                "reason": reason,
+                "owner": {"owner_id": owner.owner_id, "harness": owner.harness},
+            },
+            **extra,
         )
-        raise WorkerFailure(
-            "cannot prove terminal output closure after owner recovery",
-            code="termination_unconfirmed",
-        )
+        return {
+            "schema": "flow.cognitive-cancellation/v1",
+            "logical_invocation_id": logical_invocation_id,
+            "state": "quarantined",
+            "idempotent": False,
+        }
+
+    def _require_dead_launch(self, launch: object) -> None:
+        """Fail closed unless the recorded launch evidence proves the process is dead.
+
+        A same-host boot_id mismatch is definitive death: the recorded process tree belonged to
+        a prior boot, so any currently live process at that numeric pgid is an unrelated reuse,
+        not the original worker. Only a same-boot pgid must actually be proven absent, and a
+        live or permission-denied group refuses recovery outright, with no force and no signal.
+        lease.boot_id() can return "" when unavailable; an empty boot_id is absent evidence, not
+        an incomplete field, so it neither wedges the completeness check below nor satisfies the
+        mismatch shortcut -- it falls back to the pgid-only gate like a same-boot launch would.
+        """
+        if not isinstance(launch, dict) or not all(
+            launch.get(field) for field in ("pid", "pgid", "hostname", "started_at")
+        ):
+            raise WorkerFailure(
+                "cannot recover a running invocation without complete launch evidence",
+                code="recovery_required",
+            )
+        evidence = cast(dict[str, Any], launch)
+        if evidence["hostname"] != lease.hostname():
+            raise WorkerFailure(
+                "cannot recover a running invocation launched on a different host",
+                code="recovery_required",
+            )
+        current_boot = lease.boot_id()
+        evidence_boot = evidence.get("boot_id")
+        if current_boot and evidence_boot and evidence_boot != current_boot:
+            return
+        # _process_group_absent already folds a PermissionError (group exists, owned by someone
+        # else) into "not absent", so a live or permission-denied group both refuse here.
+        if not _process_group_absent(int(evidence["pgid"])):
+            raise WorkerFailure(
+                "cannot recover a running invocation whose process group is still live",
+                code="execution_busy",
+            )
 
 
 def _load_order(path: Path) -> WorkOrder:
@@ -3480,7 +3862,9 @@ def prepare_work_order(
             seed_digest = hashlib.sha256(seed).hexdigest()
     order = WorkOrder(
         logical_invocation_id=str(sealed["logical_invocation_id"]),
-        generation=int(sealed["stage_generation"]),
+        # Legacy seals predating per-substep retry have no "generation" key; they fall back to
+        # stage_generation, the value the substep's generation was always implicitly equal to.
+        generation=int(sealed.get("generation", sealed["stage_generation"])),
         profile=str(sealed["profile"]),
         source_root=str(source),
         source_sha=head,
@@ -3496,7 +3880,6 @@ def prepare_work_order(
         stage=str(sealed["stage"]),
         substep=str(sealed["substep"]),
         stage_generation=int(sealed["stage_generation"]),
-        expected_state="in_progress",
         lease_fence=cast(str | None, sealed.get("lease_fence")),
     )
     _atomic_json(order_path, order.to_mapping(), mode=0o400)
@@ -3574,12 +3957,7 @@ def run_stage(
             facts=facts,
             output=root / "orders" / f"{substep}.json",
         )
-        owner = OwnerProof(
-            owner_id=owner_id,
-            harness=owner_harness,
-            run_id=order.run_id,
-            lease_fence=order.lease_fence,
-        )
+        owner = OwnerProof(owner_id=owner_id, harness=owner_harness)
         outcome = executor.run(order, owner).to_mapping()
         outcomes[substep] = outcome
         result_path = root / "results" / f"{substep}.json"
@@ -3621,6 +3999,12 @@ def _parser() -> argparse.ArgumentParser:
     bundle_parser = sub.add_parser("bundle-review")
     bundle_parser.add_argument("--source-root", required=True)
     bundle_parser.add_argument("--output", required=True)
+    recover_parser = sub.add_parser("recover-invocation")
+    recover_parser.add_argument("--logical-invocation-id", required=True)
+    recover_parser.add_argument("--artifact-root", required=True)
+    recover_parser.add_argument("--capsule-root", required=True)
+    recover_parser.add_argument("--owner-id", default="facade-owner")
+    recover_parser.add_argument("--reason", required=True)
     return parser
 
 
@@ -3663,13 +4047,16 @@ def cli_main(argv: list[str]) -> int:
             _atomic_json(Path(args.output).expanduser().resolve(), body)
             sys.stdout.write(json.dumps(body, indent=2, sort_keys=True) + "\n")
             return 0
+        if args.operation == "recover-invocation":
+            workers = CognitiveWorkers(
+                artifact_root=Path(args.artifact_root), capsule_root=Path(args.capsule_root)
+            )
+            owner = OwnerProof(owner_id=args.owner_id, harness=_owner_harness())
+            receipt = workers.cancel(args.logical_invocation_id, owner, args.reason)
+            sys.stdout.write(json.dumps(receipt, indent=2, sort_keys=True) + "\n")
+            return 0
         order = _load_order(Path(args.work_order).expanduser().resolve())
-        owner = OwnerProof(
-            owner_id=args.owner_id,
-            harness=_owner_harness(),
-            run_id=order.run_id,
-            lease_fence=order.lease_fence,
-        )
+        owner = OwnerProof(owner_id=args.owner_id, harness=_owner_harness())
         workers = CognitiveWorkers(
             artifact_root=Path(args.artifact_root), capsule_root=Path(args.capsule_root)
         )
@@ -3725,7 +4112,6 @@ __all__ = [
     "prepare_work_order",
     "provider_schema",
     "run_stage",
-    "supervise_process",
     "validate_typed_result",
     "worker_environment",
 ]

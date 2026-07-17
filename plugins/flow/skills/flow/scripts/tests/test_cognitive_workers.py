@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import json
 import os
+import signal
+import stat
 import subprocess
 import sys
 import threading
@@ -73,6 +76,41 @@ def test_catalog_activates_readers_e2e_and_the_importing_fixers() -> None:
     # machinery_fixer is an active read_only capsule; reflect applies its report via the guard.
     assert cw.ROLE_CATALOG["machinery_fixer"].authority == "read_only"
     assert cw.ROLE_CATALOG["machinery_fixer"].active is True
+
+
+def test_role_catalog_carries_per_role_soft_and_hard_budgets() -> None:
+    readers = {
+        "planner",
+        "plan_assessor",
+        "code_reviewer",
+        "diff_reviewer",
+        "guard_reviewer",
+        "review_brief_author",
+        "reflector",
+        "machinery_fixer",
+    }
+    for name in readers:
+        policy = cw.ROLE_CATALOG[name]
+        assert (policy.soft_budget_seconds, policy.hard_budget_seconds) == (600, 2400), name
+    for name in ("implementer", "review_fixer", "revision_fixer"):
+        policy = cw.ROLE_CATALOG[name]
+        assert (policy.soft_budget_seconds, policy.hard_budget_seconds) == (1200, 5400), name
+    assert (
+        cw.ROLE_CATALOG["e2e"].soft_budget_seconds,
+        cw.ROLE_CATALOG["e2e"].hard_budget_seconds,
+    ) == (900, 3600)
+    # The module constants stay the reader defaults external callers may still reference.
+    assert cw.SOFT_TIMEOUT_SECONDS == 600
+    assert cw.HARD_TIMEOUT_SECONDS == 2400
+
+
+def test_cumulative_role_budget_accounts_for_permitted_retries() -> None:
+    # Readers retry once (1 + 1 attempts) at 2400s each.
+    assert cw.cumulative_role_budget("planner") == 2 * 2400
+    assert cw.cumulative_role_budget("machinery_fixer") == 2 * 2400
+    # Writers and e2e never retry (1 attempt).
+    assert cw.cumulative_role_budget("implementer") == 5400
+    assert cw.cumulative_role_budget("e2e") == 3600
 
 
 def test_inactive_profile_is_refused_before_capsule_allocation(
@@ -626,9 +664,11 @@ class _FakeProcess:
         self.pid = pid
         self.returncode: int | None = None
         self.timeouts: list[float | None] = []
+        self.inputs: list[str | None] = []
 
-    def communicate(self, timeout: float | None = None):
+    def communicate(self, timeout: float | None = None, input: str | None = None):
         self.timeouts.append(timeout)
+        self.inputs.append(input)
         outcome = self.outcomes.pop(0)
         if isinstance(outcome, BaseException):
             raise outcome
@@ -663,11 +703,104 @@ def test_soft_deadline_is_recorded_but_does_not_cancel(tmp_path: Path) -> None:
     events: list[str] = []
     execution = _run(process, on_event=lambda event: events.append(event["type"]))
     assert execution.worker_id == "T-1"
-    assert events == ["soft_deadline"]
+    assert events == ["launch", "soft_deadline"]
     assert process.timeouts == [10, 30]
     assert execution.attempts[0]["deadline_events"] == ["soft_deadline"]
     assert execution.attempts[0]["terminal_acknowledged"] is True
     assert execution.process.soft_deadline is True
+
+
+def test_launch_event_carries_pid_pgid_and_started_at_before_any_output_is_read() -> None:
+    process = _FakeProcess([(json.dumps({"thread_id": "T-1", "result": {"summary": "ok"}}), "")])
+    events: list[dict[str, object]] = []
+    execution = _run(process, on_event=events.append)
+    assert execution.worker_id == "T-1"
+    launches = [event for event in events if event["type"] == "launch"]
+    assert len(launches) == 1
+    launch = launches[0]
+    assert launch["attempt"] == 1
+    assert launch["pid"] == process.pid
+    assert launch["pgid"] == process.pid
+    assert isinstance(launch["started_at"], float)
+
+
+def test_launch_callback_failure_that_drains_cleanly_reraises_the_callback_error() -> None:
+    """A non-WorkerFailure callback error (e.g. an OSError from a journal write) is wrapped as
+    a WorkerFailure once the group's death is confirmed -- a bare exception would escape every
+    WorkerFailure handler upstream and leave the invocation unjournaled and its capsule
+    undisposed. A WorkerFailure raised by the callback itself is reraised verbatim instead
+    (see test_launch_callback_worker_failure_is_reraised_verbatim_when_drained_cleanly).
+    """
+    process = _FakeProcess([("", "")])
+    killed: list[int] = []
+
+    def on_event(event: dict[str, object]) -> None:
+        if event["type"] == "launch":
+            raise OSError("journal write failed")
+
+    with pytest.raises(cw.WorkerFailure, match="journal write failed") as error:
+        cw.run_provider_process(
+            ["provider"],
+            cwd=Path.cwd(),
+            environment={},
+            popen=lambda *a, **k: process,
+            killpg=lambda pid, sig: killed.append(sig),
+            group_absent=lambda pid: True,
+            soft_timeout=10,
+            hard_timeout=40,
+            on_event=on_event,
+        )
+    assert error.value.code == "launch_callback_failed"
+    # Terminated (not killed): the drain communicate() call below succeeded on the first try.
+    assert killed == [signal.SIGTERM]
+    assert process.poll() is not None
+
+
+def test_launch_callback_worker_failure_is_reraised_verbatim_when_drained_cleanly() -> None:
+    process = _FakeProcess([("", "")])
+
+    def on_event(event: dict[str, object]) -> None:
+        if event["type"] == "launch":
+            raise cw.WorkerFailure("journal digest is invalid", code="recovery_required")
+
+    with pytest.raises(cw.WorkerFailure, match="journal digest is invalid") as error:
+        cw.run_provider_process(
+            ["provider"],
+            cwd=Path.cwd(),
+            environment={},
+            popen=lambda *a, **k: process,
+            killpg=lambda pid, sig: None,
+            group_absent=lambda pid: True,
+            soft_timeout=10,
+            hard_timeout=40,
+            on_event=on_event,
+        )
+    assert error.value.code == "recovery_required"
+
+
+def test_launch_callback_failure_with_no_terminal_proof_becomes_termination_unconfirmed() -> None:
+    process = _FakeProcess(
+        [subprocess.TimeoutExpired(["provider"], 5), subprocess.TimeoutExpired(["provider"], 5)]
+    )
+
+    def on_event(event: dict[str, object]) -> None:
+        if event["type"] == "launch":
+            raise ValueError("journal write failed")
+
+    with pytest.raises(cw.WorkerFailure, match="launch-journaling failure") as error:
+        cw.run_provider_process(
+            ["provider"],
+            cwd=Path.cwd(),
+            environment={},
+            popen=lambda *a, **k: process,
+            killpg=lambda pid, sig: None,
+            group_absent=lambda pid: True,
+            soft_timeout=10,
+            hard_timeout=40,
+            on_event=on_event,
+        )
+    assert error.value.code == "termination_unconfirmed"
+    assert process.poll() is None
 
 
 def test_hard_timeout_retries_once_only_after_terminal_acknowledgement() -> None:
@@ -682,7 +815,10 @@ def test_hard_timeout_retries_once_only_after_terminal_acknowledgement() -> None
         first.outcomes.append(("", ""))
 
     execution = cw.run_provider_with_retry(
-        lambda fresh: ["provider", "fresh" if fresh else "initial"],
+        lambda fresh: (
+            ["provider", "fresh" if fresh else "initial"],
+            "fresh prompt" if fresh else "initial prompt",
+        ),
         cwd=Path.cwd(),
         environment={},
         retry_limit=1,
@@ -695,6 +831,8 @@ def test_hard_timeout_retries_once_only_after_terminal_acknowledgement() -> None
     assert execution.attempt == 2
     assert execution.command[-1] == "fresh"
     assert [item["outcome"] for item in execution.attempts] == ["hard_timeout", "success"]
+    assert first.inputs == ["initial prompt", None, None]
+    assert second.inputs == ["fresh prompt"]
 
 
 def test_ambiguous_termination_forbids_any_replacement() -> None:
@@ -715,7 +853,7 @@ def test_ambiguous_termination_forbids_any_replacement() -> None:
 
     with pytest.raises(cw.WorkerFailure, match="terminal acknowledgement") as error:
         cw.run_provider_with_retry(
-            lambda fresh: ["provider"],
+            lambda fresh: (["provider"], None),
             cwd=Path.cwd(),
             environment={},
             retry_limit=1,
@@ -778,7 +916,7 @@ def test_second_hard_timeout_never_starts_a_third_launch() -> None:
 
     with pytest.raises(cw.WorkerFailure, match="retry budget") as error:
         cw.run_provider_with_retry(
-            lambda fresh: ["provider"],
+            lambda fresh: (["provider"], None),
             cwd=Path.cwd(),
             environment={},
             retry_limit=1,
@@ -792,11 +930,354 @@ def test_second_hard_timeout_never_starts_a_third_launch() -> None:
     assert [item["attempt"] for item in error.value.attempts] == [1, 2]
 
 
+# ─── stdin transport (ARG_MAX) ────────────────────────────────────────────────
+
+
+def test_run_provider_process_pipes_a_huge_prompt_via_stdin_only_on_the_first_call() -> None:
+    huge_prompt = "P" * (3 * 1024 * 1024)
+    process = _FakeProcess([(json.dumps({"thread_id": "T-1", "result": {"summary": "ok"}}), "")])
+    captured_kwargs: dict[str, Any] = {}
+
+    def popen(command: list[str], **kwargs: Any) -> _FakeProcess:
+        captured_kwargs.update(kwargs)
+        return process
+
+    execution = cw.run_provider_process(
+        ["provider", "-"],
+        cwd=Path.cwd(),
+        environment={},
+        stdin_payload=huge_prompt,
+        popen=popen,
+        group_absent=lambda pid: True,
+        soft_timeout=10,
+        hard_timeout=40,
+    )
+    assert captured_kwargs["stdin"] == subprocess.PIPE
+    assert process.inputs == [huge_prompt]
+    assert execution.worker_id == "T-1"
+
+
+def test_run_provider_process_never_resends_input_after_a_soft_timeout() -> None:
+    process = _FakeProcess(
+        [
+            subprocess.TimeoutExpired(["provider"], 10),
+            (json.dumps({"thread_id": "T-1", "result": {"summary": "ok"}}), ""),
+        ]
+    )
+    execution = _run(process, stdin_payload="prompt bytes")
+    assert process.inputs == ["prompt bytes", None]
+    assert execution.worker_id == "T-1"
+
+
+def test_run_provider_process_omits_input_through_every_hard_deadline_continuation() -> None:
+    process = _FakeProcess(
+        [
+            subprocess.TimeoutExpired(["provider"], 10),
+            subprocess.TimeoutExpired(["provider"], 30),
+            ("tail stdout", "tail stderr"),
+        ]
+    )
+    with pytest.raises(cw.WorkerFailure, match="hard deadline"):
+        _run(process, stdin_payload="prompt bytes", killpg=lambda pid, sig: None)
+    assert process.inputs == ["prompt bytes", None, None]
+
+
+def test_run_provider_process_legacy_call_never_pipes_stdin() -> None:
+    """Callers that omit ``stdin_payload`` keep today's no-stdin Popen and communicate shape."""
+    process = _FakeProcess([(json.dumps({"thread_id": "T-1", "result": {"summary": "ok"}}), "")])
+    captured_kwargs: dict[str, Any] = {}
+
+    def popen(command: list[str], **kwargs: Any) -> _FakeProcess:
+        captured_kwargs.update(kwargs)
+        return process
+
+    execution = cw.run_provider_process(
+        ["provider"],
+        cwd=Path.cwd(),
+        environment={},
+        popen=popen,
+        group_absent=lambda pid: True,
+        soft_timeout=10,
+        hard_timeout=40,
+    )
+    assert "stdin" not in captured_kwargs
+    assert process.inputs == [None]
+    assert execution.worker_id == "T-1"
+
+
+def test_full_run_fresh_retry_pairs_the_fresh_prompt_and_keeps_command_digest_on_the_first(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The retry factory pairs each attempt's own prompt with its own argv end to end.
+
+    A forced fresh retry must reach the second process's stdin with
+    ``order.fresh_provider_prompt``, never the initial prompt, while the journal's
+    ``command_digest`` stays pinned to the first attempt's argv even though the
+    second attempt's argv differs (a distinct session id per attempt).
+    """
+    source, sha = _repository(tmp_path)
+    input_path = tmp_path / "input.json"
+    input_path.write_text("{}\n", encoding="utf-8")
+
+    envelope = {
+        "attempt_id": "attempt-1",
+        "version": 1,
+        "parent_digest": None,
+        "base_sha": sha,
+        "route_digest": "b" * 64,
+        "author": {"id": "codex:fake", "harness": "codex", "model": "fake"},
+        "status": "PLAN_READY",
+        "plan": {
+            "motivation": "m",
+            "goal": "g",
+            "scenarios": [{"before": "b", "after": "a"}],
+            "architecture": ["x"],
+            "decisions": ["d"],
+            "acceptance_outcomes": ["o"],
+            "steps": ["s"],
+            "files": ["f.py"],
+            "context_paths": [],
+            "verification": ["v"],
+            "e2e_recipe": "run",
+            "lane": "full",
+            "compatibility": [],
+            "rollout": "r",
+            "risks": ["r"],
+        },
+        "questions": [],
+        "incorporated_feedback_ids": [],
+    }
+
+    processes: list[_FakeProcess] = []
+    launched_commands: list[list[str]] = []
+    real_popen = cw.subprocess.Popen
+
+    def fake_popen(command: list[str], **kwargs: Any) -> Any:
+        # Only the fake provider launch is faked; every git subprocess this run makes
+        # (clone, receipts, HEAD checks) must reach the real Popen unchanged.
+        if not command or command[0] != "fake-codex":
+            return real_popen(command, **kwargs)
+        launched_commands.append(list(command))
+        if not processes:
+            process = _FakeProcess(
+                [
+                    subprocess.TimeoutExpired(command, 1),
+                    subprocess.TimeoutExpired(command, 1),
+                    ("", ""),
+                ],
+                pid=900001,
+            )
+        else:
+            process = _FakeProcess(
+                [(json.dumps({"thread_id": "fresh-thread", "result": envelope}), "")],
+                pid=900002,
+            )
+        processes.append(process)
+        return process
+
+    monkeypatch.setattr(cw.subprocess, "Popen", fake_popen)
+
+    class Adapter:
+        harness = "codex"
+
+        def preflight(self, route: Any, authority: str = "read_only") -> dict[str, str]:
+            return {"executable": "fake", "version": "fake/1", "harness": "codex"}
+
+        def command(self, *args: Any, **kwargs: Any) -> list[str]:
+            raise AssertionError("a planner order never uses the plain capsule command")
+
+        def session_command(
+            self, route: Any, prompt: str, schema_path: Path, *, thread_id: Any, new_thread_id: Any
+        ) -> list[str]:
+            return ["fake-codex", "exec", "--session-id", str(new_thread_id), "-"]
+
+    order = cw.WorkOrder(
+        logical_invocation_id="planner-fresh-retry",
+        generation=1,
+        profile="planner",
+        source_root=str(source),
+        source_sha=sha,
+        route={"harness": "codex", "model": "fake", "effort": "high"},
+        route_snapshot_digest="b" * 64,
+        input_bundle=str(input_path),
+        input_digest=hashlib.sha256(input_path.read_bytes()).hexdigest(),
+        facts={},
+        provider_prompt="INITIAL PLANNER PROMPT",
+        fresh_provider_prompt="FRESH REHYDRATION PROMPT",
+        session={
+            "thread_id": None,
+            "initial_session_id": "initial-session",
+            "fresh_session_id": "fresh-session",
+        },
+    )
+    workers = cw.CognitiveWorkers(
+        artifact_root=tmp_path / "artifacts",
+        capsule_root=tmp_path / "capsules",
+        adapters={"codex": Adapter()},
+    )
+
+    outcome = workers.run(order, cw.OwnerProof(owner_id="owner", harness="codex"))
+
+    assert outcome.status == "succeeded"
+    first_command = ["fake-codex", "exec", "--session-id", "initial-session", "-"]
+    fresh_command = ["fake-codex", "exec", "--session-id", "fresh-session", "-"]
+    assert launched_commands == [first_command, fresh_command]
+    assert processes[0].inputs == ["INITIAL PLANNER PROMPT", None, None]
+    assert processes[1].inputs == ["FRESH REHYDRATION PROMPT"]
+    assert outcome.receipts["command"] == fresh_command
+
+    invocation = (
+        tmp_path / "artifacts" / "invocations" / hashlib.sha256(b"planner-fresh-retry").hexdigest()
+    )
+    journal_value = json.loads((invocation / "journal.json").read_text(encoding="utf-8"))
+    assert journal_value["command_digest"] == cw._digest(first_command)
+    assert journal_value["command_digest"] != cw._digest(fresh_command)
+    assert journal_value["command"] == fresh_command
+
+    # The journaled and returned command evidence is exactly the executed argv: no prompt
+    # bytes ride either, since both attempts' prompts went out over stdin instead.
+    command_evidence = json.dumps([journal_value["command"], outcome.receipts["command"]])
+    assert "INITIAL PLANNER PROMPT" not in command_evidence
+    assert "FRESH REHYDRATION PROMPT" not in command_evidence
+
+
+# ─── failure-tail retention ──────────────────────────────────────────────────
+
+
+def test_hard_timeout_retains_the_final_grace_communicate_output() -> None:
+    process = _FakeProcess(
+        [
+            subprocess.TimeoutExpired(["provider"], 10),
+            subprocess.TimeoutExpired(["provider"], 30),
+            ("tail stdout", "tail stderr"),
+        ]
+    )
+    retained: list[tuple[int, bytes, bytes]] = []
+    with pytest.raises(cw.WorkerFailure, match="hard deadline"):
+        _run(
+            process,
+            killpg=lambda pid, sig: None,
+            retain_failure=lambda attempt, out, err: retained.append((attempt, out, err)),
+        )
+    assert retained == [(1, b"tail stdout", b"tail stderr")]
+
+
+def test_hard_timeout_retention_falls_back_to_timeoutexpired_bytes_when_streams_never_close() -> (
+    None
+):
+    hard_exc = subprocess.TimeoutExpired(
+        ["provider"], 30, output=b"raw stdout bytes", stderr=b"raw stderr bytes"
+    )
+    process = _FakeProcess(
+        [
+            subprocess.TimeoutExpired(["provider"], 10),
+            hard_exc,
+            subprocess.TimeoutExpired(["provider"], 5),
+            subprocess.TimeoutExpired(["provider"], 5),
+        ]
+    )
+    retained: list[tuple[int, bytes, bytes]] = []
+    with pytest.raises(cw.WorkerFailure):
+        _run(
+            process,
+            killpg=lambda pid, sig: None,
+            grace=0.01,
+            retain_failure=lambda attempt, out, err: retained.append((attempt, out, err)),
+        )
+    # The final post-kill communicate() returned nothing, so retention falls back to the
+    # hard-deadline TimeoutExpired's own captured bytes, undecoded.
+    assert retained == [(1, b"raw stdout bytes", b"raw stderr bytes")]
+
+
+def test_worker_exited_retains_the_captured_streams() -> None:
+    class _Failing(_FakeProcess):
+        @override
+        def communicate(self, timeout: float | None = None, input: str | None = None):
+            result = super().communicate(timeout, input)
+            self.returncode = 7
+            return result
+
+    process = _Failing([("boom stdout", "boom stderr")])
+    retained: list[tuple[int, bytes, bytes]] = []
+    with pytest.raises(cw.WorkerFailure, match="exited 7"):
+        _run(process, retain_failure=lambda attempt, out, err: retained.append((attempt, out, err)))
+    assert retained == [(1, b"boom stdout", b"boom stderr")]
+
+
+def test_invalid_output_retains_the_captured_streams() -> None:
+    retained: list[tuple[int, bytes, bytes]] = []
+    with pytest.raises(cw.WorkerFailure, match="no typed result"):
+        _run(
+            _FakeProcess([("not-json\n", "some stderr")]),
+            retain_failure=lambda attempt, out, err: retained.append((attempt, out, err)),
+        )
+    assert retained == [(1, b"not-json\n", b"some stderr")]
+
+
+def test_success_never_invokes_the_retention_callback() -> None:
+    process = _FakeProcess([(json.dumps({"thread_id": "T-1", "result": {"summary": "ok"}}), "")])
+    retained: list[tuple[int, bytes, bytes]] = []
+    _run(process, retain_failure=lambda attempt, out, err: retained.append((attempt, out, err)))
+    assert retained == []
+
+
+def test_retention_failure_never_blocks_the_acknowledged_fresh_retry() -> None:
+    first = _FakeProcess(
+        [subprocess.TimeoutExpired(["provider"], 10), subprocess.TimeoutExpired(["provider"], 30)]
+    )
+    second = _FakeProcess([(json.dumps({"thread_id": "fresh", "result": {"summary": "ok"}}), "")])
+    processes = iter([first, second])
+
+    def killpg(pid: int, sig: int) -> None:
+        first.returncode = -sig
+        first.outcomes.append(("", ""))
+
+    def failing_retain(attempt: int, out: bytes, err: bytes) -> None:
+        raise RuntimeError("disk full")
+
+    execution = cw.run_provider_with_retry(
+        lambda fresh: (["provider", "fresh" if fresh else "initial"], None),
+        cwd=Path.cwd(),
+        environment={},
+        retry_limit=1,
+        popen=lambda *a, **k: next(processes),
+        killpg=killpg,
+        group_absent=lambda pid: True,
+        soft_timeout=10,
+        hard_timeout=40,
+        retain_failure=failing_retain,
+    )
+    assert execution.attempt == 2
+    assert [item["outcome"] for item in execution.attempts] == ["hard_timeout", "success"]
+
+
+def test_persist_failure_tail_truncates_to_the_last_50kib_atomically(tmp_path: Path) -> None:
+    invocation = tmp_path / "invocation"
+    invocation.mkdir()
+    data = b"x" * (60 * 1024) + b"tail-marker"
+    cw._persist_failure_tail(invocation, 2, "stdout", data)
+    path = invocation / "attempt-2-stdout.tail"
+    written = path.read_bytes()
+    assert written == data[-cw._FAILURE_TAIL_MAX_BYTES :]
+    assert len(written) == cw._FAILURE_TAIL_MAX_BYTES
+    assert written.endswith(b"tail-marker")
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+
+def test_invocation_failure_tail_writes_both_streams(tmp_path: Path) -> None:
+    invocation = tmp_path / "invocation"
+    invocation.mkdir()
+    callback = cw._invocation_failure_tail(invocation)
+    callback(3, b"out-data", b"err-data")
+    assert (invocation / "attempt-3-stdout.tail").read_bytes() == b"out-data"
+    assert (invocation / "attempt-3-stderr.tail").read_bytes() == b"err-data"
+
+
 def test_cli_failure_prefers_the_structured_stdout_error() -> None:
     class _Failing(_FakeProcess):
         @override
-        def communicate(self, timeout: float | None = None):
-            result = super().communicate(timeout)
+        def communicate(self, timeout: float | None = None, input: str | None = None):
+            result = super().communicate(timeout, input)
             self.returncode = 1
             return result
 
@@ -893,6 +1374,121 @@ def _workers(tmp_path: Path, adapter) -> cw.CognitiveWorkers:
     )
 
 
+def test_running_journal_records_launch_evidence_for_the_current_attempt(
+    tmp_path: Path,
+) -> None:
+    source, sha = _repository(tmp_path)
+    input_path = tmp_path / "input.json"
+    input_path.write_text("{}\n", encoding="utf-8")
+    order = _review_order(source, sha, input_path, "review-launch-evidence")
+
+    outcome = _workers(tmp_path, _ScriptedAdapter(_EMIT)).run(
+        order, cw.OwnerProof(owner_id="owner", harness="codex")
+    )
+    assert outcome.status == "succeeded"
+
+    journal = _violation_journal(tmp_path, "review-launch-evidence")
+    # Boot evidence is written at the "running" transition, pre-spawn, so it is present even
+    # if the process crashes before the launch callback fires; the launch record's own
+    # hostname/boot_id (below) are the per-attempt copy.
+    assert isinstance(journal["hostname"], str)
+    assert journal["hostname"]
+    assert isinstance(journal["boot_id"], str)
+    launch = journal["launch"]
+    assert launch["attempt"] == 1
+    assert isinstance(launch["pid"], int)
+    assert launch["pgid"] == launch["pid"]
+    assert isinstance(launch["hostname"], str)
+    assert launch["hostname"]
+    assert isinstance(launch["boot_id"], str)
+    assert isinstance(launch["started_at"], float)
+    assert journal["launches"] == [launch]
+
+
+def test_bare_oserror_from_the_launch_callback_kills_the_group_and_disposes_the_capsule(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An OSError out of the real on_launch hook (e.g. a journal write hitting a full disk)
+    must reach `run()`'s WorkerFailure handler -- not escape it -- so the invocation lands on
+    "blocked" (the group is provably dead: no live evidence to preserve) and its capsule is
+    disposed rather than left an orphan.
+    """
+    source, sha = _repository(tmp_path)
+    input_path = tmp_path / "input.json"
+    input_path.write_text("{}\n", encoding="utf-8")
+    order = _review_order(source, sha, input_path, "review-launch-oserror")
+
+    original_transition = cw.InvocationJournal.transition
+
+    def flaky_transition(self: cw.InvocationJournal, state: str, **fields: Any) -> dict[str, Any]:
+        if "launch" in fields:
+            raise OSError("disk full")
+        return original_transition(self, state, **fields)
+
+    monkeypatch.setattr(cw.InvocationJournal, "transition", flaky_transition)
+
+    with pytest.raises(cw.WorkerFailure, match="disk full") as error:
+        _workers(tmp_path, _ScriptedAdapter(_EMIT)).run(
+            order, cw.OwnerProof(owner_id="owner", harness="codex")
+        )
+
+    assert error.value.code == "launch_callback_failed"
+    journal = _violation_journal(tmp_path, "review-launch-oserror")
+    assert journal["state"] == "blocked"
+    assert journal["failure"]["code"] == "launch_callback_failed"
+    capsule = Path(journal["disposal"]["capsule"])
+    assert not capsule.exists()
+
+
+def test_full_run_capsule_branch_pairs_the_bundle_prompt_with_its_argv(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The capsule branch of build_invocation (a non-session order) must reach stdin too.
+
+    Every implementer, review_fixer, revision_fixer, E2E, and read-only capsule worker
+    takes this branch, unlike the session branch already covered by
+    ``test_full_run_fresh_retry_pairs_the_fresh_prompt_and_keeps_command_digest_on_the_first``.
+    """
+    source, sha = _repository(tmp_path)
+    input_path = tmp_path / "input.json"
+    input_path.write_text("{}\n", encoding="utf-8")
+
+    captured_prompts: list[str] = []
+    process = _FakeProcess([(json.dumps({"thread_id": "worker-1", "result": _REVIEW_RESULT}), "")])
+    real_popen = cw.subprocess.Popen
+
+    def fake_popen(command: list[str], **kwargs: Any) -> Any:
+        # subprocess.run() is implemented on top of Popen, so every git subprocess this
+        # run makes (clone, receipts, HEAD checks) must reach the real Popen unchanged.
+        if not command or command[0] != "fake-reviewer":
+            return real_popen(command, **kwargs)
+        return process
+
+    monkeypatch.setattr(cw.subprocess, "Popen", fake_popen)
+
+    class Adapter:
+        harness = "codex"
+
+        def preflight(self, route, authority="read_only"):
+            return {"executable": "/usr/bin/codex", "version": "codex 1", "harness": "codex"}
+
+        def command(self, route, prompt, schema_path, capsule, authority="read_only"):
+            captured_prompts.append(prompt)
+            return ["fake-reviewer", "-"]
+
+        def session_command(self, route, prompt, schema_path, *, thread_id, new_thread_id):
+            raise AssertionError("a capsule order never carries a provider session")
+
+    order = _review_order(source, sha, input_path, "review-capsule-branch")
+    workers = _workers(tmp_path, Adapter())
+
+    outcome = workers.run(order, cw.OwnerProof(owner_id="owner", harness="codex"))
+
+    assert outcome.status == "succeeded"
+    assert captured_prompts
+    assert process.inputs == [captured_prompts[0]]
+
+
 def test_a_reader_that_writes_to_its_capsule_is_a_read_only_violation(tmp_path: Path) -> None:
     source, sha = _repository(tmp_path)
     input_path = tmp_path / "input.json"
@@ -940,6 +1536,147 @@ def test_a_reader_that_writes_to_the_authoritative_tree_is_a_read_only_violation
     assert error.value.code == "read_only_violation"
 
 
+def _violation_journal(tmp_path: Path, logical_id: str) -> dict[str, Any]:
+    token = hashlib.sha256(logical_id.encode()).hexdigest()
+    path = tmp_path / "artifacts" / "invocations" / token / "journal.json"
+    value: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
+    return value
+
+
+def test_authoritative_violation_diagnostics_name_the_injected_untracked_path(
+    tmp_path: Path,
+) -> None:
+    source, sha = _repository(tmp_path)
+    input_path = tmp_path / "input.json"
+    input_path.write_text("{}\n", encoding="utf-8")
+    body = (
+        "import json,pathlib,sys;"
+        f" pathlib.Path({str(source / 'leaked.txt')!r}).write_text('x');"
+        f" sys.stdout.write(json.dumps({{'result': {_REVIEW_RESULT!r}}}))"
+    )
+    order = _review_order(source, sha, input_path, "review-source-diagnostics")
+
+    with pytest.raises(cw.WorkerFailure, match="authoritative repository") as error:
+        _workers(tmp_path, _ScriptedAdapter(body)).run(
+            order, cw.OwnerProof(owner_id="owner", harness="codex")
+        )
+    assert "leaked.txt" in str(error.value)
+    assert "added untracked paths" in str(error.value)
+
+    failure = _violation_journal(tmp_path, "review-source-diagnostics")["failure"]
+    assert failure["target"] == "authoritative_repository"
+    assert failure["untracked_content"]["added"] == ["leaked.txt"]
+    assert failure["untracked_content"]["removed"] == []
+    assert "leaked.txt" in failure["live_status_dirty_paths"]
+    assert "leaked.txt" in failure["detail"]
+
+
+def test_capped_dirty_paths_elides_past_the_display_limit() -> None:
+    paths = [f"file-{i}.txt" for i in range(cw._DIRTY_PATHS_DISPLAY_LIMIT + 10)]
+
+    capped = cw._capped_dirty_paths(paths)
+
+    assert len(capped) == cw._DIRTY_PATHS_DISPLAY_LIMIT + 1
+    assert capped[:-1] == paths[: cw._DIRTY_PATHS_DISPLAY_LIMIT]
+    assert capped[-1] == "... (+10 more, 60 total)"
+
+
+def test_capped_dirty_paths_is_a_no_op_at_or_under_the_limit() -> None:
+    paths = [f"file-{i}.txt" for i in range(cw._DIRTY_PATHS_DISPLAY_LIMIT)]
+
+    assert cw._capped_dirty_paths(paths) == paths
+
+
+def test_authoritative_violation_diagnostics_cap_a_shim_sized_dirty_tree(
+    tmp_path: Path,
+) -> None:
+    """A shim (mise/uv) can materialize tens of thousands of untracked paths in one violation.
+
+    Without a cap, `_capped_dirty_paths` would write every one of them into both the raised
+    WorkerFailure message and the digest-verified journal.json failure record, which is
+    re-read and re-digested on every later transition.
+    """
+    source, sha = _repository(tmp_path)
+    input_path = tmp_path / "input.json"
+    input_path.write_text("{}\n", encoding="utf-8")
+    extra = cw._DIRTY_PATHS_DISPLAY_LIMIT + 25
+    body = (
+        "import json,pathlib,sys;"
+        f" [pathlib.Path({str(source)!r}, f'leaked-{{i}}.txt').write_text('x')"
+        f" for i in range({extra})];"
+        f" sys.stdout.write(json.dumps({{'result': {_REVIEW_RESULT!r}}}))"
+    )
+    order = _review_order(source, sha, input_path, "review-shim-dirty-tree")
+
+    with pytest.raises(cw.WorkerFailure, match="authoritative repository") as error:
+        _workers(tmp_path, _ScriptedAdapter(body)).run(
+            order, cw.OwnerProof(owner_id="owner", harness="codex")
+        )
+
+    message = str(error.value)
+    assert f"more, {extra} total)" in message
+
+    failure = _violation_journal(tmp_path, "review-shim-dirty-tree")["failure"]
+    dirty_paths = failure["live_status_dirty_paths"]
+    assert len(dirty_paths) == cw._DIRTY_PATHS_DISPLAY_LIMIT + 1
+    assert dirty_paths[-1] == f"... (+{extra - cw._DIRTY_PATHS_DISPLAY_LIMIT} more, {extra} total)"
+
+
+def test_capsule_violation_diagnostics_name_the_injected_untracked_path(tmp_path: Path) -> None:
+    source, sha = _repository(tmp_path)
+    input_path = tmp_path / "input.json"
+    input_path.write_text("{}\n", encoding="utf-8")
+    body = (
+        "import json,pathlib,sys; pathlib.Path('escaped.txt').write_text('x');"
+        f" sys.stdout.write(json.dumps({{'result': {_REVIEW_RESULT!r}}}))"
+    )
+    order = _review_order(source, sha, input_path, "review-capsule-diagnostics")
+
+    with pytest.raises(cw.WorkerFailure, match="changed its capsule") as error:
+        _workers(tmp_path, _ScriptedAdapter(body)).run(
+            order, cw.OwnerProof(owner_id="owner", harness="codex")
+        )
+    assert "escaped.txt" in str(error.value)
+
+    failure = _violation_journal(tmp_path, "review-capsule-diagnostics")["failure"]
+    assert failure["target"] == "capsule"
+    assert failure["untracked_content"]["added"] == ["escaped.txt"]
+
+
+def test_authoritative_violation_with_clean_status_uses_the_documented_fallback(
+    tmp_path: Path,
+) -> None:
+    """A HEAD move with no working-tree change is invisible to `git status`.
+
+    `git commit --allow-empty` drifts the stored receipt's "head" field without touching the
+    working tree or index, so the live status probe is clean and the diagnostic falls back to
+    the documented "no visible dirt" wording in both the raised message and the journal.
+    """
+    source, sha = _repository(tmp_path)
+    input_path = tmp_path / "input.json"
+    input_path.write_text("{}\n", encoding="utf-8")
+    body = (
+        "import json,subprocess,sys;"
+        f" subprocess.run(['git', 'commit', '--allow-empty', '-qm', 'x'],"
+        f" cwd={str(source)!r}, check=True);"
+        f" sys.stdout.write(json.dumps({{'result': {_REVIEW_RESULT!r}}}))"
+    )
+    order = _review_order(source, sha, input_path, "review-source-clean-status")
+
+    with pytest.raises(cw.WorkerFailure, match="authoritative repository") as error:
+        _workers(tmp_path, _ScriptedAdapter(body)).run(
+            order, cw.OwnerProof(owner_id="owner", harness="codex")
+        )
+    assert "no visible dirt; index-flag/ref drift" in str(error.value)
+
+    failure = _violation_journal(tmp_path, "review-source-clean-status")["failure"]
+    assert failure["detail"] == (
+        "changed receipt fields: head; no visible dirt; index-flag/ref drift"
+    )
+    assert failure["changed_fields"] == ["head"]
+    assert failure["live_status_dirty_paths"] == []
+
+
 def test_a_stale_source_sha_is_refused_before_any_capsule_exists(tmp_path: Path) -> None:
     source, sha = _repository(tmp_path)
     input_path = tmp_path / "input.json"
@@ -968,24 +1705,6 @@ def test_a_tampered_input_bundle_is_refused_before_any_capsule_exists(tmp_path: 
             order, cw.OwnerProof(owner_id="owner", harness="codex")
         )
     assert not (tmp_path / "capsules").exists()
-
-
-def test_a_lost_lease_fence_cannot_run_a_sealed_order(tmp_path: Path) -> None:
-    import hashlib
-
-    source, sha = _repository(tmp_path)
-    input_path = tmp_path / "input.json"
-    input_path.write_text("{}\n", encoding="utf-8")
-    del hashlib
-    base = _review_order(source, sha, input_path, "review-fence")
-    order = dataclasses.replace(base, run_id="run-1", lease_fence="fence-1")
-
-    with pytest.raises(cw.WorkerFailure, match="lease fence") as error:
-        _workers(tmp_path, _ScriptedAdapter(_EMIT)).run(
-            order,
-            cw.OwnerProof(owner_id="owner", harness="codex", run_id="run-1", lease_fence="fence-2"),
-        )
-    assert error.value.code == "lost_owner"
 
 
 @pytest.mark.parametrize("state", ["completed", "blocked", "quarantined"])
@@ -1161,6 +1880,296 @@ def test_cancel_refuses_a_contended_invocation_instead_of_waiting_for_the_run(
 
     assert error.value.code == "execution_busy"
     assert json.loads((invocation / "journal.json").read_text())["state"] == "running"
+
+
+def _running_journal(
+    workers: cw.CognitiveWorkers,
+    logical_id: str,
+    *,
+    launch: dict[str, object] | None,
+    capsule: Path | None = None,
+) -> tuple[Path, cw.InvocationJournal]:
+    """Seed a "running" journal. `capsule` defaults to a path under capsule_root, matching
+    every real invocation (CognitiveWorkers.run always mints capsules there); pass an
+    out-of-root path to exercise the cancel containment guard."""
+    invocation = workers._invocation_dir(logical_id)
+    journal = cw.InvocationJournal(invocation / "journal.json", logical_id)
+    journal.transition("prepared", launch_nonce="nonce")
+    journal.transition(
+        "running",
+        capsule=str(capsule if capsule is not None else workers.capsule_root / logical_id),
+        **({"launch": launch} if launch is not None else {}),
+    )
+    return invocation, journal
+
+
+def _launch_evidence(**overrides: object) -> dict[str, object]:
+    evidence: dict[str, object] = {
+        "attempt": 1,
+        "pid": 4242,
+        "pgid": 4242,
+        "hostname": "recovery-host",
+        "boot_id": "boot-a",
+        "started_at": 1000.0,
+    }
+    evidence.update(overrides)
+    return evidence
+
+
+def test_recover_invocation_quarantines_a_dead_same_boot_pgid_with_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workers = _workers(tmp_path, _ScriptedAdapter(_EMIT))
+    invocation, _journal = _running_journal(workers, "review-dead-pgid", launch=_launch_evidence())
+    capsule = Path(json.loads((invocation / "journal.json").read_text())["capsule"])
+    capsule.mkdir(parents=True)
+    (capsule / "evidence.txt").write_text("x", encoding="utf-8")
+    monkeypatch.setattr(cw.lease, "hostname", lambda: "recovery-host")
+    monkeypatch.setattr(cw.lease, "boot_id", lambda: "boot-a")
+    monkeypatch.setattr(cw, "_process_group_absent", lambda pgid: True)
+
+    receipt = workers.cancel(
+        "review-dead-pgid", cw.OwnerProof(owner_id="owner", harness="codex"), "operator"
+    )
+
+    assert receipt["state"] == "quarantined"
+    assert receipt["idempotent"] is False
+    on_disk = json.loads((invocation / "journal.json").read_text())
+    assert on_disk["state"] == "quarantined"
+    assert on_disk["failure"]["code"] == "termination_unconfirmed"
+    assert on_disk["failure"]["owner"] == {"owner_id": "owner", "harness": "codex"}
+    assert on_disk["disposal"]["quarantined"] is True
+    quarantined = list((tmp_path / "capsules" / "quarantine").glob("*"))
+    assert len(quarantined) == 1
+    assert (quarantined[0] / "evidence.txt").is_file()
+
+
+def test_recover_invocation_quarantines_the_journal_but_never_moves_a_capsule_outside_the_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A recorded capsule path outside the configured capsule_root is never disposed.
+
+    The "capsule" field is executor-written provenance from the original run; an operator
+    who recovers with a different --capsule-root than that run used must not have this path
+    relocated into an unrelated quarantine tree. The journal still quarantines -- only the
+    disposal is skipped.
+    """
+    workers = _workers(tmp_path, _ScriptedAdapter(_EMIT))
+    outside_root = tmp_path / "elsewhere" / "capsule"
+    outside_root.mkdir(parents=True)
+    (outside_root / "evidence.txt").write_text("x", encoding="utf-8")
+    invocation, _journal = _running_journal(
+        workers, "review-outside-root", launch=_launch_evidence(), capsule=outside_root
+    )
+    monkeypatch.setattr(cw.lease, "hostname", lambda: "recovery-host")
+    monkeypatch.setattr(cw.lease, "boot_id", lambda: "boot-a")
+    monkeypatch.setattr(cw, "_process_group_absent", lambda pgid: True)
+
+    receipt = workers.cancel(
+        "review-outside-root", cw.OwnerProof(owner_id="owner", harness="codex"), "operator"
+    )
+
+    assert receipt["state"] == "quarantined"
+    on_disk = json.loads((invocation / "journal.json").read_text())
+    assert on_disk["state"] == "quarantined"
+    assert "disposal" not in on_disk
+    assert outside_root.is_dir()
+    assert (outside_root / "evidence.txt").is_file()
+    assert not (tmp_path / "capsules" / "quarantine").exists()
+
+
+def test_recover_invocation_refuses_a_live_same_boot_pgid(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workers = _workers(tmp_path, _ScriptedAdapter(_EMIT))
+    invocation, _journal = _running_journal(workers, "review-live-pgid", launch=_launch_evidence())
+    monkeypatch.setattr(cw.lease, "hostname", lambda: "recovery-host")
+    monkeypatch.setattr(cw.lease, "boot_id", lambda: "boot-a")
+    monkeypatch.setattr(cw, "_process_group_absent", lambda pgid: False)
+
+    with pytest.raises(cw.WorkerFailure, match="still live") as error:
+        workers.cancel(
+            "review-live-pgid", cw.OwnerProof(owner_id="owner", harness="codex"), "operator"
+        )
+
+    assert error.value.code == "execution_busy"
+    assert json.loads((invocation / "journal.json").read_text())["state"] == "running"
+
+
+def test_recover_invocation_prior_boot_mismatch_quarantines_a_reused_live_pgid(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A same-host boot mismatch proves the recorded process tree is dead.
+
+    The current numeric pgid can be live and owned by an unrelated process (pgid reuse across
+    boots); that must not block recovery, so the absence probe is never even consulted.
+    """
+    workers = _workers(tmp_path, _ScriptedAdapter(_EMIT))
+    invocation, _journal = _running_journal(
+        workers, "review-prior-boot", launch=_launch_evidence(boot_id="old-boot")
+    )
+    probed: list[int] = []
+    monkeypatch.setattr(cw.lease, "hostname", lambda: "recovery-host")
+    monkeypatch.setattr(cw.lease, "boot_id", lambda: "new-boot")
+    monkeypatch.setattr(cw, "_process_group_absent", lambda pgid: (probed.append(pgid), False)[1])
+
+    receipt = workers.cancel(
+        "review-prior-boot", cw.OwnerProof(owner_id="owner", harness="codex"), "operator"
+    )
+
+    assert receipt["state"] == "quarantined"
+    assert probed == []
+    assert json.loads((invocation / "journal.json").read_text())["state"] == "quarantined"
+
+
+def test_recover_invocation_fails_closed_on_a_cross_host_launch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workers = _workers(tmp_path, _ScriptedAdapter(_EMIT))
+    invocation, _journal = _running_journal(
+        workers, "review-cross-host", launch=_launch_evidence(hostname="other-host")
+    )
+    monkeypatch.setattr(cw.lease, "hostname", lambda: "recovery-host")
+    monkeypatch.setattr(cw.lease, "boot_id", lambda: "boot-a")
+
+    with pytest.raises(cw.WorkerFailure, match="different host") as error:
+        workers.cancel(
+            "review-cross-host", cw.OwnerProof(owner_id="owner", harness="codex"), "operator"
+        )
+
+    assert error.value.code == "recovery_required"
+    assert json.loads((invocation / "journal.json").read_text())["state"] == "running"
+
+
+def test_recover_invocation_fails_closed_on_incomplete_launch_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A launch record present but missing a required field still fails closed.
+
+    Unlike a wholly absent "launch" (see the launchless-journal test below), a present-but-
+    incomplete dict has been through the evidence gate and failed its completeness check --
+    that must still refuse recovery outright rather than take the unconditional-quarantine path.
+    """
+    workers = _workers(tmp_path, _ScriptedAdapter(_EMIT))
+    incomplete = _launch_evidence(hostname=None)
+    invocation, _journal = _running_journal(
+        workers, "review-incomplete-evidence", launch=incomplete
+    )
+    monkeypatch.setattr(cw.lease, "hostname", lambda: "recovery-host")
+    monkeypatch.setattr(cw.lease, "boot_id", lambda: "boot-a")
+
+    with pytest.raises(cw.WorkerFailure, match="launch evidence") as error:
+        workers.cancel(
+            "review-incomplete-evidence",
+            cw.OwnerProof(owner_id="owner", harness="codex"),
+            "operator",
+        )
+
+    assert error.value.code == "recovery_required"
+    assert json.loads((invocation / "journal.json").read_text())["state"] == "running"
+
+
+def test_recover_invocation_quarantines_a_launchless_running_journal_unconditionally(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A running/cancelling journal with no launch record at all can never earn the evidence
+    _require_dead_launch demands -- every journal written before launch evidence existed, or a
+    supervisor that died before the launch callback fired, is launchless forever. It takes the
+    old unconditional-quarantine path instead of wedging shut with no escape hatch.
+    """
+    workers = _workers(tmp_path, _ScriptedAdapter(_EMIT))
+    invocation, _journal = _running_journal(workers, "review-no-launch", launch=None)
+    monkeypatch.setattr(cw.lease, "hostname", lambda: "recovery-host")
+    monkeypatch.setattr(cw.lease, "boot_id", lambda: "boot-a")
+
+    receipt = workers.cancel(
+        "review-no-launch", cw.OwnerProof(owner_id="owner", harness="codex"), "operator"
+    )
+
+    assert receipt["state"] == "quarantined"
+    assert receipt["idempotent"] is False
+    on_disk = json.loads((invocation / "journal.json").read_text())
+    assert on_disk["state"] == "quarantined"
+    assert on_disk["failure"]["code"] == "termination_unconfirmed"
+
+
+def test_recover_invocation_prepared_and_cloning_quarantine_without_launch_evidence(
+    tmp_path: Path,
+) -> None:
+    workers = _workers(tmp_path, _ScriptedAdapter(_EMIT))
+    invocation = workers._invocation_dir("review-prepared-only")
+    journal = cw.InvocationJournal(invocation / "journal.json", "review-prepared-only")
+    journal.transition("prepared", launch_nonce="nonce")
+
+    receipt = workers.cancel(
+        "review-prepared-only", cw.OwnerProof(owner_id="owner", harness="codex"), "operator"
+    )
+
+    assert receipt["state"] == "quarantined"
+    assert json.loads((invocation / "journal.json").read_text())["state"] == "quarantined"
+
+
+def test_recover_invocation_cloning_quarantines_and_disposes_the_capsule_without_launch_evidence(
+    tmp_path: Path,
+) -> None:
+    """ "cloning" is the only never-launched state carrying a "capsule" field (`run()` writes it
+    via `journal.transition("cloning", capsule=str(capsule))` before any process spawns), so it
+    is the one state that actually drives `_cancel_locked`'s dispose-without-launch-evidence
+    branch. The "prepared" test above proves the journal-only transition; without this test a
+    regression there (e.g. a capsule dir that doesn't exist yet, so disposal silently no-ops)
+    could ship green.
+    """
+    workers = _workers(tmp_path, _ScriptedAdapter(_EMIT))
+    invocation = workers._invocation_dir("review-cloning-only")
+    journal = cw.InvocationJournal(invocation / "journal.json", "review-cloning-only")
+    journal.transition("prepared", launch_nonce="nonce")
+    capsule = workers.capsule_root / "review-cloning-only"
+    capsule.mkdir(parents=True)
+    (capsule / "evidence.txt").write_text("x", encoding="utf-8")
+    journal.transition("cloning", capsule=str(capsule))
+
+    receipt = workers.cancel(
+        "review-cloning-only", cw.OwnerProof(owner_id="owner", harness="codex"), "operator"
+    )
+
+    assert receipt["state"] == "quarantined"
+    on_disk = json.loads((invocation / "journal.json").read_text())
+    assert on_disk["state"] == "quarantined"
+    assert on_disk["disposal"]["quarantined"] is True
+    quarantined = list((tmp_path / "capsules" / "quarantine").glob("*"))
+    assert len(quarantined) == 1
+    assert (quarantined[0] / "evidence.txt").is_file()
+    assert not capsule.exists()
+
+
+def test_recover_invocation_cli_moves_a_dead_running_journal_to_quarantined(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workers = _workers(tmp_path, _ScriptedAdapter(_EMIT))
+    invocation, _journal = _running_journal(
+        workers, "review-cli-recovery", launch=_launch_evidence()
+    )
+    monkeypatch.setattr(cw.lease, "hostname", lambda: "recovery-host")
+    monkeypatch.setattr(cw.lease, "boot_id", lambda: "boot-a")
+    monkeypatch.setattr(cw, "_process_group_absent", lambda pgid: True)
+    monkeypatch.setenv("FLOW_HARNESS", "codex")
+
+    rc = cw.cli_main(
+        [
+            "recover-invocation",
+            "--logical-invocation-id",
+            "review-cli-recovery",
+            "--artifact-root",
+            str(tmp_path / "artifacts"),
+            "--capsule-root",
+            str(tmp_path / "capsules"),
+            "--reason",
+            "operator recovery",
+        ]
+    )
+
+    assert rc == 0
+    assert json.loads((invocation / "journal.json").read_text())["state"] == "quarantined"
 
 
 # ─── deterministic stage execution ───────────────────────────────────────────
@@ -1375,6 +2384,58 @@ def test_a_cleanly_failed_invocation_does_not_strand_its_capsule(tmp_path: Path)
         )
 
     assert not list((tmp_path / "capsules").glob("*"))
+
+
+def test_run_records_the_roles_soft_and_hard_budgets_in_physical_attempts(
+    tmp_path: Path,
+) -> None:
+    source, sha = _repository(tmp_path)
+    input_path = tmp_path / "input.json"
+    input_path.write_text("{}\n", encoding="utf-8")
+    order = _review_order(source, sha, input_path, "review-budget-receipt")
+    outcome = _workers(tmp_path, _ScriptedAdapter(_EMIT)).run(
+        order, cw.OwnerProof(owner_id="owner", harness="codex")
+    )
+    attempts = outcome.receipts["physical_attempts"]
+    assert attempts[0]["soft_budget_seconds"] == 600
+    assert attempts[0]["hard_budget_seconds"] == 2400
+
+
+def test_worker_exited_persists_failure_tails_beside_the_journal(tmp_path: Path) -> None:
+    source, sha = _repository(tmp_path)
+    input_path = tmp_path / "input.json"
+    input_path.write_text("{}\n", encoding="utf-8")
+    body = "import sys; sys.stdout.write('boom-out'); sys.stderr.write('boom-err'); sys.exit(3)"
+    order = _review_order(source, sha, input_path, "review-worker-exited")
+
+    with pytest.raises(cw.WorkerFailure, match="exited 3") as error:
+        _workers(tmp_path, _ScriptedAdapter(body)).run(
+            order, cw.OwnerProof(owner_id="owner", harness="codex")
+        )
+    assert error.value.code == "worker_exited"
+
+    invocation = (
+        tmp_path / "artifacts" / "invocations" / hashlib.sha256(b"review-worker-exited").hexdigest()
+    )
+    assert (invocation / "attempt-1-stdout.tail").read_bytes() == b"boom-out"
+    assert (invocation / "attempt-1-stderr.tail").read_bytes() == b"boom-err"
+
+
+def test_a_successful_invocation_never_creates_failure_tail_artifacts(tmp_path: Path) -> None:
+    source, sha = _repository(tmp_path)
+    input_path = tmp_path / "input.json"
+    input_path.write_text("{}\n", encoding="utf-8")
+    order = _review_order(source, sha, input_path, "review-success-no-tails")
+    _workers(tmp_path, _ScriptedAdapter(_EMIT)).run(
+        order, cw.OwnerProof(owner_id="owner", harness="codex")
+    )
+    invocation = (
+        tmp_path
+        / "artifacts"
+        / "invocations"
+        / hashlib.sha256(b"review-success-no-tails").hexdigest()
+    )
+    assert list(invocation.glob("*.tail")) == []
 
 
 def test_a_read_only_violation_quarantines_the_capsule_instead_of_stranding_it(

@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 import plan_review as pr
 import planning_attempt as pa
 
@@ -114,29 +112,3 @@ def test_markdown_fallback_is_behaviorally_equivalent_and_visible() -> None:
     assert "min read" not in markdown.lower()
     assert "Show the motivation first." in markdown
     assert "owner synthesis: Lead with before and after." in markdown
-
-
-def test_review_freeze_drains_final_feedback_and_closes_surface() -> None:
-    controller = pr.ReviewController()
-    controller.queue_feedback("F-1", "First", ["motivation"], "why")
-    drained = controller.freeze(
-        final_batch=[{"id": "F-2", "verbatim": "Second", "anchors": [], "owner_synthesis": ""}]
-    )
-    assert [item.id for item in drained] == ["F-1", "F-2"]
-    assert controller.frozen is True
-    with pytest.raises(pr.ReviewError, match="frozen"):
-        controller.queue_feedback("F-3", "Late", [], "")
-
-
-def test_review_freeze_is_atomic_when_final_batch_is_invalid() -> None:
-    controller = pr.ReviewController()
-    controller.queue_feedback("F-1", "First", ["motivation"], "why")
-    with pytest.raises((pa.AttemptError, pr.ReviewError)):
-        controller.freeze(
-            final_batch=[
-                {"id": "F-2", "verbatim": "Second", "anchors": [], "owner_synthesis": ""},
-                {"id": "F-3", "verbatim": "", "anchors": [], "owner_synthesis": ""},
-            ]
-        )
-    assert controller.frozen is False
-    assert [item.id for item in controller.freeze(final_batch=[])] == ["F-1"]

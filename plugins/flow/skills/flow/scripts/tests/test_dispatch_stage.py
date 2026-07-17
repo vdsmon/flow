@@ -1884,6 +1884,79 @@ def test_stage_ttl_seconds_proportional_to_timeout() -> None:
         assert ttl > meta.default_timeout_min * 60
 
 
+def _pending(*profiles: str) -> dict[str, dict[str, Any]]:
+    return {
+        f"substep-{i}": {"profile": profile, "activation": "pending"}
+        for i, profile in enumerate(profiles)
+    }
+
+
+def test_stage_ttl_seconds_cumulative_budget_across_real_stage_compositions() -> None:
+    """Cumulative floor for every real agent_routes._STAGE_EXECUTION composition.
+
+    Each expectation is ceil(sum((1 + retry_limit) * hard_budget_seconds) * 1.5) over the
+    stage's sealed substeps (readers retry once at 2400s, writers/e2e never retry).
+    """
+    from _registry import registry_by_name
+
+    reg = registry_by_name(ds._skill_root_from_script() / ds._STAGE_REGISTRY_RELATIVE)
+    cases = {
+        # planner + plan_assessor, each 2*2400 -> ceil(9600*1.5)=14400.
+        "plan": (_pending("planner", "plan_assessor"), 14400),
+        # implementer alone, 1*5400 -> ceil(5400*1.5)=8100.
+        "implement": (_pending("implementer"), 8100),
+        # code_reviewer + diff_reviewer (2*2400 each) + conditional review_fixer (1*5400)
+        # -> ceil(15000*1.5)=22500.
+        "code_review": (_pending("code_reviewer", "diff_reviewer", "review_fixer"), 22500),
+        # e2e alone, 1*3600 -> ceil(3600*1.5)=5400.
+        "e2e": (_pending("e2e"), 5400),
+        # review_fixer + revision_fixer, each 1*5400 -> ceil(10800*1.5)=16200.
+        "review_loop": (_pending("review_fixer", "revision_fixer"), 16200),
+        # review_brief_author alone, 2*2400 -> ceil(4800*1.5)=7200.
+        "review_brief": (_pending("review_brief_author"), 7200),
+        # reflector + machinery_fixer, each 2*2400 -> ceil(9600*1.5)=14400.
+        "reflect": (_pending("reflector", "machinery_fixer"), 14400),
+        # guard_reviewer alone, 2*2400 -> ceil(4800*1.5)=7200.
+        "merge": (_pending("guard_reviewer"), 7200),
+    }
+    for stage_name, (cognitive, expected_ttl) in cases.items():
+        meta = reg[stage_name]
+        assert ds._stage_ttl_seconds(meta, cognitive) == expected_ttl, stage_name
+        for substep in cognitive.values():
+            hard_budget = cw.ROLE_CATALOG[substep["profile"]].hard_budget_seconds
+            assert hard_budget < expected_ttl, (stage_name, substep["profile"])
+
+
+def test_stage_ttl_seconds_includes_conditional_pending_substeps() -> None:
+    # A conditional substep is still launchable, so it must size the worst case: the primary
+    # reader retries once (2*2400) plus the conditional writer's one permitted attempt (5400).
+    cognitive = {
+        "primary_review": {"profile": "code_reviewer", "activation": "pending"},
+        "review_fix": {
+            "profile": "review_fixer",
+            "activation": "pending",
+            "conditional": True,
+        },
+    }
+    assert ds._stage_ttl_seconds(None, cognitive) == 15300
+
+
+def test_stage_ttl_seconds_ignores_non_pending_activation() -> None:
+    cognitive = {"main": {"profile": "implementer", "activation": "shadow"}}
+    assert ds._stage_ttl_seconds(None, cognitive) == 1200
+
+
+def test_stage_ttl_seconds_empty_cognitive_keeps_the_timeout_floor() -> None:
+    assert ds._stage_ttl_seconds(None, {}) == 1200
+    assert ds._stage_ttl_seconds(None, None) == 1200
+
+
+def test_stage_ttl_seconds_unknown_profile_fails_closed() -> None:
+    cognitive = {"main": {"profile": "not_a_real_profile", "activation": "pending"}}
+    with pytest.raises(cw.WorkerFailure, match="unknown profile"):
+        ds._stage_ttl_seconds(None, cognitive)
+
+
 def test_next_refreshes_lease_with_multiplied_ttl(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1960,6 +2033,27 @@ def test_next_seals_each_cognitive_substep_to_its_stage_generation(
     assert sealed["planning"]["logical_invocation_id"].endswith(":plan:planning:1")
     assert sealed == _sealed(td)
     assert json.loads(Path(payload["descriptor_path"]).read_text(encoding="utf-8")) == payload
+
+
+def test_next_refreshes_lease_with_the_sealed_cumulative_floor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # plan's registry timeout_min is 10 -> the old floor is 1200s. Its sealed substeps
+    # (planner + plan_assessor, each retrying once at 2400s) give a cumulative floor of
+    # ceil((2*2400 + 2*2400) * 1.5) = 14400s: proves the sealed descriptor drove the
+    # refreshed lease, not merely timeout_min * 2.
+    td = _cognitive_workspace(tmp_path, monkeypatch)
+    rc, payload = ds.cmd_next(tmp_path, "FT-1")
+    assert rc == 0
+    assert payload["stage"] == "plan"
+
+    lse = lease.read_lease(td)
+    assert lse is not None
+    expires = lease.parse_iso(lse.lease_expires_at)
+    assert expires is not None
+    remaining = (expires - datetime.now(UTC)).total_seconds()
+    assert remaining > 1200
+    assert remaining > 14000
 
 
 def test_stage_cannot_complete_without_a_matching_cognitive_outcome(
@@ -2306,6 +2400,222 @@ def test_code_review_full_lane_refuses_a_plan_blind_review_skip(
     assert ts.stages["code_review"].status == "completed"
 
 
+def test_per_substep_retry_advances_only_the_retried_substep_generation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """recover retry --substep re-seals one substep while a completed sibling's seal survives.
+
+    plan_blind_review completes with a real outcome at generation 1. primary_review is retried
+    in place: its own "generation" and logical_invocation_id advance, its "stage_generation"
+    and every other sealed field stay put, and plan_blind_review's sealed record is untouched.
+    """
+    td, _descriptor = _code_review_workspace(tmp_path, monkeypatch)
+    sealed = _sealed(td, "code_review")
+    _publish_outcome(sealed["plan_blind_review"])
+
+    before = sealed["primary_review"]
+    assert before["generation"] == 1
+    assert before["stage_generation"] == 1
+
+    ts = state.retry_cognitive_substep(td, "code_review", "primary_review")
+    assert ts.stages["code_review"].status == "in_progress"
+
+    after = _sealed(td, "code_review")
+    assert after["primary_review"]["generation"] == 2
+    assert after["primary_review"]["stage_generation"] == 1
+    expected_lid = f"{before['run_id']}:code_review:primary_review:2"
+    assert after["primary_review"]["logical_invocation_id"] == expected_lid
+    assert after["primary_review"]["logical_invocation_id"] != before["logical_invocation_id"]
+    # Every other sealed field on the retried substep is untouched.
+    unchanged = {
+        key: value
+        for key, value in before.items()
+        if key not in {"generation", "logical_invocation_id"}
+    }
+    assert after["primary_review"] == {
+        **unchanged,
+        "generation": 2,
+        "logical_invocation_id": expected_lid,
+    }
+    # The completed sibling's sealed record and outcome are untouched.
+    assert after["plan_blind_review"] == sealed["plan_blind_review"]
+
+    # The retried substep's fresh outcome, published at its new generation, still completes
+    # the stage: the fence accepts it against the new sealed generation, and the sibling's
+    # generation-1 outcome still satisfies its own unchanged seal.
+    _publish_outcome(after["primary_review"])
+    review_fix_skip = {
+        "review_fix": {
+            "substep": "review_fix",
+            "stage_generation": sealed["review_fix"]["stage_generation"],
+            "reason": "no auto-fixable findings this run",
+        }
+    }
+    rc, done = ds.cmd_finish(
+        tmp_path,
+        "FT-1",
+        "code_review",
+        "completed",
+        skill_output={"cognitive_skips": review_fix_skip},
+    )
+    assert rc == 0, done
+
+
+def test_stage_wide_retry_after_a_substep_retry_never_reissues_a_consumed_generation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A stage-wide retry must remint past any generation a per-substep retry already sealed.
+
+    primary_review is retried in place to generation 2 while the stage record's own
+    generation stays 1. A later stage-wide retry (force_stage_status -> pending, then
+    cmd_next) must not recompute record.generation + 1 = 2 -- that id was already consumed
+    by the substep retry. It must land on generation 3 for every substep instead.
+    """
+    td, _descriptor = _code_review_workspace(tmp_path, monkeypatch)
+    sealed = _sealed(td, "code_review")
+    assert sealed["primary_review"]["generation"] == 1
+
+    state.retry_cognitive_substep(td, "code_review", "primary_review")
+    retried = _sealed(td, "code_review")
+    assert retried["primary_review"]["generation"] == 2
+
+    state.force_stage_status(td, "code_review", "pending")
+    rc, payload = ds.cmd_next(tmp_path, "FT-1")
+    assert rc == 0, payload
+    assert payload["generation"] == 3
+
+    resealed = payload["cognitive_substeps"]
+    for name in ("primary_review", "plan_blind_review", "review_fix"):
+        assert resealed[name]["generation"] == 3
+        assert resealed[name]["stage_generation"] == 3
+        assert resealed[name]["logical_invocation_id"].endswith(f":{name}:3")
+
+
+def test_legacy_seal_without_a_generation_key_falls_back_to_stage_generation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A seal predating per-substep retry has no "generation" key; the fence still accepts it."""
+    td, _descriptor = _code_review_workspace(tmp_path, monkeypatch)
+    sealed = _sealed(td, "code_review")
+    legacy = {
+        name: {key: value for key, value in facts.items() if key != "generation"}
+        for name, facts in sealed.items()
+    }
+    ts, _ = state.read(td)
+    assert ts is not None
+    record = ts.stages["code_review"]
+    new_record = state.replace(record, cognitive_substeps=legacy)
+    state._write(td, state.replace(ts, stages={**ts.stages, "code_review": new_record}))
+
+    legacy_sealed = _sealed(td, "code_review")
+    assert "generation" not in legacy_sealed["primary_review"]
+    _publish_outcome(legacy_sealed["primary_review"])
+    _publish_outcome(legacy_sealed["plan_blind_review"])
+    review_fix_skip = {
+        "review_fix": {
+            "substep": "review_fix",
+            "stage_generation": legacy_sealed["review_fix"]["stage_generation"],
+            "reason": "no auto-fixable findings this run",
+        }
+    }
+    rc, done = ds.cmd_finish(
+        tmp_path,
+        "FT-1",
+        "code_review",
+        "completed",
+        skill_output={"cognitive_skips": review_fix_skip},
+    )
+    assert rc == 0, done
+
+
+def _review_brief_workspace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[Path, dict[str, Any]]:
+    """Drive real dispatch to a sealed review_brief with its conditional 'main' substep.
+
+    Returns (ticket_dir, descriptor).
+    """
+    _write_workspace(
+        tmp_path,
+        handlers={"ticket": "inline", "review_brief": "inline"},
+        stages=["ticket", "review_brief"],
+        compounding=False,
+    )
+    _stub_git_head(monkeypatch, "a" * 40)
+    ds.cmd_init(tmp_path, "FT-1")
+    td = tmp_path / ".flow" / "runs" / "FT-1"
+    agent_routes.snapshot(tmp_path, "codex", output_path=td / "route-snapshot.json")
+    ds.cmd_next(tmp_path, "FT-1")
+    ds.cmd_finish(tmp_path, "FT-1", "ticket", "completed")
+    rc, descriptor = ds.cmd_next(tmp_path, "FT-1")
+    assert rc == 0, descriptor
+    assert descriptor["stage"] == "review_brief", descriptor
+    return td, descriptor
+
+
+def test_review_brief_main_seals_conditional_and_accepts_a_reasoned_skip(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """review_brief's 'main' substep is conditional, so an unattended run can skip authorship.
+
+    The route contract gives review_brief a substeps map (agent_routes.py) instead of a bare
+    profile, so the unchanged completion fence treats 'main' as a conditional, non-lane-gated
+    substep: it wedges with no outcome or skip, then accepts a reasoned skip through the same
+    fence review_fix/machinery_fix already use. review_brief.freshness() is what later decides
+    whether that receipt is actually authorized for this run (test_review_brief.py); the
+    dispatcher's job here is only to accept and persist the reasoned skip generically.
+    """
+    td, _descriptor = _review_brief_workspace(tmp_path, monkeypatch)
+
+    sealed = _sealed(td, "review_brief")
+    assert set(sealed) == {"main"}
+    assert sealed["main"]["activation"] == "pending"
+    assert sealed["main"]["conditional"] is True
+    assert "lane" not in sealed["main"]
+
+    # No worker outcome and no skip: the fence wedges.
+    rc, wedged = ds.cmd_finish(tmp_path, "FT-1", "review_brief", "completed")
+    assert rc == 1
+    assert wedged["error"] == (
+        "activated cognitive substep 'main' has no successful outcome or valid skip"
+    )
+
+    # A reasoned skip (the canonical unattended reason) is accepted and persisted for
+    # review_brief.freshness() to cross-check downstream.
+    skip_output = {
+        "cognitive_skips": {
+            "main": {
+                "substep": "main",
+                "stage_generation": sealed["main"]["stage_generation"],
+                "reason": "unattended run has no live human reviewer",
+            }
+        }
+    }
+    rc, done = ds.cmd_finish(
+        tmp_path, "FT-1", "review_brief", "completed", skill_output=skip_output
+    )
+    assert rc == 0, done
+    ts, _ = state.read(td)
+    assert ts is not None
+    assert ts.stages["review_brief"].status == "completed"
+    assert ts.stages["review_brief"].skill_output == skip_output
+
+
+def test_review_brief_main_completes_via_a_real_worker_outcome(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An attended run authors the brief: 'main' completes via a real outcome, not a skip."""
+    td, _descriptor = _review_brief_workspace(tmp_path, monkeypatch)
+    sealed = _sealed(td, "review_brief")
+    _publish_outcome(sealed["main"])
+
+    rc, done = ds.cmd_finish(tmp_path, "FT-1", "review_brief", "completed")
+    assert rc == 0, done
+    ts, _ = state.read(td)
+    assert ts is not None
+    assert ts.stages["review_brief"].status == "completed"
+
+
 def _reflect_workspace(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> tuple[Path, dict[str, Any]]:
@@ -2400,10 +2710,12 @@ def _publish_outcome(facts: dict[str, Any], *, generation: int | None = None) ->
 
 
 def _outcome(facts: dict[str, Any], *, generation: int | None = None) -> dict[str, Any]:
-    generation = facts["stage_generation"] if generation is None else generation
+    substep_generation = (
+        facts.get("generation", facts["stage_generation"]) if generation is None else generation
+    )
     body = {
         "logical_invocation_id": facts["logical_invocation_id"],
-        "generation": generation,
+        "generation": substep_generation,
         "profile": facts["profile"],
         "status": "succeeded",
         "result": {"ok": True},
@@ -2425,7 +2737,7 @@ def _outcome(facts: dict[str, Any], *, generation: int | None = None) -> dict[st
         "run_id": facts["run_id"],
         "stage": facts["stage"],
         "substep": facts["substep"],
-        "stage_generation": generation,
+        "stage_generation": facts["stage_generation"],
         "route_snapshot_digest": facts["route_snapshot_digest"],
         "source_sha": facts["source_sha"],
         "lease_fence": facts["lease_fence"],

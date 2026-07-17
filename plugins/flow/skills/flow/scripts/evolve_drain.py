@@ -2,10 +2,12 @@
 
 The drain loop reaps finished orphans, then asks this module: given the current `evolve_select`
 result plus the liveness of every in-flight run, should the loop LAUNCH the next batch, WAIT for a
-live run to settle, or is it DONE (nothing startable)? The owner-session loop itself (reap, launch
-native collaboration workers, owner wait) is prose in `references/command-maintain.md` (§drain);
-this is the pure decision it
-consumes.
+live run to settle, or is it DONE (nothing startable)? The exact facade consumer is the
+`evolve-drain` command in `FLOW maintain evolution drain` (`references/command-maintain.md`
+§drain): the owner loop (reap, launch native collaboration workers, owner wait) is prose there;
+the CLI here is its pure evolution-scoped decision, plus `decide()`/`liveness_map()`/
+`stranded_pre_pr()` as a shared library `queue_drain.py`/`queue_status.py` reuse for the day-job
+(non-evolve) backlog with their own scoped in-flight set.
 
 The in-flight set is derived from the actual OPEN evolve PRs (plus any ready bead that is
 in-flight), NOT from `evolve_select`'s `skipped_in_flight` alone: a run that occupies the open-PR

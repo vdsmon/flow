@@ -1275,17 +1275,21 @@ def _stamp_run_frontmatter(
     commit_type: str | None,
     commit_summary: str | None,
     e2e_recipe: str | None,
+    unattended: bool,
     lane: str | None = None,
 ) -> None:
     """Seed the run frontmatter the unattended tail reads so it never pauses to ask.
 
     planned_files -> records_diff_baseline pre-hook; covers -> the delivery fan-out
     (transition / PR comment / reflect); commit_type/commit_summary -> the commit
-    stage; e2e_recipe -> the e2e lint gate + recipe executor; lane -> the verification
-    depth the spec/implement/reflect stages read (tier_policy). List fields go in as
-    TOML-array literals so ticket_frontmatter coerces them back to lists.
+    stage; e2e_recipe -> the e2e lint gate + recipe executor; unattended -> the sole
+    signal review_brief.freshness() cross-checks against a canonical skip receipt
+    (stamped unconditionally, unlike the other optional fields below, so a canonical
+    skip can never fail open on an absent key); lane -> the verification depth the
+    spec/implement/reflect stages read (tier_policy). List fields go in as TOML-array
+    literals so ticket_frontmatter coerces them back to lists.
     """
-    fm_updates: dict[str, str] = {}
+    fm_updates: dict[str, str] = {"unattended": "true" if unattended else "false"}
     if planned_files:
         fm_updates["planned_files"] = "[" + ", ".join(f'"{f}"' for f in planned_files) + "]"
     if covers:
@@ -1298,8 +1302,7 @@ def _stamp_run_frontmatter(
         fm_updates["e2e_recipe"] = e2e_recipe
     if lane:
         fm_updates["lane"] = lane
-    if fm_updates:
-        ticket_frontmatter.update(worktree / ".flow" / "tickets" / f"{ticket}.md", fm_updates)
+    ticket_frontmatter.update(worktree / ".flow" / "tickets" / f"{ticket}.md", fm_updates)
 
 
 def _refuse_offcontract_branch(*, ticket: str, branch: str) -> None:
@@ -1372,6 +1375,11 @@ def bootstrap(  # noqa: C901
         planned_files=planned_files,
         main_root=main_root,
     )
+
+    # Matches _enforce_autonomy_floors' own signal exactly, computed off the caller's raw
+    # base before _resolve_base or an approval receipt replaces it below: either mutation would
+    # lose the `@default` drain-launch signal review_brief.freshness() later authorizes against.
+    unattended = auto or base.strip() == "@default"
 
     plan_text = plan_from.read_text(encoding="utf-8")
     approval: planning_attempt.ApprovalReceipt | None = None
@@ -1598,6 +1606,22 @@ def bootstrap(  # noqa: C901
             if journal is not None:
                 journal.advance("run_seeded", run_id=run_id)
 
+            # An unattended run derives its lane from the bead's tier labels (per the CLI help +
+            # delivery-plan.md).
+            effective_lane = _effective_lane(
+                explicit=None if auto else lane,
+                ticket=ticket,
+                planned_files=planned_files,
+                main_root=main_root,
+            )
+            if approval is not None and approval.plan_lane is not None:
+                derived_for_compare = effective_lane or "full"
+                if approval.plan_lane != derived_for_compare:
+                    warnings.append(
+                        f"plan declared lane {approval.plan_lane!r} but the bootstrap-derived "
+                        f"lane is {derived_for_compare!r}; the derived lane governs gating"
+                    )
+
             _stamp_run_frontmatter(
                 worktree,
                 ticket,
@@ -1606,14 +1630,8 @@ def bootstrap(  # noqa: C901
                 commit_type=commit_type,
                 commit_summary=commit_summary,
                 e2e_recipe=e2e_recipe,
-                # An unattended run derives its lane
-                # from the bead's tier labels (per the CLI help + delivery-plan.md).
-                lane=_effective_lane(
-                    explicit=None if auto else lane,
-                    ticket=ticket,
-                    planned_files=planned_files,
-                    main_root=main_root,
-                ),
+                unattended=unattended,
+                lane=effective_lane,
             )
 
             # Last step: the run is fully seeded, so carrying spilled edits in (and

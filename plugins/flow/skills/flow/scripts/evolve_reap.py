@@ -12,12 +12,17 @@ rather than trusting GitHub. CI runs on `push` + every `pull_request`, so a PR's
 while it is still a draft. This classify can confirm green here, and the verb marks the PR ready
 right before merging.
 
-This module is pure classification (no side effects). The
-`FLOW maintain evolution drain` reap step performs the merge: `gh pr ready` (if draft) then
-`gh pr merge --squash` over the `merge` set. The remote branch is deleted separately via
-`git push origin --delete`. `--delete-branch` is dropped because
-the still-registered worktree holds the local branch checked out, which makes gh's branch-delete
-step fail and an otherwise-clean merge exit 1.
+`classify` is pure (no side effects). `reap()` is the CLI-side read: it gathers PR/lease/main-CI
+evidence via `gh`/`bd` and, unless `dry_run`, files the deduplicated main-red P0 (see
+`_file_main_red_p0`). Under `dry_run` the whole filing call (dedup scan included) is skipped,
+mirroring `senses_deadman.deadman`, and the result's `main_red_p0` record carries the would-file
+descriptor (action + failing sha + failing checks) instead. The restored `FLOW maintain evolution
+drain` owner loop (`references/command-maintain.md`) consumes the `merge` bucket and performs the
+actual side effects: `forge mark-ready` (if draft) then `forge merge --squash` over each entry, then
+closes the bead + covers through the tracker seam and deletes the remote branch through the forge
+seam. `--delete-branch` is dropped from the merge call because the still-registered worktree holds
+the local branch checked out, which makes gh's branch-delete step fail and an otherwise-clean merge
+exit 1.
 
 Eligibility (all required): branch is `feat/<key>-*`; the bead carries `evolve`; the check rollup is
 non-empty and all SUCCESS (green); mergeable (CLEAN, or DRAFT which needs only `gh pr ready`). A hot
@@ -31,12 +36,12 @@ still reads live/corrupt lands in skipped_live (held, not merged). The run self-
 merge stage, so the reap stays an orphan-only safety-net. Before any promotion, reap() probes main's
 OWN CI health for the turn (main_ci_health.py): when main is genuinely red (failed), every would-be-
 merge (the promoted hot AND the non-hot leaves) routes into held_main_red instead, no hot promotes,
-and reap() files ONE deduped P0 naming the failing sha + check(s). Green / pending / a transient
-probe error all resume normally. Anything else lands in not_green / skipped_hot / skipped_live /
-blocked / held_main_red / ignored.
+and reap() files ONE deduped P0 naming the failing sha + check(s) (reported instead of filed under
+--dry-run). Green / pending / a transient probe error all resume normally. Anything else lands in
+not_green / skipped_hot / skipped_live / blocked / held_main_red / ignored.
 
 CLI:
-  evolve_reap.py --workspace-root <dir>
+  evolve_reap.py --workspace-root <dir> [--include-proposals] [--dry-run]
 
 Exit codes:
   0 = ok (prints the classification JSON)
@@ -47,7 +52,6 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
-import contextlib
 import json
 import re
 import sys
@@ -281,7 +285,7 @@ def _labels_index(runner: Runner, *, include_proposals: bool = False) -> dict[st
 _MAIN_RED_STEM = "main-ci-red"
 
 
-def _file_main_red_p0(run: Runner, sha: str | None, failing_checks: list[str]) -> None:
+def _file_main_red_p0(run: Runner, sha: str | None, failing_checks: list[str]) -> dict[str, Any]:
     """Best-effort: file ONE deduped P0 naming the failing main sha + check(s).
 
     At-most-one-open: scan `bd list --status open --limit 0 --json` titles for the
@@ -289,21 +293,33 @@ def _file_main_red_p0(run: Runner, sha: str | None, failing_checks: list[str]) -
     directly (not flow_beads_create.py: its dedup is closed-inclusive, so it would
     never refile after a human closes the P0, and it passes no priority). Every bd
     call is guarded so a tracker hiccup never crashes the reap (the gate already
-    held the merges; the bead is the alert, not the safety property).
+    held the merges; the bead is the alert, not the safety property; the
+    held_main_red report still names the held PRs).
+
+    Returns a descriptor in senses_deadman._file_p0's shape extended with the sha and
+    failing checks: {"action": "filed"|"skipped_open"|"skipped_list_error"|
+    "create_error", "sha": ..., "failing_checks": ...}.
     """
+    report: dict[str, Any] = {"sha": sha or "unknown-sha", "failing_checks": failing_checks}
     try:
         listed = run(["bd", "list", "--status", "open", "--limit", "0", "--json"])
         if listed.returncode == 0:
             for b in _loads(listed.stdout or "[]"):
                 if isinstance(b, dict) and _MAIN_RED_STEM in str(b.get("title", "")):
-                    return  # an open P0 already covers this red main
+                    # an open P0 already covers this red main
+                    return {"action": "skipped_open", **report}
     except Exception:
-        return  # a list failure: skip filing rather than risk a duplicate
+        # a list failure: skip filing rather than risk a duplicate
+        return {"action": "skipped_list_error", **report}
     checks = ", ".join(failing_checks) if failing_checks else "unknown check"
     title = f"{_MAIN_RED_STEM}: {sha or 'unknown-sha'} {checks}"
-    with contextlib.suppress(Exception):
-        # best-effort; the held_main_red report still names the held PRs
-        run(["bd", "create", "-p", "P0", "--title", title])
+    try:
+        created = run(["bd", "create", "-p", "P0", "--title", title])
+    except Exception:
+        return {"action": "create_error", **report}
+    if created.returncode != 0:
+        return {"action": "create_error", **report}
+    return {"action": "filed", **report}
 
 
 def _enrich_pr_details(run: Runner, prs: list[dict[str, Any]], index: dict[str, list[str]]) -> None:
@@ -333,7 +349,11 @@ def _enrich_pr_details(run: Runner, prs: list[dict[str, Any]], index: dict[str, 
 
 
 def reap(
-    workspace_root: Path, *, runner: Runner | None = None, include_proposals: bool = False
+    workspace_root: Path,
+    *,
+    runner: Runner | None = None,
+    include_proposals: bool = False,
+    dry_run: bool = False,
 ) -> dict[str, Any]:
     repo = resolve_maintainer_repo(workspace_root)
     if repo is None:
@@ -377,15 +397,25 @@ def reap(
     # injected-runner lane and skip the GH_TOKEN export (headless gh 401 flake).
     health = main_ci_health.probe(repo, runner=runner)
     main_ci_status = str(health.get("status"))
+    main_red_p0: dict[str, Any] = {"action": "none"}
     if main_ci_status == "failed":
-        _file_main_red_p0(run, health.get("sha"), health.get("failing_checks") or [])
-    return classify(
+        sha = health.get("sha")
+        failing_checks = health.get("failing_checks") or []
+        if dry_run:
+            # gate the whole filing call, dedup scan included, mirroring senses_deadman.deadman;
+            # the would-file record is advisory and needs no bd read.
+            main_red_p0 = {"action": "would_file", "sha": sha, "failing_checks": failing_checks}
+        else:
+            main_red_p0 = _file_main_red_p0(run, sha, failing_checks)
+    result = classify(
         prs,
         index,
         auto_merge_hot=auto_merge_hot,
         liveness=liveness,
         main_ci_status=main_ci_status,
     )
+    result["main_red_p0"] = main_red_p0
+    return result
 
 
 def cli_main(argv: list[str]) -> int:
@@ -397,9 +427,19 @@ def cli_main(argv: list[str]) -> int:
         help="DANGEROUS: also reap orphan `proposal` PRs (pairs with the same flag "
         "on evolve_drain.py). Default off; evolve/audit PRs only.",
     )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="report the would-file main-ci-red P0 in the main_red_p0 record instead "
+        "of filing it; classification is unchanged.",
+    )
     args = parser.parse_args(argv)
     try:
-        result = reap(Path(args.workspace_root), include_proposals=args.include_proposals)
+        result = reap(
+            Path(args.workspace_root),
+            include_proposals=args.include_proposals,
+            dry_run=args.dry_run,
+        )
     except NotMaintainer as exc:
         print(str(exc), file=sys.stderr)
         return 4

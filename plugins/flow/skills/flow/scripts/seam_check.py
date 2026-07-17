@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import ast
 import hashlib
+import os
 import re
 import shlex
 import subprocess
@@ -30,10 +31,10 @@ from pathlib import Path
 
 import agent_routes
 import flowctl
-import init as initmod
 
 SCRIPTS_DIR = Path(__file__).resolve().parent
 SKILL_ROOT = SCRIPTS_DIR.parent
+REPO_ROOT = SKILL_ROOT.parents[3]
 _COGNITIVE_WORKER_DESIGN_DIGEST = "36b2007e88e43cd99b6c1b3a99b7a4102ff6f099a9525f6a58854b01407f3a85"
 
 # A direct script reference inside prose, using a legacy child environment alias or the
@@ -149,6 +150,18 @@ _ROLE_MEMBERSHIP_RE = re.compile(r"roles[`\s]*(?:includes?|contains?|has)\b")
 _ROLE_LITERAL_RE = re.compile(r"[\"']+([a-z][a-z0-9_]+)[\"']+")
 # An inline-code span: text between a pair of backticks on one line.
 _INLINE_SPAN_RE = re.compile(r"`([^`]*)`")
+# A whitespace-delimited token inside an executable recipe span (see _executable_recipe_spans). Only
+# a glued-suffix corruption of the runtime-directory substring (extra text pasted directly after
+# `.flow/runtime` with no separator, e.g. `.flow/runtimeFLOW`) is flagged; legitimate sibling
+# runtime files (`skill-root`, `memory-root`, `layout-version`) and bare directory mentions keep a
+# separator right after the substring and are never flagged.
+_RECIPE_TOKEN_RE = re.compile(r"\S+")
+_RUNTIME_SUBSTRING = ".flow/runtime"
+# Characters that may legitimately follow `_RUNTIME_SUBSTRING` inside a token: a path separator (a
+# sibling runtime file or a subdirectory), a closing quote/paren, or nothing (end of token).
+# Anything else means text was glued directly onto the runtime-dir substring with no separator, the
+# flow-lhhn corruption shape (`.flow/runtimeFLOW`).
+_RUNTIME_SUBSTRING_SEPARATORS = frozenset({"/", '"', "'", ")"})
 # A fenced-code block delimiter (``` or ~~~), ignoring leading whitespace.
 _FENCE_RE = re.compile(r"^\s*(```|~~~)")
 # Reusable docs use logical FLOW. Host-specific invocations belong only at the
@@ -163,6 +176,11 @@ class Surface:
     subcommands: frozenset[str]
     global_flags: frozenset[str]
     sub_flags: dict[str, frozenset[str]]
+    # Long flags rendered before the `{subcommands} ...` positional in the top-level USAGE block
+    # only (never the full help text, which over-captures flags merely mentioned in a docstring).
+    # This is the ownership evidence for the post-subcommand parent-flag position check; do not use
+    # `global_flags` for that purpose.
+    parent_usage_flags: frozenset[str] = frozenset()
 
     def all_sub_flags(self) -> frozenset[str]:
         out: set[str] = set()
@@ -411,6 +429,86 @@ def find_bare_script_invocations(doc_name: str, text: str) -> list[Invocation]:
     return invocations
 
 
+def _executable_recipe_spans(text: str) -> list[tuple[int, str]]:
+    """Lines this checker treats as executable shell recipes.
+
+    A fenced ``bash``/``sh``/``shell``/``zsh`` line is a recipe by construction, the same convention
+    `find_bare_script_invocations` uses. An inline-code span outside any fence counts only when it
+    carries a long option, which keeps a bare citation like ``<run_root>/.flow/runtime/flow`` and a
+    non-shell text-layout fence out of the executable set.
+    """
+    spans: list[tuple[int, str]] = []
+    in_fence = False
+    shell_fence = False
+    for lineno, line in enumerate(text.splitlines(), start=1):
+        if _FENCE_RE.match(line):
+            if not in_fence:
+                marker = _FENCE_RE.match(line)
+                assert marker is not None
+                language = line[marker.end() :].strip().lower()
+                shell_fence = language in {"bash", "sh", "shell", "zsh"}
+                in_fence = True
+            else:
+                in_fence = False
+                shell_fence = False
+            continue
+        if in_fence and shell_fence:
+            spans.append((lineno, line))
+        elif not in_fence:
+            for match in _INLINE_SPAN_RE.finditer(line):
+                span = match.group(1)
+                if _FLAG_RE.search(span) is not None:
+                    spans.append((lineno, span))
+    return spans
+
+
+def _is_glued_runtime_corruption(token: str) -> bool:
+    """Whether `token` glues text directly onto the runtime-dir substring with no separator."""
+    start = token.find(_RUNTIME_SUBSTRING)
+    if start == -1:
+        return False
+    end = start + len(_RUNTIME_SUBSTRING)
+    if end == len(token):
+        return False
+    return token[end] not in _RUNTIME_SUBSTRING_SEPARATORS
+
+
+def malformed_runtime_token_problems(doc_name: str, text: str) -> list[Problem]:
+    """ERROR on a glued-suffix runtime-facade corruption in an executable recipe.
+
+    Scoped to `_executable_recipe_spans` so narrative prose and non-shell layout examples never
+    enter the scan. A candidate token must both glue text directly onto `.flow/runtime` with no
+    separator (`_is_glued_runtime_corruption`, the flow-lhhn shape: `.flow/runtimeFLOW`) and fall
+    outside every `_FACADE_RE` match span on the same line. Coverage is per match span, which
+    extends past the path to include an optional trailing `command` token; a runtime token separated
+    from a valid facade call by a shell operator (`&&`, `||`, `|`, `;`) or by more than one token of
+    whitespace still falls outside that span and is checked independently. Legitimate sibling
+    runtime files (`skill-root`, `memory-root`, `layout-version`) and bare directory mentions keep a
+    separator right after the substring, so `_is_glued_runtime_corruption` never flags them, even
+    when no facade match covers them.
+    """
+    problems: list[Problem] = []
+    for lineno, span in _executable_recipe_spans(text):
+        covered = [match.span() for match in _FACADE_RE.finditer(span)]
+        for token_match in _RECIPE_TOKEN_RE.finditer(span):
+            token = token_match.group(0)
+            if not _is_glued_runtime_corruption(token):
+                continue
+            start, end = token_match.span()
+            if any(cov_start <= start and end <= cov_end for cov_start, cov_end in covered):
+                continue
+            problems.append(
+                Problem(
+                    doc=doc_name,
+                    line=lineno,
+                    level="ERROR",
+                    msg=f"malformed runtime facade token (text glued onto .flow/runtime): {token}",
+                    raw=span.strip(),
+                )
+            )
+    return problems
+
+
 def stale_direct_invocation_problems(invocations: list[Invocation]) -> list[Problem]:
     """Reject direct skill-script calls outside bootstrap and public routing."""
     return [
@@ -471,6 +569,13 @@ def _run_help(script: Path, sub: str | None) -> str | None:
     if sub:
         argv.append(sub)
     argv.append("--help")
+    # argparse colorizes --help on 3.14+ (PYTHON_COLORS/FORCE_COLOR win over a piped
+    # stdout) and ANSI defeats _VALUE_OPTION_RE, so probes force a plain-text child
+    # (flow-nmnb).
+    env = os.environ.copy()
+    for var in ("FORCE_COLOR", "PYTHON_COLORS", "CLICOLOR_FORCE", "CLICOLOR"):
+        env.pop(var, None)
+    env["NO_COLOR"] = "1"
     try:
         cp = subprocess.run(
             argv,
@@ -479,10 +584,31 @@ def _run_help(script: Path, sub: str | None) -> str | None:
             text=True,
             timeout=30,
             check=False,
+            env=env,
         )
     except (OSError, subprocess.TimeoutExpired):
         return None
     return cp.stdout or None
+
+
+def _usage_block(help_text: str) -> str:
+    """The argparse `usage:` line plus its indented wrap-continuation lines, joined.
+
+    Bounded at the first blank line, which always precedes the description/positional-arguments
+    sections. Callers additionally slice at the `{subcommands} ...` marker to keep the subcommand
+    list and anything past it (including a script's docstring prose) out of parent-flag ownership
+    derivation; this function only trims the usage block itself, capturing wrap-continuation lines
+    that a plain first-N-lines join would miss.
+    """
+    lines = help_text.splitlines()
+    if not lines or not lines[0].startswith("usage:"):
+        return ""
+    block = [lines[0]]
+    for line in lines[1:]:
+        if not line.strip() or not line[:1].isspace():
+            break
+        block.append(line)
+    return " ".join(block)
 
 
 @cache
@@ -494,16 +620,23 @@ def surface_of(script_name: str) -> Surface | None:
     if top is None:
         return None
     subs: frozenset[str] = frozenset()
-    usage_oneline = " ".join(top.splitlines()[:3])
-    um = _USAGE_SUBCMD_RE.search(usage_oneline)
+    parent_usage_flags: frozenset[str] = frozenset()
+    usage_block = _usage_block(top)
+    um = _USAGE_SUBCMD_RE.search(usage_block)
     if um:
         subs = frozenset(s.strip() for s in um.group(1).split(",") if s.strip())
+        parent_usage_flags = frozenset(_FLAG_RE.findall(usage_block[: um.start()]))
     global_flags = frozenset(_FLAG_RE.findall(top))
     sub_flags: dict[str, frozenset[str]] = {}
     for s in subs:
         sh = _run_help(script, s)
         sub_flags[s] = frozenset(_FLAG_RE.findall(sh)) if sh else frozenset()
-    return Surface(subcommands=subs, global_flags=global_flags, sub_flags=sub_flags)
+    return Surface(
+        subcommands=subs,
+        global_flags=global_flags,
+        sub_flags=sub_flags,
+        parent_usage_flags=parent_usage_flags,
+    )
 
 
 @cache
@@ -520,12 +653,18 @@ def value_flags_of(script_name: str, subcommand: str | None = None) -> frozenset
     return frozenset(flags)
 
 
-def _facade_shape(inv: Invocation, surface: Surface) -> tuple[str | None, list[str]]:
-    """Return the first positional subcommand and flags that precede it.
+def _facade_shape(inv: Invocation, surface: Surface) -> tuple[str | None, list[str], list[str]]:
+    """Return the first positional subcommand, flags before it, and flags after it.
 
     Global options may legally precede a subcommand. Their values are skipped using the real
     argparse help surface. A subcommand-only option in that slot is returned for a placement error
     instead of being allowed to disguise its value as the command token.
+
+    Scanning continues past the subcommand so a parent-parser flag placed after it can be caught by
+    the position check. A `--` end-of-options sentinel only takes effect in the phase it appears in:
+    in the pre-subcommand phase it consumes the very next token as the candidate and scanning then
+    resumes in the post-subcommand phase; in the post-subcommand phase it ends scanning outright, so
+    a token after it there is a positional, never a misplaced flag.
     """
     tokens = list(inv.argv or ())
     all_value_flags = set(value_flags_of(inv.script))
@@ -533,27 +672,50 @@ def _facade_shape(inv: Invocation, surface: Surface) -> tuple[str | None, list[s
         all_value_flags.update(value_flags_of(inv.script, subcommand))
 
     before: list[str] = []
+    after: list[str] = []
     index = 0
+    candidate: str | None = None
     while index < len(tokens):
         token = tokens[index]
         if token == "--":
             index += 1
-            return (_clean(tokens[index]), before) if index < len(tokens) else (None, before)
+            candidate = _clean(tokens[index]) if index < len(tokens) else None
+            index += 1
+            break
         if token.startswith("-"):
             flag = token.split("=", 1)[0]
             before.append(flag)
             consumes_next = "=" not in token and flag in all_value_flags
             index += 2 if consumes_next else 1
             continue
-        return _clean(token), before
-    return None, before
+        candidate = _clean(token)
+        index += 1
+        break
+
+    resolved_value_flags = set(value_flags_of(inv.script))
+    if candidate is not None:
+        resolved_value_flags.update(value_flags_of(inv.script, candidate))
+
+    while index < len(tokens):
+        token = tokens[index]
+        if token == "--":
+            break
+        if token.startswith("-"):
+            flag = token.split("=", 1)[0]
+            after.append(flag)
+            consumes_next = "=" not in token and flag in resolved_value_flags
+            index += 2 if consumes_next else 1
+            continue
+        index += 1
+
+    return candidate, before, after
 
 
 def _resolve_subcommand(inv: Invocation, surface: Surface) -> str | None:
     if not surface.subcommands:
         return None
     if inv.facade_command is not None:
-        candidate, _ = _facade_shape(inv, surface)
+        candidate, _, _ = _facade_shape(inv, surface)
         return candidate if candidate in surface.subcommands else None
     args = inv.raw.split(inv.script, 1)[-1]
     for tok in (_clean(t) for t in args.split()):
@@ -567,7 +729,7 @@ def _resolve_subcommand(inv: Invocation, surface: Surface) -> str | None:
 
 def _validate_facade_shape(inv: Invocation, surface: Surface) -> tuple[str | None, list[Problem]]:
     """Validate the structural subcommand slot of one facade invocation."""
-    candidate, before_flags = _facade_shape(inv, surface)
+    candidate, before_flags, after_flags = _facade_shape(inv, surface)
     subcommand = candidate if candidate in surface.subcommands else None
     problems: list[Problem] = []
     if candidate is None:
@@ -603,6 +765,27 @@ def _validate_facade_shape(inv: Invocation, surface: Surface) -> tuple[str | Non
         for flag in before_flags
         if flag not in surface.global_flags and flag != "--help"
     )
+    if subcommand is not None:
+        # Real argparse rejects a parent-parser flag placed after the subcommand (`unrecognized
+        # arguments`). Ownership evidence is the usage-derived parent set, never `global_flags`
+        # (which over-captures docstring mentions). Skip when the subcommand's own probe came back
+        # empty: an unknown/degenerate sub-surface would otherwise make every parent option look
+        # parent-only.
+        sub_flags = surface.sub_flags.get(subcommand, frozenset())
+        if sub_flags:
+            parent_only = surface.parent_usage_flags - sub_flags
+            problems.extend(
+                Problem(
+                    inv.doc,
+                    inv.line,
+                    "ERROR",
+                    f"{inv.script}: flag {flag} is a parent-parser option and must precede "
+                    f"{subcommand}, not follow it",
+                    inv.raw,
+                )
+                for flag in after_flags
+                if flag in parent_only
+            )
     return subcommand, problems
 
 
@@ -1050,10 +1233,11 @@ def module_md_importer_drift(
 
     For each line: take the module from the first backticked *.py token, require
     the literal `imported by` anchor (skips reverse-direction `imports x, y`
-    rows), parse the importer list after it (split on , and +; strip
-    parentheticals/backticks/the/.py). A row is enumerable iff every token
-    resolves to a local stem; unresolvable rows (prose like `the adapters`) are
-    skipped. Enumerable rows whose parsed set != true set yield one descriptor.
+    rows), parse the importer list after it (split on `,`, `+`, and the
+    natural-language word `and`; strip parentheticals/backticks/the/.py). A row
+    is enumerable iff every token resolves to a local stem; unresolvable rows
+    (prose like `the adapters`) are skipped. Enumerable rows whose parsed set !=
+    true set yield one descriptor.
     """
     if module_text is None:
         module_text = (scripts_dir / "MODULE.md").read_text(encoding="utf-8")
@@ -1076,7 +1260,7 @@ def module_md_importer_drift(
         cell = line[idx + len(anchor) :]
         cell = cell.split("|", 1)[0]
         tokens: list[str] = []
-        for raw_tok in re.split(r"[,+]", cell):
+        for raw_tok in re.split(r"[,+]|\band\b", cell):
             tok = raw_tok.split("(", 1)[0]
             tok = tok.strip().strip("`").strip()
             tok = tok.removeprefix("the ")
@@ -1104,6 +1288,73 @@ def module_md_importer_drift(
 class SurfaceCellDrift:
     module: str
     missing: frozenset[str]  # real subcommands absent from the surface cell
+    phantom: frozenset[str] = frozenset()  # cited tokens that are not real subcommands
+
+
+# A facade-name annotation ("facade name `agent-route`") documents the CLI's registered public
+# alias, not one of its argparse subcommands. Strip the whole phrase before extracting citations so
+# the alias is never mistaken for a phantom subcommand.
+_FACADE_NAME_ANNOTATION_RE = re.compile(r"(?i)\bfacade name\s+`[^`]*`")
+# A bare command-shaped token: lowercase letters, digits, and hyphens only. Anchored with fullmatch
+# so a flag (`--foo`), a filename or path (`state.json`, `.flow/runtime`), a script-name annotation
+# (`recall.py`), a quoted JSON key (`"role"`), and an uppercase or bracketed placeholder (`<KEY>`,
+# `[args...]`) are never mistaken for a citation.
+_COMMAND_TOKEN_RE = re.compile(r"[a-z][a-z0-9-]*")
+
+
+def _split_table_row(line: str) -> list[str]:
+    """Split a markdown table row on `|`, but never inside a backtick span or a `\\|` escape.
+
+    A surface cell can itself contain a literal pipe (`` `extract (--transcript | --session)` ``,
+    a markdown-escaped `` `--state open\\|merged` ``); splitting on every raw `|` byte fractures
+    those spans and shifts cell boundaries.
+    """
+    cells: list[str] = []
+    current: list[str] = []
+    in_span = False
+    i = 0
+    n = len(line)
+    while i < n:
+        ch = line[i]
+        if ch == "\\" and i + 1 < n:
+            current.append(ch)
+            current.append(line[i + 1])
+            i += 2
+            continue
+        if ch == "`":
+            in_span = not in_span
+            current.append(ch)
+            i += 1
+            continue
+        if ch == "|" and not in_span:
+            cells.append("".join(current))
+            current = []
+            i += 1
+            continue
+        current.append(ch)
+        i += 1
+    cells.append("".join(current))
+    return cells
+
+
+def _cell_citations(cell: str) -> frozenset[str]:
+    """Command-shaped citation tokens inside one MODULE.md surface cell.
+
+    A citation is the first whitespace token of a backtick span (`` `advance --skill-output-from` ``
+    cites `advance`, its subcommand, not the flag that follows). Working from discrete extracted
+    tokens rather than a substring search over the whole cell is what keeps `list` from ever
+    matching inside a cited `list-assigned`.
+    """
+    cell = _FACADE_NAME_ANNOTATION_RE.sub(" ", cell)
+    citations: set[str] = set()
+    for span in _INLINE_SPAN_RE.finditer(cell):
+        content = span.group(1).strip()
+        if not content:
+            continue
+        token = content.split(maxsplit=1)[0]
+        if _COMMAND_TOKEN_RE.fullmatch(token):
+            citations.add(token)
+    return frozenset(citations)
 
 
 def module_md_surface_cell_drift(
@@ -1113,22 +1364,24 @@ def module_md_surface_cell_drift(
 ) -> list[SurfaceCellDrift]:
     """Drift between a MODULE.md surface cell and a script's real argparse subcommands.
 
-    Per table row (a line containing `|`): the module stem is the first backticked
-    *.py token in the first non-empty `|`-cell. `(lib)` rows are skipped (libs are
-    documented by their importer list, not a CLI surface). The surface cell is the
-    LAST non-empty `|`-cell; a real subcommand counts as enumerated only as a
-    standalone token (boundary regex, so `list` does not match inside
-    `list-assigned`). A row enumerating ZERO real subcommands is not claiming to be
-    a surface listing (e.g. metric.py's forwarded `(via recall.py --metric)`) and is
-    skipped. A row enumerating >=1 but not all yields one descriptor.
+    Per table row (a line whose first non-whitespace character is `|`; a stray `|` inside prose,
+    e.g. a regex-alternation example, must not be mistaken for a row): the module stem is the first
+    backticked *.py token in the first non-empty `|`-cell. `(lib)` rows are skipped (libs are
+    documented by their importer list, not a CLI surface). The surface cell is the LAST non-empty
+    `|`-cell; `_cell_citations` extracts every command-shaped citation from it. A row with ZERO
+    citations makes no enumerable surface claim (e.g. metric.py's forwarded `(via recall.py
+    --metric)`) and is skipped -- this is a stronger gate than "zero REAL subcommands cited", so a
+    row whose citations are all stale (all-phantom, zero real) is still caught rather than escaping
+    through the same skip. A row whose citations differ from the real set in either direction yields
+    one descriptor carrying both directions.
     """
     if module_text is None:
         module_text = (scripts_dir / "MODULE.md").read_text(encoding="utf-8")
     drifts: list[SurfaceCellDrift] = []
     for line in module_text.splitlines():
-        if "|" not in line:
+        if not line.strip().startswith("|"):
             continue
-        cells = [c for c in (c.strip() for c in line.split("|")) if c]
+        cells = [c for c in (c.strip() for c in _split_table_row(line)) if c]
         if not cells:
             continue
         first, last = cells[0], cells[-1]
@@ -1145,18 +1398,17 @@ def module_md_surface_cell_drift(
         surface = surface_lookup(module_stem + ".py")
         if surface is None or not surface.subcommands:
             continue
-        present = {
-            sub
-            for sub in surface.subcommands
-            if re.search(rf"(?<![A-Za-z0-9-]){re.escape(sub)}(?![A-Za-z0-9-])", last)
-        }
-        if not present:
+        citations = _cell_citations(last)
+        if not citations:
             continue
-        if present != surface.subcommands:
+        missing = surface.subcommands - citations
+        phantom = citations - surface.subcommands
+        if missing or phantom:
             drifts.append(
                 SurfaceCellDrift(
                     module=module_stem,
-                    missing=frozenset(surface.subcommands - present),
+                    missing=frozenset(missing),
+                    phantom=frozenset(phantom),
                 )
             )
     return drifts
@@ -1337,164 +1589,227 @@ def docs_to_check() -> list[Path]:
     return [d for d in docs if d.is_file()]
 
 
-def _configured_profiles(toml_text: str) -> set[str]:
-    try:
-        data = tomllib.loads(toml_text)
-    except tomllib.TOMLDecodeError:
-        return set()
-    agents = data.get("agents")
-    return {str(profile) for profile in agents} if isinstance(agents, dict) else set()
+# --- activation-truth marker/pin parity --------------------------------------
+
+# The marker identity every live claim-carrying surface pins itself with. A lone `:begin` (no
+# `:end`) is deliberate: this is a single-line presence pin, not a managed content block like the
+# AGENTS stanza or the inventory profile block, so there is nothing to delimit.
+_ACTIVATION_TRUTH_MARKER = "flow:activation-truth:begin"
+_ACTIVATION_TRUTH_MD_RE = re.compile(
+    r"(?m)^<!-- " + re.escape(_ACTIVATION_TRUTH_MARKER) + r" -->\s*$"
+)
+_ACTIVATION_TRUTH_PY_RE = re.compile(r"(?m)^# " + re.escape(_ACTIVATION_TRUTH_MARKER) + r"\s*$")
+
+# Repo-relative paths of every surface an author has declared to carry live activation-truth prose
+# (the exact post-plan route catalog, the generic-owner shadow rule, importing/capsule-writer
+# claims). Bidirectional parity with the discovered marker set (`activation_truth_drift`) is the
+# completeness guarantee: a marked file missing from this set, or a pinned file that lost its marker
+# (by edit, deletion, or rename), both fail the gate.
+ACTIVATION_TRUTH_PINS = frozenset(
+    {
+        "CLAUDE.md",
+        "plugins/flow/skills/flow/SKILL.md",
+        "plugins/flow/skills/flow/references/command-target.md",
+        "plugins/flow/skills/flow/references/command-workspace.md",
+        "plugins/flow/skills/flow/references/delivery-loop.md",
+        "plugins/flow/skills/flow/references/delivery-plan.md",
+        "plugins/flow/skills/flow/references/delivery-revision.md",
+        "plugins/flow/skills/flow/references/harness.md",
+        "plugins/flow/skills/flow/references/robustness.md",
+        "plugins/flow/skills/flow/references/stage-code_review.md",
+        "plugins/flow/skills/flow/references/stage-e2e.md",
+        "plugins/flow/skills/flow/references/stage-implement.md",
+        "plugins/flow/skills/flow/references/stage-merge.md",
+        "plugins/flow/skills/flow/references/stage-plan.md",
+        "plugins/flow/skills/flow/references/stage-reflect.md",
+        "plugins/flow/skills/flow/references/stage-review_brief.md",
+        "plugins/flow/skills/flow/references/stage-review_loop.md",
+        "plugins/flow/skills/flow/scripts/MODULE.md",
+        "plugins/flow/skills/flow/scripts/agent_routes.py",
+        "plugins/flow/skills/flow/scripts/cognitive_workers.py",
+        "plugins/flow/skills/flow/scripts/inventory.md",
+    }
+)
 
 
-def _composed_profiles(stage_execution: dict[str, dict[str, object]]) -> set[str]:
-    profiles: set[str] = set()
-    for record in stage_execution.values():
-        profile = record.get("profile")
-        if isinstance(profile, str):
-            profiles.add(profile)
-        substeps = record.get("substeps")
-        if not isinstance(substeps, dict):
+def activation_truth_candidates(
+    repo_root: Path = REPO_ROOT, skill_root: Path = SKILL_ROOT, scripts_dir: Path = SCRIPTS_DIR
+) -> list[Path]:
+    """The live hand-authored surface universe scanned for activation-truth markers.
+
+    Root CLAUDE.md, SKILL.md, top-level references/*.md, and top-level scripts/*.md and
+    scripts/*.py. Every glob is non-recursive, which keeps scripts/tests/* (fixtures and
+    marker-shaped strings in the test source itself) and any nested doc directory out of the
+    universe with no explicit exclusion list; historical design records under docs/specs are never
+    scanned.
+    """
+    candidates: list[Path] = []
+    claude_md = repo_root / "CLAUDE.md"
+    if claude_md.is_file():
+        candidates.append(claude_md)
+    skill_md = skill_root / "SKILL.md"
+    if skill_md.is_file():
+        candidates.append(skill_md)
+    refs = skill_root / "references"
+    if refs.is_dir():
+        candidates.extend(sorted(refs.glob("*.md")))
+    if scripts_dir.is_dir():
+        candidates.extend(sorted(scripts_dir.glob("*.md")))
+        candidates.extend(sorted(scripts_dir.glob("*.py")))
+    return candidates
+
+
+def discovered_activation_truth_markers(
+    candidates: list[Path] | None = None, repo_root: Path = REPO_ROOT
+) -> frozenset[str]:
+    """Repo-relative paths of every candidate that carries the activation-truth marker."""
+    if candidates is None:
+        candidates = activation_truth_candidates(repo_root=repo_root)
+    found: set[str] = set()
+    for path in candidates:
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
             continue
-        for substep in substeps.values():
-            substep_profile = substep.get("profile") if isinstance(substep, dict) else None
-            if isinstance(substep_profile, str):
-                profiles.add(substep_profile)
-    return profiles
+        if _ACTIVATION_TRUTH_MD_RE.search(text) or _ACTIVATION_TRUTH_PY_RE.search(text):
+            found.add(path.relative_to(repo_root).as_posix())
+    return frozenset(found)
 
 
-def _route_config_drift(
-    label: str,
-    toml_text: str,
-    expected: set[str],
-    *,
-    require_complete: bool = True,
-    require_defaults: bool,
-) -> list[str]:
-    configured = _configured_profiles(toml_text)
-    missing = expected - configured
-    extra = configured - expected
-    if extra or (require_complete and missing):
-        return [f"{label} route catalog mismatch; missing {missing}, extra {extra}"]
-    configured_routes = tomllib.loads(toml_text).get("agents", {})
-    defaults = agent_routes.default_route_config()
-    defaults_drift = require_defaults and any(
-        configured_routes.get(profile) != defaults[profile] for profile in configured
+@dataclass(frozen=True)
+class ActivationTruthDrift:
+    marker_without_pin: frozenset[str]
+    pin_without_marker: frozenset[str]
+
+
+def activation_truth_drift(
+    candidates: list[Path] | None = None,
+    pins: frozenset[str] = ACTIVATION_TRUTH_PINS,
+    repo_root: Path = REPO_ROOT,
+) -> ActivationTruthDrift:
+    """Bidirectional parity between discovered markers and the pin registry.
+
+    A marker with no matching pin, and a pin whose file lost its marker (by edit, deletion, or
+    rename), both surface here; membership is the completeness contract, not a derived heuristic.
+    """
+    markers = discovered_activation_truth_markers(candidates, repo_root)
+    return ActivationTruthDrift(
+        marker_without_pin=frozenset(markers - pins),
+        pin_without_marker=frozenset(pins - markers),
     )
-    if defaults_drift:
-        return [f"{label} route defaults diverge from agent_routes"]
+
+
+# One bounded authoring reminder, not a general claim-completeness scan: these four phrases anchor
+# the live exact post-plan route catalog, the generic-owner shadow rule, the importing-writer claim,
+# and the capsule-writer claim. Proven to have zero hits across every currently-unmarked
+# references/*.md at the base SHA; re-check that invariant before widening this set. The marker/pin
+# parity above is what actually closes the completeness gap; this tripwire is only a nudge toward
+# using it.
+_ACTIVATION_CLAIM_PHRASES = (
+    "exact post-plan",
+    "generic owner",
+    "importing writer",
+    "capsule writer",
+)
+
+
+def _reference_docs(skill_root: Path = SKILL_ROOT) -> list[Path]:
+    refs = skill_root / "references"
+    return sorted(refs.glob("*.md")) if refs.is_dir() else []
+
+
+def activation_truth_tripwire_problems(
+    docs: list[Path] | None = None,
+) -> list[tuple[str, int, str]]:
+    """Flag an unmarked reference doc that uses a live activation-claim phrase.
+
+    Scoped to references/*.md that do not already carry the marker: a marked file's completeness is
+    already covered by `activation_truth_drift`, so re-scanning it here would be redundant. Reports
+    at most one hit per doc.
+    """
+    if docs is None:
+        docs = _reference_docs()
+    problems: list[tuple[str, int, str]] = []
+    for doc in docs:
+        text = doc.read_text(encoding="utf-8")
+        if _ACTIVATION_TRUTH_MD_RE.search(text):
+            continue
+        for lineno, logical in _logical_lines(text):
+            lowered = logical.lower()
+            if any(phrase in lowered for phrase in _ACTIVATION_CLAIM_PHRASES):
+                problems.append((doc.name, lineno, "add the activation-truth marker or reword"))
+                break
+    return problems
+
+
+def _workspace_agents_drift(workspace_toml: str) -> list[str]:
+    try:
+        data = tomllib.loads(workspace_toml)
+    except tomllib.TOMLDecodeError as exc:
+        return [f"self-workspace is not valid TOML: {exc}"]
+    # Schema validation first: it rejects unknown profiles and incomplete or malformed route tables,
+    # so the render below is total (render_route_config would KeyError on a missing field and
+    # silently drop an unknown profile).
+    schema_problems = agent_routes.configuration_errors(data)
+    if schema_problems:
+        return [f"self-workspace {problem}" for problem in schema_problems]
+    agents = data.get("agents")
+    if not isinstance(agents, dict):
+        return ["self-workspace has no [agents] configuration"]
+    expected = set(agent_routes.PROFILES)
+    configured = {str(profile) for profile in agents}
+    if configured != expected:
+        missing = expected - configured
+        extra = configured - expected
+        return [f"self-workspace route catalog mismatch; missing {missing}, extra {extra}"]
+    if agent_routes.render_route_config(agents) != agent_routes.render_default_routes_toml():
+        return ["self-workspace routes do not canonicalize to the rendered defaults"]
     return []
 
 
-def _inventory_route_drift(inventory_text: str, expected: set[str]) -> list[str]:
-    inventory_line = next(
-        (line for line in inventory_text.splitlines() if line.startswith("Agent route profiles:")),
-        "",
-    )
-    inventory_profiles = {
-        value.strip().strip("`")
-        for value in inventory_line.removeprefix("Agent route profiles:").split(",")
-        if value.strip()
-    }
-    drift = [
-        f"inventory route catalog is missing {profile}"
-        for profile in sorted(expected - inventory_profiles)
-    ]
-    drift.extend(
-        f"inventory route catalog names unknown profile {profile}"
-        for profile in sorted(inventory_profiles - expected)
-    )
-    return drift
-
-
-def _public_route_drift(public_registry_text: str) -> list[str]:
-    try:
-        public_data = tomllib.loads(public_registry_text)
-    except tomllib.TOMLDecodeError:
-        return ["public command registry is not valid TOML"]
-    target = next(
-        (command for command in public_data.get("command", []) if command.get("id") == "target"),
-        {},
-    )
-    route_option = next(
-        (option for option in target.get("options", []) if option.get("name") == "--route"),
-        {},
-    )
-    if route_option.get("value_type") != "agent_route":
-        return ["public --route must use the agent_route atomic value type"]
+def _inventory_profiles_drift(inventory_text: str) -> list[str]:
+    begin = agent_routes.INVENTORY_PROFILES_BEGIN
+    end = agent_routes.INVENTORY_PROFILES_END
+    if inventory_text.count(begin) != 1 or inventory_text.count(end) != 1:
+        return ["inventory route-profile markers must appear exactly once each"]
+    start = inventory_text.index(begin)
+    stop = inventory_text.index(end)
+    if stop < start:
+        return ["inventory route-profile end marker precedes its begin marker"]
+    block = inventory_text[start : stop + len(end)] + "\n"
+    if block != agent_routes.render_inventory_profiles_block():
+        return ["inventory route-profile block is stale relative to agent_routes.PROFILES"]
     return []
 
 
 def route_contract_drift(
     *,
-    stage_execution: dict[str, dict[str, object]] | None = None,
-    setup_toml: str | None = None,
     workspace_toml: str | None = None,
-    migration_toml: str | None = None,
     inventory_text: str | None = None,
-    public_registry_text: str | None = None,
 ) -> list[str]:
-    """Compare every duplicated route surface with the central catalog."""
-    expected = set(agent_routes.PROFILES)
-    execution = (
-        stage_execution if stage_execution is not None else agent_routes.stage_execution_contract()
-    )
+    """Check the committed route surfaces against their agent_routes renderers.
 
-    composed = _composed_profiles(execution)
-    drift = [
-        f"profile {profile} is absent from stage composition"
-        for profile in sorted(expected - composed)
-    ]
-    drift.extend(
-        f"stage composition names unknown profile {profile}"
-        for profile in sorted(composed - expected)
-    )
-    drift.extend(
-        f"deterministic stage {stage} must retain model=none"
-        for stage in ("ticket", "commit", "create_pr", "merge")
-        if execution.get(stage, {}).get("model") != "none"
-    )
-
-    setup = setup_toml if setup_toml is not None else initmod._default_agent_routes_toml()
-    drift.extend(_route_config_drift("native setup", setup, expected, require_defaults=True))
-
+    Setup and migration TOML are rendered by agent_routes at runtime, and stage/substep composition
+    is pinned by tests/test_agent_routes.py, so the only surfaces that can go stale are the
+    committed ones: the inventory.md managed block and the deliberately pinned self-workspace
+    [agents] configuration. Check-only, never writes.
+    """
     if workspace_toml is None:
-        workspace_path = SKILL_ROOT.parents[3] / ".flow" / "workspace.toml"
+        workspace_path = REPO_ROOT / ".flow" / "workspace.toml"
         if workspace_path.is_file():
             workspace_toml = workspace_path.read_text(encoding="utf-8")
-    if workspace_toml is not None:
-        drift.extend(
-            _route_config_drift(
-                "self-workspace",
-                workspace_toml,
-                expected,
-                require_complete=True,
-                require_defaults=True,
-            )
-        )
-
-    if migration_toml is None:
-        migration_toml = agent_routes.render_migration_routes_toml(
-            {"work_model": "sonnet", "e2e": "sonnet"}
-        )
-    drift.extend(_route_config_drift("migration", migration_toml, expected, require_defaults=False))
+    drift = [] if workspace_toml is None else _workspace_agents_drift(workspace_toml)
 
     if inventory_text is None:
         inventory_text = (SCRIPTS_DIR / "inventory.md").read_text(encoding="utf-8")
-    drift.extend(_inventory_route_drift(inventory_text, expected))
-
-    if public_registry_text is None:
-        public_registry_text = (SKILL_ROOT / "public-commands.toml").read_text(encoding="utf-8")
-    drift.extend(_public_route_drift(public_registry_text))
+    drift.extend(_inventory_profiles_drift(inventory_text))
     return drift
 
 
 def cognitive_worker_design_drift(path: Path | None = None) -> list[str]:
     """Require the landed capsule design to match its approved source bytes."""
     design = path or (
-        SKILL_ROOT.parents[3]
-        / "docs"
-        / "specs"
-        / "2026-07-14-universal-cognitive-worker-routing-design.md"
+        REPO_ROOT / "docs" / "specs" / "2026-07-14-universal-cognitive-worker-routing-design.md"
     )
     try:
         digest = hashlib.sha256(design.read_bytes()).hexdigest()
@@ -1527,6 +1842,7 @@ def main(argv: list[str]) -> int:
         problems.extend(host_specific_invocation_problems(doc.name, text))
         problems.extend(stale_direct_invocation_problems(direct))
         problems.extend(facade_context_problems(facade))
+        problems.extend(malformed_runtime_token_problems(doc.name, text))
 
     for inv in all_invs:
         problems.extend(validate(inv))
@@ -1607,11 +1923,38 @@ def main(argv: list[str]) -> int:
             level="ERROR",
             msg=(
                 f"MODULE.md surface cell for {drift.module}: "
-                f"missing subcommand(s) {sorted(drift.missing)}"
+                f"missing {sorted(drift.missing)}, phantom {sorted(drift.phantom)}"
             ),
             raw="",
         )
         for drift in module_md_surface_cell_drift()
+    )
+
+    activation_drift = activation_truth_drift()
+    problems.extend(
+        Problem(
+            doc="activation-truth pins",
+            line=0,
+            level="ERROR",
+            msg=f"marker without pin: {name}",
+            raw="",
+        )
+        for name in sorted(activation_drift.marker_without_pin)
+    )
+    problems.extend(
+        Problem(
+            doc="activation-truth pins",
+            line=0,
+            level="ERROR",
+            msg=f"pin without marker: {name}",
+            raw="",
+        )
+        for name in sorted(activation_drift.pin_without_marker)
+    )
+
+    problems.extend(
+        Problem(doc=doc_name, line=lineno, level="ERROR", msg=msg, raw="")
+        for doc_name, lineno, msg in activation_truth_tripwire_problems()
     )
 
     for doc_name, count in sorted(docs_over_stage_doc_citation_limit().items()):
@@ -1673,17 +2016,6 @@ def main(argv: list[str]) -> int:
             raw="",
         )
         for detail in route_contract_drift()
-    )
-
-    problems.extend(
-        Problem(
-            doc="cognitive-worker design",
-            line=0,
-            level="ERROR",
-            msg=detail,
-            raw="",
-        )
-        for detail in cognitive_worker_design_drift()
     )
 
     if args.verbose:

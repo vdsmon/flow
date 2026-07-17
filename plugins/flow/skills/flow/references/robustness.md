@@ -1,3 +1,4 @@
+<!-- flow:activation-truth:begin -->
 # Robustness: the load-bearing safety machinery
 
 ## Cognitive-worker failure containment
@@ -7,7 +8,14 @@ exact-SHA clone. Intent is durable before clone and process launch. Cancellation
 acknowledged only after direct-child reap, process-group absence, and both stream EOFs.
 Ambiguous termination or a Git postcondition mismatch quarantines evidence and forbids
 replacement. Validated read-only completion removes the capsule; cleanup failure is a
-hard artifact failure. Increment two contains no patch apply or import path.
+hard artifact failure. The disposable E2E writer runs a write-capable capsule seeded with
+the ticket's uncommitted working state, captures the recipe's own mutations as report
+evidence, imports nothing, and is discarded. The three importing writers (implementer,
+review_fixer, revision_fixer) run a write-capable capsule whose validated binary-aware
+patch is compare-and-swap imported into the authoritative worktree under a sole-writer
+claim, then disposed. machinery_fixer runs a read-only capsule that derives a report of
+anchored {file, old, new} edits and mutates nothing; reflect applies each edit through the
+machinery_edit guard, never the CAS import path.
 
 The index CLAUDE.md's "Robustness (do not erode)" paragraph points at. Each mechanism below accreted from a real incident; the "witnessed failure" column is the proof it is load-bearing, not incidental complexity — mined from the `fix:` history so a reader no longer needs git archaeology to know which clauses are safe to touch. Simplify presentation, never the machinery.
 

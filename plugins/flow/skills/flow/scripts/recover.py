@@ -15,15 +15,34 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import flow_friction
 import lease
 import state
 from _timeutil import utcnow_iso
 from _workspace import WorkspaceConfigError, load_workspace_toml
 from snapshot import verify_snapshot, write_snapshot
 
+# Stable friction stage name for takeover, which may reset zero, one, or many pipeline stages; the
+# recovery event itself is what reflect needs to see.
+_RECOVERY_STAGE = "recover"
+
 
 def _ticket_dir(workspace_root: Path, ticket: str) -> Path:
     return workspace_root / ".flow" / "runs" / ticket
+
+
+def _log_friction(
+    workspace_root: Path,
+    ticket: str,
+    run_id: str,
+    stage: str,
+    type_: str,
+    body: str,
+    detail: str | None = None,
+) -> None:
+    """Best-effort friction append; a logging failure never affects the caller's result."""
+    with contextlib.suppress(Exception):
+        flow_friction.append(workspace_root, ticket, run_id, stage, type_, body, detail=detail)
 
 
 def _skill_root() -> Path:
@@ -98,6 +117,7 @@ def takeover(
     now_iso = now_iso or utcnow_iso()
     td = _ticket_dir(workspace_root, ticket)
     reset: list[str] = []
+    run_id_holder: list[str] = []
 
     def _reset_and_snapshot() -> None:
         # runs while takeover_clear STILL holds the lease flock, so a concurrent
@@ -105,6 +125,7 @@ def takeover(
         # just-begun stage forced back to pending under it.
         ts, _ = state.read(td)
         if ts is not None:
+            run_id_holder.append(ts.run_id)
             for name, rec in ts.stages.items():
                 if rec.status == "in_progress":
                     state.force_stage_status(td, name, "pending")
@@ -123,24 +144,76 @@ def takeover(
     if not result["cleared"]:
         return 1, {"error": "lease is live; cannot take over", "holder": result["holder"]}
     quarantined = result["quarantined"]
+    lease_state = result["state"]
     payload: dict[str, Any] = {"ticket": ticket, "took_over": True, "reset_stages": reset}
     if quarantined is not None:
         payload["quarantined"] = str(quarantined)
+    if run_id_holder and (lease_state != "free" or reset):
+        # Logged after takeover_clear releases the lease flock, so a slow or contended friction
+        # append never extends the load-bearing lease lock. Skipped on a free-lease no-op clear
+        # (nothing was actually lost) unless it also reset in_progress stages.
+        _log_friction(
+            workspace_root,
+            ticket,
+            run_id_holder[0],
+            _RECOVERY_STAGE,
+            "LEASE_LOSS",
+            f"recover takeover cleared {lease_state} lease for ticket {ticket!r}; "
+            f"reset stages: {sorted(reset)}",
+            detail=str(quarantined) if lease_state == "corrupt" else None,
+        )
     return 0, payload
 
 
 def _force(
-    workspace_root: Path, ticket: str, stage: str, status: state.StageStatus
+    workspace_root: Path,
+    ticket: str,
+    stage: str,
+    status: state.StageStatus,
+    *,
+    log_retry: bool = False,
+) -> tuple[int, dict[str, Any]]:
+    td = _ticket_dir(workspace_root, ticket)
+    ts, _ = state.read(td)
+    if ts is None:
+        return 2, {"error": f"no state.json at {td}"}
+    prior_status = ts.stages[stage].status if stage in ts.stages else None
+    try:
+        state.force_stage_status(td, stage, status)
+    except ValueError as exc:
+        return 1, {"error": str(exc)}
+    if log_retry:
+        _log_friction(
+            workspace_root,
+            ticket,
+            ts.run_id,
+            stage,
+            "RETRY",
+            f"recover retry reset stage {stage!r} from {prior_status!r} to pending",
+        )
+    return 0, {"ticket": ticket, "stage": stage, "status": status}
+
+
+def _retry_substep(
+    workspace_root: Path, ticket: str, stage: str, substep: str
 ) -> tuple[int, dict[str, Any]]:
     td = _ticket_dir(workspace_root, ticket)
     ts, _ = state.read(td)
     if ts is None:
         return 2, {"error": f"no state.json at {td}"}
     try:
-        state.force_stage_status(td, stage, status)
+        new_state = state.retry_cognitive_substep(td, stage, substep)
     except ValueError as exc:
         return 1, {"error": str(exc)}
-    return 0, {"ticket": ticket, "stage": stage, "status": status}
+    sealed = (new_state.stages[stage].cognitive_substeps or {}).get(substep, {})
+    return 0, {
+        "ticket": ticket,
+        "stage": stage,
+        "substep": substep,
+        "status": new_state.stages[stage].status,
+        "generation": sealed.get("generation"),
+        "logical_invocation_id": sealed.get("logical_invocation_id"),
+    }
 
 
 def abort(workspace_root: Path, ticket: str, *, force: bool = False) -> tuple[int, dict[str, Any]]:
@@ -205,6 +278,10 @@ def cli_main(argv: list[str]) -> int:
     sub.add_parser("reload-snapshot", parents=[common], help="Accept current config (clear drift).")
     p_retry = sub.add_parser("retry", parents=[common], help="Reset a stage to pending.")
     p_retry.add_argument("--stage", required=True)
+    p_retry.add_argument(
+        "--substep",
+        help="Retry only this sealed cognitive substep in place, preserving completed siblings.",
+    )
     p_skip = sub.add_parser("skip", parents=[common], help="Mark a stage completed.")
     p_skip.add_argument("--stage", required=True)
     args = parser.parse_args(argv)
@@ -215,7 +292,10 @@ def cli_main(argv: list[str]) -> int:
     elif args.cmd == "takeover":
         rc, payload = takeover(workspace_root, args.ticket, force=args.force)
     elif args.cmd == "retry":
-        rc, payload = _force(workspace_root, args.ticket, args.stage, "pending")
+        if args.substep:
+            rc, payload = _retry_substep(workspace_root, args.ticket, args.stage, args.substep)
+        else:
+            rc, payload = _force(workspace_root, args.ticket, args.stage, "pending", log_retry=True)
     elif args.cmd == "skip":
         rc, payload = _force(workspace_root, args.ticket, args.stage, "completed")
     elif args.cmd == "abort":

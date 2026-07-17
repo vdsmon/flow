@@ -1,3 +1,4 @@
+<!-- flow:activation-truth:begin -->
 # CLAUDE.md
 
 Flow's cognitive route catalog is authoritative for model selection. New exact route
@@ -60,6 +61,8 @@ Runtime is stdlib-only (`python3`); the venv/mise is dev tooling only.
 
 - **Branch off `origin/main`, never local `main` (lags) or current HEAD.** This repo churns with many worktrees; cutting a feature branch off a stale/feature HEAD pollutes the PR with already-merged commits (→ DIRTY). Unattended Flow runs resolve the remote default branch before creating their worktree; do the same by hand.
 - **Live-testing plugin changes:** the `vdsmon-flow` marketplace tracks the **local main checkout** (`~/repos/personal/flow`), not `origin`. A launched `/flow` run loads that checkout's code. To exercise merged changes: advance the checkout to `origin/main`, then `claude plugin marketplace update vdsmon-flow` (`claude plugin details flow` shows the version).
+- **A run is sealed to the engine installed at its start, not the one its own PR changes.** The run resolves its engine through the install path pinned in `.flow/runtime/skill-root` at workspace setup, so a PR's edits to a substep or profile in its own worktree are not the tree the run executes; only a run started after merge (a fresh setup) picks up the new contract. If the old contract fences a stage the new PR removed or reshapes, clearing that fence may need a manual step. This is a distinct lifecycle moment from the marketplace/live-testing bullet above, which is about install-time source selection, not an in-run frozen snapshot.
+- **Never run `uv run` inside a worktree.** `uv run pytest` creates `plugins/flow/skills/flow/scripts/uv.lock`; the content-ownership commit gate treats it as unowned drift and exits 3. Use `mise run test` or the e2e capsule instead. If a stray `uv.lock` already landed, remove it before committing.
 - **`gh pr merge` needs a real branch** — a detached HEAD fails with "could not determine current branch"; merge from a throwaway branch off `origin/main`.
 - **`stage-registry.toml` lives at the skill root** (`plugins/flow/skills/flow/`), never under `scripts/`. A `scripts/stage-registry.toml` entry in `planned_files` reads as unowned drift and aborts the run.
 - **Env/CLI quirks** (gh keyring 401, GraphQL `{owner}`/`{repo}`, mise shim heal, zsh word-split, ty ignore syntax): `plugins/flow/skills/flow/references/troubleshooting.md`.

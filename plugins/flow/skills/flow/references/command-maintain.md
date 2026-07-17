@@ -1,7 +1,8 @@
 # Maintain commands
 
-Except for workspace-local worktree cleanup, maintenance is restricted to workspaces
-whose configuration identifies the current repository as Flow's maintainer target:
+Except for workspace-local worktree and quarantine cleanup, maintenance is restricted
+to workspaces whose configuration identifies the current repository as Flow's
+maintainer target:
 
 ```bash
 FLOW_HARNESS="<harness>" "<facade>" maintainer --workspace-root . --require-current
@@ -12,8 +13,9 @@ repository. Internal scheduling code may still resolve that target, but no publi
 maintenance command follows the pointer implicitly. Maintenance never assumes a
 particular host process, terminal, or background-job implementation.
 
-Before every maintenance operation except `FLOW maintain worktrees clean`, collect
-the host-neutral schedule and ship-event senses diagnostics:
+Before every maintenance operation except `FLOW maintain worktrees clean` and
+`FLOW maintain quarantine clean`, collect the host-neutral schedule and ship-event
+senses diagnostics:
 
 ```bash
 FLOW_HARNESS="<harness>" "<facade>" maintainer-preflight --json
@@ -210,13 +212,133 @@ hot work.
 
 Each bounded loop turn:
 
-1. classify existing PRs for merge, hold, failure, or main-branch-red;
-2. re-check lease liveness immediately before every merge or reap;
-3. merge only green, permitted evolution PRs; preserve hot/guard holds for review;
-4. checkpoint and recover stranded pre-PR work as in backlog drain;
-5. classify the next launch batch, register fleet entries, launch host-native workers,
-   and wait/reclassify;
-6. stop at `done` or the configured iteration bound and report all residual work.
+1. Reap-classify existing PRs through the reap seam, forwarding `--include-proposals`
+   whenever the public invocation carries it (both classifiers MUST see the same
+   flag, or the launch and reap populations diverge) and forwarding `--dry-run` the
+   same way:
+
+   ```bash
+   FLOW_HARNESS="<harness>" "<facade>" evolve-reap --workspace-root . [--include-proposals] [--dry-run]
+   ```
+
+   Buckets: `merge`, `not_green`, `skipped_hot`, `skipped_live`, `blocked`,
+   `held_main_red`, plus the `main_red_p0` record. `evolve-reap` probes main's OWN CI
+   health every turn and, when main is genuinely red, routes every would-be merge into
+   `held_main_red`. Without `--dry-run` it also files its best-effort, deduplicated
+   `main-ci-red` P0 tracker alert; with `--dry-run` it files nothing and `main_red_p0`
+   instead carries the would-file record naming the failing sha + check(s) (see
+   Dry-run below).
+
+2. Decide the launch/recover/wait/done action through the drain seam (`evolve-drain`,
+   same `--include-proposals` forwarding). On `--dry-run` this runs right here, after
+   step 1 (see Dry-run below). On a real turn it instead runs after the merge set is
+   fully processed (see "Non-dry-run: decide the launch/recover/wait/done action")
+   — a merge executed this turn frees the PR-cap backpressure `evolve-drain` counts
+   against, and deciding on the pre-merge open-PR count could return `done` while
+   that freed capacity sits unused.
+
+### Dry-run
+
+`--dry-run` runs both classifications: step 1 above, then step 2 immediately:
+
+```bash
+FLOW_HARNESS="<harness>" "<facade>" evolve-drain --workspace-root . [--include-proposals]
+```
+
+Reports `action` (`launch`/`recover`/`wait`/`done`), `launch`, `stranded_pre_pr`, and
+`parked`. Dry-run then reports the would-merge set (the reap `merge` bucket), the
+would-launch set (the drain `launch` batch), the would-recover set (the drain
+`stranded_pre_pr` list), and, when main CI is genuinely red, "would file P0:
+<sha> <failing checks>" (from the reap `main_red_p0` record), then stops. It performs
+NO merge, tracker write, fleet registration, worktree reaping, or worker launch, with
+no exceptions: every write belongs to the non-dry-run branches below.
+
+### Non-dry-run: reap the `merge` set
+
+For each entry:
+
+1. Re-check its lease liveness immediately before mutating anything — a classification
+   goes stale the instant a parked run resumes:
+
+   ```bash
+   FLOW_HARNESS="<harness>" "<facade>" fleet is-live --key "<key>" --workspace-root .
+   ```
+
+   Exit 0 (live) withdraws the candidate for this turn, the same as `skipped_live`.
+
+2. When `is_hot`, first quiesce every other evolve run: `evolve-reap`'s isolation only
+   serializes hot PRs within one classification pass, not across concurrent
+   maintenance drains, so the operator must confirm no sibling drain is mid-hot-pass
+   before merging. Report an inability to quiesce as a hold; never merge past it.
+
+3. When `is_hot`, run the independent guard-property review exactly as
+   `references/stage-merge.md` §2 describes: a fresh reviewer, not the diff's author,
+   asked to REFUTE against the same guard properties. A `property_removed: true`
+   verdict, or any reviewer failure, holds the PR (report it `held_guard`); only a
+   clean verdict proceeds.
+
+4. Mark a draft ready, then squash-merge, through the forge seam:
+
+   ```bash
+   FLOW_HARNESS="<harness>" "<facade>" forge --workspace-root . mark-ready --pr "<pr>"
+   FLOW_HARNESS="<harness>" "<facade>" forge --workspace-root . merge --pr "<pr>" --squash
+   ```
+
+5. Only once the merge call reports success: close the lead ticket and every key in
+   `covers` through the tracker seam,
+
+   ```bash
+   FLOW_HARNESS="<harness>" "<facade>" tracker --workspace-root . transition --key "<key>" --to-state closed
+   ```
+
+   observe the ship event exactly as `references/stage-reflect.md` §Step 6 describes
+   when the orphaned run's own reflect stage never recorded it, delete the remote
+   branch,
+
+   ```bash
+   FLOW_HARNESS="<harness>" "<facade>" forge --workspace-root . delete-branch --branch "<branch>"
+   ```
+
+   and reap the local worktree:
+
+   ```bash
+   FLOW_HARNESS="<harness>" "<facade>" worktree reap --ticket "<key>" --main-root .
+   ```
+
+   A merge-tool failure closes nothing and leaves the PR for a later turn. A
+   post-merge close/observe/branch-delete/reap hiccup is best-effort — warn and
+   continue, since the diff is already merged and none of these steps is what makes
+   that safe.
+
+Leave `not_green`, `blocked`, `skipped_live`, `skipped_hot`, and `held_main_red`
+untouched; they are not this turn's problem.
+
+### Non-dry-run: decide the launch/recover/wait/done action
+
+Run step 2 now, only after the merge set above is fully processed, so a productive
+merge turn cannot report `done` on backpressure the merges just freed:
+
+```bash
+FLOW_HARNESS="<harness>" "<facade>" evolve-drain --workspace-root . [--include-proposals]
+```
+
+Reports `action` (`launch`/`recover`/`wait`/`done`), `launch`, `stranded_pre_pr`, and
+`parked`.
+
+### Non-dry-run: consume the drain decision
+
+- `launch`: register every key in the durable fleet before creating its worker, then
+  launch exactly as `FLOW maintain backlog drain` step 3, scoped to the evolution
+  batch the classifier chose.
+- `recover`: for each key in `stranded_pre_pr`, re-check its lease liveness, then reap
+  its dirty worktree (the reap facade checkpoints uncommitted work to a
+  `flow-rescue/*` ref before removing anything) only after the checkpoint succeeds,
+  then reopen the bead for one fresh launch next turn — the same shape as backlog
+  drain step 4. A repeated deterministic strand becomes blocked with evidence rather
+  than looping forever.
+- `wait`: wait on owner handles when available and durable lease/fleet/PR changes in
+  all cases, exactly as backlog drain step 5.
+- `done`: report merged, delivered, parked, recovered, blocked, and held work.
 
 Tier and model hints are policy inputs, not worker identity. Claude Code may apply a
 supported Claude model hint; Codex inherits the active model while preserving the
@@ -225,8 +347,7 @@ one hot slot.
 
 `--include-proposals` deliberately widens the ready set to proposal tickets and thus
 permits unattended delivery of judgment work. Surface that risk in the initial and
-final report. `--dry-run` performs classification and shows merge/launch/recovery
-sets, but performs no merge, tracker write, fleet registration, reaping, or launch.
+final report.
 
 Do not update an installed plugin or advance the maintainer checkout while any base
 or revision run is live. The scheduler proves this with
@@ -277,3 +398,44 @@ A dirty candidate is checkpointed to a rescue ref before removal. Capture failur
 leaves the worktree intact. `observe_at_close` runs inside the guarded teardown after checkpointing
 and immediately before each removal attempt; the preview never observes or reaps. Never remove an
 unrecognized worktree merely because its branch name resembles Flow.
+
+## `FLOW maintain quarantine clean [--dry-run]`
+
+Sweep quarantined cognitive capsules owned by the invoking workspace only: every
+`.flow/runs/<ticket>/cognitive/<stage>/invocations/*/journal.json` and its
+`revisions/<revision>/` sibling. Ephemeral planner and plan-assessor invocation roots
+live outside the workspace, under each launch's own private cache directory, and are
+bounded separately by that worker's own reaper; this command never touches them.
+
+A quarantined journal always records the capsule path `_dispose_failed_capsule` moved
+it to. Seven days since the journal's last transition is the default aged threshold; a
+candidate at or past it is listed as reapable without further acknowledgement. A
+younger candidate is listed too, but only an explicit confirmed candidate ID selects
+it for the real pass. A recorded quarantine path that does not exist on disk (a
+suppressed move failure) is reported as its own row rather than silently dropped or
+treated as an error.
+
+```bash
+FLOW_HARNESS="<harness>" "<facade>" worktree-janitor quarantine-clean --workspace-root . --dry-run
+```
+
+First show the absolute `target_root`, every aged candidate under `reapable`, every
+younger candidate under `younger`, and every recorded-but-absent path under
+`recorded_missing`, each with its `confirmation_id`. If the public invocation included
+`--dry-run`, stop there. Otherwise obtain confirmation for that exact target and
+candidate set. Then bind the destructive invocation to the preview values:
+
+```bash
+FLOW_HARNESS="<harness>" "<facade>" worktree-janitor quarantine-clean --workspace-root . \
+  --confirmed-target "<target_root>" \
+  --confirmed-candidate "<confirmation_id>" [...]
+```
+
+The second invocation re-reads each confirmed journal and re-checks containment and
+the digest-bound confirmation ID under the same per-invocation lock the cognitive
+executor itself uses, before it archives anything. A candidate whose journal changed
+since the preview (a fresh recovery, a concurrent annotation) has a different
+confirmation ID and is preserved. A confirmed, still-matching candidate is archived by
+rename into a sibling `archive/` directory next to `capsules/quarantine/`; this command
+never deletes a capsule. The still-quarantined journal is annotated with the archive
+path afterward; a failed annotation leaves a visible row but does not undo the rename.

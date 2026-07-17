@@ -30,7 +30,6 @@ Cardinality = Literal["one", "zero_or_one", "zero_or_more", "one_or_more"]
 _EFFECTS = frozenset({"read", "confirm", "write"})
 _WORKSPACE_REQUIREMENTS = frozenset({"none", "optional", "required"})
 _CARDINALITIES = frozenset({"one", "zero_or_one", "zero_or_more", "one_or_more"})
-_HARNESSES = frozenset({"claude-code", "codex"})
 _PATH_TOKEN_RE = re.compile(r"[a-z][a-z0-9-]*")
 _OPTION_RE = re.compile(r"--[a-z][a-z0-9-]*")
 _PR_PATH_RE = re.compile(r"/(?:pull|pull-requests)/(\d+)(?:/|$)")
@@ -92,11 +91,9 @@ class CommandSpec:
     effect: Effect
     workspace: WorkspaceRequirement
     reference: str
-    harnesses: frozenset[str]
     additional_usages: tuple[str, ...] = ()
     arguments: tuple[ArgumentSpec, ...] = ()
     options: tuple[OptionSpec, ...] = ()
-    constraints: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -243,13 +240,11 @@ def _parse_command(raw: object, *, logical_trigger: str) -> CommandSpec:
         effect=cast(Effect, effect),
         workspace=cast(WorkspaceRequirement, workspace),
         reference=reference,
-        harnesses=frozenset(_strings(raw.get("harnesses"), field=f"{command_id}.harnesses")),
         additional_usages=_strings(
             raw.get("additional_usages"), field=f"{command_id}.additional_usages"
         ),
         arguments=arguments,
         options=options,
-        constraints=_strings(raw.get("constraints"), field=f"{command_id}.constraints"),
     )
 
 
@@ -299,8 +294,6 @@ def _validate_commands(registry: Registry) -> None:
         ids.add(command.id)
         paths.add(command.path)
 
-        if command.harnesses != _HARNESSES:
-            raise RegistryError(f"{command.id}: harnesses must be exactly {sorted(_HARNESSES)}")
         if (
             command.path
             and command.path[0] != "<target>"
@@ -754,17 +747,6 @@ def render_trigger_description(registry: Registry) -> str:
     )
 
 
-def generated_sections(registry: Registry) -> dict[str, str]:
-    """Return every deterministic public-prose artifact for check-only generators."""
-
-    return {
-        "grammar": render_grammar_block(registry),
-        "help": render_help(registry),
-        "router": render_router_block(registry),
-        "trigger_description": render_trigger_description(registry),
-    }
-
-
 def replace_generated_block(
     document: str,
     *,
@@ -816,7 +798,6 @@ __all__ = [
     "TargetKind",
     "check_generated_block",
     "classify_root_token",
-    "generated_sections",
     "load_registry",
     "render_grammar_block",
     "render_help",
