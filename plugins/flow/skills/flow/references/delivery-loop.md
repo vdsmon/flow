@@ -215,6 +215,25 @@ or launch one replacement against the same baseline and ownership boundary. Neve
 overlap the replacement with the original: two plausible writers turn a recoverable
 stall into ambiguous code ownership.
 
+### review_brief's unattended skip signal
+
+`review_brief_author`'s `main` substep is conditional. The bootstrapped `unattended`
+ticket-frontmatter boolean (stamped once at `worktree create`, from `auto` or a
+`@default` base) is the SOLE run-mode signal for whether it launches: never
+re-derive unattendedness from lane, route activation, browser/`--no-open`
+configuration, environment, or owner memory — `stage-review_brief.md` reads that one
+frontmatter value and reuses it for both the skip decision and `--no-open`.
+
+When `unattended` is `true`, the terminal `advance` for `review_brief` carries a
+`main` skip through `--skill-output-from` with the exact reason `unattended run has
+no live human reviewer`; the generic conditional fence accepts any reasoned skip
+here (it is not lane-gated), but that acceptance is not authorization. `merge`'s
+eligibility probe separately calls `review_brief.py freshness`, which re-reads this
+same run's `unattended` frontmatter and the persisted skip receipt, and returns
+`disabled` (non-blocking) only when both agree; an attended run whose tail emitted
+the canonical skip anyway gets blocking `missing` instead, so the brief is refreshed
+rather than silently lost.
+
 ### Installed skill
 
 Resolve the configured handler through the facade, then invoke it with the host's

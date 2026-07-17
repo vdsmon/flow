@@ -2400,6 +2400,94 @@ def test_code_review_full_lane_refuses_a_plan_blind_review_skip(
     assert ts.stages["code_review"].status == "completed"
 
 
+def _review_brief_workspace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[Path, dict[str, Any]]:
+    """Drive real dispatch to a sealed review_brief with its conditional 'main' substep.
+
+    Returns (ticket_dir, descriptor).
+    """
+    _write_workspace(
+        tmp_path,
+        handlers={"ticket": "inline", "review_brief": "inline"},
+        stages=["ticket", "review_brief"],
+        compounding=False,
+    )
+    _stub_git_head(monkeypatch, "a" * 40)
+    ds.cmd_init(tmp_path, "FT-1")
+    td = tmp_path / ".flow" / "runs" / "FT-1"
+    agent_routes.snapshot(tmp_path, "codex", output_path=td / "route-snapshot.json")
+    ds.cmd_next(tmp_path, "FT-1")
+    ds.cmd_finish(tmp_path, "FT-1", "ticket", "completed")
+    rc, descriptor = ds.cmd_next(tmp_path, "FT-1")
+    assert rc == 0, descriptor
+    assert descriptor["stage"] == "review_brief", descriptor
+    return td, descriptor
+
+
+def test_review_brief_main_seals_conditional_and_accepts_a_reasoned_skip(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """review_brief's 'main' substep is conditional, so an unattended run can skip authorship.
+
+    The route contract gives review_brief a substeps map (agent_routes.py) instead of a bare
+    profile, so the unchanged completion fence treats 'main' as a conditional, non-lane-gated
+    substep: it wedges with no outcome or skip, then accepts a reasoned skip through the same
+    fence review_fix/machinery_fix already use. review_brief.freshness() is what later decides
+    whether that receipt is actually authorized for this run (test_review_brief.py); the
+    dispatcher's job here is only to accept and persist the reasoned skip generically.
+    """
+    td, _descriptor = _review_brief_workspace(tmp_path, monkeypatch)
+
+    sealed = _sealed(td, "review_brief")
+    assert set(sealed) == {"main"}
+    assert sealed["main"]["activation"] == "pending"
+    assert sealed["main"]["conditional"] is True
+    assert "lane" not in sealed["main"]
+
+    # No worker outcome and no skip: the fence wedges.
+    rc, wedged = ds.cmd_finish(tmp_path, "FT-1", "review_brief", "completed")
+    assert rc == 1
+    assert wedged["error"] == (
+        "activated cognitive substep 'main' has no successful outcome or valid skip"
+    )
+
+    # A reasoned skip (the canonical unattended reason) is accepted and persisted for
+    # review_brief.freshness() to cross-check downstream.
+    skip_output = {
+        "cognitive_skips": {
+            "main": {
+                "substep": "main",
+                "stage_generation": sealed["main"]["stage_generation"],
+                "reason": "unattended run has no live human reviewer",
+            }
+        }
+    }
+    rc, done = ds.cmd_finish(
+        tmp_path, "FT-1", "review_brief", "completed", skill_output=skip_output
+    )
+    assert rc == 0, done
+    ts, _ = state.read(td)
+    assert ts is not None
+    assert ts.stages["review_brief"].status == "completed"
+    assert ts.stages["review_brief"].skill_output == skip_output
+
+
+def test_review_brief_main_completes_via_a_real_worker_outcome(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An attended run authors the brief: 'main' completes via a real outcome, not a skip."""
+    td, _descriptor = _review_brief_workspace(tmp_path, monkeypatch)
+    sealed = _sealed(td, "review_brief")
+    _publish_outcome(sealed["main"])
+
+    rc, done = ds.cmd_finish(tmp_path, "FT-1", "review_brief", "completed")
+    assert rc == 0, done
+    ts, _ = state.read(td)
+    assert ts is not None
+    assert ts.stages["review_brief"].status == "completed"
+
+
 def _reflect_workspace(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> tuple[Path, dict[str, Any]]:

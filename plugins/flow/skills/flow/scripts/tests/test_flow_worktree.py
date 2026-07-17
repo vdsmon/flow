@@ -131,7 +131,7 @@ def _run(tmp: Path, main: Path, **kw):
     return fw.bootstrap(
         ticket="FT-1",
         plan_from=_plan_file(tmp),
-        base="main",
+        base=kw.pop("base", "main"),
         branch=kw.pop("branch", "feat/FT-1-thing"),
         main_root=main,
         worktree_override=str(wt),
@@ -713,6 +713,56 @@ def test_seeds_planned_files_as_list(tmp_path: Path) -> None:
     fm_path = Path(res["worktree"]) / ".flow" / "tickets" / "FT-1.md"
     parsed = ticket_frontmatter.read(fm_path)
     assert parsed["planned_files"] == ["src/a.py", "src/b.py"]
+
+
+# ─── unattended frontmatter signal (flow-rptq) ─────────────────────────────────
+
+
+def _unattended_fm(tmp_path: Path, main: Path, **kw) -> bool:
+    import ticket_frontmatter
+
+    res = _run(tmp_path, main, runner=_fake_runner(main=main), **kw)
+    fm = ticket_frontmatter.read(Path(res["worktree"]) / ".flow" / "tickets" / "FT-1.md")
+    value = fm["unattended"]
+    assert isinstance(value, bool)  # TOML boolean, never a string
+    return value
+
+
+def test_unattended_true_for_explicit_auto(tmp_path: Path) -> None:
+    main = _main_checkout(tmp_path)
+    assert _unattended_fm(tmp_path, main, auto=True) is True
+
+
+def test_unattended_true_for_default_base_drain_launch(tmp_path: Path) -> None:
+    # The drain launches with auto=False but base="@default"; _enforce_autonomy_floors treats
+    # this the same as auto=True, so the seeded frontmatter signal must match or the fleet's
+    # valid unattended review_brief skip would be misclassified as attended and blocked.
+    main = _main_checkout(tmp_path)
+    assert _unattended_fm(tmp_path, main, auto=False, base="@default") is True
+
+
+def test_unattended_false_for_attended_non_default_base(tmp_path: Path) -> None:
+    main = _main_checkout(tmp_path)
+    assert _unattended_fm(tmp_path, main, auto=False, base="main") is False
+
+
+def test_unattended_stamp_leaves_other_frontmatter_fields_intact(tmp_path: Path) -> None:
+    import ticket_frontmatter
+
+    main = _main_checkout(tmp_path)
+    res = _run(
+        tmp_path,
+        main,
+        runner=_fake_runner(main=main),
+        planned_files=["src/a.py"],
+        commit_type="feat",
+        commit_summary="add the thing",
+    )
+    fm = ticket_frontmatter.read(Path(res["worktree"]) / ".flow" / "tickets" / "FT-1.md")
+    assert fm["unattended"] is False
+    assert fm["planned_files"] == ["src/a.py"]
+    assert fm["commit_type"] == "feat"
+    assert fm["commit_summary"] == "add the thing"
 
 
 # ─── L2: detect-and-recover edits spilled onto main before bootstrap ───────────
