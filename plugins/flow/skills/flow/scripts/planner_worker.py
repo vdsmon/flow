@@ -96,7 +96,10 @@ def validate_envelope(route: PlannerRoute, value: Mapping[str, Any] | None) -> d
         or envelope.author.get("harness") != route.harness
         or envelope.author.get("model") != route.model
     ):
-        raise WorkerError("planner envelope author identity does not match the actual route")
+        raise WorkerError(
+            "planner envelope author identity does not match the actual route; "
+            f"the launched route requires author id {route.author_id!r}"
+        )
     return envelope.to_mapping()
 
 
@@ -155,10 +158,79 @@ def _owner_proof() -> cognitive_workers.OwnerProof:
     return cognitive_workers.OwnerProof(owner_id="planner-worker", harness=harness)
 
 
-def _work_order(args: argparse.Namespace, route: PlannerRoute) -> cognitive_workers.WorkOrder:
+def _explicit_source_root(args: argparse.Namespace) -> Path:
+    if not args.source_root:
+        raise WorkerError(
+            "planner-worker requires an explicit --source-root: the invoking checkout is "
+            "typically the shared cockpit checkout, which concurrent actors mutate between "
+            "the before/after receipt captures; pass a dedicated pristine mirror clone"
+        )
+    return Path(args.source_root).expanduser().resolve()
+
+
+def _assessor_order(
+    args: argparse.Namespace, route: PlannerRoute, source_root: Path
+) -> cognitive_workers.WorkOrder:
     missing = [
         flag
         for flag, value in (
+            ("--attempt-dir", args.attempt_dir),
+            ("--route-digest", args.route_digest),
+            ("--facts-from", args.facts_from),
+        )
+        if value is None
+    ]
+    if missing:
+        raise WorkerError(f"a plan-assessor launch requires {', '.join(missing)}")
+    try:
+        attempt = planning_attempt.PlanningAttempt.load_bundle(Path(args.attempt_dir))
+    except planning_attempt.AttemptError as exc:
+        raise WorkerError(f"cannot load the planning attempt bundle: {exc}") from exc
+    if attempt.route_digest != args.route_digest:
+        raise WorkerError("--route-digest does not match the planning attempt bundle")
+    current = attempt.current
+    if current is None:
+        raise WorkerError("planning attempt has no current complete plan to assess")
+    planner_receipt = attempt.planner_launch_receipts.get(current.digest)
+    if planner_receipt is None:
+        raise WorkerError("planning attempt is missing the current planner launch receipt")
+    facts_path = Path(args.facts_from).expanduser().resolve()
+    try:
+        supplied = json.loads(facts_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise WorkerError(f"cannot read the assessor facts file: {exc}") from exc
+    if not isinstance(supplied, dict) or set(supplied) != {"ticket", "assessment_rubric"}:
+        raise WorkerError("assessor facts must supply exactly ticket and assessment_rubric")
+    return cognitive_workers.WorkOrder(
+        logical_invocation_id=f"plan-assessor:{attempt.attempt_id}:v{current.version}",
+        generation=1,
+        profile="plan_assessor",
+        source_root=str(source_root),
+        source_sha=_git(source_root, "rev-parse", "HEAD"),
+        route=route.to_mapping(),
+        route_snapshot_digest=args.route_digest,
+        input_bundle=str(facts_path),
+        input_digest=hashlib.sha256(facts_path.read_bytes()).hexdigest(),
+        facts={
+            "ticket": supplied["ticket"],
+            "base_sha": attempt.base_sha,
+            "route_digest": attempt.route_digest,
+            "candidate_plan": current.to_mapping(),
+            "planner_receipt": planner_receipt,
+            "assessment_rubric": supplied["assessment_rubric"],
+        },
+    )
+
+
+def _work_order(args: argparse.Namespace, route: PlannerRoute) -> cognitive_workers.WorkOrder:
+    source_root = _explicit_source_root(args)
+    if args.profile == "plan_assessor":
+        return _assessor_order(args, route, source_root)
+    missing = [
+        flag
+        for flag, value in (
+            ("--prompt-from", args.prompt_from),
+            ("--schema", args.schema),
             ("--attempt-id", args.attempt_id),
             ("--plan-version", args.plan_version),
             ("--route-digest", args.route_digest),
@@ -179,16 +251,15 @@ def _work_order(args: argparse.Namespace, route: PlannerRoute) -> cognitive_work
         if args.fresh_prompt_from
         else prompt
     )
-    source_root = (
-        Path(args.source_root).expanduser().resolve()
-        if args.source_root
-        else Path(_git(None, "rev-parse", "--show-toplevel")).resolve()
-    )
     schema_path = Path(args.schema).expanduser().resolve()
     try:
         schema = json.loads(schema_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise WorkerError(f"cannot read the emitted planner schema: {exc}") from exc
+    if isinstance(schema, dict):
+        # The claude --json-schema path rejects the draft marker the emitted schema carries;
+        # the worker owns this strip so no driver rewrites the emitted file by hand.
+        schema.pop("$schema", None)
     return cognitive_workers.WorkOrder(
         logical_invocation_id=f"planner:{args.attempt_id}:v{args.plan_version}",
         generation=1,
@@ -216,7 +287,7 @@ def _work_order(args: argparse.Namespace, route: PlannerRoute) -> cognitive_work
 
 
 def _launch(args: argparse.Namespace, route: PlannerRoute) -> dict[str, Any]:
-    """Run one logical planner invocation through the common capsule executor."""
+    """Run one logical pre-approval invocation through the common capsule executor."""
     order = _work_order(args, route)
     owner = _owner_proof()
     ephemeral = args.invocation_root is None
@@ -233,15 +304,19 @@ def _launch(args: argparse.Namespace, route: PlannerRoute) -> dict[str, Any]:
     acceptance = dict(receipts["route_acceptance"])
     acceptance["cleanup"] = {**acceptance["cleanup"], "invocation_root": str(invocation_root)}
     acceptance["capsule"] = receipts["capsule"]
-    if ephemeral:
-        # The planner's durable state is the envelope it just returned. Its journal holds the
-        # provider transcript, and the transcript holds the live thread id, which must never
-        # outlive the owner conversation. A failed launch keeps its evidence.
-        shutil.rmtree(invocation_root, ignore_errors=True)
-        acceptance["cleanup"]["invocation_root_absent"] = not invocation_root.exists()
-    return {
-        "envelope": validate_envelope(route, outcome.result),
-        "thread_id": receipts["route"]["worker_id"],
+    worker_id = receipts["route"]["worker_id"]
+    if args.profile == "plan_assessor":
+        if not worker_id:
+            raise WorkerError(
+                "plan-assessor output carried no worker session id; assess --require-fresh "
+                "needs the receipt's distinct worker id as the assessor identity"
+            )
+        typed: dict[str, Any] = {"assessment": outcome.result}
+    else:
+        typed = {"envelope": validate_envelope(route, outcome.result)}
+    result = {
+        **typed,
+        "thread_id": worker_id,
         "attempt": attempts[-1]["attempt"] if attempts else 1,
         "physical_attempts": attempts,
         "aggregate_wall_seconds": sum(float(item["elapsed_seconds"]) for item in attempts),
@@ -249,22 +324,58 @@ def _launch(args: argparse.Namespace, route: PlannerRoute) -> dict[str, Any]:
         "command": receipts["command"],
         "acceptance": acceptance,
     }
+    if args.result_output:
+        # Persisted before the ephemeral disposal so a failed write keeps the invocation root as
+        # evidence. The planner copy carries the live session id nowhere: worker_id doubles as the
+        # thread id and rides top-level thread_id, acceptance.response.worker_id, and the command
+        # argv (resume/session flags embed it), so all three stay out of the file. The assessor
+        # copy keeps its worker_id, the durable attested identity that assess --require-fresh
+        # consumes; a one-shot assessor has no live owner conversation to protect.
+        if args.profile == "plan_assessor":
+            persisted = {key: value for key, value in result.items() if key != "thread_id"}
+        else:
+            persisted = {
+                key: value for key, value in result.items() if key not in {"thread_id", "command"}
+            }
+            persisted["acceptance"] = {
+                **acceptance,
+                "response": {
+                    key: value
+                    for key, value in acceptance["response"].items()
+                    if key != "worker_id"
+                },
+            }
+        planning_attempt.atomic_write_text(
+            Path(args.result_output).expanduser().resolve(),
+            json.dumps(persisted, indent=2, sort_keys=True) + "\n",
+        )
+    if ephemeral:
+        # The planner's durable state is the envelope it returned. Its journal holds the provider
+        # transcript, and the transcript holds the live thread id, which must never outlive the
+        # owner conversation. A failed launch keeps its evidence.
+        shutil.rmtree(invocation_root, ignore_errors=True)
+        acceptance["cleanup"]["invocation_root_absent"] = not invocation_root.exists()
+    return result
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Run one exact read-only planner route.")
+    parser = argparse.ArgumentParser(description="Run one exact read-only pre-approval route.")
     parser.add_argument("--harness", choices=["codex", "claude_code"], required=True)
     parser.add_argument("--model", required=True)
     parser.add_argument("--effort", required=True)
-    parser.add_argument("--prompt-from", required=True)
+    parser.add_argument("--profile", choices=["planner", "plan_assessor"], default="planner")
+    parser.add_argument("--prompt-from")
     parser.add_argument("--fresh-prompt-from")
-    parser.add_argument("--schema", required=True)
+    parser.add_argument("--schema")
     parser.add_argument("--thread-id")
     parser.add_argument("--attempt-id")
     parser.add_argument("--plan-version", type=int)
     parser.add_argument("--route-digest")
+    parser.add_argument("--attempt-dir")
+    parser.add_argument("--facts-from")
     parser.add_argument("--source-root")
     parser.add_argument("--invocation-root")
+    parser.add_argument("--result-output")
     parser.add_argument("--preflight-only", action="store_true")
     return parser
 
