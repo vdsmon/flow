@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import json
+import re
 import threading
 from pathlib import Path
 
@@ -160,6 +161,17 @@ def test_provider_schema_is_closed_without_provider_side_uniqueness() -> None:
         "model",
     }
     assert set(schema["properties"]["plan"]["properties"]) == set(pa._PLAN_REQUIRED)
+
+
+def test_envelope_schema_teaches_the_exact_author_identity() -> None:
+    author = pa.envelope_json_schema()["properties"]["author"]["properties"]
+    pattern = author["id"]["pattern"]
+    assert re.search(pattern, "codex:gpt-5.6-sol")
+    assert re.search(pattern, "claude_code:opus")
+    assert not re.search(pattern, "gpt-5.6-sol")
+    for field in ("id", "harness", "model"):
+        assert author[field]["description"]
+    assert "<harness>:<model>" in author["id"]["description"]
 
 
 @pytest.mark.parametrize(

@@ -100,9 +100,22 @@ def envelope_json_schema() -> dict[str, Any]:
                 "additionalProperties": False,
                 "required": ["id", "harness", "model"],
                 "properties": {
-                    "id": {"type": "string", "minLength": 1},
-                    "harness": {"type": "string", "minLength": 1},
-                    "model": {"type": "string", "minLength": 1},
+                    "id": {
+                        "type": "string",
+                        "minLength": 1,
+                        "pattern": "^(codex|claude_code):.+$",
+                        "description": "exact <harness>:<model> of the launched route",
+                    },
+                    "harness": {
+                        "type": "string",
+                        "minLength": 1,
+                        "description": "the harness that executed the launched route",
+                    },
+                    "model": {
+                        "type": "string",
+                        "minLength": 1,
+                        "description": "the exact model selector of the launched route",
+                    },
                 },
             },
             "status": {"enum": sorted(_STATUSES)},
