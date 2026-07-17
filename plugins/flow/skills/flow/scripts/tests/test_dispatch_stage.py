@@ -1884,6 +1884,79 @@ def test_stage_ttl_seconds_proportional_to_timeout() -> None:
         assert ttl > meta.default_timeout_min * 60
 
 
+def _pending(*profiles: str) -> dict[str, dict[str, Any]]:
+    return {
+        f"substep-{i}": {"profile": profile, "activation": "pending"}
+        for i, profile in enumerate(profiles)
+    }
+
+
+def test_stage_ttl_seconds_cumulative_budget_across_real_stage_compositions() -> None:
+    """Cumulative floor for every real agent_routes._STAGE_EXECUTION composition.
+
+    Each expectation is ceil(sum((1 + retry_limit) * hard_budget_seconds) * 1.5) over the
+    stage's sealed substeps (readers retry once at 2400s, writers/e2e never retry).
+    """
+    from _registry import registry_by_name
+
+    reg = registry_by_name(ds._skill_root_from_script() / ds._STAGE_REGISTRY_RELATIVE)
+    cases = {
+        # planner + plan_assessor, each 2*2400 -> ceil(9600*1.5)=14400.
+        "plan": (_pending("planner", "plan_assessor"), 14400),
+        # implementer alone, 1*5400 -> ceil(5400*1.5)=8100.
+        "implement": (_pending("implementer"), 8100),
+        # code_reviewer + diff_reviewer (2*2400 each) + conditional review_fixer (1*5400)
+        # -> ceil(15000*1.5)=22500.
+        "code_review": (_pending("code_reviewer", "diff_reviewer", "review_fixer"), 22500),
+        # e2e alone, 1*3600 -> ceil(3600*1.5)=5400.
+        "e2e": (_pending("e2e"), 5400),
+        # review_fixer + revision_fixer, each 1*5400 -> ceil(10800*1.5)=16200.
+        "review_loop": (_pending("review_fixer", "revision_fixer"), 16200),
+        # review_brief_author alone, 2*2400 -> ceil(4800*1.5)=7200.
+        "review_brief": (_pending("review_brief_author"), 7200),
+        # reflector + machinery_fixer, each 2*2400 -> ceil(9600*1.5)=14400.
+        "reflect": (_pending("reflector", "machinery_fixer"), 14400),
+        # guard_reviewer alone, 2*2400 -> ceil(4800*1.5)=7200.
+        "merge": (_pending("guard_reviewer"), 7200),
+    }
+    for stage_name, (cognitive, expected_ttl) in cases.items():
+        meta = reg[stage_name]
+        assert ds._stage_ttl_seconds(meta, cognitive) == expected_ttl, stage_name
+        for substep in cognitive.values():
+            hard_budget = cw.ROLE_CATALOG[substep["profile"]].hard_budget_seconds
+            assert hard_budget < expected_ttl, (stage_name, substep["profile"])
+
+
+def test_stage_ttl_seconds_includes_conditional_pending_substeps() -> None:
+    # A conditional substep is still launchable, so it must size the worst case: the primary
+    # reader retries once (2*2400) plus the conditional writer's one permitted attempt (5400).
+    cognitive = {
+        "primary_review": {"profile": "code_reviewer", "activation": "pending"},
+        "review_fix": {
+            "profile": "review_fixer",
+            "activation": "pending",
+            "conditional": True,
+        },
+    }
+    assert ds._stage_ttl_seconds(None, cognitive) == 15300
+
+
+def test_stage_ttl_seconds_ignores_non_pending_activation() -> None:
+    cognitive = {"main": {"profile": "implementer", "activation": "shadow"}}
+    assert ds._stage_ttl_seconds(None, cognitive) == 1200
+
+
+def test_stage_ttl_seconds_empty_cognitive_keeps_the_timeout_floor() -> None:
+    assert ds._stage_ttl_seconds(None, {}) == 1200
+    assert ds._stage_ttl_seconds(None, None) == 1200
+
+
+def test_stage_ttl_seconds_unknown_profile_fails_closed() -> None:
+    cognitive = {"main": {"profile": "not_a_real_profile", "activation": "pending"}}
+    with pytest.raises(cw.WorkerFailure, match="unknown profile"):
+        ds._stage_ttl_seconds(None, cognitive)
+
+
 def test_next_refreshes_lease_with_multiplied_ttl(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1960,6 +2033,27 @@ def test_next_seals_each_cognitive_substep_to_its_stage_generation(
     assert sealed["planning"]["logical_invocation_id"].endswith(":plan:planning:1")
     assert sealed == _sealed(td)
     assert json.loads(Path(payload["descriptor_path"]).read_text(encoding="utf-8")) == payload
+
+
+def test_next_refreshes_lease_with_the_sealed_cumulative_floor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # plan's registry timeout_min is 10 -> the old floor is 1200s. Its sealed substeps
+    # (planner + plan_assessor, each retrying once at 2400s) give a cumulative floor of
+    # ceil((2*2400 + 2*2400) * 1.5) = 14400s: proves the sealed descriptor drove the
+    # refreshed lease, not merely timeout_min * 2.
+    td = _cognitive_workspace(tmp_path, monkeypatch)
+    rc, payload = ds.cmd_next(tmp_path, "FT-1")
+    assert rc == 0
+    assert payload["stage"] == "plan"
+
+    lse = lease.read_lease(td)
+    assert lse is not None
+    expires = lease.parse_iso(lse.lease_expires_at)
+    assert expires is not None
+    remaining = (expires - datetime.now(UTC)).total_seconds()
+    assert remaining > 1200
+    assert remaining > 14000
 
 
 def test_stage_cannot_complete_without_a_matching_cognitive_outcome(

@@ -1032,6 +1032,32 @@ def test_importer_drift_reverse_direction_guard(tmp_path) -> None:
     assert seam_check.module_md_importer_drift(scripts_dir=tmp_path, module_text=text) == []
 
 
+def test_importer_drift_natural_language_and_separator_matches_when_complete(tmp_path) -> None:
+    (tmp_path / "a.py").write_text("")
+    (tmp_path / "b.py").write_text("import a\n")
+    (tmp_path / "c.py").write_text("import a\n")
+    text = "| `a.py` (lib) | x | imported by b and c |\n"
+    assert seam_check.module_md_importer_drift(scripts_dir=tmp_path, module_text=text) == []
+
+
+def test_importer_drift_natural_language_and_separator_catches_missing_importer(tmp_path) -> None:
+    # Regression for the cognitive_workers.py row: "imported by cognitive_worker_smoke and
+    # planner_worker" was one unresolved token before the "and" separator was recognized, so
+    # dispatch_stage's real new import edge was silently invisible to this gate.
+    (tmp_path / "cognitive_workers.py").write_text("")
+    (tmp_path / "cognitive_worker_smoke.py").write_text("import cognitive_workers\n")
+    (tmp_path / "dispatch_stage.py").write_text("import cognitive_workers\n")
+    (tmp_path / "planner_worker.py").write_text("import cognitive_workers\n")
+    text = (
+        "| `cognitive_workers.py` (lib) | x | "
+        "imported by cognitive_worker_smoke and planner_worker |\n"
+    )
+    drifts = seam_check.module_md_importer_drift(scripts_dir=tmp_path, module_text=text)
+    assert len(drifts) == 1
+    assert drifts[0].missing == frozenset({"dispatch_stage"})
+    assert drifts[0].phantom == frozenset()
+
+
 def test_true_importers_captures_lazy_in_function_import(tmp_path) -> None:
     (tmp_path / "a.py").write_text("")
     (tmp_path / "b.py").write_text("def f():\n    from a import X\n    return X\n")

@@ -1232,10 +1232,11 @@ def module_md_importer_drift(
 
     For each line: take the module from the first backticked *.py token, require
     the literal `imported by` anchor (skips reverse-direction `imports x, y`
-    rows), parse the importer list after it (split on , and +; strip
-    parentheticals/backticks/the/.py). A row is enumerable iff every token
-    resolves to a local stem; unresolvable rows (prose like `the adapters`) are
-    skipped. Enumerable rows whose parsed set != true set yield one descriptor.
+    rows), parse the importer list after it (split on `,`, `+`, and the
+    natural-language word `and`; strip parentheticals/backticks/the/.py). A row
+    is enumerable iff every token resolves to a local stem; unresolvable rows
+    (prose like `the adapters`) are skipped. Enumerable rows whose parsed set !=
+    true set yield one descriptor.
     """
     if module_text is None:
         module_text = (scripts_dir / "MODULE.md").read_text(encoding="utf-8")
@@ -1258,7 +1259,7 @@ def module_md_importer_drift(
         cell = line[idx + len(anchor) :]
         cell = cell.split("|", 1)[0]
         tokens: list[str] = []
-        for raw_tok in re.split(r"[,+]", cell):
+        for raw_tok in re.split(r"[,+]|\band\b", cell):
             tok = raw_tok.split("(", 1)[0]
             tok = tok.strip().strip("`").strip()
             tok = tok.removeprefix("the ")

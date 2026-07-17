@@ -79,7 +79,17 @@ class RolePolicy:
     prompt_builder: str
     result_schema: str
     retry_limit: int
+    soft_budget_seconds: int
+    hard_budget_seconds: int
 
+
+# Writers run a TDD implementation loop or a wide fix sweep over an unknown-size diff; a
+# reader's fixed budget can hard-kill that mid-sweep before it ever reaches a stopping point
+# (flow-euzu forensics). e2e runs one bounded recipe, wider than a reader but short of a writer.
+_WRITER_SOFT_BUDGET_SECONDS = 20 * 60
+_WRITER_HARD_BUDGET_SECONDS = 90 * 60
+_E2E_SOFT_BUDGET_SECONDS = 15 * 60
+_E2E_HARD_BUDGET_SECONDS = 60 * 60
 
 _READERS = {
     "planner": ("planner", "plan-envelope/v1"),
@@ -101,27 +111,68 @@ _WRITERS = {
 }
 
 ROLE_CATALOG: dict[str, RolePolicy] = {
-    name: RolePolicy(name, "read_only", True, builder, schema, 1)
+    name: RolePolicy(
+        name, "read_only", True, builder, schema, 1, SOFT_TIMEOUT_SECONDS, HARD_TIMEOUT_SECONDS
+    )
     for name, (builder, schema) in _READERS.items()
 }
 ROLE_CATALOG.update(
     {
-        name: RolePolicy(name, "capsule_writer", False, name, schema, 0)
+        name: RolePolicy(
+            name,
+            "capsule_writer",
+            False,
+            name,
+            schema,
+            0,
+            _WRITER_SOFT_BUDGET_SECONDS,
+            _WRITER_HARD_BUDGET_SECONDS,
+        )
         for name, schema in _WRITERS.items()
     }
 )
-ROLE_CATALOG["e2e"] = RolePolicy("e2e", "disposable_writer", True, "e2e", "e2e-report/v1", 0)
+ROLE_CATALOG["e2e"] = RolePolicy(
+    "e2e",
+    "disposable_writer",
+    True,
+    "e2e",
+    "e2e-report/v1",
+    0,
+    _E2E_SOFT_BUDGET_SECONDS,
+    _E2E_HARD_BUDGET_SECONDS,
+)
 # The implementer, review_fixer, and revision_fixer are activated importing writers: each
 # validated capsule patch is imported into the authoritative worktree under the sole-writer
 # claim. machinery_fixer is not here: it is an active read_only role (see _READERS).
 ROLE_CATALOG["implementer"] = RolePolicy(
-    "implementer", "capsule_writer", True, "implementer", "implementation-report/v1", 0
+    "implementer",
+    "capsule_writer",
+    True,
+    "implementer",
+    "implementation-report/v1",
+    0,
+    _WRITER_SOFT_BUDGET_SECONDS,
+    _WRITER_HARD_BUDGET_SECONDS,
 )
 ROLE_CATALOG["review_fixer"] = RolePolicy(
-    "review_fixer", "capsule_writer", True, "review_fixer", "fix-report/v1", 0
+    "review_fixer",
+    "capsule_writer",
+    True,
+    "review_fixer",
+    "fix-report/v1",
+    0,
+    _WRITER_SOFT_BUDGET_SECONDS,
+    _WRITER_HARD_BUDGET_SECONDS,
 )
 ROLE_CATALOG["revision_fixer"] = RolePolicy(
-    "revision_fixer", "capsule_writer", True, "revision_fixer", "revision-report/v1", 0
+    "revision_fixer",
+    "capsule_writer",
+    True,
+    "revision_fixer",
+    "revision-report/v1",
+    0,
+    _WRITER_SOFT_BUDGET_SECONDS,
+    _WRITER_HARD_BUDGET_SECONDS,
 )
 
 # Preserve the public profile order used by agent_routes.py.
@@ -143,6 +194,17 @@ ROLE_CATALOG = {
     )
 }
 ACTIVE_READ_ONLY_PROFILES = tuple(name for name, policy in ROLE_CATALOG.items() if policy.active)
+
+
+def cumulative_role_budget(profile: str) -> int:
+    """One role's maximum cumulative provider hard-timeout allowance in seconds.
+
+    Covers every permitted attempt (the launch plus each fresh retry) at that role's
+    hard budget. dispatch_stage sums this once per launchable sealed substep to size a
+    stage's lease; the retry policy itself stays owned here, not duplicated there.
+    """
+    policy = ROLE_CATALOG[profile]
+    return (1 + policy.retry_limit) * policy.hard_budget_seconds
 
 
 def _resolve_authority(
@@ -2290,6 +2352,44 @@ def _default_popen(command: list[str], **kwargs: Any) -> subprocess.Popen[str]:
     return subprocess.Popen(command, **kwargs)
 
 
+FailureTailCallback = Callable[[int, bytes, bytes], None]
+
+_FAILURE_TAIL_MAX_BYTES = 50 * 1024
+
+
+def _normalize_stream(value: str | bytes | None) -> bytes:
+    """Coerce one captured subprocess stream to bytes, decoding only str values.
+
+    A byte-valued ``TimeoutExpired.output``/``.stderr`` (the fallback used when the final
+    ``communicate()`` after a kill returns nothing) passes through unchanged: re-encoding an
+    already-decoded str is the only lossy step, so it happens at most once per stream.
+    """
+    if isinstance(value, bytes):
+        return value
+    if value is None:
+        return b""
+    return value.encode("utf-8", errors="replace")
+
+
+def _retain_failure_tail(
+    callback: FailureTailCallback | None,
+    attempt_number: int,
+    stdout: str | bytes | None,
+    stderr: str | bytes | None,
+) -> None:
+    """Best-effort failure-evidence retention: never lets a callback fault reach the caller.
+
+    Runs only on a controlled post-launch failure path (hard_timeout, termination_unconfirmed,
+    worker_exited, or an invalid provider result). Normalization and the callback itself are
+    swallowed under a broad exception boundary so a retention fault can never replace the
+    lifecycle error, suppress a fresh retry, or block terminal acknowledgement.
+    """
+    if callback is None:
+        return
+    with contextlib.suppress(Exception):
+        callback(attempt_number, _normalize_stream(stdout), _normalize_stream(stderr))
+
+
 def run_provider_process(
     command: list[str],
     *,
@@ -2303,6 +2403,7 @@ def run_provider_process(
     grace: float = TERMINATION_GRACE_SECONDS,
     on_event: Callable[[dict[str, Any]], None] | None = None,
     attempt_number: int = 1,
+    retain_failure: FailureTailCallback | None = None,
 ) -> ProviderExecution:
     """Run one provider process group and retain typed output plus terminal proof."""
     if soft_timeout <= 0 or hard_timeout <= soft_timeout:
@@ -2334,7 +2435,7 @@ def run_provider_process(
             )
         try:
             stdout, stderr = process.communicate(timeout=hard_timeout - soft_timeout)
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired as hard_exc:
             deadline_events.append("hard_deadline")
             with contextlib.suppress(OSError, ProcessLookupError):
                 killpg(process.pid, signal.SIGTERM)
@@ -2374,6 +2475,12 @@ def run_provider_process(
                         "terminal_acknowledged": acknowledged,
                     }
                 )
+            # The final communicate() after a kill can return nothing even though the process
+            # buffered output before it died; fall back to the hard-deadline TimeoutExpired's own
+            # captured streams, which may carry it as bytes straight from the pipe.
+            tail_stdout = stdout if streams_closed else (stdout or hard_exc.output)
+            tail_stderr = stderr if streams_closed else (stderr or hard_exc.stderr)
+            _retain_failure_tail(retain_failure, attempt_number, tail_stdout, tail_stderr)
             raise _ProviderHardTimeout(acknowledged, metric) from None
     elapsed = max(0.0, time.monotonic() - started)
     returncode = process.returncode
@@ -2394,6 +2501,7 @@ def run_provider_process(
                 time.sleep(0.05)
                 absent = group_absent(process.pid)
     if returncode is None or not absent:
+        _retain_failure_tail(retain_failure, attempt_number, stdout, stderr)
         raise WorkerFailure(
             "worker termination lacks child or process-group acknowledgement",
             code="termination_unconfirmed",
@@ -2431,6 +2539,7 @@ def run_provider_process(
         "terminal_acknowledged": evidence.terminal_acknowledged,
     }
     if returncode != 0:
+        _retain_failure_tail(retain_failure, attempt_number, stdout, stderr)
         raise WorkerFailure(
             f"worker CLI exited {returncode}: {_cli_error_detail(stdout, stderr)}",
             code="worker_exited",
@@ -2440,6 +2549,7 @@ def run_provider_process(
         payload, worker_id = _extract_typed_result(stdout)
     except WorkerFailure as exc:
         metric["outcome"] = "invalid_output"
+        _retain_failure_tail(retain_failure, attempt_number, stdout, stderr)
         raise WorkerFailure(str(exc), code=exc.code, attempts=(metric,)) from exc
     return ProviderExecution(
         payload=payload,
@@ -2465,6 +2575,7 @@ def run_provider_with_retry(
     hard_timeout: float = HARD_TIMEOUT_SECONDS,
     grace: float = TERMINATION_GRACE_SECONDS,
     on_event: Callable[[dict[str, Any]], None] | None = None,
+    retain_failure: FailureTailCallback | None = None,
 ) -> ProviderExecution:
     """Run one logical provider request with at most one acknowledged fresh retry."""
     if retry_limit not in {0, 1}:
@@ -2486,6 +2597,7 @@ def run_provider_with_retry(
                 grace=grace,
                 on_event=on_event,
                 attempt_number=attempt,
+                retain_failure=retain_failure,
             )
         except _ProviderHardTimeout as exc:
             metrics.extend(exc.attempts)
@@ -2811,6 +2923,22 @@ def _import_capsule_patch(
         ) from exc
 
 
+def _persist_failure_tail(invocation: Path, attempt_number: int, name: str, data: bytes) -> None:
+    """Write the final ~50 KiB of one failed attempt's stream beside the invocation journal."""
+    path = invocation / f"attempt-{attempt_number}-{name}.tail"
+    atomic_write_bytes(path, data[-_FAILURE_TAIL_MAX_BYTES:], mode=0o600)
+
+
+def _invocation_failure_tail(invocation: Path) -> FailureTailCallback:
+    """Bind a failure-tail callback to one invocation directory beside its journal.json."""
+
+    def _retain(attempt_number: int, stdout: bytes, stderr: bytes) -> None:
+        _persist_failure_tail(invocation, attempt_number, "stdout", stdout)
+        _persist_failure_tail(invocation, attempt_number, "stderr", stderr)
+
+    return _retain
+
+
 class CognitiveWorkers:
     """Deep execution boundary for independently routed cognitive roles."""
 
@@ -3129,6 +3257,9 @@ class CognitiveWorkers:
                         {"FLOW_WORKER_INVOCATION": order.logical_invocation_id}
                     ),
                     retry_limit=policy.retry_limit,
+                    soft_timeout=policy.soft_budget_seconds,
+                    hard_timeout=policy.hard_budget_seconds,
+                    retain_failure=_invocation_failure_tail(invocation),
                 )
             except WorkerFailure as exc:
                 quarantine = exc.code == "termination_unconfirmed"

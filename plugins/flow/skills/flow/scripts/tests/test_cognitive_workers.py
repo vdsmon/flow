@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import json
 import os
+import stat
 import subprocess
 import sys
 import threading
@@ -73,6 +75,41 @@ def test_catalog_activates_readers_e2e_and_the_importing_fixers() -> None:
     # machinery_fixer is an active read_only capsule; reflect applies its report via the guard.
     assert cw.ROLE_CATALOG["machinery_fixer"].authority == "read_only"
     assert cw.ROLE_CATALOG["machinery_fixer"].active is True
+
+
+def test_role_catalog_carries_per_role_soft_and_hard_budgets() -> None:
+    readers = {
+        "planner",
+        "plan_assessor",
+        "code_reviewer",
+        "diff_reviewer",
+        "guard_reviewer",
+        "review_brief_author",
+        "reflector",
+        "machinery_fixer",
+    }
+    for name in readers:
+        policy = cw.ROLE_CATALOG[name]
+        assert (policy.soft_budget_seconds, policy.hard_budget_seconds) == (600, 2400), name
+    for name in ("implementer", "review_fixer", "revision_fixer"):
+        policy = cw.ROLE_CATALOG[name]
+        assert (policy.soft_budget_seconds, policy.hard_budget_seconds) == (1200, 5400), name
+    assert (
+        cw.ROLE_CATALOG["e2e"].soft_budget_seconds,
+        cw.ROLE_CATALOG["e2e"].hard_budget_seconds,
+    ) == (900, 3600)
+    # The module constants stay the reader defaults external callers may still reference.
+    assert cw.SOFT_TIMEOUT_SECONDS == 600
+    assert cw.HARD_TIMEOUT_SECONDS == 2400
+
+
+def test_cumulative_role_budget_accounts_for_permitted_retries() -> None:
+    # Readers retry once (1 + 1 attempts) at 2400s each.
+    assert cw.cumulative_role_budget("planner") == 2 * 2400
+    assert cw.cumulative_role_budget("machinery_fixer") == 2 * 2400
+    # Writers and e2e never retry (1 attempt).
+    assert cw.cumulative_role_budget("implementer") == 5400
+    assert cw.cumulative_role_budget("e2e") == 3600
 
 
 def test_inactive_profile_is_refused_before_capsule_allocation(
@@ -792,6 +829,138 @@ def test_second_hard_timeout_never_starts_a_third_launch() -> None:
     assert [item["attempt"] for item in error.value.attempts] == [1, 2]
 
 
+# ─── failure-tail retention ──────────────────────────────────────────────────
+
+
+def test_hard_timeout_retains_the_final_grace_communicate_output() -> None:
+    process = _FakeProcess(
+        [
+            subprocess.TimeoutExpired(["provider"], 10),
+            subprocess.TimeoutExpired(["provider"], 30),
+            ("tail stdout", "tail stderr"),
+        ]
+    )
+    retained: list[tuple[int, bytes, bytes]] = []
+    with pytest.raises(cw.WorkerFailure, match="hard deadline"):
+        _run(
+            process,
+            killpg=lambda pid, sig: None,
+            retain_failure=lambda attempt, out, err: retained.append((attempt, out, err)),
+        )
+    assert retained == [(1, b"tail stdout", b"tail stderr")]
+
+
+def test_hard_timeout_retention_falls_back_to_timeoutexpired_bytes_when_streams_never_close() -> (
+    None
+):
+    hard_exc = subprocess.TimeoutExpired(
+        ["provider"], 30, output=b"raw stdout bytes", stderr=b"raw stderr bytes"
+    )
+    process = _FakeProcess(
+        [
+            subprocess.TimeoutExpired(["provider"], 10),
+            hard_exc,
+            subprocess.TimeoutExpired(["provider"], 5),
+            subprocess.TimeoutExpired(["provider"], 5),
+        ]
+    )
+    retained: list[tuple[int, bytes, bytes]] = []
+    with pytest.raises(cw.WorkerFailure):
+        _run(
+            process,
+            killpg=lambda pid, sig: None,
+            grace=0.01,
+            retain_failure=lambda attempt, out, err: retained.append((attempt, out, err)),
+        )
+    # The final post-kill communicate() returned nothing, so retention falls back to the
+    # hard-deadline TimeoutExpired's own captured bytes, undecoded.
+    assert retained == [(1, b"raw stdout bytes", b"raw stderr bytes")]
+
+
+def test_worker_exited_retains_the_captured_streams() -> None:
+    class _Failing(_FakeProcess):
+        @override
+        def communicate(self, timeout: float | None = None):
+            result = super().communicate(timeout)
+            self.returncode = 7
+            return result
+
+    process = _Failing([("boom stdout", "boom stderr")])
+    retained: list[tuple[int, bytes, bytes]] = []
+    with pytest.raises(cw.WorkerFailure, match="exited 7"):
+        _run(process, retain_failure=lambda attempt, out, err: retained.append((attempt, out, err)))
+    assert retained == [(1, b"boom stdout", b"boom stderr")]
+
+
+def test_invalid_output_retains_the_captured_streams() -> None:
+    retained: list[tuple[int, bytes, bytes]] = []
+    with pytest.raises(cw.WorkerFailure, match="no typed result"):
+        _run(
+            _FakeProcess([("not-json\n", "some stderr")]),
+            retain_failure=lambda attempt, out, err: retained.append((attempt, out, err)),
+        )
+    assert retained == [(1, b"not-json\n", b"some stderr")]
+
+
+def test_success_never_invokes_the_retention_callback() -> None:
+    process = _FakeProcess([(json.dumps({"thread_id": "T-1", "result": {"summary": "ok"}}), "")])
+    retained: list[tuple[int, bytes, bytes]] = []
+    _run(process, retain_failure=lambda attempt, out, err: retained.append((attempt, out, err)))
+    assert retained == []
+
+
+def test_retention_failure_never_blocks_the_acknowledged_fresh_retry() -> None:
+    first = _FakeProcess(
+        [subprocess.TimeoutExpired(["provider"], 10), subprocess.TimeoutExpired(["provider"], 30)]
+    )
+    second = _FakeProcess([(json.dumps({"thread_id": "fresh", "result": {"summary": "ok"}}), "")])
+    processes = iter([first, second])
+
+    def killpg(pid: int, sig: int) -> None:
+        first.returncode = -sig
+        first.outcomes.append(("", ""))
+
+    def failing_retain(attempt: int, out: bytes, err: bytes) -> None:
+        raise RuntimeError("disk full")
+
+    execution = cw.run_provider_with_retry(
+        lambda fresh: ["provider", "fresh" if fresh else "initial"],
+        cwd=Path.cwd(),
+        environment={},
+        retry_limit=1,
+        popen=lambda *a, **k: next(processes),
+        killpg=killpg,
+        group_absent=lambda pid: True,
+        soft_timeout=10,
+        hard_timeout=40,
+        retain_failure=failing_retain,
+    )
+    assert execution.attempt == 2
+    assert [item["outcome"] for item in execution.attempts] == ["hard_timeout", "success"]
+
+
+def test_persist_failure_tail_truncates_to_the_last_50kib_atomically(tmp_path: Path) -> None:
+    invocation = tmp_path / "invocation"
+    invocation.mkdir()
+    data = b"x" * (60 * 1024) + b"tail-marker"
+    cw._persist_failure_tail(invocation, 2, "stdout", data)
+    path = invocation / "attempt-2-stdout.tail"
+    written = path.read_bytes()
+    assert written == data[-cw._FAILURE_TAIL_MAX_BYTES :]
+    assert len(written) == cw._FAILURE_TAIL_MAX_BYTES
+    assert written.endswith(b"tail-marker")
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+
+def test_invocation_failure_tail_writes_both_streams(tmp_path: Path) -> None:
+    invocation = tmp_path / "invocation"
+    invocation.mkdir()
+    callback = cw._invocation_failure_tail(invocation)
+    callback(3, b"out-data", b"err-data")
+    assert (invocation / "attempt-3-stdout.tail").read_bytes() == b"out-data"
+    assert (invocation / "attempt-3-stderr.tail").read_bytes() == b"err-data"
+
+
 def test_cli_failure_prefers_the_structured_stdout_error() -> None:
     class _Failing(_FakeProcess):
         @override
@@ -1375,6 +1544,58 @@ def test_a_cleanly_failed_invocation_does_not_strand_its_capsule(tmp_path: Path)
         )
 
     assert not list((tmp_path / "capsules").glob("*"))
+
+
+def test_run_records_the_roles_soft_and_hard_budgets_in_physical_attempts(
+    tmp_path: Path,
+) -> None:
+    source, sha = _repository(tmp_path)
+    input_path = tmp_path / "input.json"
+    input_path.write_text("{}\n", encoding="utf-8")
+    order = _review_order(source, sha, input_path, "review-budget-receipt")
+    outcome = _workers(tmp_path, _ScriptedAdapter(_EMIT)).run(
+        order, cw.OwnerProof(owner_id="owner", harness="codex")
+    )
+    attempts = outcome.receipts["physical_attempts"]
+    assert attempts[0]["soft_budget_seconds"] == 600
+    assert attempts[0]["hard_budget_seconds"] == 2400
+
+
+def test_worker_exited_persists_failure_tails_beside_the_journal(tmp_path: Path) -> None:
+    source, sha = _repository(tmp_path)
+    input_path = tmp_path / "input.json"
+    input_path.write_text("{}\n", encoding="utf-8")
+    body = "import sys; sys.stdout.write('boom-out'); sys.stderr.write('boom-err'); sys.exit(3)"
+    order = _review_order(source, sha, input_path, "review-worker-exited")
+
+    with pytest.raises(cw.WorkerFailure, match="exited 3") as error:
+        _workers(tmp_path, _ScriptedAdapter(body)).run(
+            order, cw.OwnerProof(owner_id="owner", harness="codex")
+        )
+    assert error.value.code == "worker_exited"
+
+    invocation = (
+        tmp_path / "artifacts" / "invocations" / hashlib.sha256(b"review-worker-exited").hexdigest()
+    )
+    assert (invocation / "attempt-1-stdout.tail").read_bytes() == b"boom-out"
+    assert (invocation / "attempt-1-stderr.tail").read_bytes() == b"boom-err"
+
+
+def test_a_successful_invocation_never_creates_failure_tail_artifacts(tmp_path: Path) -> None:
+    source, sha = _repository(tmp_path)
+    input_path = tmp_path / "input.json"
+    input_path.write_text("{}\n", encoding="utf-8")
+    order = _review_order(source, sha, input_path, "review-success-no-tails")
+    _workers(tmp_path, _ScriptedAdapter(_EMIT)).run(
+        order, cw.OwnerProof(owner_id="owner", harness="codex")
+    )
+    invocation = (
+        tmp_path
+        / "artifacts"
+        / "invocations"
+        / hashlib.sha256(b"review-success-no-tails").hexdigest()
+    )
+    assert list(invocation.glob("*.tail")) == []
 
 
 def test_a_read_only_violation_quarantines_the_capsule_instead_of_stranding_it(
