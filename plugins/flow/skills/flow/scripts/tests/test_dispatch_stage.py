@@ -2400,6 +2400,134 @@ def test_code_review_full_lane_refuses_a_plan_blind_review_skip(
     assert ts.stages["code_review"].status == "completed"
 
 
+def test_per_substep_retry_advances_only_the_retried_substep_generation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """recover retry --substep re-seals one substep while a completed sibling's seal survives.
+
+    plan_blind_review completes with a real outcome at generation 1. primary_review is retried
+    in place: its own "generation" and logical_invocation_id advance, its "stage_generation"
+    and every other sealed field stay put, and plan_blind_review's sealed record is untouched.
+    """
+    td, _descriptor = _code_review_workspace(tmp_path, monkeypatch)
+    sealed = _sealed(td, "code_review")
+    _publish_outcome(sealed["plan_blind_review"])
+
+    before = sealed["primary_review"]
+    assert before["generation"] == 1
+    assert before["stage_generation"] == 1
+
+    ts = state.retry_cognitive_substep(td, "code_review", "primary_review")
+    assert ts.stages["code_review"].status == "in_progress"
+
+    after = _sealed(td, "code_review")
+    assert after["primary_review"]["generation"] == 2
+    assert after["primary_review"]["stage_generation"] == 1
+    expected_lid = f"{before['run_id']}:code_review:primary_review:2"
+    assert after["primary_review"]["logical_invocation_id"] == expected_lid
+    assert after["primary_review"]["logical_invocation_id"] != before["logical_invocation_id"]
+    # Every other sealed field on the retried substep is untouched.
+    unchanged = {
+        key: value
+        for key, value in before.items()
+        if key not in {"generation", "logical_invocation_id"}
+    }
+    assert after["primary_review"] == {
+        **unchanged,
+        "generation": 2,
+        "logical_invocation_id": expected_lid,
+    }
+    # The completed sibling's sealed record and outcome are untouched.
+    assert after["plan_blind_review"] == sealed["plan_blind_review"]
+
+    # The retried substep's fresh outcome, published at its new generation, still completes
+    # the stage: the fence accepts it against the new sealed generation, and the sibling's
+    # generation-1 outcome still satisfies its own unchanged seal.
+    _publish_outcome(after["primary_review"])
+    review_fix_skip = {
+        "review_fix": {
+            "substep": "review_fix",
+            "stage_generation": sealed["review_fix"]["stage_generation"],
+            "reason": "no auto-fixable findings this run",
+        }
+    }
+    rc, done = ds.cmd_finish(
+        tmp_path,
+        "FT-1",
+        "code_review",
+        "completed",
+        skill_output={"cognitive_skips": review_fix_skip},
+    )
+    assert rc == 0, done
+
+
+def test_stage_wide_retry_after_a_substep_retry_never_reissues_a_consumed_generation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A stage-wide retry must remint past any generation a per-substep retry already sealed.
+
+    primary_review is retried in place to generation 2 while the stage record's own
+    generation stays 1. A later stage-wide retry (force_stage_status -> pending, then
+    cmd_next) must not recompute record.generation + 1 = 2 -- that id was already consumed
+    by the substep retry. It must land on generation 3 for every substep instead.
+    """
+    td, _descriptor = _code_review_workspace(tmp_path, monkeypatch)
+    sealed = _sealed(td, "code_review")
+    assert sealed["primary_review"]["generation"] == 1
+
+    state.retry_cognitive_substep(td, "code_review", "primary_review")
+    retried = _sealed(td, "code_review")
+    assert retried["primary_review"]["generation"] == 2
+
+    state.force_stage_status(td, "code_review", "pending")
+    rc, payload = ds.cmd_next(tmp_path, "FT-1")
+    assert rc == 0, payload
+    assert payload["generation"] == 3
+
+    resealed = payload["cognitive_substeps"]
+    for name in ("primary_review", "plan_blind_review", "review_fix"):
+        assert resealed[name]["generation"] == 3
+        assert resealed[name]["stage_generation"] == 3
+        assert resealed[name]["logical_invocation_id"].endswith(f":{name}:3")
+
+
+def test_legacy_seal_without_a_generation_key_falls_back_to_stage_generation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A seal predating per-substep retry has no "generation" key; the fence still accepts it."""
+    td, _descriptor = _code_review_workspace(tmp_path, monkeypatch)
+    sealed = _sealed(td, "code_review")
+    legacy = {
+        name: {key: value for key, value in facts.items() if key != "generation"}
+        for name, facts in sealed.items()
+    }
+    ts, _ = state.read(td)
+    assert ts is not None
+    record = ts.stages["code_review"]
+    new_record = state.replace(record, cognitive_substeps=legacy)
+    state._write(td, state.replace(ts, stages={**ts.stages, "code_review": new_record}))
+
+    legacy_sealed = _sealed(td, "code_review")
+    assert "generation" not in legacy_sealed["primary_review"]
+    _publish_outcome(legacy_sealed["primary_review"])
+    _publish_outcome(legacy_sealed["plan_blind_review"])
+    review_fix_skip = {
+        "review_fix": {
+            "substep": "review_fix",
+            "stage_generation": legacy_sealed["review_fix"]["stage_generation"],
+            "reason": "no auto-fixable findings this run",
+        }
+    }
+    rc, done = ds.cmd_finish(
+        tmp_path,
+        "FT-1",
+        "code_review",
+        "completed",
+        skill_output={"cognitive_skips": review_fix_skip},
+    )
+    assert rc == 0, done
+
+
 def _review_brief_workspace(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> tuple[Path, dict[str, Any]]:
@@ -2582,10 +2710,12 @@ def _publish_outcome(facts: dict[str, Any], *, generation: int | None = None) ->
 
 
 def _outcome(facts: dict[str, Any], *, generation: int | None = None) -> dict[str, Any]:
-    generation = facts["stage_generation"] if generation is None else generation
+    substep_generation = (
+        facts.get("generation", facts["stage_generation"]) if generation is None else generation
+    )
     body = {
         "logical_invocation_id": facts["logical_invocation_id"],
-        "generation": generation,
+        "generation": substep_generation,
         "profile": facts["profile"],
         "status": "succeeded",
         "result": {"ok": True},
@@ -2607,7 +2737,7 @@ def _outcome(facts: dict[str, Any], *, generation: int | None = None) -> dict[st
         "run_id": facts["run_id"],
         "stage": facts["stage"],
         "substep": facts["substep"],
-        "stage_generation": generation,
+        "stage_generation": facts["stage_generation"],
         "route_snapshot_digest": facts["route_snapshot_digest"],
         "source_sha": facts["source_sha"],
         "lease_fence": facts["lease_fence"],

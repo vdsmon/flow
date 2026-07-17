@@ -128,6 +128,10 @@ def _cognitive_substeps(
             "run_id": ticket_state.run_id,
             "stage": stage_name,
             "substep": str(substep),
+            # Initial seal sets the substep's own generation equal to the stage-wide seal; a
+            # later per-substep retry (state.retry_cognitive_substep) advances only this field
+            # while stage_generation stays the unchanged stage-wide seal both substeps share.
+            "generation": generation,
             "stage_generation": generation,
             "source_sha": head_sha,
             "route_snapshot_digest": snapshot["digest"],
@@ -194,7 +198,9 @@ def _outcome_matches(outcome: dict[str, Any], expected: dict[str, Any]) -> bool:
     return (
         outcome.get("status") == "succeeded"
         and outcome.get("logical_invocation_id") == expected["logical_invocation_id"]
-        and outcome.get("generation") == expected["stage_generation"]
+        # A legacy seal from before per-substep retry has no "generation" key of its own; it
+        # falls back to stage_generation, the value it was always implicitly equal to.
+        and outcome.get("generation") == expected.get("generation", expected["stage_generation"])
         and outcome.get("profile") == expected["profile"]
         and outcome.get("run_id") == expected["run_id"]
         and outcome.get("stage") == expected["stage"]

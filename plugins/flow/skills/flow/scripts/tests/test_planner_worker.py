@@ -654,6 +654,48 @@ def test_defaulted_source_root_is_refused_for_both_profiles(
     assert "pristine mirror" in capsys.readouterr().err
 
 
+def test_invocation_root_equal_to_source_root_is_refused(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    monkeypatch.setattr(cw, "ADAPTERS", {"codex": _FakeAdapter(_envelope())})
+    monkeypatch.setenv("FLOW_HARNESS", "codex")
+    source = _source(tmp_path)
+    argv = _argv(tmp_path, source)
+    flag = argv.index("--invocation-root")
+    argv[flag + 1] = str(source)
+
+    assert pw.cli_main(argv) == 2
+    err = capsys.readouterr().err
+    assert str(source.resolve()) in err
+
+
+def test_invocation_root_nested_under_source_root_is_refused(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    monkeypatch.setattr(cw, "ADAPTERS", {"codex": _FakeAdapter(_envelope())})
+    monkeypatch.setenv("FLOW_HARNESS", "codex")
+    source = _source(tmp_path)
+    nested = source / "capsules" / "scratch"
+    argv = _argv(tmp_path, source)
+    flag = argv.index("--invocation-root")
+    argv[flag + 1] = str(nested)
+
+    assert pw.cli_main(argv) == 2
+    err = capsys.readouterr().err
+    assert str(nested.resolve()) in err
+    assert str(source.resolve()) in err
+
+
+def test_invocation_root_help_text_documents_the_containment_requirement() -> None:
+    """Pin the documented behavior, not the exact wording: the two adjacent tests already
+    cover the containment refusal itself, so this only needs the help text to still mention
+    that the flag must be kept outside the repo -- a rewording should not fail this test.
+    """
+    help_text = " ".join(pw._parser().format_help().split())
+    assert "--invocation-root" in help_text
+    assert "outside the repo" in help_text
+
+
 def test_schema_with_draft_marker_is_normalized_by_the_worker(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
