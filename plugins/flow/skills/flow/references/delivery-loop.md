@@ -289,6 +289,17 @@ Log friction before working around drift, lease loss, reconciliation, missing to
 blockers, failed stages, retries, and state rollback. Friction logging is best-effort
 and cannot fail the run.
 
+```bash
+FLOW_HARNESS="<harness>" "<facade>" friction \
+  --ticket <KEY> --run-id <run_id> --stage <stage> \
+  --type <TYPE> --severity <sev> \
+  --body "<what>" --detail "<why>" \
+  --workspace-root . || true
+```
+
+`<TYPE>` is one of `BLOCKER`, `RETRY`, `MISSING_TOOL`, `DRIFT`, `LEASE_LOSS`,
+`RECONCILE`, `STAGE_FAILED`, or `STATE_ROLLBACK`; `<sev>` is `major` or `minor`.
+
 ## Post-implementation ownership reconcile
 
 If implementation identifies necessary files outside `planned_files`, widen the

@@ -28,7 +28,9 @@ from _timeutil import utcnow_iso
 
 Recorder = list[list[str]]
 
-# the retired launch_ledger.LAUNCH_TTL_SECONDS carried the same ceiling
+# TTL binds to the live fleet staleness window; the oracle is TTL-parameterized so this
+# proves logic equivalence under a shared ceiling, not a claim the retired
+# launch_ledger.LAUNCH_TTL_SECONDS ever equaled this value.
 TTL = fleet.STALE_AFTER_S
 
 
