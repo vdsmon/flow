@@ -1,3 +1,4 @@
+<!-- flow:activation-truth:begin -->
 # review_brief stage (inline, local reviewer companion)
 
 ## Routed authorship boundary

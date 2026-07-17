@@ -1,3 +1,4 @@
+<!-- flow:activation-truth:begin -->
 # CLAUDE.md
 
 Flow's cognitive route catalog is authoritative for model selection. New exact route

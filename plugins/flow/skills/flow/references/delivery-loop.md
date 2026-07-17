@@ -1,3 +1,4 @@
+<!-- flow:activation-truth:begin -->
 # Dispatcher delivery loop
 
 ## Cognitive outcome fence

@@ -1,3 +1,4 @@
+<!-- flow:activation-truth:begin -->
 # merge stage (inline, evolve self-target only)
 
 ## Routed guard review

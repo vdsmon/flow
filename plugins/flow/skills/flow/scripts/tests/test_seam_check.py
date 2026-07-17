@@ -1223,6 +1223,7 @@ def test_surface_cell_under_enumerated_row() -> None:
     assert len(drifts) == 1
     assert drifts[0].module == "a"
     assert drifts[0].missing == frozenset({"reap"})
+    assert drifts[0].phantom == frozenset()
 
 
 def test_surface_cell_lib_row_skipped() -> None:
@@ -1248,6 +1249,73 @@ def test_surface_cell_boundary_list_assigned() -> None:
     drifts = seam_check.module_md_surface_cell_drift(module_text=text, surface_lookup=lookup)
     assert len(drifts) == 1
     assert drifts[0].missing == frozenset({"list"})
+    assert drifts[0].phantom == frozenset()
+
+
+def test_surface_cell_phantom_only_row() -> None:
+    # A stale `retired` citation alongside real `create` is a phantom, not a missing-only drift.
+    text = "| `a.py` | x | `create` / `retired` |\n"
+    lookup = lambda name: _surface("create")  # noqa: E731
+    drifts = seam_check.module_md_surface_cell_drift(module_text=text, surface_lookup=lookup)
+    assert len(drifts) == 1
+    assert drifts[0].missing == frozenset()
+    assert drifts[0].phantom == frozenset({"retired"})
+
+
+def test_surface_cell_missing_and_phantom_together() -> None:
+    text = "| `a.py` | x | `create` / `retired` |\n"
+    lookup = lambda name: _surface("create", "reap")  # noqa: E731
+    drifts = seam_check.module_md_surface_cell_drift(module_text=text, surface_lookup=lookup)
+    assert len(drifts) == 1
+    assert drifts[0].missing == frozenset({"reap"})
+    assert drifts[0].phantom == frozenset({"retired"})
+
+
+def test_surface_cell_all_phantom_row_not_masked_by_zero_real_skip() -> None:
+    # Every citation is stale: the zero-REAL-subcommand skip must not swallow this row, since it has
+    # citations (none real). Both directions surface.
+    text = "| `a.py` | x | `retired` |\n"
+    lookup = lambda name: _surface("create", "reap")  # noqa: E731
+    drifts = seam_check.module_md_surface_cell_drift(module_text=text, surface_lookup=lookup)
+    assert len(drifts) == 1
+    assert drifts[0].missing == frozenset({"create", "reap"})
+    assert drifts[0].phantom == frozenset({"retired"})
+
+
+def test_surface_cell_facade_name_annotation_not_a_phantom() -> None:
+    # "facade name `x`" documents the CLI's registered public alias, not a subcommand; it must never
+    # count as a stale citation.
+    text = "| `a.py` | x | `create` / `reap` subcommands; facade name `a-cli` |\n"
+    lookup = lambda name: _surface("create", "reap")  # noqa: E731
+    assert seam_check.module_md_surface_cell_drift(module_text=text, surface_lookup=lookup) == []
+
+
+def test_surface_cell_pipe_inside_backtick_span_not_a_cell_boundary() -> None:
+    # A `|` inside a backtick span (trace_mine.py-shaped: `extract (--transcript | --session)`)
+    # must not fracture the row into the wrong number of cells (flow-xm0x). If it did, citation
+    # extraction would collapse to near-empty and the row would be silently skipped as making
+    # "no enumerable surface claim" -- dropping it from coverage entirely rather than catching the
+    # real missing/phantom drift below.
+    text = (
+        "| `a.py` | x | `extract (--transcript | --session) --ticket` / "
+        "`cluster [--events-file]` / `retired-sub` |\n"
+    )
+    lookup = lambda name: _surface("extract", "cluster", "file")  # noqa: E731
+    drifts = seam_check.module_md_surface_cell_drift(module_text=text, surface_lookup=lookup)
+    assert len(drifts) == 1
+    assert drifts[0].missing == frozenset({"file"})
+    assert drifts[0].phantom == frozenset({"retired-sub"})
+
+
+def test_surface_cell_stray_pipe_in_prose_is_not_a_row() -> None:
+    # A `|` used as regex alternation inside prose, not a table row, must not be mistaken for one
+    # (flow-xm0x): the line does not start with `|`.
+    text = (
+        'Selected by `[forge] backend = "github" | "bitbucket"` in `a.py`, '
+        "the read `create` verb.\n"
+    )
+    lookup = lambda name: _surface("create", "reap")  # noqa: E731
+    assert seam_check.module_md_surface_cell_drift(module_text=text, surface_lookup=lookup) == []
 
 
 def test_main_fails_on_surface_cell_drift(monkeypatch) -> None:
@@ -1267,6 +1335,169 @@ def test_main_fails_on_surface_cell_drift(monkeypatch) -> None:
 def test_module_md_surface_cells_match_argparse() -> None:
     """Every live MODULE.md surface cell must fully enumerate the script's subcommands."""
     assert seam_check.module_md_surface_cell_drift() == []
+
+
+# --- activation-truth marker/pin parity --------------------------------------
+
+
+def test_discovered_activation_truth_markers_recognizes_python_marker(tmp_path) -> None:
+    f = tmp_path / "a.py"
+    f.write_text('# flow:activation-truth:begin\n"""doc"""\n', encoding="utf-8")
+    assert seam_check.discovered_activation_truth_markers([f], repo_root=tmp_path) == frozenset(
+        {"a.py"}
+    )
+
+
+def test_discovered_activation_truth_markers_recognizes_markdown_marker(tmp_path) -> None:
+    f = tmp_path / "a.md"
+    f.write_text("<!-- flow:activation-truth:begin -->\n# A\n", encoding="utf-8")
+    assert seam_check.discovered_activation_truth_markers([f], repo_root=tmp_path) == frozenset(
+        {"a.md"}
+    )
+
+
+def test_discovered_activation_truth_markers_requires_exact_marker_line(tmp_path) -> None:
+    # A prose MENTION of the marker string is not a marker line.
+    f = tmp_path / "a.md"
+    f.write_text("This doc mentions flow:activation-truth:begin in prose.\n", encoding="utf-8")
+    assert seam_check.discovered_activation_truth_markers([f], repo_root=tmp_path) == frozenset()
+
+
+def test_activation_truth_candidates_excludes_tests_dir() -> None:
+    # scripts/tests/*.py (fixtures, marker-shaped strings in the test source itself) must never
+    # enter the scanned universe.
+    candidates = seam_check.activation_truth_candidates()
+    assert not any(p.parent.name == "tests" for p in candidates)
+
+
+def test_activation_truth_candidates_includes_root_claude_and_skill() -> None:
+    names = {p.name for p in seam_check.activation_truth_candidates()}
+    assert "CLAUDE.md" in names
+    assert "SKILL.md" in names
+
+
+def test_activation_truth_drift_flags_marker_without_pin(tmp_path) -> None:
+    marked = tmp_path / "marked.md"
+    marked.write_text("<!-- flow:activation-truth:begin -->\n# Marked\n", encoding="utf-8")
+    drift = seam_check.activation_truth_drift(
+        candidates=[marked], pins=frozenset(), repo_root=tmp_path
+    )
+    assert drift.marker_without_pin == frozenset({"marked.md"})
+    assert drift.pin_without_marker == frozenset()
+
+
+def test_activation_truth_drift_flags_pin_without_marker(tmp_path) -> None:
+    unmarked = tmp_path / "unmarked.md"
+    unmarked.write_text("# No marker here\n", encoding="utf-8")
+    drift = seam_check.activation_truth_drift(
+        candidates=[unmarked], pins=frozenset({"unmarked.md"}), repo_root=tmp_path
+    )
+    assert drift.pin_without_marker == frozenset({"unmarked.md"})
+    assert drift.marker_without_pin == frozenset()
+
+
+def test_activation_truth_drift_flags_deleted_or_renamed_pinned_file(tmp_path) -> None:
+    # The pin references a path absent from the scanned candidate set entirely (deleted, or renamed
+    # away without moving the marker with it).
+    drift = seam_check.activation_truth_drift(
+        candidates=[], pins=frozenset({"gone.md"}), repo_root=tmp_path
+    )
+    assert drift.pin_without_marker == frozenset({"gone.md"})
+    assert drift.marker_without_pin == frozenset()
+
+
+def test_activation_truth_drift_clean_when_marker_and_pin_match(tmp_path) -> None:
+    marked = tmp_path / "marked.py"
+    marked.write_text('# flow:activation-truth:begin\n"""doc"""\n', encoding="utf-8")
+    drift = seam_check.activation_truth_drift(
+        candidates=[marked], pins=frozenset({"marked.py"}), repo_root=tmp_path
+    )
+    assert drift == seam_check.ActivationTruthDrift(frozenset(), frozenset())
+
+
+def test_main_fails_on_activation_truth_marker_without_pin(monkeypatch) -> None:
+    monkeypatch.setattr(seam_check, "scripts_missing_from_module_md", lambda *a, **k: set())
+    monkeypatch.setattr(
+        seam_check, "scripts_missing_from_registry_descriptions", lambda *a, **k: set()
+    )
+    monkeypatch.setattr(seam_check, "module_md_importer_drift", lambda *a, **k: [])
+    monkeypatch.setattr(seam_check, "module_md_surface_cell_drift", lambda *a, **k: [])
+    monkeypatch.setattr(
+        seam_check,
+        "activation_truth_drift",
+        lambda *a, **k: seam_check.ActivationTruthDrift(
+            marker_without_pin=frozenset({"stray.md"}), pin_without_marker=frozenset()
+        ),
+    )
+    assert seam_check.main([]) == 1
+
+
+def test_main_fails_on_activation_truth_pin_without_marker(monkeypatch) -> None:
+    monkeypatch.setattr(seam_check, "scripts_missing_from_module_md", lambda *a, **k: set())
+    monkeypatch.setattr(
+        seam_check, "scripts_missing_from_registry_descriptions", lambda *a, **k: set()
+    )
+    monkeypatch.setattr(seam_check, "module_md_importer_drift", lambda *a, **k: [])
+    monkeypatch.setattr(seam_check, "module_md_surface_cell_drift", lambda *a, **k: [])
+    monkeypatch.setattr(
+        seam_check,
+        "activation_truth_drift",
+        lambda *a, **k: seam_check.ActivationTruthDrift(
+            marker_without_pin=frozenset(), pin_without_marker=frozenset({"CLAUDE.md"})
+        ),
+    )
+    assert seam_check.main([]) == 1
+
+
+def test_live_activation_truth_markers_match_pins() -> None:
+    """The live discovered marker set has no omissions or extras vs. the pin registry."""
+    assert seam_check.activation_truth_drift() == seam_check.ActivationTruthDrift(
+        frozenset(), frozenset()
+    )
+
+
+# --- activation-truth reference-only tripwire ---------------------------------
+
+
+def test_activation_truth_tripwire_flags_unmarked_reference(tmp_path) -> None:
+    doc = tmp_path / "new-ref.md"
+    doc.write_text("# New reference\n\nThe capsule writer runs the recipe.\n", encoding="utf-8")
+    problems = seam_check.activation_truth_tripwire_problems(docs=[doc])
+    assert problems == [("new-ref.md", 3, "add the activation-truth marker or reword")]
+
+
+def test_activation_truth_tripwire_skips_marked_reference(tmp_path) -> None:
+    doc = tmp_path / "marked-ref.md"
+    doc.write_text(
+        "<!-- flow:activation-truth:begin -->\n# Marked\n\nThe capsule writer runs.\n",
+        encoding="utf-8",
+    )
+    assert seam_check.activation_truth_tripwire_problems(docs=[doc]) == []
+
+
+def test_activation_truth_tripwire_ignores_unrelated_prose(tmp_path) -> None:
+    doc = tmp_path / "unrelated.md"
+    doc.write_text("# Unrelated\n\nRun the tests before merging.\n", encoding="utf-8")
+    assert seam_check.activation_truth_tripwire_problems(docs=[doc]) == []
+
+
+def test_main_fails_on_activation_truth_tripwire(monkeypatch) -> None:
+    monkeypatch.setattr(seam_check, "scripts_missing_from_module_md", lambda *a, **k: set())
+    monkeypatch.setattr(
+        seam_check, "scripts_missing_from_registry_descriptions", lambda *a, **k: set()
+    )
+    monkeypatch.setattr(seam_check, "module_md_importer_drift", lambda *a, **k: [])
+    monkeypatch.setattr(seam_check, "module_md_surface_cell_drift", lambda *a, **k: [])
+    monkeypatch.setattr(
+        seam_check,
+        "activation_truth_tripwire_problems",
+        lambda *a, **k: [("new-ref.md", 3, "add the activation-truth marker or reword")],
+    )
+    assert seam_check.main([]) == 1
+
+
+def test_live_activation_truth_tripwire_has_no_hits() -> None:
+    assert seam_check.activation_truth_tripwire_problems() == []
 
 
 # --- stage->reference_doc map re-enumeration drift ---------------------------

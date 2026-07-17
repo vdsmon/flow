@@ -4,6 +4,7 @@ description: State-aware ticket-to-PR delivery and workspace operations. Use FLO
 allowed-tools: Bash(.flow/runtime/flow:*), Bash(*/.flow/runtime/flow:*), Bash(python3:*), Bash(git:*), Bash(bd:*), Bash(jq:*), Bash(gh:*), Read, Write, Edit, Agent, Skill, AskUserQuestion, PushNotification, EnterWorktree
 ---
 
+<!-- flow:activation-truth:begin -->
 # Flow
 
 ## Routed cognition

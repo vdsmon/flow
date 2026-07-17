@@ -1,3 +1,4 @@
+# flow:activation-truth:begin
 """Execute exact routed cognition inside isolated capsules.
 
 The public seam intentionally stays small: callers submit a closed ``WorkOrder``

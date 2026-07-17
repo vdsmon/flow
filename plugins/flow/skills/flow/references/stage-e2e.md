@@ -1,3 +1,4 @@
+<!-- flow:activation-truth:begin -->
 # Stage: e2e
 
 ## Routed disposable-capsule e2e

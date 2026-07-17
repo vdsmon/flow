@@ -1,3 +1,4 @@
+<!-- flow:activation-truth:begin -->
 # Delivery planning and approval
 
 ## Cognitive execution boundary
