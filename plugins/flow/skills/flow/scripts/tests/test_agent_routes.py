@@ -221,6 +221,7 @@ def test_stage_execution_records_complete_composite_provenance(tmp_path: Path) -
     assert execution["review_brief"] == {
         "kind": "agent",
         "profile": "review_brief_author",
+        "substeps": {"main": {"profile": "review_brief_author", "conditional": True}},
     }
     assert execution["reflect"] == {
         "kind": "owner",

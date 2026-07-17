@@ -315,7 +315,10 @@ def probe(workspace_root: Path, ticket_dir: Path, key: str, *, runner: Runner) -
     brief: dict[str, Any] | None = None
     if _review_brief_enabled(workspace_root):
         brief = _review_brief_freshness(workspace_root, ticket_dir, pr_id, runner)
-        if brief.get("status") != "current":
+        # "disabled" here is an AUTHORIZED unattended skip (review_brief.freshness() already
+        # cross-checked it against the run's seeded signal), not the enabled/disabled workspace
+        # toggle above; both are non-blocking, "missing"/"stale"/"error" still refresh the brief.
+        if brief.get("status") not in ("current", "disabled"):
             status = str(brief.get("status") or "error")
             detail = str(brief.get("reason") or "freshness could not be established")
             return _verdict(

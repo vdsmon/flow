@@ -30,6 +30,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal, Protocol, cast
 
+import ticket_frontmatter
 from _atomicio import atomic_write_text
 from _runner import CwdRunner as Runner
 from _runner import cwd_default_runner
@@ -37,6 +38,7 @@ from forge import Forge, ForgeError, PullRequest, make_forge, read_forge_config
 
 RENDERER_VERSION = 1
 SCHEMA_VERSION = 1
+CANONICAL_UNATTENDED_SKIP_REASON = "unattended run has no live human reviewer"
 _ASSET = Path(__file__).resolve().parent / "assets" / "review_brief.css"
 _SHA_RE = re.compile(r"^[0-9a-fA-F]{7,64}$")
 _ID_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,63}$")
@@ -1022,6 +1024,72 @@ def _latest_receipt(ticket_dir: Path) -> dict[str, Any] | None:
     return None
 
 
+def _completed_review_brief_record(ticket_dir: Path) -> tuple[str | None, dict[str, Any] | None]:
+    """Read the run's ticket key and its completed review_brief stage record, if any.
+
+    Reads state.json's on-disk shape directly rather than importing state.py: that cross-module
+    dependency would require a MODULE.md import-graph update outside this stage's planned file
+    set, and touching a file outside that set voids the whole capsule import.
+    """
+    try:
+        raw = json.loads((ticket_dir / "state.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None, None
+    if not isinstance(raw, dict):
+        return None, None
+    ticket = raw.get("ticket")
+    stages = raw.get("stages")
+    record = stages.get("review_brief") if isinstance(stages, dict) else None
+    if not isinstance(ticket, str) or not isinstance(record, dict):
+        return None, None
+    if record.get("status") != "completed":
+        return None, None
+    return ticket, record
+
+
+def _skip_authorization(workspace_root: Path, ticket_dir: Path) -> Freshness | None:
+    """Cross-check a dispatcher-accepted review_brief skip against the run's seeded signal.
+
+    Returns None when review_brief was never skipped (no run state, the stage is not
+    completed, or its receipt carries no 'main' cognitive skip) OR when a skip exists but is
+    not authorized (not the exact canonical, matching-generation skip with no competing 'main'
+    outcome, or the run's frontmatter does not carry `unattended = true`): either way the
+    caller falls through to the normal render-freshness path, which still reports 'missing'
+    when no brief exists for the PR head, so an attended tail can never silently lose its
+    brief (flow-ijyh) and the documented in-merge refresh keeps working. Only the exact
+    canonical, matching-generation, non-competing skip on a run whose frontmatter carries
+    `unattended = true` short-circuits here, returning the non-blocking 'disabled' status.
+    """
+    ticket, record = _completed_review_brief_record(ticket_dir)
+    if ticket is None or record is None:
+        return None
+    skill_output = record.get("skill_output")
+    skill_output = skill_output if isinstance(skill_output, dict) else {}
+    skips = skill_output.get("cognitive_skips")
+    main_skip = skips.get("main") if isinstance(skips, dict) else None
+    if not isinstance(main_skip, dict):
+        return None
+    outcomes = skill_output.get("cognitive_outcomes")
+    competing_outcome = isinstance(outcomes, dict) and "main" in outcomes
+    canonical = (
+        main_skip.get("reason") == CANONICAL_UNATTENDED_SKIP_REASON
+        and main_skip.get("stage_generation") == record.get("generation")
+        and not competing_outcome
+    )
+    fm_path = workspace_root / ".flow" / "tickets" / f"{ticket}.md"
+    unattended = ticket_frontmatter.read(fm_path).get("unattended")
+    if canonical and unattended is True:
+        return Freshness(
+            "disabled",
+            None,
+            None,
+            None,
+            None,
+            "unattended run authorized the canonical review-brief skip",
+        )
+    return None
+
+
 def freshness(
     request: FreshnessRequest,
     *,
@@ -1033,6 +1101,9 @@ def freshness(
         return Freshness("disabled", None, None, None, None, "review brief is disabled")
     workspace_root = request.workspace_root.resolve()
     ticket_dir = request.ticket_dir.resolve()
+    authorization = _skip_authorization(workspace_root, ticket_dir)
+    if authorization is not None:
+        return authorization
     run = runner or cwd_default_runner(workspace_root)
     fg = forge or _resolve_forge(workspace_root)
     try:

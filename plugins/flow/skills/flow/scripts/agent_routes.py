@@ -142,7 +142,11 @@ _STAGE_EXECUTION = {
             "revision_fix": {"profile": "revision_fixer", "conditional": True},
         },
     },
-    "review_brief": {"kind": "agent", "profile": "review_brief_author"},
+    "review_brief": {
+        "kind": "agent",
+        "profile": "review_brief_author",
+        "substeps": {"main": {"profile": "review_brief_author", "conditional": True}},
+    },
     "reflect": {
         "kind": "owner",
         "model": "unknown",

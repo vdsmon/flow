@@ -1621,3 +1621,71 @@ def test_route_contract_gate_never_mutates_the_committed_surfaces() -> None:
     assert seam_check.route_contract_drift() == []
 
     assert (inventory_path.read_bytes(), workspace_path.read_bytes()) == before
+
+
+# --- review_brief unattended skip prose seam (flow-rptq) ---------------------
+
+
+def test_review_brief_reads_unattended_frontmatter_through_allowlisted_facade_once() -> None:
+    # `frontmatter` is the allowlisted facade command for ticket_frontmatter.py (flowctl.py's
+    # command map). stage-review_brief.md must read the seeded `unattended` signal through it
+    # exactly once and bind it to one variable, not re-derive it ad hoc per decision point.
+    text = (seam_check.SKILL_ROOT / "references" / "stage-review_brief.md").read_text(
+        encoding="utf-8"
+    )
+    assert text.count('"<facade>" frontmatter read') == 1
+    assert 'UNATTENDED=$(FLOW_HARNESS="<harness>" "<facade>" frontmatter read' in text
+
+
+def test_review_brief_reuses_same_unattended_signal_for_skip_and_no_open() -> None:
+    # Both the §0 skip-or-author choice and the §4 `--no-open` choice must consume the same
+    # `UNATTENDED` variable seeded once in §0, never a fresh live judgment for either.
+    text = (
+        (seam_check.SKILL_ROOT / "references" / "stage-review_brief.md")
+        .read_text(encoding="utf-8")
+        .replace("\n", " ")
+    )
+    assert "When `UNATTENDED` is `true`, skip" in text
+    assert "`UNATTENDED` (§0) is `true`" in text
+
+
+def test_review_brief_canonical_skip_reason_matches_freshness_authorization() -> None:
+    # The exact string stage-review_brief.md instructs agents to emit must equal review_brief.py's
+    # CANONICAL_UNATTENDED_SKIP_REASON constant; a prose/code drift here fails freshness silently.
+    import review_brief
+
+    text = (seam_check.SKILL_ROOT / "references" / "stage-review_brief.md").read_text(
+        encoding="utf-8"
+    )
+    assert review_brief.CANONICAL_UNATTENDED_SKIP_REASON in text.replace("\n", " ")
+
+
+def test_review_brief_skip_receipt_flows_through_existing_run_stage_recipe() -> None:
+    # review_brief's unattended terminal names the same generic `cognitive-worker run-stage`
+    # recipe documented in delivery-loop.md ("Activated cognitive substeps"), carries the
+    # canonical skip reason, and hands its result to `advance` through `--skill-output-from` -
+    # the defined terminal peer stages (stage-code_review.md step 9, stage-reflect.md step 7)
+    # already use, not a bespoke facade call invented inside stage-review_brief.md.
+    stage_doc = (seam_check.SKILL_ROOT / "references" / "stage-review_brief.md").read_text(
+        encoding="utf-8"
+    )
+    delivery_loop = (seam_check.SKILL_ROOT / "references" / "delivery-loop.md").read_text(
+        encoding="utf-8"
+    )
+    assert "cognitive-worker run-stage" in stage_doc
+    assert "cognitive-worker run-stage" in delivery_loop
+    assert "--skill-output-from" in stage_doc
+    assert '--output "$TICKET_DIR/stages/<stage>.cognitive.json"' in delivery_loop
+
+
+def test_review_brief_treats_revision_sub_run_as_attended() -> None:
+    # A revision sub-run reuses the original launch's worktree, so its frontmatter
+    # `unattended` flag still reflects that ORIGINAL launch, not the revision itself - and a
+    # revision is opened by a human's `revise` action, so it must be treated as attended
+    # (flow-rptq CR-F5). Prose-only: a revision seals no cognitive substep and runs no merge
+    # stage, so there is no fence to code-seal this override against.
+    text = (seam_check.SKILL_ROOT / "references" / "stage-review_brief.md").read_text(
+        encoding="utf-8"
+    )
+    assert "/revisions/" in text
+    assert "ATTENDED" in text
