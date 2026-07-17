@@ -715,10 +715,11 @@ class ApprovalReceipt:
     plan_file_sha256: str
     gate: GateTuple
     digest: str
+    plan_lane: str | None = None
     schema: str = field(default=APPROVAL_SCHEMA, init=False)
 
     def to_mapping(self) -> dict[str, Any]:
-        return {
+        mapping = {
             "schema": self.schema,
             "attempt_id": self.attempt_id,
             "native_gate_id": self.native_gate_id,
@@ -728,6 +729,9 @@ class ApprovalReceipt:
             "gate": self.gate.to_mapping(),
             "digest": self.digest,
         }
+        if self.plan_lane is not None:
+            mapping["plan_lane"] = self.plan_lane
+        return mapping
 
     def verify_plan_bytes(self, content: bytes) -> None:
         if hashlib.sha256(content).hexdigest() != self.plan_file_sha256:
@@ -1005,6 +1009,7 @@ class PlanningAttempt:
             raise AttemptError(
                 "approved plan file is not the canonical rendering of the reviewed envelope"
             )
+        plan_lane = current.plan["lane"]
         body = {
             "schema": APPROVAL_SCHEMA,
             "attempt_id": self.attempt_id,
@@ -1013,6 +1018,7 @@ class PlanningAttempt:
             "route_digest": gate.route_digest,
             "plan_file_sha256": hashlib.sha256(plan_bytes).hexdigest(),
             "gate": gate.to_mapping(),
+            "plan_lane": plan_lane,
         }
         receipt = ApprovalReceipt(
             attempt_id=self.attempt_id,
@@ -1021,6 +1027,7 @@ class PlanningAttempt:
             route_digest=gate.route_digest,
             plan_file_sha256=body["plan_file_sha256"],
             gate=gate,
+            plan_lane=plan_lane,
             digest=canonical_digest(body),
         )
         self.frozen = True
@@ -1253,6 +1260,16 @@ def load_approval_receipt(path: Path) -> ApprovalReceipt:
     if not isinstance(raw_gate, dict):
         raise AttemptError("approval receipt requires an exact gate tuple")
     gate = _gate_from_mapping(raw_gate)
+    plan_lane: str | None = None
+    if "plan_lane" in value:
+        raw_plan_lane = value["plan_lane"]
+        if raw_plan_lane is None:
+            raise AttemptError(
+                "approval receipt plan_lane must not be null; omit the field for a legacy receipt"
+            )
+        if not isinstance(raw_plan_lane, str) or raw_plan_lane not in _PLAN_LANES:
+            raise AttemptError(f"approval receipt plan_lane must be one of {sorted(_PLAN_LANES)!r}")
+        plan_lane = raw_plan_lane
     receipt = ApprovalReceipt(
         attempt_id=_nonempty(value.get("attempt_id"), "attempt id"),
         native_gate_id=_nonempty(value.get("native_gate_id"), "native gate id"),
@@ -1262,6 +1279,7 @@ def load_approval_receipt(path: Path) -> ApprovalReceipt:
         route_digest=_require_hex(value.get("route_digest"), "route digest", _HEX_64),
         plan_file_sha256=_require_hex(value.get("plan_file_sha256"), "plan file digest", _HEX_64),
         gate=gate,
+        plan_lane=plan_lane,
         digest=str(value["digest"]),
     )
     if receipt.attempt_id != gate.attempt_id:

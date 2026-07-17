@@ -1606,6 +1606,22 @@ def bootstrap(  # noqa: C901
             if journal is not None:
                 journal.advance("run_seeded", run_id=run_id)
 
+            # An unattended run derives its lane from the bead's tier labels (per the CLI help +
+            # delivery-plan.md).
+            effective_lane = _effective_lane(
+                explicit=None if auto else lane,
+                ticket=ticket,
+                planned_files=planned_files,
+                main_root=main_root,
+            )
+            if approval is not None and approval.plan_lane is not None:
+                derived_for_compare = effective_lane or "full"
+                if approval.plan_lane != derived_for_compare:
+                    warnings.append(
+                        f"plan declared lane {approval.plan_lane!r} but the bootstrap-derived "
+                        f"lane is {derived_for_compare!r}; the derived lane governs gating"
+                    )
+
             _stamp_run_frontmatter(
                 worktree,
                 ticket,
@@ -1615,14 +1631,7 @@ def bootstrap(  # noqa: C901
                 commit_summary=commit_summary,
                 e2e_recipe=e2e_recipe,
                 unattended=unattended,
-                # An unattended run derives its lane
-                # from the bead's tier labels (per the CLI help + delivery-plan.md).
-                lane=_effective_lane(
-                    explicit=None if auto else lane,
-                    ticket=ticket,
-                    planned_files=planned_files,
-                    main_root=main_root,
-                ),
+                lane=effective_lane,
             )
 
             # Last step: the run is fully seeded, so carrying spilled edits in (and

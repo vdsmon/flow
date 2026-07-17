@@ -148,6 +148,7 @@ def _approval_file(
     owner_harness: str = "claude-code",
     route_overrides: list[str] | None = None,
     attempt_id: str = "attempt-1",
+    plan_lane: str = "full",
 ) -> Path:
     route = agent_routes.snapshot(main, owner_harness, overrides=route_overrides or [])
     desired = {"harness": "codex", "model": "gpt-5.6-sol", "effort": "xhigh"}
@@ -200,7 +201,7 @@ def _approval_file(
                 "context_paths": [],
                 "verification": ["Run bootstrap recovery tests"],
                 "e2e_recipe": "Bootstrap and recover the same approved tuple.",
-                "lane": "full",
+                "lane": plan_lane,
                 "compatibility": [],
                 "rollout": "Require an explicit approval receipt.",
                 "risks": ["Crash between journal phases"],
@@ -1303,6 +1304,113 @@ def test_lane_auto_derives_from_tier_label(tmp_path: Path, monkeypatch) -> None:
     _patch_tracker(monkeypatch, _LabelTracker(["tier:trivial"]))
     fm = _lane_fm(tmp_path, main, lane="light", planned_files=["src/a.py"], auto=True)
     assert fm["lane"] == "express"
+
+
+# ─── approved plan lane vs bootstrap-derived lane (flow-dmrs) ─────────────────
+
+
+def _legacy_approval_file(path: Path) -> Path:
+    """Strip `plan_lane` from an approval receipt and recompute its digest, simulating a receipt
+    frozen before this field existed."""
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    body = {key: value for key, value in raw.items() if key not in {"digest", "plan_lane"}}
+    legacy = {**body, "digest": pa.canonical_digest(body)}
+    legacy_path = path.with_name("approval-legacy.json")
+    legacy_path.write_text(json.dumps(legacy), encoding="utf-8")
+    return legacy_path
+
+
+def _bootstrap_approved(tmp_path: Path, main: Path, *, approval: Path, plan: Path):
+    return fw.bootstrap(
+        ticket="FT-1",
+        plan_from=plan,
+        base="main",
+        branch="feat/FT-1-thing",
+        main_root=main,
+        worktree_override=str(tmp_path / "wt"),
+        approval_receipt=approval,
+        runner=_fake_runner(main=main),
+    )
+
+
+def test_bootstrap_warns_when_approved_light_diverges_from_derived_full(
+    tmp_path: Path,
+) -> None:
+    # LOAD-BEARING: an unlabelled bead (no tracker patch -> _lane_for_bead's real-tracker read fails
+    # and fails open to full) diverges from an approved plan declaring light. The divergence must
+    # surface as an advisory warning while gating and the stamped frontmatter stay exactly what a
+    # plain full run already produces.
+    import ticket_frontmatter
+
+    baseline_main = _main_checkout(tmp_path / "baseline")
+    baseline_plan = _plan_file(tmp_path / "baseline")
+    baseline_approval = _approval_file(
+        tmp_path / "baseline", baseline_main, plan=baseline_plan, plan_lane="full"
+    )
+    baseline = _bootstrap_approved(
+        tmp_path / "baseline", baseline_main, approval=baseline_approval, plan=baseline_plan
+    )
+
+    divergent_main = _main_checkout(tmp_path / "divergent")
+    divergent_plan = _plan_file(tmp_path / "divergent")
+    divergent_approval = _approval_file(
+        tmp_path / "divergent", divergent_main, plan=divergent_plan, plan_lane="light"
+    )
+    divergent = _bootstrap_approved(
+        tmp_path / "divergent", divergent_main, approval=divergent_approval, plan=divergent_plan
+    )
+
+    assert baseline["warnings"] == []
+    assert divergent["warnings"] == [
+        "plan declared lane 'light' but the bootstrap-derived lane is 'full'; "
+        "the derived lane governs gating"
+    ]
+
+    baseline_fm_path = Path(baseline["worktree"]) / ".flow" / "tickets" / "FT-1.md"
+    divergent_fm_path = Path(divergent["worktree"]) / ".flow" / "tickets" / "FT-1.md"
+    assert divergent_fm_path.read_bytes() == baseline_fm_path.read_bytes()
+
+    fm = ticket_frontmatter.read(divergent_fm_path)
+    assert "lane" not in fm
+    assert fm["unattended"] is False
+
+
+def test_bootstrap_no_warning_when_declared_and_derived_lanes_match(
+    tmp_path: Path, monkeypatch
+) -> None:
+    main = _main_checkout(tmp_path)
+    plan = _plan_file(tmp_path)
+    approval = _approval_file(tmp_path, main, plan=plan, plan_lane="light")
+    _patch_tracker(monkeypatch, _LabelTracker(["tier:light"]))
+    res = _bootstrap_approved(tmp_path, main, approval=approval, plan=plan)
+    assert res["warnings"] == []
+
+
+def test_bootstrap_no_warning_when_declared_full_matches_derived_none(
+    tmp_path: Path,
+) -> None:
+    # full <-> None is the deliberate absent-as-full mapping (_effective_lane); it must compare
+    # equal, never emit a false divergence warning for a normal full run.
+    main = _main_checkout(tmp_path)
+    plan = _plan_file(tmp_path)
+    approval = _approval_file(tmp_path, main, plan=plan, plan_lane="full")
+    res = _bootstrap_approved(tmp_path, main, approval=approval, plan=plan)
+    assert res["warnings"] == []
+
+
+def test_bootstrap_no_warning_with_legacy_receipt_missing_plan_lane(
+    tmp_path: Path, monkeypatch
+) -> None:
+    # A legacy receipt carries no trusted structural plan lane, so it stays silent even though the
+    # bead's derived lane genuinely disagrees with what the plan prose said.
+    main = _main_checkout(tmp_path)
+    plan = _plan_file(tmp_path)
+    approval_path = _approval_file(tmp_path, main, plan=plan, plan_lane="full")
+    legacy_path = _legacy_approval_file(approval_path)
+    assert pa.load_approval_receipt(legacy_path).plan_lane is None
+    _patch_tracker(monkeypatch, _LabelTracker(["tier:light"]))
+    res = _bootstrap_approved(tmp_path, main, approval=legacy_path, plan=plan)
+    assert res["warnings"] == []
 
 
 # ─── planned_files gitignore gate ─────────────────────────────────────────────
