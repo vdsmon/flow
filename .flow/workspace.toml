@@ -8,24 +8,21 @@ backend = "beads"
 prefix = "flow"
 shared_server = true
 
-# This repo IS the flow self-improvement target. Travels with the repo (so the
-# cloud routine's clone and local dogfooding both see it) and gates the
-# self-evolution loop: machinery friction -> flow's beads, /flow evolve enabled.
+# Stabilization freeze: this repo must not target itself for automatic
+# self-evolution while the orchestration machinery is being simplified.
 [maintainer]
-self_target = true
+self_target = false
 
-# Maintainer self-target only: let the reaper auto-merge a hot leaf PR in
-# isolation (one hot per pass). Stays off for user projects (human-merge keystone).
-# cap/concurrency tune this repo's drainer fan-out (default 5/3); committed so the
-# nightly schedule's ff-only advance doesn't conflict with a local uncommitted edit.
+# Stabilization freeze: retain the inactive evolve tuning for rollback context,
+# but prohibit automatic merge of Flow-on-Flow work.
 [evolve]
 cap = 10
 concurrency = 8
-auto_merge_hot = true
+auto_merge_hot = false
 # model tiering for spawned worker runs: fable for the interactive orchestrator, opus for spawned worker runs, sonnet for trivial.
 worker_model = "opus"
-# lift the hot hard-floor for this maintainer self-target repo (the human reviews
-# every PR; the floor was pure friction). Merge-time guard-property review + CI gate.
+# Inactive during stabilization; retained with the other evolve tuning for
+# rollback context.
 adjudicate_hot = true
 
 # Explicit routes are desired execution contracts. Flow records the selected route and
@@ -161,45 +158,27 @@ backend = "github"
 [forge.github]
 
 [pipeline]
-stages = ["ticket", "plan", "implement", "code_review", "e2e", "commit", "create_pr", "review_loop", "review_brief", "reflect", "merge"]
+stages = ["ticket", "plan", "implement", "code_review", "commit", "create_pr", "review_loop"]
 
 [pipeline.handlers]
 ticket = "inline"
 plan = "subagent:Plan"
 implement = "subagent:general-purpose"
 code_review = "inline"
-# Dogfood flow-l014 (e2e on by default): every ticket settles a recipe at spec
-# time — a real one, test-ci-only, or a deliberate `skip: <reason>`. Recipes are
-# authored from .flow/e2e-recipes.md; --auto runs fall back per verb-spec.
-e2e = "subagent:general-purpose"
 commit = "inline"
 create_pr = "inline"
 review_loop = "inline"
-review_brief = "inline"
-reflect = "inline"
-# Layer 2: evolve self-target self-merges its own green+clean PR (hot via an
-# independent reviewer). Bare plugin default is none = human keystone.
-merge = "inline"
-
-[review_brief]
-# Off in this repo: runs here are unattended fleet deliveries, so no reviewer is
-# present when the PR parks and an authored brief goes unread. Forge remains the
-# formal review gate. flow-rptq tracks the conditional unattended-only skip for
-# user projects.
-mode = "off"
-open = true
 
 [reflect]
-# flow runs its own pipeline on itself (dogfood); turn the harness self-repair
-# lens on so reflect fixes machinery friction from inside the run.
-machinery = true
+# Explicit dormant guard during stabilization; reflect is not in the pipeline.
+machinery = false
 
 [memory]
 namespace = "flow"
 auto_recall = true
 recall_by = ["branch", "current-ticket", "ready-tickets"]
 recall_top_n = 5
-compounding = true
+compounding = false
 
 [memory.semantic]
 enabled = true
