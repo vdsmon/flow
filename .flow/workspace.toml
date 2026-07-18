@@ -190,9 +190,9 @@ mode = "off"
 open = true
 
 [reflect]
-# flow runs its own pipeline on itself (dogfood); turn the harness self-repair
-# lens on so reflect fixes machinery friction from inside the run.
-machinery = true
+# Stabilization temporarily disables machinery filing/apply while review_brief
+# remains off; reflect records the stage without applying machinery edits.
+machinery = false
 
 [memory]
 namespace = "flow"

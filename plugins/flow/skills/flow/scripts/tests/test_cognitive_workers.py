@@ -286,18 +286,18 @@ def test_read_only_git_receipt_detects_an_untracked_content_rewrite(tmp_path: Pa
     assert cw.git_receipt(source)["digest"] == before["digest"]
 
 
-def test_read_only_git_receipt_size_marks_an_over_cap_untracked_file(
+def test_read_only_git_receipt_streams_an_over_cap_untracked_file(
     tmp_path: Path, monkeypatch
 ) -> None:
-    """Over the cap the entry carries a size, so an equal-size rewrite escapes the guard."""
-    monkeypatch.setattr(cw, "_UNTRACKED_DIGEST_MAX_FILE_BYTES", 8)
+    """An equal-size rewrite of a large untracked file changes the canonical receipt."""
+    monkeypatch.setattr(cw._gitreceipt, "_UNTRACKED_DIGEST_MAX_FILE_BYTES", 8)
     source, _ = _repository(tmp_path)
     big = source / "big.bin"
     big.write_bytes(b"aaaaaaaaaaaa")
     before = cw.git_receipt(source)
 
     big.write_bytes(b"bbbbbbbbbbbb")
-    assert cw.git_receipt(source)["digest"] == before["digest"]
+    assert cw.git_receipt(source)["digest"] != before["digest"]
 
     big.write_bytes(b"bbbbbbbbbbbbb")
     assert cw.git_receipt(source)["digest"] != before["digest"]
@@ -404,7 +404,7 @@ def test_read_only_git_receipt_survives_a_vanishing_runtime_temp(
     read_race.chmod(0o755)
 
     real_lstat = Path.lstat
-    real_digest = cw._file_digest
+    real_digest = cw._gitreceipt._file_digest
 
     def racing_lstat(self: Path, **kwargs: Any) -> os.stat_result:
         if self == stat_race:
@@ -417,7 +417,7 @@ def test_read_only_git_receipt_survives_a_vanishing_runtime_temp(
         return real_digest(path)
 
     monkeypatch.setattr(Path, "lstat", racing_lstat)
-    monkeypatch.setattr(cw, "_file_digest", racing_digest)
+    monkeypatch.setattr(cw._gitreceipt, "_file_digest", racing_digest)
     after = cw.git_receipt(source)
     assert after["digest"] == before["digest"]
 

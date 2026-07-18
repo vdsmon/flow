@@ -254,6 +254,10 @@ evidence is required before activation. Failure stops visibly without selecting 
 fallback route. `snapshot --workspace-config` resolves from bytes read at the fetched
 base SHA instead of ambient checkout state.
 
+`_gitreceipt.py` is the single standard-library-only authority for
+`flow.git-receipt/v1`, including streamed hashes for large non-ignored untracked
+files; `worker_pool.py` consumes it and rejects legacy four-field evidence.
+
 `cognitive_workers.py` is the common exact-route boundary. It owns the closed role
 catalog, prompt and schema digests, standalone exact-SHA clones, immutable dirty-review
 bundles, durable invocation journals, provider commands, process-group terminal proof,

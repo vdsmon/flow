@@ -37,6 +37,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Literal, Protocol, cast
 
+import _gitreceipt
 import lease
 from _atomicio import atomic_write_bytes, atomic_write_text
 from _locking import LockContention, flock_blocking, flock_retry
@@ -1379,176 +1380,12 @@ def _git_bytes(root: Path, *args: str, allow_returncodes: tuple[int, ...] = (0,)
     return result.stdout
 
 
-_RUNTIME_POINTERS = frozenset({"skill-root", "memory-root", "layout-version"})
-
-
-def _runtime_surface(root: Path) -> list[list[Any]]:
-    """Digest the executable surface of the gitignored .flow/runtime/ directory.
-
-    `status --untracked-files=all` never lists ignored paths, and .gitignore ignores
-    `**/.flow/runtime/`, which holds the `flow` facade every prose command executes plus the
-    pointers deciding which code that facade loads. Without this, a worker could rewrite the
-    facade, redirect skill-root at its own tree, or flip an executable bit and still pass the
-    read-only postcondition. Only executables and pointers are digested: the same directory
-    carries per-run envelopes and locks that prose writes while a reader is in flight, so a
-    whole-directory digest would report a violation for the run's own bookkeeping.
-
-    A listed path that vanishes before its stat or its read is skipped: live writers publish
-    into this directory through mkstemp + os.replace, so the listing can name a temporary the
-    rename removes a moment later. A guarded file a worker deleted still changes the receipt,
-    because the before-receipt carries the entry the after-receipt now lacks.
-    """
-    runtime = root / ".flow" / "runtime"
-    entries: list[list[Any]] = []
-    for path in sorted(runtime.rglob("*")) if runtime.is_dir() else []:
-        with contextlib.suppress(FileNotFoundError):
-            info = path.lstat()
-            if not stat.S_ISREG(info.st_mode):
-                continue
-            if not (info.st_mode & 0o111 or path.name in _RUNTIME_POINTERS):
-                continue
-            entries.append([path.relative_to(root).as_posix(), info.st_mode, _file_digest(path)])
-    return entries
-
-
-_HARNESS_CONFIG = (".claude/settings.json", ".claude/settings.local.json")
-
-
-def _harness_surface(root: Path) -> list[list[Any]]:
-    """Digest the harness settings files, which are gitignored yet declare executable hooks.
-
-    Claude Code runs the hook commands declared in these two files, so a worker that appends a
-    PreToolUse hook reaches arbitrary code execution in the parent harness on its next tool call.
-    Both are ignored in this repository, so `status --untracked-files=all` never lists them and
-    the read-only postcondition passes clean. Only these two paths are digested: the rest of
-    .claude/ (todos, statsig, shell snapshots, worktrees) churns under a live session and would
-    report the harness's own bookkeeping as a violation.
-    """
-    entries: list[list[Any]] = []
-    for relative in _HARNESS_CONFIG:
-        path = root / relative
-        if not path.is_file():
-            continue
-        entries.append([relative, path.lstat().st_mode, _file_digest(path)])
-    return entries
-
-
-_UNTRACKED_DIGEST_MAX_FILE_BYTES = 8 * 1024 * 1024
-
-
-def _untracked_content(root: Path) -> list[list[Any]]:
-    """Digest the content of untracked, non-ignored files.
-
-    `status --porcelain=v2` lists an untracked path by name alone and `git diff` hashes tracked
-    content only, so rewriting an existing untracked file moved no other field of this receipt.
-    Ignored paths stay out: a blanket digest churns on caches, virtualenvs, and build output.
-    A file over the cap carries its size instead of a content hash, which keeps a receipt taken
-    twice per bundle capture and four times per worker invocation from reading an unbounded
-    artifact. Size is a function of content, unlike mtime, so a size-only entry is not a
-    false-positive source, but a same-size rewrite of an over-cap file does escape the guard.
-    """
-    raw = _git_bytes(root, "ls-files", "--others", "--exclude-standard", "-z")
-    entries: list[list[Any]] = []
-    for name in sorted(item for item in raw.split(b"\0") if item):
-        path = root / os.fsdecode(name)
-        encoded = _encoded_path(name)
-        try:
-            info = path.lstat()
-        except OSError:
-            continue
-        content: str
-        if stat.S_ISLNK(info.st_mode):
-            content = hashlib.sha256(os.readlink(path).encode(errors="surrogateescape")).hexdigest()
-        elif stat.S_ISREG(info.st_mode) and info.st_size <= _UNTRACKED_DIGEST_MAX_FILE_BYTES:
-            try:
-                content = _file_digest(path)
-            except OSError:
-                continue
-        else:
-            content = f"size:{info.st_size}"
-        entries.append(
-            [encoded["path"], encoded["path_encoding"], info.st_mode, info.st_size, content]
-        )
-    return entries
-
-
 def git_receipt(root: Path) -> dict[str, Any]:
-    """Capture source, index, worktree, untracked, submodule, and Git metadata."""
-    resolved = root.resolve()
-    git_dir_raw = _git_bytes(resolved, "rev-parse", "--absolute-git-dir").strip()
-    common_raw = _git_bytes(resolved, "rev-parse", "--git-common-dir").strip()
-    head = _git_bytes(resolved, "rev-parse", "HEAD").strip().decode()
-    branch = (
-        _git_bytes(resolved, "symbolic-ref", "-q", "HEAD", allow_returncodes=(0, 1))
-        .strip()
-        .decode(errors="replace")
-    )
-    status_bytes = _git_bytes(resolved, "status", "--porcelain=v2", "-z", "--untracked-files=all")
-    index_bytes = _git_bytes(resolved, "ls-files", "--stage", "-z")
-    # Per-entry index flags, which neither ls-files --stage nor status reveals. Without them,
-    # `update-index --assume-unchanged` (or --skip-worktree) hides an arbitrary tracked-file
-    # rewrite from the whole guard. This listing is stable across a stat-cache refresh, so it
-    # restores the coverage the raw .git/index hash gave without its false positives.
-    index_flags = _git_bytes(resolved, "ls-files", "-v", "-z")
-    # Neither status --porcelain=v2 nor ls-files --stage carries a worktree content hash, so a
-    # tracked file rewritten in place keeps both digests equal while its bytes change. The
-    # unstaged diff hashes that content through Git and stays byte-identical across a stat-cache
-    # refresh, which is why the raw .git/index below is still excluded.
-    worktree_diff = _git_bytes(
-        resolved, "diff", "--binary", "--full-index", "--no-ext-diff", "--no-textconv"
-    )
-    submodules = _git_bytes(resolved, "submodule", "status", "--recursive")
-    hooks = sorted(
-        (entry.name, entry.stat().st_mode, hashlib.sha256(entry.read_bytes()).hexdigest())
-        for entry in (Path(os.fsdecode(git_dir_raw)) / "hooks").glob("*")
-        if entry.is_file() and not entry.name.endswith(".sample")
-    )
-    git_dir = Path(os.fsdecode(git_dir_raw))
-    if not git_dir.is_absolute():
-        git_dir = resolved / git_dir
-    # The raw .git/index file is deliberately excluded: Git rewrites its stat cache for
-    # racily-clean entries, so its bytes change without any repository change. The index
-    # is covered semantically by ls-files --stage and status --porcelain below.
-    metadata: dict[str, Any] = {}
-    for relative in ("HEAD", "config", "packed-refs"):
-        path = git_dir / relative
-        if path.is_file():
-            data = path.read_bytes()
-            metadata[relative] = {"length": len(data), "sha256": hashlib.sha256(data).hexdigest()}
-        else:
-            metadata[relative] = None
-    # HEAD/config/packed-refs miss a loose ref, and the writer seed machinery records the seeded
-    # tree under refs/flow/seed-baseline. Scoped to refs/flow/ so a stray such ref in the
-    # AUTHORITATIVE repo trips the read-only postcondition; that namespace is empty there, so
-    # before==after and no live behavior changes. A full-refs digest would false-trip on
-    # refs/remotes and refs/dolt that legitimately move during a run.
-    flow_refs = _git_bytes(resolved, "for-each-ref", "refs/flow/")
-    body = {
-        "schema": "flow.git-receipt/v1",
-        "root": str(resolved),
-        "head": head,
-        "head_ref": branch or None,
-        "git_dir": str(git_dir.resolve()),
-        "common_dir": os.fsdecode(common_raw),
-        "status": {"length": len(status_bytes), "sha256": hashlib.sha256(status_bytes).hexdigest()},
-        "index": {"length": len(index_bytes), "sha256": hashlib.sha256(index_bytes).hexdigest()},
-        "index_flags": {
-            "length": len(index_flags),
-            "sha256": hashlib.sha256(index_flags).hexdigest(),
-        },
-        "worktree_diff": {
-            "length": len(worktree_diff),
-            "sha256": hashlib.sha256(worktree_diff).hexdigest(),
-        },
-        "submodules": {"length": len(submodules), "sha256": hashlib.sha256(submodules).hexdigest()},
-        "flow_refs": {"length": len(flow_refs), "sha256": hashlib.sha256(flow_refs).hexdigest()},
-        "metadata": metadata,
-        "hooks": hooks,
-        "runtime_surface": _runtime_surface(resolved),
-        "harness_surface": _harness_surface(resolved),
-        "untracked_content": _untracked_content(resolved),
-    }
-    return {**body, "digest": _digest(body)}
+    """Capture the canonical receipt and translate failures to WorkerFailure."""
+    try:
+        return _gitreceipt.capture(root)
+    except _gitreceipt.GitReceiptError as exc:
+        raise WorkerFailure(str(exc), code="artifact_failure") from exc
 
 
 def _load_seed(order: WorkOrder) -> bytes:

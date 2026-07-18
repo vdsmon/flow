@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import json
 import subprocess
-from dataclasses import asdict
 from pathlib import Path
 
 import pytest
 
+import _gitreceipt
 import worker_pool as wp
 
 
@@ -105,21 +105,77 @@ def test_capture_git_snapshot_is_stable_with_preexisting_dirt(tmp_path: Path) ->
     assert wp.capture_git_snapshot(repo) == wp.capture_git_snapshot(repo)
 
 
+def test_worker_pool_snapshot_round_trip_does_not_report_hook_mutation(
+    tmp_path: Path,
+) -> None:
+    repo = _repo(tmp_path)
+    hook = repo / ".git" / "hooks" / "pre-commit"
+    hook.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    hook.chmod(0o755)
+
+    before = wp.capture_git_snapshot(repo)
+    reloaded = json.loads(json.dumps(before))
+
+    assert wp.changed_git_fields(before, reloaded) == ()
+
+
+def test_worker_pool_snapshot_is_the_canonical_git_receipt(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+
+    assert wp.capture_git_snapshot(repo) == _gitreceipt.capture(repo)
+
+
 def test_capture_git_snapshot_detects_each_worktree_class(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
     before = wp.capture_git_snapshot(repo)
 
     (repo / "tracked.txt").write_text("dirty\n", encoding="utf-8")
     tracked = wp.capture_git_snapshot(repo)
-    assert wp.changed_git_fields(before, tracked) == ("tracked_worktree",)
+    assert wp.changed_git_fields(before, tracked) == ("status", "worktree_diff")
 
     _git(repo, "add", "tracked.txt")
     staged = wp.capture_git_snapshot(repo)
-    assert wp.changed_git_fields(tracked, staged) == ("index_tree", "tracked_worktree")
+    assert wp.changed_git_fields(tracked, staged) == ("status", "index", "worktree_diff")
 
     (repo / "new.txt").write_text("new\n", encoding="utf-8")
     untracked = wp.capture_git_snapshot(repo)
-    assert wp.changed_git_fields(staged, untracked) == ("untracked_worktree",)
+    assert wp.changed_git_fields(staged, untracked) == ("status", "untracked_content")
+
+
+def test_worker_pool_snapshot_detects_equal_size_large_untracked_rewrites(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = _repo(tmp_path)
+    monkeypatch.setattr(_gitreceipt, "_UNTRACKED_DIGEST_MAX_FILE_BYTES", 8)
+    large = repo / "large.bin"
+    large.write_bytes(b"a" * 16)
+    before = wp.capture_git_snapshot(repo)
+
+    large.write_bytes(b"b" * 16)
+    after = wp.capture_git_snapshot(repo)
+
+    assert wp.changed_git_fields(before, after) == ("untracked_content",)
+
+
+def test_worker_pool_guard_rejects_legacy_four_field_receipts(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    repo = _repo(tmp_path)
+    before = tmp_path / "before.json"
+    before.write_text(
+        json.dumps(
+            {
+                "head": "head",
+                "index_tree": "index",
+                "tracked_worktree": "tracked",
+                "untracked_worktree": "untracked",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert wp.cli_main(["guard", "--workspace-root", str(repo), "--before", str(before)]) == 2
+    assert "flow.git-receipt/v1" in capsys.readouterr().err
 
 
 def test_cli_limit_reserves_owner_slot(capsys: pytest.CaptureFixture[str]) -> None:
@@ -137,7 +193,7 @@ def test_cli_snapshot_guard_refuses_discovery_mutation(
 ) -> None:
     repo = _repo(tmp_path)
     before = tmp_path / "before.json"
-    before.write_text(json.dumps(asdict(wp.capture_git_snapshot(repo))), encoding="utf-8")
+    before.write_text(json.dumps(wp.capture_git_snapshot(repo)), encoding="utf-8")
     (repo / "new.txt").write_text("mutated\n", encoding="utf-8")
 
     assert (
@@ -153,7 +209,7 @@ def test_cli_snapshot_guard_refuses_discovery_mutation(
         == 3
     )
     assert json.loads(capsys.readouterr().out) == {
-        "changed_git_fields": ["untracked_worktree"],
+        "changed_git_fields": ["status", "untracked_content"],
         "unchanged": False,
     }
 

@@ -50,8 +50,8 @@ high-scrutiny lane; user projects and held changes remain human-merge.
   path and confirm a snapshot reload.
 - Never advance or update the maintainer checkout while any base or revision lease
   is live.
-- Read-only discovery workers are accepted only when HEAD, index, tracked worktree,
-  and untracked-worktree snapshots are unchanged.
+- Read-only discovery workers are accepted only when canonical `flow.git-receipt/v1`
+  snapshots are unchanged; legacy four-field receipts fail closed.
 - The review and merge stages independently check the resulting diff. The producer's
   confidence is not merge authority.
 - Immutable ship events and friction records drive `FLOW measure` outcomes; tracker

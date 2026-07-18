@@ -80,9 +80,10 @@ FLOW_HARNESS="<harness>" "<facade>" worker-pool guard \
   --workspace-root "<run_root>" --before "<absolute-before-file>"
 ```
 
-Guard exit 3 names the changed HEAD, index, tracked-worktree, or untracked-worktree
-fields. Discard that worker's findings and stop before filing tickets or applying a
-proposal. Pre-existing dirt is allowed only when the receipts are exactly equal.
+Guard exit 3 names changed canonical `flow.git-receipt/v1` fields. Discard that
+worker's findings and stop before filing tickets or applying a proposal. A legacy
+four-field receipt fails closed with exit 2. Pre-existing dirt is allowed only when
+the receipts are exactly equal.
 
 The user may background the owner conversation through the host. Flow does not
 background itself, inspect host job directories, stop host sessions, or tear down its
