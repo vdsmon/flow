@@ -1,5 +1,10 @@
 # State of Flow — 2026-07-17
 
+> Historical snapshot: this document predates the observed `flow-yahm` run and the
+> stabilization freeze merged in PR #539. Its delivery claims and ceremony verdicts
+> describe what was believed before that evidence. Current simplification decisions
+> live in `docs/specs/2026-07-18-flow-simplification-map-design.md`.
+
 One page for the maintainer returning after time away. What this system is today, what
 each moving part costs and buys, and which parts are safe to simplify. Written at the
 close of the audit-delivery session (PRs #512–#537, 28 tickets shipped through Flow
