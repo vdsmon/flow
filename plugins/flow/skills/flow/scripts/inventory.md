@@ -211,15 +211,10 @@ harness values are `claude_code` and `codex`. A profile defines either one commo
 route or a `by_owner` table; mixing them or omitting a field is invalid.
 
 <!-- flow:agent-route-profiles:begin -->
-Agent route profiles: `planner`, `plan_assessor`, `implementer`, `e2e`, `code_reviewer`, `diff_reviewer`, `guard_reviewer`, `review_fixer`, `revision_fixer`, `review_brief_author`, `reflector`, `machinery_fixer`
+Agent route profiles: `implementer`, `e2e`, `code_reviewer`, `diff_reviewer`, `guard_reviewer`, `review_fixer`, `revision_fixer`, `review_brief_author`, `reflector`, `machinery_fixer`
 <!-- flow:agent-route-profiles:end -->
 
 ```toml
-[agents.planner]
-harness = "codex"
-model = "gpt-5.6-sol"
-effort = "xhigh"
-
 [agents.implementer.by_owner.claude_code]
 harness = "claude_code"
 model = "sonnet"
@@ -234,11 +229,11 @@ effort = "high"
 Resolution precedence is a complete per-run `--route` tuple, an explicit workspace
 route for that profile, its corresponding legacy `[models]` fallback, then built-in
 defaults. Profiles without a legacy knob go straight to their built-in route. Bootstrap freezes the
-canonical route snapshot. The snapshot records plan assessment, implementation, E2E,
+canonical post-plan route snapshot. The snapshot records implementation, E2E,
 primary and plan-blind review, ordinary and revision fixes, review-brief authorship,
 reflection, optional machinery fixes, and merge guarding. Ticket, commit, PR creation,
 and merge retain `model: none` at stage level. Exact CLI receipts may activate the
-planner, plan assessor, code and plan-blind reviewers, guard reviewer, review-brief
+code and plan-blind reviewers, guard reviewer, review-brief
 author, reflector, the disposable-capsule E2E writer, the importing writers
 (implementer, review_fixer, revision_fixer), and the read-only machinery_fixer. Every
 exact post-plan route is active; only the generic owner adapter leaves a route shadowed
@@ -248,11 +243,11 @@ with `effective: null`.
 `migrate --check|--apply` operation. Migration leaves `[models]` bytes intact so
 removing `[agents]` restores legacy behavior.
 
-Configured, built-in, and overridden planner routes enter the strict read-only CLI
-path. Exact capability, authentication, provider-schema acceptance, and launch receipt
-evidence is required before activation. Failure stops visibly without selecting a
-fallback route. `snapshot --workspace-config` resolves from bytes read at the fetched
-base SHA instead of ambient checkout state.
+Planning is one attended host-native conversation whose durable output is the approved
+Markdown plan. Exact capability, authentication, provider-schema acceptance, and launch
+receipt evidence is required before a post-plan route activates. Failure stops visibly
+without selecting a fallback route. `snapshot --workspace-config` resolves from bytes
+read at the fetched base SHA instead of ambient checkout state.
 
 `cognitive_workers.py` is the common exact-route boundary. It owns the closed role
 catalog, prompt and schema digests, standalone exact-SHA clones, immutable dirty-review
@@ -271,39 +266,12 @@ each edit through the `machinery_edit.py` guard.
 Codex or Claude Code parent through the nested exact route, terminal, Git, and disposal
 receipts. Setting `FLOW_HARNESS` without the real outer executable cannot satisfy it.
 
-### Pre-approval planning schemas
+### Planning handoff
 
-`planning_attempt.py` owns six canonical, digest-bearing artifacts:
-
-| Schema | Purpose |
-|---|---|
-| `flow.plan-envelope/v1` | Complete planner result with attempt/version/parent CAS, base, route-bound author id, status, required review fields, typed questions, and incorporated feedback ids. Provider objects are closed. Duplicate lists are rejected by Python after provider parsing. |
-| `flow.planning-attempt/v1` | Ephemeral review bundle with plan history, visible feedback ledger, assessment, and revalidation. Mutations lock the complete load/CAS/save transaction, and the bundle never stores a worker thread receipt. |
-| `flow.plan-assessment/v1` | Author-separated assessor outcome and findings bound to the exact plan digest, actual author id, and required-fresh assessor launch receipt |
-| `flow.plan-revalidation/v1` | Approved/latest base and exact changed/planned/context paths classified as unchanged, unrelated, relevant, or ambiguous |
-| `flow.plan-gate/v1` | Plan version/digest, approved SHA, route digest, unique planner-launch receipt, feedback watermark, assessment, and revalidation digests |
-| `flow.plan-approval/v1` | Host-native gate id, exact gate tuple, and approved plan-file digest consumed by bootstrap. Approval must present the exact digest returned by `gate`. |
-
-Only `PLAN_READY` with no pending feedback, a passing policy-valid assessment, and an
-unchanged or proven-unrelated revalidation may produce a gate tuple. Owner loss can
-rehydrate from the complete bundle, but its physical Codex or Claude session id exists
-only in live owner memory.
-
-`flow.bootstrap-journal/v1` advances one approval digest through `prepared`,
-`worktree_intended`, `worktree_created`, `run_seeded`, and `committed`. The journal rejects a different
-tuple. An incomplete matching tuple is rolled back and retried under the existing claim;
-a committed tuple returns the existing run only after state, route, approval, and plan
-artifacts are re-verified. Its filename derives from the approval digest rather than a
-planner-provided attempt id.
-The intent phase records branch and worktree before Git mutation so every crash point
-has deterministic rollback coordinates. Cleanup clears those coordinates only after
-worktree and branch removal are proven.
-
-`planner_worker.py` is the compatibility wrapper over the common capsule and journal
-primitives. It reports one record per physical launch: attempt number, exact
-600-second soft and 2400-second hard budgets, deadline events, outcome, elapsed time,
-and terminal acknowledgement. One fresh retry receives a new budget after process and
-output closure. Aggregate wall time is a separate field rather than an attempt metric.
+Planning produces one human-approved Markdown file and records the inspected base SHA.
+`flow-worktree create` resolves that base, writes the plan to `stages/plan.out`, and marks
+the stage complete. The ticket claim, isolated worktree, atomic run state, route snapshot,
+and planned-file ownership remain the bootstrap's durable safety boundaries.
 
 ### Legacy `[models]` workspace schema
 

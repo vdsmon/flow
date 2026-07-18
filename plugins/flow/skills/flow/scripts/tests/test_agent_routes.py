@@ -86,24 +86,10 @@ def test_snapshot_contains_the_complete_cognitive_profile_catalog(
     snapshot = agent_routes.snapshot(_workspace(tmp_path), owner)
 
     assert tuple(snapshot["routes"]) == agent_routes.PROFILES
-    assert snapshot["routes"]["planner"]["activation"] == "pending"
     pending = {
         profile for profile, route in snapshot["routes"].items() if route["activation"] == "pending"
     }
-    assert pending == {
-        "planner",
-        "plan_assessor",
-        "implementer",
-        "code_reviewer",
-        "diff_reviewer",
-        "guard_reviewer",
-        "review_fixer",
-        "revision_fixer",
-        "review_brief_author",
-        "reflector",
-        "e2e",
-        "machinery_fixer",
-    }
+    assert pending == set(agent_routes.PROFILES)
     assert all(route["effective"] is None for route in snapshot["routes"].values())
 
 
@@ -116,7 +102,7 @@ def test_no_exact_post_plan_route_is_shadowed_except_generic(tmp_path: Path) -> 
         shadowed = sorted(p for p, route in routes.items() if route["activation"] == "shadow")
         assert shadowed == [], (owner, shadowed)
     generic = agent_routes.snapshot(root, "generic")["routes"]
-    assert generic["planner"]["activation"] == "shadow"
+    assert {route["activation"] for route in generic.values()} == {"unrouted"}
 
 
 @pytest.mark.parametrize(
@@ -136,16 +122,6 @@ def test_builtin_profile_defaults_follow_the_approved_role_tiers(
 ) -> None:
     routes = agent_routes.snapshot(_workspace(tmp_path), owner)["routes"]
 
-    assert routes["planner"]["desired"] == {
-        "harness": "codex",
-        "model": "gpt-5.6-sol",
-        "effort": "xhigh",
-    }
-    assert routes["plan_assessor"]["desired"] == {
-        "harness": "claude_code",
-        "model": "opus",
-        "effort": "high",
-    }
     for profile in ("code_reviewer", "diff_reviewer", "guard_reviewer", "reflector"):
         assert routes[profile]["desired"] == {
             "harness": strong_harness,
@@ -188,12 +164,10 @@ def test_stage_execution_records_complete_composite_provenance(tmp_path: Path) -
         "merge",
     }
     assert execution["plan"] == {
-        "kind": "agent",
-        "profile": "planner",
-        "substeps": {
-            "planning": {"profile": "planner"},
-            "assessment": {"profile": "plan_assessor"},
-        },
+        "kind": "owner",
+        "model": "unknown",
+        "effort": "unknown",
+        "harness": "codex",
     }
     assert execution["code_review"] == {
         "kind": "composite",
@@ -264,8 +238,12 @@ def test_stage_execution_keeps_original_v1_fields_while_adding_substeps(
 ) -> None:
     execution = agent_routes.snapshot(_workspace(tmp_path), "claude-code")["stage_execution"]
 
-    assert execution["plan"]["kind"] == "agent"
-    assert execution["plan"]["profile"] == "planner"
+    assert execution["plan"] == {
+        "kind": "owner",
+        "model": "unknown",
+        "effort": "unknown",
+        "harness": "claude_code",
+    }
     assert execution["code_review"]["profile"] == "diff_reviewer"
     assert execution["code_review"]["owner"]["harness"] == "claude_code"
     assert execution["review_loop"]["profile"] == "revision_fixer"
@@ -280,102 +258,9 @@ def test_stage_execution_keeps_original_v1_fields_while_adding_substeps(
     assert execution["merge"]["guard_profile"] == "guard_reviewer"
 
 
-def test_configured_and_builtin_planner_routes_enter_strict_cli_activation(
-    tmp_path: Path,
-) -> None:
-    root = _workspace(
-        tmp_path,
-        '\n[agents.planner]\nharness = "codex"\nmodel = "gpt-5.6-sol"\neffort = "xhigh"\n',
-    )
-    configured = agent_routes.resolve(root, "planner", "claude-code")
-    explicit = agent_routes.resolve(
-        root,
-        "planner",
-        "claude-code",
-        overrides=["planner=codex,gpt-5.6-sol,xhigh"],
-    )
-    builtin = agent_routes.resolve(_workspace(tmp_path / "builtin"), "planner", "codex")
-    assert configured["activation"] == "pending"
-    assert configured["desired"] == {
-        "harness": "codex",
-        "model": "gpt-5.6-sol",
-        "effort": "xhigh",
-    }
-    assert builtin["activation"] == "pending"
-    assert builtin["desired"] == configured["desired"]
-    assert explicit["activation"] == "pending"
-    assert "strict read-only planner CLI" in explicit["reason"]
-
-
-@pytest.mark.parametrize("source", ["workspace", "built_in"])
-def test_ordinary_planner_cli_attestation_proves_exact_execution(
-    tmp_path: Path, source: str
-) -> None:
-    body = (
-        '\n[agents.planner]\nharness = "codex"\nmodel = "gpt-5.6-sol"\neffort = "xhigh"\n'
-        if source == "workspace"
-        else ""
-    )
-    root = _workspace(tmp_path, body)
-    snap = agent_routes.snapshot(root, "claude-code")
-    request = dict(snap["routes"]["planner"]["desired"])
-    receipt = agent_routes.attest(
-        snap,
-        "planner",
-        {
-            "request": request,
-            "response": {
-                "accepted": True,
-                **request,
-                "transport": "cli",
-                "adapter_version": "codex-cli/test",
-            },
-            "prompt_hash": "a" * 64,
-            "schema_hash": "b" * 64,
-            "physical_attempt": {"terminal_acknowledged": True},
-            "cleanup": {"capsule_absent": True, "quarantined": False},
-        },
-    )
-    assert receipt["source"] == source
-    assert receipt["activation"] == "active"
-    assert receipt["effective"] == request
-
-
-def test_explicit_planner_cli_attestation_proves_exact_execution(tmp_path: Path) -> None:
-    root = _workspace(tmp_path)
-    snap = agent_routes.snapshot(
-        root,
-        "claude-code",
-        overrides=["planner=codex,gpt-5.6-sol,xhigh"],
-    )
-    request = dict(snap["routes"]["planner"]["desired"])
-    receipt = agent_routes.attest(
-        snap,
-        "planner",
-        {
-            "request": request,
-            "response": {
-                "accepted": True,
-                **request,
-                "transport": "cli",
-                "adapter_version": "codex-cli/test",
-                "canonical_model": "gpt-5.6-sol-2026-07-01",
-            },
-            "prompt_hash": "prompt",
-            "schema_hash": "schema",
-            "physical_attempt": {"terminal_acknowledged": True},
-            "cleanup": {"capsule_absent": True, "quarantined": False},
-        },
-    )
-    assert receipt["activation"] == "active"
-    assert receipt["effective"] == request
-
-
 @pytest.mark.parametrize(
     "profile",
     [
-        "planner",
-        "plan_assessor",
         "code_reviewer",
         "diff_reviewer",
         "guard_reviewer",
@@ -461,15 +346,8 @@ def test_read_only_receipt_without_terminal_cleanup_proof_stays_shadow(tmp_path:
 
 def test_legacy_models_are_classified_without_becoming_agent_routes(tmp_path: Path) -> None:
     root = _workspace(tmp_path, '\n[models]\nwork_model = "opus"\ne2e = "off"\n')
-    planner = agent_routes.resolve(root, "planner", "claude-code")
     implement = agent_routes.resolve(root, "implementer", "claude-code")
     e2e = agent_routes.resolve(root, "e2e", "claude-code")
-    assert planner["activation"] == "legacy"
-    assert planner["desired"] is None
-    assert planner["legacy"] == {
-        "field": "owner session model",
-        "value": "host-native planning",
-    }
     assert implement["activation"] == "legacy"
     assert implement["desired"] is None
     assert implement["legacy"] == {"field": "models.work_model", "value": "opus"}
@@ -489,14 +367,10 @@ effort = "medium"
 """,
     )
     implementer = agent_routes.resolve(root, "implementer", "claude-code")
-    assessor = agent_routes.resolve(root, "plan_assessor", "claude-code")
 
     assert implementer["source"] == "legacy_models"
     assert implementer["desired"] is None
     assert implementer["legacy"] == {"field": "models.work_model", "value": "opus"}
-    assert assessor["source"] == "built_in"
-    assert assessor["desired"]["model"] == "opus"
-    assert assessor["legacy"] is None
 
 
 def test_snapshot_is_canonical_stable_and_round_trips(
@@ -590,12 +464,16 @@ def test_attestation_requires_structured_exact_native_acceptance(tmp_path: Path)
 def test_attestation_cannot_promote_a_generic_owner_shadow_route(tmp_path: Path) -> None:
     # Every exact post-plan route is active now, so the only shadow left is the generic owner
     # adapter; not even an exact CLI acceptance can promote it.
-    snap = agent_routes.snapshot(_workspace(tmp_path), "generic")
-    assert snap["routes"]["planner"]["activation"] == "shadow"
-    request = dict(snap["routes"]["planner"]["desired"])
+    root = _workspace(
+        tmp_path,
+        '\n[agents.implementer]\nharness = "codex"\nmodel = "gpt-5.6-luna"\neffort = "high"\n',
+    )
+    snap = agent_routes.snapshot(root, "generic")
+    assert snap["routes"]["implementer"]["activation"] == "shadow"
+    request = dict(snap["routes"]["implementer"]["desired"])
     receipt = agent_routes.attest(
         snap,
-        "planner",
+        "implementer",
         {
             "request": request,
             "response": {"accepted": True, **request, "transport": "cli"},
@@ -716,12 +594,10 @@ def test_cli_snapshot_resolve_attest_round_trip(tmp_path: Path, capsys) -> None:
     assert json.loads(capsys.readouterr().out)["activation"] == "shadow"
 
 
-def test_every_non_planner_exact_acceptance_remains_shadowed(tmp_path: Path) -> None:
+def test_native_acceptance_does_not_replace_exact_cli_proof(tmp_path: Path) -> None:
     snapshot = agent_routes.snapshot(_workspace(tmp_path), "claude-code")
 
     for profile in agent_routes.PROFILES:
-        if profile == "planner":
-            continue
         desired = snapshot["routes"][profile]["desired"]
         receipt = agent_routes.attest(
             snapshot,
@@ -874,8 +750,6 @@ def test_old_v1_snapshot_retains_its_recorded_routes_without_synthesis(tmp_path:
     loaded = agent_routes.load_snapshot(path)
 
     assert set(loaded["routes"]) == {
-        "planner",
-        "plan_assessor",
         "implementer",
         "e2e",
         "diff_reviewer",

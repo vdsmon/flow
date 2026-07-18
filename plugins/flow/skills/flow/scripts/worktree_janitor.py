@@ -344,12 +344,7 @@ def sweep(  # noqa: C901
 
 
 def _discover_quarantine_journals(workspace_root: Path) -> list[Path]:
-    """Journal paths under every workspace-owned run/revision cognitive root.
-
-    Ephemeral planner/assessor invocation roots live outside the workspace under each launch's
-    own tmpdir and are bounded separately by planner_worker's own `_reap_stale_ephemeral_siblings`;
-    they are intentionally out of scope here.
-    """
+    """Journal paths under every workspace-owned run/revision cognitive root."""
     runs_root = workspace_root / ".flow" / "runs"
     if not runs_root.is_dir():
         return []

@@ -154,8 +154,6 @@ key is refused rather than ignored, so a prompt can never be extended from the o
 
 | profile | facts |
 |---|---|
-| `planner` | `stage_plan`, `ticket`, `base_sha`, `route`, `current_envelope`, `feedback_ledger`, `version_requirements`, `approved_design_digest`, `mode` |
-| `plan_assessor` | `ticket`, `base_sha`, `route_digest`, `candidate_plan`, `planner_receipt`, `assessment_rubric` |
 | `code_reviewer` | `stage_code_review`, `ticket`, `accepted_plan`, `source_sha`, `review_bundle` |
 | `diff_reviewer` | `source_sha`, `review_bundle`, `review_rubric` |
 | `guard_reviewer` | `probe`, `guard_diff`, `guard_properties` |

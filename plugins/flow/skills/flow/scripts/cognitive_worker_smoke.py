@@ -51,7 +51,7 @@ def prepare(
 
     source = source_root.expanduser().resolve()
     source_receipt = cognitive_workers.git_receipt(source)
-    candidate_plan = {
+    guard_probe = {
         "digest": hashlib.sha256(
             f"cross-harness:{direction}:{challenge_digest}".encode()
         ).hexdigest(),
@@ -60,7 +60,7 @@ def prepare(
     input_value = {
         "schema": "flow.cognitive-worker-smoke-input/v1",
         "challenge_digest": challenge_digest,
-        "candidate_plan": candidate_plan,
+        "guard_probe": guard_probe,
     }
     input_path = smoke_root / "input.json"
     _write_json(input_path, input_value, 0o400)
@@ -68,7 +68,7 @@ def prepare(
     order = cognitive_workers.WorkOrder(
         logical_invocation_id=f"smoke:{direction}:{challenge_digest}",
         generation=1,
-        profile="plan_assessor",
+        profile="guard_reviewer",
         source_root=str(source),
         source_sha=source_receipt["head"],
         route=route,
@@ -78,15 +78,10 @@ def prepare(
         input_bundle=str(input_path),
         input_digest=input_digest,
         facts={
-            "ticket": {"key": "FLOW-SMOKE", "title": "Cross-harness challenge"},
-            "base_sha": source_receipt["head"],
-            "route_digest": hashlib.sha256(
-                json.dumps(route, sort_keys=True, separators=(",", ":")).encode()
-            ).hexdigest(),
-            "candidate_plan": candidate_plan,
-            "planner_receipt": {"digest": challenge_digest},
-            "assessment_rubric": (
-                "Return approve only when the exact challenge digest appears in the candidate."
+            "probe": guard_probe,
+            "guard_diff": {"challenge_digest": challenge_digest},
+            "guard_properties": (
+                "Return clean only when the exact challenge digest appears in the guard diff."
             ),
         },
         challenge_digest=challenge_digest,

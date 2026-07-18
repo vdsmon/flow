@@ -45,7 +45,7 @@ roots, stop for authorization rather than escaping the sandbox.
 | Trigger | `/flow` | `$flow:flow` | installed skill equivalent |
 | Plan gate | native plan mode | native Plan mode when active, else turn boundary | turn boundary |
 | Workspace | native switch plus absolute binding | explicit absolute binding | native switch if real, else explicit binding |
-| Worker | native collaboration agent, plus every exact CLI route (planner, read-only post-plan profiles, disposable-capsule E2E writer, importing writers, read-only machinery_fixer) | native collaboration agent, plus every exact CLI route (planner, read-only post-plan profiles, disposable-capsule E2E writer, importing writers, read-only machinery_fixer) | independent call or documented inline behavior |
+| Worker | native collaboration agent, plus every exact post-plan CLI route | native collaboration agent, plus every exact post-plan CLI route | independent call or documented inline behavior |
 | Exact write | native file writer | rooted safe edit/write | exact writer or collision-safe fallback |
 | Wait | native owning-session wait | native owning-session wait | bounded foreground poll |
 | Input | native question surface | plain question and wait | plain question and wait |
@@ -54,8 +54,8 @@ roots, stop for authorization rather than escaping the sandbox.
 
 Do not infer the harness from ambient environment. The adapter supplies it. Public
 route configuration uses `claude_code` and `codex`; Flow normalizes the ambient
-`claude-code` adapter name at the boundary. Every exact route, planner and post-plan
-alike, activates through an exact structured CLI receipt on either owner harness. Only
+`claude-code` adapter name at the boundary. Every exact post-plan route activates
+through an exact structured CLI receipt on either owner harness. Only
 the generic adapter leaves a route shadowed, its native response never substituting
 for a receipt-bound worker.
 
@@ -89,20 +89,12 @@ plan mode; Codex either exits native Plan mode or ends the turn at the soft boun
 Approval is the only attended delivery gate. No worktree or repository edit exists
 before it.
 
-The ordinary planner route uses `planning-attempt`, `planner-worker`, and `plan-review`
-through the facade. The worker process has a read-only sandbox and a closed canonical
-schema. Each physical launch has its own 10-minute soft deadline and 40-minute
-hard deadline. One fresh retry gets a new budget only after cancellation and output
-closure are acknowledged, and metrics keep both attempts separate. Its thread id stays
-only in the live owner conversation. The attempt bundle may retain complete plan
-versions and feedback, but never a resumable worker receipt or a Flow run. The owner
-drains the review surface before requesting its host-native gate, then passes the exact
-pre-gate digest back to approval and supplies the receipt to `worktree create
---approval-receipt`. A configured route failure stops visibly. No planner fallback runs.
+Planning is one host-native conversation that produces one complete Markdown plan.
+The human approves that exact text. A fresh assessor is optional for hot, high-risk,
+or unclear work; it returns findings to the owner and creates no second canonical plan.
+The approved text and base SHA pass directly to `worktree create`.
 
-Unattended delivery has no live gate. It proceeds only under the documented
-independent-confidence and safety policy; otherwise it records a durable question
-and exits.
+During stabilization, unattended planning stops without creating a worktree or run.
 
 Every stage or maintenance worker receives:
 

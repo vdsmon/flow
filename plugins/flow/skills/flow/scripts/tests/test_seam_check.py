@@ -1041,16 +1041,15 @@ def test_importer_drift_natural_language_and_separator_matches_when_complete(tmp
 
 
 def test_importer_drift_natural_language_and_separator_catches_missing_importer(tmp_path) -> None:
-    # Regression for the cognitive_workers.py row: "imported by cognitive_worker_smoke and
-    # planner_worker" was one unresolved token before the "and" separator was recognized, so
-    # dispatch_stage's real new import edge was silently invisible to this gate.
+    # Regression for a row with two natural-language importers: the "and" separator must not
+    # hide a third real import edge.
     (tmp_path / "cognitive_workers.py").write_text("")
     (tmp_path / "cognitive_worker_smoke.py").write_text("import cognitive_workers\n")
     (tmp_path / "dispatch_stage.py").write_text("import cognitive_workers\n")
-    (tmp_path / "planner_worker.py").write_text("import cognitive_workers\n")
+    (tmp_path / "worktree_janitor.py").write_text("import cognitive_workers\n")
     text = (
         "| `cognitive_workers.py` (lib) | x | "
-        "imported by cognitive_worker_smoke and planner_worker |\n"
+        "imported by cognitive_worker_smoke and worktree_janitor |\n"
     )
     drifts = seam_check.module_md_importer_drift(scripts_dir=tmp_path, module_text=text)
     assert len(drifts) == 1
@@ -1791,10 +1790,10 @@ def test_live_workspace_agents_pin_the_rendered_defaults() -> None:
 
 def test_route_contract_rejects_partial_self_workspace_after_capsule_activation() -> None:
     partial = """
-[agents.planner]
+[agents.implementer.by_owner.codex]
 harness = "codex"
-model = "gpt-5.6-sol"
-effort = "xhigh"
+model = "gpt-5.6-luna"
+effort = "high"
 """
 
     drift = seam_check.route_contract_drift(workspace_toml=partial)
@@ -1831,7 +1830,7 @@ def test_route_contract_flags_a_hand_edited_inventory_block() -> None:
 
 
 def test_route_contract_fails_closed_on_missing_inventory_markers() -> None:
-    drift = seam_check.route_contract_drift(inventory_text="Agent route profiles: `planner`\n")
+    drift = seam_check.route_contract_drift(inventory_text="Agent route profiles: `implementer`\n")
 
     assert any("marker" in detail for detail in drift)
 

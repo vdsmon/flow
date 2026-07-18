@@ -47,14 +47,11 @@ def test_codex_adapter_command_pipes_a_huge_prompt_off_argv_arg_max(tmp_path: Pa
 def test_claude_adapter_command_pipes_a_huge_prompt_off_argv_arg_max(tmp_path: Path) -> None:
     """--json-schema inlines the schema text, the one argv token stdin delivery left unbounded.
 
-    A stub schema (a couple bytes) would make the <100KB budget assertion pass trivially
-    regardless of schema size, so this uses the real plan-envelope schema (~3KB) — the
-    largest schema this codebase actually emits over the wire.
+    A stub schema would make the budget assertion pass trivially, so this uses a real
+    production schema with nested objects.
     """
-    import planning_attempt
-
     schema = tmp_path / "schema.json"
-    schema.write_text(json.dumps(planning_attempt.envelope_json_schema()), encoding="utf-8")
+    schema.write_text(json.dumps(cw.provider_schema("reflector")), encoding="utf-8")
     command = cw.ClaudeCodeCliAdapter().command(
         {"harness": "claude_code", "model": "opus", "effort": "high"},
         _HUGE_PROMPT,
@@ -64,46 +61,6 @@ def test_claude_adapter_command_pipes_a_huge_prompt_off_argv_arg_max(tmp_path: P
     assert _HUGE_PROMPT not in command
     assert command[-1] != _HUGE_PROMPT
     assert sum(len(token) for token in command) < _ARG_MAX_BUDGET_BYTES
-
-
-def test_build_planner_command_pipes_a_huge_prompt_off_argv_arg_max(tmp_path: Path) -> None:
-    schema = tmp_path / "schema.json"
-    schema.write_text('{"type":"object"}', encoding="utf-8")
-
-    codex_initial = cw.build_planner_command(
-        {"harness": "codex", "model": "gpt-5.6-sol", "effort": "xhigh"},
-        _HUGE_PROMPT,
-        schema_path=schema,
-    )
-    assert codex_initial[-1] == "-"
-    assert _HUGE_PROMPT not in codex_initial
-    assert sum(len(token) for token in codex_initial) < _ARG_MAX_BUDGET_BYTES
-
-    codex_resume = cw.build_planner_command(
-        {"harness": "codex", "model": "gpt-5.6-sol", "effort": "xhigh"},
-        _HUGE_PROMPT,
-        schema_path=schema,
-        thread_id="thread-7",
-    )
-    assert codex_resume[-2:] == ["thread-7", "-"]
-    assert _HUGE_PROMPT not in codex_resume
-
-    claude_initial = cw.build_planner_command(
-        {"harness": "claude_code", "model": "opus", "effort": "high"},
-        _HUGE_PROMPT,
-        schema_path=schema,
-    )
-    assert _HUGE_PROMPT not in claude_initial
-    assert sum(len(token) for token in claude_initial) < _ARG_MAX_BUDGET_BYTES
-
-    claude_resume = cw.build_planner_command(
-        {"harness": "claude_code", "model": "opus", "effort": "high"},
-        _HUGE_PROMPT,
-        schema_path=schema,
-        thread_id="session-7",
-    )
-    assert claude_resume[claude_resume.index("--resume") + 1] == "session-7"
-    assert _HUGE_PROMPT not in claude_resume
 
 
 def test_claude_adapter_command_proves_exact_plan_permissions(tmp_path: Path) -> None:
@@ -139,12 +96,9 @@ def test_claude_worker_command_is_accepted_by_the_real_cli_contract(tmp_path: Pa
     schema.write_text('{"type":"object"}', encoding="utf-8")
     route = {"harness": "claude_code", "model": "opus", "effort": "high"}
 
-    for command in (
-        cw.ClaudeCodeCliAdapter().command(route, "prompt", schema, tmp_path),
-        cw.build_planner_command(route, "prompt", schema_path=schema),
-    ):
-        assert command[command.index("--output-format") + 1] == "stream-json"
-        assert "--verbose" in command
+    command = cw.ClaudeCodeCliAdapter().command(route, "prompt", schema, tmp_path)
+    assert command[command.index("--output-format") + 1] == "stream-json"
+    assert "--verbose" in command
 
 
 def test_codex_adapter_command_branches_the_sandbox_on_authority(tmp_path: Path) -> None:

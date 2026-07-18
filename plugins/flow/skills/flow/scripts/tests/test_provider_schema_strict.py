@@ -8,8 +8,6 @@ types, never by leaving a property out of `required`.
 import cognitive_workers as cw
 
 _PROFILES = [
-    "planner",
-    "plan_assessor",
     "code_reviewer",
     "diff_reviewer",
     "guard_reviewer",

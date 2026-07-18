@@ -24,6 +24,12 @@ retains native Codex support and the state-aware command while preceding the rou
 planning-transaction, review-brief, and capsule expansion. Simplification proceeds
 through forward deletion.
 
+The first deletion slice is implemented on `stabilize/understanding-map`: planning is
+one approved Markdown plan, the four planning-transaction modules and their direct
+tests are deleted, bootstrap has one path again, and planner/assessor route contracts
+are gone. Post-plan routes and the review brief remain for later, separately approved
+slices.
+
 ## Original intent and target
 
 The useful idea from `PiLastDigit/TRIP-workflow` was logical role separation: a

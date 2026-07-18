@@ -403,9 +403,7 @@ unrecognized worktree merely because its branch name resembles Flow.
 
 Sweep quarantined cognitive capsules owned by the invoking workspace only: every
 `.flow/runs/<ticket>/cognitive/<stage>/invocations/*/journal.json` and its
-`revisions/<revision>/` sibling. Ephemeral planner and plan-assessor invocation roots
-live outside the workspace, under each launch's own private cache directory, and are
-bounded separately by that worker's own reaper; this command never touches them.
+`revisions/<revision>/` sibling.
 
 A quarantined journal always records the capsule path `_dispose_failed_capsule` moved
 it to. Seven days since the journal's last transition is the default aged threshold; a

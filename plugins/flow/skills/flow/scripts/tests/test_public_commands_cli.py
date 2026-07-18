@@ -52,7 +52,7 @@ def test_route_payload_preserves_repeated_agent_route_values(tmp_path, capsys) -
             "--",
             "FT-12",
             "--route",
-            "planner=codex,gpt-5.6-sol,xhigh",
+            "code_reviewer=codex,gpt-5.6-sol,xhigh",
             "--route=implementer=claude_code,sonnet,high",
         ]
     )
@@ -61,7 +61,7 @@ def test_route_payload_preserves_repeated_agent_route_values(tmp_path, capsys) -
     assert payload["options"] == ["--route", "--route"]
     assert payload["option_values"] == {
         "--route": [
-            "planner=codex,gpt-5.6-sol,xhigh",
+            "code_reviewer=codex,gpt-5.6-sol,xhigh",
             "implementer=claude_code,sonnet,high",
         ]
     }
