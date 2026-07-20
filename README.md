@@ -19,13 +19,13 @@ currently needs attention.
 
 After approval, Flow seeds a git worktree, binds every command, edit, and worker
 to its absolute root, and runs the autonomous tail (implement -> code review ->
-e2e -> commit -> draft PR) in the same owner session. You shape the work and
-review the PR; the machine owns everything in between.
+e2e -> commit -> draft PR) in the same driver session. You shape the work and
+review the PR; the driver handles everything in between.
 
 - Multi-tracker: Jira (REST) or [beads](https://github.com/steveyegge/beads) (`bd`), one active per workspace.
 - Deterministic engine: a state-machine dispatcher owns `state.json`, a per-ticket run lease, and a canonical-snapshot TOCTOU guard. Stdlib-only Python with atomic writes and quarantine recovery.
 - Compounding memory: the reflect stage extracts durable knowledge per ticket, and plan-phase recall feeds it back into the next plan (BM25, optional semantic fusion).
-- Harness-neutral maintenance: Claude Code and Codex use their native collaboration workers behind the same bounded owner-session pool. Durable run, fleet, lease, and PR evidence remains authoritative if a worker handle disappears.
+- Harness-neutral maintenance: Claude Code and Codex use their native collaboration workers behind the same bounded driver-session pool. Durable run, fleet, lease, and PR evidence remains authoritative if a worker handle disappears.
 - Self-evolving: reflect turns observed friction into guarded machinery fixes (`machinery_edit` -> reviewed commit; version stamped after merge). See `plugins/flow/skills/flow/references/self-evolution.md`.
 
 ## Install with Claude Code
@@ -86,7 +86,7 @@ Fair question, since most tools in this space ship as their own binary. flow is 
 A standalone binary running its own agent loop on the API would buy real things: a coded do-loop (the prose-drift bug class that `seam_check` and trace-mining police today just disappears), versioned releases, and the option to run in CI. I still think it costs more than it buys.
 
 - Rebuilding the harness. Permissions, sandboxing, worktree isolation, subagents, and plan-approval UX are supplied by Claude Code or Codex and keep improving underneath the plugin.
-- Native workers. Maintenance drains use the active harness's collaboration agents. The owner session reserves one slot, bounds concurrency by host capacity, and can itself be backgrounded by the user without inventing a second job system.
+- Native workers. Maintenance drains use the active host's collaboration agents. The driver session reserves one slot, bounds concurrency by host capacity, and can itself be backgrounded by the human without inventing a second job system.
 - Self-evolution, which is the whole thesis (see [VISION.md](VISION.md)). The reflect stage can repair flow's own harness from inside a run because the running agent has edit access to its own prose and scripts, gated by `machinery_edit`. Prose is what makes self-repair cheap and reviewable, and a binary editing its own installed package mid-run is a versioning nightmare.
 - Graceful ambiguity. Prose executed by a model absorbs the weird states (half-dead CI, misfiled tickets, recovery from a killed session) that hard-coded orchestration would have to enumerate case by case.
 

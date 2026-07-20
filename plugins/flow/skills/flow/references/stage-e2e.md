@@ -115,7 +115,7 @@ Your job is to run it exactly, not to reinterpret it.
    - **Rung 4, external blob link (only when the note carries a destination).** If,
      and only if, the evidence note contains an explicit human-authored upload
      destination, upload the full artifact there and record the URL plus the sha256
-     that pins it. Never invent a destination; an unattended planner never introduces
+     that pins it. Never invent a destination; an unattended driver never introduces
      one, and with no destination in the note there is no rung 4.
 
    Keep the report scrub-safe: no em-dashes in the prose lines (write

@@ -5,7 +5,7 @@
 Flow planning needs a live relationship with the human. Repository access may be
 missing, a permission boundary may need approval, or a factual question may change
 the scope. Giving plan ownership to a separate planner agent makes those ordinary
-interactions indirect: the main session must relay questions and reconstruct context
+interactions indirect: the driver must relay questions and reconstruct context
 that it already holds.
 
 The main driver therefore owns planning. Independent challenge remains valuable, but
@@ -19,7 +19,10 @@ understand.
 
 ### Driver
 
-The main session is the sole plan author and human cockpit. It:
+The driver is the main agent/session and the sole plan author and human cockpit. In
+this design, **human** means the user or maintainer at the approval gate and **host**
+means the Claude Code, Codex, or generic adapter. **Owner** remains available for real
+resource ownership such as leases, repositories, branches, and content. The driver:
 
 - reads the ticket, current repository, project instructions, and directly relevant
   history;
@@ -92,7 +95,8 @@ decides whether that evidence removes the deduction on the next pass.
 ## Confidence contract
 
 The assessor assigns whole-number scores from 0 through 100. The overall confidence
-is the weighted result, reported to one decimal place:
+is the weighted result. Report it to one decimal place, but evaluate the gate against
+the unrounded value:
 
 | Dimension | Weight | Question |
 |---|---:|---|
@@ -194,13 +198,16 @@ ticket mutation, or approval artifact exists before approval.
 
 ## Implementation boundary
 
-Implementation changes only the surviving planning instructions and configuration:
+Implementation changes the surviving planning instructions and configuration, plus
+the shared drain decision needed to enforce the same gate for fresh unattended work:
 
 - make the stage-registry plan handler and this workspace's plan handler `inline`;
 - update `SKILL.md`, `references/delivery-plan.md`, and
   `references/stage-plan.md` to give the driver plan ownership;
 - encode the mandatory assessor loop, adversarial posture, confidence rubric,
   convergence cap, replacement rule, base recheck, and gate display; and
+- replace the drains' fresh `launch` action with `plan_required`, after recovery and
+  waiting for existing work, so unattended maintenance cannot bypass human approval;
 - reconcile the simplification map with the final planning contract.
 
 It does not add runtime state, assessor commands, schemas, model routes, session-id

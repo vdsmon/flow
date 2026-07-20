@@ -32,7 +32,7 @@ An empty PR id is a failed stage.
 
 Poll `ci-rollup` in bounded foreground calls. Read the command exit code before
 parsing JSON; a probe error is not `pending`. Stop each call after eight probes and
-return control to the owner before another call.
+return control to the driver before another call.
 
 ```bash
 i=0; errors=0; while [ $i -lt 8 ]; do
@@ -49,7 +49,7 @@ done
 ```
 
 Three consecutive probe errors fail visibly. A still-pending result is not failure;
-report it and let the owner resume the same stage later.
+report it and let the driver resume the same stage later.
 
 ## 2. Inspect review feedback
 

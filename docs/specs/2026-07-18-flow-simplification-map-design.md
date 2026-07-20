@@ -27,7 +27,11 @@ through forward deletion.
 
 The first deletion slice merged in PR #540: planning is one approved Markdown plan,
 the four planning-transaction modules and their direct tests are deleted, bootstrap
-has one path again, and planner/assessor route contracts are gone.
+has one path again, and planner/assessor route contracts are gone. The driver now
+authors that plan directly and sends it through one bounded adversarial assessor loop.
+The human gate requires unrounded confidence of at least 90.0 and zero blockers.
+Maintenance drains report fresh work as `plan_required`; they do not launch it
+unattended.
 
 The separately approved second and third slices are implemented on
 `stabilize/native-agents`: post-plan agents run natively in the ticket worktree;
@@ -38,9 +42,9 @@ an optional per-stage hint, and outer Claude Code/Codex harness selection remain
 
 ## Original intent and target
 
-The useful idea from `PiLastDigit/TRIP-workflow` was logical role separation: a
-planner concentrates on the plan, an implementer writes, and a fresh reviewer
-challenges the result while one owner remains the human cockpit. That idea does not
+The useful idea from `PiLastDigit/TRIP-workflow` was logical role separation: the
+driver concentrates on the plan, an implementer writes, and fresh assessors/reviewers
+challenge judgment while the driver remains the human cockpit. That idea does not
 require a swarm, private repository clones, exact provider proof, or a distributed
 transaction protocol.
 
@@ -48,7 +52,8 @@ The target is:
 
 ```text
 ticket
-  -> one fresh native planner and one saved plan
+  -> one driver-authored plan
+  -> one bounded adversarial assessor loop (confidence >= 90%, no blockers)
   -> human approval
   -> one ticket worktree
   -> direct implementation in that worktree
@@ -58,10 +63,11 @@ ticket
   -> commit, PR, CI, human merge
 ```
 
-Roles remain logically separate. Claude Code and Codex remain first-class outer
-harness adapters. A role may use the owning harness's native fresh-agent mechanism.
-Exact cross-provider model execution is not a correctness property and is removed
-from the hot path.
+Roles remain logically separate. Claude Code and Codex remain first-class host
+adapters. A role may use the active host's native fresh-agent mechanism. Fresh
+delivery always passes through attended driver planning and the human gate. Exact
+cross-provider model execution is not a correctness property and is removed from the
+hot path.
 
 ## Scale of the expansion
 
@@ -151,8 +157,8 @@ and a five-phase bootstrap journal.
 The `flow-yahm` plan was approved at v1 with zero feedback, zero revisions, and zero
 model retries. The machinery still spent about 26 cognitive minutes on planning and
 assessment and required two route-shape rerenders. Preserve the useful outcome, not
-the transaction protocol: one grounded plan, an optional independent challenge, one
-human approval, the approved base SHA, and a bootstrap drift check.
+the transaction protocol: one driver-authored plan, one mandatory bounded adversarial
+challenge, one human approval, the approved base SHA, and a bootstrap drift check.
 
 Verdict: collapse first.
 
@@ -238,10 +244,10 @@ machinery. Rejected.
 
 ## Ordered slices
 
-1. **Collapsed in PR #540 — planning transactions.** Restore a single native planner result and
-   human gate. Remove plan versions, feedback CAS, assessor receipts, route-bound gate
-   receipts, and the approval bootstrap journal. Retain one optional independent
-   assessor for explicitly high-risk work.
+1. **Collapsed in PR #540 — planning transactions.** Keep one driver-authored plan,
+   a mandatory bounded adversarial assessor loop, and the human gate. Remove plan
+   versions, feedback CAS, assessor receipts, route-bound gate receipts, and the
+   approval bootstrap journal.
 2. **Implemented on `stabilize/native-agents` — capsule execution and patch import.** Restore direct native agents in the
    ticket worktree. Remove work orders, private clones, claims, generations, patch
    CAS, capsule quarantine, and their tests. Decouple the retained review brief and
@@ -264,21 +270,21 @@ machinery. Rejected.
    active wall time, and fewer than 4.46 million reported input tokens, an 80 percent
    reduction from `flow-yahm`.
 
-## First slice design: collapse planning transactions
+## Collapsed planning contract
 
 ### Behavior
 
-- A fresh plan uses one host-native planner context. It returns one complete Markdown
-  plan grounded against the fetched default branch.
-- The owner may request one fresh assessor only for hot, high-risk, or unclear work.
-  Ordinary bounded tickets have no mandatory assessor.
+- The driver writes one complete Markdown plan grounded against the fetched default
+  branch and handles every human question or access request directly.
+- Every plan receives one fresh adversarial assessor. The same assessor re-evaluates
+  revisions for at most three completed passes per autonomous round. The gate requires
+  unrounded weighted confidence of at least 90.0 and zero blockers.
 - The maintainer sees the plan and explicitly approves it. Requested changes edit the
   same plan; Flow does not create a version graph or feedback ledger.
-- During stabilization, planning is attended. Unattended planning does not bypass the
-  human gate and is not reimplemented inside this slice. It may be reconsidered only
-  after the measured simple delivery.
+- Planning is attended. Fresh unattended targets and maintenance candidates stop
+  without mutation; confidence never bypasses the human gate.
 - Approval records the plan file and base SHA. Bootstrap fetches the default branch
-  again. If the base moved, the owner performs one bounded changed-path check.
+  again. If the base moved, the driver performs one bounded changed-path check.
   Proven-disjoint movement continues; relevant or ambiguous movement returns the same
   plan to the human gate. It never automatically generates another plan.
 - Bootstrap creates the existing ticket worktree and seeds the existing run state.
@@ -300,7 +306,8 @@ added.
 
 ### Failure handling
 
-- Planner/provider failure is reported directly and leaves the repository untouched.
+- Assessor loss follows the one-replacement rule and otherwise stops visibly; it
+  leaves the repository untouched.
 - A user question is presented directly, not stored in a feedback ledger.
 - Relevant or ambiguous base movement before bootstrap stops with the old and new
   SHAs and the changed paths. Proven-disjoint movement continues without another
@@ -323,8 +330,8 @@ added.
 
 ### Completion evidence
 
-The slice is complete when the public planning instructions describe only the simple
+The collapsed contract is complete when the public planning instructions describe only the simple
 path, removed facade commands fail as unknown, worktree bootstrap accepts the simple
 approved plan without route or approval receipts, retained safety tests pass, CI is
-green, and the PR reports lines and tests deleted plus wall time. No Flow driver,
-reflection, machinery ticket, or automatic merge is used to deliver it.
+green, and the PR reports lines and tests deleted plus wall time. No automatic Flow
+delivery run, reflection, machinery ticket, or automatic merge is used to deliver it.

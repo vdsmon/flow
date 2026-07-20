@@ -26,7 +26,7 @@ def _repo(tmp_path: Path) -> Path:
     return repo
 
 
-def test_effective_concurrency_reserves_one_owner_slot() -> None:
+def test_effective_concurrency_reserves_one_driver_slot() -> None:
     assert wp.effective_concurrency(configured=8, capacity=4) == 3
     assert wp.effective_concurrency(configured=2, capacity=9) == 2
     assert wp.effective_concurrency(configured=3, capacity=1) == 0
@@ -54,10 +54,10 @@ def test_effective_concurrency_rejects_invalid_inputs(
         (wp.DurableRunState.CORRUPT, wp.RecoveryAction.REPAIR),
     ],
 )
-def test_owner_failure_recovery_uses_durable_run_evidence(
+def test_driver_failure_recovery_uses_durable_run_evidence(
     state: wp.DurableRunState, expected: wp.RecoveryAction
 ) -> None:
-    outcome = wp.owner_recovery_outcome(
+    outcome = wp.driver_recovery_outcome(
         wp.DurableRunEvidence(key="FT-1", state=state, run_id="run-1")
     )
 
@@ -66,23 +66,23 @@ def test_owner_failure_recovery_uses_durable_run_evidence(
     assert outcome.run_id == "run-1"
 
 
-def test_owner_recovery_does_not_accept_disposable_worker_handles_as_evidence() -> None:
-    # A dead owner can leave a stale native handle or lose it entirely. The recovery
+def test_driver_recovery_does_not_accept_disposable_worker_handles_as_evidence() -> None:
+    # A dead driver can leave a stale native handle or lose it entirely. The recovery
     # seam deliberately accepts only durable run evidence, so either situation maps
     # to the same action and a live durable run is never launched twice.
     evidence = wp.DurableRunEvidence(
         key="FT-1", state=wp.DurableRunState.RUNNING, run_id="run-durable"
     )
 
-    first = wp.owner_recovery_outcome(evidence)
-    second = wp.owner_recovery_outcome(evidence)
+    first = wp.driver_recovery_outcome(evidence)
+    second = wp.driver_recovery_outcome(evidence)
 
     assert first == second
     assert first.action is wp.RecoveryAction.MONITOR
 
 
 def test_recovery_plan_defaults_missing_durable_evidence_to_relaunch() -> None:
-    plan = wp.owner_recovery_plan(
+    plan = wp.driver_recovery_plan(
         ["FT-1", "FT-2"],
         {
             "FT-2": wp.DurableRunEvidence(
@@ -122,13 +122,13 @@ def test_capture_git_snapshot_detects_each_worktree_class(tmp_path: Path) -> Non
     assert wp.changed_git_fields(staged, untracked) == ("untracked_worktree",)
 
 
-def test_cli_limit_reserves_owner_slot(capsys: pytest.CaptureFixture[str]) -> None:
+def test_cli_limit_reserves_driver_slot(capsys: pytest.CaptureFixture[str]) -> None:
     assert wp.cli_main(["limit", "--configured", "8", "--capacity", "4"]) == 0
     assert json.loads(capsys.readouterr().out) == {
         "configured": 8,
         "effective_concurrency": 3,
         "host_capacity": 4,
-        "owner_slots": 1,
+        "driver_slots": 1,
     }
 
 

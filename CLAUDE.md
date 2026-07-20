@@ -2,7 +2,7 @@
 
 Flow uses one attended planning conversation, one human-approved Markdown plan, and
 one authoritative ticket worktree. Fresh host-native agents provide logical role
-separation for implementation and review. Keep the owner as the single human cockpit;
+separation for implementation and review. Keep the driver as the single human cockpit;
 do not add provider proof, execution capsules, or patch-import transactions around
 those roles.
 

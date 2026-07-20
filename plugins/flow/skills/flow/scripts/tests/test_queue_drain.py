@@ -189,14 +189,15 @@ def test_cli_drops_launch_key_with_merged_pr(monkeypatch, tmp_path, capsys):
     ]
 
 
-def test_cli_launch_passthrough_smoke(monkeypatch, tmp_path, capsys):
-    # decide() contract is owned by test_evolve_drain; this test proves only the passthrough
+def test_cli_requires_planning_for_fresh_candidates(monkeypatch, tmp_path, capsys):
+    # decide() contract is owned by test_evolve_drain; this proves the queue adapter exposes it.
     _stub_cli(monkeypatch, tmp_path, _sel(launch=["flow-a", "flow-b"]))
     rc = qd.cli_main(["--workspace-root", str(tmp_path)])
     assert rc == 0
     out = _out(capsys)
-    assert out["action"] == "launch"
-    assert out["launch"] == ["flow-a", "flow-b"]
+    assert out["action"] == "plan_required"
+    assert out["launch"] == []
+    assert out["plan_required"] == ["flow-a", "flow-b"]
     assert out["reap"] == []
     assert out["select"]["launch"] == ["flow-a", "flow-b"]
 
@@ -450,7 +451,7 @@ def test_cli_stranded_dayjob_true_positive_recovers(monkeypatch, tmp_path, capsy
 def test_cli_stranded_excludes_evolve_proposal_hot_labels(monkeypatch, tmp_path, capsys):
     # the day-job scope is the inverse of evolve's: an in_progress bead carrying
     # any of {evolve, proposal, hot} is NOT this queue's to recover (the evolve
-    # drain owns evolve/proposal; a hot bead never auto-launches on this queue).
+    # drain owns evolve/proposal; a hot bead is never selected on this queue).
     runner = _StubRunner(
         in_progress=[
             {"id": "flow-evo", "labels": ["evolve"]},

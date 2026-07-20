@@ -1,8 +1,8 @@
 """flow_worktree.py: post-approval bootstrap for the ticket pipeline.
 
-After Flow approves a target plan, this seeds a git worktree so delivery resumes
-directly at the implement stage. The spec session then enters this worktree (EnterWorktree) and
-continues the `do` pipeline in the SAME conversation; running it unattended is a separate,
+After the human approves a target plan, this seeds a git worktree so delivery resumes
+directly at the implement stage. The driver then enters this worktree (EnterWorktree) and
+continues the `do` pipeline in the SAME conversation; backgrounding is a separate,
 harness-level choice (`/bg`), not this script's concern.
 
   1. resolve the approved base, then git worktree add -b <branch> <worktree> <base>
@@ -18,7 +18,7 @@ harness-level choice (`/bg`), not this script's concern.
      bootstrap offline; tracker auth stays live)
   6. stamp commit_type/commit_summary (and e2e_recipe unless e2e is explicitly disabled) into the
      worktree frontmatter so the commit + e2e stages do not block on a prompt
-  7. print the worktree path (the spec session enters it via EnterWorktree)
+  7. print the worktree path (the driver enters it via EnterWorktree)
 
 The bootstrap holds NO run lease; the pipeline's cmd_init acquires it under the run_id seeded here
 (it sees that run_id as the owner, so resume is clean). It DOES transiently hold the canonical

@@ -28,7 +28,7 @@ Branch on the verdict:
 
 - **`already_merged` true** → nothing to do. Run `execute --already-merged` (§3 below) to close the bead + any covers, then `STATUS=completed`. STOP — skip everything else in this doc.
 - **`action` `"refresh_review_brief"`** → do not merge and do not mark this stage complete. Surface `review_brief_reason`. If the reason says local and PR heads differ, use the existing authorized publish path first; never make the freshness probe push implicitly. Then repeat `references/stage-review_brief.md`'s evidence-authoring and render steps at the new SHA and rerun this probe. This refresh is mechanical continuation, not a wait for human approval. Cap it at one refresh per merge attempt; a second mismatch is `STATUS=failed` with both SHAs so workspace repair can retry deliberately.
-- **`action` `"skip"`** → leave the PR as-is for the human (the normal outcome on a user project, and for a held hot ticket), `STATUS=completed`. Done. An unattended owner records this as a parked green PR in durable evidence; a later drain distinguishes it from an orphan without consulting host session state. On an eval-driven skip (`eval_status` is `regressed`/`error`), first post a PR comment naming `regressed_cases` from the verdict (mirrors §2's `held_guard` pattern) so the maintainer sees WHICH frozen cases moved.
+- **`action` `"skip"`** → leave the PR as-is for the human (the normal outcome on a user project, and for a held hot ticket), `STATUS=completed`. Done. An unattended driver records this as a parked green PR in durable evidence; a later drain distinguishes it from an orphan without consulting host session state. On an eval-driven skip (`eval_status` is `regressed`/`error`), first post a PR comment naming `regressed_cases` from the verdict (mirrors §2's `held_guard` pattern) so the maintainer sees WHICH frozen cases moved.
 - **`action` `"merge"`, `is_hot` false** → skip straight to §3 (Execute).
 - **`action` `"merge"`, `is_hot` true** → run §2 first; only a clean review proceeds to §3.
 
@@ -68,4 +68,7 @@ When this run grouped sibling tickets (`FLOW <KEY> <c1> <c2> --unattended --toge
 
 ## Serialization note
 
-No merge-lease is needed: `evolve_select` launches at most one `hot` bead per batch and skips a hot bead while another hot PR/branch is in flight, so two hot runs never reach this stage concurrently.
+The planning-candidate selector offers at most one `hot` bead per batch and withholds another while
+a hot PR or branch is in flight. That is scheduling guidance, not merge authorization. This stage
+re-reads merge eligibility and always requires the independent guard-property review below for a
+hot diff.

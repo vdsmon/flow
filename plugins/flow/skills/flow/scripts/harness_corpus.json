@@ -587,7 +587,7 @@
       }
     },
     {
-      "case_id": "edrn-launch",
+      "case_id": "edrn-plan-required",
       "split": "held_in",
       "decider": "evolve_drain.decide",
       "args": {
@@ -598,13 +598,12 @@
           ],
           "launched_pending": []
         },
-        "liveness": {
-          "flow-c": "live"
-        }
+        "liveness": {}
       },
       "expected": {
-        "action": "launch",
-        "launch": [
+        "action": "plan_required",
+        "launch": [],
+        "plan_required": [
           "flow-a",
           "flow-b"
         ],
@@ -627,6 +626,7 @@
       "expected": {
         "action": "wait",
         "launch": [],
+        "plan_required": [],
         "parked": []
       }
     },
@@ -646,6 +646,7 @@
       "expected": {
         "action": "wait",
         "launch": [],
+        "plan_required": [],
         "parked": []
       }
     },
@@ -666,6 +667,7 @@
       "expected": {
         "action": "done",
         "launch": [],
+        "plan_required": [],
         "parked": [
           "flow-a",
           "flow-b"
@@ -686,6 +688,7 @@
       "expected": {
         "action": "done",
         "launch": [],
+        "plan_required": [],
         "parked": []
       }
     },
@@ -707,6 +710,7 @@
       "expected": {
         "action": "wait",
         "launch": [],
+        "plan_required": [],
         "parked": []
       },
       "source": "flow-d4s"
@@ -730,6 +734,7 @@
       "expected": {
         "action": "wait",
         "launch": [],
+        "plan_required": [],
         "parked": [
           "flow-q"
         ]
@@ -753,6 +758,7 @@
       "expected": {
         "action": "wait",
         "launch": [],
+        "plan_required": [],
         "parked": [
           "flow-b",
           "flow-c"
@@ -777,6 +783,7 @@
       "expected": {
         "action": "wait",
         "launch": [],
+        "plan_required": [],
         "parked": []
       }
     },
@@ -797,6 +804,7 @@
       "expected": {
         "action": "recover",
         "launch": [],
+        "plan_required": [],
         "stranded": [
           "flow-9ljv"
         ],
@@ -825,6 +833,7 @@
       "expected": {
         "action": "recover",
         "launch": [],
+        "plan_required": [],
         "stranded": [
           "flow-a",
           "flow-s"

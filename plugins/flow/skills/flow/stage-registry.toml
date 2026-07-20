@@ -45,7 +45,7 @@ roles = []
 [[stage]]
 name = "plan"
 description = "Architect plan, return for approval"
-default_handler = "subagent:Plan"
+default_handler = "inline"
 default_timeout_min = 10
 required_predecessors = ["ticket"]
 required = false

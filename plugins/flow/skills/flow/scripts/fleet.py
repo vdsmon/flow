@@ -10,7 +10,7 @@ or stale entry cannot affect a run (the shadow-write window).
 Storage: one JSON file per key at `<shared .flow>/fleet/<key>.json`, where the shared `.flow` is
 resolved by `_memory_paths.resolve_memory_base`, the SAME worktree->main redirect the memory store
 uses (the gitignored `.flow/memory-root` sibling written at worktree bootstrap). So a per-stage
-heartbeat from inside a worktree run and a register from the drain's main session both land in the
+heartbeat from inside a worktree run and a register from the drain's driver session both land in the
 MAIN checkout's `.flow/fleet/`, durable across worktree teardown. This is the reason we do NOT
 resolve via `maintainer.resolve_maintainer_repo`: in self-target mode that returns the WORKTREE (its
 workspace.toml is a byte copy carrying self_target), so a heartbeat would write into the doomed

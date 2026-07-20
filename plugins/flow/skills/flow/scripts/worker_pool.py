@@ -1,11 +1,11 @@
-"""Host-neutral owner-session worker-pool core.
+"""Host-neutral driver-session worker-pool core.
 
-The host adapter owns native worker creation, waiting, and cancellation. This
+The host adapter performs native worker creation, waiting, and cancellation. This
 module owns the invariants shared by Claude Code and Codex:
 
-* one host slot always stays with the owner session;
-* native worker handles are owner-scoped and disposable;
-* owner recovery trusts durable Flow run evidence, never a surviving handle;
+* one host slot always stays with the driver session;
+* native worker handles are driver-scoped and disposable;
+* driver recovery trusts durable Flow run evidence, never a surviving handle;
 * read-only discovery workers must leave the git snapshot byte-for-byte equal.
 
 There is deliberately no process, terminal, or shell-detachment implementation
@@ -60,12 +60,12 @@ _GIT_FIELDS = ("head", "index_tree", "tracked_worktree", "untracked_worktree")
 
 
 def effective_concurrency(*, configured: int, capacity: int) -> int:
-    """Worker slots available while reserving one slot for the owner session."""
+    """Worker slots available while reserving one slot for the driver session."""
 
     if configured < 0:
         raise ValueError("configured concurrency must be non-negative")
     if capacity < 1:
-        raise ValueError("host capacity must include at least the owner session")
+        raise ValueError("host capacity must include at least the driver session")
     return min(configured, capacity - 1)
 
 
@@ -76,7 +76,7 @@ def changed_git_fields(before: GitSnapshot, after: GitSnapshot) -> tuple[str, ..
 
 
 class DurableRunState(StrEnum):
-    """Durable evidence visible after an owner session and handles disappear."""
+    """Durable evidence visible after a driver session and handles disappear."""
 
     ABSENT = "absent"
     BOOTSTRAPPING = "bootstrapping"
@@ -94,7 +94,7 @@ class DurableRunEvidence:
 
 
 class RecoveryAction(StrEnum):
-    """New-owner action chosen only from durable Flow evidence."""
+    """New-driver action chosen only from durable Flow evidence."""
 
     RELAUNCH = "relaunch"
     MONITOR = "monitor"
@@ -103,16 +103,16 @@ class RecoveryAction(StrEnum):
 
 
 @dataclass(frozen=True)
-class OwnerRecoveryOutcome:
+class DriverRecoveryOutcome:
     key: str
     action: RecoveryAction
     run_id: str = ""
 
 
-def owner_recovery_outcome(evidence: DurableRunEvidence) -> OwnerRecoveryOutcome:
-    """Choose a post-owner-failure action without consulting worker handles.
+def driver_recovery_outcome(evidence: DurableRunEvidence) -> DriverRecoveryOutcome:
+    """Choose a post-driver-failure action without consulting worker handles.
 
-    Native handles die with, or become inaccessible after, their owner session.
+    Native handles die with, or become inaccessible after, their driver session.
     Durable run state is therefore the only authority that may suppress a
     relaunch or require repair.
     """
@@ -125,15 +125,15 @@ def owner_recovery_outcome(evidence: DurableRunEvidence) -> OwnerRecoveryOutcome
         DurableRunState.FAILED: RecoveryAction.REPAIR,
         DurableRunState.CORRUPT: RecoveryAction.REPAIR,
     }[evidence.state]
-    return OwnerRecoveryOutcome(key=evidence.key, action=action, run_id=evidence.run_id)
+    return DriverRecoveryOutcome(key=evidence.key, action=action, run_id=evidence.run_id)
 
 
-def owner_recovery_plan(
+def driver_recovery_plan(
     keys: Sequence[str], evidence_by_key: Mapping[str, DurableRunEvidence]
-) -> list[OwnerRecoveryOutcome]:
+) -> list[DriverRecoveryOutcome]:
     """Recovery outcomes in request order; missing evidence means no run started."""
 
-    outcomes: list[OwnerRecoveryOutcome] = []
+    outcomes: list[DriverRecoveryOutcome] = []
     for key in keys:
         evidence = evidence_by_key.get(key)
         if evidence is None:
@@ -142,7 +142,7 @@ def owner_recovery_plan(
             raise ValueError(
                 f"durable evidence key mismatch: expected {key!r}, got {evidence.key!r}"
             )
-        outcomes.append(owner_recovery_outcome(evidence))
+        outcomes.append(driver_recovery_outcome(evidence))
     return outcomes
 
 
@@ -259,11 +259,11 @@ def _read_recovery_evidence(path: Path) -> tuple[list[str], dict[str, DurableRun
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Deterministic seams for a host-native Flow owner worker pool."
+        description="Deterministic seams for a host-native Flow driver worker pool."
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    limit = subparsers.add_parser("limit", help="Reserve the owner slot and bound fan-out.")
+    limit = subparsers.add_parser("limit", help="Reserve the driver slot and bound fan-out.")
     limit.add_argument("--configured", type=int, required=True)
     limit.add_argument("--capacity", type=int, required=True)
 
@@ -274,7 +274,7 @@ def _parser() -> argparse.ArgumentParser:
     guard.add_argument("--workspace-root", required=True)
     guard.add_argument("--before", required=True)
 
-    recover = subparsers.add_parser("recover", help="Reduce durable post-owner evidence.")
+    recover = subparsers.add_parser("recover", help="Reduce durable post-driver evidence.")
     recover.add_argument("--evidence", required=True)
     return parser
 
@@ -288,7 +288,7 @@ def cli_main(argv: list[str] | None = None) -> int:
                 "configured": args.configured,
                 "effective_concurrency": effective,
                 "host_capacity": args.capacity,
-                "owner_slots": 1,
+                "driver_slots": 1,
             }
         elif args.command == "snapshot":
             root = _absolute_file(args.workspace_root, option="--workspace-root")
@@ -307,7 +307,7 @@ def cli_main(argv: list[str] | None = None) -> int:
         elif args.command == "recover":
             evidence_path = _absolute_file(args.evidence, option="--evidence")
             keys, evidence = _read_recovery_evidence(evidence_path)
-            payload = {"outcomes": [asdict(item) for item in owner_recovery_plan(keys, evidence)]}
+            payload = {"outcomes": [asdict(item) for item in driver_recovery_plan(keys, evidence)]}
         else:
             raise ValueError(f"unknown worker-pool command {args.command!r}")
     except ValueError as exc:
@@ -322,15 +322,15 @@ if __name__ == "__main__":
 
 
 __all__ = [
+    "DriverRecoveryOutcome",
     "DurableRunEvidence",
     "DurableRunState",
     "GitSnapshot",
-    "OwnerRecoveryOutcome",
     "RecoveryAction",
     "capture_git_snapshot",
     "changed_git_fields",
     "cli_main",
+    "driver_recovery_outcome",
+    "driver_recovery_plan",
     "effective_concurrency",
-    "owner_recovery_outcome",
-    "owner_recovery_plan",
 ]

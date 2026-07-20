@@ -28,18 +28,18 @@ evidence; it is not silently converted to healthy. Commands whose own decision n
 that evidence stop rather than guessing. Scheduled nightly operation may run the
 senses seam without `--dry-run` as its explicitly configured alarm producer.
 
-## Owner-session worker pool
+## Driver-session worker pool
 
-The conversation invoking a drain is the owner. Native worker creation, waiting, and
+The conversation invoking a drain is the driver. Native worker creation, waiting, and
 cancellation exist only in the harness tool API, so a Python subprocess cannot call
-them on the owner's behalf. The adapter drives those native operations and uses the
+them on the driver's behalf. The host adapter drives those native operations and uses the
 executable `worker-pool` facade for the deterministic decisions around them:
 
 ```text
-capacity  total collaboration slots, including the owner
+capacity  total collaboration slots, including the driver
 launch    create a host-native worker for one bounded request
-wait      return completion for selected owner handles
-cancel    stop selected owner handles
+wait      return completion for selected driver handles
+cancel    stop selected driver handles
 ```
 
 Effective worker concurrency is
@@ -51,14 +51,14 @@ FLOW_HARNESS="<harness>" "<facade>" worker-pool limit \
   --configured <configured-concurrency> --capacity <host-capacity>
 ```
 
-Always reserve one slot for the owner.
+Always reserve one slot for the driver.
 Claude Code uses native collaboration agents and may honor a configured Claude model
 hint. Codex uses native collaboration agents that inherit the active model. Never
 launch a detached host CLI or emulate backgrounding with shell processes.
 
-Worker handles belong to one owner session and are disposable. Durable fleet entries,
+Worker handles belong to one driver session and are disposable. Durable fleet entries,
 run state, leases, worktrees, tracker state, and PRs decide whether work is running or
-settled. If the owner disappears, normalize durable evidence to an absolute JSON array
+settled. If the driver disappears, normalize durable evidence to an absolute JSON array
 of `{key,state,run_id}` rows and reduce it before any relaunch:
 
 ```bash
@@ -84,9 +84,9 @@ Guard exit 3 names the changed HEAD, index, tracked-worktree, or untracked-workt
 fields. Discard that worker's findings and stop before filing tickets or applying a
 proposal. Pre-existing dirt is allowed only when the receipts are exactly equal.
 
-The user may background the owner conversation through the host. Flow does not
+The human may background the driver conversation through the host. Flow does not
 background itself, inspect host job directories, stop host sessions, or tear down its
-owner.
+driver.
 
 ## `FLOW maintain backlog status [--preview]`
 
@@ -102,18 +102,18 @@ Render:
 - active runs with lease liveness;
 - open-PR backpressure and parked tickets;
 - newly actionable PR feedback;
-- launch-pending fleet entries;
+- launch-pending fleet entries from already-approved work;
 - the advisory next action.
 
-`--preview` additionally shows the bounded batch a drain would launch and its
-verification/model policy, but launches nothing and writes no fleet entry. Human-input,
+`--preview` additionally shows the bounded batch that requires attended planning and
+its verification/model policy, but launches nothing and writes no fleet entry. Human-input,
 hot, evolution, proposal, and epic tickets remain outside the ordinary ready set.
 Actionable review rows point to `FLOW pr:<number>`.
 
 ## `FLOW maintain backlog drain [--dry-run]`
 
-The ordinary backlog drain owns ready day-job work until it is delivered, parked for
-review, deferred for a decision, or durably blocked.
+The ordinary backlog drain classifies existing day-job delivery and reports fresh
+candidates that need attended planning. It never authorizes a fresh ticket itself.
 
 Each loop turn:
 
@@ -123,22 +123,20 @@ Each loop turn:
    FLOW_HARNESS="<harness>" "<facade>" queue-drain --workspace-root .
    ```
 
-2. Interpret exactly one action: `launch`, `recover`, `wait`, or `done`.
-3. `launch`: register every key in the durable fleet before creating its worker, then
-   launch up to the owner-pool limit with the logical task
-   `FLOW <key> --unattended`. Wait through the host adapter for completions or enough
-   durable evidence to reclassify.
-4. `recover`: re-check the lease under the authoritative seam, checkpoint any dirty
+2. Interpret exactly one action: `recover`, `wait`, `plan_required`, or `done`.
+3. `recover`: re-check the lease under the authoritative seam, checkpoint any dirty
    stranded pre-PR worktree to a rescue ref, reap only after the checkpoint succeeds,
-   then reopen for one fresh launch. A repeated deterministic strand becomes blocked
-   with evidence rather than looping forever.
-5. `wait`: wait on owner handles when available and durable lease/fleet/PR changes in
+   then reopen the ticket so attended planning can start cleanly. A repeated
+   deterministic strand becomes blocked with evidence rather than looping forever.
+4. `wait`: wait on driver handles when available and durable lease/fleet/PR changes in
    all cases. Use a bounded poll and a consecutive-error budget; then reclassify.
+5. `plan_required`: report each candidate as `FLOW <key>` and stop. The driver must
+   enter the ordinary attended planning and human approval gate for each ticket.
 6. `done`: report delivered, parked, deferred, blocked, recovered, and failed work.
 
 Ordinary backlog delivery parks a green PR for human review; it does not merge it.
-`--dry-run` performs one classification and renders launches/recovery without fleet
-writes, worker launches, tracker transitions, worktree reaping, or merges.
+`--dry-run` performs one classification and renders planning candidates/recovery
+without fleet writes, worker launches, tracker transitions, worktree reaping, or merges.
 
 ## `FLOW maintain evolution audit`
 
@@ -206,7 +204,7 @@ deliver children automatically from expansion.
 
 ## `FLOW maintain evolution drain [--dry-run] [--include-proposals]`
 
-Evolution drain uses the same owner pool and durable authority as the ordinary
+Evolution drain uses the same driver pool and durable authority as the ordinary
 backlog, but additionally reaps green evolution PRs after guard checks and serializes
 hot work.
 
@@ -214,7 +212,7 @@ Each bounded loop turn:
 
 1. Reap-classify existing PRs through the reap seam, forwarding `--include-proposals`
    whenever the public invocation carries it (both classifiers MUST see the same
-   flag, or the launch and reap populations diverge) and forwarding `--dry-run` the
+   flag, or the candidate and reap populations diverge) and forwarding `--dry-run` the
    same way:
 
    ```bash
@@ -229,10 +227,10 @@ Each bounded loop turn:
    instead carries the would-file record naming the failing sha + check(s) (see
    Dry-run below).
 
-2. Decide the launch/recover/wait/done action through the drain seam (`evolve-drain`,
+2. Decide the recover/wait/plan_required/done action through the drain seam (`evolve-drain`,
    same `--include-proposals` forwarding). On `--dry-run` this runs right here, after
    step 1 (see Dry-run below). On a real turn it instead runs after the merge set is
-   fully processed (see "Non-dry-run: decide the launch/recover/wait/done action")
+   fully processed (see "Non-dry-run: decide the next action")
    — a merge executed this turn frees the PR-cap backpressure `evolve-drain` counts
    against, and deciding on the pre-merge open-PR count could return `done` while
    that freed capacity sits unused.
@@ -245,9 +243,9 @@ Each bounded loop turn:
 FLOW_HARNESS="<harness>" "<facade>" evolve-drain --workspace-root . [--include-proposals]
 ```
 
-Reports `action` (`launch`/`recover`/`wait`/`done`), `launch`, `stranded_pre_pr`, and
-`parked`. Dry-run then reports the would-merge set (the reap `merge` bucket), the
-would-launch set (the drain `launch` batch), the would-recover set (the drain
+Reports `action` (`recover`/`wait`/`plan_required`/`done`), `plan_required`,
+`stranded_pre_pr`, and `parked`; top-level `launch` is always empty. Dry-run then
+reports the would-merge set (the reap `merge` bucket), the needs-planning set, the would-recover set (the drain
 `stranded_pre_pr` list), and, when main CI is genuinely red, "would file P0:
 <sha> <failing checks>" (from the reap `main_red_p0` record), then stops. It performs
 NO merge, tracker write, fleet registration, worktree reaping, or worker launch, with
@@ -313,7 +311,7 @@ For each entry:
 Leave `not_green`, `blocked`, `skipped_live`, `skipped_hot`, and `held_main_red`
 untouched; they are not this turn's problem.
 
-### Non-dry-run: decide the launch/recover/wait/done action
+### Non-dry-run: decide the next action
 
 Run step 2 now, only after the merge set above is fully processed, so a productive
 merge turn cannot report `done` on backpressure the merges just freed:
@@ -322,22 +320,22 @@ merge turn cannot report `done` on backpressure the merges just freed:
 FLOW_HARNESS="<harness>" "<facade>" evolve-drain --workspace-root . [--include-proposals]
 ```
 
-Reports `action` (`launch`/`recover`/`wait`/`done`), `launch`, `stranded_pre_pr`, and
-`parked`.
+Reports `action` (`recover`/`wait`/`plan_required`/`done`), `plan_required`,
+`stranded_pre_pr`, and `parked`; top-level `launch` is always empty. The decision
+priority is recover, then wait, then plan-required, then done.
 
 ### Non-dry-run: consume the drain decision
 
-- `launch`: register every key in the durable fleet before creating its worker, then
-  launch exactly as `FLOW maintain backlog drain` step 3, scoped to the evolution
-  batch the classifier chose.
 - `recover`: for each key in `stranded_pre_pr`, re-check its lease liveness, then reap
   its dirty worktree (the reap facade checkpoints uncommitted work to a
   `flow-rescue/*` ref before removing anything) only after the checkpoint succeeds,
-  then reopen the bead for one fresh launch next turn — the same shape as backlog
-  drain step 4. A repeated deterministic strand becomes blocked with evidence rather
+  then reopen the bead for attended planning on a later invocation — the same shape
+  as backlog drain step 3. A repeated deterministic strand becomes blocked with evidence rather
   than looping forever.
-- `wait`: wait on owner handles when available and durable lease/fleet/PR changes in
-  all cases, exactly as backlog drain step 5.
+- `wait`: wait on driver handles when available and durable lease/fleet/PR changes in
+  all cases, exactly as backlog drain step 4.
+- `plan_required`: report each candidate as `FLOW <key>` and stop. Each ticket must
+  enter driver-authored planning, adversarial assessment, and explicit human approval.
 - `done`: report merged, delivered, parked, recovered, blocked, and held work.
 
 Tier and model hints are policy inputs, not worker identity. Claude Code may apply a
@@ -345,9 +343,8 @@ supported Claude model hint; Codex inherits the active model while preserving th
 same verification lane. Hot work takes the configured high-scrutiny lane and only
 one hot slot.
 
-`--include-proposals` deliberately widens the ready set to proposal tickets and thus
-permits unattended delivery of judgment work. Surface that risk in the initial and
-final report.
+`--include-proposals` deliberately widens the planning-candidate set to proposal
+tickets. It never authorizes unattended delivery of judgment work.
 
 Do not update an installed plugin or advance the maintainer checkout while any base
 or revision run is live. The scheduler proves this with

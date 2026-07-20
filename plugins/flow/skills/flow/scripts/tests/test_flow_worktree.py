@@ -291,10 +291,9 @@ def test_unattended_true_for_explicit_auto(tmp_path: Path) -> None:
     assert _unattended_fm(tmp_path, main, auto=True) is True
 
 
-def test_unattended_true_for_default_base_drain_launch(tmp_path: Path) -> None:
-    # The drain launches with auto=False but base="@default"; _enforce_autonomy_floors treats
-    # this the same as auto=True, so the seeded frontmatter signal must match or the fleet's
-    # valid unattended review_brief skip would be misclassified as attended and blocked.
+def test_unattended_true_for_default_base_automation(tmp_path: Path) -> None:
+    # A caller using auto=False with base="@default" still requests an unattended tail;
+    # _enforce_autonomy_floors treats it like auto=True, so frontmatter must agree.
     main = _main_checkout(tmp_path)
     assert _unattended_fm(tmp_path, main, auto=False, base="@default") is True
 

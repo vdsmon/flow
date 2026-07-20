@@ -1,17 +1,14 @@
-"""Select + partition the next batch of evolve beads to launch (drain's select core).
+"""Select + partition the next bounded batch of evolve planning candidates.
 
 Pure selection over flow's OWN backlog, no side effects. Given the ready evolve
-beads plus the in-flight branches/PRs, decide which keys to fan out as
-`FLOW <key> --unattended` runs. The `FLOW maintain evolution drain` loop consumes this (via
-`evolve_drain.py`, which adds in-flight lease liveness) and does the launching.
+beads plus the in-flight branches/PRs, decide which keys fit the next candidate
+batch. `evolve_drain.py` adds lease liveness and reports those keys as
+`plan_required`; selection never authorizes delivery.
 
-Partition is best-effort coarse, NOT a disjointness guarantee. Planning is
-post-launch (the unattended planning agent runs inside its native worker), so the
-selector never knows a bead's real file set. It serializes on the two signals it
-does have (the `hot` label + a primary-file anchor parsed from the bead's BLAST
-RADIUS line) and relies on the keystone gate: each run is worktree/lease-isolated,
-so any residual file overlap surfaces as a merge conflict at human review
-(friction, never corruption). Keep CONCURRENCY low so that stays rare.
+Partition is best-effort coarse, not a disjointness guarantee. The selector does not
+know a ticket's final planned file set. It prioritizes using the two signals it does
+have: the `hot` label and a primary-file anchor parsed from the bead's BLAST RADIUS
+line. Attended driver planning establishes the actual scope before a run starts.
 
 Selection inputs (all read-only, queryable):
   - `bd ready -l evolve --json`, open dependency-unblocked candidates (bd ready
@@ -59,21 +56,21 @@ def partition(
     inflight_count: int = 0,
     include_proposals: bool = False,
 ) -> dict[str, Any]:
-    """Pure core: decide the launch batch from already-extracted inputs.
+    """Pure core: decide the candidate batch from already-extracted inputs.
 
     candidates: parsed `bd ready -l evolve` items (id, priority, labels, issue_type,
-    description). Epics are skipped (you launch a run on leaf work, not a container).
+    description). Epics are skipped (delivery applies to leaf work, not a container).
     `inflight_count` shrinks the concurrency budget by the in-flight active-session
     count (launched_pending UNION live_runs), so launched-but-not-yet-open runs back off.
     Generative proposals now live in a separate (non-`evolve`) backlog and only
     reach drain at all if mislabeled; the `proposal`-exclusion filter in `active`
-    is retained as a defensive guard (judgment work never auto-launches), no
+    is retained as a defensive guard (judgment work is excluded by default), no
     longer surfaced as `held_proposal`.
 
-    `include_proposals` is the DANGEROUS opt-in: it drops the proposal-exclusion
-    guard so judgment beads auto-launch alongside audit work, bypassing the human
-    spec-plan accept gate. The caller also has to feed the proposal candidates in
-    (see `select`); flipping this alone over an evolve-only candidate set is a no-op.
+    `include_proposals` drops the proposal-exclusion guard so judgment beads may be
+    returned as planning candidates alongside audit work. It does not bypass the
+    human plan gate. The caller also has to feed the proposal candidates in (see
+    `select`); flipping this alone over an evolve-only candidate set is a no-op.
 
     A `hitl` bead (human-in-the-loop, resolves only through a live exchange) is
     excluded UNCONDITIONALLY: `include_proposals` does not lift it, because a
@@ -155,12 +152,12 @@ def _hot_inflight(
     """True if any in-flight `feat/flow-*` ref maps to a hot evolve bead.
 
     Under `include_proposals` the hot slot also serializes hot *proposal* beads, so
-    a hot proposal already in flight blocks the next hot launch (the `proposal`
+    a hot proposal already in flight blocks the next hot candidate (the `proposal`
     label can carry `hot` too, see references/command-maintain.md §propose).
 
     `extra_keys` seeds the in-flight set with keys known live by another channel
     (e.g. a pre-PR lease that has no ref/PR yet), so a hot pre-PR run blocks the
-    next hot launch.
+    next hot candidate.
     """
     inflight_flow_keys = {k for r in refs if (k := _key_from_ref(r))} | set(extra_keys)
     if not inflight_flow_keys:

@@ -1,7 +1,7 @@
 """Resolve an optional native-agent model hint from ``[models]``.
 
 ``[models].<stage>`` may name a model for a stage that launches a fresh native
-agent. Missing, disabled, or unreadable configuration means "inherit the owner
+agent. Missing, disabled, or unreadable configuration means "inherit the driver
 session model". Flow does not attest which provider or model actually ran.
 """
 

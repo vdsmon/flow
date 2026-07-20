@@ -102,7 +102,7 @@ def _dispatch(
 # ---- status(): happy path ----
 
 
-def test_happy_path_ready_and_launch(tmp_path):
+def test_happy_path_ready_requires_planning(tmp_path):
     ws = _marked_ws(tmp_path)
     run, calls = _dispatch(
         ready=[
@@ -117,8 +117,9 @@ def test_happy_path_ready_and_launch(tmp_path):
     out = qst.status(ws, cap=5, concurrency=3, runner=run)
     assert [r["id"] for r in out["ready"]] == ["flow-a", "flow-b"]
     assert out["ready"][0]["title"] == "first"
-    assert out["launch"] == ["flow-a", "flow-b"]
-    assert out["action"] == "launch"
+    assert out["launch"] == []
+    assert out["plan_required"] == ["flow-a", "flow-b"]
+    assert out["action"] == "plan_required"
     assert out["parked"] == []
     assert out["liveness"] == {}
     # the status verb re-reads the full backlog: one bd ready inside select(),
@@ -155,7 +156,8 @@ def test_ready_lists_past_the_launch_budget(tmp_path):
     ws = _marked_ws(tmp_path)
     run, _ = _dispatch(ready=[_cand(f"flow-{i}") for i in range(5)])
     out = qst.status(ws, cap=5, concurrency=2, runner=run)
-    assert len(out["launch"]) == 2
+    assert out["launch"] == []
+    assert len(out["plan_required"]) == 2
     assert len(out["ready"]) == 5
 
 
@@ -253,7 +255,9 @@ def test_model_per_key_passthrough(tmp_path):
     ws = _marked_ws(tmp_path)
     run, _ = _dispatch(ready=[_cand("flow-t", labels=["tier:trivial"])])
     out = qst.status(ws, cap=5, concurrency=3, runner=run)
-    assert out["launch"] == ["flow-t"]
+    assert out["launch"] == []
+    assert out["plan_required"] == ["flow-t"]
+    assert out["select"]["launch"] == ["flow-t"]
     assert out["select"]["model_per_key"]["flow-t"] == "sonnet"
 
 
@@ -326,6 +330,7 @@ def test_cli_output_shape(tmp_path, monkeypatch, capsys):
     assert set(out) == {
         "action",
         "launch",
+        "plan_required",
         "parked",
         "reviews",
         "stranded_pre_pr",

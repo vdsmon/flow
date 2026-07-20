@@ -738,7 +738,7 @@ def test_live_evolution_drain_section_pins_dry_run_boundary_and_would_file_repor
     flat = " ".join(_evolution_drain_section().split())
 
     assert "would-merge" in flat
-    assert "would-launch" in flat
+    assert "needs-planning" in flat
     assert "would-recover" in flat
     assert "main-ci-red" in flat
     assert "would file P0" in flat

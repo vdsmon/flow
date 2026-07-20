@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import subprocess
 
+import pytest
+
 import evolve_drain as ed
 import lease
 from _timeutil import utcnow_iso
@@ -40,11 +42,17 @@ def _sel(launch=None, launched_pending=None):
 # ─── decide(): the termination core ──────────────────────────────────────────
 
 
-def test_launch_nonempty_launches():
-    d = ed.decide(_sel(launch=["flow-a", "flow-b"]), {})
-    assert d["action"] == "launch"
-    assert d["launch"] == ["flow-a", "flow-b"]
-    assert d["parked"] == []
+def test_candidates_require_attended_planning():
+    d = ed.decide(
+        _sel(launch=["flow-a", "flow-b"]),
+        {"flow-parked": "absent"},
+    )
+    assert d == {
+        "action": "plan_required",
+        "launch": [],
+        "plan_required": ["flow-a", "flow-b"],
+        "parked": ["flow-parked"],
+    }
 
 
 def test_drained_is_done():
@@ -57,6 +65,7 @@ def test_drained_is_done():
 def test_live_inflight_waits():
     d = ed.decide(_sel(), {"flow-run": "live"})
     assert d["action"] == "wait"
+    assert d["plan_required"] == []
 
 
 def test_held_hot_blocked_by_live_run_waits():
@@ -232,7 +241,8 @@ def test_cli_include_proposals_threads_to_select(monkeypatch, tmp_path, capsys):
     assert captured["include_proposals"] is True
     cap = capsys.readouterr()
     assert json.loads(cap.out)["include_proposals"] is True
-    assert "WARNING" in cap.err  # the dangerous-mode banner fires
+    assert "NOTICE" in cap.err
+    assert "planning candidates" in cap.err
 
 
 # ─── cli_main: exit codes ────────────────────────────────────────────────────
@@ -410,21 +420,40 @@ def test_stranded_with_live_run_not_done():
     assert d["stranded"] == ["flow-s"]
 
 
-def test_empty_stranded_byte_identical_done():
-    # the regression guard: empty stranded + nothing blocking → done with the exact
-    # pre-stranded shape (no `stranded` key leaks onto the done return).
+def test_empty_stranded_is_done_with_stable_shape():
     d = ed.decide(_sel(), {}, stranded=[])
-    assert d == {"action": "done", "launch": [], "parked": []}
-    # and the default-arg call (queue_drain's positional shape) is identical
-    assert ed.decide(_sel(), {}) == {"action": "done", "launch": [], "parked": []}
+    expected = {"action": "done", "launch": [], "plan_required": [], "parked": []}
+    assert d == expected
+    assert ed.decide(_sel(), {}) == expected
 
 
-def test_launch_beats_stranded():
-    # launch precedence is highest: a non-empty launch wins over a stranded set.
+def test_stranded_beats_fresh_candidates():
     d = ed.decide(_sel(launch=["flow-a"]), {}, stranded=["flow-s"])
-    assert d["action"] == "launch"
-    assert d["launch"] == ["flow-a"]
-    assert "stranded" not in d
+    assert d == {
+        "action": "recover",
+        "launch": [],
+        "plan_required": [],
+        "stranded": ["flow-s"],
+        "parked": [],
+    }
+
+
+@pytest.mark.parametrize(
+    ("liveness", "launched_pending"),
+    [
+        ({"flow-live": "live"}, []),
+        ({"flow-corrupt": "corrupt"}, []),
+        ({}, ["flow-pending"]),
+    ],
+)
+def test_existing_work_waits_before_fresh_candidates(liveness, launched_pending):
+    d = ed.decide(
+        _sel(launch=["flow-fresh"], launched_pending=launched_pending),
+        liveness,
+    )
+    assert d["action"] == "wait"
+    assert d["launch"] == []
+    assert d["plan_required"] == []
 
 
 # ─── cli_main: STRANDED detection (stub bd/gh reads + on-disk lease) ──────────

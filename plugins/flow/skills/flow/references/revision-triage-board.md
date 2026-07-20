@@ -134,10 +134,10 @@ Out-of-set changes still run the normal widening reconcile.
 Before the do-loop begins, do not call dispatcher `next` merely as a heartbeat: an
 all-pending revision would begin implement before dispositions exist. The
 `revise-open` lease may outlive its initial TTL; refresh-past-expiry is legal for the
-same owner and the first real `next --revision` re-covers it.
+same lease holder and the first real `next --revision` re-covers it.
 
 Once a revision stage is in progress, refresh on every poll return and whenever
-control returns to the orchestrator:
+control returns to the driver:
 
 ```bash
 FLOW_HARNESS="<harness>" "<facade>" dispatch next \

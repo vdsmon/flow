@@ -3,7 +3,7 @@
 ## Purpose
 
 Have one fresh native reviewer challenge the implementation before commit. The
-reviewer is logically independent from the planner and implementer, but it reads the
+reviewer is logically independent from the driver and implementer, but it reads the
 same authoritative ticket worktree. Flow does not require a particular provider,
 model, effort level, clone, or execution receipt.
 

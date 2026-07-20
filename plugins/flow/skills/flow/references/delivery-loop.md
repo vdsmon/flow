@@ -1,7 +1,7 @@
 # Dispatcher delivery loop
 
 The dispatcher owns state, lease refresh, snapshot validation, stage transitions, and
-the canonical descriptor. The owner conversation executes handlers and persists their
+the canonical descriptor. The driver conversation executes handlers and persists their
 artifacts. All commands use the absolute runtime facade and `run_root` workdir.
 
 ## Acquire
@@ -19,12 +19,12 @@ artifacts. All commands use the absolute runtime facade and `run_root` workdir.
    ```
 
 3. Capture `run_id` and `session_nonce`. Carry the nonce verbatim on every later
-   `next`, `advance`, and `release`. It distinguishes the owner from a second session
+   `next`, `advance`, and `release`. It distinguishes the driver holding the lease from a second session
    that merely knows the run id.
 
 Do not clear leases automatically. A live holder, stale holder, corrupt lock,
 unrecoverable state, or workspace violation returns to the target lifecycle as
-`running` or `repair`. If acquisition failed, do not release because this owner never
+`running` or `repair`. If acquisition failed, do not release because this driver never
 held the lease.
 
 ## Iterate
@@ -81,7 +81,7 @@ A workspace may provide an optional stage model hint:
 FLOW_HARNESS="<harness>" "<facade>" model --workspace-root . --stage "<stage>"
 ```
 
-An empty result means inherit the owner session model. Apply a non-empty hint only
+An empty result means inherit the driver session model. Apply a non-empty hint only
 when the current host supports it; unsupported hints also inherit. This is a
 convenience, not execution provenance: Flow does not attest the provider or model.
 

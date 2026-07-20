@@ -52,7 +52,7 @@ stages = ["ticket", "plan", "implement", "code_review", "commit", "create_pr", "
 
 [pipeline.handlers]
 ticket = "inline"
-plan = "subagent:Plan"
+plan = "inline"
 implement = "subagent:general-purpose"
 code_review = "inline"
 commit = "inline"

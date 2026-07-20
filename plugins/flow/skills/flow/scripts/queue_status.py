@@ -6,9 +6,10 @@ lease liveness (`evolve_drain.liveness_map`), and the ADVISORY next action a que
 here. The advisory mirrors `queue_drain.cli_main`'s scoping: the active-evolve set is subtracted
 from `live_runs`/`launched_pending` (this loop never waits on a live evolve run) and STRANDED pre-PR
 day-job beads feed `decide` so it reads `recover`, not a false `done`. One known approximation
-remains: the advisory `launch` list is not reap-filtered, so a merged-PR key the real drain diverts
-to the close path can still appear in it (the reap classification needs the merged-PR + per-key `bd
-show` gather this status verb skips).
+remains: the advisory `plan_required` list is not reap-filtered, so a merged-PR key the real drain
+diverts to the close path can still appear in it (the reap classification needs the merged-PR +
+per-key `bd show` gather this status verb skips). The approximation is read-only and never
+authorizes delivery.
 
 Also carries the parked-PR review enrichment (epic flow-kx17.5): each parked key's open PR is probed
 for unresolved NATIVE Major+ review threads (a genuine new human CHANGES_REQUESTED ->
@@ -199,6 +200,7 @@ def status(
     return {
         "action": decision["action"],
         "launch": decision["launch"],
+        "plan_required": decision["plan_required"],
         "parked": decision["parked"],
         "reviews": reviews,
         "stranded_pre_pr": stranded,

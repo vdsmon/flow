@@ -191,7 +191,7 @@ def test_bare_jira_init_writes_workspace_toml(tmp_path: Path) -> None:
     assert data["memory"]["label_facets"] == []
     handlers = data["pipeline"]["handlers"]
     # Bare defaults from stage-registry.toml.
-    assert handlers["plan"] == "subagent:Plan"
+    assert handlers["plan"] == "inline"
     assert handlers["implement"] == "subagent:general-purpose"
     assert handlers["create_pr"] == "none"
     assert handlers["review_loop"] == "none"
@@ -360,7 +360,7 @@ def test_bare_beads_init_runs_bd_and_writes_workspace_toml(tmp_path: Path) -> No
     assert data["tracker"]["beads"]["prefix"] == "testpkg"
     assert data["tracker"]["beads"]["shared_server"] is True
     # Beads workspaces still get FT/code_review/etc handlers from defaults.
-    assert data["pipeline"]["handlers"]["plan"] == "subagent:Plan"
+    assert data["pipeline"]["handlers"]["plan"] == "inline"
 
 
 def test_beads_bd_init_failure_blocks_finalization(tmp_path: Path) -> None:
@@ -455,7 +455,7 @@ def test_custom_bundle_uses_supplied_handlers(tmp_path: Path) -> None:
     assert result.handlers["create_pr"] == "skill:ship-it:create"
     assert result.handlers["e2e"] == "subagent:general-purpose"
     # Stages not overridden keep stage-registry defaults.
-    assert result.handlers["plan"] == "subagent:Plan"
+    assert result.handlers["plan"] == "inline"
 
 
 def test_custom_bundle_requires_at_least_one_override(tmp_path: Path) -> None:
@@ -520,7 +520,7 @@ def test_resume_skips_completed_phases(tmp_path: Path) -> None:
     assert not (tmp_path / ".flow" / ".initializing").exists()
     assert (tmp_path / ".flow" / "runtime" / "skill-root").is_file()
     assert (tmp_path / ".flow" / "runtime" / "flow").stat().st_mode & 0o111
-    assert result.handlers["plan"] == "subagent:Plan"
+    assert result.handlers["plan"] == "inline"
 
 
 def test_failure_leaves_initializing_marker(tmp_path: Path) -> None:

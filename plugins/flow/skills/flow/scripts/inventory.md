@@ -206,7 +206,7 @@ repo_slug = "rs"
 ### Optional `[models]` workspace schema
 
 A workspace may give a native stage agent a model hint. Missing keys inherit the
-owner session model, and a host that does not accept a hint ignores it. These are
+driver session model, and a host that does not accept a hint ignores it. These are
 preferences, not execution provenance.
 
 ```toml
