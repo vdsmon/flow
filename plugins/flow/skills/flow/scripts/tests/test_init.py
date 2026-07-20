@@ -219,11 +219,6 @@ def test_native_setup_emits_explicit_owner_relative_agent_routes(tmp_path: Path)
     result = initmod.run_init(_jira_config(tmp_path))
     data = tomllib.loads(result.workspace_toml_path.read_text(encoding="utf-8"))
     assert tuple(data["agents"]) == agent_routes.PROFILES
-    assert data["agents"]["planner"] == {
-        "harness": "codex",
-        "model": "gpt-5.6-sol",
-        "effort": "xhigh",
-    }
     assert data["agents"]["implementer"]["by_owner"]["claude_code"]["model"] == "sonnet"
     assert data["agents"]["implementer"]["by_owner"]["codex"]["model"] == "gpt-5.6-luna"
     assert data["agents"]["code_reviewer"]["by_owner"]["codex"]["model"] == "gpt-5.6-sol"
@@ -233,8 +228,8 @@ def test_native_setup_emits_explicit_owner_relative_agent_routes(tmp_path: Path)
     assert data["agents"]["machinery_fixer"]["by_owner"]["codex"]["model"] == ("gpt-5.6-luna")
     assert data["agents"] == agent_routes.default_route_config()
     assert data["agents"] == tomllib.loads(agent_routes.render_default_routes_toml())["agents"]
-    resolved = agent_routes.resolve(tmp_path, "planner", "codex")
-    assert resolved["desired"] == data["agents"]["planner"]
+    resolved = agent_routes.resolve(tmp_path, "implementer", "codex")
+    assert resolved["desired"] == data["agents"]["implementer"]["by_owner"]["codex"]
     assert resolved["source"] == "workspace"
     assert resolved["activation"] == "pending"
 
@@ -250,7 +245,7 @@ def test_reconfigure_preserves_legacy_models_without_migrating(tmp_path: Path) -
     first = initmod.run_init(_jira_config(tmp_path))
     workspace = first.workspace_toml_path
     content = workspace.read_text(encoding="utf-8")
-    agents_at = content.index("[agents.planner]")
+    agents_at = content.index("[agents.implementer.by_owner.claude_code]")
     workspace.write_text(
         content[:agents_at] + '[models]\nwork_model = "opus"\ne2e = "off"\n',
         encoding="utf-8",
@@ -274,7 +269,7 @@ def test_reconfigure_preserves_explicit_routes_and_legacy_rollback_block(
 
     initmod.run_init(_jira_config(tmp_path), reconfigure=True)
     data = tomllib.loads(workspace.read_text(encoding="utf-8"))
-    assert data["agents"]["planner"]["model"] == "gpt-5.6-sol"
+    assert data["agents"]["implementer"]["by_owner"]["codex"]["model"] == "gpt-5.6-luna"
     assert data["models"] == {"work_model": "opus", "e2e": "sonnet"}
 
 

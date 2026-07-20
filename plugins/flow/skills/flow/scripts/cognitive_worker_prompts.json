@@ -1,14 +1,6 @@
 {
   "schema": "flow.cognitive-worker-prompts/v1",
   "entries": {
-    "planner": {
-      "version": 1,
-      "instruction": "Design the requested change from the supplied repository and planning facts. Return only the typed result. Never modify source files."
-    },
-    "plan_assessor": {
-      "version": 1,
-      "instruction": "Assess the candidate plan independently for correctness, omissions, verification strength, and unsafe assumptions. Return only the typed verdict. Never rewrite the plan or modify source files."
-    },
     "code_reviewer": {
       "version": 1,
       "instruction": "Review the exact immutable change evidence against the accepted plan. Return findings only. Never modify source files or propose a patch payload."

@@ -25,19 +25,9 @@ worker_model = "opus"
 # rollback context.
 adjudicate_hot = true
 
-# Explicit routes are desired execution contracts. Flow records the selected route and
-# requires structured launch acceptance before calling it active. The planner route is
-# the ordinary strict read-only path, with no automatic fallback. Codex post-plan
-# launches still inherit the owner model and remain visibly shadowed.
-[agents.planner]
-harness = "codex"
-model = "gpt-5.6-sol"
-effort = "xhigh"
-
-[agents.plan_assessor]
-harness = "claude_code"
-model = "opus"
-effort = "high"
+# Post-plan routes are desired execution contracts. Planning itself is an attended,
+# host-native conversation. Flow records the selected post-plan route and requires
+# structured launch acceptance before calling it active.
 
 [agents.implementer.by_owner.claude_code]
 harness = "claude_code"

@@ -3,7 +3,7 @@
 
 ## Agent-route workspace contract
 
-Initialized workspaces carry all twelve explicit route profiles. New exact snapshots
+Initialized workspaces carry all ten post-plan route profiles. New exact snapshots
 activate every read-only profile, the disposable E2E writer, and the three importing
 writers (implementer, review_fixer, revision_fixer) on Claude Code and Codex; only
 the generic owner adapter leaves a route shadowed. Repair and validation reject a
@@ -91,14 +91,12 @@ silently converts it. When a workspace has both tables, a missing explicit profi
 uses its corresponding legacy model when one exists, then falls back to the built-in
 route for profiles without a legacy knob.
 
-Native setup emits all twelve profiles from the central route catalog. Planner remains
-`codex / gpt-5.6-sol / xhigh`, and plan assessment remains
-`claude_code / opus / high`. Review and reflection use the owner's strong tier.
+Native setup emits all ten post-plan profiles from the central route catalog. Review and
+reflection use the owner's strong tier.
 Implementation, fixes, and review-brief authorship use its faster tier, while E2E
-uses that tier at medium effort. Configured and built-in planner routes enter the strict
-read-only CLI path without a per-run override. Exact capability, authentication,
-schema, and launch-receipt evidence is required. A failure stops the attempt and does
-not select another harness or model. Every exact post-plan route is now active on
+uses that tier at medium effort. Planning is host-native and attended. Exact capability,
+authentication, schema, and launch-receipt evidence is required for post-plan workers.
+A failure stops the attempt and does not select another harness or model. Every exact route is active on
 Claude Code and Codex; only the generic owner adapter leaves a route shadowed.
 
 Review migration before applying it:

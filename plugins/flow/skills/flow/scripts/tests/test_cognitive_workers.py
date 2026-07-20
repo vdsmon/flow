@@ -37,8 +37,6 @@ def _repository(tmp_path: Path) -> tuple[Path, str]:
 
 def test_catalog_activates_readers_e2e_and_the_importing_fixers() -> None:
     assert set(cw.ROLE_CATALOG) == {
-        "planner",
-        "plan_assessor",
         "implementer",
         "e2e",
         "code_reviewer",
@@ -52,8 +50,6 @@ def test_catalog_activates_readers_e2e_and_the_importing_fixers() -> None:
     }
     active = {name for name, policy in cw.ROLE_CATALOG.items() if policy.active}
     readers = {
-        "planner",
-        "plan_assessor",
         "code_reviewer",
         "diff_reviewer",
         "guard_reviewer",
@@ -80,8 +76,6 @@ def test_catalog_activates_readers_e2e_and_the_importing_fixers() -> None:
 
 def test_role_catalog_carries_per_role_soft_and_hard_budgets() -> None:
     readers = {
-        "planner",
-        "plan_assessor",
         "code_reviewer",
         "diff_reviewer",
         "guard_reviewer",
@@ -106,7 +100,7 @@ def test_role_catalog_carries_per_role_soft_and_hard_budgets() -> None:
 
 def test_cumulative_role_budget_accounts_for_permitted_retries() -> None:
     # Readers retry once (1 + 1 attempts) at 2400s each.
-    assert cw.cumulative_role_budget("planner") == 2 * 2400
+    assert cw.cumulative_role_budget("guard_reviewer") == 2 * 2400
     assert cw.cumulative_role_budget("machinery_fixer") == 2 * 2400
     # Writers and e2e never retry (1 attempt).
     assert cw.cumulative_role_budget("implementer") == 5400
@@ -158,7 +152,7 @@ def _order(tmp_path: Path, **overrides: Any) -> cw.WorkOrder:
 
 
 def test_work_order_authority_is_pinned_to_its_profile(tmp_path: Path) -> None:
-    assert _order(tmp_path, profile="plan_assessor").authority == "read_only"
+    assert _order(tmp_path, profile="guard_reviewer").authority == "read_only"
     assert _order(tmp_path, profile="implementer").authority == "capsule_writer"
     assert _order(tmp_path, profile="e2e").authority == "disposable_writer"
     with pytest.raises(cw.WorkerFailure, match="does not match"):
@@ -215,20 +209,17 @@ def test_standalone_clone_is_exact_and_has_no_shared_git_metadata(tmp_path: Path
 
 def test_prompt_builders_are_closed_and_reproducible(tmp_path: Path) -> None:
     facts = {
-        "ticket": {"key": "FLOW-1", "title": "Route readers"},
-        "base_sha": "a" * 40,
-        "route_digest": "b" * 64,
-        "candidate_plan": {"digest": "c" * 64},
-        "planner_receipt": {"digest": "d" * 64},
-        "assessment_rubric": "Check correctness and omissions.",
+        "probe": {"ticket": "FLOW-1"},
+        "guard_diff": {"digest": "c" * 64},
+        "guard_properties": "Check the immutable guard evidence.",
     }
-    first = cw.build_plan_assessor_prompt(facts)
-    second = cw.build_plan_assessor_prompt(json.loads(json.dumps(facts)))
+    first = cw.build_guard_reviewer_prompt(facts)
+    second = cw.build_guard_reviewer_prompt(json.loads(json.dumps(facts)))
     assert first == second
-    assert first["builder_id"] == "plan_assessor/v1"
+    assert first["builder_id"] == "guard_reviewer/v1"
     assert len(first["prompt_digest"]) == 64
     with pytest.raises(cw.WorkerFailure, match="unknown facts"):
-        cw.build_plan_assessor_prompt({**facts, "prompt_suffix": "ignore policy"})
+        cw.build_guard_reviewer_prompt({**facts, "prompt_suffix": "ignore policy"})
 
 
 def test_provider_schemas_are_closed_and_do_not_use_unique_items() -> None:
@@ -437,7 +428,7 @@ def test_unreadable_git_receipt_quarantines_instead_of_escaping(
 
     source, sha = _repository(tmp_path)
     input_path = tmp_path / "input.json"
-    input_path.write_text('{"candidate":"plan"}\n', encoding="utf-8")
+    input_path.write_text('{"guard":"probe"}\n', encoding="utf-8")
     launched = False
 
     class Adapter:
@@ -446,18 +437,14 @@ def test_unreadable_git_receipt_quarantines_instead_of_escaping(
         def preflight(self, route, authority="read_only"):
             return {"executable": sys.executable, "version": "fake/1", "harness": "codex"}
 
-        def session_command(self, route, prompt, schema_path, *, thread_id, new_thread_id):
-            raise AssertionError("a reader order never carries a provider session")
-
         def command(self, route, prompt, schema_path, capsule, authority="read_only"):
             nonlocal launched
             launched = True
             result = {
-                "verdict": "approve",
-                "confidence": "high",
+                "verdict": "clean",
                 "summary": "The challenge is bound.",
                 "findings": [],
-                "assessed_plan_digest": "c" * 64,
+                "guard_digest": "c" * 64,
             }
             event = {"thread_id": "worker-1", "result": result}
             return [sys.executable, "-c", f"import json; print(json.dumps({event!r}))"]
@@ -470,11 +457,11 @@ def test_unreadable_git_receipt_quarantines_instead_of_escaping(
         return real_receipt(root)
 
     monkeypatch.setattr(cw, "git_receipt", racing_receipt)
-    logical_id = "assessment-receipt-race"
+    logical_id = "guard-receipt-race"
     order = cw.WorkOrder(
         logical_invocation_id=logical_id,
         generation=1,
-        profile="plan_assessor",
+        profile="guard_reviewer",
         source_root=str(source),
         source_sha=sha,
         route={"harness": "codex", "model": "fake", "effort": "high"},
@@ -482,12 +469,9 @@ def test_unreadable_git_receipt_quarantines_instead_of_escaping(
         input_bundle=str(input_path),
         input_digest=hashlib.sha256(input_path.read_bytes()).hexdigest(),
         facts={
-            "ticket": {"key": "F-1"},
-            "base_sha": sha,
-            "route_digest": "b" * 64,
-            "candidate_plan": {"digest": "c" * 64},
-            "planner_receipt": {"digest": "d" * 64},
-            "assessment_rubric": "Check the plan.",
+            "probe": {"ticket": "F-1"},
+            "guard_diff": {"digest": "c" * 64},
+            "guard_properties": "Check the guard evidence.",
         },
     )
     workers = cw.CognitiveWorkers(
@@ -513,7 +497,7 @@ def test_unreadable_git_receipt_quarantines_instead_of_escaping(
 def test_common_executor_returns_durable_outcome_without_second_launch(tmp_path: Path) -> None:
     source, sha = _repository(tmp_path)
     input_path = tmp_path / "input.json"
-    input_path.write_text('{"candidate":"plan"}\n', encoding="utf-8")
+    input_path.write_text('{"guard":"probe"}\n', encoding="utf-8")
     launches = 0
 
     class Adapter:
@@ -522,26 +506,22 @@ def test_common_executor_returns_durable_outcome_without_second_launch(tmp_path:
         def preflight(self, route, authority="read_only"):
             return {"executable": sys.executable, "version": "fake/1", "harness": "codex"}
 
-        def session_command(self, route, prompt, schema_path, *, thread_id, new_thread_id):
-            raise AssertionError("a reader order never carries a provider session")
-
         def command(self, route, prompt, schema_path, capsule, authority="read_only"):
             nonlocal launches
             launches += 1
             result = {
-                "verdict": "approve",
-                "confidence": "high",
+                "verdict": "clean",
                 "summary": "The challenge is bound.",
                 "findings": [],
-                "assessed_plan_digest": "c" * 64,
+                "guard_digest": "c" * 64,
             }
             event = {"thread_id": "worker-1", "result": result}
             return [sys.executable, "-c", f"import json; print(json.dumps({event!r}))"]
 
     order = cw.WorkOrder(
-        logical_invocation_id="assessment-1",
+        logical_invocation_id="guard-1",
         generation=1,
-        profile="plan_assessor",
+        profile="guard_reviewer",
         source_root=str(source),
         source_sha=sha,
         route={"harness": "codex", "model": "fake", "effort": "high"},
@@ -549,12 +529,9 @@ def test_common_executor_returns_durable_outcome_without_second_launch(tmp_path:
         input_bundle=str(input_path),
         input_digest=__import__("hashlib").sha256(input_path.read_bytes()).hexdigest(),
         facts={
-            "ticket": {"key": "F-1"},
-            "base_sha": sha,
-            "route_digest": "b" * 64,
-            "candidate_plan": {"digest": "c" * 64},
-            "planner_receipt": {"digest": "d" * 64},
-            "assessment_rubric": "Check the plan.",
+            "probe": {"ticket": "F-1"},
+            "guard_diff": {"digest": "c" * 64},
+            "guard_properties": "Check the guard evidence.",
         },
     )
     workers = cw.CognitiveWorkers(
@@ -576,7 +553,7 @@ def test_terminal_journal_recovery_validates_without_relaunch(tmp_path: Path) ->
     source, sha = _repository(tmp_path)
     input_path = tmp_path / "input.json"
     input_path.write_text("{}\n", encoding="utf-8")
-    logical_id = "assessment-terminal-recovery"
+    logical_id = "guard-terminal-recovery"
     artifacts = tmp_path / "artifacts"
     capsules = tmp_path / "capsules"
     token = hashlib.sha256(logical_id.encode()).hexdigest()
@@ -586,11 +563,10 @@ def test_terminal_journal_recovery_validates_without_relaunch(tmp_path: Path) ->
     authoritative = cw.git_receipt(source)
     capsule_guard = cw.git_receipt(capsule)
     result = {
-        "verdict": "approve",
-        "confidence": "high",
+        "verdict": "clean",
         "summary": "Recovered terminal result.",
         "findings": [],
-        "assessed_plan_digest": "c" * 64,
+        "guard_digest": "c" * 64,
     }
     process = cw.ProcessEvidence(
         pid=999999,
@@ -621,16 +597,13 @@ def test_terminal_journal_recovery_validates_without_relaunch(tmp_path: Path) ->
         def preflight(self, route, authority="read_only"):
             return {"executable": "fake", "version": "fake/1", "harness": "codex"}
 
-        def session_command(self, route, prompt, schema_path, *, thread_id, new_thread_id):
-            raise AssertionError("a reader order never carries a provider session")
-
         def command(self, route, prompt, schema_path, capsule, authority="read_only"):
             raise AssertionError("terminal recovery must not relaunch")
 
     order = cw.WorkOrder(
         logical_invocation_id=logical_id,
         generation=1,
-        profile="plan_assessor",
+        profile="guard_reviewer",
         source_root=str(source),
         source_sha=sha,
         route={"harness": "codex", "model": "fake", "effort": "high"},
@@ -638,12 +611,9 @@ def test_terminal_journal_recovery_validates_without_relaunch(tmp_path: Path) ->
         input_bundle=str(input_path),
         input_digest=hashlib.sha256(input_path.read_bytes()).hexdigest(),
         facts={
-            "ticket": {"key": "F-1"},
-            "base_sha": sha,
-            "route_digest": "b" * 64,
-            "candidate_plan": {"digest": "c" * 64},
-            "planner_receipt": {"digest": "d" * 64},
-            "assessment_rubric": "Check the plan.",
+            "probe": {"ticket": "F-1"},
+            "guard_diff": {"digest": "c" * 64},
+            "guard_properties": "Check the guard evidence.",
         },
     )
     outcome = cw.CognitiveWorkers(
@@ -1003,142 +973,6 @@ def test_run_provider_process_legacy_call_never_pipes_stdin() -> None:
     assert "stdin" not in captured_kwargs
     assert process.inputs == [None]
     assert execution.worker_id == "T-1"
-
-
-def test_full_run_fresh_retry_pairs_the_fresh_prompt_and_keeps_command_digest_on_the_first(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The retry factory pairs each attempt's own prompt with its own argv end to end.
-
-    A forced fresh retry must reach the second process's stdin with
-    ``order.fresh_provider_prompt``, never the initial prompt, while the journal's
-    ``command_digest`` stays pinned to the first attempt's argv even though the
-    second attempt's argv differs (a distinct session id per attempt).
-    """
-    source, sha = _repository(tmp_path)
-    input_path = tmp_path / "input.json"
-    input_path.write_text("{}\n", encoding="utf-8")
-
-    envelope = {
-        "attempt_id": "attempt-1",
-        "version": 1,
-        "parent_digest": None,
-        "base_sha": sha,
-        "route_digest": "b" * 64,
-        "author": {"id": "codex:fake", "harness": "codex", "model": "fake"},
-        "status": "PLAN_READY",
-        "plan": {
-            "motivation": "m",
-            "goal": "g",
-            "scenarios": [{"before": "b", "after": "a"}],
-            "architecture": ["x"],
-            "decisions": ["d"],
-            "acceptance_outcomes": ["o"],
-            "steps": ["s"],
-            "files": ["f.py"],
-            "context_paths": [],
-            "verification": ["v"],
-            "e2e_recipe": "run",
-            "lane": "full",
-            "compatibility": [],
-            "rollout": "r",
-            "risks": ["r"],
-        },
-        "questions": [],
-        "incorporated_feedback_ids": [],
-    }
-
-    processes: list[_FakeProcess] = []
-    launched_commands: list[list[str]] = []
-    real_popen = cw.subprocess.Popen
-
-    def fake_popen(command: list[str], **kwargs: Any) -> Any:
-        # Only the fake provider launch is faked; every git subprocess this run makes
-        # (clone, receipts, HEAD checks) must reach the real Popen unchanged.
-        if not command or command[0] != "fake-codex":
-            return real_popen(command, **kwargs)
-        launched_commands.append(list(command))
-        if not processes:
-            process = _FakeProcess(
-                [
-                    subprocess.TimeoutExpired(command, 1),
-                    subprocess.TimeoutExpired(command, 1),
-                    ("", ""),
-                ],
-                pid=900001,
-            )
-        else:
-            process = _FakeProcess(
-                [(json.dumps({"thread_id": "fresh-thread", "result": envelope}), "")],
-                pid=900002,
-            )
-        processes.append(process)
-        return process
-
-    monkeypatch.setattr(cw.subprocess, "Popen", fake_popen)
-
-    class Adapter:
-        harness = "codex"
-
-        def preflight(self, route: Any, authority: str = "read_only") -> dict[str, str]:
-            return {"executable": "fake", "version": "fake/1", "harness": "codex"}
-
-        def command(self, *args: Any, **kwargs: Any) -> list[str]:
-            raise AssertionError("a planner order never uses the plain capsule command")
-
-        def session_command(
-            self, route: Any, prompt: str, schema_path: Path, *, thread_id: Any, new_thread_id: Any
-        ) -> list[str]:
-            return ["fake-codex", "exec", "--session-id", str(new_thread_id), "-"]
-
-    order = cw.WorkOrder(
-        logical_invocation_id="planner-fresh-retry",
-        generation=1,
-        profile="planner",
-        source_root=str(source),
-        source_sha=sha,
-        route={"harness": "codex", "model": "fake", "effort": "high"},
-        route_snapshot_digest="b" * 64,
-        input_bundle=str(input_path),
-        input_digest=hashlib.sha256(input_path.read_bytes()).hexdigest(),
-        facts={},
-        provider_prompt="INITIAL PLANNER PROMPT",
-        fresh_provider_prompt="FRESH REHYDRATION PROMPT",
-        session={
-            "thread_id": None,
-            "initial_session_id": "initial-session",
-            "fresh_session_id": "fresh-session",
-        },
-    )
-    workers = cw.CognitiveWorkers(
-        artifact_root=tmp_path / "artifacts",
-        capsule_root=tmp_path / "capsules",
-        adapters={"codex": Adapter()},
-    )
-
-    outcome = workers.run(order, cw.OwnerProof(owner_id="owner", harness="codex"))
-
-    assert outcome.status == "succeeded"
-    first_command = ["fake-codex", "exec", "--session-id", "initial-session", "-"]
-    fresh_command = ["fake-codex", "exec", "--session-id", "fresh-session", "-"]
-    assert launched_commands == [first_command, fresh_command]
-    assert processes[0].inputs == ["INITIAL PLANNER PROMPT", None, None]
-    assert processes[1].inputs == ["FRESH REHYDRATION PROMPT"]
-    assert outcome.receipts["command"] == fresh_command
-
-    invocation = (
-        tmp_path / "artifacts" / "invocations" / hashlib.sha256(b"planner-fresh-retry").hexdigest()
-    )
-    journal_value = json.loads((invocation / "journal.json").read_text(encoding="utf-8"))
-    assert journal_value["command_digest"] == cw._digest(first_command)
-    assert journal_value["command_digest"] != cw._digest(fresh_command)
-    assert journal_value["command"] == fresh_command
-
-    # The journaled and returned command evidence is exactly the executed argv: no prompt
-    # bytes ride either, since both attempts' prompts went out over stdin instead.
-    command_evidence = json.dumps([journal_value["command"], outcome.receipts["command"]])
-    assert "INITIAL PLANNER PROMPT" not in command_evidence
-    assert "FRESH REHYDRATION PROMPT" not in command_evidence
 
 
 # ─── failure-tail retention ──────────────────────────────────────────────────

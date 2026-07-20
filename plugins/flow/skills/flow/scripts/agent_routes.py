@@ -4,7 +4,7 @@
 The module owns route precedence and provenance. Callers work with complete
 ``harness/model/effort`` routes and never need to interpret workspace TOML,
 activation capability, or digest rules themselves. Exact CLI receipts activate the
-planner, the read-only post-plan profiles, the disposable-capsule E2E writer, the
+read-only post-plan profiles, the disposable-capsule E2E writer, the
 importing writers (implementer, review_fixer, revision_fixer) whose validated patch is
 imported under a sole-writer claim, and the read-only machinery_fixer whose report reflect
 applies through the machinery_edit guard. Every exact post-plan route is active; no route
@@ -31,8 +31,6 @@ OWNER_HARNESSES = frozenset({"claude_code", "codex", "generic"})
 EFFORTS = frozenset({"low", "medium", "high", "xhigh", "max"})
 
 PROFILES = (
-    "planner",
-    "plan_assessor",
     "implementer",
     "e2e",
     "code_reviewer",
@@ -44,11 +42,6 @@ PROFILES = (
     "reflector",
     "machinery_fixer",
 )
-
-_COMMON_DEFAULTS = {
-    "planner": {"harness": "codex", "model": "gpt-5.6-sol", "effort": "xhigh"},
-    "plan_assessor": {"harness": "claude_code", "model": "opus", "effort": "high"},
-}
 
 _OWNER_DEFAULTS = {
     "implementer": {
@@ -105,14 +98,8 @@ _LEGACY_STAGE = {
 
 _STAGE_EXECUTION = {
     "ticket": {"kind": "tool", "model": "none"},
-    "plan": {
-        "kind": "agent",
-        "profile": "planner",
-        "substeps": {
-            "planning": {"profile": "planner"},
-            "assessment": {"profile": "plan_assessor"},
-        },
-    },
+    # Planning is an attended, host-native conversation completed before bootstrap.
+    "plan": {"kind": "owner", "model": "unknown", "effort": "unknown"},
     "implement": {"kind": "agent", "profile": "implementer"},
     "code_review": {
         "kind": "composite",
@@ -180,8 +167,6 @@ _MIGRATION_EFFORT = {
 
 _ACTIVE_READ_ONLY = frozenset(
     {
-        "planner",
-        "plan_assessor",
         "code_reviewer",
         "diff_reviewer",
         "guard_reviewer",
@@ -400,8 +385,6 @@ def _legacy_route(data: dict[str, Any], profile: str) -> dict[str, str] | None:
     stage = _LEGACY_STAGE.get(profile)
     if not isinstance(models, dict):
         return None
-    if profile == "planner":
-        return {"field": "owner session model", "value": "host-native planning"}
     if stage is None:
         return None
     if isinstance(models.get(stage), str):
@@ -424,9 +407,6 @@ def legacy_fallback_profiles(data: dict[str, Any]) -> tuple[str, ...]:
 
 
 def _builtin_route(profile: str, owner_harness: str) -> dict[str, str] | None:
-    common = _COMMON_DEFAULTS.get(profile)
-    if common is not None:
-        return dict(common)
     owners = _OWNER_DEFAULTS.get(profile)
     if owners is None or owner_harness == "generic":
         return None
@@ -443,8 +423,6 @@ def _activation(
         return "unrouted", "no exact route exists for this owner harness"
     if owner_harness == "generic":
         return "shadow", "the generic adapter has no structured model and effort selector"
-    if profile == "planner":
-        return "pending", "strict read-only planner CLI activation requires an exact receipt"
     if profile == "e2e":
         return "pending", "strict disposable-capsule E2E activation requires an exact CLI receipt"
     if profile in {"implementer", "review_fixer", "revision_fixer"}:
@@ -719,10 +697,6 @@ def default_route_config() -> dict[str, dict[str, Any]]:
     """Return native setup defaults for the complete profile catalog."""
     config: dict[str, dict[str, Any]] = {}
     for profile in PROFILES:
-        common = _COMMON_DEFAULTS.get(profile)
-        if common is not None:
-            config[profile] = dict(common)
-            continue
         config[profile] = {
             "by_owner": {owner: dict(route) for owner, route in _OWNER_DEFAULTS[profile].items()}
         }

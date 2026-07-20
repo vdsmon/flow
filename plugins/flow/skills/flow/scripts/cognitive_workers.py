@@ -31,7 +31,6 @@ import subprocess
 import sys
 import tempfile
 import time
-import uuid
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -93,8 +92,6 @@ _E2E_SOFT_BUDGET_SECONDS = 15 * 60
 _E2E_HARD_BUDGET_SECONDS = 60 * 60
 
 _READERS = {
-    "planner": ("planner", "plan-envelope/v1"),
-    "plan_assessor": ("plan_assessor", "plan-assessment/v1"),
     "code_reviewer": ("code_reviewer", "review-findings/v1"),
     "diff_reviewer": ("diff_reviewer", "review-findings/v1"),
     "guard_reviewer": ("guard_reviewer", "guard-verdict/v1"),
@@ -180,8 +177,6 @@ ROLE_CATALOG["revision_fixer"] = RolePolicy(
 ROLE_CATALOG = {
     name: ROLE_CATALOG[name]
     for name in (
-        "planner",
-        "plan_assessor",
         "implementer",
         "e2e",
         "code_reviewer",
@@ -288,9 +283,6 @@ class WorkOrder:
     lease_fence: str | None = None
     challenge_digest: str | None = None
     result_schema: dict[str, Any] | None = None
-    provider_prompt: str | None = None
-    fresh_provider_prompt: str | None = None
-    session: dict[str, str | None] | None = None
 
     def __post_init__(self) -> None:
         if self.schema != WORK_ORDER_SCHEMA:
@@ -315,21 +307,6 @@ class WorkOrder:
             raise WorkerFailure("work-order route must be an exact harness/model/effort triple")
         if self.route["harness"] not in {"codex", "claude_code"}:
             raise WorkerFailure("work-order route names an unsupported harness")
-        if self.provider_prompt is not None and self.profile != "planner":
-            raise WorkerFailure("only the planner compatibility order may bind a provider prompt")
-        if self.session is not None:
-            if self.profile != "planner" or set(self.session) != {
-                "thread_id",
-                "initial_session_id",
-                "fresh_session_id",
-            }:
-                raise WorkerFailure("planner session fields do not match the closed contract")
-            if not self.session.get("initial_session_id") or not self.session.get(
-                "fresh_session_id"
-            ):
-                raise WorkerFailure("planner session requires initial and fresh session IDs")
-            if self.session.get("thread_id") and not self.fresh_provider_prompt:
-                raise WorkerFailure("a resumed planner requires a complete fresh prompt")
 
     @classmethod
     def from_mapping(cls, value: Mapping[str, Any]) -> WorkOrder:
@@ -366,9 +343,6 @@ class WorkOrder:
                 "lease_fence",
                 "challenge_digest",
                 "result_schema",
-                "provider_prompt",
-                "fresh_provider_prompt",
-                "session",
             )
             if key in value
         }
@@ -485,29 +459,6 @@ def _prompt_entries() -> dict[str, dict[str, Any]]:
 
 
 _FACT_KEYS: dict[str, frozenset[str]] = {
-    "planner": frozenset(
-        {
-            "stage_plan",
-            "ticket",
-            "base_sha",
-            "route",
-            "current_envelope",
-            "feedback_ledger",
-            "version_requirements",
-            "approved_design_digest",
-            "mode",
-        }
-    ),
-    "plan_assessor": frozenset(
-        {
-            "ticket",
-            "base_sha",
-            "route_digest",
-            "candidate_plan",
-            "planner_receipt",
-            "assessment_rubric",
-        }
-    ),
     "code_reviewer": frozenset(
         {"stage_code_review", "ticket", "accepted_plan", "source_sha", "review_bundle"}
     ),
@@ -587,14 +538,6 @@ def _build_prompt(profile: str, facts: Mapping[str, Any]) -> PromptMaterial:
     )
 
 
-def build_planner_prompt(facts: Mapping[str, Any]) -> PromptMaterial:
-    return _build_prompt("planner", facts)
-
-
-def build_plan_assessor_prompt(facts: Mapping[str, Any]) -> PromptMaterial:
-    return _build_prompt("plan_assessor", facts)
-
-
 def build_code_reviewer_prompt(facts: Mapping[str, Any]) -> PromptMaterial:
     return _build_prompt("code_reviewer", facts)
 
@@ -635,32 +578,7 @@ def build_revision_fixer_prompt(facts: Mapping[str, Any]) -> PromptMaterial:
     return _build_prompt("revision_fixer", facts)
 
 
-def _bound_provider_prompt(
-    prompt: str, *, facts: Mapping[str, Any], schema: Mapping[str, Any]
-) -> PromptMaterial:
-    """Bind the historical planner prompt without letting callers append to it.
-
-    ``planner-worker`` predates the closed fact builders and its public surface accepts
-    one complete prompt file. The compatibility wrapper may bind that whole file, but
-    it cannot add a suffix or select a different schema after the work order is sealed.
-    """
-    if not prompt.strip():
-        raise WorkerFailure("planner provider prompt must not be empty")
-    prompt_digest = hashlib.sha256(prompt.encode()).hexdigest()
-    return PromptMaterial(
-        builder_id="planner-worker-compat/v1",
-        template_digest=prompt_digest,
-        facts_digest=_digest(facts),
-        artifact_digests={"provider_prompt": prompt_digest},
-        schema_digest=_digest(schema),
-        prompt=prompt,
-        prompt_digest=prompt_digest,
-    )
-
-
 PROMPT_BUILDERS: dict[str, Callable[[Mapping[str, Any]], PromptMaterial]] = {
-    "planner": build_planner_prompt,
-    "plan_assessor": build_plan_assessor_prompt,
     "code_reviewer": build_code_reviewer_prompt,
     "diff_reviewer": build_diff_reviewer_prompt,
     "guard_reviewer": build_guard_reviewer_prompt,
@@ -699,21 +617,6 @@ _FINDING = _closed_object(
 
 def provider_schema(profile: str) -> dict[str, Any]:
     """Return the closed provider-facing schema for one active profile."""
-    if profile == "planner":
-        import planning_attempt
-
-        return planning_attempt.envelope_json_schema()
-    if profile == "plan_assessor":
-        return _closed_object(
-            {
-                "verdict": {"type": "string", "enum": ["approve", "revise"]},
-                "confidence": {"type": "string", "enum": ["low", "medium", "high"]},
-                "summary": _TEXT,
-                "findings": {"type": "array", "items": _FINDING},
-                "assessed_plan_digest": _TEXT,
-            },
-            ["verdict", "confidence", "summary", "findings", "assessed_plan_digest"],
-        )
     if profile in {"code_reviewer", "diff_reviewer"}:
         return _closed_object(
             {
@@ -845,20 +748,7 @@ def validate_typed_result(profile: str, value: object) -> dict[str, Any]:  # noq
     """Apply semantic checks that provider JSON schemas cannot express."""
     if not isinstance(value, dict):
         raise WorkerFailure("worker result must be an object", code="invalid_result")
-    if profile == "planner":
-        import planning_attempt
-
-        try:
-            return planning_attempt.PlanEnvelope.from_mapping(
-                cast(dict[str, Any], value)
-            ).to_mapping()
-        except planning_attempt.AttemptError as exc:
-            raise WorkerFailure(f"planner result is invalid: {exc}", code="invalid_result") from exc
     contracts: dict[str, tuple[set[str], dict[str, set[str]]]] = {
-        "plan_assessor": (
-            {"verdict", "confidence", "summary", "findings", "assessed_plan_digest"},
-            {"verdict": {"approve", "revise"}, "confidence": {"low", "medium", "high"}},
-        ),
         "code_reviewer": (
             {"verdict", "summary", "findings", "input_digest"},
             {"verdict": {"clean", "findings"}},
@@ -892,7 +782,7 @@ def validate_typed_result(profile: str, value: object) -> dict[str, Any]:  # noq
         for key, allowed in enums.items():
             if value.get(key) not in allowed:
                 raise WorkerFailure(f"{profile} result has invalid {key}", code="invalid_result")
-    if profile in {"plan_assessor", "code_reviewer", "diff_reviewer", "guard_reviewer"}:
+    if profile in {"code_reviewer", "diff_reviewer", "guard_reviewer"}:
         findings = value.get("findings")
         if not isinstance(findings, list):
             raise WorkerFailure("worker result findings must be an array", code="invalid_result")
@@ -904,7 +794,6 @@ def validate_typed_result(profile: str, value: object) -> dict[str, Any]:  # noq
                 "worker result contains duplicate finding IDs", code="invalid_result"
             )
         digest_field = {
-            "plan_assessor": "assessed_plan_digest",
             "code_reviewer": "input_digest",
             "diff_reviewer": "input_digest",
             "guard_reviewer": "guard_digest",
@@ -1004,16 +893,6 @@ class CliAdapter(Protocol):
         authority: str = "read_only",
     ) -> list[str]: ...
 
-    def session_command(
-        self,
-        route: Mapping[str, str],
-        prompt: str,
-        schema_path: Path,
-        *,
-        thread_id: str | None,
-        new_thread_id: str | None,
-    ) -> list[str]: ...
-
     def preflight(
         self, route: Mapping[str, str], authority: str = "read_only"
     ) -> dict[str, str]: ...
@@ -1024,10 +903,9 @@ def preflight_route(
     *,
     runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
     timeout: float = 5.0,
-    require_resume: bool = False,
     authority: str = "read_only",
 ) -> dict[str, str]:
-    """Probe one exact provider route, including planner resume when requested.
+    """Probe one exact provider route.
 
     The probe runs in the same narrowed environment the worker will get. Probing the owner's
     full environment instead would green-light an authentication the launch cannot reproduce.
@@ -1059,13 +937,9 @@ def preflight_route(
             check=False,
             env=environment,
         )
-        help_commands = (
-            [[executable, "exec", "--help"], [executable, "exec", "resume", "--help"]]
-            if executable == "codex" and require_resume
-            else [
-                [executable, "exec", "--help"] if executable == "codex" else [executable, "--help"]
-            ]
-        )
+        help_commands = [
+            [executable, "exec", "--help"] if executable == "codex" else [executable, "--help"]
+        ]
         help_results = [
             runner(
                 command,
@@ -1105,18 +979,6 @@ def preflight_route(
             + (f": {', '.join(missing)}" if missing else ""),
             code="capability_missing",
         )
-    if executable == "codex" and require_resume:
-        resume_text = help_results[1].stdout + help_results[1].stderr
-        resume_missing = [
-            flag
-            for flag in ("--model", "--output-schema", "--json", "--config")
-            if flag not in resume_text
-        ]
-        if resume_missing:
-            raise WorkerFailure(
-                "worker CLI resume lacks required capabilities: " + ", ".join(resume_missing),
-                code="capability_missing",
-            )
     return {
         "executable": resolved,
         "version": (version.stdout or version.stderr).strip(),
@@ -1165,23 +1027,6 @@ class CodexCliAdapter:
             "-",
         ]
 
-    def session_command(
-        self,
-        route: Mapping[str, str],
-        prompt: str,
-        schema_path: Path,
-        *,
-        thread_id: str | None,
-        new_thread_id: str | None,
-    ) -> list[str]:
-        return build_planner_command(
-            route,
-            prompt,
-            schema_path=schema_path,
-            thread_id=thread_id,
-            new_thread_id=new_thread_id,
-        )
-
     def preflight(self, route: Mapping[str, str], authority: str = "read_only") -> dict[str, str]:
         return _probe_cli(
             "codex",
@@ -1228,23 +1073,6 @@ class ClaudeCodeCliAdapter:
             # No positional prompt: --print reads it from stdin when none is given.
         ]
 
-    def session_command(
-        self,
-        route: Mapping[str, str],
-        prompt: str,
-        schema_path: Path,
-        *,
-        thread_id: str | None,
-        new_thread_id: str | None,
-    ) -> list[str]:
-        return build_planner_command(
-            route,
-            prompt,
-            schema_path=schema_path,
-            thread_id=thread_id,
-            new_thread_id=new_thread_id,
-        )
-
     def preflight(self, route: Mapping[str, str], authority: str = "read_only") -> dict[str, str]:
         return _probe_cli(
             "claude",
@@ -1264,65 +1092,6 @@ ADAPTERS: dict[str, CliAdapter] = {
     "codex": CodexCliAdapter(),
     "claude_code": ClaudeCodeCliAdapter(),
 }
-
-
-def build_planner_command(
-    route: Mapping[str, str],
-    prompt: str,
-    *,
-    schema_path: Path,
-    thread_id: str | None = None,
-    new_thread_id: str | None = None,
-) -> list[str]:
-    """Build the session-aware command used by the planner compatibility facade."""
-    schema = str(schema_path.expanduser().resolve())
-    if route["harness"] == "codex":
-        command = ["codex", "exec"]
-        if thread_id:
-            command.append("resume")
-        command.extend(
-            [
-                "--model",
-                route["model"],
-                "-c",
-                f'model_reasoning_effort="{route["effort"]}"',
-            ]
-        )
-        if thread_id:
-            command.extend(["-c", 'sandbox_mode="read-only"'])
-        else:
-            command.extend(["--sandbox", "read-only"])
-        command.extend(["--json", "--output-schema", schema])
-        if thread_id:
-            command.append(thread_id)
-        # "-" is codex exec's documented stdin marker; supplying a real prompt token here
-        # too would make codex append the piped stdin after it instead of reading from it.
-        command.append("-")
-        return command
-    if route["harness"] != "claude_code":
-        raise WorkerFailure("planner route names an unsupported harness")
-    command = [
-        "claude",
-        "--print",
-        "--model",
-        route["model"],
-        "--effort",
-        route["effort"],
-        "--permission-mode",
-        "plan",
-        "--output-format",
-        "stream-json",
-        # --print with stream-json is rejected outright unless --verbose is also present.
-        "--verbose",
-        "--json-schema",
-        schema_path.read_text(encoding="utf-8"),
-    ]
-    if thread_id:
-        command.extend(["--resume", thread_id])
-    else:
-        command.extend(["--session-id", new_thread_id or str(uuid.uuid4())])
-    # No positional prompt: --print reads it from stdin when none is given.
-    return command
 
 
 def worker_environment(extra: Mapping[str, str] | None = None) -> dict[str, str]:
@@ -3283,17 +3052,8 @@ class CognitiveWorkers:
         if adapter is None:
             raise WorkerFailure("work-order harness has no exact adapter", code="route_unavailable")
         schema = order.result_schema or provider_schema(order.profile)
-        if order.profile == "planner" and isinstance(
-            adapter, (CodexCliAdapter, ClaudeCodeCliAdapter)
-        ):
-            capability = preflight_route(order.route, require_resume=True)
-        else:
-            capability = adapter.preflight(order.route, order.authority)
-        prompt = (
-            _bound_provider_prompt(order.provider_prompt, facts=order.facts, schema=schema)
-            if order.provider_prompt is not None
-            else PROMPT_BUILDERS[order.profile](order.facts)
-        )
+        capability = adapter.preflight(order.route, order.authority)
+        prompt = PROMPT_BUILDERS[order.profile](order.facts)
         schema_path = invocation / "provider-schema.json"
         _atomic_json(schema_path, schema, mode=0o400)
         capsule = (
@@ -3365,25 +3125,7 @@ class CognitiveWorkers:
             capsule_before = guarded_receipt(capsule)
 
             def build_invocation(fresh: bool) -> tuple[list[str], str | None]:
-                if order.provider_prompt is not None:
-                    session = order.session or {}
-                    selected_prompt = (
-                        order.fresh_provider_prompt or order.provider_prompt
-                        if fresh
-                        else order.provider_prompt
-                    )
-                    command = adapter.session_command(
-                        order.route,
-                        selected_prompt,
-                        schema_path,
-                        thread_id=None if fresh else session.get("thread_id"),
-                        new_thread_id=(
-                            session.get("fresh_session_id")
-                            if fresh
-                            else session.get("initial_session_id")
-                        ),
-                    )
-                    return command, selected_prompt
+                del fresh
                 command = adapter.command(
                     order.route, prompt.prompt, schema_path, capsule, order.authority
                 )
@@ -3564,15 +3306,6 @@ class CognitiveWorkers:
                     capsule, order.source_sha
                 )
             journal.transition("validated", **validated_fields)
-        if order.session is not None and not worker_id:
-            journal.transition(
-                "blocked",
-                failure={"code": "invalid_result"},
-                disposal=self._dispose_failed_capsule(capsule, quarantine=False),
-            )
-            raise WorkerFailure(
-                "planner output carried no worker session id", code="invalid_result"
-            )
         change_receipt: dict[str, Any] | None = None
         if policy.authority == "capsule_writer":
             # Runs for the three active importing writers (implementer, review_fixer,
@@ -4098,8 +3831,6 @@ __all__ = [
     "build_guard_reviewer_prompt",
     "build_implementer_prompt",
     "build_machinery_fixer_prompt",
-    "build_plan_assessor_prompt",
-    "build_planner_prompt",
     "build_reflector_prompt",
     "build_review_brief_author_prompt",
     "build_review_fixer_prompt",

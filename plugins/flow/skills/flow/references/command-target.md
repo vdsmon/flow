@@ -115,7 +115,7 @@ The ticket is deferred or blocked and has a durable saved question. Without
 4. clear the human-input label when the tracker supports it;
 5. re-probe and continue in the same invocation.
 
-The durable answer stem must remain recognizable to unattended planning. Do not
+The durable answer stem must remain recognizable to later target handling. Do not
 overwrite or delete the original question.
 
 ### `resume`
@@ -159,8 +159,9 @@ force operation.
 
 ## Target options
 
-- `--unattended` selects headless planning and delivery. It conflicts with
-  `--verify`; defer or block instead of asking a live question.
+- `--unattended` asks the owner not to prompt during an already approved delivery. It
+  conflicts with `--verify`. During stabilization, a fresh target still stops at the
+  human plan gate without mutation.
 - `--verify express|light|full` fixes the attended verification lane. Hot changes
   clamp to `full`.
 - `--e2e "<recipe>"` supplies the approved end-to-end recipe; persist it with the
@@ -172,15 +173,14 @@ force operation.
 - `--route "<profile>=<harness>,<model>,<effort>"` overrides one complete agent
   route for this run. It is repeatable, but each profile may appear once and every
   tuple is validated atomically before lifecycle execution. The closed profiles are
-  `planner`, `plan_assessor`, `implementer`, `e2e`, `code_reviewer`, `diff_reviewer`,
-  `guard_reviewer`, `review_fixer`, `revision_fixer`, `review_brief_author`,
+  `implementer`, `e2e`, `code_reviewer`, `diff_reviewer`, `guard_reviewer`,
+  `review_fixer`, `revision_fixer`, `review_brief_author`,
   `reflector`, and `machinery_fixer`. The public harness names are `claude_code` and
   `codex`. The option is valid only while starting a fresh target. Reject it after the
-  lifecycle reducer selects resume, repair, revise, show, or a terminal action. Fresh
-  targets use the configured or built-in strict read-only planner route before
-  approval. An explicit `planner` override replaces that complete route for this
-  attempt. Missing capability, authentication, schema acceptance, or exact receipt
-  evidence stops visibly, with no automatic fallback. Every exact post-plan route is now
+  lifecycle reducer selects resume, repair, revise, show, or a terminal action. Planning
+  remains host-native and attended; `--route` applies only after plan approval. Missing
+  capability, authentication, schema acceptance, or exact receipt evidence stops
+  visibly, with no automatic fallback. Every exact post-plan route is
   active; only the generic owner adapter leaves a route shadowed.
 
 For multiple targets without `--together`, attended mode asks whether to deliver

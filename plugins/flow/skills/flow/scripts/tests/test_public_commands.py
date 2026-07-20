@@ -220,7 +220,7 @@ def test_route_keeps_repeated_route_values_without_losing_option_names() -> None
         [
             "FT-1",
             "--route",
-            "planner=codex,gpt-5.6-sol,xhigh",
+            "code_reviewer=codex,gpt-5.6-sol,xhigh",
             "--route=implementer=claude_code,sonnet,high",
         ],
         load_registry(REGISTRY),
@@ -228,7 +228,7 @@ def test_route_keeps_repeated_route_values_without_losing_option_names() -> None
     )
     assert route.options == ("--route", "--route")
     assert route.option_values == (
-        ("--route", "planner=codex,gpt-5.6-sol,xhigh"),
+        ("--route", "code_reviewer=codex,gpt-5.6-sol,xhigh"),
         ("--route", "implementer=claude_code,sonnet,high"),
     )
 

@@ -195,7 +195,7 @@ def lane(config: dict[str, Any], key: str, *, runner: Any = None) -> str:
     """Resolve a bead's verification lane (express|light|full) from its tier labels.
 
     The spec-time twin of `flow_worktree._lane_for_bead` (which reads via the tracker
-    at bootstrap): the `--auto` planner calls this BEFORE bootstrap, so the express/light
+    at bootstrap): the attended planning path calls this BEFORE bootstrap, so the express/light
     skips (advisor probe, plan revision) can fire while planning. Same raw bd read as
     `decided`; policy lives in `tier_policy.lane_for`. Fail-open to "full" so a flaky
     read never silently downshifts a run's gating.

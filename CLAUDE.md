@@ -1,9 +1,10 @@
 <!-- flow:activation-truth:begin -->
 # CLAUDE.md
 
-Flow's cognitive route catalog is authoritative for model selection. New exact route
-snapshots may launch read-only planning, assessment, review, review-brief authorship,
-and reflection through either Claude Code or Codex capsules. E2E is also activated, as a
+Flow's post-plan cognitive route catalog is authoritative for model selection. Planning
+is one attended host-native conversation that produces the human-approved Markdown plan.
+Exact route snapshots may launch review, review-brief authorship, and reflection through
+either Claude Code or Codex capsules. E2E is also activated, as a
 disposable-capsule writer: it clones the sealed `source_sha`, is seeded with the ticket's
 uncommitted working state, runs the recipe there, captures the recipe's mutations as
 evidence, imports nothing, and discards the capsule. The importing writers (implementer,

@@ -1901,8 +1901,6 @@ def test_stage_ttl_seconds_cumulative_budget_across_real_stage_compositions() ->
 
     reg = registry_by_name(ds._skill_root_from_script() / ds._STAGE_REGISTRY_RELATIVE)
     cases = {
-        # planner + plan_assessor, each 2*2400 -> ceil(9600*1.5)=14400.
-        "plan": (_pending("planner", "plan_assessor"), 14400),
         # implementer alone, 1*5400 -> ceil(5400*1.5)=8100.
         "implement": (_pending("implementer"), 8100),
         # code_reviewer + diff_reviewer (2*2400 each) + conditional review_fixer (1*5400)
@@ -1994,11 +1992,11 @@ def test_next_refreshes_lease_with_multiplied_ttl(
 
 
 def _cognitive_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Init a run whose plan stage carries a frozen exact route snapshot."""
+    """Init a run whose implement stage carries a frozen exact route snapshot."""
     _write_workspace(
         tmp_path,
-        handlers={"ticket": "inline", "plan": "inline"},
-        stages=["ticket", "plan"],
+        handlers={"ticket": "inline", "implement": "inline"},
+        stages=["ticket", "implement"],
         compounding=False,
     )
     _stub_git_head(monkeypatch, "a" * 40)
@@ -2010,7 +2008,7 @@ def _cognitive_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Pat
     return td
 
 
-def _sealed(td: Path, stage: str = "plan") -> dict[str, Any]:
+def _sealed(td: Path, stage: str = "implement") -> dict[str, Any]:
     ts, _ = state.read(td)
     assert ts is not None
     return ts.stages[stage].cognitive_substeps or {}
@@ -2022,15 +2020,15 @@ def test_next_seals_each_cognitive_substep_to_its_stage_generation(
     td = _cognitive_workspace(tmp_path, monkeypatch)
     rc, payload = ds.cmd_next(tmp_path, "FT-1")
     assert rc == 0
-    assert payload["stage"] == "plan"
+    assert payload["stage"] == "implement"
     assert payload["generation"] == 1
 
     sealed = payload["cognitive_substeps"]
-    assert set(sealed) == {"planning", "assessment"}
-    assert sealed["planning"]["profile"] == "planner"
-    assert sealed["planning"]["activation"] == "pending"
-    assert sealed["planning"]["source_sha"] == "a" * 40
-    assert sealed["planning"]["logical_invocation_id"].endswith(":plan:planning:1")
+    assert set(sealed) == {"main"}
+    assert sealed["main"]["profile"] == "implementer"
+    assert sealed["main"]["activation"] == "pending"
+    assert sealed["main"]["source_sha"] == "a" * 40
+    assert sealed["main"]["logical_invocation_id"].endswith(":implement:main:1")
     assert sealed == _sealed(td)
     assert json.loads(Path(payload["descriptor_path"]).read_text(encoding="utf-8")) == payload
 
@@ -2038,22 +2036,19 @@ def test_next_seals_each_cognitive_substep_to_its_stage_generation(
 def test_next_refreshes_lease_with_the_sealed_cumulative_floor(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # plan's registry timeout_min is 10 -> the old floor is 1200s. Its sealed substeps
-    # (planner + plan_assessor, each retrying once at 2400s) give a cumulative floor of
-    # ceil((2*2400 + 2*2400) * 1.5) = 14400s: proves the sealed descriptor drove the
-    # refreshed lease, not merely timeout_min * 2.
+    # implementer's 5400s hard budget gives a cumulative floor of 8100s, proving the sealed
+    # descriptor drove the refreshed lease rather than only the registry timeout.
     td = _cognitive_workspace(tmp_path, monkeypatch)
     rc, payload = ds.cmd_next(tmp_path, "FT-1")
     assert rc == 0
-    assert payload["stage"] == "plan"
+    assert payload["stage"] == "implement"
 
     lse = lease.read_lease(td)
     assert lse is not None
     expires = lease.parse_iso(lse.lease_expires_at)
     assert expires is not None
     remaining = (expires - datetime.now(UTC)).total_seconds()
-    assert remaining > 1200
-    assert remaining > 14000
+    assert remaining > 8000
 
 
 def test_stage_cannot_complete_without_a_matching_cognitive_outcome(
@@ -2062,7 +2057,7 @@ def test_stage_cannot_complete_without_a_matching_cognitive_outcome(
     _cognitive_workspace(tmp_path, monkeypatch)
     ds.cmd_next(tmp_path, "FT-1")
 
-    rc, payload = ds.cmd_finish(tmp_path, "FT-1", "plan", "completed")
+    rc, payload = ds.cmd_finish(tmp_path, "FT-1", "implement", "completed")
     assert rc == 1
     assert "no successful outcome" in payload["error"]
 
@@ -2075,7 +2070,7 @@ def test_stale_generation_outcome_cannot_complete_the_stage(
     for facts in _sealed(td).values():
         _publish_outcome(facts, generation=facts["stage_generation"] + 1)
 
-    rc, payload = ds.cmd_finish(tmp_path, "FT-1", "plan", "completed")
+    rc, payload = ds.cmd_finish(tmp_path, "FT-1", "implement", "completed")
     assert rc == 1
     assert "does not match the sealed stage generation" in payload["error"]
 
@@ -2088,11 +2083,11 @@ def test_matching_outcomes_complete_the_stage(
     for facts in _sealed(td).values():
         _publish_outcome(facts)
 
-    rc, payload = ds.cmd_finish(tmp_path, "FT-1", "plan", "completed")
+    rc, payload = ds.cmd_finish(tmp_path, "FT-1", "implement", "completed")
     assert rc == 0, payload
     ts, _ = state.read(td)
     assert ts is not None
-    assert ts.stages["plan"].status == "completed"
+    assert ts.stages["implement"].status == "completed"
 
 
 def test_a_fabricated_outcome_in_the_stage_output_cannot_complete_the_stage(
@@ -2106,7 +2101,7 @@ def test_a_fabricated_outcome_in_the_stage_output_cannot_complete_the_stage(
     rc, payload = ds.cmd_finish(
         tmp_path,
         "FT-1",
-        "plan",
+        "implement",
         "completed",
         skill_output={"cognitive_outcomes": forged},
     )
@@ -2122,14 +2117,14 @@ def test_tampered_outcome_digest_cannot_complete_the_stage(
     sealed = _sealed(td)
     for facts in sealed.values():
         _publish_outcome(facts)
-    planning = sealed["planning"]
-    token = hashlib.sha256(str(planning["logical_invocation_id"]).encode()).hexdigest()
-    path = Path(planning["artifact_root"]) / "invocations" / token / "outcome.json"
+    main = sealed["main"]
+    token = hashlib.sha256(str(main["logical_invocation_id"]).encode()).hexdigest()
+    path = Path(main["artifact_root"]) / "invocations" / token / "outcome.json"
     value = json.loads(path.read_text(encoding="utf-8"))
     value["result"] = {"tampered": True}
     path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
-    rc, payload = ds.cmd_finish(tmp_path, "FT-1", "plan", "completed")
+    rc, payload = ds.cmd_finish(tmp_path, "FT-1", "implement", "completed")
     assert rc == 1
     assert "does not match the sealed stage generation" in payload["error"]
 
@@ -2147,7 +2142,7 @@ def test_a_resumed_cognitive_stage_keeps_its_seal_when_head_moves(
     rc, second = ds.cmd_next(tmp_path, "FT-1")
 
     assert rc == 0, second
-    assert second["stage"] == "plan"
+    assert second["stage"] == "implement"
     assert second["generation"] == first["generation"]
     assert _sealed(td) == sealed_before
     assert second["cognitive_substeps"] == sealed_before
