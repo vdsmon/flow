@@ -1,4 +1,3 @@
-<!-- flow:activation-truth:begin -->
 # Stage: plan
 
 The plan stage records the one human-approved Markdown plan produced by the host-native planning

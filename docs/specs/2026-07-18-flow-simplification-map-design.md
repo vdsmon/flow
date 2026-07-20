@@ -13,7 +13,8 @@ later slices automatically.
 The freeze from PR #539 is active on `main`. This repository no longer targets itself
 for maintenance, automatically merges hot work, compounds memory, creates machinery
 tickets through reflection, or runs `e2e`, `review_brief`, `reflect`, and `merge` in
-its own pipeline. The corresponding plugin features still exist in the runtime.
+its own pipeline. Those ancillary stages still exist in the plugin, but the capsule
+executor and exact route transaction no longer sit underneath them.
 
 The incomplete `flow-yahm` work is preserved on
 `archive/flow-yahm-2026-07-18` and in a checksummed binary patch. It is evidence, not
@@ -24,11 +25,16 @@ retains native Codex support and the state-aware command while preceding the rou
 planning-transaction, review-brief, and capsule expansion. Simplification proceeds
 through forward deletion.
 
-The first deletion slice is implemented on `stabilize/understanding-map`: planning is
-one approved Markdown plan, the four planning-transaction modules and their direct
-tests are deleted, bootstrap has one path again, and planner/assessor route contracts
-are gone. Post-plan routes and the review brief remain for later, separately approved
-slices.
+The first deletion slice merged in PR #540: planning is one approved Markdown plan,
+the four planning-transaction modules and their direct tests are deleted, bootstrap
+has one path again, and planner/assessor route contracts are gone.
+
+The separately approved second and third slices are implemented on
+`stabilize/native-agents`: post-plan agents run natively in the ticket worktree;
+capsule execution, patch import, quarantine, generations, exact route profiles,
+snapshots, attestations, overrides, and their direct verification surfaces are
+deleted. The review brief remains as a small ancillary renderer, model selection is
+an optional per-stage hint, and outer Claude Code/Codex harness selection remains.
 
 ## Original intent and target
 
@@ -232,15 +238,15 @@ machinery. Rejected.
 
 ## Ordered slices
 
-1. **Collapse planning transactions.** Restore a single native planner result and
+1. **Collapsed in PR #540 — planning transactions.** Restore a single native planner result and
    human gate. Remove plan versions, feedback CAS, assessor receipts, route-bound gate
    receipts, and the approval bootstrap journal. Retain one optional independent
    assessor for explicitly high-risk work.
-2. **Delete capsule execution and patch import.** Restore direct native agents in the
+2. **Implemented on `stabilize/native-agents` — capsule execution and patch import.** Restore direct native agents in the
    ticket worktree. Remove work orders, private clones, claims, generations, patch
    CAS, capsule quarantine, and their tests. Decouple the retained review brief and
    janitor.
-3. **Collapse exact routes.** Remove route profiles, snapshots, attestations,
+3. **Implemented on `stabilize/native-agents` — exact routes.** Remove route profiles, snapshots, attestations,
    overrides, generated route surfaces, and validator/seam obligations. Keep outer
    harness selection and optional host-native model hints.
 4. **Remove the automatic self-evolution loop.** Delete machinery-ticket creation and

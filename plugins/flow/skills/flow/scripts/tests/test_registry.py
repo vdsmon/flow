@@ -30,17 +30,16 @@ def test_load_real_registry():
 def test_registry_by_name_fields():
     by = registry_by_name(REAL_REGISTRY)
     assert by["commit"].required_fields == ["commit_type", "commit_summary"]
-    assert "records_diff_baseline" in by["implement"].roles
-    assert "agent_routed" in by["implement"].roles
-    assert "agent_routed" in by["e2e"].roles
+    assert by["implement"].roles == ["records_diff_baseline"]
+    assert by["e2e"].roles == []
     assert by["implement"].default_timeout_min == 30
     assert by["review_brief"].default_handler == "inline"
     assert by["review_brief"].required_predecessors == ["create_pr"]
-    assert "agent_routed" in by["review_brief"].roles
-    assert "agent_routed" in by["plan"].roles
-    assert "agent_routed" in by["code_review"].roles
-    assert "agent_routed" in by["reflect"].roles
-    assert "agent_routed" in by["merge"].roles
+    assert by["review_brief"].roles == []
+    assert by["plan"].roles == []
+    assert by["code_review"].roles == []
+    assert by["reflect"].roles == ["reflect_anchor", "ship_observer"]
+    assert by["merge"].roles == []
     assert by["review_brief"].default_handler == "inline"
     assert by["reflect"].default_handler == "inline"
 

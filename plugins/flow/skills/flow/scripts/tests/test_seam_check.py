@@ -11,11 +11,9 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
-import tomllib
 
 import pytest
 
-import agent_routes
 import seam_check
 
 
@@ -707,30 +705,6 @@ def test_live_post_init_prose_has_no_bare_script_invocation() -> None:
     assert escaped == []
 
 
-def test_live_all_exact_post_plan_routes_activate_only_generic_stays_shadow() -> None:
-    # Flatten whitespace so markdown hard-wrapping cannot break a multi-word assertion.
-    def _flat(rel: str) -> str:
-        return " ".join((seam_check.SKILL_ROOT / rel).read_text(encoding="utf-8").split())
-
-    skill = _flat("SKILL.md")
-    do_ref = _flat("references/delivery-loop.md")
-    # The importing writers and the read-only machinery_fixer all activate; nothing is shadowed
-    # anymore except under the generic owner adapter.
-    assert (
-        "importing writers (implementer, review_fixer, revision_fixer), and the read-only "
-        "machinery_fixer all become active on an exact CLI receipt" in skill
-    )
-    assert "generic owner adapter a route stays shadowed with `effective: null`" in skill
-    assert (
-        "importing writers (implementer, review_fixer, revision_fixer), and the read-only "
-        "machinery_fixer have `activation: pending`" in do_ref
-    )
-    assert "generic owner adapter a route stays shadow" in do_ref
-    assert "A shadow receipt" in do_ref
-    assert "Do not retry" in do_ref
-    assert "never fall back to a native" in do_ref
-
-
 def _evolution_drain_section() -> str:
     text = (seam_check.SKILL_ROOT / "references" / "command-maintain.md").read_text(
         encoding="utf-8"
@@ -1043,17 +1017,14 @@ def test_importer_drift_natural_language_and_separator_matches_when_complete(tmp
 def test_importer_drift_natural_language_and_separator_catches_missing_importer(tmp_path) -> None:
     # Regression for a row with two natural-language importers: the "and" separator must not
     # hide a third real import edge.
-    (tmp_path / "cognitive_workers.py").write_text("")
-    (tmp_path / "cognitive_worker_smoke.py").write_text("import cognitive_workers\n")
-    (tmp_path / "dispatch_stage.py").write_text("import cognitive_workers\n")
-    (tmp_path / "worktree_janitor.py").write_text("import cognitive_workers\n")
-    text = (
-        "| `cognitive_workers.py` (lib) | x | "
-        "imported by cognitive_worker_smoke and worktree_janitor |\n"
-    )
+    (tmp_path / "shared.py").write_text("")
+    (tmp_path / "first.py").write_text("import shared\n")
+    (tmp_path / "middle.py").write_text("import shared\n")
+    (tmp_path / "last.py").write_text("import shared\n")
+    text = "| `shared.py` (lib) | x | imported by first and last |\n"
     drifts = seam_check.module_md_importer_drift(scripts_dir=tmp_path, module_text=text)
     assert len(drifts) == 1
-    assert drifts[0].missing == frozenset({"dispatch_stage"})
+    assert drifts[0].missing == frozenset({"middle"})
     assert drifts[0].phantom == frozenset()
 
 
@@ -1336,169 +1307,6 @@ def test_module_md_surface_cells_match_argparse() -> None:
     assert seam_check.module_md_surface_cell_drift() == []
 
 
-# --- activation-truth marker/pin parity --------------------------------------
-
-
-def test_discovered_activation_truth_markers_recognizes_python_marker(tmp_path) -> None:
-    f = tmp_path / "a.py"
-    f.write_text('# flow:activation-truth:begin\n"""doc"""\n', encoding="utf-8")
-    assert seam_check.discovered_activation_truth_markers([f], repo_root=tmp_path) == frozenset(
-        {"a.py"}
-    )
-
-
-def test_discovered_activation_truth_markers_recognizes_markdown_marker(tmp_path) -> None:
-    f = tmp_path / "a.md"
-    f.write_text("<!-- flow:activation-truth:begin -->\n# A\n", encoding="utf-8")
-    assert seam_check.discovered_activation_truth_markers([f], repo_root=tmp_path) == frozenset(
-        {"a.md"}
-    )
-
-
-def test_discovered_activation_truth_markers_requires_exact_marker_line(tmp_path) -> None:
-    # A prose MENTION of the marker string is not a marker line.
-    f = tmp_path / "a.md"
-    f.write_text("This doc mentions flow:activation-truth:begin in prose.\n", encoding="utf-8")
-    assert seam_check.discovered_activation_truth_markers([f], repo_root=tmp_path) == frozenset()
-
-
-def test_activation_truth_candidates_excludes_tests_dir() -> None:
-    # scripts/tests/*.py (fixtures, marker-shaped strings in the test source itself) must never
-    # enter the scanned universe.
-    candidates = seam_check.activation_truth_candidates()
-    assert not any(p.parent.name == "tests" for p in candidates)
-
-
-def test_activation_truth_candidates_includes_root_claude_and_skill() -> None:
-    names = {p.name for p in seam_check.activation_truth_candidates()}
-    assert "CLAUDE.md" in names
-    assert "SKILL.md" in names
-
-
-def test_activation_truth_drift_flags_marker_without_pin(tmp_path) -> None:
-    marked = tmp_path / "marked.md"
-    marked.write_text("<!-- flow:activation-truth:begin -->\n# Marked\n", encoding="utf-8")
-    drift = seam_check.activation_truth_drift(
-        candidates=[marked], pins=frozenset(), repo_root=tmp_path
-    )
-    assert drift.marker_without_pin == frozenset({"marked.md"})
-    assert drift.pin_without_marker == frozenset()
-
-
-def test_activation_truth_drift_flags_pin_without_marker(tmp_path) -> None:
-    unmarked = tmp_path / "unmarked.md"
-    unmarked.write_text("# No marker here\n", encoding="utf-8")
-    drift = seam_check.activation_truth_drift(
-        candidates=[unmarked], pins=frozenset({"unmarked.md"}), repo_root=tmp_path
-    )
-    assert drift.pin_without_marker == frozenset({"unmarked.md"})
-    assert drift.marker_without_pin == frozenset()
-
-
-def test_activation_truth_drift_flags_deleted_or_renamed_pinned_file(tmp_path) -> None:
-    # The pin references a path absent from the scanned candidate set entirely (deleted, or renamed
-    # away without moving the marker with it).
-    drift = seam_check.activation_truth_drift(
-        candidates=[], pins=frozenset({"gone.md"}), repo_root=tmp_path
-    )
-    assert drift.pin_without_marker == frozenset({"gone.md"})
-    assert drift.marker_without_pin == frozenset()
-
-
-def test_activation_truth_drift_clean_when_marker_and_pin_match(tmp_path) -> None:
-    marked = tmp_path / "marked.py"
-    marked.write_text('# flow:activation-truth:begin\n"""doc"""\n', encoding="utf-8")
-    drift = seam_check.activation_truth_drift(
-        candidates=[marked], pins=frozenset({"marked.py"}), repo_root=tmp_path
-    )
-    assert drift == seam_check.ActivationTruthDrift(frozenset(), frozenset())
-
-
-def test_main_fails_on_activation_truth_marker_without_pin(monkeypatch) -> None:
-    monkeypatch.setattr(seam_check, "scripts_missing_from_module_md", lambda *a, **k: set())
-    monkeypatch.setattr(
-        seam_check, "scripts_missing_from_registry_descriptions", lambda *a, **k: set()
-    )
-    monkeypatch.setattr(seam_check, "module_md_importer_drift", lambda *a, **k: [])
-    monkeypatch.setattr(seam_check, "module_md_surface_cell_drift", lambda *a, **k: [])
-    monkeypatch.setattr(
-        seam_check,
-        "activation_truth_drift",
-        lambda *a, **k: seam_check.ActivationTruthDrift(
-            marker_without_pin=frozenset({"stray.md"}), pin_without_marker=frozenset()
-        ),
-    )
-    assert seam_check.main([]) == 1
-
-
-def test_main_fails_on_activation_truth_pin_without_marker(monkeypatch) -> None:
-    monkeypatch.setattr(seam_check, "scripts_missing_from_module_md", lambda *a, **k: set())
-    monkeypatch.setattr(
-        seam_check, "scripts_missing_from_registry_descriptions", lambda *a, **k: set()
-    )
-    monkeypatch.setattr(seam_check, "module_md_importer_drift", lambda *a, **k: [])
-    monkeypatch.setattr(seam_check, "module_md_surface_cell_drift", lambda *a, **k: [])
-    monkeypatch.setattr(
-        seam_check,
-        "activation_truth_drift",
-        lambda *a, **k: seam_check.ActivationTruthDrift(
-            marker_without_pin=frozenset(), pin_without_marker=frozenset({"CLAUDE.md"})
-        ),
-    )
-    assert seam_check.main([]) == 1
-
-
-def test_live_activation_truth_markers_match_pins() -> None:
-    """The live discovered marker set has no omissions or extras vs. the pin registry."""
-    assert seam_check.activation_truth_drift() == seam_check.ActivationTruthDrift(
-        frozenset(), frozenset()
-    )
-
-
-# --- activation-truth reference-only tripwire ---------------------------------
-
-
-def test_activation_truth_tripwire_flags_unmarked_reference(tmp_path) -> None:
-    doc = tmp_path / "new-ref.md"
-    doc.write_text("# New reference\n\nThe capsule writer runs the recipe.\n", encoding="utf-8")
-    problems = seam_check.activation_truth_tripwire_problems(docs=[doc])
-    assert problems == [("new-ref.md", 3, "add the activation-truth marker or reword")]
-
-
-def test_activation_truth_tripwire_skips_marked_reference(tmp_path) -> None:
-    doc = tmp_path / "marked-ref.md"
-    doc.write_text(
-        "<!-- flow:activation-truth:begin -->\n# Marked\n\nThe capsule writer runs.\n",
-        encoding="utf-8",
-    )
-    assert seam_check.activation_truth_tripwire_problems(docs=[doc]) == []
-
-
-def test_activation_truth_tripwire_ignores_unrelated_prose(tmp_path) -> None:
-    doc = tmp_path / "unrelated.md"
-    doc.write_text("# Unrelated\n\nRun the tests before merging.\n", encoding="utf-8")
-    assert seam_check.activation_truth_tripwire_problems(docs=[doc]) == []
-
-
-def test_main_fails_on_activation_truth_tripwire(monkeypatch) -> None:
-    monkeypatch.setattr(seam_check, "scripts_missing_from_module_md", lambda *a, **k: set())
-    monkeypatch.setattr(
-        seam_check, "scripts_missing_from_registry_descriptions", lambda *a, **k: set()
-    )
-    monkeypatch.setattr(seam_check, "module_md_importer_drift", lambda *a, **k: [])
-    monkeypatch.setattr(seam_check, "module_md_surface_cell_drift", lambda *a, **k: [])
-    monkeypatch.setattr(
-        seam_check,
-        "activation_truth_tripwire_problems",
-        lambda *a, **k: [("new-ref.md", 3, "add the activation-truth marker or reword")],
-    )
-    assert seam_check.main([]) == 1
-
-
-def test_live_activation_truth_tripwire_has_no_hits() -> None:
-    assert seam_check.activation_truth_tripwire_problems() == []
-
-
 # --- stage->reference_doc map re-enumeration drift ---------------------------
 
 
@@ -1705,7 +1513,7 @@ def test_prose_role_citation_membership_idiom() -> None:
 
 
 def test_prose_role_citation_rejects_stage_name_as_role_membership() -> None:
-    text = "If the stage is `agent_routed`, resolve the adapter route.\n"
+    text = "If the stage is `implement`, record the baseline.\n"
     assert seam_check.prose_role_citations(text) == []
 
 
@@ -1717,8 +1525,8 @@ def test_prose_role_citation_ignores_non_membership_roles_mention() -> None:
 
 def test_prose_role_citation_ignores_later_backticked_token() -> None:
     # a backticked lowercase token AFTER the role literal must not read as a role
-    text = 'when `descriptor.roles` includes `"agent_routed"`, pass the route in the Agent call.\n'
-    assert seam_check.prose_role_citations(text) == [(1, "agent_routed")]
+    text = 'when `descriptor.roles` includes `"reflect_anchor"`, write `memory`.\n'
+    assert seam_check.prose_role_citations(text) == [(1, "reflect_anchor")]
 
 
 def test_live_role_citations_recognized() -> None:
@@ -1730,7 +1538,7 @@ def test_live_role_citations_recognized() -> None:
             (seam_check.SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
         )
     }
-    assert {"records_diff_baseline", "agent_routed"} <= roles
+    assert {"records_diff_baseline"} <= roles
 
 
 def test_role_literal_drift_flags_renamed_role(tmp_path) -> None:
@@ -1764,93 +1572,6 @@ def test_main_fails_on_role_literal_drift(monkeypatch) -> None:
 def test_live_role_citations_all_in_registry() -> None:
     """Every role literal cited in the live docs exists in a registry roles array."""
     assert seam_check.role_literal_drift() == []
-
-
-# --- committed route-surface staleness gate ---------------------------------
-
-
-def test_live_route_contract_surfaces_are_aligned() -> None:
-    assert seam_check.route_contract_drift() == []
-
-
-def test_cognitive_worker_design_provenance_is_exact() -> None:
-    assert seam_check.cognitive_worker_design_drift() == []
-
-
-def test_live_inventory_block_equals_its_renderer() -> None:
-    inventory = (seam_check.SCRIPTS_DIR / "inventory.md").read_text(encoding="utf-8")
-    assert agent_routes.render_inventory_profiles_block().rstrip("\n") in inventory
-
-
-def test_live_workspace_agents_pin_the_rendered_defaults() -> None:
-    workspace_path = seam_check.SKILL_ROOT.parents[3] / ".flow" / "workspace.toml"
-    agents = tomllib.loads(workspace_path.read_text(encoding="utf-8"))["agents"]
-    assert agent_routes.render_route_config(agents) == agent_routes.render_default_routes_toml()
-
-
-def test_route_contract_rejects_partial_self_workspace_after_capsule_activation() -> None:
-    partial = """
-[agents.implementer.by_owner.codex]
-harness = "codex"
-model = "gpt-5.6-luna"
-effort = "high"
-"""
-
-    drift = seam_check.route_contract_drift(workspace_toml=partial)
-    assert any("self-workspace route catalog mismatch" in detail for detail in drift)
-
-
-def test_route_contract_rejects_an_unknown_workspace_profile() -> None:
-    extra = (
-        agent_routes.render_default_routes_toml()
-        + '\n[agents.mystery]\nharness = "codex"\nmodel = "gpt-5.6-sol"\neffort = "high"\n'
-    )
-
-    drift = seam_check.route_contract_drift(workspace_toml=extra)
-
-    assert any("mystery" in detail and "not a known profile" in detail for detail in drift)
-
-
-def test_route_contract_flags_a_changed_workspace_default_value() -> None:
-    edited = agent_routes.render_default_routes_toml().replace(
-        'model = "gpt-5.6-sol"', 'model = "gpt-5.6-luna"', 1
-    )
-
-    drift = seam_check.route_contract_drift(workspace_toml=edited)
-
-    assert drift == ["self-workspace routes do not canonicalize to the rendered defaults"]
-
-
-def test_route_contract_flags_a_hand_edited_inventory_block() -> None:
-    stale = agent_routes.render_inventory_profiles_block().replace("`reflector`, ", "")
-
-    drift = seam_check.route_contract_drift(inventory_text="# inventory\n\n" + stale)
-
-    assert any("inventory" in detail and "stale" in detail for detail in drift)
-
-
-def test_route_contract_fails_closed_on_missing_inventory_markers() -> None:
-    drift = seam_check.route_contract_drift(inventory_text="Agent route profiles: `implementer`\n")
-
-    assert any("marker" in detail for detail in drift)
-
-
-def test_route_contract_fails_closed_on_duplicate_inventory_markers() -> None:
-    block = agent_routes.render_inventory_profiles_block()
-
-    drift = seam_check.route_contract_drift(inventory_text=block + "\n" + block)
-
-    assert any("marker" in detail for detail in drift)
-
-
-def test_route_contract_gate_never_mutates_the_committed_surfaces() -> None:
-    inventory_path = seam_check.SCRIPTS_DIR / "inventory.md"
-    workspace_path = seam_check.SKILL_ROOT.parents[3] / ".flow" / "workspace.toml"
-    before = (inventory_path.read_bytes(), workspace_path.read_bytes())
-
-    assert seam_check.route_contract_drift() == []
-
-    assert (inventory_path.read_bytes(), workspace_path.read_bytes()) == before
 
 
 # --- review_brief unattended skip prose seam (flow-rptq) ---------------------
@@ -1890,32 +1611,21 @@ def test_review_brief_canonical_skip_reason_matches_freshness_authorization() ->
     assert review_brief.CANONICAL_UNATTENDED_SKIP_REASON in text.replace("\n", " ")
 
 
-def test_review_brief_skip_receipt_flows_through_existing_run_stage_recipe() -> None:
-    # review_brief's unattended terminal names the same generic `cognitive-worker run-stage`
-    # recipe documented in delivery-loop.md ("Activated cognitive substeps"), carries the
-    # canonical skip reason, and hands its result to `advance` through `--skill-output-from` -
-    # the defined terminal peer stages (stage-code_review.md step 9, stage-reflect.md step 7)
-    # already use, not a bespoke facade call invented inside stage-review_brief.md.
+def test_review_brief_skip_receipt_uses_plain_stage_output() -> None:
     stage_doc = (seam_check.SKILL_ROOT / "references" / "stage-review_brief.md").read_text(
         encoding="utf-8"
     )
-    delivery_loop = (seam_check.SKILL_ROOT / "references" / "delivery-loop.md").read_text(
-        encoding="utf-8"
-    )
-    assert "cognitive-worker run-stage" in stage_doc
-    assert "cognitive-worker run-stage" in delivery_loop
+    assert '"review_brief_skip"' in stage_doc
     assert "--skill-output-from" in stage_doc
-    assert '--output "$TICKET_DIR/stages/<stage>.cognitive.json"' in delivery_loop
 
 
 def test_review_brief_treats_revision_sub_run_as_attended() -> None:
     # A revision sub-run reuses the original launch's worktree, so its frontmatter
     # `unattended` flag still reflects that ORIGINAL launch, not the revision itself - and a
     # revision is opened by a human's `revise` action, so it must be treated as attended
-    # (flow-rptq CR-F5). Prose-only: a revision seals no cognitive substep and runs no merge
-    # stage, so there is no fence to code-seal this override against.
+    # (flow-rptq CR-F5).
     text = (seam_check.SKILL_ROOT / "references" / "stage-review_brief.md").read_text(
         encoding="utf-8"
     )
     assert "/revisions/" in text
-    assert "ATTENDED" in text
+    assert "treat the run as attended" in text

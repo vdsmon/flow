@@ -11,7 +11,6 @@ from pathlib import Path
 
 import pytest
 
-import agent_routes
 import validate_workspace as vw
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -477,42 +476,42 @@ def test_forge_unknown_backend_fails(tmp_path: Path) -> None:
     assert any("forge.backend" in v for v in result.violations)
 
 
-# ─── [models] work_model opt-in guard ────────────────────────────────────────
+# ─── [models] per-stage opt-in guard ─────────────────────────────────────────
 
 
-def test_inline_implement_with_work_model_warns(tmp_path: Path) -> None:
-    # opt-in [models] work_model + an inline implement -> non-fatal warning (an inline
+def test_inline_implement_with_model_hint_warns(tmp_path: Path) -> None:
+    # opt-in [models] implement + an inline implement -> non-fatal warning (an inline
     # stage cannot be model-pinned), but validation still passes (ok stays True).
     root = _make_workspace(tmp_path, backend="beads")  # default handlers: implement inline
-    _append_forge(root, '[models]\nwork_model = "sonnet"\n')
+    _append_forge(root, '[models]\nimplement = "sonnet"\n')
     result, _ = vw.validate(root)
     assert result.ok
-    assert any("work_model" in w and "inline" in w for w in result.warnings)
+    assert any("models.implement" in w and "inline" in w for w in result.warnings)
 
 
-def test_subagent_implement_with_work_model_no_warn(tmp_path: Path) -> None:
+def test_subagent_implement_with_model_hint_no_warn(tmp_path: Path) -> None:
     stages = ["ticket", "plan", "implement", "commit", "reflect"]
     handlers = dict.fromkeys(stages, "inline")
     handlers["implement"] = "subagent:general-purpose"
     root = _make_workspace(tmp_path, backend="beads", stages=stages, handlers=handlers)
-    _append_forge(root, '[models]\nwork_model = "sonnet"\n')
+    _append_forge(root, '[models]\nimplement = "sonnet"\n')
     result, _ = vw.validate(root)
     assert result.ok
     assert result.warnings == []
 
 
-def test_work_model_absent_no_warn(tmp_path: Path) -> None:
-    # no [models] block -> the downshift is on by default, but there is no explicit
-    # config intent to defeat, so an inline implement warns nothing (avoids spam).
+def test_model_hint_absent_no_warn(tmp_path: Path) -> None:
+    # No [models] block means there is no explicit config intent to defeat, so an inline
+    # implement warns nothing.
     root = _make_workspace(tmp_path, backend="beads")
     result, _ = vw.validate(root)
     assert result.warnings == []
 
 
-def test_opt_out_work_model_inline_no_warn(tmp_path: Path) -> None:
-    # work_model = "off" (opt-out) + inline implement -> no warning (nothing to apply).
+def test_opt_out_implement_model_inline_no_warn(tmp_path: Path) -> None:
+    # implement = "off" (opt-out) + inline implement -> no warning (nothing to apply).
     root = _make_workspace(tmp_path, backend="beads")  # default handlers: implement inline
-    _append_forge(root, '[models]\nwork_model = "off"\n')
+    _append_forge(root, '[models]\nimplement = "off"\n')
     result, _ = vw.validate(root)
     assert result.ok
     assert result.warnings == []
@@ -543,108 +542,35 @@ def test_subagent_e2e_with_per_stage_pin_no_warn(tmp_path: Path) -> None:
     assert result.warnings == []
 
 
-def test_complete_common_agent_route_is_valid(tmp_path: Path) -> None:
+def test_agents_table_is_rejected_with_simple_replacement_hint(tmp_path: Path) -> None:
     root = _make_workspace(tmp_path, backend="beads")
     _append_forge(
         root,
         '[agents.implementer]\nharness = "claude_code"\nmodel = "sonnet"\neffort = "high"\n',
     )
     result, _ = vw.validate(root)
-    assert result.ok, result.violations
+    assert any("no longer supported" in violation for violation in result.violations)
 
 
-@pytest.mark.parametrize("profile", agent_routes.PROFILES)
-def test_every_cognitive_profile_accepts_a_complete_common_route(
-    tmp_path: Path, profile: str
-) -> None:
+def test_models_accept_known_stage_string_hints_only(tmp_path: Path) -> None:
     root = _make_workspace(tmp_path, backend="beads")
-    _append_forge(
-        root,
-        f'[agents.{profile}]\nharness = "codex"\nmodel = "test-model"\neffort = "high"\n',
-    )
-
-    result, _ = vw.validate(root)
-
-    assert result.ok, result.violations
-
-
-def test_new_profile_accepts_owner_relative_routes(tmp_path: Path) -> None:
-    root = _make_workspace(tmp_path, backend="beads")
-    _append_forge(
-        root,
-        """[agents.reflector.by_owner.claude_code]
-harness = "claude_code"
-model = "opus"
-effort = "high"
-[agents.reflector.by_owner.codex]
-harness = "codex"
-model = "gpt-5.6-sol"
-effort = "high"
-""",
-    )
-
-    result, _ = vw.validate(root)
-
-    assert result.ok, result.violations
-
-
-def test_partial_agent_route_is_invalid(tmp_path: Path) -> None:
-    root = _make_workspace(tmp_path, backend="beads")
-    _append_forge(root, '[agents.implementer]\nharness = "claude_code"\nmodel = "sonnet"\n')
-    result, _ = vw.validate(root)
-    assert any("agents.implementer.effort" in violation for violation in result.violations)
-
-
-def test_agent_route_common_xor_by_owner(tmp_path: Path) -> None:
-    root = _make_workspace(tmp_path, backend="beads")
-    _append_forge(
-        root,
-        """[agents.implementer]
-harness = "claude_code"
-model = "sonnet"
-effort = "high"
-[agents.implementer.by_owner.codex]
-harness = "codex"
-model = "gpt-5.6-luna"
-effort = "high"
-""",
-    )
-    result, _ = vw.validate(root)
-    assert any("common route or by_owner" in violation for violation in result.violations)
-
-
-def test_agents_and_models_warn_which_profiles_use_legacy_fallback(tmp_path: Path) -> None:
-    root = _make_workspace(tmp_path, backend="beads")
-    _append_forge(
-        root,
-        """[models]
-work_model = "opus"
-[agents.implementer]
-harness = "claude_code"
-model = "sonnet"
-effort = "high"
-""",
-    )
+    _append_forge(root, '[models]\nimplement = "sonnet"\ne2e = "off"\n')
     result, _ = vw.validate(root)
     assert result.ok
+
+
+def test_models_reject_unknown_stage_and_non_string(tmp_path: Path) -> None:
+    root = _make_workspace(tmp_path, backend="beads")
+    _append_forge(root, '[models]\nwork_model = "opus"\nimplement = 3\n')
+    result, _ = vw.validate(root)
     assert any(
-        "models" in warning
-        and "fallback" in warning
-        and "implementer" not in warning
-        and "review_fixer" in warning
-        for warning in result.warnings
+        "models.work_model" in violation and "unknown stage" in violation
+        for violation in result.violations
     )
-
-
-def test_complete_agents_and_models_warn_that_models_are_rollback_only(tmp_path: Path) -> None:
-    root = _make_workspace(tmp_path, backend="beads")
-    routes = agent_routes.render_default_routes_toml()
-    _append_forge(root, f'[models]\nwork_model = "opus"\n{routes}')
-
-    result, _ = vw.validate(root)
-
-    assert result.ok
-    assert any("rollback only" in warning for warning in result.warnings)
+    assert any(
+        "models.implement" in violation and "must be a string" in violation
+        for violation in result.violations
+    )
 
 
 def test_inline_code_review_with_per_stage_pin_no_warn(tmp_path: Path) -> None:

@@ -16,10 +16,9 @@ harness-level choice (`/bg`), not this script's concern.
   5. seed state.json: plan marked completed with its output_path; plan.out written from --plan-from;
      ticket left pending so the pipeline self-fetches ticket.json and stamps frontmatter (keeps the
      bootstrap offline; tracker auth stays live)
-  6. freeze the normalized owner and desired/effective agent-route snapshot in the run
-  7. stamp commit_type/commit_summary (and e2e_recipe unless e2e is explicitly disabled) into the
+  6. stamp commit_type/commit_summary (and e2e_recipe unless e2e is explicitly disabled) into the
      worktree frontmatter so the commit + e2e stages do not block on a prompt
-  8. print the worktree path (the spec session enters it via EnterWorktree)
+  7. print the worktree path (the spec session enters it via EnterWorktree)
 
 The bootstrap holds NO run lease; the pipeline's cmd_init acquires it under the run_id seeded here
 (it sees that run_id as the owner, so resume is clean). It DOES transiently hold the canonical
@@ -51,7 +50,6 @@ left INTACT, failing toward preserving work; see reap_worktree).
 from __future__ import annotations
 
 import argparse
-import os
 import secrets
 import shutil
 import sys
@@ -63,7 +61,6 @@ import _atomicio
 import _locking
 import _memory_paths
 import _workspace
-import agent_routes
 import flow_launcher
 import lease
 import state
@@ -327,25 +324,6 @@ def _seed_state(worktree: Path, ticket: str, plan_text: str, head_sha: str) -> s
         _atomicio.atomic_write_text(plan_out, plan_text)
         state.finish_stage(ticket_dir, "plan", "completed", head_sha, output_path=str(plan_out))
     return run_id
-
-
-def _freeze_route_snapshot(
-    worktree: Path,
-    ticket: str,
-    owner_harness: str | None,
-    route_overrides: list[str] | None,
-) -> dict[str, Any]:
-    selected_owner = owner_harness or os.environ.get("FLOW_HARNESS") or "claude-code"
-    route_path = worktree / ".flow" / "runs" / ticket / "route-snapshot.json"
-    try:
-        return agent_routes.snapshot(
-            worktree,
-            selected_owner,
-            overrides=route_overrides or [],
-            output_path=route_path,
-        )
-    except agent_routes.RouteError as exc:
-        raise _ConfigError(f"cannot freeze agent routes: {exc}") from exc
 
 
 def _e2e_enabled(main_root: Path) -> bool:
@@ -1242,8 +1220,6 @@ def bootstrap(
     mise_trust: bool = True,
     auto: bool = False,
     recover_spill: bool = False,
-    owner_harness: str | None = None,
-    route_overrides: list[str] | None = None,
     runner: Runner | None = None,
 ) -> dict[str, Any]:
     run = runner or _default_runner()
@@ -1412,9 +1388,6 @@ def bootstrap(
 
             head_sha = _git(["rev-parse", "HEAD"], worktree, run)
             run_id = _seed_state(worktree, ticket, plan_text, head_sha)
-            route_snapshot = _freeze_route_snapshot(
-                worktree, ticket, owner_harness, route_overrides
-            )
 
             # An unattended run derives its lane from the bead's tier labels (per the CLI help +
             # delivery-plan.md).
@@ -1452,7 +1425,6 @@ def bootstrap(
         "run_id": run_id,
         "copied": copied,
         "warnings": warnings,
-        "route_digest": route_snapshot["digest"],
     }
 
 
@@ -1486,12 +1458,6 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     )
     p.add_argument("--commit-type", default=None)
     p.add_argument("--commit-summary", default=None)
-    p.add_argument(
-        "--route",
-        action="append",
-        default=[],
-        help="profile=harness,model,effort; repeatable and frozen into run provenance",
-    )
     p.add_argument(
         "--lane",
         default=None,
@@ -1617,7 +1583,6 @@ def cli_main(argv: list[str]) -> int:
             mise_trust=not args.no_mise_trust,
             auto=args.auto,
             recover_spill=args.recover_spill,
-            route_overrides=args.route,
         )
     except _ConfigError as exc:
         sys.stderr.write(f"flow-worktree: {exc}\n")

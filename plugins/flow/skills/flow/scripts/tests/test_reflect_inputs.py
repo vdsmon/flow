@@ -827,22 +827,3 @@ def test_bundle_label_facets_empty_when_malformed(tmp_repo: Path, tmp_path: Path
     _seed_state(ticket_dir, head)
     payload = reflect_inputs.bundle("FT-1", ticket_dir, tmp_repo)
     assert payload["label_facets"] == []
-
-
-def test_immutable_routed_envelope_binds_payload_source_route_and_generation(
-    tmp_path: Path,
-) -> None:
-    output = tmp_path / "reflection-input.json"
-    envelope = reflect_inputs.write_immutable_envelope(
-        {"ticket": "F-1", "final_diff": {"patch": "x"}},
-        output,
-        source_sha="a" * 40,
-        route_digest="b" * 64,
-        stage_generation=3,
-    )
-    persisted = json.loads(output.read_text(encoding="utf-8"))
-    assert persisted == envelope
-    assert envelope["schema"] == "flow.reflection-input-bundle/v1"
-    assert envelope["stage_generation"] == 3
-    assert len(envelope["digest"]) == 64
-    assert output.stat().st_mode & 0o222 == 0

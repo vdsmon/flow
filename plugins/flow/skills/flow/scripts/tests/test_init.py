@@ -26,7 +26,6 @@ from pathlib import Path
 
 import pytest
 
-import agent_routes
 import flow_launcher
 import init as initmod
 
@@ -215,62 +214,32 @@ def test_init_uses_executing_skill_dir_not_ambient_env(tmp_path: Path, monkeypat
     assert (tmp_path / ".flow" / "runtime" / "flow").stat().st_mode & 0o111
 
 
-def test_native_setup_emits_explicit_owner_relative_agent_routes(tmp_path: Path) -> None:
+def test_setup_emits_no_provider_routes_or_default_model_hints(tmp_path: Path) -> None:
     result = initmod.run_init(_jira_config(tmp_path))
     data = tomllib.loads(result.workspace_toml_path.read_text(encoding="utf-8"))
-    assert tuple(data["agents"]) == agent_routes.PROFILES
-    assert data["agents"]["implementer"]["by_owner"]["claude_code"]["model"] == "sonnet"
-    assert data["agents"]["implementer"]["by_owner"]["codex"]["model"] == "gpt-5.6-luna"
-    assert data["agents"]["code_reviewer"]["by_owner"]["codex"]["model"] == "gpt-5.6-sol"
-    assert data["agents"]["review_fixer"]["by_owner"]["claude_code"]["model"] == "sonnet"
-    assert data["agents"]["review_brief_author"]["by_owner"]["codex"]["model"] == ("gpt-5.6-luna")
-    assert data["agents"]["reflector"]["by_owner"]["claude_code"]["model"] == "opus"
-    assert data["agents"]["machinery_fixer"]["by_owner"]["codex"]["model"] == ("gpt-5.6-luna")
-    assert data["agents"] == agent_routes.default_route_config()
-    assert data["agents"] == tomllib.loads(agent_routes.render_default_routes_toml())["agents"]
-    resolved = agent_routes.resolve(tmp_path, "implementer", "codex")
-    assert resolved["desired"] == data["agents"]["implementer"]["by_owner"]["codex"]
-    assert resolved["source"] == "workspace"
-    assert resolved["activation"] == "pending"
+    assert "agents" not in data
+    assert "models" not in data
 
 
-def test_generic_setup_emits_no_explicit_agent_routes(tmp_path: Path, monkeypatch) -> None:
+def test_generic_setup_has_the_same_simple_config(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("FLOW_HARNESS", "generic")
     result = initmod.run_init(_jira_config(tmp_path))
     data = tomllib.loads(result.workspace_toml_path.read_text(encoding="utf-8"))
     assert "agents" not in data
 
 
-def test_reconfigure_preserves_legacy_models_without_migrating(tmp_path: Path) -> None:
+def test_reconfigure_preserves_optional_model_hints(tmp_path: Path) -> None:
     first = initmod.run_init(_jira_config(tmp_path))
     workspace = first.workspace_toml_path
-    content = workspace.read_text(encoding="utf-8")
-    agents_at = content.index("[agents.implementer.by_owner.claude_code]")
     workspace.write_text(
-        content[:agents_at] + '[models]\nwork_model = "opus"\ne2e = "off"\n',
+        workspace.read_text(encoding="utf-8") + '[models]\nimplement = "opus"\ne2e = "off"\n',
         encoding="utf-8",
     )
 
     initmod.run_init(_jira_config(tmp_path), reconfigure=True)
     data = tomllib.loads(workspace.read_text(encoding="utf-8"))
-    assert data["models"] == {"work_model": "opus", "e2e": "off"}
+    assert data["models"] == {"implement": "opus", "e2e": "off"}
     assert "agents" not in data
-
-
-def test_reconfigure_preserves_explicit_routes_and_legacy_rollback_block(
-    tmp_path: Path,
-) -> None:
-    first = initmod.run_init(_jira_config(tmp_path))
-    workspace = first.workspace_toml_path
-    workspace.write_text(
-        workspace.read_text(encoding="utf-8") + '\n[models]\nwork_model = "opus"\ne2e = "sonnet"\n',
-        encoding="utf-8",
-    )
-
-    initmod.run_init(_jira_config(tmp_path), reconfigure=True)
-    data = tomllib.loads(workspace.read_text(encoding="utf-8"))
-    assert data["agents"]["implementer"]["by_owner"]["codex"]["model"] == "gpt-5.6-luna"
-    assert data["models"] == {"work_model": "opus", "e2e": "sonnet"}
 
 
 # ─── L1: AGENTS.md cross-harness entry point (opt-in, CC-neutral by default) ──

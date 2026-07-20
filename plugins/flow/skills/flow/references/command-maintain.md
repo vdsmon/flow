@@ -1,6 +1,6 @@
 # Maintain commands
 
-Except for workspace-local worktree and quarantine cleanup, maintenance is restricted
+Except for workspace-local worktree cleanup, maintenance is restricted
 to workspaces whose configuration identifies the current repository as Flow's
 maintainer target:
 
@@ -13,8 +13,8 @@ repository. Internal scheduling code may still resolve that target, but no publi
 maintenance command follows the pointer implicitly. Maintenance never assumes a
 particular host process, terminal, or background-job implementation.
 
-Before every maintenance operation except `FLOW maintain worktrees clean` and
-`FLOW maintain quarantine clean`, collect the host-neutral schedule and ship-event
+Before every maintenance operation except `FLOW maintain worktrees clean`, collect
+the host-neutral schedule and ship-event
 senses diagnostics:
 
 ```bash
@@ -398,42 +398,3 @@ A dirty candidate is checkpointed to a rescue ref before removal. Capture failur
 leaves the worktree intact. `observe_at_close` runs inside the guarded teardown after checkpointing
 and immediately before each removal attempt; the preview never observes or reaps. Never remove an
 unrecognized worktree merely because its branch name resembles Flow.
-
-## `FLOW maintain quarantine clean [--dry-run]`
-
-Sweep quarantined cognitive capsules owned by the invoking workspace only: every
-`.flow/runs/<ticket>/cognitive/<stage>/invocations/*/journal.json` and its
-`revisions/<revision>/` sibling.
-
-A quarantined journal always records the capsule path `_dispose_failed_capsule` moved
-it to. Seven days since the journal's last transition is the default aged threshold; a
-candidate at or past it is listed as reapable without further acknowledgement. A
-younger candidate is listed too, but only an explicit confirmed candidate ID selects
-it for the real pass. A recorded quarantine path that does not exist on disk (a
-suppressed move failure) is reported as its own row rather than silently dropped or
-treated as an error.
-
-```bash
-FLOW_HARNESS="<harness>" "<facade>" worktree-janitor quarantine-clean --workspace-root . --dry-run
-```
-
-First show the absolute `target_root`, every aged candidate under `reapable`, every
-younger candidate under `younger`, and every recorded-but-absent path under
-`recorded_missing`, each with its `confirmation_id`. If the public invocation included
-`--dry-run`, stop there. Otherwise obtain confirmation for that exact target and
-candidate set. Then bind the destructive invocation to the preview values:
-
-```bash
-FLOW_HARNESS="<harness>" "<facade>" worktree-janitor quarantine-clean --workspace-root . \
-  --confirmed-target "<target_root>" \
-  --confirmed-candidate "<confirmation_id>" [...]
-```
-
-The second invocation re-reads each confirmed journal and re-checks containment and
-the digest-bound confirmation ID under the same per-invocation lock the cognitive
-executor itself uses, before it archives anything. A candidate whose journal changed
-since the preview (a fresh recovery, a concurrent annotation) has a different
-confirmation ID and is preserved. A confirmed, still-matching candidate is archived by
-rename into a sibling `archive/` directory next to `capsules/quarantine/`; this command
-never deletes a capsule. The still-quarantined journal is annotated with the archive
-path afterward; a failed annotation leaves a visible row but does not undo the rename.

@@ -17,8 +17,6 @@ from pathlib import Path
 from typing import Literal, cast
 from urllib.parse import urlparse
 
-import agent_routes
-
 SCHEMA_VERSION = 1
 DEFAULT_REGISTRY = Path(__file__).resolve().parent.parent / "public-commands.toml"
 STATIC_NAMESPACES = ("ticket", "memory", "measure", "workspace", "maintain", "help")
@@ -612,12 +610,6 @@ def _parse_command_tail(
 
     _validate_argument_values(command, positionals, tracker_key_patterns, forbidden_root_tokens)
     _validate_seen_options(command, positionals, seen)
-    route_values = [value for name, value in values if name == "--route"]
-    if route_values:
-        try:
-            agent_routes.parse_route_overrides(route_values)
-        except agent_routes.RouteError as exc:
-            raise RegistryError(f"{command.id}: option --route: {exc}") from exc
     seen_set = set(seen)
     if command.id == "ticket.group":
         explicit = bool(positionals)

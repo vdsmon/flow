@@ -1,13 +1,4 @@
-<!-- flow:activation-truth:begin -->
 # Cockpit and target commands
-
-## Routed cognitive substeps
-
-The target loop consumes `cognitive_substeps` from the dispatch descriptor. A pending
-exact read-only route is executed through the common capsule facade, and its typed
-outcome is passed back in the stage's structured output. Conditional substeps require a
-deterministic skip receipt when they do not apply. Stale generations, shadow receipts,
-and missing terminal or cleanup evidence cannot complete a stage.
 
 This reference owns bare `FLOW`, `FLOW <target>...`, and `FLOW help`. The rooted
 execution contract in `harness.md` applies throughout: `<facade>` means the absolute
@@ -170,19 +161,6 @@ force operation.
   on an open PR. Reject it on an active approved run and on terminal delivery.
 - `--together` requests one coherent grouped run. All targets must be fresh, live,
   distinct, non-epic tickets with verified coupling.
-- `--route "<profile>=<harness>,<model>,<effort>"` overrides one complete agent
-  route for this run. It is repeatable, but each profile may appear once and every
-  tuple is validated atomically before lifecycle execution. The closed profiles are
-  `implementer`, `e2e`, `code_reviewer`, `diff_reviewer`, `guard_reviewer`,
-  `review_fixer`, `revision_fixer`, `review_brief_author`,
-  `reflector`, and `machinery_fixer`. The public harness names are `claude_code` and
-  `codex`. The option is valid only while starting a fresh target. Reject it after the
-  lifecycle reducer selects resume, repair, revise, show, or a terminal action. Planning
-  remains host-native and attended; `--route` applies only after plan approval. Missing
-  capability, authentication, schema acceptance, or exact receipt evidence stops
-  visibly, with no automatic fallback. Every exact post-plan route is
-  active; only the generic owner adapter leaves a route shadowed.
-
 For multiple targets without `--together`, attended mode asks whether to deliver
 sequentially or as one coherent group. Unattended mode errors because that choice
 changes run identity and review shape. Sequential delivery means one complete gate

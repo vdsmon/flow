@@ -1,4 +1,3 @@
-<!-- flow:activation-truth:begin -->
 # Plan
 
 Planning is an attended, host-native conversation. Its durable output is one complete Markdown
@@ -72,12 +71,11 @@ FLOW_HARNESS="<harness>" "<facade>" worktree create \
   --e2e-recipe "<recipe or skip: reason>"
 ```
 
-Repeat `--route profile=harness,model,effort` only for deliberate post-plan worker overrides.
 Do not pass `--recover-spill` automatically; it is an explicit operator recovery action.
 
 The bootstrap keeps the safety boundaries that matter: isolated ticket worktree, single-ticket
-claim, current-base resolution, atomic run state, frozen post-plan route snapshot, planned-file
-ownership, and spill protection. It writes the approved text to `stages/plan.out` and marks `plan`
+claim, current-base resolution, atomic run state, planned-file ownership, and spill protection. It
+writes the approved text to `stages/plan.out` and marks `plan`
 complete so delivery resumes at implementation.
 
 Treat `result.worktree` as the absolute run root for all later operations. That absolute path is the

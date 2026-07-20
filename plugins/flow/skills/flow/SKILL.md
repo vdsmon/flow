@@ -4,24 +4,15 @@ description: State-aware ticket-to-PR delivery and workspace operations. Use FLO
 allowed-tools: Bash(.flow/runtime/flow:*), Bash(*/.flow/runtime/flow:*), Bash(python3:*), Bash(git:*), Bash(bd:*), Bash(jq:*), Bash(gh:*), Read, Write, Edit, Agent, Skill, AskUserQuestion, PushNotification, EnterWorktree
 ---
 
-<!-- flow:activation-truth:begin -->
 # Flow
 
-## Routed cognition
+## Native roles
 
-New route snapshots may execute the planner, plan assessor, reviewers, review-brief
-author, and reflector through exact Codex or Claude Code CLI routes inside standalone
-read-only capsules, E2E through a disposable write-capable capsule that imports nothing
-and discards every mutation, and the importing writers (implementer, review_fixer,
-revision_fixer) through a write-capable capsule whose validated binary-aware patch Flow
-captures and imports into the authoritative worktree under a sole-writer claim. The
-machinery_fixer also runs in a read-only capsule: it derives a report of anchored
-{file, old, new} edits, mutates nothing, and reflect applies each edit through the
-machinery_edit guard. The owner conversation remains the single human cockpit and the
-dispatcher remains the only stage authority. Each activated substep is bound to its stage
-generation and must return a matching typed outcome. Every exact post-plan route is now
-active; only the generic owner adapter leaves a route shadowed. An exact-route failure
-stops visibly; it never selects a native or alternate-model fallback.
+The owner conversation remains the single human cockpit and the dispatcher remains
+the only stage authority. Planning, implementation, review, and optional authorship
+roles use fresh host-native agents when their stage calls for independence. They work
+in the one authoritative ticket worktree. Flow may offer a simple model hint that the
+active host can accept or ignore; provider and model identity are not delivery gates.
 
 Flow is one state-aware path from a tracker ticket to a reviewable pull request.
 The user owns intent, plan approval, and PR review. Flow owns the isolated worktree
@@ -111,7 +102,7 @@ The complete public grammar is generated from the registry:
 <!-- flow:public-grammar:begin -->
 ```text
 FLOW
-FLOW <target> [<target> ...] [--unattended] [--together] [--verify express|light|full] [--e2e <recipe>] [--request <additional-intent>] [--route <profile=harness,model,effort>]...
+FLOW <target> [<target> ...] [--unattended] [--together] [--verify express|light|full] [--e2e <recipe>] [--request <additional-intent>]
 FLOW ticket create [--request <problem>]
 FLOW ticket group (<ticket> ... | --mine) [--state open]
 FLOW ticket split <ticket>
@@ -132,7 +123,6 @@ FLOW maintain evolution epic
 FLOW maintain evolution expand <epic>
 FLOW maintain evolution drain [--dry-run] [--include-proposals]
 FLOW maintain worktrees clean [--dry-run]
-FLOW maintain quarantine clean [--dry-run]
 FLOW help [ticket|memory|measure|workspace|maintain]
 ```
 <!-- flow:public-grammar:end -->
@@ -241,17 +231,8 @@ Parse the returned branches structurally: `{"done": true}` is complete, while
 `{"done": false, "blocked_by": "<stage>", "reason": "<text>"}` is a durable
 stop. Otherwise expect a handler descriptor with `stage`, `handler_type`, `head_sha`,
 `ticket_dir`, `output_path`, and `roles`. If `descriptor.roles` includes `"records_diff_baseline"`,
-capture the owned-file baseline before the handler. When
-`descriptor.roles` includes `"agent_routed"`, resolve the frozen profile from the
-run's route snapshot. The snapshot covers all twelve cognitive profiles and records
-composite substeps separately from deterministic stage execution. The read-only profiles,
-the disposable E2E capsule, the importing writers (implementer, review_fixer,
-revision_fixer), and the read-only machinery_fixer all become active on an exact CLI
-receipt. Under the generic owner adapter a route stays shadowed with `effective: null`,
-including a matching native launch acceptance.
-An activated substep runs through `cognitive-worker run-stage`; the configured or
-built-in planner follows the strict pre-approval CLI contract in
-`references/delivery-plan.md`. A per-run override may replace its complete route.
+capture the owned-file baseline before the handler. The
+configured or built-in planner follows `references/delivery-plan.md`.
 
 Every independent stage-agent prompt includes these exact rooted fields. The agent
 applies the call-local `FLOW_HARNESS` selector to the bound absolute `facade`:
@@ -266,12 +247,9 @@ Reference path: <absolute reference, or none>
 Artifact path: <absolute output_path>
 ```
 
-Handlers may be inline, independent subagents, installed skills, or no-ops. A post-plan
-handler with an active exact route launches its worker through `cognitive-worker
-run-stage`; a handler on a shadow route (the generic owner adapter, or a historical
-snapshot) keeps its owner-native or inline execution and records desired route provenance
-only. Every agent receives absolute workspace, skill, ticket, reference, and artifact
-paths plus the harness identity.
+Handlers may be inline, independent native agents, installed skills, or no-ops. Every
+agent receives absolute workspace, skill, ticket, reference, and artifact paths plus
+the harness identity.
 Read `references/delivery-loop.md` before starting or continuing a run.
 
 ## Internal delivery references

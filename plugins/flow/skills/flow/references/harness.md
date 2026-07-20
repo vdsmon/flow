@@ -1,4 +1,3 @@
-<!-- flow:activation-truth:begin -->
 # Harness adapters
 
 ## Cross-harness cognitive workers

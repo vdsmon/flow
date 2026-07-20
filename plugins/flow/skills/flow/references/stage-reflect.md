@@ -1,30 +1,10 @@
-<!-- flow:activation-truth:begin -->
 # Stage: reflect
-
-## Routed reflection boundary
-
-`reflect-inputs --immutable-output` publishes the unchanged historical payload inside
-`flow.reflection-input-bundle/v1`, bound to the exact source SHA, route digest, and
-stage generation. An active `reflector` returns typed proposals only. Deterministic
-Flow commands remain the sole appliers for knowledge, supersession, recall usage,
-project-rule suggestions, and ship events. `machinery_fixer` is a separate read-only
-capsule that derives anchored edits only; reflect applies each through the
-`machinery_edit` guard, so reflection never acquires source-write authority through its
-findings.
 
 ## Purpose
 
 Extract durable knowledge from this ticket's run, append entries to the compounding memory layer, and (if the ticket shipped) record an immutable ship-event evidence record.
 
-Reflect is the closing stage. When `review_brief` is configured, reflection starts as
-soon as that stage publishes its snapshot; it does not wait for the human to finish
-reading the brief or reviewing in Forge. Human review and reflection intentionally
-overlap.
-The route snapshot records the read-only reflection decision as `reflector` and any
-conditional machinery edit as a separate `machinery_fixer` substep. New exact snapshots
-activate both the reflector and the machinery_fixer: the machinery_fixer derives anchored
-edits in a read-only capsule and reflect applies each through the `machinery_edit` guard.
-Historical and generic shadow runs retain inline reflection.
+Reflect is the closing stage.
 The discipline here is what makes `FLOW` compounding: every ticket's run produces 0..N knowledge entries that future tickets in the same workspace can recall via BM25.
 Reflection runs on three lenses, two of them gated by `workspace.toml [reflect]` flags that `reflect_inputs.py` surfaces in the bundle as `reflect_config` (step 1):
 
@@ -112,8 +92,6 @@ The taxonomy is closed:
 
 2b. **Machinery reflection (lens B — gated; mandatory when ON and the run hit any friction).** SKIP this entire step unless `reflect_config.machinery` is true. It is false by default: a stranger running flow neither wants flow editing its own source nor cares about flow-internal findings. When the flag is off, do not record `MACHINERY:` entries and do not apply harness fixes; go straight to step 2c. When it is on (the skill developer's workspace), run it in full. The steps above point the lens DOWN at the ticket's domain (the code, the tax rules, the library). This step points it UP at the harness that produced the work: did `FLOW`'s own scripts, stages, exit codes, handler dispatch, and orchestration loop serve the run, or fight it? This is the feedstock an installed skill-polishing capability consumes — produce it whether or not a human asked, at the depth of an engineering review, not a vibe check.
 
-   **Where the derivation runs (routed vs inline).** When this run's route snapshot activates `machinery_fixer` (an exact non-generic owner route), the anchored-fix DERIVATION below is routed to a read-only `machinery_fixer` capsule rather than done inline: the dispatcher seals the `machinery_fix` substep, and `cognitive-worker run-stage` (references/delivery-loop.md) hands the reflect/friction context to the capsule, which returns a `machinery-fix-report/v1` — a `summary`, the bound `source_sha`, and a list of anchored `{file, old, new, rationale}` edits whose shape matches `machinery_edit.py`'s payload. The capsule mutates nothing (read-only postcondition). Reflect then APPLIES each returned edit through the same `machinery_edit` guard in the APPLY-NOW mechanism below, honoring every refusal exactly as the inline path does. On a shadow, generic, or historical run (no active `machinery_fixer` route) the owner derives the fixes inline as described here. Either way the sole applier is `machinery-edit apply` and the guard is untouched. The substep is conditional: when a routed anchored fix runs, the `machinery_fixer` capsule's report outcome satisfies the `machinery_fix` fence; when this pass warrants no anchored fix, the terminal Step 7 emits the reasoned deterministic skip that satisfies it. Step 7 also carries that skip for the default machinery-OFF run, which skips this whole step, so the fence is satisfied there without ever reading this block.
-
    Reconstruct friction from evidence, not memory (a backgrounded reflect agent has no live recall): the PRIMARY source is the in-flight friction log — the bundle's `friction` array (entries the do-loop appended via `flow_friction.py` as the run hit retries, missing tools, drift, lost leases, planned-file reconciles, failed stages). Corroborate and extend it with the stage `.out` reports in `<ticket-dir>/stages/` (subagents flag things like "created a file outside planned_files"), the `state.json` stage history (retries, `failed`->`retry` transitions, stages that needed a `recover`), and anything else the run had to work around. A non-empty `friction_recurrence` block (step 1) is prima-facie evidence that a class the harness ALREADY claimed to fix recurred (fired_count times, last fix sha X, runs_ago runs ago) — treat each such class as a high-priority machinery finding: the prior fix did not hold, so re-diagnose the root cause rather than re-applying the same fix. Read the two counts on their own anchors: `fired_count` is class-scoped (hits of THIS class since its earliest fix) while `runs_ago` is global (distinct friction-logging runs since the class's latest fix — any class, not this one); the list is capped to the worst 15 classes by fired_count. For EACH friction point:
    - **Re-read the script or reference file behind it** (`scripts/<x>.py`, `references/stage-<y>.md`) — do NOT guess at the cause. Cite `file:line`.
    - State the defect concretely + a one-line fix (e.g. "`diff_extract.check_ownership` runs bare `git status --porcelain`, which collapses a fully-untracked dir to `foo/` and false-positives against per-file `planned_files`; add `--untracked-files=all`").
@@ -142,7 +120,6 @@ The taxonomy is closed:
        ```
        Exit 0 `applied` → done. Exit 0 `already_applied` → a sibling beat you to it, treat as done. Exit 3 `anchor_not_found` → re-derive the anchor (re-Read; it may already be fixed differently). Exit 4 `ambiguous` → narrow the anchor and retry. Exit 2 `refused` → snapshot-pinned, out-of-tree, OR skill-root on a protected branch (main/master/dev/develop), route to PROPOSE + RECORD.
      - **A machinery fix NEVER commits onto a protected branch.** `machinery_edit.py` refuses an apply (exit 2 `refused`) when skill-root is on a protected branch (main/master/dev/develop), so the finding routes to PROPOSE + RECORD → the evolve-bead sling instead (rationale: self-evolution.md §Guardrails — never commit machinery to `main`). Do NOT bump-and-commit a machinery fix onto a protected branch from inside a run. Only when the skill checkout is itself on a feature branch does the apply succeed; there, capture it: commit the touched skill files on that feature branch (NO version bump — the version stamps at merge) (do NOT push — publishing is a human call), recording the commit sha in the `MACHINERY:` entry as provenance. A dirty skill checkout with unrelated work also falls back to PROPOSE + RECORD.
-     - **Self-target review-brief staleness is expected, never hidden.** In the normal two-tree case, a machinery edit does not change the ticket PR. In Flow's dogfood case `skill_root == run_root`, a committed reflect edit changes the PR branch after `review_brief` was generated. Continue and finish reflection without waiting for the reviewer; the exact-SHA label keeps the older artifact honest. Before merge, the authorized publish path must push the new commit and retry `review_brief` at that SHA. The merge freshness probe blocks until local HEAD, PR head, receipt, and HTML agree. Never treat the pre-reflect artifact as current for the mutated branch.
      - **Snapshot caveat — things you must NOT touch mid-run** (also: never advance the MAIN checkout — `git pull` / marketplace update — while runs are in flight; the `engine` snapshot component aborts them) (they ARE in the run's canonical snapshot; rationale: self-evolution.md §Guardrails — snapshot caveat): `stage-registry.toml`, and any WIRED handler skill (the plugin behind a `skill:` entry in `pipeline.handlers`, e.g. the `create_pr` / `review_loop` skill). A fix to those is PROPOSE + RECORD, OR apply it and then run `FLOW workspace repair reload-snapshot <ticket>` to re-baseline before the loop closes.
    - **PROPOSE + RECORD, do not self-apply unattended.** Structural changes (the orchestration driver, the dispatch loop, a script rewrite), anything touching a file the fleet is actively mid-stage on, or anything you are not high-confidence is strictly correct. The blast radius across concurrent runs is too large to self-apply. Here the `MACHINERY:` entry + the human note ARE the deliverable, and recording them IS acting on the finding: it is durable, it survives the run, it is findable later. That is the requirement. If a skill-polishing or refactor capability happens to be installed, you MAY invoke it here to carry the recorded finding into a reviewed edit while the context is fresh, but that is a loose best-effort dependency, not a mandate, and the run does not block on it: the record stands on its own when no such skill exists. A human gate sits on anything that would be pushed.
      - **Sling it to the backlog (Producer A, maintainer mode).** A `MACHINERY:` entry in `knowledge.jsonl` dead-ends unless someone greps it. So for a PROPOSE+RECORD finding, ALSO file it as a bead in flow's OWN beads, where it becomes triaged, shippable work the `FLOW maintain evolution` loop can pick up. File once per finding:
@@ -205,7 +182,13 @@ The taxonomy is closed:
 
    - **AUTO-supersede ONLY when the disproof is ground truth** — the contradicting change is PRESENT in `final_diff` (this run itself changed the behavior the entry describes, not merely a guess that it looks stale). Append a NEW entry that cites this run / PR and states what is now true, supersedes-targeting the dead entry by its exact id:
      ```bash
-     FLOW_HARNESS="<harness>" "<facade>" memory-append        --type <FACT|LEARNED|DEVIATION>        --text "<what is now true; cite this run/PR>"        --branch "$(git rev-parse --abbrev-ref HEAD)"        --ticket <KEY>        --supersedes <recalled_entries[i].id>        --workspace-root .
+     FLOW_HARNESS="<harness>" "<facade>" memory-append \
+       --type <FACT|LEARNED|DEVIATION> \
+       --text "<what is now true; cite this run/PR>" \
+       --branch "$(git rev-parse --abbrev-ref HEAD)" \
+       --ticket <KEY> \
+       --supersedes <recalled_entries[i].id> \
+       --workspace-root .
      ```
      Use the exact `recalled_entries[i].id` for `--supersedes`. The `--type` respects the closed taxonomy — typically `FACT`/`LEARNED` for the corrected truth, or `DEVIATION` when the point is that the old entry was disproven.
    - **Anything ambiguous, indirect, or inference-based** — the entry merely looks stale, or the contradiction is NOT in `final_diff` — do NOT auto-supersede. Surface a one-line proposal note in the human-facing reflect output instead (`Proposed supersede: <id> — <why it may be stale>`), a binding skeptic correction the maintainer adjudicates. The auto path is reserved for diff-grounded disproof.
@@ -325,9 +308,9 @@ The taxonomy is closed:
      - Exit 3 → I/O error, lock contention, or workspace memory config missing/invalid (intent log written).
        Surface warning; continue.
 
-### Step 7 — satisfy the cognitive outcome fence, then complete
+### Step 7 — complete
 
-7. **Satisfy the cognitive outcome fence on EVERY path**, then `advance --status completed`. This step is reached on every reflect path (machinery lens ON or OFF, a fix applied or none), so it is where the fence is satisfied for the default machinery-OFF run that skipped step 2b entirely. The frozen snapshot seals `reflection` (non-conditional) and `machinery_fix` (conditional). `reflection` is satisfied by the reflector's outcome; it cannot be skipped, so reflect never completes without it (do NOT emit a skip for it). `machinery_fix` is satisfied by the `machinery_fixer` capsule's report outcome when a routed fix ran this pass (the fence reads that outcome first and ignores a skip for it), and needs a reasoned deterministic skip (a non-empty reason) whenever no machinery fix ran: the default machinery-OFF run (`reflect_config.machinery` false, step 2b skipped whole), and the machinery-ON run that hit no friction warranting an anchored fix. Emit that skip for the un-run `machinery_fix` substep through the same `cognitive-worker run-stage` skip input as `review_loop` §5 / `code_review` step 9 (`references/delivery-loop.md`, "Activated cognitive substeps"), then pass the executor's `cognitive_skips` as the advance skill output (`--skill-output-from`). Without the no-fix `machinery_fix` skip the terminal advance fails closed with `activated cognitive substep 'machinery_fix' has no successful outcome or valid skip`, the wedge every default delivery would otherwise hit on the closing stage. Then the stage completes with status=completed.
+7. Stage completes with status=completed.
 
 ## Outputs
 

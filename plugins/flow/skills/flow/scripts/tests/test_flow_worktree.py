@@ -18,7 +18,6 @@ from pathlib import Path
 
 import pytest
 
-import agent_routes
 import flow_worktree as fw
 import lease
 import state
@@ -177,26 +176,6 @@ def test_seeds_plan_completed_with_output_path(tmp_path: Path) -> None:
     assert "Goal: do the thing." in plan_out.read_text(encoding="utf-8")
     # ticket left pending so the tail self-fetches ticket.json + frontmatter
     assert ts.stages["ticket"].status == "pending"
-
-
-def test_bootstrap_seeds_frozen_route_snapshot_before_return(tmp_path: Path) -> None:
-    main = _main_checkout(tmp_path)
-    res = _run(
-        tmp_path,
-        main,
-        owner_harness="claude-code",
-        route_overrides=["implementer=claude_code,opus,high"],
-    )
-    route_path = Path(res["worktree"]) / ".flow" / "runs" / "FT-1" / "route-snapshot.json"
-    snapshot = json.loads(route_path.read_text(encoding="utf-8"))
-    assert snapshot["owner_harness"] == "claude_code"
-    assert set(snapshot["routes"]) == set(agent_routes.PROFILES)
-    assert snapshot["routes"]["implementer"]["desired"]["model"] == "opus"
-    assert snapshot["stage_execution"]["review_brief"]["profile"] == "review_brief_author"
-    assert (
-        snapshot["stage_execution"]["reflect"]["substeps"]["reflection"]["profile"] == "reflector"
-    )
-    assert res["route_digest"] == snapshot["digest"]
 
 
 def test_copies_gitignored_config(tmp_path: Path) -> None:

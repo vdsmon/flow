@@ -1,20 +1,10 @@
-<!-- flow:activation-truth:begin -->
 # CLAUDE.md
 
-Flow's post-plan cognitive route catalog is authoritative for model selection. Planning
-is one attended host-native conversation that produces the human-approved Markdown plan.
-Exact route snapshots may launch review, review-brief authorship, and reflection through
-either Claude Code or Codex capsules. E2E is also activated, as a
-disposable-capsule writer: it clones the sealed `source_sha`, is seeded with the ticket's
-uncommitted working state, runs the recipe there, captures the recipe's mutations as
-evidence, imports nothing, and discards the capsule. The importing writers (implementer,
-review_fixer, revision_fixer) also launch as capsule writers whose validated binary-aware
-patch is compare-and-swap imported under a sole-writer claim, then disposed. The
-machinery_fixer also launches, as a read-only capsule: it derives a report of anchored
-`{file, old, new}` edits and reflect applies each through the untouched `machinery_edit`
-guard (never the CAS import path). No exact post-plan route remains shadowed. Keep the
-owner as the single human cockpit, pass exact typed outcomes back to dispatch, and never
-treat an environment-only harness label as cross-harness execution proof.
+Flow uses one attended planning conversation, one human-approved Markdown plan, and
+one authoritative ticket worktree. Fresh host-native agents provide logical role
+separation for implementation and review. Keep the owner as the single human cockpit;
+do not add provider proof, execution capsules, or patch-import transactions around
+those roles.
 
 Guide for Claude Code or Codex working in the `flow` repo.
 
@@ -62,8 +52,8 @@ Runtime is stdlib-only (`python3`); the venv/mise is dev tooling only.
 
 - **Branch off `origin/main`, never local `main` (lags) or current HEAD.** This repo churns with many worktrees; cutting a feature branch off a stale/feature HEAD pollutes the PR with already-merged commits (→ DIRTY). Unattended Flow runs resolve the remote default branch before creating their worktree; do the same by hand.
 - **Live-testing plugin changes:** the `vdsmon-flow` marketplace tracks the **local main checkout** (`~/repos/personal/flow`), not `origin`. A launched `/flow` run loads that checkout's code. To exercise merged changes: advance the checkout to `origin/main`, then `claude plugin marketplace update vdsmon-flow` (`claude plugin details flow` shows the version).
-- **A run is sealed to the engine installed at its start, not the one its own PR changes.** The run resolves its engine through the install path pinned in `.flow/runtime/skill-root` at workspace setup, so a PR's edits to a substep or profile in its own worktree are not the tree the run executes; only a run started after merge (a fresh setup) picks up the new contract. If the old contract fences a stage the new PR removed or reshapes, clearing that fence may need a manual step. This is a distinct lifecycle moment from the marketplace/live-testing bullet above, which is about install-time source selection, not an in-run frozen snapshot.
-- **Never run `uv run` inside a worktree.** `uv run pytest` creates `plugins/flow/skills/flow/scripts/uv.lock`; the content-ownership commit gate treats it as unowned drift and exits 3. Use `mise run test` or the e2e capsule instead. If a stray `uv.lock` already landed, remove it before committing.
+- **A run is sealed to the engine installed at its start, not the one its own PR changes.** The run resolves its engine through the install path pinned in `.flow/runtime/skill-root` at workspace setup, so a PR's own engine edits do not change the running pipeline. Only a run started after installation of the merged change picks up the new contract.
+- **Never run `uv run` inside a worktree.** `uv run pytest` creates `plugins/flow/skills/flow/scripts/uv.lock`; the content-ownership commit gate treats it as unowned drift and exits 3. Use the repository's configured `mise` tasks instead. If a stray `uv.lock` already landed, remove it before committing.
 - **`gh pr merge` needs a real branch** — a detached HEAD fails with "could not determine current branch"; merge from a throwaway branch off `origin/main`.
 - **`stage-registry.toml` lives at the skill root** (`plugins/flow/skills/flow/`), never under `scripts/`. A `scripts/stage-registry.toml` entry in `planned_files` reads as unowned drift and aborts the run.
 - **Env/CLI quirks** (gh keyring 401, GraphQL `{owner}`/`{repo}`, mise shim heal, zsh word-split, ty ignore syntax): `plugins/flow/skills/flow/references/troubleshooting.md`.

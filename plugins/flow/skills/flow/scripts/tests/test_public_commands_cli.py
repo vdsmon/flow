@@ -42,54 +42,6 @@ def test_route_emits_deterministic_command_contract(tmp_path, capsys) -> None:
     }
 
 
-def test_route_payload_preserves_repeated_agent_route_values(tmp_path, capsys) -> None:
-    _write_jira_workspace(tmp_path)
-    rc = public_commands_cli.cli_main(
-        [
-            "route",
-            "--workspace-root",
-            str(tmp_path),
-            "--",
-            "FT-12",
-            "--route",
-            "code_reviewer=codex,gpt-5.6-sol,xhigh",
-            "--route=implementer=claude_code,sonnet,high",
-        ]
-    )
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["options"] == ["--route", "--route"]
-    assert payload["option_values"] == {
-        "--route": [
-            "code_reviewer=codex,gpt-5.6-sol,xhigh",
-            "implementer=claude_code,sonnet,high",
-        ]
-    }
-
-
-def test_route_rejects_duplicate_agent_profiles_before_lifecycle_execution(
-    tmp_path, capsys
-) -> None:
-    _write_jira_workspace(tmp_path)
-
-    rc = public_commands_cli.cli_main(
-        [
-            "route",
-            "--workspace-root",
-            str(tmp_path),
-            "--",
-            "FT-12",
-            "--route",
-            "reflector=codex,gpt-5.6-sol,high",
-            "--route",
-            "reflector=claude_code,opus,high",
-        ]
-    )
-
-    assert rc == 2
-    assert "duplicate --route" in capsys.readouterr().err
-
-
 def test_route_emits_scoped_help_contract(capsys) -> None:
     assert public_commands_cli.cli_main(["route", "--", "help", "memory"]) == 0
     assert json.loads(capsys.readouterr().out) == {
