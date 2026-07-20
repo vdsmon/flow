@@ -17,7 +17,7 @@ evidence via `gh`/`bd` and, unless `dry_run`, files the deduplicated main-red P0
 `_file_main_red_p0`). Under `dry_run` the whole filing call (dedup scan included) is skipped,
 mirroring `senses_deadman.deadman`, and the result's `main_red_p0` record carries the would-file
 descriptor (action + failing sha + failing checks) instead. The restored `FLOW maintain evolution
-drain` owner loop (`references/command-maintain.md`) consumes the `merge` bucket and performs the
+drain` driver loop (`references/command-maintain.md`) consumes the `merge` bucket and performs the
 actual side effects: `forge mark-ready` (if draft) then `forge merge --squash` over each entry, then
 closes the bead + covers through the tracker seam and deletes the remote branch through the forge
 seam. `--delete-branch` is dropped from the merge call because the still-registered worktree holds

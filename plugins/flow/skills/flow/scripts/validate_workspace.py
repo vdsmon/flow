@@ -19,9 +19,7 @@ Validates:
 8. `required = true` stages appear.
 9. `required_when_compounding = true` stages appear iff
    `[memory] compounding = true`.
-10. Optional `[agents]`: complete routes, valid public harnesses, and common XOR
-    `by_owner` profile shape.
-11. `[memory]`: `namespace` string; `compounding` bool; `auto_recall` bool;
+10. `[memory]`: `namespace` string; `compounding` bool; `auto_recall` bool;
     `recall_by` list[str]; `recall_top_n` int.
 """
 
@@ -34,7 +32,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-import agent_routes
 from _registry import HANDLER_RE, StageEntry, load_registry
 from model_resolve import OFF_VALUES
 
@@ -120,21 +117,6 @@ def _validate_forge_block(data: dict[str, Any], result: ValidationResult) -> Non
             for key in ("workspace", "repo_slug"):
                 if not isinstance(bb.get(key), str) or not bb[key]:
                     result.add(f"forge.bitbucket.{key}", "missing or not a non-empty string")
-
-
-def _validate_agent_routes(data: dict[str, Any], result: ValidationResult) -> None:
-    for message in agent_routes.configuration_errors(data):
-        result.add("agents", message)
-    if isinstance(data.get("agents"), dict) and isinstance(data.get("models"), dict):
-        fallbacks = agent_routes.legacy_fallback_profiles(data)
-        if fallbacks:
-            result.warn(
-                "models",
-                "legacy fallback remains active for profiles without explicit routes: "
-                + ", ".join(fallbacks),
-            )
-        else:
-            result.warn("models", "retained for rollback only; every profile is explicit")
 
 
 def _parse_stages(pipeline: dict[str, Any], result: ValidationResult) -> list[str] | None:
@@ -249,14 +231,9 @@ def _warn_inline_stage_model(
     """Warn (non-fatal) when a stage has an EXPLICIT model pin but runs inline.
 
     An inline stage runs on the session model and cannot be model-pinned, so an
-    explicit pin would silently not apply to it. Scoped to `implement` and `e2e` only:
-    those are the stages the do-loop dispatches directly as subagents, so inline there
-    genuinely kills the pin. `code_review`/`review_loop` are inline parents that pin a
-    subagent they spawn in their own prose, so their per-stage model IS honored even
-    while the parent is inline; they never warn. The effective pin per stage is
-    `[models].<stage>` if set, else the deprecated `[models].work_model`; an OFF_VALUE
-    at either level means no intent to apply, so no warning. The on-by-default case
-    (no `[models]` block) never warns, to keep validate quiet for the common setup.
+    explicit pin would silently not apply to it. Scoped to `implement` and `e2e`:
+    those stages are dispatched directly as subagents. Inline review stages may
+    launch their own fresh native reviewer, so their hints remain meaningful.
     """
     models = data.get("models")
     if not isinstance(models, dict):
@@ -265,8 +242,6 @@ def _warn_inline_stage_model(
         per_stage = models.get(stage)
         if isinstance(per_stage, str):
             field, value = f"models.{stage}", per_stage
-        elif isinstance(models.get("work_model"), str):
-            field, value = "models.work_model", models["work_model"]
         else:
             continue
         if value.strip().lower() in OFF_VALUES:
@@ -277,6 +252,29 @@ def _warn_inline_stage_model(
                 f"{stage} handler is 'inline'; an inline stage cannot be model-pinned, "
                 f"so it runs on the session model and its model pin is ignored",
             )
+
+
+def _validate_model_hints(
+    data: dict[str, Any], registry: list[StageEntry], result: ValidationResult
+) -> None:
+    if "agents" in data:
+        result.add(
+            "agents",
+            "provider route tables are no longer supported; delete [agents] and use optional "
+            "[models].<stage> hints",
+        )
+    models = data.get("models")
+    if models is None:
+        return
+    if not isinstance(models, dict):
+        result.add("models", "must be a table of stage = model hints")
+        return
+    stages = {entry.name for entry in registry}
+    for stage, model in models.items():
+        if stage not in stages:
+            result.add(f"models.{stage}", "unknown stage")
+        if not isinstance(model, str):
+            result.add(f"models.{stage}", "must be a string")
 
 
 def _validate_memory_block(data: dict[str, Any], result: ValidationResult) -> bool:
@@ -355,10 +353,10 @@ def validate(
 
     backend = _validate_tracker_block(data, result)
     _validate_forge_block(data, result)
-    _validate_agent_routes(data, result)
     compounding = _validate_memory_block(data, result)
 
     registry = stage_registry or load_registry(_stage_registry_path())
+    _validate_model_hints(data, registry, result)
     stages, handlers = _validate_pipeline_block(data, registry, compounding, result)
 
     _warn_inline_stage_model(data, handlers, result)

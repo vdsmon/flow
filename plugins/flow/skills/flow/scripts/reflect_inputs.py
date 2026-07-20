@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
-import hashlib
 import json
 import sys
 from pathlib import Path
@@ -42,7 +41,6 @@ import harness_corpus
 import recall
 import state
 import ticket_frontmatter
-from _atomicio import atomic_write_text
 from _jsonl import read_jsonl_lenient
 
 # Worst-first ceiling on distilled recurrence classes; the live corpus already
@@ -54,39 +52,6 @@ _RECURRENCE_CAP = 15
 # developer opts in; claude_memory (writing the global ~/.claude memory) is ON
 # because cross-session compounding is the safe-ship default.
 _REFLECT_DEFAULTS = {"machinery": False, "claude_memory": True}
-
-
-def write_immutable_envelope(
-    payload: dict[str, Any],
-    output: Path,
-    *,
-    source_sha: str,
-    route_digest: str,
-    stage_generation: int,
-) -> dict[str, Any]:
-    """Atomically publish the exact routed reflection input as a read-only value."""
-    if len(source_sha) != 40 or len(route_digest) != 64 or stage_generation < 1:
-        raise ValueError("immutable reflection input requires exact source, route, and generation")
-    body = {
-        "schema": "flow.reflection-input-bundle/v1",
-        "source_sha": source_sha,
-        "route_digest": route_digest,
-        "stage_generation": stage_generation,
-        "payload": payload,
-        "payload_digest": hashlib.sha256(
-            json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
-        ).hexdigest(),
-    }
-    envelope = {
-        **body,
-        "digest": hashlib.sha256(
-            json.dumps(body, sort_keys=True, separators=(",", ":")).encode()
-        ).hexdigest(),
-    }
-    target = output.expanduser().resolve()
-    atomic_write_text(target, json.dumps(envelope, indent=2, sort_keys=True) + "\n")
-    target.chmod(0o400)
-    return envelope
 
 
 def _reflect_config(cwd: Path) -> dict[str, bool]:
@@ -331,10 +296,6 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         help="path to ticket .md frontmatter file (optional).",
     )
     parser.add_argument("--cwd", default=".")
-    parser.add_argument("--immutable-output")
-    parser.add_argument("--source-sha")
-    parser.add_argument("--route-digest")
-    parser.add_argument("--stage-generation", type=int)
     return parser.parse_args(argv)
 
 
@@ -362,27 +323,7 @@ def cli_main(argv: list[str]) -> int:
     except OSError as exc:
         sys.stderr.write(f"reflect-inputs: I/O error: {exc}\n")
         return 3
-    if args.immutable_output:
-        if not args.source_sha or not args.route_digest or not args.stage_generation:
-            sys.stderr.write(
-                "reflect-inputs: immutable output requires --source-sha, --route-digest, "
-                "and --stage-generation\n"
-            )
-            return 1
-        try:
-            result = write_immutable_envelope(
-                payload,
-                Path(args.immutable_output),
-                source_sha=args.source_sha,
-                route_digest=args.route_digest,
-                stage_generation=args.stage_generation,
-            )
-        except (OSError, ValueError) as exc:
-            sys.stderr.write(f"reflect-inputs: immutable output failed: {exc}\n")
-            return 3
-        sys.stdout.write(json.dumps(result, indent=2, sort_keys=True) + "\n")
-    else:
-        sys.stdout.write(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+    sys.stdout.write(json.dumps(payload, indent=2, sort_keys=True) + "\n")
     return 0
 
 
@@ -390,4 +331,4 @@ if __name__ == "__main__":
     raise SystemExit(cli_main(sys.argv[1:]))
 
 
-__all__ = ["bundle", "cli_main", "write_immutable_envelope"]
+__all__ = ["bundle", "cli_main"]

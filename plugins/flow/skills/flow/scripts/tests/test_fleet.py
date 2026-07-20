@@ -1,14 +1,11 @@
 from __future__ import annotations
 
 import json
-import math
 import subprocess
 import sys
 from datetime import timedelta
 from pathlib import Path
 
-import cognitive_workers
-import dispatch_stage
 import fleet
 import lease
 from _timeutil import utcnow_iso
@@ -26,22 +23,11 @@ def _fleet(tmp_path: Path) -> Path:
     return tmp_path / "fleet"
 
 
-# ─── STALE_AFTER_S: pinned to the worst-case per-role cumulative lease TTL ────
+# ─── STALE_AFTER_S: longest default stage lease ──────────────────────────────
 
 
-def test_stale_after_s_pinned_to_code_review_worst_case():
-    # Derived from the model itself (dispatch_stage._stage_ttl_seconds /
-    # cognitive_workers.cumulative_role_budget), not re-hardcoded, so model drift
-    # propagates here instead of leaving fleet.STALE_AFTER_S silently stale.
-    code_review_worst_case = sum(
-        cognitive_workers.cumulative_role_budget(profile)
-        for profile in ("code_reviewer", "diff_reviewer", "review_fixer")
-    )
-    assert (
-        math.ceil(code_review_worst_case * dispatch_stage._CUMULATIVE_TTL_MARGIN)
-        == fleet.STALE_AFTER_S
-    )
-    assert fleet.STALE_AFTER_S == 22500
+def test_stale_after_s_covers_longest_default_stage_lease():
+    assert fleet.STALE_AFTER_S == 7200
 
 
 # ─── register / upsert ────────────────────────────────────────────────────────

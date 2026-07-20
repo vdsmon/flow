@@ -1,14 +1,4 @@
-<!-- flow:activation-truth:begin -->
 # review_brief stage (inline, local reviewer companion)
-
-## Routed authorship boundary
-
-On an active exact route, `review_brief_author` receives immutable ticket, plan, PR,
-review, E2E, and CI facts and returns only the existing validated content model. The
-worker cannot render, publish, open a browser, or mutate source. `review_brief.py`
-retains deterministic snapshot binding, HTML rendering, publication, and freshness.
-The matching cognitive outcome is stage-generation fenced; exact-route failure stops
-instead of silently asking the owner to author the brief.
 
 Generate a beautiful, read-only HTML companion for the human reviewing the PR.
 The brief answers the questions a maintainer arriving cold to a large codebase has
@@ -22,10 +12,10 @@ artifact, opens it when configured, records `STATUS=completed`, and advances to
 Forge. Forge remains the source of truth for the full diff, comments, approval, and
 merge authorization.
 
-The route snapshot records the cognitive authorship as `review_brief_author`. A new
-exact snapshot runs the author in a read-only capsule; historical or generic shadow
-runs retain inline authorship. The deterministic renderer publishes either validated
-content model through the same snapshot-bound path.
+Authorship may run inline or in one fresh native agent. In either case, the author
+returns only the validated content model. `review_brief.py` retains deterministic
+snapshot binding, HTML rendering, publication, and freshness. No authoring agent may
+render, publish, open a browser, or mutate source.
 
 The registry default handler is `inline`, so newly initialized and explicitly
 reconfigured workspaces receive the stage. Existing workspaces that omit the optional
@@ -34,21 +24,17 @@ exists, or `[review_brief].mode = "off"`, complete as an explicit no-op: there i
 PR snapshot to explain. A workspace using Flow's native PR pipeline, including Flow's
 dogfood workspace, renders the artifact.
 
-The route contract gives this stage one conditional `main` substep
-(`review_brief_author`). On a genuinely unattended run there is no live reviewer to
-author the brief for, so `main` takes a reasoned skip instead of launching the
-worker; the completion fence accepts it generically, the same way it accepts
-`review_fix`/`machinery_fix` skips elsewhere. `review_brief.freshness()` later
-cross-checks that skip against this run's seeded frontmatter signal (§0) before
-merge treats it as non-blocking — an attended run whose tail emits the skip anyway
-does not silently lose its brief.
+On a genuinely unattended run there is no live reviewer to author the brief for, so
+the stage records one explicit skip. `review_brief.freshness()` cross-checks that
+record against the run's seeded frontmatter signal before merge treats it as
+non-blocking. An attended run cannot silently lose its brief.
 
 ## 0. Resolve the run's attendedness once
 
 Read the seeded `unattended` frontmatter boolean at the top of the stage and reuse
 that one value for every decision below (this section's own skip-or-author choice,
 stated next, and §4's `--no-open` choice). Never re-derive attendedness from lane,
-route activation, browser configuration, or live prose judgment — the
+browser configuration, or live prose judgment; the
 bootstrap-stamped signal is the sole source of truth and is what
 `review_brief.freshness()` cross-checks downstream:
 
@@ -60,25 +46,21 @@ UNATTENDED=$(FLOW_HARNESS="<harness>" "<facade>" frontmatter read .flow/tickets/
 **Revision override.** A revision sub-run (`references/delivery-revision.md`) reuses
 the original launch's worktree, so this frontmatter value still reflects that
 ORIGINAL launch, not this revision. A revision is opened by a human's `revise`
-action, so when `$TICKET_DIR` contains `/revisions/`, treat the run as ATTENDED
-(override `UNATTENDED` to `false`) unless the revision itself was launched by an
-unattended automation. A revision seals no cognitive substep and runs no merge
-stage, so there is no fence to code-seal this override against; it is prose-only
-by design.
+action, so when `$TICKET_DIR` contains `/revisions/`, treat the run as attended
+(override `UNATTENDED` to `false`) unless the revision itself was launched by
+unattended automation.
 
-When `UNATTENDED` is `true`, skip §§1-3 entirely and go straight to this stage's
-defined terminal, the same shape as the peer pattern at `stage-code_review.md` step 9
-/ `stage-reflect.md` step 7: through `cognitive-worker run-stage`
-(`references/delivery-loop.md`, "Activated cognitive substeps"), emit a reasoned
-skip for the `main` substep carrying the exact canonical reason `unattended run has
-no live human reviewer` (any other reason, or an attended run's tail emitting this
-skip, fails `review_brief.freshness()`'s authorization and falls through to the
-blocking render-freshness path instead of silently dropping the brief). Write the
-executor's result to `$TICKET_DIR/stages/review_brief.cognitive.json` and advance
-`review_brief` with
-`--skill-output-from "$TICKET_DIR/stages/review_brief.cognitive.json"`; do not
-author, render, or open. When `UNATTENDED` is `false`, continue with §§1-4 and
-author the brief.
+When `UNATTENDED` is `true`, skip §§1-3. Record this exact JSON as the stage's skill
+output and complete without authoring, rendering, or opening:
+
+```json
+{"review_brief_skip": "unattended run has no live human reviewer"}
+```
+
+Pass the file containing that JSON through `dispatch advance --skill-output-from`.
+Any other reason, or the same reason on an attended run, fails freshness authorization
+and falls through to the blocking render path. When `UNATTENDED` is `false`, continue
+with §§1-4 and author the brief.
 
 ## 1. Resolve the PR and exact snapshot
 

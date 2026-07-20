@@ -1,4 +1,3 @@
-<!-- flow:activation-truth:begin -->
 # inventory: API/contract reference + build log
 
 > **Navigation.** The CURRENT script map is `MODULE.md`. Build status / release notes are in `dev-history.md`. This file keeps the API/contract tables (Jira REST mapping, beads CLI surface, `.flow-bundle.toml` schema, `state.json` schema) plus the phase-by-phase build narrative. The "Phase X" / "Known holes" sections below are archived history, not current status — read them as the build log, not as a description of how flow works today.
@@ -6,7 +5,7 @@
 Live contract sections (grep the heading; everything else here is build log):
 
 - §Jira API inventory + §Status normalization mapping + §HTTP error → exception / TransitionResult mapping
-- §Forge (PR host) surface: operation surface, `[forge]`, `[agents]`, and legacy `[models]` workspace schemas
+- §Forge (PR host) surface: operation surface, `[forge]`, and optional `[models]` workspace schemas
 - §`.flow-bundle.toml` schema — discovery contract, composition rules, bootstrap markers
 - §Beads CLI surface — subcommands, state normalization, transition synthesis, is_shipped contract
 - §Dispatcher state machine — stage lifecycle, `state.json` schema, atomic-write contract, quarantine, exit codes, handler-descriptor shape, revision sub-run, TOCTOU invariant
@@ -204,94 +203,29 @@ repo_slug = "rs"
 
 `validate_workspace.py` validates the block only when present (`KNOWN_FORGE_BACKENDS = ("github", "bitbucket")`); github needs no sub-keys, bitbucket requires `workspace` + `repo_slug`.
 
-### `[agents]` route schema
+### Optional `[models]` workspace schema
 
-Every explicit route is a complete `harness`, `model`, and `effort` triple. Public
-harness values are `claude_code` and `codex`. A profile defines either one common
-route or a `by_owner` table; mixing them or omitting a field is invalid.
-
-<!-- flow:agent-route-profiles:begin -->
-Agent route profiles: `implementer`, `e2e`, `code_reviewer`, `diff_reviewer`, `guard_reviewer`, `review_fixer`, `revision_fixer`, `review_brief_author`, `reflector`, `machinery_fixer`
-<!-- flow:agent-route-profiles:end -->
+A workspace may give a native stage agent a model hint. Missing keys inherit the
+driver session model, and a host that does not accept a hint ignores it. These are
+preferences, not execution provenance.
 
 ```toml
-[agents.implementer.by_owner.claude_code]
-harness = "claude_code"
-model = "sonnet"
-effort = "high"
-
-[agents.implementer.by_owner.codex]
-harness = "codex"
-model = "gpt-5.6-luna"
-effort = "high"
+[models]
+implement = "sonnet"
+code_review = "opus"
+e2e = "sonnet"
 ```
 
-Resolution precedence is a complete per-run `--route` tuple, an explicit workspace
-route for that profile, its corresponding legacy `[models]` fallback, then built-in
-defaults. Profiles without a legacy knob go straight to their built-in route. Bootstrap freezes the
-canonical post-plan route snapshot. The snapshot records implementation, E2E,
-primary and plan-blind review, ordinary and revision fixes, review-brief authorship,
-reflection, optional machinery fixes, and merge guarding. Ticket, commit, PR creation,
-and merge retain `model: none` at stage level. Exact CLI receipts may activate the
-code and plan-blind reviewers, guard reviewer, review-brief
-author, reflector, the disposable-capsule E2E writer, the importing writers
-(implementer, review_fixer, revision_fixer), and the read-only machinery_fixer. Every
-exact post-plan route is active; only the generic owner adapter leaves a route shadowed
-with `effective: null`.
-
-`agent_routes.py` owns resolution, snapshot digests, attestations, and the surgical
-`migrate --check|--apply` operation. Migration leaves `[models]` bytes intact so
-removing `[agents]` restores legacy behavior.
-
-Planning is one attended host-native conversation whose durable output is the approved
-Markdown plan. Exact capability, authentication, provider-schema acceptance, and launch
-receipt evidence is required before a post-plan route activates. Failure stops visibly
-without selecting a fallback route. `snapshot --workspace-config` resolves from bytes
-read at the fetched base SHA instead of ambient checkout state.
-
-`cognitive_workers.py` is the common exact-route boundary. It owns the closed role
-catalog, prompt and schema digests, standalone exact-SHA clones, immutable dirty-review
-bundles, durable invocation journals, provider commands, process-group terminal proof,
-typed results, Git guards, cleanup, and quarantine. The E2E writer runs in a write-capable
-capsule that captures its mutations as report evidence, imports nothing, and is discarded.
-The implementer and the two review-loop fixers (review_fixer, revision_fixer) run in a
-write-capable capsule whose validated binary-aware patch is imported into the authoritative
-worktree under a sole-writer claim, then disposed; each order's `allowed_mutation_paths` is
-sealed to the run's `planned_files`, and a seeded writer's patch is captured against the
-seeded baseline so the seed is not double-counted. machinery_fixer runs as a read-only
-capsule: it derives a `machinery-fix-report/v1` of anchored `{file, old, new, rationale}`
-edits, mutates nothing, and never enters the capsule-writer import path; reflect applies
-each edit through the `machinery_edit.py` guard.
-`cognitive_worker_smoke.py` verifies a fresh challenge from a real
-Codex or Claude Code parent through the nested exact route, terminal, Git, and disposal
-receipts. Setting `FLOW_HARNESS` without the real outer executable cannot satisfy it.
+The resolver reads only `[models].<stage>`. Values `off`, `none`, `false`, and the
+empty string mean inherit. There is no provider matrix, effort contract, snapshot,
+attestation, or route override.
 
 ### Planning handoff
 
 Planning produces one human-approved Markdown file and records the inspected base SHA.
-`flow-worktree create` resolves that base, writes the plan to `stages/plan.out`, and marks
-the stage complete. The ticket claim, isolated worktree, atomic run state, route snapshot,
-and planned-file ownership remain the bootstrap's durable safety boundaries.
-
-### Legacy `[models]` workspace schema
-
-```toml
-# The block is OPTIONAL. Omit it entirely for the default (routable stages = sonnet
-# on full-lane runs). Each key is a routable stage; its value is the model to pin, or
-# "off"/"none"/"false"/"" to inherit the session model for THAT stage.
-[models]
-implement   = "opus"     # per-stage pin: e.g. this stage self-edits the harness -> keep it strong
-e2e         = "sonnet"   # run + observe the change -> cheap
-# code_review, review_loop are also routable (default sonnet); unlisted stages inherit.
-
-# work_model = "sonnet"  # DEPRECATED global fallback: one model for every routable
-                         # stage without a per-stage key. A per-stage key always wins.
-```
-
-The compatibility wrapper remains byte-for-byte behavioral legacy: full-lane default,
-stage-over-work-model precedence, express/light skip, OFF inheritance, fail-open
-reads, and Codex inheritance. It is never coerced into an `AgentRoute`. Explicit
-`[agents]` routes win as a separate mode; migration requires an explicit apply.
+`flow-worktree create` resolves that base, writes the plan to `stages/plan.out`, and
+marks the stage complete. The ticket claim, isolated worktree, atomic run state, and
+planned-file ownership remain the bootstrap's durable safety boundaries.
 
 ## `.flow-bundle.toml` schema
 
@@ -943,12 +877,8 @@ Bundles the reflect-stage's inputs into a single JSON payload for the reflect LL
 | `--ticket-dir` | `.flow/runs/<ticket>` directory. |
 | `--ticket-frontmatter` | Optional path to ticket .md frontmatter file. |
 | `--cwd` | Git repo working dir (for `diff_since_stage` call). Default `.`. |
-| `--immutable-output` | Atomically write `flow.reflection-input-bundle/v1` for routed reflection. |
-| `--source-sha` / `--route-digest` / `--stage-generation` | Required digest and generation fence for immutable output. |
 
 Payload shape: `{ticket, run_id, state, ticket_frontmatter, final_diff, subagent_reports[], friction[], recalled_entries[], reflect_config, harness_eval}`.
-Immutable mode wraps the unchanged payload with exact source, route, generation, payload
-digest, and envelope digest fields and publishes it read-only.
 `final_diff` is null when ticket stage never started.
 Missing report files → `body: null` + warning to stderr (not fatal).
 

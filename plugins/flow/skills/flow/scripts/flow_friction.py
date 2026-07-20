@@ -1,6 +1,6 @@
 """Append-only in-flight friction log: `.flow/<namespace>/friction.jsonl`.
 
-The do-verb loop appends one entry whenever the orchestrator hits a snag the run
+The do-verb loop appends one entry whenever the driver hits a snag the run
 worked around (a retry, a missing tool, config drift, a lost lease, a planned-file
 reconcile, a failed stage). The reflect stage synthesizes these into the
 machinery-lens findings (`MACHINERY:` knowledge entries) instead of reconstructing

@@ -22,13 +22,11 @@ def test_hot_path_command_resolution() -> None:
         "frontmatter": "ticket_frontmatter.py",
         "friction": "flow_friction.py",
         "model": "model_resolve.py",
-        "agent-route": "agent_routes.py",
         "pending-mutations": "pending_mutations.py",
         "handler": "resolve_handler.py",
         "merge": "stage_merge.py",
         "lifecycle": "lifecycle_cli.py",
         "cockpit": "cockpit_cli.py",
-        "cognitive-worker": "cognitive_workers.py",
         "maintainer-preflight": "maintainer_preflight.py",
         "worker-pool": "worker_pool.py",
         "maintainer-senses": "senses_deadman.py",
@@ -45,6 +43,8 @@ def test_default_commands_use_kebab_case() -> None:
     assert "evolve-session-cleanup" not in flowctl.COMMANDS
     assert "commands" not in flowctl.COMMANDS
     assert "cognitive-worker-smoke" not in flowctl.COMMANDS
+    assert "agent-route" not in flowctl.COMMANDS
+    assert "cognitive-worker" not in flowctl.COMMANDS
 
 
 def test_unknown_command_refused_with_exit_2(tmp_path: Path, capsys) -> None:

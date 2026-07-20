@@ -301,20 +301,12 @@ def _seed_frontmatter(tmp_path: Path, *, unattended) -> None:
 def _seed_review_brief_skip(
     tmp_path: Path,
     *,
-    generation: int = 1,
     reason: str = rb.CANONICAL_UNATTENDED_SKIP_REASON,
-    competing_outcome: bool = False,
 ) -> Path:
     ticket_dir = tmp_path / ".flow" / "runs" / _KEY
     state.init(ticket_dir, _KEY, "jira", ["review_brief"])
     state.begin_stage(ticket_dir, "review_brief", "a" * 40)
-    skill_output: dict = {
-        "cognitive_skips": {
-            "main": {"substep": "main", "stage_generation": generation, "reason": reason}
-        }
-    }
-    if competing_outcome:
-        skill_output["cognitive_outcomes"] = {"main": {"status": "succeeded"}}
+    skill_output = {"review_brief_skip": reason}
     state.finish_stage(ticket_dir, "review_brief", "completed", "a" * 40, skill_output=skill_output)
     return ticket_dir
 
@@ -356,38 +348,6 @@ def test_absent_or_non_boolean_unattended_fails_closed(tmp_path: Path, unattende
     assert result.status == "missing"
 
 
-def test_stale_generation_skip_fails_closed_even_when_unattended(tmp_path: Path):
-    ticket_dir = _seed_review_brief_skip(tmp_path, generation=1)
-    # init seals generation 0; begin_stage bumps it to 1, finish_stage's canonical skip
-    # claims 1 and matches. force_stage_status back to pending keeps the sealed generation
-    # at 1, and the second begin_stage below bumps it to 2 - the skip re-recorded below still
-    # claims generation 1, which is now the STALE one.
-    state.force_stage_status(ticket_dir, "review_brief", "pending")
-    state.begin_stage(ticket_dir, "review_brief", "b" * 40)
-    state.finish_stage(
-        ticket_dir,
-        "review_brief",
-        "completed",
-        "b" * 40,
-        skill_output={
-            "cognitive_skips": {
-                "main": {
-                    "substep": "main",
-                    "stage_generation": 1,
-                    "reason": rb.CANONICAL_UNATTENDED_SKIP_REASON,
-                }
-            }
-        },
-    )
-    _seed_frontmatter(tmp_path, unattended=True)
-
-    result = rb.freshness(
-        _freshness_request(tmp_path, ticket_dir), forge=FakeForge(), runner=GitRunner()
-    )
-
-    assert result.status == "missing"
-
-
 def test_noncanonical_skip_reason_fails_closed_even_when_unattended(tmp_path: Path):
     ticket_dir = _seed_review_brief_skip(tmp_path, reason="not the canonical reason")
     _seed_frontmatter(tmp_path, unattended=True)
@@ -399,25 +359,8 @@ def test_noncanonical_skip_reason_fails_closed_even_when_unattended(tmp_path: Pa
     assert result.status == "missing"
 
 
-def test_outcome_conflicting_skip_fails_closed_even_when_unattended(tmp_path: Path):
-    ticket_dir = _seed_review_brief_skip(tmp_path, competing_outcome=True)
-    _seed_frontmatter(tmp_path, unattended=True)
-
-    result = rb.freshness(
-        _freshness_request(tmp_path, ticket_dir), forge=FakeForge(), runner=GitRunner()
-    )
-
-    assert result.status == "missing"
-
-
 def test_attended_normal_render_remains_current(tmp_path: Path):
-    """Positive path: an attended run's authored, rendered brief still reports current.
-
-    Seeds a completed review_brief record whose skill_output carries an OUTCOME-ONLY
-    'main' (no cognitive_skips), so _skip_authorization actually runs its logic
-    (skips.get('main') is None) and returns None, falling through to the ordinary
-    render-freshness path instead of trivially short-circuiting on no run state at all.
-    """
+    """An attended run's authored, rendered brief still reports current."""
     _seed_frontmatter(tmp_path, unattended=False)
     ticket_dir = tmp_path / ".flow" / "runs" / _KEY
     state.init(ticket_dir, _KEY, "jira", ["review_brief"])
@@ -427,7 +370,7 @@ def test_attended_normal_render_remains_current(tmp_path: Path):
         "review_brief",
         "completed",
         "a" * 40,
-        skill_output={"cognitive_outcomes": {"main": {"status": "succeeded"}}},
+        skill_output={},
     )
     request = _request(tmp_path, _write_content(tmp_path, _content()))
     rb.render(request, forge=FakeForge(SHA_A), runner=GitRunner(SHA_A))

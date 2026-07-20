@@ -1,34 +1,4 @@
-<!-- flow:activation-truth:begin -->
 # Stage: e2e
-
-## Routed disposable-capsule e2e
-
-When the frozen route marks `e2e` pending, dispatch seals its cognitive substep (logical
-invocation, stage generation, source SHA, route digest, owner, and lease fence) and the
-executor launches it through `cognitive-worker run-stage` (`references/delivery-loop.md`),
-never by hand. The capsule is a private standalone clone at the sealed `source_sha`, and
-unlike every read-only role it is write-capable (`authority: disposable_writer`): a recipe
-run legitimately writes fixtures, caches, snapshots, and build products, so the recipe
-executes INSIDE the capsule with a writable sandbox.
-
-Nothing the capsule writes reaches the authoritative worktree. Flow, not the model,
-captures what the capsule mutated (touched paths and a diffstat) into the result's
-`capsule_mutations`, takes no writer import lock, and then discards the whole capsule. The
-read-only-violation guard proves the authoritative worktree is byte-identical across the
-run, so "every source mutation discarded" holds by construction. The worker returns the
-recipe verdict (`pass`/`fail`), the evidence the recipe produced, and the exact
-`source_sha`; Flow attaches the mutation summary as report evidence.
-
-The routed capsule is cloned at the sealed `source_sha` and then **seeded** with the
-ticket's uncommitted working state: implement and code_review run before commit, so their
-edits are still uncommitted in the authoritative worktree at e2e time. Dispatch captures
-that delta as an immutable, digest-bound seed patch and the executor applies it into the
-capsule, so the recipe runs against the ticket's real changed code, not the bare base
-commit. The recipe's own mutations are then measured against that seeded baseline, so the
-`capsule_mutations` evidence reflects what the recipe wrote and never the seeded ticket
-diff. This substep is non-conditional: an activated e2e route always runs the seeded
-capsule, never a `subagent:general-purpose` fallback. The two paths share the recipe and
-evidence contract the rest of this doc defines.
 
 ## Purpose
 
@@ -51,10 +21,8 @@ Your job is to run it exactly, not to reinterpret it.
   fixture, and the expected pass signal.
 - `.flow/runs/<KEY>/ticket.json` — ticket context, for understanding what the
   recipe is verifying.
-- The recipe's code under test: the live working tree (including the uncommitted
-  implement-stage changes) under the default `subagent:general-purpose` handler, or the
-  disposable capsule cloned at the sealed `source_sha` and seeded with those same
-  uncommitted changes under an activated routed run.
+- The current repository, including the implement-stage changes in the working
+  tree.
 
 ## Steps
 
@@ -76,11 +44,11 @@ Your job is to run it exactly, not to reinterpret it.
      anything. This is the one case that emits NO evidence block: the skip line is
      the whole report, with no sentinel (create_pr then draws `## Evidence` from
      the implement verify tail alone, omitting the section when that too is empty).
-   - `test-ci-only` → run the project's no-frills CI/unit suite (the cheap gate
-     the recipe names, e.g. a `mise`/`make`/`npm` test task) and report its
-     result as a rung-1 evidence block (the sentinel + the run block of step 4,
-     for the CI-gate run). Red = failed stage.
    - anything else → a real recipe; go to step 3.
+
+   A unit-test or CI command is not an E2E recipe. Those checks belong to the
+   implementation gate and CI; do not run them a third time here. If the ticket has
+   no real runnable behavior, the plan must use `skip: <reason>`.
 
 3. Execute the recipe exactly as written. Run its env-prep first (the recipe
    spells out any auth refresh, container/service bring-up, or resource tuning
@@ -147,7 +115,7 @@ Your job is to run it exactly, not to reinterpret it.
    - **Rung 4, external blob link (only when the note carries a destination).** If,
      and only if, the evidence note contains an explicit human-authored upload
      destination, upload the full artifact there and record the URL plus the sha256
-     that pins it. Never invent a destination; an unattended run never introduces
+     that pins it. Never invent a destination; an unattended driver never introduces
      one, and with no destination in the note there is no rung 4.
 
    Keep the report scrub-safe: no em-dashes in the prose lines (write
@@ -170,31 +138,7 @@ Your job is to run it exactly, not to reinterpret it.
 ## Errors
 
 - Recipe runs and fails → report the failure and return with the stage
-  unfinished. A failing e2e recipe is a failed stage, with one exception: a
-  failure confirmed as a known sandbox-blocked-subprocess artifact (below).
-- **Known sandbox-blocked-subprocess false-fails, the one exception to the rule
-  above.** Two probes in this repo's own suite can fail inside the e2e capsule
-  sandbox for a reason unrelated to the ticket's change: the sandbox blocks or
-  kills a subprocess the probe depends on. `tests/test_recover.py::test_detect_holder_liveness_alive_end_to_end`
-  exercises `recover._holder_liveness`, which shells out to `ps -p <pid>`; when
-  the sandbox blocks that subprocess the call raises inside the surrounding
-  try/except and `_holder_liveness` returns `{"probe": "error", "alive": None}`
-  instead of a real `ps` result. Any test that calls `cognitive_workers.git_receipt`
-  unmocked (several files under `tests/test_cognitive_worker*.py`) exercises its
-  `git submodule status --recursive` call, made through `_git_bytes` with the
-  default `allow_returncodes=(0,)`; when the sandbox kills that subprocess with
-  SIGPIPE the process exits 141 (128 plus signal 13), a code `_git_bytes` does
-  not allow, so it raises. Both belong to the same class: the sandbox blocking
-  or killing a subprocess the probe shells out to. Apply one rule whenever
-  these are the only failures in an e2e run: isolate each failing test and
-  rerun it with the sandbox disabled. Treat a failure as a known sandbox
-  artifact only when it passes sandbox-disabled and the test does not touch a
-  file the ticket changed; that confirmed case does NOT fail the stage, record
-  it in the rung-1 evidence block as a known sandbox artifact with the
-  sandbox-disabled rerun as evidence, and the stage completes. If it still
-  fails sandbox-disabled, or it touches a changed file, treat the ticket's
-  change as implicated instead, and the stage stays failed per the rule above.
-  The same rule covers any future probe in this class.
+  unfinished. A failing e2e recipe is a failed stage.
 - `e2e_recipe` missing/empty → workspace misconfiguration (e2e is running without a
   recipe; the bootstrap gate normally prevents this). Report it as failed so the
   user supplies a recipe or explicitly disables e2e (`e2e = "none"`).

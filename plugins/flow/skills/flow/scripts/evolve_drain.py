@@ -1,10 +1,11 @@
 """Decide the next action for the `evolve drain` loop (pure core + thin CLI).
 
 The drain loop reaps finished orphans, then asks this module: given the current `evolve_select`
-result plus the liveness of every in-flight run, should the loop LAUNCH the next batch, WAIT for a
-live run to settle, or is it DONE (nothing startable)? The exact facade consumer is the
+result plus the liveness of every in-flight run, should the driver RECOVER stranded work, WAIT for
+a live run to settle, request ATTENDED PLANNING for fresh candidates, or report DONE? The facade
+consumer is the
 `evolve-drain` command in `FLOW maintain evolution drain` (`references/command-maintain.md`
-§drain): the owner loop (reap, launch native collaboration workers, owner wait) is prose there;
+§drain): the driver loop (reap, native collaboration, driver wait) is prose there;
 the CLI here is its pure evolution-scoped decision, plus `decide()`/`liveness_map()`/
 `stranded_pre_pr()` as a shared library `queue_drain.py`/`queue_status.py` reuse for the day-job
 (non-evolve) backlog with their own scoped in-flight set.
@@ -15,8 +16,9 @@ cap may have left `bd ready` (its bead is claimed), so `skipped_in_flight` can b
 runs are in flight. Relying on it would make the loop quit the moment backpressure hits. Liveness
 over the open PRs is the authoritative picture.
 
-Termination: `action == "done"` iff `launch` is empty AND `launched_pending` is empty AND no
-in-flight run is BLOCKING.
+Termination: `action == "done"` iff the candidate list is empty, `launched_pending` is empty, and
+no in-flight run is blocking or stranded. A candidate requests attended planning; it does not
+authorize a worker launch.
 A run is blocking when its lease reads "live" (still working) OR "corrupt" (run.lock unparseable,
 ownership cannot be confirmed). The third blocking reason is a non-empty `launched_pending`: a run
 fanned out on a prior turn that has not yet registered a branch/lease/PR is still in the launch→init
@@ -28,16 +30,17 @@ withheld hot bead (the in-run reviewer raised `held_guard`) leaves a ready PR + 
 session has ended, so its lease is non-blocking (expired/absent): it never reads as "wait," so the
 loop cannot spin on it. It terminates and reports it `parked` for the human. A still-running run
 reads "live" → the loop waits → it self-merges → the next turn's reap clears the cap /
-`hot_inflight` → the next batch launches.
+`hot_inflight` → the next candidate batch is reported for planning.
 A corrupt lease blocks until a human runs `recover takeover`.
 
-A fourth termination guard is the STRANDED gate: a `FLOW <key> --unattended` run that died PRE-PR
-(crash/zombie/OOM in plan or implement) strands its bead in_progress with a dirty orphan worktree
+A fourth termination guard is the STRANDED gate: an already-approved unattended run that died
+before its PR (crash/zombie/OOM during delivery) strands its bead in_progress with a dirty orphan
+worktree
 but no lease and no PR, so every other channel reads it as gone and the loop would false-positive to
 "done". cli_main detects it (an in_progress evolve-scoped bead whose lease is non-live, that is not
 in `launched_pending`, and has NO PR open or merged) and feeds the key list to decide() as
 `stranded`; a non-empty `stranded` returns action "recover" (never "done"), and the loop reaps the
-dirty worktree + reopens the bead so the next turn relaunches it FRESH. See
+dirty worktree + reopens the bead so the next turn can return it for attended planning. See
 references/command-maintain.md §drain (the recover branch).
 
 Exit codes: 0 ok; 2 = a `bd`/`git`/`gh` call failed; 4 = not a maintainer setup.
@@ -78,20 +81,21 @@ def decide(
 ) -> dict[str, Any]:
     """Pure: map a select result + in-flight liveness to the loop's next action.
 
-    launch non-empty            -> launch that batch.
-    launch empty, stranded non-empty -> recover (a pre-PR dead run left its bead
+    stranded non-empty          -> recover (a pre-PR dead run left its bead
                                    IN_PROGRESS + a dirty orphan worktree, invisible
                                    to every other channel; the loop reaps the
-                                   worktree + reopens the bead so the next turn
-                                   relaunches it fresh). A non-empty `stranded` MUST
+                                   worktree + reopens the bead so the next turn can
+                                   offer it for attended planning). A non-empty `stranded` MUST
                                    never let the loop read `done`. That was the
                                    false-positive termination this gate closes.
-    launch empty, a blocking run -> wait (live OR corrupt: corrupt cannot be
+    a blocking run              -> wait (live OR corrupt: corrupt cannot be
                                    confirmed dead, so it blocks a self-merge).
-    launch empty, launched_pending non-empty -> wait (a launched-but-pre-lease run
+    launched_pending non-empty  -> wait (a launched-but-pre-lease run
                                    is still in the launch->init window; it blocks
                                    until it registers or its fleet entry ages out).
-    launch empty, none blocking -> done (drained, or only parked-for-human remains).
+    candidates non-empty        -> plan_required (fresh work needs driver planning,
+                                   independent assessment, and human approval).
+    none of the above           -> done (drained, or only parked-for-human remains).
 
     `liveness` is the complete in-flight picture (open PRs + in-flight ready beads);
     `launched_pending` (from the select result) is the still-pre-lease launched keys;
@@ -100,13 +104,12 @@ def decide(
     `parked` is the keys whose run is not live and not still bootstrapping (what the
     loop hands the human: withheld hot PRs, non-green drafts, orphaned branches).
 
-    The EMPTY-`stranded` path returns the byte-identical pre-stranded shape (no
-    `stranded` key), so the frozen `evolve_drain.decide` corpus stays green; only the
-    non-empty `recover` return carries the `stranded` list.
+    `launch` is retained only as an internal selector field. Every public decision
+    returns `launch=[]`; `plan_required` carries candidates only for that action.
+    Precedence is recover > wait > plan_required > done so fresh candidates cannot
+    hide existing work that needs recovery or observation.
     """
-    launch = list(select_result.get("launch") or [])
-    if launch:
-        return {"action": "launch", "launch": launch, "parked": []}
+    candidates = list(select_result.get("launch") or [])
     stranded_keys = sorted(set(stranded))
     launched_pending = set(select_result.get("launched_pending") or [])
     blocking = sorted(k for k, state in liveness.items() if state in ("live", "corrupt"))
@@ -116,10 +119,23 @@ def decide(
         if state not in ("live", "corrupt") and k not in launched_pending and k not in stranded_keys
     )
     if stranded_keys:
-        return {"action": "recover", "launch": [], "stranded": stranded_keys, "parked": parked}
+        return {
+            "action": "recover",
+            "launch": [],
+            "plan_required": [],
+            "stranded": stranded_keys,
+            "parked": parked,
+        }
     if blocking or launched_pending:
-        return {"action": "wait", "launch": [], "parked": parked}
-    return {"action": "done", "launch": [], "parked": parked}
+        return {"action": "wait", "launch": [], "plan_required": [], "parked": parked}
+    if candidates:
+        return {
+            "action": "plan_required",
+            "launch": [],
+            "plan_required": candidates,
+            "parked": parked,
+        }
+    return {"action": "done", "launch": [], "plan_required": [], "parked": parked}
 
 
 def liveness_map(repo: Path, keys: list[str]) -> dict[str, str]:
@@ -144,7 +160,7 @@ def _merged_pr_keys(runner: Runner) -> set[str]:
     """Flow keys with a MERGED PR.
 
     An in_progress bead with a merged PR is a different inconsistency (close, not
-    relaunch), so it is excluded from the stranded set.
+    renewed delivery), so it is excluded from the stranded set.
     """
     return {
         k
@@ -233,8 +249,7 @@ def cli_main(argv: list[str]) -> int:
     parser.add_argument(
         "--include-proposals",
         action="store_true",
-        help="DANGEROUS: also auto-launch `proposal` (judgment) beads, bypassing the "
-        "human spec-plan accept gate. Default off; evolve/audit work only.",
+        help="also include `proposal` (judgment) beads as attended planning candidates",
     )
     args = parser.parse_args(argv)
 
@@ -250,8 +265,7 @@ def cli_main(argv: list[str]) -> int:
 
     if args.include_proposals:
         print(
-            "WARNING: --include-proposals auto-launches judgment `proposal` beads "
-            "without the human spec-plan accept gate.",
+            "NOTICE: --include-proposals includes judgment beads as planning candidates",
             file=sys.stderr,
         )
 

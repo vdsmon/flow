@@ -243,32 +243,6 @@ def test_pick_next_resumes_in_progress_stage(tmp_path: Path) -> None:
     assert state.pick_next_pending(ts, order) == "plan"
 
 
-def test_stage_generation_is_stable_on_resume_and_increments_on_explicit_retry(
-    tmp_path: Path,
-) -> None:
-    state.init(tmp_path, "F-1", "beads", ["plan"])
-    first = state.begin_stage(tmp_path, "plan", "h1")
-    assert first.stages["plan"].generation == 1
-    resumed = state.begin_stage(tmp_path, "plan", "h1")
-    assert resumed.stages["plan"].generation == 1
-    state.force_stage_status(tmp_path, "plan", "pending")
-    retried = state.begin_stage(tmp_path, "plan", "h2")
-    assert retried.stages["plan"].generation == 2
-
-
-def test_old_stage_record_without_generation_loads_as_zero(tmp_path: Path) -> None:
-    state.init(tmp_path, "F-1", "beads", ["plan"])
-    path = tmp_path / "state.json"
-    value = json.loads(path.read_text(encoding="utf-8"))
-    value["stages"]["plan"].pop("generation", None)
-    value["stages"]["plan"].pop("cognitive_substeps", None)
-    path.write_text(json.dumps(value), encoding="utf-8")
-    loaded, code = state.read(tmp_path)
-    assert code == 0
-    assert loaded is not None
-    assert loaded.stages["plan"].generation == 0
-
-
 def test_pick_next_returns_none_when_all_done(tmp_path: Path) -> None:
     _seed(tmp_path)
     for s in ["ticket", "plan", "implement", "commit", "reflect"]:

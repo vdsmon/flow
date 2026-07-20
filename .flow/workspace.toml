@@ -25,114 +25,14 @@ worker_model = "opus"
 # rollback context.
 adjudicate_hot = true
 
-# Post-plan routes are desired execution contracts. Planning itself is an attended,
-# host-native conversation. Flow records the selected post-plan route and requires
-# structured launch acceptance before calling it active.
-
-[agents.implementer.by_owner.claude_code]
-harness = "claude_code"
-model = "sonnet"
-effort = "high"
-
-[agents.implementer.by_owner.codex]
-harness = "codex"
-model = "gpt-5.6-luna"
-effort = "high"
-
-[agents.e2e.by_owner.claude_code]
-harness = "claude_code"
-model = "sonnet"
-effort = "medium"
-
-[agents.e2e.by_owner.codex]
-harness = "codex"
-model = "gpt-5.6-luna"
-effort = "medium"
-
-[agents.diff_reviewer.by_owner.claude_code]
-harness = "claude_code"
-model = "opus"
-effort = "high"
-
-[agents.diff_reviewer.by_owner.codex]
-harness = "codex"
-model = "gpt-5.6-sol"
-effort = "high"
-
-[agents.guard_reviewer.by_owner.claude_code]
-harness = "claude_code"
-model = "opus"
-effort = "high"
-
-[agents.guard_reviewer.by_owner.codex]
-harness = "codex"
-model = "gpt-5.6-sol"
-effort = "high"
-
-[agents.code_reviewer.by_owner.claude_code]
-harness = "claude_code"
-model = "opus"
-effort = "high"
-
-[agents.code_reviewer.by_owner.codex]
-harness = "codex"
-model = "gpt-5.6-sol"
-effort = "high"
-
-[agents.review_fixer.by_owner.claude_code]
-harness = "claude_code"
-model = "sonnet"
-effort = "high"
-
-[agents.review_fixer.by_owner.codex]
-harness = "codex"
-model = "gpt-5.6-luna"
-effort = "high"
-
-[agents.revision_fixer.by_owner.claude_code]
-harness = "claude_code"
-model = "sonnet"
-effort = "high"
-
-[agents.revision_fixer.by_owner.codex]
-harness = "codex"
-model = "gpt-5.6-luna"
-effort = "high"
-
-[agents.review_brief_author.by_owner.claude_code]
-harness = "claude_code"
-model = "sonnet"
-effort = "high"
-
-[agents.review_brief_author.by_owner.codex]
-harness = "codex"
-model = "gpt-5.6-luna"
-effort = "high"
-
-[agents.reflector.by_owner.claude_code]
-harness = "claude_code"
-model = "opus"
-effort = "high"
-
-[agents.reflector.by_owner.codex]
-harness = "codex"
-model = "gpt-5.6-sol"
-effort = "high"
-
-[agents.machinery_fixer.by_owner.claude_code]
-harness = "claude_code"
-model = "sonnet"
-effort = "high"
-
-[agents.machinery_fixer.by_owner.codex]
-harness = "codex"
-model = "gpt-5.6-luna"
-effort = "high"
-
-# Removing [agents] restores the standalone legacy resolver during rollback.
+# Optional native-agent model hints. Unsupported hints inherit the owner session model.
 [models]
-work_model = "opus"   # deprecated global fallback -> implement, code_review, review_loop
-e2e = "sonnet"        # per-stage override wins over work_model
+implement = "sonnet"
+code_review = "opus"
+review_loop = "sonnet"
+e2e = "sonnet"
+review_brief = "sonnet"
+reflect = "opus"
 
 # This repo opens PRs ready for review (maintainer preference). The engine
 # default is draft (create_pr.py returns true when this key is unset), so
@@ -152,7 +52,7 @@ stages = ["ticket", "plan", "implement", "code_review", "commit", "create_pr", "
 
 [pipeline.handlers]
 ticket = "inline"
-plan = "subagent:Plan"
+plan = "inline"
 implement = "subagent:general-purpose"
 code_review = "inline"
 commit = "inline"

@@ -1,16 +1,15 @@
-"""Select + partition the next batch of day-job beads to launch (queue-drain's select core).
+"""Select + partition the next bounded batch of day-job planning candidates.
 
 Day-job sibling of `evolve_select.py`: pure selection over the project's
 NON-evolve backlog, no side effects. Given the ready beads plus the in-flight
-branches/PRs, decide which keys to fan out as `FLOW <key> --unattended` runs. The
-day-job queue-drain loop (flow-hw1.3) consumes this and does the launching.
+branches/PRs, decide which keys fit the next candidate batch. The day-job queue-drain
+loop consumes this and reports `plan_required`; selection never authorizes delivery.
 
 Day-job = `bd ready --json` (unlabelled) minus epics and minus beads labelled
-`evolve` (the evolve drain's queue), `proposal` (judgment work never
-auto-launches; no opt-in exists here), `hot` (a hot non-evolve bead would be
-invisible to evolve's one-hot gate, so it never auto-launches either), or `hitl`
-(human-in-the-loop: resolves only through a live exchange, so unattended pickup
-is structurally wrong). No hot-serialization layer. Hotness is
+`evolve` (the evolve drain's queue), `proposal` (judgment work is excluded by
+default with no opt-in here), `hot` (a hot non-evolve bead would be invisible to
+evolve's one-hot gate, so it is excluded here too), or `hitl` (human-in-the-loop:
+resolves only through a live exchange). No hot-serialization layer. Hotness is
 evolve-machinery-only.
 
 Backpressure is queue-scoped: only open `feat/flow-*` PRs whose key is NOT
@@ -18,15 +17,13 @@ an active evolve bead count toward the `[queue]` cap, and the concurrency
 budget's in-flight session count (the shared worktree pool + fleet ledger)
 subtracts the same active-evolve set, so a busy evolve drain never starves
 this queue. Conservative edge: a flow-key PR whose evolve bead is already
-closed/deferred counts toward the day-job cap (transient under-launching,
-never over-launching).
+closed/deferred counts toward the day-job cap (transient under-selection,
+never over-selection).
 
-Partition is best-effort coarse, NOT a disjointness guarantee (planning is
-post-launch, so the selector never knows a bead's real file set). It serializes
-on the primary-file anchor parsed from the bead's BLAST RADIUS line and relies
-on the keystone gate: each run is worktree/lease-isolated, so any residual file
-overlap surfaces as a merge conflict at human review (friction, never
-corruption).
+Partition is best-effort coarse, not a disjointness guarantee. The selector does not
+know a ticket's final planned file set. It serializes on the primary-file anchor
+parsed from the bead's BLAST RADIUS line; attended driver planning establishes the
+actual scope before a run starts.
 
 Lib only (no CLI): consumed by queue_drain.py's select + decide round and
 queue_status.py's advisory. Raises NotMaintainer (callers map to exit 4) and
@@ -81,7 +78,7 @@ def partition(
     concurrency: int = DEFAULT_CONCURRENCY,
     inflight_count: int = 0,
 ) -> dict[str, Any]:
-    """Pure core: decide the launch batch from already-extracted inputs.
+    """Pure core: decide the candidate batch from already-extracted inputs.
 
     candidates: parsed `bd ready --json` items (id, priority, labels,
     issue_type, description). The day-job filter applies BEFORE the in-flight
@@ -158,7 +155,7 @@ def select(
     # consume this queue's concurrency budget (a saturated evolve drain would
     # otherwise zero it and starve the day-job queue). One query serves both;
     # skipped when there is nothing to subtract from. A key whose evolve bead is
-    # already closed/deferred still counts here (transient under-launching only).
+    # already closed/deferred still counts here (transient under-selection only).
     active_evolve = active_evolve_keys(run) if (pr_keys or sessions) else set()
     open_pr_keys = sorted(pr_keys - active_evolve)
     inflight_keys = {

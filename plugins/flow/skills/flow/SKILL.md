@@ -4,24 +4,20 @@ description: State-aware ticket-to-PR delivery and workspace operations. Use FLO
 allowed-tools: Bash(.flow/runtime/flow:*), Bash(*/.flow/runtime/flow:*), Bash(python3:*), Bash(git:*), Bash(bd:*), Bash(jq:*), Bash(gh:*), Read, Write, Edit, Agent, Skill, AskUserQuestion, PushNotification, EnterWorktree
 ---
 
-<!-- flow:activation-truth:begin -->
 # Flow
 
-## Routed cognition
+## Native roles
 
-New route snapshots may execute the planner, plan assessor, reviewers, review-brief
-author, and reflector through exact Codex or Claude Code CLI routes inside standalone
-read-only capsules, E2E through a disposable write-capable capsule that imports nothing
-and discards every mutation, and the importing writers (implementer, review_fixer,
-revision_fixer) through a write-capable capsule whose validated binary-aware patch Flow
-captures and imports into the authoritative worktree under a sole-writer claim. The
-machinery_fixer also runs in a read-only capsule: it derives a report of anchored
-{file, old, new} edits, mutates nothing, and reflect applies each edit through the
-machinery_edit guard. The owner conversation remains the single human cockpit and the
-dispatcher remains the only stage authority. Each activated substep is bound to its stage
-generation and must return a matching typed outcome. Every exact post-plan route is now
-active; only the generic owner adapter leaves a route shadowed. An exact-route failure
-stops visibly; it never selects a native or alternate-model fallback.
+The driver is the main agent/session and the single human cockpit; the dispatcher
+remains the only stage-state authority. The driver owns planning. Implementation,
+review, assessment, and optional authorship roles use fresh host-native agents when
+their stage calls for independence. They work in the one authoritative ticket
+worktree. Flow may offer a simple model hint that the active host can accept or
+ignore; provider and model identity are not delivery gates.
+
+Use **human** for the user or maintainer at an approval gate and **host** for the
+Claude Code, Codex, or generic adapter. Reserve **owner** for actual resource
+ownership such as a lease, repository, branch, or content boundary.
 
 Flow is one state-aware path from a tracker ticket to a reviewable pull request.
 The user owns intent, plan approval, and PR review. Flow owns the isolated worktree
@@ -111,7 +107,7 @@ The complete public grammar is generated from the registry:
 <!-- flow:public-grammar:begin -->
 ```text
 FLOW
-FLOW <target> [<target> ...] [--unattended] [--together] [--verify express|light|full] [--e2e <recipe>] [--request <additional-intent>] [--route <profile=harness,model,effort>]...
+FLOW <target> [<target> ...] [--unattended] [--together] [--verify express|light|full] [--e2e <recipe>] [--request <additional-intent>]
 FLOW ticket create [--request <problem>]
 FLOW ticket group (<ticket> ... | --mine) [--state open]
 FLOW ticket split <ticket>
@@ -132,7 +128,6 @@ FLOW maintain evolution epic
 FLOW maintain evolution expand <epic>
 FLOW maintain evolution drain [--dry-run] [--include-proposals]
 FLOW maintain worktrees clean [--dry-run]
-FLOW maintain quarantine clean [--dry-run]
 FLOW help [ticket|memory|measure|workspace|maintain]
 ```
 <!-- flow:public-grammar:end -->
@@ -204,20 +199,30 @@ conflicts with `--verify`. Full behavior is in `references/command-target.md`.
 
 ## The one approval gate
 
-For a fresh target, planning is a read-only collaboration with the user. Fetch the
-ticket, inspect the default-branch code, search relevant memory, settle factual
-questions through read-only investigation, and produce a complete plan with an
-independent confidence assessment and an explicit verification lane and e2e recipe.
+For a fresh target, the driver plans read-only with the human. Fetch the ticket,
+inspect default-branch code, search relevant memory, settle factual questions, and
+write one complete plan with a verification lane and E2E recipe. The driver alone
+asks human questions or requests access and permission.
+
+Every plan receives one independent adversarial assessment. Continue the same
+assessor with the complete revised plan for at most three completed passes in one
+autonomous round. Score repository grounding/design correctness/scope completeness/
+verification quality/operational feasibility at weights 25/25/20/20/10. The gate
+requires an unrounded weighted score of at least 90.0 and zero blockers. One
+disclosed replacement assessor is allowed if the original context is lost; it does
+not reset the pass count. Read `references/delivery-plan.md` for the full contract.
 
 - Claude Code uses native plan mode and its exit boundary.
 - Codex uses native Plan mode when active; otherwise present the complete plan, end
   the turn, and wait for explicit approval.
 - A generic adapter uses the same soft turn boundary.
 
-No worktree, repository edit, or run is created before approval. In unattended mode,
-the independent planner may cross the gate only under the documented confidence and
-safety rules; otherwise it records a durable question and exits without parking for
-live input. Read `references/delivery-plan.md` for the full procedure.
+Before approval, re-fetch the default branch and restart bounded assessment when
+relevant paths moved. Present the exact plan, base SHA, confidence and category
+scores, pass/replacement facts, resolved findings, and residual risks. No worktree,
+repository edit, run, or ticket mutation exists before explicit human approval. A
+fresh unattended invocation stops before mutation; confidence never substitutes for
+human approval.
 
 ## Delivery loop
 
@@ -241,17 +246,8 @@ Parse the returned branches structurally: `{"done": true}` is complete, while
 `{"done": false, "blocked_by": "<stage>", "reason": "<text>"}` is a durable
 stop. Otherwise expect a handler descriptor with `stage`, `handler_type`, `head_sha`,
 `ticket_dir`, `output_path`, and `roles`. If `descriptor.roles` includes `"records_diff_baseline"`,
-capture the owned-file baseline before the handler. When
-`descriptor.roles` includes `"agent_routed"`, resolve the frozen profile from the
-run's route snapshot. The snapshot covers all twelve cognitive profiles and records
-composite substeps separately from deterministic stage execution. The read-only profiles,
-the disposable E2E capsule, the importing writers (implementer, review_fixer,
-revision_fixer), and the read-only machinery_fixer all become active on an exact CLI
-receipt. Under the generic owner adapter a route stays shadowed with `effective: null`,
-including a matching native launch acceptance.
-An activated substep runs through `cognitive-worker run-stage`; the configured or
-built-in planner follows the strict pre-approval CLI contract in
-`references/delivery-plan.md`. A per-run override may replace its complete route.
+capture the owned-file baseline before the handler. The driver follows
+`references/delivery-plan.md`.
 
 Every independent stage-agent prompt includes these exact rooted fields. The agent
 applies the call-local `FLOW_HARNESS` selector to the bound absolute `facade`:
@@ -266,12 +262,9 @@ Reference path: <absolute reference, or none>
 Artifact path: <absolute output_path>
 ```
 
-Handlers may be inline, independent subagents, installed skills, or no-ops. A post-plan
-handler with an active exact route launches its worker through `cognitive-worker
-run-stage`; a handler on a shadow route (the generic owner adapter, or a historical
-snapshot) keeps its owner-native or inline execution and records desired route provenance
-only. Every agent receives absolute workspace, skill, ticket, reference, and artifact
-paths plus the harness identity.
+Handlers may be inline, independent native agents, installed skills, or no-ops. Every
+agent receives absolute workspace, skill, ticket, reference, and artifact paths plus
+the harness identity.
 Read `references/delivery-loop.md` before starting or continuing a run.
 
 ## Internal delivery references
@@ -284,6 +277,6 @@ Read `references/delivery-loop.md` before starting or continuing a run.
 - Background ownership: `references/background-pipeline.md`
 - Stage protocols: `references/stage-*.md`
 
-Backgrounding is always a host-owned choice. Flow does not spawn a detached CLI,
+Backgrounding is a host capability chosen by the human. Flow does not spawn a detached CLI,
 scan a host job directory, stop host jobs, or tear down its own session. The owning
-conversation retains continuation responsibility even when the user backgrounds it.
+driver retains continuation responsibility even when the human backgrounds it.

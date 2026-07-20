@@ -1,14 +1,4 @@
-<!-- flow:activation-truth:begin -->
 # Workspace commands
-
-## Agent-route workspace contract
-
-Initialized workspaces carry all ten post-plan route profiles. New exact snapshots
-activate every read-only profile, the disposable E2E writer, and the three importing
-writers (implementer, review_fixer, revision_fixer) on Claude Code and Codex; only
-the generic owner adapter leaves a route shadowed. Repair and validation reject a
-partial self-workspace catalog because route resolution, dispatch composition,
-prompt entries, and receipts must agree.
 
 Workspace commands manage Flow's local installation, health, repairs, queued tracker
 writes, and runtime layout. The loaded skill directory is the only trusted source for
@@ -84,35 +74,9 @@ Success reports tracker backend, namespace, runtime layout version, facade path,
 the host-rendered invocation for bare `FLOW`. A healthy second setup is a successful
 validation, not an error and not a destructive reconfiguration.
 
-Fresh Claude Code and Codex setup writes explicit `[agents]` defaults. Generic setup
-emits no route that its adapter cannot honor. Existing `[models]` configuration stays
-in standalone compatibility mode during repair or reconfiguration. Setup never
-silently converts it. When a workspace has both tables, a missing explicit profile
-uses its corresponding legacy model when one exists, then falls back to the built-in
-route for profiles without a legacy knob.
-
-Native setup emits all ten post-plan profiles from the central route catalog. Review and
-reflection use the owner's strong tier.
-Implementation, fixes, and review-brief authorship use its faster tier, while E2E
-uses that tier at medium effort. Planning is host-native and attended. Exact capability,
-authentication, schema, and launch-receipt evidence is required for post-plan workers.
-A failure stops the attempt and does not select another harness or model. Every exact route is active on
-Claude Code and Codex; only the generic owner adapter leaves a route shadowed.
-
-Review migration before applying it:
-
-```bash
-FLOW_HARNESS="<harness>" "<facade>" agent-route migrate \
-  --workspace-root . --check
-FLOW_HARNESS="<harness>" "<facade>" agent-route migrate \
-  --workspace-root . --apply --confirm
-```
-
-The migration appends the complete twelve-profile catalog atomically and preserves
-every existing byte. It translates roles that have legacy stage knobs and fills the
-remaining roles from declared built-ins. It refuses OFF values and provider aliases
-that cannot become an explicit Claude Code route. Removing the appended `[agents]`
-tables restores the unchanged legacy block.
+An optional `[models]` table may provide host-native stage hints. Reconfiguration
+preserves those hints. Setup does not create provider matrices or require model
+identity as execution evidence.
 
 ## `FLOW workspace inspect [<target>] [--json]`
 

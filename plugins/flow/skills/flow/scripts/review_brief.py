@@ -1025,12 +1025,7 @@ def _latest_receipt(ticket_dir: Path) -> dict[str, Any] | None:
 
 
 def _completed_review_brief_record(ticket_dir: Path) -> tuple[str | None, dict[str, Any] | None]:
-    """Read the run's ticket key and its completed review_brief stage record, if any.
-
-    Reads state.json's on-disk shape directly rather than importing state.py: that cross-module
-    dependency would require a MODULE.md import-graph update outside this stage's planned file
-    set, and touching a file outside that set voids the whole capsule import.
-    """
+    """Read the run's ticket key and its completed review_brief stage record, if any."""
     try:
         raw = json.loads((ticket_dir / "state.json").read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
@@ -1048,34 +1043,13 @@ def _completed_review_brief_record(ticket_dir: Path) -> tuple[str | None, dict[s
 
 
 def _skip_authorization(workspace_root: Path, ticket_dir: Path) -> Freshness | None:
-    """Cross-check a dispatcher-accepted review_brief skip against the run's seeded signal.
-
-    Returns None when review_brief was never skipped (no run state, the stage is not
-    completed, or its receipt carries no 'main' cognitive skip) OR when a skip exists but is
-    not authorized (not the exact canonical, matching-generation skip with no competing 'main'
-    outcome, or the run's frontmatter does not carry `unattended = true`): either way the
-    caller falls through to the normal render-freshness path, which still reports 'missing'
-    when no brief exists for the PR head, so an attended tail can never silently lose its
-    brief (flow-ijyh) and the documented in-merge refresh keeps working. Only the exact
-    canonical, matching-generation, non-competing skip on a run whose frontmatter carries
-    `unattended = true` short-circuits here, returning the non-blocking 'disabled' status.
-    """
+    """Accept the documented unattended skip recorded by the completed stage."""
     ticket, record = _completed_review_brief_record(ticket_dir)
     if ticket is None or record is None:
         return None
     skill_output = record.get("skill_output")
     skill_output = skill_output if isinstance(skill_output, dict) else {}
-    skips = skill_output.get("cognitive_skips")
-    main_skip = skips.get("main") if isinstance(skips, dict) else None
-    if not isinstance(main_skip, dict):
-        return None
-    outcomes = skill_output.get("cognitive_outcomes")
-    competing_outcome = isinstance(outcomes, dict) and "main" in outcomes
-    canonical = (
-        main_skip.get("reason") == CANONICAL_UNATTENDED_SKIP_REASON
-        and main_skip.get("stage_generation") == record.get("generation")
-        and not competing_outcome
-    )
+    canonical = skill_output.get("review_brief_skip") == CANONICAL_UNATTENDED_SKIP_REASON
     fm_path = workspace_root / ".flow" / "tickets" / f"{ticket}.md"
     unattended = ticket_frontmatter.read(fm_path).get("unattended")
     if canonical and unattended is True:

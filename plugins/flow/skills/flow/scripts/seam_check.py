@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import argparse
 import ast
-import hashlib
 import os
 import re
 import shlex
@@ -29,14 +28,11 @@ from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
 
-import agent_routes
 import flowctl
 
 SCRIPTS_DIR = Path(__file__).resolve().parent
 SKILL_ROOT = SCRIPTS_DIR.parent
 REPO_ROOT = SKILL_ROOT.parents[3]
-_COGNITIVE_WORKER_DESIGN_DIGEST = "36b2007e88e43cd99b6c1b3a99b7a4102ff6f099a9525f6a58854b01407f3a85"
-
 # A direct script reference inside prose, using a legacy child environment alias or the
 # harness-neutral loaded-root placeholder.
 # Char class is [a-z0-9_]+ (NOT [a-z_]+): omitting the digit silently skips a
@@ -1589,240 +1585,6 @@ def docs_to_check() -> list[Path]:
     return [d for d in docs if d.is_file()]
 
 
-# --- activation-truth marker/pin parity --------------------------------------
-
-# The marker identity every live claim-carrying surface pins itself with. A lone `:begin` (no
-# `:end`) is deliberate: this is a single-line presence pin, not a managed content block like the
-# AGENTS stanza or the inventory profile block, so there is nothing to delimit.
-_ACTIVATION_TRUTH_MARKER = "flow:activation-truth:begin"
-_ACTIVATION_TRUTH_MD_RE = re.compile(
-    r"(?m)^<!-- " + re.escape(_ACTIVATION_TRUTH_MARKER) + r" -->\s*$"
-)
-_ACTIVATION_TRUTH_PY_RE = re.compile(r"(?m)^# " + re.escape(_ACTIVATION_TRUTH_MARKER) + r"\s*$")
-
-# Repo-relative paths of every surface an author has declared to carry live activation-truth prose
-# (the exact post-plan route catalog, the generic-owner shadow rule, importing/capsule-writer
-# claims). Bidirectional parity with the discovered marker set (`activation_truth_drift`) is the
-# completeness guarantee: a marked file missing from this set, or a pinned file that lost its marker
-# (by edit, deletion, or rename), both fail the gate.
-ACTIVATION_TRUTH_PINS = frozenset(
-    {
-        "CLAUDE.md",
-        "plugins/flow/skills/flow/SKILL.md",
-        "plugins/flow/skills/flow/references/command-target.md",
-        "plugins/flow/skills/flow/references/command-workspace.md",
-        "plugins/flow/skills/flow/references/delivery-loop.md",
-        "plugins/flow/skills/flow/references/delivery-plan.md",
-        "plugins/flow/skills/flow/references/delivery-revision.md",
-        "plugins/flow/skills/flow/references/harness.md",
-        "plugins/flow/skills/flow/references/robustness.md",
-        "plugins/flow/skills/flow/references/stage-code_review.md",
-        "plugins/flow/skills/flow/references/stage-e2e.md",
-        "plugins/flow/skills/flow/references/stage-implement.md",
-        "plugins/flow/skills/flow/references/stage-merge.md",
-        "plugins/flow/skills/flow/references/stage-plan.md",
-        "plugins/flow/skills/flow/references/stage-reflect.md",
-        "plugins/flow/skills/flow/references/stage-review_brief.md",
-        "plugins/flow/skills/flow/references/stage-review_loop.md",
-        "plugins/flow/skills/flow/scripts/MODULE.md",
-        "plugins/flow/skills/flow/scripts/agent_routes.py",
-        "plugins/flow/skills/flow/scripts/cognitive_workers.py",
-        "plugins/flow/skills/flow/scripts/inventory.md",
-    }
-)
-
-
-def activation_truth_candidates(
-    repo_root: Path = REPO_ROOT, skill_root: Path = SKILL_ROOT, scripts_dir: Path = SCRIPTS_DIR
-) -> list[Path]:
-    """The live hand-authored surface universe scanned for activation-truth markers.
-
-    Root CLAUDE.md, SKILL.md, top-level references/*.md, and top-level scripts/*.md and
-    scripts/*.py. Every glob is non-recursive, which keeps scripts/tests/* (fixtures and
-    marker-shaped strings in the test source itself) and any nested doc directory out of the
-    universe with no explicit exclusion list; historical design records under docs/specs are never
-    scanned.
-    """
-    candidates: list[Path] = []
-    claude_md = repo_root / "CLAUDE.md"
-    if claude_md.is_file():
-        candidates.append(claude_md)
-    skill_md = skill_root / "SKILL.md"
-    if skill_md.is_file():
-        candidates.append(skill_md)
-    refs = skill_root / "references"
-    if refs.is_dir():
-        candidates.extend(sorted(refs.glob("*.md")))
-    if scripts_dir.is_dir():
-        candidates.extend(sorted(scripts_dir.glob("*.md")))
-        candidates.extend(sorted(scripts_dir.glob("*.py")))
-    return candidates
-
-
-def discovered_activation_truth_markers(
-    candidates: list[Path] | None = None, repo_root: Path = REPO_ROOT
-) -> frozenset[str]:
-    """Repo-relative paths of every candidate that carries the activation-truth marker."""
-    if candidates is None:
-        candidates = activation_truth_candidates(repo_root=repo_root)
-    found: set[str] = set()
-    for path in candidates:
-        try:
-            text = path.read_text(encoding="utf-8")
-        except OSError:
-            continue
-        if _ACTIVATION_TRUTH_MD_RE.search(text) or _ACTIVATION_TRUTH_PY_RE.search(text):
-            found.add(path.relative_to(repo_root).as_posix())
-    return frozenset(found)
-
-
-@dataclass(frozen=True)
-class ActivationTruthDrift:
-    marker_without_pin: frozenset[str]
-    pin_without_marker: frozenset[str]
-
-
-def activation_truth_drift(
-    candidates: list[Path] | None = None,
-    pins: frozenset[str] = ACTIVATION_TRUTH_PINS,
-    repo_root: Path = REPO_ROOT,
-) -> ActivationTruthDrift:
-    """Bidirectional parity between discovered markers and the pin registry.
-
-    A marker with no matching pin, and a pin whose file lost its marker (by edit, deletion, or
-    rename), both surface here; membership is the completeness contract, not a derived heuristic.
-    """
-    markers = discovered_activation_truth_markers(candidates, repo_root)
-    return ActivationTruthDrift(
-        marker_without_pin=frozenset(markers - pins),
-        pin_without_marker=frozenset(pins - markers),
-    )
-
-
-# One bounded authoring reminder, not a general claim-completeness scan: these four phrases anchor
-# the live exact post-plan route catalog, the generic-owner shadow rule, the importing-writer claim,
-# and the capsule-writer claim. Proven to have zero hits across every currently-unmarked
-# references/*.md at the base SHA; re-check that invariant before widening this set. The marker/pin
-# parity above is what actually closes the completeness gap; this tripwire is only a nudge toward
-# using it.
-_ACTIVATION_CLAIM_PHRASES = (
-    "exact post-plan",
-    "generic owner",
-    "importing writer",
-    "capsule writer",
-)
-
-
-def _reference_docs(skill_root: Path = SKILL_ROOT) -> list[Path]:
-    refs = skill_root / "references"
-    return sorted(refs.glob("*.md")) if refs.is_dir() else []
-
-
-def activation_truth_tripwire_problems(
-    docs: list[Path] | None = None,
-) -> list[tuple[str, int, str]]:
-    """Flag an unmarked reference doc that uses a live activation-claim phrase.
-
-    Scoped to references/*.md that do not already carry the marker: a marked file's completeness is
-    already covered by `activation_truth_drift`, so re-scanning it here would be redundant. Reports
-    at most one hit per doc.
-    """
-    if docs is None:
-        docs = _reference_docs()
-    problems: list[tuple[str, int, str]] = []
-    for doc in docs:
-        text = doc.read_text(encoding="utf-8")
-        if _ACTIVATION_TRUTH_MD_RE.search(text):
-            continue
-        for lineno, logical in _logical_lines(text):
-            lowered = logical.lower()
-            if any(phrase in lowered for phrase in _ACTIVATION_CLAIM_PHRASES):
-                problems.append((doc.name, lineno, "add the activation-truth marker or reword"))
-                break
-    return problems
-
-
-def _workspace_agents_drift(workspace_toml: str) -> list[str]:
-    try:
-        data = tomllib.loads(workspace_toml)
-    except tomllib.TOMLDecodeError as exc:
-        return [f"self-workspace is not valid TOML: {exc}"]
-    # Schema validation first: it rejects unknown profiles and incomplete or malformed route tables,
-    # so the render below is total (render_route_config would KeyError on a missing field and
-    # silently drop an unknown profile).
-    schema_problems = agent_routes.configuration_errors(data)
-    if schema_problems:
-        return [f"self-workspace {problem}" for problem in schema_problems]
-    agents = data.get("agents")
-    if not isinstance(agents, dict):
-        return ["self-workspace has no [agents] configuration"]
-    expected = set(agent_routes.PROFILES)
-    configured = {str(profile) for profile in agents}
-    if configured != expected:
-        missing = expected - configured
-        extra = configured - expected
-        return [f"self-workspace route catalog mismatch; missing {missing}, extra {extra}"]
-    if agent_routes.render_route_config(agents) != agent_routes.render_default_routes_toml():
-        return ["self-workspace routes do not canonicalize to the rendered defaults"]
-    return []
-
-
-def _inventory_profiles_drift(inventory_text: str) -> list[str]:
-    begin = agent_routes.INVENTORY_PROFILES_BEGIN
-    end = agent_routes.INVENTORY_PROFILES_END
-    if inventory_text.count(begin) != 1 or inventory_text.count(end) != 1:
-        return ["inventory route-profile markers must appear exactly once each"]
-    start = inventory_text.index(begin)
-    stop = inventory_text.index(end)
-    if stop < start:
-        return ["inventory route-profile end marker precedes its begin marker"]
-    block = inventory_text[start : stop + len(end)] + "\n"
-    if block != agent_routes.render_inventory_profiles_block():
-        return ["inventory route-profile block is stale relative to agent_routes.PROFILES"]
-    return []
-
-
-def route_contract_drift(
-    *,
-    workspace_toml: str | None = None,
-    inventory_text: str | None = None,
-) -> list[str]:
-    """Check the committed route surfaces against their agent_routes renderers.
-
-    Setup and migration TOML are rendered by agent_routes at runtime, and stage/substep composition
-    is pinned by tests/test_agent_routes.py, so the only surfaces that can go stale are the
-    committed ones: the inventory.md managed block and the deliberately pinned self-workspace
-    [agents] configuration. Check-only, never writes.
-    """
-    if workspace_toml is None:
-        workspace_path = REPO_ROOT / ".flow" / "workspace.toml"
-        if workspace_path.is_file():
-            workspace_toml = workspace_path.read_text(encoding="utf-8")
-    drift = [] if workspace_toml is None else _workspace_agents_drift(workspace_toml)
-
-    if inventory_text is None:
-        inventory_text = (SCRIPTS_DIR / "inventory.md").read_text(encoding="utf-8")
-    drift.extend(_inventory_profiles_drift(inventory_text))
-    return drift
-
-
-def cognitive_worker_design_drift(path: Path | None = None) -> list[str]:
-    """Require the landed capsule design to match its approved source bytes."""
-    design = path or (
-        REPO_ROOT / "docs" / "specs" / "2026-07-14-universal-cognitive-worker-routing-design.md"
-    )
-    try:
-        digest = hashlib.sha256(design.read_bytes()).hexdigest()
-    except OSError as exc:
-        return [f"cannot read cognitive-worker design: {exc}"]
-    if digest != _COGNITIVE_WORKER_DESIGN_DIGEST:
-        return [
-            "cognitive-worker design digest is "
-            f"{digest}, expected {_COGNITIVE_WORKER_DESIGN_DIGEST}"
-        ]
-    return []
-
-
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(
         description="Validate Flow prose invocations against the public registry and real CLIs."
@@ -1930,33 +1692,6 @@ def main(argv: list[str]) -> int:
         for drift in module_md_surface_cell_drift()
     )
 
-    activation_drift = activation_truth_drift()
-    problems.extend(
-        Problem(
-            doc="activation-truth pins",
-            line=0,
-            level="ERROR",
-            msg=f"marker without pin: {name}",
-            raw="",
-        )
-        for name in sorted(activation_drift.marker_without_pin)
-    )
-    problems.extend(
-        Problem(
-            doc="activation-truth pins",
-            line=0,
-            level="ERROR",
-            msg=f"pin without marker: {name}",
-            raw="",
-        )
-        for name in sorted(activation_drift.pin_without_marker)
-    )
-
-    problems.extend(
-        Problem(doc=doc_name, line=lineno, level="ERROR", msg=msg, raw="")
-        for doc_name, lineno, msg in activation_truth_tripwire_problems()
-    )
-
     for doc_name, count in sorted(docs_over_stage_doc_citation_limit().items()):
         problems.append(
             Problem(
@@ -2005,17 +1740,6 @@ def main(argv: list[str]) -> int:
             raw="",
         )
         for detail in managed_agents_guidance_drift()
-    )
-
-    problems.extend(
-        Problem(
-            doc="agent route contract",
-            line=0,
-            level="ERROR",
-            msg=detail,
-            raw="",
-        )
-        for detail in route_contract_drift()
     )
 
     if args.verbose:

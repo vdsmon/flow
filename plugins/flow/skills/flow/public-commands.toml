@@ -35,7 +35,7 @@ reference = "references/command-target.md"
 [[command]]
 id = "target"
 path = ["<target>"]
-usage = "FLOW <target> [<target> ...] [--unattended] [--together] [--verify express|light|full] [--e2e <recipe>] [--request <additional-intent>] [--route <profile=harness,model,effort>]..."
+usage = "FLOW <target> [<target> ...] [--unattended] [--together] [--verify express|light|full] [--e2e <recipe>] [--request <additional-intent>]"
 summary = "Start, answer, resume, repair, revise, or show work from its current state."
 effect = "confirm"
 workspace = "required"
@@ -49,7 +49,6 @@ options = [
   { name = "--verify", value_type = "choice", cardinality = "zero_or_one", choices = ["express", "light", "full"], conflicts = ["--unattended"] },
   { name = "--e2e", value_type = "text", cardinality = "zero_or_one" },
   { name = "--request", value_type = "text", cardinality = "zero_or_one" },
-  { name = "--route", value_type = "agent_route", cardinality = "zero_or_more" },
 ]
 
 [[command]]
@@ -220,7 +219,7 @@ options = [
 id = "maintain.backlog.drain"
 path = ["maintain", "backlog", "drain"]
 usage = "FLOW maintain backlog drain [--dry-run]"
-summary = "Run ready backlog work through the bounded worker pool."
+summary = "Advance existing backlog delivery and report fresh planning candidates."
 effect = "write"
 workspace = "required"
 reference = "references/command-maintain.md"
@@ -271,7 +270,7 @@ arguments = [
 id = "maintain.evolution.drain"
 path = ["maintain", "evolution", "drain"]
 usage = "FLOW maintain evolution drain [--dry-run] [--include-proposals]"
-summary = "Run ready evolution work through the bounded worker pool."
+summary = "Advance existing evolution delivery and report fresh planning candidates."
 effect = "write"
 workspace = "required"
 reference = "references/command-maintain.md"
@@ -288,19 +287,6 @@ summary = "Remove safe stale Flow worktrees from the invoking workspace."
 effect = "confirm"
 workspace = "required"
 reference = "references/command-maintain.md"
-options = [
-  { name = "--dry-run", value_type = "boolean", cardinality = "zero_or_one" },
-]
-
-[[command]]
-id = "maintain.quarantine.clean"
-path = ["maintain", "quarantine", "clean"]
-usage = "FLOW maintain quarantine clean [--dry-run]"
-summary = "Archive workspace-owned quarantined cognitive capsules."
-effect = "confirm"
-workspace = "required"
-reference = "references/command-maintain.md"
-harnesses = ["claude-code", "codex"]
 options = [
   { name = "--dry-run", value_type = "boolean", cardinality = "zero_or_one" },
 ]

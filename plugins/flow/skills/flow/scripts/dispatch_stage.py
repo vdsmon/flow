@@ -28,9 +28,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
-import hashlib
 import json
-import math
 import secrets
 import socket
 import subprocess
@@ -40,13 +38,10 @@ from pathlib import Path
 from typing import Any, cast
 
 import _locking
-import agent_routes
-import cognitive_workers
 import fleet
 import lease
 import recall_pending
 import state
-import ticket_frontmatter
 import validate_workspace as vw
 from _atomicio import atomic_write_text
 from _registry import StageEntry, registry_by_name
@@ -71,255 +66,16 @@ _INIT_TTL_S = 600
 # (review_loop, 60min -> 120min), bounded and recoverable via FLOW workspace repair.
 _LEASE_TTL_MULTIPLIER = 2
 
-# Lanes that already traded away the plan-blind reader depth; the full lane (the safe default for
-# an absent/unknown frontmatter lane) keeps it mandatory.
-_CHEAP_LANES = frozenset({"express", "light"})
 
-
-def _run_lane(workspace_root: Path, ticket: str) -> str:
-    """The run's verification lane from the ticket frontmatter; absent/unknown reads as full."""
-    try:
-        fm = ticket_frontmatter.read(workspace_root / ".flow" / "tickets" / f"{ticket}.md")
-    except Exception:
-        return "full"
-    lane = fm.get("lane")
-    return lane if isinstance(lane, str) and lane in _CHEAP_LANES else "full"
-
-
-def _cognitive_substeps(
-    workspace_root: Path,
-    ticket_dir: Path,
-    ticket_state: state.TicketState,
-    stage_name: str,
-    generation: int,
-    head_sha: str,
-    lease_fence: str | None,
-) -> dict[str, dict[str, Any]]:
-    """Build sealed cognitive facts from the run's frozen route snapshot."""
-    route_path = ticket_dir / "route-snapshot.json"
-    if not route_path.is_file():
-        return {}
-    try:
-        snapshot = agent_routes.load_snapshot(route_path)
-    except agent_routes.RouteError:
-        return {}
-    execution = snapshot.get("stage_execution", {}).get(stage_name, {})
-    raw_substeps = execution.get("substeps") if isinstance(execution, dict) else None
-    if isinstance(raw_substeps, dict):
-        candidates = raw_substeps
-    elif isinstance(execution, dict) and isinstance(execution.get("profile"), str):
-        candidates = {"main": {"profile": execution["profile"]}}
-    else:
-        return {}
-    routes = snapshot.get("routes")
-    if not isinstance(routes, dict):
-        return {}
-    lane: str | None = None
-    result: dict[str, dict[str, Any]] = {}
-    for substep, raw in candidates.items():
-        if not isinstance(raw, dict) or not isinstance(raw.get("profile"), str):
-            continue
-        profile = raw["profile"]
-        route = routes.get(profile)
-        if not isinstance(route, dict):
-            continue
-        facts: dict[str, Any] = {
-            "logical_invocation_id": (f"{ticket_state.run_id}:{stage_name}:{substep}:{generation}"),
-            "run_id": ticket_state.run_id,
-            "stage": stage_name,
-            "substep": str(substep),
-            # Initial seal sets the substep's own generation equal to the stage-wide seal; a
-            # later per-substep retry (state.retry_cognitive_substep) advances only this field
-            # while stage_generation stays the unchanged stage-wide seal both substeps share.
-            "generation": generation,
-            "stage_generation": generation,
-            "source_sha": head_sha,
-            "route_snapshot_digest": snapshot["digest"],
-            "profile": profile,
-            "desired_route": route.get("desired"),
-            "activation": route.get("activation"),
-            "conditional": raw.get("conditional") is True,
-            "owner_harness": snapshot.get("owner_harness"),
-            "lease_fence": lease_fence,
-            # An importing writer's order seals allowed_mutation_paths from this run's
-            # baseline.json planned_files; prepare_work_order reads it from here. The baseline is
-            # written by the records_diff_baseline pre-hook AFTER this seal, so the paths cannot be
-            # read now, only the ticket_dir that will hold them.
-            "ticket_dir": str(ticket_dir),
-            # The dispatcher, not the agent, decides where the worker's receipt lands, and
-            # reads it back from there. An outcome passed in through the stage's structured
-            # output would be an agent-authored JSON blob, which is trivially fabricable.
-            "artifact_root": str(ticket_dir / "cognitive" / stage_name),
-        }
-        # Seal the run's lane onto a lane-gated substep so the completion fence, which never reads
-        # the plan frontmatter, can refuse a full-lane skip of the mandatory reader (flow-ijyh).
-        if raw.get("lane_gated") is True:
-            if lane is None:
-                lane = _run_lane(workspace_root, ticket_state.ticket)
-            facts["lane"] = lane
-        result[str(substep)] = facts
-    return result
-
-
-def _read_worker_outcome(expected: dict[str, Any]) -> dict[str, Any] | None:
-    """Load one worker's own receipt from the path the dispatcher sealed for it."""
-    artifact_root = expected.get("artifact_root")
-    logical_id = expected.get("logical_invocation_id")
-    if not isinstance(artifact_root, str) or not isinstance(logical_id, str):
-        return None
-    token = hashlib.sha256(logical_id.encode()).hexdigest()
-    path = Path(artifact_root) / "invocations" / token / "outcome.json"
-    try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    return value if isinstance(value, dict) else None
-
-
-def _outcome_matches(outcome: dict[str, Any], expected: dict[str, Any]) -> bool:
-    body = {key: value for key, value in outcome.items() if key != "digest"}
-    if outcome.get("digest") != agent_routes.canonical_digest(body):
-        return False
-    receipts = outcome.get("receipts")
-    if not isinstance(receipts, dict):
-        return False
-    route_receipt = receipts.get("route")
-    process = receipts.get("process")
-    disposal = receipts.get("disposal")
-    if not all(isinstance(item, dict) for item in (route_receipt, process, disposal)):
-        return False
-    route_receipt = cast(dict[str, Any], route_receipt)
-    process = cast(dict[str, Any], process)
-    disposal = cast(dict[str, Any], disposal)
-    terminal = all(
-        process.get(key) is True
-        for key in ("child_reaped", "process_group_absent", "stdout_eof", "stderr_eof")
-    )
-    return (
-        outcome.get("status") == "succeeded"
-        and outcome.get("logical_invocation_id") == expected["logical_invocation_id"]
-        # A legacy seal from before per-substep retry has no "generation" key of its own; it
-        # falls back to stage_generation, the value it was always implicitly equal to.
-        and outcome.get("generation") == expected.get("generation", expected["stage_generation"])
-        and outcome.get("profile") == expected["profile"]
-        and outcome.get("run_id") == expected["run_id"]
-        and outcome.get("stage") == expected["stage"]
-        and outcome.get("substep") == expected["substep"]
-        and outcome.get("stage_generation") == expected["stage_generation"]
-        and outcome.get("source_sha") == expected["source_sha"]
-        and outcome.get("route_snapshot_digest") == expected["route_snapshot_digest"]
-        and outcome.get("lease_fence") == expected["lease_fence"]
-        and route_receipt.get("activation") == "active"
-        and route_receipt.get("effective") == expected["desired_route"]
-        and terminal
-        and disposal.get("absent") is True
-        and disposal.get("quarantined") is False
-    )
-
-
-def _validate_cognitive_completion(
-    record: state.StageRecord, skill_output: dict[str, Any] | None
-) -> str | None:
-    """Reject stage completion when an activated substep has no matching worker receipt.
-
-    The receipt is read from the invocation directory the dispatcher sealed, never from the
-    stage's structured output: an outcome the agent hands back is an agent-authored JSON blob
-    and would let a stage complete without any worker ever running.
-    """
-    sealed = record.cognitive_substeps or {}
-    active = {
-        name: value
-        for name, value in sealed.items()
-        if isinstance(value, dict) and value.get("activation") == "pending"
-    }
-    if not active:
-        return None
-    raw_skips = skill_output.get("cognitive_skips") if isinstance(skill_output, dict) else None
-    skips = raw_skips if isinstance(raw_skips, dict) else {}
-    for name, expected in active.items():
-        outcome = _read_worker_outcome(expected)
-        if outcome is not None:
-            if _outcome_matches(outcome, expected):
-                continue
-            return f"cognitive outcome for {name!r} does not match the sealed stage generation"
-        skip = skips.get(name)
-        if expected.get("conditional") and isinstance(skip, dict) and skip.get("reason"):
-            # A lane-gated substep (only plan_blind_review today) carries the run's sealed lane; on
-            # the full lane its reader is mandatory, so its reasoned skip is refused (flow-ijyh). A
-            # non-lane-gated conditional substep (review_fix/revision_fix/machinery_fix) has no
-            # sealed lane and its skip is still accepted.
-            lane = expected.get("lane")
-            if lane is None or lane in _CHEAP_LANES:
-                continue
-            return f"lane-gated cognitive substep {name!r} cannot be skipped on the {lane!r} lane"
-        return f"activated cognitive substep {name!r} has no successful outcome or valid skip"
-    return None
-
-
-def _begin_and_seal(
-    ticket_dir: Path,
-    stage_name: str,
-    head_sha: str,
-    generation: int,
-    cognitive: dict[str, Any],
-    *,
-    already_sealed: bool,
-) -> str | None:
-    """Open the stage and bind its cognitive facts once, or report why it cannot open."""
-    try:
-        state.begin_stage(ticket_dir, stage_name, head_sha)
-        if cognitive and not already_sealed:
-            state.seal_cognitive_substeps(ticket_dir, stage_name, generation, cognitive)
-    except ValueError as exc:
-        return str(exc)
-    return None
-
-
-# Margin applied on top of the sealed stage's cumulative provider-deadline allowance (every
-# launchable substep's hard budget, across its permitted retries) so the lease outlives the
-# worst-case sequential runtime run_stage may still be executing when the doubled-timeout floor
-# would already have expired it (flow-euzu forensics: a writer's TDD sweep outran a reader lease).
-_CUMULATIVE_TTL_MARGIN = 1.5
-
-
-def _stage_ttl_seconds(
-    stage_meta: StageEntry | None, cognitive: dict[str, dict[str, Any]] | None = None
-) -> int:
+def _stage_ttl_seconds(stage_meta: StageEntry | None) -> int:
     timeout_min = stage_meta.default_timeout_min if stage_meta else 10
-    floor = timeout_min * 60 * _LEASE_TTL_MULTIPLIER
-    if not cognitive:
-        return floor
-    cumulative = 0
-    for substep in cognitive.values():
-        if not isinstance(substep, dict) or substep.get("activation") != "pending":
-            continue
-        profile = substep.get("profile")
-        if not isinstance(profile, str) or profile not in cognitive_workers.ROLE_CATALOG:
-            raise cognitive_workers.WorkerFailure(
-                f"sealed cognitive substep names an unknown profile {profile!r}",
-                code="invalid_order",
-            )
-        cumulative += cognitive_workers.cumulative_role_budget(profile)
-    return max(floor, math.ceil(cumulative * _CUMULATIVE_TTL_MARGIN))
-
-
-def _stage_ttl_or_error(
-    stage_meta: StageEntry | None,
-    cognitive: dict[str, dict[str, Any]] | None,
-    stage_name: str,
-) -> tuple[int, None] | tuple[None, dict[str, Any]]:
-    """Compute the refreshed lease TTL, or the typed error an unknown profile raises."""
-    try:
-        return _stage_ttl_seconds(stage_meta, cognitive), None
-    except cognitive_workers.WorkerFailure as exc:
-        return None, {"error": str(exc), "stage": stage_name}
+    return timeout_min * 60 * _LEASE_TTL_MULTIPLIER
 
 
 def _refresh_stage_lease(
     td: Path,
     run_id: str,
     stage_meta: StageEntry | None,
-    cognitive: dict[str, dict[str, Any]] | None,
     stage_name: str,
     *,
     boot: str,
@@ -327,22 +83,14 @@ def _refresh_stage_lease(
     workspace_root: Path,
     session_nonce: str | None,
 ) -> tuple[int, dict[str, Any]] | None:
-    """Refresh the run's lease to cover the sealed stage's TTL before it opens.
-
-    A no-op when no lease exists yet. An unknown launchable profile in the sealed cognitive
-    descriptor fails closed here, before the caller opens the stage, rather than refreshing
-    an under-sized lease.
-    """
+    """Refresh the run's lease to cover the stage timeout before it opens."""
     if lease.read_lease(td) is None:
         return None
-    ttl, ttl_error = _stage_ttl_or_error(stage_meta, cognitive, stage_name)
-    if ttl_error is not None:
-        return 1, ttl_error
     try:
         lease.refresh(
             td,
             run_id,
-            cast(int, ttl),
+            _stage_ttl_seconds(stage_meta),
             utcnow_iso(),
             stage=stage_name,
             current_boot=boot,
@@ -953,20 +701,6 @@ def cmd_next(
         return 0, {"done": True, **recovery}
 
     head_sha = _git_head_sha(workspace_root)
-    current_record = ts.stages[next_stage]
-    generation = (
-        current_record.generation + 1
-        if current_record.status == "pending"
-        else current_record.generation
-    )
-    # A resumed stage keeps the facts it was sealed with. Recomputing them against a HEAD
-    # that moved mid-stage would contradict the seal and strand the stage permanently.
-    sealed = current_record.cognitive_substeps
-    cognitive = (
-        _cognitive_substeps(workspace_root, td, ts, next_stage, generation, head_sha, session_nonce)
-        if current_record.status == "pending"
-        else (sealed or {})
-    )
 
     # Assemble the full descriptor BEFORE mutating state. If descriptor assembly raises, the stage
     # must stay pending rather than be stuck in_progress.
@@ -984,8 +718,6 @@ def cmd_next(
         "output_path": str(output_path),
         "descriptor_path": str(descriptor_path),
         "roles": stage_meta.roles if stage_meta else [],
-        "generation": generation,
-        "cognitive_substeps": cognitive,
         **handler_descriptor,
     }
     # Attach reference_doc regardless of handler type so the do-loop can pass it
@@ -1004,7 +736,6 @@ def cmd_next(
         td,
         ts.run_id,
         stage_meta,
-        cognitive,
         next_stage,
         boot=boot,
         host=host,
@@ -1032,11 +763,10 @@ def cmd_next(
 
     descriptor_path.parent.mkdir(parents=True, exist_ok=True)
     atomic_write_text(descriptor_path, json.dumps(payload, indent=2, sort_keys=True) + "\n")
-    error = _begin_and_seal(
-        td, next_stage, head_sha, generation, cognitive, already_sealed=sealed is not None
-    )
-    if error is not None:
-        return 1, {"error": error, "stage": next_stage}
+    try:
+        state.begin_stage(td, next_stage, head_sha)
+    except ValueError as exc:
+        return 1, {"error": str(exc), "stage": next_stage}
     return 0, payload
 
 
@@ -1075,13 +805,6 @@ def cmd_finish(
                 "error": f"--output-path names a missing file: {p}",
                 "hint": "write the stage output file first, then re-run finish/advance",
             }
-
-    record = ts.stages.get(stage_name)
-    if record is None:
-        return 1, {"error": f"stage {stage_name!r} not in state.stages"}
-    cognitive_error = _validate_cognitive_completion(record, skill_output)
-    if status_value == "completed" and cognitive_error is not None:
-        return 1, {"error": cognitive_error}
 
     head_sha = _git_head_sha(workspace_root)
     try:
@@ -1257,8 +980,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     p_advance.add_argument(
         "--skill-output-from",
         default=None,
-        help="path to the stage's structured output; required for cognitive outcomes, whose "
-        "process evidence does not fit in one argument",
+        help="path to the stage's structured JSON output",
     )
     p_advance.add_argument("--failure-detail", default=None)
     p_advance.add_argument("--revision", default=None, help=revision_help)

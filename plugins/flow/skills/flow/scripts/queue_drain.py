@@ -1,14 +1,14 @@
 """Decide the next action for the day-job `queue drain` loop (pure core + thin CLI).
 
-Day-job sibling of `evolve_drain.py`. The loop itself (reap merged-and-exited runs, fan out
-native `FLOW <key> --unattended` workers and owner waits) is prose in
+Day-job sibling of `evolve_drain.py`. The loop itself (reap merged-and-exited runs,
+wait for existing delivery, and report fresh candidates for attended planning) is prose in
 `references/command-maintain.md`
-(§drain); this module supplies the decision it consumes. The `launch | recover | wait | done`
+(§drain); this module supplies the decision it consumes. The `recover | wait | plan_required | done`
 core and the lease-liveness annotation are `evolve_drain.decide` / `evolve_drain.liveness_map`,
 imported (both pure), not duplicated; the selection is `queue_select.select`. New here is
 `classify_reap`, the merged-PR reap classification.
 
-STRANDED pre-PR parity: a day-job `FLOW <key> --unattended` run that dies pre-PR strands its bead
+STRANDED pre-PR parity: an already-approved unattended run that dies pre-PR strands its bead
 in_progress with no lease and no PR, invisible to every channel (the loop would false-positive
 to `done`). `cli_main` detects it with the SAME `evolve_drain.stranded_pre_pr` core, fed a
 DAY-JOB-scoped in_progress set (all in_progress beads minus epics minus the `{evolve, proposal,

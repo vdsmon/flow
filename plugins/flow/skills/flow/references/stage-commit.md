@@ -5,7 +5,7 @@
 Compose a conventional commit, apply the recorded implement-stage diff, and transition the tracker ticket.
 Bare workspace default.
 
-The commit message header is deterministic (built by `compose_commit.py`); the body is filled in by the main agent based on the implement-stage context.
+The commit message header is deterministic (built by `compose_commit.py`); the body is filled in by the driver based on the implement-stage context.
 The applied patch comes from the recorded `implement.diff` — NOT from `git add .` — so unrelated edits in the working tree are NOT included.
 
 ## Inputs

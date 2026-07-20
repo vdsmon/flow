@@ -18,7 +18,6 @@ from pathlib import Path
 
 import pytest
 
-import agent_routes
 import flow_worktree as fw
 import lease
 import state
@@ -179,26 +178,6 @@ def test_seeds_plan_completed_with_output_path(tmp_path: Path) -> None:
     assert ts.stages["ticket"].status == "pending"
 
 
-def test_bootstrap_seeds_frozen_route_snapshot_before_return(tmp_path: Path) -> None:
-    main = _main_checkout(tmp_path)
-    res = _run(
-        tmp_path,
-        main,
-        owner_harness="claude-code",
-        route_overrides=["implementer=claude_code,opus,high"],
-    )
-    route_path = Path(res["worktree"]) / ".flow" / "runs" / "FT-1" / "route-snapshot.json"
-    snapshot = json.loads(route_path.read_text(encoding="utf-8"))
-    assert snapshot["owner_harness"] == "claude_code"
-    assert set(snapshot["routes"]) == set(agent_routes.PROFILES)
-    assert snapshot["routes"]["implementer"]["desired"]["model"] == "opus"
-    assert snapshot["stage_execution"]["review_brief"]["profile"] == "review_brief_author"
-    assert (
-        snapshot["stage_execution"]["reflect"]["substeps"]["reflection"]["profile"] == "reflector"
-    )
-    assert res["route_digest"] == snapshot["digest"]
-
-
 def test_copies_gitignored_config(tmp_path: Path) -> None:
     main = _main_checkout(tmp_path)
     res = _run(tmp_path, main)
@@ -312,10 +291,9 @@ def test_unattended_true_for_explicit_auto(tmp_path: Path) -> None:
     assert _unattended_fm(tmp_path, main, auto=True) is True
 
 
-def test_unattended_true_for_default_base_drain_launch(tmp_path: Path) -> None:
-    # The drain launches with auto=False but base="@default"; _enforce_autonomy_floors treats
-    # this the same as auto=True, so the seeded frontmatter signal must match or the fleet's
-    # valid unattended review_brief skip would be misclassified as attended and blocked.
+def test_unattended_true_for_default_base_automation(tmp_path: Path) -> None:
+    # A caller using auto=False with base="@default" still requests an unattended tail;
+    # _enforce_autonomy_floors treats it like auto=True, so frontmatter must agree.
     main = _main_checkout(tmp_path)
     assert _unattended_fm(tmp_path, main, auto=False, base="@default") is True
 

@@ -105,7 +105,7 @@ def test_evolve_label_never_launched():
 
 
 def test_proposal_label_never_launched():
-    # judgment work never auto-launches; no opt-in exists on this queue
+    # judgment work is never selected; no opt-in exists on this queue
     cands = [_cand("flow-prop", labels=["proposal"]), _cand("flow-a")]
     out = qs.partition(cands, set(), 0, cap=10, concurrency=5)
     assert out["launch"] == ["flow-a"]
