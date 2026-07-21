@@ -89,3 +89,25 @@ Visual review of the real Perfin brief exposed four defects in the first impleme
 Regression coverage must verify consecutive 26px diff rows without narrative margins,
 full-width added/deleted paint after horizontal scrolling, absence of the decisive gutter,
 and icon-only collapse/expand behavior.
+
+## Typography rebalance
+
+Visual review of the corrected real Perfin brief showed that the document still required
+browser zoom for comfortable reading, while the display title consumed too much of the
+first viewport. Apply one explicit scale across the whole brief:
+
+- Cap the desktop title at 48px and use approximately 36px on mobile.
+- Set lead/outcome prose to 20px and main narrative prose to 16–18px.
+- Keep card bodies, scenarios, checks, and lists at 16px or larger.
+- Keep metadata and secondary labels at 13–14px or larger.
+- Render code at 15px with a comfortable line height.
+- Render sidebar navigation at 13px.
+- Render system-map labels at 15px and map kinds at 12px.
+
+Remove the footer from the renderer, locale catalog, and stylesheet rather than hiding
+it. It does not help review decisions and competes with the document's closing content.
+
+The approved real-content preview is
+`/private/tmp/perfin-typography-preview-v2.html`. Regression coverage must assert the
+important computed sizes at desktop and mobile widths, the absence of a footer, and no
+new page-level overflow.
