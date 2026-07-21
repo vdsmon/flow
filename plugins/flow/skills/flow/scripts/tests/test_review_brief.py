@@ -125,7 +125,6 @@ def _content(*, mode: str = "full") -> dict:
                 "path": "src/scope.py",
                 "start_line": 1,
                 "end_line": 3,
-                "highlight_lines": [1, 3],
             }
         ],
         "verification": [
@@ -206,7 +205,9 @@ index 1111111..2222222 100644
     assert 'class="diff-marker">-' in document
     assert 'class="code-line added"' in document
     assert 'class="diff-marker">+' in document
-    assert 'class="code-line context decisive"' in document
+    assert 'class="code-line unchanged"' in document
+    assert 'class="code-lines"' in document
+    assert "decisive" not in document
     assert ["git", "merge-base", SHA_A, "refs/remotes/origin/main"] in runner.calls
 
 
@@ -218,10 +219,23 @@ def test_unchanged_evidence_falls_back_to_commit_pinned_source(tmp_path):
     )
 
     document = Path(receipt.html_path).read_text(encoding="utf-8")
-    assert 'class="code-line context decisive"' in document
+    assert 'class="code-line unchanged"' in document
     assert 'class="diff-marker"> ' in document
     assert 'class="code-line added' not in document
     assert 'class="code-line deleted' not in document
+    assert "decisive" not in document
+
+
+def test_highlight_lines_is_not_part_of_the_authoring_contract():
+    schema = rb.provider_schema()
+    evidence = schema["properties"]["code_evidence"]["items"]
+    assert "highlight_lines" not in evidence["properties"]
+    assert "highlight_lines" not in evidence["required"]
+
+    content = _content()
+    content["code_evidence"][0]["highlight_lines"] = [1]
+    with pytest.raises(rb.ValidationError, match="unknown fields: highlight_lines"):
+        rb.validate_content(content)
 
 
 def test_portuguese_authored_prose_localizes_renderer_copy(tmp_path):

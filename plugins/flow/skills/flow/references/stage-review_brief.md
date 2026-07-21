@@ -162,8 +162,7 @@ Schema version 1:
       "explanation": "Why this is the decisive seam, not merely a changed hunk.",
       "path": "src/example.py",
       "start_line": 40,
-      "end_line": 52,
-      "highlight_lines": [44, 49]
+      "end_line": 52
     }
   ],
   "verification": [

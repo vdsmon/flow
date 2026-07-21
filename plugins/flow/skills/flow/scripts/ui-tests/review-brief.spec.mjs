@@ -52,6 +52,30 @@ test("full brief is stable, accessible, and reviewable on desktop", async ({ pag
     deleted: getComputedStyle(document.querySelector(".code-line.deleted")).backgroundColor,
   }));
   expect(diffBackgrounds.added).not.toBe(diffBackgrounds.deleted);
+  await expect(page.locator(".code-line.decisive")).toHaveCount(0);
+
+  const diffGeometry = await page.locator(".code-scroll").first().evaluate((scroll) => {
+    const wrapper = scroll.querySelector(".code-lines");
+    const rows = [...scroll.querySelectorAll(".code-line")];
+    const boxes = rows.map((row) => row.getBoundingClientRect());
+    return {
+      clientWidth: scroll.clientWidth,
+      scrollWidth: scroll.scrollWidth,
+      wrapperWidth: wrapper.getBoundingClientRect().width,
+      rowWidths: boxes.map((box) => box.width),
+      rowHeights: boxes.map((box) => box.height),
+      rowMargins: rows.map((row) => {
+        const style = getComputedStyle(row);
+        return [style.marginTop, style.marginBottom];
+      }),
+      gaps: boxes.slice(1).map((box, index) => box.top - boxes[index].bottom),
+    };
+  });
+  expect(diffGeometry.scrollWidth).toBeGreaterThan(diffGeometry.clientWidth);
+  expect(diffGeometry.rowHeights.every((height) => height === 26)).toBe(true);
+  expect(diffGeometry.rowMargins.every((margins) => margins.every((value) => value === "0px"))).toBe(true);
+  expect(diffGeometry.gaps.every((gap) => gap === 0)).toBe(true);
+  expect(diffGeometry.rowWidths.every((width) => width === diffGeometry.wrapperWidth)).toBe(true);
 
   const labelsFit = await page.locator(".map-node").evaluateAll((nodes) =>
     nodes.every((node) => {
@@ -65,14 +89,21 @@ test("full brief is stable, accessible, and reviewable on desktop", async ({ pag
   expect(labelsFit).toBe(true);
 
   const rail = page.locator(".rail");
+  const railToggle = page.locator(".rail-disclosure summary");
+  await expect(railToggle).toHaveAccessibleName("Collapse navigation");
+  expect((await railToggle.boundingBox()).width).toBeLessThanOrEqual(40);
+  const toggleLabelBox = await page.getByText("Collapse navigation", { exact: true }).boundingBox();
+  expect(toggleLabelBox.width).toBeLessThanOrEqual(1);
+  expect(toggleLabelBox.height).toBeLessThanOrEqual(1);
   await page.evaluate(() => scrollTo(0, document.body.scrollHeight / 2));
   await expect.poll(async () => Math.round((await rail.boundingBox()).y)).toBe(0);
   const expandedContentX = (await page.locator(".content").boundingBox()).x;
-  await page.locator(".rail-disclosure summary").click();
+  await railToggle.click();
   await expect(page.locator(".rail-disclosure")).not.toHaveAttribute("open", "");
   await expect(page.locator(".rail-inner")).toBeHidden();
+  await expect(railToggle).toHaveAccessibleName("Expand sections");
   expect((await page.locator(".content").boundingBox()).x).toBeLessThan(expandedContentX);
-  await page.locator(".rail-disclosure summary").click();
+  await railToggle.click();
   await expect(page.locator(".rail-disclosure")).toHaveAttribute("open", "");
 
   await page.getByRole("link", { name: "Code evidence" }).click();

@@ -44,8 +44,7 @@
       "explanation": "O serviço recebe o modelo já validado e mantém o restante do fluxo simples.",
       "path": "src/scope.py",
       "start_line": 1,
-      "end_line": 3,
-      "highlight_lines": [1, 3]
+      "end_line": 3
     }
   ],
   "verification": [

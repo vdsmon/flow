@@ -337,7 +337,6 @@ class _Excerpt:
     path: str
     start_line: int
     end_line: int
-    highlight_lines: frozenset[int]
     source_url: str
     diff_lines: tuple[_DiffLine, ...]
 
@@ -542,7 +541,6 @@ def _normalize_evidence(value: Any) -> list[dict[str, Any]]:
         "path",
         "start_line",
         "end_line",
-        "highlight_lines",
     }
     for index, raw in enumerate(_list(value, "code_evidence")):
         where = f"code_evidence[{index}]"
@@ -554,12 +552,6 @@ def _normalize_evidence(value: Any) -> list[dict[str, Any]]:
             _fail(f"{where}.end_line must be >= start_line")
         if end - start > 119:
             _fail(f"{where} may include at most 120 lines")
-        highlights = [
-            _integer(line, f"{where}.highlight_lines[{line_index}]")
-            for line_index, line in enumerate(_list(item.get("highlight_lines", []), where))
-        ]
-        if any(line < start or line > end for line in highlights):
-            _fail(f"{where}.highlight_lines must fall inside the excerpt range")
         result.append(
             {
                 "claim": _text(item.get("claim"), f"{where}.claim"),
@@ -567,7 +559,6 @@ def _normalize_evidence(value: Any) -> list[dict[str, Any]]:
                 "path": _safe_path(item.get("path"), f"{where}.path"),
                 "start_line": start,
                 "end_line": end,
-                "highlight_lines": sorted(set(highlights)),
             }
         )
     if not result:
@@ -677,12 +668,8 @@ def provider_schema() -> dict[str, Any]:
             "path": text,
             "start_line": {"type": "integer", "minimum": 1},
             "end_line": {"type": "integer", "minimum": 1},
-            "highlight_lines": {
-                "type": "array",
-                "items": {"type": "integer", "minimum": 1},
-            },
         },
-        ["claim", "explanation", "path", "start_line", "end_line", "highlight_lines"],
+        ["claim", "explanation", "path", "start_line", "end_line"],
     )
     verification = obj(
         {
@@ -974,7 +961,6 @@ def _extract_evidence(
                 path=path,
                 start_line=start,
                 end_line=end,
-                highlight_lines=frozenset(item["highlight_lines"]),
                 source_url=source_url,
                 diff_lines=diff_lines,
             )
@@ -1171,14 +1157,10 @@ def _render_evidence(items: Sequence[_Excerpt], pr_url: str, copy: Mapping[str, 
         code_lines: list[str] = []
         for line in excerpt.diff_lines:
             number = line.new_number if line.new_number is not None else line.old_number
-            decisive = (
-                " decisive"
-                if line.new_number is not None and line.new_number in excerpt.highlight_lines
-                else ""
-            )
             marker = {"context": " ", "added": "+", "deleted": "-"}[line.kind]
+            row_class = "unchanged" if line.kind == "context" else line.kind
             code_lines.append(
-                f'<span class="code-line {line.kind}{decisive}">'
+                f'<span class="code-line {row_class}">'
                 f'<span class="diff-marker">{marker}</span>'
                 f'<span class="line-number">{_e(number or "")}</span>'
                 f'<span class="code-text">{_highlight_line(line.text)}</span></span>'
@@ -1188,7 +1170,10 @@ def _render_evidence(items: Sequence[_Excerpt], pr_url: str, copy: Mapping[str, 
             f'<span class="code-file">{_e(excerpt.path)}:{excerpt.start_line}</span>'
             f"<strong>{_e(excerpt.claim)}</strong><p>{_e(excerpt.explanation)}</p>"
             f'<a href="{_e(excerpt.source_url)}">{_e(copy["open_lines"])}</a>'
-            f'</div><div class="code-scroll">{"".join(code_lines)}</div></article>'
+            f'</div><div class="code-scroll" tabindex="0" '
+            f'aria-label="{_e(copy["evidence"])}: {_e(excerpt.path)}">'
+            f'<div class="code-lines">'
+            f"{''.join(code_lines)}</div></div></article>"
         )
     excerpt_label = copy["excerpt_one"] if len(items) == 1 else copy["excerpt_many"]
     return (
@@ -1315,8 +1300,9 @@ def _document(
         <details class="rail-disclosure" open>
           <summary>
             <span class="rail-toggle-expanded" aria-hidden="true">&#8249;</span>
-            <span class="rail-toggle-label">{_e(copy["collapse_nav"])}</span>
-            <span class="rail-toggle-collapsed" aria-label="{_e(copy["expand_nav"])}">☰</span>
+            <span class="rail-toggle-label rail-expanded-label">{_e(copy["collapse_nav"])}</span>
+            <span class="rail-toggle-collapsed" aria-hidden="true">☰</span>
+            <span class="rail-toggle-label rail-collapsed-label">{_e(copy["expand_nav"])}</span>
           </summary>
           <div class="rail-inner">
             <div class="rail-label">{_e(copy["on_page"])}</div>{rail}

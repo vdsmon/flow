@@ -100,12 +100,12 @@ a { text-underline-offset: 3px; }
 .rail-disclosure { height: 100%; }
 .rail-disclosure summary {
   display: flex;
+  width: 36px;
   min-height: 36px;
   align-items: center;
   justify-content: center;
-  gap: 7px;
-  margin-bottom: 18px;
-  padding: 8px;
+  margin: 0 0 18px auto;
+  padding: 0;
   border-radius: 9px;
   color: var(--muted);
   cursor: pointer;
@@ -117,9 +117,20 @@ a { text-underline-offset: 3px; }
 .rail-disclosure summary:hover, .rail-disclosure summary:focus-visible { color: var(--ink); background: var(--surface); }
 .rail-toggle-expanded { font-size: 18px; line-height: 0; }
 .rail-toggle-collapsed { display: none; font-size: 16px; }
+.rail-toggle-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+.rail-collapsed-label { display: none; }
 .rail-disclosure:not([open]) .rail-toggle-expanded,
-.rail-disclosure:not([open]) .rail-toggle-label { display: none; }
+.rail-disclosure:not([open]) .rail-expanded-label { display: none; }
 .rail-disclosure:not([open]) .rail-toggle-collapsed { display: grid; place-items: center; }
+.rail-disclosure:not([open]) .rail-collapsed-label { display: block; }
 .rail-inner { overflow: hidden; }
 
 .rail-label {
@@ -261,12 +272,11 @@ h1 {
 .code-copy a:hover, .code-copy a:focus-visible { text-decoration: underline; }
 .code-file { display: block; margin-bottom: 12px; color: #809087; font: 12px / 1.4 ui-monospace, SFMono-Regular, Consolas, monospace; overflow-wrap: anywhere; }
 .code-scroll { min-width: 0; overflow-x: auto; padding: 16px 0; }
-.code-line { display: grid; grid-template-columns: 30px 58px minmax(max-content, 1fr); min-height: 26px; font: 14px / 1.7 ui-monospace, SFMono-Regular, Consolas, monospace; }
-.code-line.decisive { background: rgb(226 191 124 / 10%); box-shadow: inset 2px 0 #e2bf7c; }
+.code-scroll:focus-visible { outline: 3px solid var(--gold); outline-offset: -3px; }
+.code-lines { display: grid; width: max-content; min-width: 100%; }
+.code-line { display: grid; width: 100%; grid-template-columns: 30px 58px minmax(max-content, 1fr); min-height: 26px; font: 14px / 1.7 ui-monospace, SFMono-Regular, Consolas, monospace; }
 .code-line.added { background: rgb(65 132 91 / 22%); }
 .code-line.deleted { background: rgb(174 72 64 / 23%); }
-.code-line.added.decisive { box-shadow: inset 3px 0 #75c892; }
-.code-line.deleted.decisive { box-shadow: inset 3px 0 #e8877c; }
 .diff-marker { color: #718079; text-align: center; user-select: none; }
 .added .diff-marker { color: #75c892; }
 .deleted .diff-marker { color: #e8877c; }

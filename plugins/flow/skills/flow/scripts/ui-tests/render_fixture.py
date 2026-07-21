@@ -18,14 +18,15 @@ SOURCE = (
     "    # Keep <script>alert('no')</script> inert.\n"
     '    return {"root": cwd, "attempts": 3}\n'
 )
-DIFF = """diff --git a/src/scope.py b/src/scope.py
+LONG_VALUE = "focused-diff-line-" * 10
+DIFF = f"""diff --git a/src/scope.py b/src/scope.py
 index 1111111..2222222 100644
 --- a/src/scope.py
 +++ b/src/scope.py
 @@ -1,3 +1,3 @@
  def resolve_scope(cwd):
--    return {"root": cwd}
-+    return {"root": cwd, "attempts": 3}
+-    return {{"root": cwd}}
++    return {{"root": cwd, "attempts": 3, "description": "{LONG_VALUE}"}}
      # Keep <script>alert('no')</script> inert.
 """
 

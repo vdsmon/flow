@@ -18,8 +18,7 @@
       "explanation": "The guard returns before candidate discovery begins.",
       "path": "src/scope.py",
       "start_line": 1,
-      "end_line": 3,
-      "highlight_lines": [1]
+      "end_line": 3
     }
   ],
   "verification": [
