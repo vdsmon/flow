@@ -40,11 +40,38 @@ test("full brief is stable, accessible, and reviewable on desktop", async ({ pag
     1100,
   );
 
-  const codeFontSize = await page
-    .locator(".code-line")
-    .first()
-    .evaluate((node) => Number.parseFloat(getComputedStyle(node).fontSize));
-  expect(codeFontSize).toBeGreaterThanOrEqual(14);
+  const typeScale = await page.evaluate(() => {
+    const size = (selector) => Number.parseFloat(getComputedStyle(document.querySelector(selector)).fontSize);
+    return {
+      title: size("h1"),
+      lead: size(".deck"),
+      narrative: size(".observation"),
+      card: size(".claim p"),
+      scenario: size(".step"),
+      check: size(".check p"),
+      list: size(".plain-list li"),
+      metadata: size(".fact"),
+      code: size(".code-line"),
+      sidebar: size(".rail a"),
+      mapLabel: size(".map-node .label"),
+      mapKind: size(".map-node .kind"),
+    };
+  });
+  expect(typeScale).toEqual({
+    title: 48,
+    lead: 20,
+    narrative: 18,
+    card: 16,
+    scenario: 16,
+    check: 16,
+    list: 16,
+    metadata: 14,
+    code: 15,
+    sidebar: 13,
+    mapLabel: 15,
+    mapKind: 12,
+  });
+  await expect(page.locator("footer")).toHaveCount(0);
   await expect(page.locator(".code-line.added .diff-marker")).toContainText("+");
   await expect(page.locator(".code-line.deleted .diff-marker")).toContainText("-");
   const diffBackgrounds = await page.evaluate(() => ({
@@ -72,7 +99,7 @@ test("full brief is stable, accessible, and reviewable on desktop", async ({ pag
     };
   });
   expect(diffGeometry.scrollWidth).toBeGreaterThan(diffGeometry.clientWidth);
-  expect(diffGeometry.rowHeights.every((height) => height === 26)).toBe(true);
+  expect(diffGeometry.rowHeights.every((height) => height === 27)).toBe(true);
   expect(diffGeometry.rowMargins.every((margins) => margins.every((value) => value === "0px"))).toBe(true);
   expect(diffGeometry.gaps.every((gap) => gap === 0)).toBe(true);
   expect(diffGeometry.rowWidths.every((width) => width === diffGeometry.wrapperWidth)).toBe(true);
@@ -131,6 +158,12 @@ test("full brief contains wide evidence without clipping the mobile page", async
   );
   await expect(page.locator(".rail")).toBeHidden();
   await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+  expect(
+    await page
+      .getByRole("heading", { level: 1 })
+      .evaluate((node) => Number.parseFloat(getComputedStyle(node).fontSize)),
+  ).toBe(36);
+  await expect(page.locator("footer")).toHaveCount(0);
   expect(await page.locator(".system-map").evaluate((node) => node.scrollWidth > node.clientWidth)).toBe(true);
   await expect(page).toHaveScreenshot("review-brief-mobile.png", { fullPage: true });
 });

@@ -118,8 +118,6 @@ _COPY: dict[str, dict[str, str]] = {
         "verification_nav": "Verification & risk",
         "limitations_nav": "Limits & unknowns",
         "prompts_nav": "Review prompts",
-        "footer_before": "This brief is a read-only companion to the Forge review, frozen at",
-        "footer_after": "If the branch changes, regenerate it before merge.",
     },
     "pt-BR": {
         "brand": "Resumo de revisão do Flow",
@@ -172,10 +170,6 @@ _COPY: dict[str, dict[str, str]] = {
         "verification_nav": "Verificação e risco",
         "limitations_nav": "Limites e incertezas",
         "prompts_nav": "Perguntas para revisão",
-        "footer_before": (
-            "Este resumo é um complemento somente de leitura para a revisão no Forge, congelado em"
-        ),
-        "footer_after": "Se a branch mudar, gere-o novamente antes do merge.",
     },
 }
 
@@ -1039,12 +1033,12 @@ def _map_layout(system_map: Mapping[str, Any]) -> tuple[dict[str, tuple[int, int
 def _wrapped_map_label(label: str) -> tuple[str, ...]:
     lines = textwrap.wrap(
         label,
-        width=28,
+        width=24,
         break_long_words=True,
         break_on_hyphens=False,
     ) or [label]
     if len(lines) > 3:
-        final = lines[2][:27].rstrip()
+        final = lines[2][:23].rstrip()
         lines = [*lines[:2], f"{final}…"]
     return tuple(lines)
 
@@ -1332,10 +1326,6 @@ def _document(
           </div>
         </div>
         {"".join(sections)}
-        <footer class="footer">
-          {_e(copy["footer_before"])}
-          <code>{_e(snapshot.sha)}</code>. {_e(copy["footer_after"])}
-        </footer>
       </div>
     </div>
   </main>

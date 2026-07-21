@@ -177,6 +177,7 @@ def test_render_publishes_self_contained_snapshot_and_receipt(tmp_path):
     assert "Relevant components and the direction" in document
     assert 'aria-labelledby="brief-title"' in document
     assert 'tabindex="0" aria-label="Scrollable relevant system map"' in document
+    assert "<footer" not in document
     assert f"blob/{SHA_A}/src/scope.py#L1-L3" in document
     assert "estimated" not in document.lower()
     assert forge.source_calls == [("42", SHA_A, "src/scope.py", 1, 3)]
