@@ -18,6 +18,16 @@ SOURCE = (
     "    # Keep <script>alert('no')</script> inert.\n"
     '    return {"root": cwd, "attempts": 3}\n'
 )
+DIFF = """diff --git a/src/scope.py b/src/scope.py
+index 1111111..2222222 100644
+--- a/src/scope.py
++++ b/src/scope.py
+@@ -1,3 +1,3 @@
+ def resolve_scope(cwd):
+-    return {"root": cwd}
++    return {"root": cwd, "attempts": 3}
+     # Keep <script>alert('no')</script> inert.
+"""
 
 
 class FixtureForge:
@@ -44,6 +54,10 @@ class FixtureForge:
 def runner(args: list[str]):
     if args == ["git", "rev-parse", "HEAD"]:
         return subprocess.CompletedProcess(args, 0, SHA + "\n", "")
+    if args[:2] == ["git", "merge-base"]:
+        return subprocess.CompletedProcess(args, 0, "b" * 40 + "\n", "")
+    if args[:2] == ["git", "diff"]:
+        return subprocess.CompletedProcess(args, 0, DIFF, "")
     if args[:2] == ["git", "show"]:
         return subprocess.CompletedProcess(args, 0, SOURCE, "")
     return subprocess.CompletedProcess(args, 1, "", f"unexpected command: {args}")
@@ -66,4 +80,4 @@ def render_fixture(name: str) -> str:
 
 
 if __name__ == "__main__":
-    print(json.dumps({name: render_fixture(name) for name in ("full", "compact")}))
+    print(json.dumps({name: render_fixture(name) for name in ("full", "compact", "portuguese")}))

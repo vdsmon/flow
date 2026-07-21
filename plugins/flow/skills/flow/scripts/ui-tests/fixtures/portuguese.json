@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "mode": "full",
+  "title": "Rebaixamento de grau sem perder consistência",
+  "outcome": "O modelo e o ledger preservam a posição e o extrato durante o rebaixamento.",
+  "risk": "medium",
+  "change_shape": "Alteração focada no domínio",
+  "motivation": {
+    "observed_problem": "Os nomes de classe e subclasse podiam divergir entre a entrada e as projeções.",
+    "why_it_matters": "O administrador precisa confiar que posição e extrato representam o mesmo domínio."
+  },
+  "scenarios": [
+    {
+      "name": "Um administrador envia um arquivo",
+      "before_label": "os nomes divergiam",
+      "after_label": "o domínio permanece consistente",
+      "before_steps": ["Enviar o arquivo", "Conciliar os dados", "Encontrar nomes diferentes"],
+      "after_steps": ["Enviar o arquivo", "Aplicar a regra", "Confirmar posição e extrato"]
+    }
+  ],
+  "system_map": {
+    "caption": "O modelo e o ledger ficam no centro das duas entradas e das duas projeções.",
+    "nodes": [
+      {"id": "api", "label": "API FastAPI com oito roteadores", "kind": "Limite", "changed": false},
+      {"id": "ledger", "label": "Ledger com lançamentos, bloqueios e sequência", "kind": "Serviço", "changed": true},
+      {"id": "model", "label": "Classe, subclasse e grau renomeados", "kind": "Modelo", "changed": true},
+      {"id": "schema", "label": "Baseline do Alembic 0001_initial", "kind": "Schema", "changed": true}
+    ],
+    "edges": [
+      {"from": "api", "to": "ledger"},
+      {"from": "ledger", "to": "model"},
+      {"from": "model", "to": "schema"}
+    ]
+  },
+  "decisions": [
+    {"title": "Renomear no domínio", "body": "As projeções recebem o vocabulário já normalizado."}
+  ],
+  "invariants": [
+    {"title": "O ledger continua central", "body": "As duas entradas alimentam a mesma fonte de verdade."}
+  ],
+  "code_evidence": [
+    {
+      "claim": "Aplicar a regra no limite",
+      "explanation": "O serviço recebe o modelo já validado e mantém o restante do fluxo simples.",
+      "path": "src/scope.py",
+      "start_line": 1,
+      "end_line": 3,
+      "highlight_lines": [1, 3]
+    }
+  ],
+  "verification": [
+    {"claim": "Os cenários direcionados passam", "evidence": "Todos os testes de posição e extrato passaram.", "status": "passed"}
+  ],
+  "limitations": ["O Forge continua sendo a fonte de verdade para o diff completo."],
+  "reviewer_prompts": ["O vocabulário do domínio está consistente em todas as projeções?"]
+}

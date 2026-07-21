@@ -27,7 +27,7 @@ async function openFixture(page, name) {
 }
 
 test("full brief is stable, accessible, and reviewable on desktop", async ({ page }) => {
-  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.setViewportSize({ width: 1600, height: 1000 });
   const observed = await openFixture(page, "full");
 
   await expect(page).toHaveTitle(/Cleanup that cannot escape its workspace/);
@@ -36,6 +36,44 @@ test("full brief is stable, accessible, and reviewable on desktop", async ({ pag
   expect(observed.consoleProblems).toEqual([]);
   expect(observed.network).toEqual([]);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  expect(await page.locator(".content").evaluate((node) => node.getBoundingClientRect().width)).toBeGreaterThan(
+    1100,
+  );
+
+  const codeFontSize = await page
+    .locator(".code-line")
+    .first()
+    .evaluate((node) => Number.parseFloat(getComputedStyle(node).fontSize));
+  expect(codeFontSize).toBeGreaterThanOrEqual(14);
+  await expect(page.locator(".code-line.added .diff-marker")).toContainText("+");
+  await expect(page.locator(".code-line.deleted .diff-marker")).toContainText("-");
+  const diffBackgrounds = await page.evaluate(() => ({
+    added: getComputedStyle(document.querySelector(".code-line.added")).backgroundColor,
+    deleted: getComputedStyle(document.querySelector(".code-line.deleted")).backgroundColor,
+  }));
+  expect(diffBackgrounds.added).not.toBe(diffBackgrounds.deleted);
+
+  const labelsFit = await page.locator(".map-node").evaluateAll((nodes) =>
+    nodes.every((node) => {
+      const boundary = node.querySelector("rect").getBoundingClientRect();
+      return [...node.querySelectorAll(".label tspan")].every((line) => {
+        const box = line.getBoundingClientRect();
+        return box.right <= boundary.right + 1 && box.bottom <= boundary.bottom + 1;
+      });
+    }),
+  );
+  expect(labelsFit).toBe(true);
+
+  const rail = page.locator(".rail");
+  await page.evaluate(() => scrollTo(0, document.body.scrollHeight / 2));
+  await expect.poll(async () => Math.round((await rail.boundingBox()).y)).toBe(0);
+  const expandedContentX = (await page.locator(".content").boundingBox()).x;
+  await page.locator(".rail-disclosure summary").click();
+  await expect(page.locator(".rail-disclosure")).not.toHaveAttribute("open", "");
+  await expect(page.locator(".rail-inner")).toBeHidden();
+  expect((await page.locator(".content").boundingBox()).x).toBeLessThan(expandedContentX);
+  await page.locator(".rail-disclosure summary").click();
+  await expect(page.locator(".rail-disclosure")).toHaveAttribute("open", "");
 
   await page.getByRole("link", { name: "Code evidence" }).click();
   await expect(page).toHaveURL(/#evidence$/);
@@ -62,8 +100,22 @@ test("full brief contains wide evidence without clipping the mobile page", async
   );
   await expect(page.locator(".rail")).toBeHidden();
   await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
-  await expect(page.locator(".system-map")).toHaveJSProperty("scrollWidth", 664);
+  expect(await page.locator(".system-map").evaluate((node) => node.scrollWidth > node.clientWidth)).toBe(true);
   await expect(page).toHaveScreenshot("review-brief-mobile.png", { fullPage: true });
+});
+
+test("Portuguese authored prose localizes all renderer-owned chrome", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  const observed = await openFixture(page, "portuguese");
+
+  expect(observed.consoleProblems).toEqual([]);
+  expect(observed.network).toEqual([]);
+  await expect(page.locator("html")).toHaveAttribute("lang", "pt-BR");
+  await expect(page.getByRole("navigation", { name: "Seções do resumo de revisão" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "A fatia relevante do sistema" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Evidências focadas no código" })).toBeVisible();
+  await expect(page.getByText("Nesta página")).toBeVisible();
+  await expect(page.getByText("Focused code evidence")).toHaveCount(0);
 });
 
 test("compact brief omits absent sections and remains complete without JavaScript", async ({ browser }) => {

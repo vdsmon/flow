@@ -21,9 +21,9 @@
   "system_map": {
     "caption": "One boundary now feeds discovery and deletion.",
     "nodes": [
-      {"id": "workspace", "label": "Workspace", "kind": "Boundary", "changed": true},
-      {"id": "discover", "label": "Discovery", "kind": "Filter", "changed": true},
-      {"id": "reap", "label": "Reap", "kind": "Action", "changed": false}
+      {"id": "workspace", "label": "Invoking workspace boundary", "kind": "Boundary", "changed": true},
+      {"id": "discover", "label": "Candidate discovery and safety filtering", "kind": "Filter", "changed": true},
+      {"id": "reap", "label": "Validated worktree cleanup action", "kind": "Action", "changed": false}
     ],
     "edges": [
       {"from": "workspace", "to": "discover"},

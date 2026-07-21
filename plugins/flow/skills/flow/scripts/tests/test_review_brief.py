@@ -39,9 +39,16 @@ class FakeForge:
 
 
 class GitRunner:
-    def __init__(self, head: str = SHA_A, remote_head: str | None = None):
+    def __init__(
+        self,
+        head: str = SHA_A,
+        remote_head: str | None = None,
+        *,
+        diffs: dict[str, str] | None = None,
+    ):
         self.head = head
         self.remote_head = remote_head or head
+        self.diffs = diffs or {}
         self.calls: list[list[str]] = []
         self.files = {
             "src/scope.py": (
@@ -58,6 +65,10 @@ class GitRunner:
         self.calls.append(args)
         if args == ["git", "rev-parse", "HEAD"]:
             return subprocess.CompletedProcess(args, 0, self.head + "\n", "")
+        if args[:2] == ["git", "merge-base"]:
+            return subprocess.CompletedProcess(args, 0, SHA_B + "\n", "")
+        if args[:2] == ["git", "diff"]:
+            return subprocess.CompletedProcess(args, 0, self.diffs.get(args[-1], ""), "")
         if args[:4] == ["git", "ls-remote", "--exit-code", "origin"]:
             return subprocess.CompletedProcess(args, 0, f"{self.remote_head}\t{args[4]}\n", "")
         if args[:2] == ["git", "show"]:
@@ -170,6 +181,130 @@ def test_render_publishes_self_contained_snapshot_and_receipt(tmp_path):
     assert f"blob/{SHA_A}/src/scope.py#L1-L3" in document
     assert "estimated" not in document.lower()
     assert forge.source_calls == [("42", SHA_A, "src/scope.py", 1, 3)]
+
+
+def test_render_uses_focused_unified_diff_for_changed_evidence(tmp_path):
+    diff = """diff --git a/src/scope.py b/src/scope.py
+index 1111111..2222222 100644
+--- a/src/scope.py
++++ b/src/scope.py
+@@ -1,3 +1,3 @@
+ def resolve_scope(cwd):
+-    return {"root": cwd}
++    return {"root": cwd, "attempts": 3}
+     return scope
+"""
+    runner = GitRunner(diffs={"src/scope.py": diff})
+    receipt = rb.render(
+        _request(tmp_path, _write_content(tmp_path, _content())),
+        forge=FakeForge(),
+        runner=runner,
+    )
+
+    document = Path(receipt.html_path).read_text(encoding="utf-8")
+    assert 'class="code-line deleted"' in document
+    assert 'class="diff-marker">-' in document
+    assert 'class="code-line added"' in document
+    assert 'class="diff-marker">+' in document
+    assert 'class="code-line context decisive"' in document
+    assert ["git", "merge-base", SHA_A, "refs/remotes/origin/main"] in runner.calls
+
+
+def test_unchanged_evidence_falls_back_to_commit_pinned_source(tmp_path):
+    receipt = rb.render(
+        _request(tmp_path, _write_content(tmp_path, _content())),
+        forge=FakeForge(),
+        runner=GitRunner(),
+    )
+
+    document = Path(receipt.html_path).read_text(encoding="utf-8")
+    assert 'class="code-line context decisive"' in document
+    assert 'class="diff-marker"> ' in document
+    assert 'class="code-line added' not in document
+    assert 'class="code-line deleted' not in document
+
+
+def test_portuguese_authored_prose_localizes_renderer_copy(tmp_path):
+    content = _content()
+    content.update(
+        {
+            "title": "Rebaixamento de grau sem perder o controle",
+            "outcome": "O modelo mantém a posição e o extrato consistentes para o administrador.",
+            "change_shape": "Alteração focada no domínio",
+            "motivation": {
+                "observed_problem": "A conciliação podia produzir dados inconsistentes.",
+                "why_it_matters": "O administrador precisa confiar na posição do fundo.",
+            },
+            "limitations": ["A revisão completa continua disponível no Forge."],
+            "reviewer_prompts": ["As regras do domínio continuam claras?"],
+        }
+    )
+    content["scenarios"] = [
+        {
+            "name": "Um administrador rebaixa o grau",
+            "before_label": "os nomes divergiam",
+            "after_label": "o domínio fica consistente",
+            "before_steps": ["Enviar o arquivo", "Conciliar os dados"],
+            "after_steps": ["Enviar o arquivo", "Confirmar a posição"],
+        }
+    ]
+    content["system_map"]["caption"] = "O modelo alimenta a posição e o extrato."
+    content["system_map"]["nodes"] = [
+        {"id": "modelo", "label": "Modelo do fundo", "kind": "Domínio", "changed": True}
+    ]
+    content["system_map"]["edges"] = []
+    content["decisions"] = [
+        {"title": "Renomear uma vez", "body": "O domínio usa um nome consistente."}
+    ]
+    content["invariants"] = [
+        {"title": "A posição permanece correta", "body": "O extrato continua conciliado."}
+    ]
+    content["code_evidence"][0].update(
+        {
+            "claim": "Aplicar a regra no limite",
+            "explanation": "O serviço recebe o modelo já validado.",
+        }
+    )
+    content["verification"] = [
+        {
+            "claim": "Os cenários passam",
+            "evidence": "Todos os testes direcionados passaram.",
+            "status": "passed",
+        }
+    ]
+
+    receipt = rb.render(
+        _request(tmp_path, _write_content(tmp_path, content)),
+        forge=FakeForge(),
+        runner=GitRunner(),
+    )
+
+    document = Path(receipt.html_path).read_text(encoding="utf-8")
+    assert '<html lang="pt-BR">' in document
+    assert "Evidências focadas no código" in document
+    assert "A fatia relevante do sistema" in document
+    assert "Nesta página" in document
+    assert "Focused code evidence" not in document
+
+
+def test_long_system_map_labels_wrap_without_losing_the_full_label(tmp_path):
+    content = _content()
+    label = (
+        "Modelo de subclasse e grau renomeado para o domínio financeiro com "
+        "detalhamento adicional que não cabe dentro do cartão"
+    )
+    content["system_map"]["nodes"][0]["label"] = label
+
+    receipt = rb.render(
+        _request(tmp_path, _write_content(tmp_path, content)),
+        forge=FakeForge(),
+        runner=GitRunner(),
+    )
+
+    document = Path(receipt.html_path).read_text(encoding="utf-8")
+    assert f"<title>Boundary: {label}</title>" in document
+    assert document.count('<tspan x="16"') >= 2
+    assert "…</tspan>" in document
 
 
 def test_render_opens_local_file_but_open_failure_is_nonfatal(tmp_path):

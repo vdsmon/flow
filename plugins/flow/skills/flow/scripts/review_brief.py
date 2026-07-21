@@ -23,6 +23,7 @@ import json
 import re
 import subprocess
 import sys
+import textwrap
 import webbrowser
 from collections import defaultdict, deque
 from collections.abc import Callable, Mapping, Sequence
@@ -46,6 +47,7 @@ _ID_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,63}$")
 _RISK = {"low", "medium", "high"}
 _MODE = {"auto", "compact", "full"}
 _STATUS = {"passed", "pending", "failed"}
+_HUNK_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 _ROOT_FIELDS = {
     "schema_version",
     "mode",
@@ -63,6 +65,193 @@ _ROOT_FIELDS = {
     "limitations",
     "reviewer_prompts",
 }
+
+_COPY: dict[str, dict[str, str]] = {
+    "en": {
+        "brand": "Flow review brief",
+        "nav_aria": "Review brief sections",
+        "on_page": "On this page",
+        "collapse_nav": "Collapse navigation",
+        "expand_nav": "Expand sections",
+        "open_diff": "Open full diff ↗",
+        "snapshot": "Snapshot",
+        "risk_low": "low risk",
+        "risk_medium": "medium risk",
+        "risk_high": "high risk",
+        "risk_value_low": "low",
+        "risk_value_medium": "medium",
+        "risk_value_high": "high",
+        "brief_compact": "compact brief",
+        "brief_full": "full brief",
+        "what_happened": "What was happening.",
+        "why_matters": "Why it matters.",
+        "change_shape": "Change shape",
+        "risk": "Risk",
+        "before_after": "Before and after",
+        "behavior_note": "Follow the behavior, not the file list",
+        "before": "Before",
+        "after": "After",
+        "map": "The relevant system slice",
+        "map_note": "Unrelated architecture omitted",
+        "map_scroll_aria": "Scrollable relevant system map",
+        "map_image_aria": "Relevant components and the direction of their relationships",
+        "decisions": "Decisions that shape the change",
+        "decisions_note": "Intentional constraints and tradeoffs",
+        "invariants": "What must remain true",
+        "invariants_note": "Review these as invariants",
+        "evidence": "Focused code evidence",
+        "excerpt_one": "excerpt",
+        "excerpt_many": "excerpts",
+        "full_diff": "full diff in Forge",
+        "open_lines": "Open exact lines in Forge ↗",
+        "verification": "Verification & risk",
+        "verification_note": "Evidence over assertion",
+        "limitations": "Limits & unknowns",
+        "prompts": "Questions worth pressure-testing",
+        "prompts_note": "A starting point, not a checklist",
+        "why_nav": "Why this changed",
+        "scenarios_nav": "Before and after",
+        "map_nav": "System map",
+        "decisions_nav": "Decisions",
+        "invariants_nav": "Invariants",
+        "evidence_nav": "Code evidence",
+        "verification_nav": "Verification & risk",
+        "limitations_nav": "Limits & unknowns",
+        "prompts_nav": "Review prompts",
+        "footer_before": "This brief is a read-only companion to the Forge review, frozen at",
+        "footer_after": "If the branch changes, regenerate it before merge.",
+    },
+    "pt-BR": {
+        "brand": "Resumo de revisão do Flow",
+        "nav_aria": "Seções do resumo de revisão",
+        "on_page": "Nesta página",
+        "collapse_nav": "Recolher navegação",
+        "expand_nav": "Abrir seções",
+        "open_diff": "Abrir diff completo ↗",
+        "snapshot": "Versão",
+        "risk_low": "risco baixo",
+        "risk_medium": "risco médio",
+        "risk_high": "risco alto",
+        "risk_value_low": "baixo",
+        "risk_value_medium": "médio",
+        "risk_value_high": "alto",
+        "brief_compact": "resumo compacto",
+        "brief_full": "resumo completo",
+        "what_happened": "O que estava acontecendo.",
+        "why_matters": "Por que isso importa.",
+        "change_shape": "Formato da mudança",
+        "risk": "Risco",
+        "before_after": "Antes e depois",
+        "behavior_note": "Acompanhe o comportamento, não a lista de arquivos",
+        "before": "Antes",
+        "after": "Depois",
+        "map": "A fatia relevante do sistema",
+        "map_note": "Arquitetura não relacionada omitida",
+        "map_scroll_aria": "Mapa rolável da parte relevante do sistema",
+        "map_image_aria": "Componentes relevantes e a direção de seus relacionamentos",
+        "decisions": "Decisões que moldam a mudança",
+        "decisions_note": "Restrições e escolhas intencionais",
+        "invariants": "O que deve continuar verdadeiro",
+        "invariants_note": "Revise estes pontos como invariantes",
+        "evidence": "Evidências focadas no código",
+        "excerpt_one": "trecho",
+        "excerpt_many": "trechos",
+        "full_diff": "diff completo no Forge",
+        "open_lines": "Abrir linhas exatas no Forge ↗",
+        "verification": "Verificação e risco",
+        "verification_note": "Evidências acima de afirmações",
+        "limitations": "Limites e incertezas",
+        "prompts": "Perguntas que merecem ser testadas",
+        "prompts_note": "Um ponto de partida, não uma lista de verificação",
+        "why_nav": "Por que isso mudou",
+        "scenarios_nav": "Antes e depois",
+        "map_nav": "Mapa do sistema",
+        "decisions_nav": "Decisões",
+        "invariants_nav": "Invariantes",
+        "evidence_nav": "Evidências de código",
+        "verification_nav": "Verificação e risco",
+        "limitations_nav": "Limites e incertezas",
+        "prompts_nav": "Perguntas para revisão",
+        "footer_before": (
+            "Este resumo é um complemento somente de leitura para a revisão no Forge, congelado em"
+        ),
+        "footer_after": "Se a branch mudar, gere-o novamente antes do merge.",
+    },
+}
+
+_PORTUGUESE_WORDS = frozenset(
+    {
+        "ainda",
+        "antes",
+        "aos",
+        "após",
+        "como",
+        "com",
+        "continua",
+        "da",
+        "das",
+        "de",
+        "depois",
+        "do",
+        "dos",
+        "e",
+        "em",
+        "entre",
+        "essa",
+        "esse",
+        "esta",
+        "este",
+        "isso",
+        "mais",
+        "na",
+        "nas",
+        "não",
+        "no",
+        "nos",
+        "ou",
+        "para",
+        "pela",
+        "pelo",
+        "por",
+        "porque",
+        "precisa",
+        "que",
+        "sem",
+        "ser",
+        "seu",
+        "sua",
+        "uma",
+        "um",
+    }
+)
+_ENGLISH_WORDS = frozenset(
+    {
+        "after",
+        "and",
+        "as",
+        "before",
+        "could",
+        "from",
+        "for",
+        "into",
+        "is",
+        "its",
+        "must",
+        "not",
+        "now",
+        "of",
+        "one",
+        "or",
+        "that",
+        "the",
+        "this",
+        "to",
+        "was",
+        "when",
+        "with",
+        "without",
+    }
+)
 
 
 class ReviewBriefError(Exception):
@@ -123,6 +312,22 @@ class _Snapshot:
     sha: str
     pr_url: str
     pr_head_sha: str
+    base: str
+
+
+@dataclass(frozen=True)
+class _DiffLine:
+    kind: Literal["context", "added", "deleted"]
+    old_number: int | None
+    new_number: int | None
+    text: str
+
+
+@dataclass(frozen=True)
+class _DiffHunk:
+    new_start: int
+    new_count: int
+    lines: tuple[_DiffLine, ...]
 
 
 @dataclass(frozen=True)
@@ -134,7 +339,7 @@ class _Excerpt:
     end_line: int
     highlight_lines: frozenset[int]
     source_url: str
-    lines: tuple[str, ...]
+    diff_lines: tuple[_DiffLine, ...]
 
 
 BrowserOpener = Callable[[str], bool]
@@ -522,6 +727,46 @@ def _resolved_mode(content: Mapping[str, Any]) -> Literal["compact", "full"]:
     return "full" if structural or len(content["code_evidence"]) > 2 else "compact"
 
 
+def _authored_prose(content: Mapping[str, Any]) -> str:
+    """Collect reviewer-authored prose while excluding source paths and code."""
+    values: list[str] = [content["title"], content["outcome"], content["change_shape"]]
+    values.extend(content["motivation"].values())
+    for scenario in content["scenarios"]:
+        values.extend(
+            [
+                scenario["name"],
+                scenario["before_label"],
+                scenario["after_label"],
+                *scenario["before_steps"],
+                *scenario["after_steps"],
+            ]
+        )
+    system_map = content["system_map"]
+    if system_map is not None:
+        values.append(system_map["caption"])
+        for node in system_map["nodes"]:
+            values.extend([node["label"], node["kind"]])
+    for field in ("decisions", "invariants"):
+        for item in content[field]:
+            values.extend([item["title"], item["body"]])
+    for item in content["code_evidence"]:
+        values.extend([item["claim"], item["explanation"]])
+    for item in content["verification"]:
+        values.extend([item["claim"], item["evidence"]])
+    values.extend(content["limitations"])
+    values.extend(content["reviewer_prompts"])
+    return " ".join(values)
+
+
+def _infer_locale(content: Mapping[str, Any]) -> Literal["en", "pt-BR"]:
+    prose = _authored_prose(content).lower()
+    tokens = re.findall(r"[a-zà-öø-ÿ]+", prose)
+    portuguese = sum(token in _PORTUGUESE_WORDS for token in tokens)
+    portuguese += min(3, sum(bool(re.search(r"[áàâãçéêíóôõúü]", token)) for token in tokens))
+    english = sum(token in _ENGLISH_WORDS for token in tokens)
+    return "pt-BR" if portuguese >= english + 2 else "en"
+
+
 def _ok(result: subprocess.CompletedProcess[str], what: str) -> str:
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or "unknown error").strip()
@@ -593,7 +838,10 @@ def _snapshot(pr_id: str, forge: ReviewBriefForge, run: Runner) -> _Snapshot:
     url = pr.get("url")
     if not isinstance(url, str) or not url:
         raise ReviewBriefError("forge PR response is missing its URL")
-    return _Snapshot(sha=local, pr_url=url, pr_head_sha=pr_head)
+    base = pr.get("base")
+    if not isinstance(base, str) or not base:
+        raise ReviewBriefError("forge PR response is missing its base branch")
+    return _Snapshot(sha=local, pr_url=url, pr_head_sha=pr_head, base=base)
 
 
 def _read_content(path: Path) -> dict[str, Any]:
@@ -606,6 +854,60 @@ def _read_content(path: Path) -> dict[str, Any]:
     return validate_content(raw)
 
 
+def _parse_diff(raw: str) -> tuple[_DiffHunk, ...]:
+    hunks: list[_DiffHunk] = []
+    lines: list[_DiffLine] = []
+    new_start = 0
+    new_count = 0
+    old_number = 0
+    new_number = 0
+
+    def finish() -> None:
+        nonlocal lines
+        if lines:
+            hunks.append(_DiffHunk(new_start, new_count, tuple(lines)))
+            lines = []
+
+    for raw_line in raw.splitlines():
+        header = _HUNK_RE.match(raw_line)
+        if header:
+            finish()
+            old_number = int(header.group(1))
+            new_start = int(header.group(3))
+            new_number = new_start
+            new_count = int(header.group(4) or "1")
+            continue
+        if new_start == 0 or not raw_line or raw_line.startswith("\\ No newline"):
+            continue
+        marker = raw_line[0]
+        text = raw_line[1:]
+        if marker == " ":
+            lines.append(_DiffLine("context", old_number, new_number, text))
+            old_number += 1
+            new_number += 1
+        elif marker == "+":
+            lines.append(_DiffLine("added", None, new_number, text))
+            new_number += 1
+        elif marker == "-":
+            lines.append(_DiffLine("deleted", old_number, None, text))
+            old_number += 1
+    finish()
+    return tuple(hunks)
+
+
+def _focused_diff(raw: str, start: int, end: int) -> tuple[_DiffLine, ...]:
+    focused: list[_DiffLine] = []
+    for hunk in _parse_diff(raw):
+        if hunk.new_count == 0:
+            intersects = start <= hunk.new_start <= end + 1
+        else:
+            hunk_end = hunk.new_start + hunk.new_count - 1
+            intersects = hunk.new_start <= end and start <= hunk_end
+        if intersects:
+            focused.extend(hunk.lines)
+    return tuple(focused)
+
+
 def _extract_evidence(
     content: Mapping[str, Any],
     snapshot: _Snapshot,
@@ -614,10 +916,23 @@ def _extract_evidence(
     run: Runner,
 ) -> list[_Excerpt]:
     excerpts: list[_Excerpt] = []
+    merge_base = _ok(
+        run(["git", "merge-base", snapshot.sha, f"refs/remotes/origin/{snapshot.base}"]),
+        "git merge-base PR base",
+    ).strip()
+    if not _SHA_RE.fullmatch(merge_base):
+        raise ReviewBriefError(f"PR merge base resolved to invalid SHA {merge_base!r}")
+    source_by_path: dict[str, list[str]] = {}
+    diff_by_path: dict[str, str] = {}
     for index, item in enumerate(content["code_evidence"]):
         path = item["path"]
-        raw = _ok(run(["git", "show", f"{snapshot.sha}:{path}"]), f"read {path} at snapshot")
-        lines = raw.splitlines()
+        if path not in source_by_path:
+            raw = _ok(
+                run(["git", "show", f"{snapshot.sha}:{path}"]),
+                f"read {path} at snapshot",
+            )
+            source_by_path[path] = raw.splitlines()
+        lines = source_by_path[path]
         start = item["start_line"]
         end = item["end_line"]
         if end > len(lines):
@@ -629,6 +944,29 @@ def _extract_evidence(
             source_url = forge.source_url(pr_id, snapshot.sha, path, start, end)
         except ForgeError as exc:
             raise ReviewBriefError(str(exc)) from exc
+        if path not in diff_by_path:
+            diff_by_path[path] = _ok(
+                run(
+                    [
+                        "git",
+                        "diff",
+                        "--no-ext-diff",
+                        "--no-color",
+                        "--unified=3",
+                        merge_base,
+                        snapshot.sha,
+                        "--",
+                        path,
+                    ]
+                ),
+                f"read focused diff for {path}",
+            )
+        diff_lines = _focused_diff(diff_by_path[path], start, end)
+        if not diff_lines:
+            diff_lines = tuple(
+                _DiffLine("context", number, number, lines[number - 1])
+                for number in range(start, end + 1)
+            )
         excerpts.append(
             _Excerpt(
                 claim=item["claim"],
@@ -638,7 +976,7 @@ def _extract_evidence(
                 end_line=end,
                 highlight_lines=frozenset(item["highlight_lines"]),
                 source_url=source_url,
-                lines=tuple(lines[start - 1 : end]),
+                diff_lines=diff_lines,
             )
         )
     return excerpts
@@ -662,7 +1000,7 @@ def _render_steps(items: Sequence[str], *, final_mark: str) -> str:
     return "".join(rows)
 
 
-def _render_scenarios(items: Sequence[Mapping[str, Any]]) -> str:
+def _render_scenarios(items: Sequence[Mapping[str, Any]], copy: Mapping[str, str]) -> str:
     if not items:
         return ""
     blocks = [
@@ -671,19 +1009,19 @@ def _render_scenarios(items: Sequence[Mapping[str, Any]]) -> str:
             f'<p class="scenario-name">{_e(scenario["name"])}</p>'
             '<div class="scenarios">'
             '<article class="scenario before"><div class="scenario-title">'
-            f"<strong>Before</strong><span>{_e(scenario['before_label'])}</span></div>"
+            f"<strong>{_e(copy['before'])}</strong><span>{_e(scenario['before_label'])}</span></div>"
             f'<div class="steps">{_render_steps(scenario["before_steps"], final_mark="!")}</div>'
             '</article><div class="arrow" aria-hidden="true">→</div>'
             '<article class="scenario after"><div class="scenario-title">'
-            f"<strong>After</strong><span>{_e(scenario['after_label'])}</span></div>"
+            f"<strong>{_e(copy['after'])}</strong><span>{_e(scenario['after_label'])}</span></div>"
             f'<div class="steps">{_render_steps(scenario["after_steps"], final_mark="✓")}</div>'
             "</article></div></div>"
         )
         for scenario in items
     ]
     return (
-        '<section id="scenarios"><div class="section-head"><h2>Before and after</h2>'
-        "<span>Follow the behavior, not the file list</span></div>"
+        f'<section id="scenarios"><div class="section-head"><h2>{_e(copy["before_after"])}</h2>'
+        f"<span>{_e(copy['behavior_note'])}</span></div>"
         f"{''.join(blocks)}</section>"
     )
 
@@ -706,13 +1044,26 @@ def _map_layout(system_map: Mapping[str, Any]) -> tuple[dict[str, tuple[int, int
     max_rows = max(len(column) for column in columns.values())
     for column, ids in columns.items():
         for row, node_id in enumerate(ids):
-            positions[node_id] = (22 + column * 174, 18 + row * 92)
-    width = max(620, 44 + (max(rank.values()) + 1) * 174)
-    height = max(98, 36 + max_rows * 92)
+            positions[node_id] = (24 + column * 280, 20 + row * 126)
+    width = max(800, 48 + (max(rank.values()) + 1) * 280)
+    height = max(136, 40 + max_rows * 126)
     return positions, width, height
 
 
-def _render_map(system_map: Mapping[str, Any] | None) -> str:
+def _wrapped_map_label(label: str) -> tuple[str, ...]:
+    lines = textwrap.wrap(
+        label,
+        width=28,
+        break_long_words=True,
+        break_on_hyphens=False,
+    ) or [label]
+    if len(lines) > 3:
+        final = lines[2][:27].rstrip()
+        lines = [*lines[:2], f"{final}…"]
+    return tuple(lines)
+
+
+def _render_map(system_map: Mapping[str, Any] | None, copy: Mapping[str, str]) -> str:
     if system_map is None:
         return ""
     positions, width, height = _map_layout(system_map)
@@ -720,8 +1071,8 @@ def _render_map(system_map: Mapping[str, Any] | None) -> str:
     for edge in system_map["edges"]:
         start_x, start_y = positions[edge["from"]]
         end_x, end_y = positions[edge["to"]]
-        x1, y1 = start_x + 136, start_y + 31
-        x2, y2 = end_x, end_y + 31
+        x1, y1 = start_x + 224, start_y + 48
+        x2, y2 = end_x, end_y + 48
         mid = (x1 + x2) / 2
         path = f"M{x1},{y1} C{mid},{y1} {mid},{y2} {x2 - 7},{y2}"
         arrows.append(
@@ -732,19 +1083,26 @@ def _render_map(system_map: Mapping[str, Any] | None) -> str:
     for node in system_map["nodes"]:
         x, y = positions[node["id"]]
         changed = " changed" if node["changed"] else ""
+        label_lines = _wrapped_map_label(node["label"])
+        tspans = "".join(
+            f'<tspan x="16" y="{46 + index * 18}">{_e(line)}</tspan>'
+            for index, line in enumerate(label_lines)
+        )
         nodes.append(
-            f'<g class="map-node{changed}" transform="translate({x} {y})">'
-            '<rect width="136" height="62" rx="11"/>'
-            f'<text class="kind" x="13" y="20">{_e(node["kind"].upper())}</text>'
-            f'<text x="13" y="43">{_e(node["label"])}</text></g>'
+            f'<g class="map-node{changed}" transform="translate({x} {y})" role="group" '
+            f'aria-label="{_e(node["kind"])}: {_e(node["label"])}">'
+            f"<title>{_e(node['kind'])}: {_e(node['label'])}</title>"
+            '<rect width="224" height="96" rx="13"/>'
+            f'<text class="kind" x="16" y="21">{_e(node["kind"].upper())}</text>'
+            f'<text class="label">{tspans}</text></g>'
         )
     return (
-        '<section id="map"><div class="section-head"><h2>The relevant system slice</h2>'
-        '<span>Unrelated architecture omitted</span></div><div class="system-map" '
-        'tabindex="0" aria-label="Scrollable relevant system map">'
+        f'<section id="map"><div class="section-head"><h2>{_e(copy["map"])}</h2>'
+        f'<span>{_e(copy["map_note"])}</span></div><div class="system-map" '
+        f'tabindex="0" aria-label="{_e(copy["map_scroll_aria"])}">'
         f'<div class="map-note">{_e(system_map["caption"])}</div>'
         f'<div class="map-canvas"><svg viewBox="0 0 {width} {height}" role="img" '
-        'aria-label="Relevant components and the direction of their relationships">'
+        f'aria-label="{_e(copy["map_image_aria"])}">'
         f"{''.join(arrows)}{''.join(nodes)}</svg></div></div></section>"
     )
 
@@ -758,17 +1116,17 @@ def _render_claims(items: Sequence[Mapping[str, str]]) -> str:
     )
 
 
-def _render_guarantees(items: Sequence[Mapping[str, str]]) -> str:
+def _render_guarantees(items: Sequence[Mapping[str, str]], copy: Mapping[str, str]) -> str:
     if not items:
         return ""
     return (
-        '<section id="invariants"><div class="section-head"><h2>What must remain true</h2>'
-        "<span>Review these as invariants</span></div>"
+        f'<section id="invariants"><div class="section-head"><h2>{_e(copy["invariants"])}</h2>'
+        f"<span>{_e(copy['invariants_note'])}</span></div>"
         f'<div class="claims">{_render_claims(items)}</div></section>'
     )
 
 
-def _render_decisions(items: Sequence[Mapping[str, str]]) -> str:
+def _render_decisions(items: Sequence[Mapping[str, str]], copy: Mapping[str, str]) -> str:
     if not items:
         return ""
     cards = "".join(
@@ -777,8 +1135,8 @@ def _render_decisions(items: Sequence[Mapping[str, str]]) -> str:
         for item in items
     )
     return (
-        '<section id="decisions"><div class="section-head"><h2>Decisions that shape the change</h2>'
-        "<span>Intentional constraints and tradeoffs</span></div>"
+        f'<section id="decisions"><div class="section-head"><h2>{_e(copy["decisions"])}</h2>'
+        f"<span>{_e(copy['decisions_note'])}</span></div>"
         f'<div class="decisions">{cards}</div></section>'
     )
 
@@ -807,33 +1165,41 @@ def _highlight_line(line: str) -> str:
     return "".join(parts)
 
 
-def _render_evidence(items: Sequence[_Excerpt], pr_url: str) -> str:
+def _render_evidence(items: Sequence[_Excerpt], pr_url: str, copy: Mapping[str, str]) -> str:
     blocks: list[str] = []
     for excerpt in items:
         code_lines: list[str] = []
-        for offset, line in enumerate(excerpt.lines):
-            number = excerpt.start_line + offset
-            decisive = " decisive" if number in excerpt.highlight_lines else ""
+        for line in excerpt.diff_lines:
+            number = line.new_number if line.new_number is not None else line.old_number
+            decisive = (
+                " decisive"
+                if line.new_number is not None and line.new_number in excerpt.highlight_lines
+                else ""
+            )
+            marker = {"context": " ", "added": "+", "deleted": "-"}[line.kind]
             code_lines.append(
-                f'<span class="code-line{decisive}"><span class="line-number">{number}</span>'
-                f'<span class="code-text">{_highlight_line(line)}</span></span>'
+                f'<span class="code-line {line.kind}{decisive}">'
+                f'<span class="diff-marker">{marker}</span>'
+                f'<span class="line-number">{_e(number or "")}</span>'
+                f'<span class="code-text">{_highlight_line(line.text)}</span></span>'
             )
         blocks.append(
             '<article class="code"><div class="code-copy">'
             f'<span class="code-file">{_e(excerpt.path)}:{excerpt.start_line}</span>'
             f"<strong>{_e(excerpt.claim)}</strong><p>{_e(excerpt.explanation)}</p>"
-            f'<a href="{_e(excerpt.source_url)}">Open exact lines in Forge ↗</a>'
+            f'<a href="{_e(excerpt.source_url)}">{_e(copy["open_lines"])}</a>'
             f'</div><div class="code-scroll">{"".join(code_lines)}</div></article>'
         )
+    excerpt_label = copy["excerpt_one"] if len(items) == 1 else copy["excerpt_many"]
     return (
-        '<section id="evidence"><div class="section-head"><h2>Focused code evidence</h2>'
-        f"<span>{len(items)} excerpt{'s' if len(items) != 1 else ''} · "
-        f'<a href="{_e(pr_url)}">full diff in Forge</a></span></div>'
+        f'<section id="evidence"><div class="section-head"><h2>{_e(copy["evidence"])}</h2>'
+        f"<span>{len(items)} {_e(excerpt_label)} · "
+        f'<a href="{_e(pr_url)}">{_e(copy["full_diff"])}</a></span></div>'
         f'<div class="evidence-list">{"".join(blocks)}</div></section>'
     )
 
 
-def _render_verification(items: Sequence[Mapping[str, str]]) -> str:
+def _render_verification(items: Sequence[Mapping[str, str]], copy: Mapping[str, str]) -> str:
     symbols = {"passed": "✓", "pending": "…", "failed": "!"}
     checks = "".join(
         f'<article class="check panel {_e(item["status"])}">'
@@ -842,8 +1208,8 @@ def _render_verification(items: Sequence[Mapping[str, str]]) -> str:
         for item in items
     )
     return (
-        '<section id="verification"><div class="section-head"><h2>Verification &amp; risk</h2>'
-        "<span>Evidence over assertion</span></div>"
+        f'<section id="verification"><div class="section-head"><h2>{_e(copy["verification"])}</h2>'
+        f"<span>{_e(copy['verification_note'])}</span></div>"
         f'<div class="verification-grid">{checks}</div></section>'
     )
 
@@ -858,28 +1224,28 @@ def _render_list_section(section_id: str, heading: str, items: Sequence[str]) ->
     )
 
 
-def _render_prompts(items: Sequence[str]) -> str:
+def _render_prompts(items: Sequence[str], copy: Mapping[str, str]) -> str:
     if not items:
         return ""
     rows = "".join(f'<li class="panel"><span>{_e(item)}</span></li>' for item in items)
     return (
-        '<section id="prompts"><div class="section-head"><h2>Questions worth pressure-testing</h2>'
-        "<span>A starting point, not a checklist</span></div>"
+        f'<section id="prompts"><div class="section-head"><h2>{_e(copy["prompts"])}</h2>'
+        f"<span>{_e(copy['prompts_note'])}</span></div>"
         f'<ol class="prompt-list">{rows}</ol></section>'
     )
 
 
-def _navigation(content: Mapping[str, Any]) -> list[tuple[str, str]]:
-    links: list[tuple[str, str]] = [("why", "Why this changed")]
+def _navigation(content: Mapping[str, Any], copy: Mapping[str, str]) -> list[tuple[str, str]]:
+    links: list[tuple[str, str]] = [("why", copy["why_nav"])]
     optional = [
-        ("scenarios", "Before and after", content["scenarios"]),
-        ("map", "System map", content["system_map"]),
-        ("decisions", "Decisions", content["decisions"]),
-        ("invariants", "Invariants", content["invariants"]),
-        ("evidence", "Code evidence", content["code_evidence"]),
-        ("verification", "Verification & risk", content["verification"]),
-        ("limitations", "Limits & unknowns", content["limitations"]),
-        ("prompts", "Review prompts", content["reviewer_prompts"]),
+        ("scenarios", copy["scenarios_nav"], content["scenarios"]),
+        ("map", copy["map_nav"], content["system_map"]),
+        ("decisions", copy["decisions_nav"], content["decisions"]),
+        ("invariants", copy["invariants_nav"], content["invariants"]),
+        ("evidence", copy["evidence_nav"], content["code_evidence"]),
+        ("verification", copy["verification_nav"], content["verification"]),
+        ("limitations", copy["limitations_nav"], content["limitations"]),
+        ("prompts", copy["prompts_nav"], content["reviewer_prompts"]),
     ]
     links.extend((section_id, label) for section_id, label, value in optional if value)
     return links
@@ -902,70 +1268,87 @@ def _document(
         f"style-src 'sha256-{digest}'; "
         "img-src data:; base-uri 'none'; form-action 'none'"
     )
+    locale = _infer_locale(content)
+    copy = _COPY[locale]
     rail = "".join(
-        f'<a href="#{_e(section_id)}">{_e(label)}</a>' for section_id, label in _navigation(content)
+        f'<a href="#{_e(section_id)}">{_e(label)}</a>'
+        for section_id, label in _navigation(content, copy)
     )
     motivation = content["motivation"]
     risk_class = " risk-high" if content["risk"] == "high" else ""
     sections = [
-        _render_scenarios(content["scenarios"]),
-        _render_map(content["system_map"]),
-        _render_decisions(content["decisions"]),
-        _render_guarantees(content["invariants"]),
-        _render_evidence(excerpts, snapshot.pr_url),
-        _render_verification(content["verification"]),
-        _render_list_section("limitations", "Limits & unknowns", content["limitations"]),
-        _render_prompts(content["reviewer_prompts"]),
+        _render_scenarios(content["scenarios"], copy),
+        _render_map(content["system_map"], copy),
+        _render_decisions(content["decisions"], copy),
+        _render_guarantees(content["invariants"], copy),
+        _render_evidence(excerpts, snapshot.pr_url, copy),
+        _render_verification(content["verification"], copy),
+        _render_list_section("limitations", copy["limitations"], content["limitations"]),
+        _render_prompts(content["reviewer_prompts"], copy),
     ]
+    risk_label = copy[f"risk_{content['risk']}"]
+    risk_value = copy[f"risk_value_{content['risk']}"]
+    brief_label = copy[f"brief_{mode}"]
     return f'''<!doctype html>
-<html lang="en">
+<html lang="{_e(locale)}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta http-equiv="Content-Security-Policy" content="{_e(csp)}">
   <meta name="color-scheme" content="light dark">
-  <title>{_e(content["title"])} · Flow review brief</title>
+  <title>{_e(content["title"])} · {_e(copy["brand"])}</title>
   <style>{style}</style>
 </head>
 <body>
   <main class="shell" aria-labelledby="brief-title">
     <header class="topbar">
-      <div class="brand"><span class="mark" aria-hidden="true">F</span>Flow review brief</div>
+      <div class="brand"><span class="mark" aria-hidden="true">F</span>{_e(copy["brand"])}</div>
       <div class="meta">
         <a class="pill" href="{_e(snapshot.pr_url)}">PR #{_e(pr_id)}</a>
         <span class="pill" title="{_e(snapshot.sha)}">{_e(snapshot.sha[:12])}</span>
-        <span class="pill{risk_class}">{_e(content["risk"])} risk</span>
-        <span class="pill snapshot">Snapshot</span>
+        <span class="pill{risk_class}">{_e(risk_label)}</span>
+        <span class="pill snapshot">{_e(copy["snapshot"])}</span>
       </div>
     </header>
     <div class="layout">
-      <nav class="rail" aria-label="Review brief sections"><div class="rail-inner">
-        <div class="rail-label">On this page</div>{rail}
-        <a class="forge-link" href="{_e(snapshot.pr_url)}">Open full diff ↗</a>
-      </div></nav>
+      <nav class="rail" aria-label="{_e(copy["nav_aria"])}">
+        <details class="rail-disclosure" open>
+          <summary>
+            <span class="rail-toggle-expanded" aria-hidden="true">&#8249;</span>
+            <span class="rail-toggle-label">{_e(copy["collapse_nav"])}</span>
+            <span class="rail-toggle-collapsed" aria-label="{_e(copy["expand_nav"])}">☰</span>
+          </summary>
+          <div class="rail-inner">
+            <div class="rail-label">{_e(copy["on_page"])}</div>{rail}
+            <a class="forge-link" href="{_e(snapshot.pr_url)}">{_e(copy["open_diff"])}</a>
+          </div>
+        </details>
+      </nav>
       <div class="content">
         <section id="why">
-          <div class="kicker">{_e(content["change_shape"])} · {_e(mode)} brief</div>
+          <div class="kicker">{_e(content["change_shape"])} · {_e(brief_label)}</div>
           <h1 id="brief-title">{_e(content["title"])}</h1>
           <p class="deck">{_e(content["outcome"])}</p>
         </section>
         <div class="context">
           <div class="observation">
-            <p><strong>What was happening.</strong> {_e(motivation["observed_problem"])}</p>
-            <p><strong>Why it matters.</strong> {_e(motivation["why_it_matters"])}</p>
+            <p><strong>{_e(copy["what_happened"])}</strong> {_e(motivation["observed_problem"])}</p>
+            <p><strong>{_e(copy["why_matters"])}</strong> {_e(motivation["why_it_matters"])}</p>
           </div>
           <div class="facts">
-            <div class="fact"><span>Change shape</span>
+            <div class="fact"><span>{_e(copy["change_shape"])}</span>
               <strong>{_e(content["change_shape"])}</strong>
             </div>
-            <div class="fact"><span>Risk</span><strong>{_e(content["risk"])}</strong></div>
-            <div class="fact"><span>Snapshot</span><strong>{_e(snapshot.sha[:12])}</strong></div>
+            <div class="fact"><span>{_e(copy["risk"])}</span><strong>{_e(risk_value)}</strong></div>
+            <div class="fact"><span>{_e(copy["snapshot"])}</span>
+              <strong>{_e(snapshot.sha[:12])}</strong>
+            </div>
           </div>
         </div>
         {"".join(sections)}
         <footer class="footer">
-          This brief is a read-only companion to the Forge review, frozen at
-          <code>{_e(snapshot.sha)}</code>. If the branch changes, regenerate it before merge.
+          {_e(copy["footer_before"])}
+          <code>{_e(snapshot.sha)}</code>. {_e(copy["footer_after"])}
         </footer>
       </div>
     </div>
