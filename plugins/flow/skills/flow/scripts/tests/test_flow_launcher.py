@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import stat
 import subprocess
 from pathlib import Path
@@ -50,6 +51,102 @@ def test_install_is_idempotent_and_executable(tmp_path: Path) -> None:
     assert (root / ".flow" / "runtime" / "skill-root").read_text(encoding="utf-8").strip() == str(
         skill.resolve()
     )
+
+
+@pytest.mark.skipif(shutil.which("python3.11") is None, reason="python3.11 is unavailable")
+def test_python311_launcher_installs_facade_that_can_run_lifecycle(tmp_path: Path) -> None:
+    root = _workspace(tmp_path)
+    python311 = shutil.which("python3.11")
+    assert python311 is not None
+    env = {**os.environ, "FLOW_HARNESS": "generic"}
+
+    setup = subprocess.run(
+        [python311, str(Path(flow_launcher.__file__)), "--workspace-root", str(root)],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+    )
+    assert setup.returncode == 0, setup.stderr
+
+    result = subprocess.run(
+        [python311, str(root / ".flow" / "runtime" / "flow"), "lifecycle", "--help"],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "usage:" in result.stdout
+    assert "ImportError" not in result.stderr
+
+
+def test_runtime_resolution_has_direct_codex_remediation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("FLOW_HARNESS", "codex")
+    monkeypatch.setattr(flow_launcher.sys, "version_info", (3, 11, 0))
+    monkeypatch.setattr(flow_launcher.shutil, "which", lambda _name: None)
+
+    with pytest.raises(
+        flow_launcher.RuntimeCompatibilityError,
+        match=r"Codex.*Python 3\.12.*uv",
+    ):
+        flow_launcher.resolve_runtime_python(tmp_path / ".flow" / "runtime")
+
+
+def test_runtime_resolution_uses_uv_when_path_has_only_python311(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(flow_launcher.sys, "version_info", (3, 11, 0))
+    monkeypatch.setattr(
+        flow_launcher.shutil,
+        "which",
+        lambda name: "/opt/bin/uv" if name == "uv" else None,
+    )
+    calls: list[list[str]] = []
+
+    def fake_run(args: list[str], **_kwargs) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        stdout = "/opt/python3.13\n" if args[0] == "/opt/bin/uv" else "3.13\n"
+        return subprocess.CompletedProcess(args, 0, stdout, "")
+
+    monkeypatch.setattr(flow_launcher.subprocess, "run", fake_run)
+
+    resolved = flow_launcher.resolve_runtime_python(tmp_path / ".flow" / "runtime")
+
+    assert resolved == Path("/opt/python3.13")
+    assert calls[0][:4] == [
+        "/opt/bin/uv",
+        "--cache-dir",
+        str(tmp_path / ".flow" / "runtime" / "uv-cache"),
+        "run",
+    ]
+
+
+def test_runtime_failure_does_not_replace_existing_facade(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _workspace(tmp_path)
+    skill = _fixture_skill(tmp_path, "")
+    runtime = root / ".flow" / "runtime"
+    runtime.mkdir()
+    skill_file = runtime / "skill-root"
+    shim = runtime / "flow"
+    skill_file.write_text("/prior/skill\n", encoding="utf-8")
+    shim.write_text("prior facade\n", encoding="utf-8")
+
+    def fail_runtime(_runtime: Path) -> Path:
+        raise flow_launcher.RuntimeCompatibilityError("unsupported runtime")
+
+    monkeypatch.setattr(flow_launcher, "resolve_runtime_python", fail_runtime)
+
+    with pytest.raises(flow_launcher.RuntimeCompatibilityError, match="unsupported runtime"):
+        flow_launcher.install(root, skill_dir=skill)
+
+    assert skill_file.read_text(encoding="utf-8") == "/prior/skill\n"
+    assert shim.read_text(encoding="utf-8") == "prior facade\n"
 
 
 def test_install_uses_atomic_replacement_for_both_files(tmp_path: Path, monkeypatch) -> None:

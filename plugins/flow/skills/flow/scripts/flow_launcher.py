@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
+import subprocess
 import sys
 import tomllib
 from pathlib import Path
@@ -13,6 +15,14 @@ from _atomicio import atomic_write_text
 from bundle_discover import HarnessError, flow_harness
 
 SKILL_ROOT = Path(__file__).resolve().parent.parent
+_MIN_PYTHON = (3, 12)
+_PYTHON_COMMANDS = ("python3", "python3.14", "python3.13", "python3.12")
+_RUNTIME_PYTHON_TOKEN = "__FLOW_RUNTIME_PYTHON__"
+
+
+class RuntimeCompatibilityError(OSError):
+    """No supported Python runtime is available to the workspace facade."""
+
 
 _SHIM = r'''#!/usr/bin/env python3
 """Generated Flow workspace launcher. Re-run Flow workspace setup to replace."""
@@ -22,6 +32,8 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
+
+_RUNTIME_PYTHON = __FLOW_RUNTIME_PYTHON__
 
 
 def _fail(message: str) -> int:
@@ -83,11 +95,17 @@ def main() -> int:
             f"Flow installation is missing {flowctl}; update Flow and run Flow workspace setup"
         )
 
+    runtime_python = Path(_RUNTIME_PYTHON)
+    if not runtime_python.is_file():
+        return _fail(
+            f"Flow runtime Python is missing at {runtime_python}; rerun the Flow launcher"
+        )
+
     os.environ["FLOW_SKILL_DIR"] = str(skill_dir)
     os.environ["CLAUDE_SKILL_DIR"] = str(skill_dir)
     os.execv(
-        sys.executable,
-        [sys.executable, str(flowctl), "--workspace-root", str(workspace_root), *sys.argv[1:]],
+        str(runtime_python),
+        [str(runtime_python), str(flowctl), "--workspace-root", str(workspace_root), *sys.argv[1:]],
     )
     return 1
 
@@ -95,6 +113,100 @@ def main() -> int:
 if __name__ == "__main__":
     raise SystemExit(main())
 '''
+
+
+def _python_version(executable: str | Path) -> tuple[int, int] | None:
+    try:
+        result = subprocess.run(
+            [
+                str(executable),
+                "-c",
+                "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    try:
+        major, minor = result.stdout.strip().split(".", 1)
+        return int(major), int(minor)
+    except ValueError:
+        return None
+
+
+def _runtime_compatibility_error() -> RuntimeCompatibilityError:
+    harness = flow_harness()
+    if harness == "codex":
+        return RuntimeCompatibilityError(
+            "Codex cannot initialize Flow: Python 3.12 or newer is required, and neither "
+            "a compatible interpreter nor a usable uv runtime is available. Install uv or "
+            "make python3.12+ available on Codex's PATH, then retry."
+        )
+    return RuntimeCompatibilityError(
+        "Flow requires Python 3.12 or newer; install a compatible interpreter or uv, then retry."
+    )
+
+
+def resolve_runtime_python(runtime_dir: Path) -> Path:
+    """Return a Python >=3.12 executable, provisioning one through uv when needed."""
+    if sys.version_info[:2] >= _MIN_PYTHON:
+        return Path(sys.executable).resolve()
+
+    seen: set[str] = set()
+    for command in _PYTHON_COMMANDS:
+        candidate = shutil.which(command)
+        if candidate is None:
+            continue
+        resolved = str(Path(candidate).resolve())
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        version = _python_version(resolved)
+        if version is not None and version >= _MIN_PYTHON:
+            return Path(resolved)
+
+    uv = shutil.which("uv")
+    if uv is None:
+        raise _runtime_compatibility_error()
+    cache_dir = runtime_dir / "uv-cache"
+    try:
+        result = subprocess.run(
+            [
+                uv,
+                "--cache-dir",
+                str(cache_dir),
+                "run",
+                "--no-project",
+                "--python",
+                ">=3.12",
+                "--",
+                "python",
+                "-c",
+                "import sys; print(sys.executable)",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=120,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise _runtime_compatibility_error() from exc
+    if result.returncode != 0:
+        raise _runtime_compatibility_error()
+    candidate = result.stdout.strip()
+    version = _python_version(candidate)
+    if not candidate or version is None or version < _MIN_PYTHON:
+        raise _runtime_compatibility_error()
+    return Path(candidate).resolve()
+
+
+def _render_shim(runtime_python: Path) -> str:
+    return _SHIM.replace(_RUNTIME_PYTHON_TOKEN, repr(str(runtime_python)))
 
 
 def _plugin_source(manifest: Path, plugin: str) -> str | None:
@@ -217,11 +329,12 @@ def install(
     flowctl = resolved_skill / "scripts" / "flowctl.py"
     if not flowctl.is_file():
         raise FileNotFoundError(f"Flow installation is missing {flowctl}")
+    runtime_python = resolve_runtime_python(root / ".flow" / "runtime")
     layout = runtime_layout.ensure_layout(root, memory_base=memory_base)
     skill_path = layout.skill_root_file
     shim_path = layout.launcher
     atomic_write_text(skill_path, str(resolved_skill) + "\n")
-    atomic_write_text(shim_path, _SHIM, mode=0o755)
+    atomic_write_text(shim_path, _render_shim(runtime_python), mode=0o755)
     return skill_path, shim_path
 
 

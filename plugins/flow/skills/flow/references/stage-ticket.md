@@ -25,11 +25,29 @@ Subsequent stages depend on `<ticket-dir>/ticket.json` being present.
    Exit 3 (no match) → abort stage with status=failed;
    the user must rerun with an explicit `--ticket` arg.
 
-2. Fetch ticket details into `<ticket-dir>/ticket.json` — the canonical Ticket payload downstream stages read (key, summary, status, description, type, assignee, comments, parent, attachments, links).
+2. Fetch ticket details into `<ticket-dir>/ticket.json` — the canonical Ticket payload downstream stages read (key, summary, status, description, type, assignee, comments, parent, attachments, links). This cache must contain the complete tracker payload returned by the selected adapter, never a summary.
 
-   **MCP-first.** When the Atlassian MCP is available (an attached session usually has it — `getJiraIssue` etc.), fetch via the MCP and write the result into `<ticket-dir>/ticket.json` in that Ticket shape. The MCP is auth-fresh and needs no env credentials, so it is the primary path in an attached run (this is what production already reaches for).
+   **Codex.** Fetch with the rooted facade, capture its complete stdout JSON, then use
+   Codex's rooted exact writer to write that JSON to `<ticket-dir>/ticket.json`:
+   ```bash
+   FLOW_HARNESS=codex "<facade>" tracker \
+     --workspace-root . \
+     get --key <KEY>
+   ```
+   Do not use shell redirection and do not reconstruct or summarize the payload. Use
+   the same exact writer to create the descriptor's `<artifact-path>` (`ticket.out`)
+   with a concise fetch/status report before advancing the stage.
 
-   **REST fallback** — when the MCP is absent (a backgrounded / headless run), or for any workspace where it is unavailable:
+   **Claude Code with Atlassian MCP.** When the Atlassian MCP is available, fetch via
+   the MCP and use the host writer to store the full result in
+   `<ticket-dir>/ticket.json` in that Ticket shape. The MCP is auth-fresh and needs no
+   environment credentials.
+
+   **Native-host fallback.** If Claude Code has no Jira MCP, use the same facade capture
+   plus exact-writer path described for Codex, with `FLOW_HARNESS=claude-code`.
+
+   **Generic/headless fallback.** When no host exact writer is available, redirect the
+   tracker facade output directly to the cache:
    ```bash
    FLOW_HARNESS="<harness>" "<facade>" tracker \
      --workspace-root . \

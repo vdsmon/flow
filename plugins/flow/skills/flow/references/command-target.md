@@ -46,6 +46,8 @@ evidence; it never turns a read-only cockpit into a repair or alarm-filing path.
 Accepted target forms are:
 
 - keys matching the configured tracker key patterns;
+- an HTTP(S) Jira browse URL ending in `/browse/<key>`, when the extracted key matches
+  the configured tracker key patterns;
 - `ticket:<key>`, required when the key's literal spelling collides with a static
   namespace;
 - `pr:<positive-number>`;

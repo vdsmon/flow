@@ -113,6 +113,11 @@ def test_target_options_encode_conflicts_and_cardinality() -> None:
         ("FT-42", TargetKind.TICKET, "FT-42"),
         ("flow-a0d", TargetKind.TICKET, "flow-a0d"),
         ("ticket:memory", TargetKind.TICKET, "memory"),
+        (
+            "https://brinta.atlassian.net/browse/FT-1470",
+            TargetKind.TICKET_URL,
+            "FT-1470",
+        ),
         ("pr:17", TargetKind.PR, "17"),
         ("https://github.com/vdsmon/flow/pull/478", TargetKind.PR_URL, "478"),
         (
@@ -132,6 +137,27 @@ def test_static_namespace_wins_even_when_tracker_pattern_matches_everything() ->
     classified = classify_root_token("memory", (r".*",))
     assert classified.kind is TargetKind.NAMESPACE
     assert classified.value == "memory"
+
+
+def test_jira_browse_url_key_must_match_workspace_tracker_grammar() -> None:
+    classified = classify_root_token(
+        "https://brinta.atlassian.net/browse/OTHER-1470",
+        (r"FT-\d+",),
+    )
+
+    assert classified.kind is TargetKind.UNKNOWN
+
+
+def test_jira_browse_url_routes_as_normalized_ticket_key() -> None:
+    route = route_tokens(
+        ["https://brinta.atlassian.net/browse/FT-1470"],
+        load_registry(REGISTRY),
+        (r"FT-\d+",),
+    )
+
+    assert route.command is not None
+    assert route.command.id == "target"
+    assert route.positionals == ("FT-1470",)
 
 
 @pytest.mark.parametrize("token", ["do", "resume", "recall", "status", "not-a-ticket", "pr:0"])

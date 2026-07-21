@@ -42,6 +42,23 @@ def test_route_emits_deterministic_command_contract(tmp_path, capsys) -> None:
     }
 
 
+def test_route_normalizes_jira_browse_url_with_workspace_grammar(tmp_path, capsys) -> None:
+    _write_jira_workspace(tmp_path)
+
+    rc = public_commands_cli.cli_main(
+        [
+            "route",
+            "--workspace-root",
+            str(tmp_path),
+            "--",
+            "https://brinta.atlassian.net/browse/FT-1470",
+        ]
+    )
+
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out)["positionals"] == ["FT-1470"]
+
+
 def test_route_emits_scoped_help_contract(capsys) -> None:
     assert public_commands_cli.cli_main(["route", "--", "help", "memory"]) == 0
     assert json.loads(capsys.readouterr().out) == {

@@ -48,6 +48,16 @@ harness        claude-code | codex | generic
 capabilities   the host operations available to this invocation
 ```
 
+For example, a Codex cache binding ends at the skill directory itself:
+
+```text
+<codex-home>/plugins/cache/vdsmon-flow/flow/<version>/skills/flow
+```
+
+Before invoking the launcher, verify that both `<skill_root>/SKILL.md` and
+`<skill_root>/scripts/flow_launcher.py` exist. If either is absent, the binding is
+wrong; stop and correct `skill_root` instead of guessing another scripts path.
+
 Every facade call is absolute and uses `run_root` as its explicit workdir. On Codex,
 prefix that same call with `FLOW_HARNESS=codex`; on Claude Code use
 `FLOW_HARNESS=claude-code`; generic adapters use `FLOW_HARNESS=generic`. Do not rely
@@ -132,7 +142,8 @@ FLOW help [ticket|memory|measure|workspace|maintain]
 ```
 <!-- flow:public-grammar:end -->
 
-Targets are configured tracker keys, `ticket:<key>` for a key that collides with a
+Targets are configured tracker keys, Jira `/browse/<key>` URLs whose extracted key
+matches the configured tracker grammar, `ticket:<key>` for a key that collides with a
 static root, `pr:<number>`, or forge PR URLs. Resolve PR forms through the forge seam,
 then enter the same ticket lifecycle. A static namespace always wins over target
 parsing.

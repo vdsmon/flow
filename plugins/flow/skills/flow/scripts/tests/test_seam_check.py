@@ -674,6 +674,24 @@ def test_live_router_carries_rooted_cross_harness_context() -> None:
     assert "binding, not the convenience switch" in spec.lower()
 
 
+def test_live_codex_entry_contract_preflights_exact_skill_root() -> None:
+    skill = (seam_check.SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
+
+    assert "<version>/skills/flow" in skill
+    assert "<skill_root>/SKILL.md" in skill
+    assert "<skill_root>/scripts/flow_launcher.py" in skill
+
+
+def test_live_ticket_stage_uses_codex_exact_writer_for_full_payload() -> None:
+    stage = (seam_check.SKILL_ROOT / "references" / "stage-ticket.md").read_text(encoding="utf-8")
+
+    assert "**Codex.**" in stage
+    assert "complete stdout JSON" in stage
+    assert "rooted exact writer" in stage
+    assert "never a summary" in stage
+    assert "`ticket.out`" in stage
+
+
 def test_live_portable_references_use_adapter_capabilities_not_claude_tool_calls() -> None:
     portable = [
         seam_check.SKILL_ROOT / "references" / "command-ticket.md",

@@ -23,6 +23,11 @@ harness        claude-code | codex | generic
 capabilities   available native operations
 ```
 
+A Codex cache path is bound through the final skill directory, for example
+`<codex-home>/plugins/cache/vdsmon-flow/flow/<version>/skills/flow`, not the plugin
+package above it. Before launcher execution, require both `<skill_root>/SKILL.md` and
+`<skill_root>/scripts/flow_launcher.py`; a missing file means the binding is wrong.
+
 Shell state does not carry across calls. Every facade invocation uses an explicit `run_root`
 workdir and a call-local `FLOW_HARNESS=<harness>`. After worktree creation or adoption, replace
 both `run_root` and `facade` immediately and never fall back to `task_root`. Root every read, edit,

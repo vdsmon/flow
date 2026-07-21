@@ -31,6 +31,7 @@ _CARDINALITIES = frozenset({"one", "zero_or_one", "zero_or_more", "one_or_more"}
 _PATH_TOKEN_RE = re.compile(r"[a-z][a-z0-9-]*")
 _OPTION_RE = re.compile(r"--[a-z][a-z0-9-]*")
 _PR_PATH_RE = re.compile(r"/(?:pull|pull-requests)/(\d+)(?:/|$)")
+_JIRA_BROWSE_PATH_RE = re.compile(r"/browse/([^/]+)/?$")
 
 
 class RegistryError(ValueError):
@@ -44,6 +45,7 @@ class GeneratedContentDrift(RegistryError):
 class TargetKind(StrEnum):
     NAMESPACE = "namespace"
     TICKET = "ticket"
+    TICKET_URL = "ticket_url"
     PR = "pr"
     PR_URL = "pr_url"
     UNKNOWN = "unknown"
@@ -390,6 +392,16 @@ def validate_tracker_key_patterns(patterns: tuple[str, ...] | list[str]) -> tupl
     return tuple(validated)
 
 
+def _matches_tracker_key(key: str, patterns: tuple[str, ...] | list[str]) -> bool:
+    for pattern in patterns:
+        try:
+            if re.fullmatch(pattern, key):
+                return True
+        except re.error as exc:
+            raise RegistryError(f"invalid tracker key pattern {pattern!r}: {exc}") from exc
+    return False
+
+
 def classify_root_token(
     token: str,
     tracker_key_patterns: tuple[str, ...] | list[str] = (),
@@ -420,13 +432,14 @@ def classify_root_token(
         match = _PR_PATH_RE.search(parsed.path)
         if match and int(match.group(1)) > 0:
             return ClassifiedTarget(TargetKind.PR_URL, match.group(1), token)
+        match = _JIRA_BROWSE_PATH_RE.search(parsed.path)
+        if match:
+            key = match.group(1)
+            if _matches_tracker_key(key, tracker_key_patterns):
+                return ClassifiedTarget(TargetKind.TICKET_URL, key, token)
 
-    for pattern in tracker_key_patterns:
-        try:
-            if re.fullmatch(pattern, token):
-                return ClassifiedTarget(TargetKind.TICKET, token, token)
-        except re.error as exc:
-            raise RegistryError(f"invalid tracker key pattern {pattern!r}: {exc}") from exc
+    if _matches_tracker_key(token, tracker_key_patterns):
+        return ClassifiedTarget(TargetKind.TICKET, token, token)
 
     return ClassifiedTarget(TargetKind.UNKNOWN, token, token)
 
@@ -510,7 +523,7 @@ def _validate_argument_values(
         )
     if argument.value_type in {"target", "ticket"}:
         allowed = (
-            {TargetKind.TICKET, TargetKind.PR, TargetKind.PR_URL}
+            {TargetKind.TICKET, TargetKind.TICKET_URL, TargetKind.PR, TargetKind.PR_URL}
             if argument.value_type == "target"
             else {TargetKind.TICKET}
         )
@@ -664,15 +677,31 @@ def route_tokens(
             topic=topic,
         )
 
-    if classified.kind in {TargetKind.TICKET, TargetKind.PR, TargetKind.PR_URL}:
+    if classified.kind in {
+        TargetKind.TICKET,
+        TargetKind.TICKET_URL,
+        TargetKind.PR,
+        TargetKind.PR_URL,
+    }:
         command = registry.by_id["target"]
         positionals, options, option_values = _parse_command_tail(
             command, tokens, tracker_key_patterns, registry.forbidden_root_tokens
         )
+        normalized_positionals: list[str] = []
+        for value in positionals:
+            target = classify_root_token(
+                value,
+                tracker_key_patterns,
+                static_namespaces=registry.static_namespaces,
+                forbidden_root_tokens=registry.forbidden_root_tokens,
+            )
+            normalized_positionals.append(
+                target.value if target.kind is TargetKind.TICKET_URL else value
+            )
         return Route(
             kind="command",
             command=command,
-            positionals=positionals,
+            positionals=tuple(normalized_positionals),
             options=options,
             option_values=option_values,
         )
