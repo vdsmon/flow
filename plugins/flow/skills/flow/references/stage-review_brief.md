@@ -83,7 +83,9 @@ When the native PR pipeline is configured, an empty PR id is a stage failure, ne
 silently empty brief. The renderer binds
 the local `HEAD`, the Forge-reported PR head, every source excerpt, every source URL,
 the artifact directory, and the receipt to the same full SHA. A mismatch fails with
-an instruction to push/update before retrying.
+an instruction to push/update before retrying. When a Forge reports an abbreviated
+head SHA, the renderer resolves the exact remote branch with `git ls-remote`, requires
+the reported abbreviation to match it, and uses that verified full SHA throughout.
 
 ## 2. Select compact or full mode
 
@@ -228,6 +230,13 @@ or Lavish session is involved.
 On renderer success, record `STATUS=completed` and advance immediately to `reflect`.
 Do not poll the file, ask for approval, wait for a comment, mark the PR ready, or
 otherwise couple Flow's execution to human review latency.
+
+If the full remote identity cannot be proven, or the Forge abbreviation disagrees
+with the remote branch, do not publish a receipt or pretend the brief is current.
+Preserve the authored input, record an explicit degraded stage report with the exact
+failure, log the friction, and continue because this companion is not a delivery
+gate. A later merge freshness check still sees the missing receipt and requires a
+successful regeneration when that workspace has enabled Flow-controlled merging.
 
 ## 5. Freshness contract
 

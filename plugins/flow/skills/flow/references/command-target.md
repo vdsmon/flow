@@ -183,11 +183,13 @@ FLOW_HARNESS="<harness>" "<facade>" lifecycle coordinate \
   [--groupability-evidence "<absolute-groupability-file>"]
 ```
 
-Only an attended answer may supply `--choice`. `--together` and the attended
-`together` choice both require groupability evidence; the reducer rejects duplicate,
-non-live, epic, or unverified groups. Delete the temporary file after parsing. The
-returned closed disposition is `direct`, `needs_choice`, `sequential`, or `together`;
-do not infer another mode.
+Only an attended answer may supply `--choice`. `--together` and `--choice` are
+mutually exclusive: `--together` carries the mode already chosen in the public
+request, while `--choice` answers a prior `needs_choice` result. Never pass both.
+`--together` and the attended `together` choice both require groupability evidence;
+the reducer rejects duplicate, non-live, epic, or unverified groups. Delete the
+temporary file after parsing. The returned closed disposition is `direct`,
+`needs_choice`, `sequential`, or `together`; do not infer another mode.
 
 ## Help
 

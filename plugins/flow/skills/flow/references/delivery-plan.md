@@ -119,6 +119,12 @@ FLOW_HARNESS="<harness>" "<facade>" worktree create \
   --e2e-recipe "<recipe or skip: reason>"
 ```
 
+`--branch` must begin with `feat/<ticket>` even when the repository normally uses
+`fix/`, `bugfix/`, `chore/`, or another type prefix. Flow's reap, drain, selection,
+and revision discovery identify newly minted ticket worktrees through that stable
+prefix; `--commit-type` carries the actual change type. Do not translate a bug-fix
+commit into a non-`feat/` Flow branch.
+
 Do not pass `--recover-spill` automatically; it is an explicit operator recovery action.
 
 Bootstrap preserves the isolated ticket worktree, single-ticket claim, current-base resolution,

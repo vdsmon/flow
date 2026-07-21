@@ -21,7 +21,7 @@ A recipe is a single string, self-contained enough that the e2e stage can execut
 Two recipe values are not commands — they are conscious decisions the plan is allowed to make instead of a real recipe:
 
 - `skip: <reason>` — this ticket has no meaningful e2e surface (a docs-only change, a change with nothing runnable to exercise). State the reason; the e2e stage reports it and finishes without executing anything. Never use this to dodge a real, runnable change — that's the convenient path this stage exists to close off.
-- `test-ci-only` — run the repo's cheap no-frills CI/unit gate and nothing heavier. This is also the unattended floor when no cookbook exists yet (see below): never a silent skip, never a block, just the cheapest honest signal available.
+- `test-ci-only` — there is no separate E2E surface, so the e2e stage reuses the exact green test command and result already recorded by `implement` and leaves remote CI confirmation to `review_loop`. It never runs the suite a third time. This is also the unattended floor when no cookbook exists yet (see below): never a silent skip, never invented evidence, just the cheapest honest signal available.
 
 ## The cookbook convention
 

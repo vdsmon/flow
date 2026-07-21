@@ -44,11 +44,19 @@ Your job is to run it exactly, not to reinterpret it.
      anything. This is the one case that emits NO evidence block: the skip line is
      the whole report, with no sentinel (create_pr then draws `## Evidence` from
      the implement verify tail alone, omitting the section when that too is empty).
+   - `test-ci-only` → there is no separate runnable E2E surface. Treat the exact
+     green test command and result already recorded in `implement.out` as the
+     verification of record; do not execute the suite again. Emit the rung-1
+     evidence block from step 4, naming `implement` as the evidence source and
+     stating that remote CI remains pending until `review_loop` observes it. If
+     `implement.out` does not contain a concrete green command and result, fail the
+     stage rather than inventing evidence.
    - anything else → a real recipe; go to step 3.
 
-   A unit-test or CI command is not an E2E recipe. Those checks belong to the
-   implementation gate and CI; do not run them a third time here. If the ticket has
-   no real runnable behavior, the plan must use `skip: <reason>`.
+   A unit-test or CI command is not a real E2E recipe. Those checks belong to the
+   implementation gate and CI; `test-ci-only` records that explicit fallback
+   without running them a third time. If the ticket has no runnable behavior at
+   all, the plan must use `skip: <reason>` instead.
 
 3. Execute the recipe exactly as written. Run its env-prep first (the recipe
    spells out any auth refresh, container/service bring-up, or resource tuning
@@ -95,11 +103,13 @@ Your job is to run it exactly, not to reinterpret it.
    is a menu the note picks from, never a checklist to fill.
 
    - **Rung 1, transcript (always).** A run block: the recipe (verbatim), the exact
-     command you ran, the exit status, the wall-clock duration, and a one-line
-     pass/fail summary; then the tail of the real output in a fenced block (~40
-     lines, prefix a `… earlier output trimmed …` line inside the fence if you
-     dropped any). On green keep the summary lines that prove the pass; on red keep
-     the failure and enough context to see why.
+     command, the stage that ran it when `test-ci-only` reuses `implement` evidence,
+     the exit status, the wall-clock duration when recorded, and a one-line pass/fail
+     summary; then the tail of the real output in a fenced block (~40 lines, prefix
+     a `… earlier output trimmed …` line inside the fence if you dropped any). On
+     green keep the summary lines that prove the pass; on red keep the failure and
+     enough context to see why. Never imply remote CI is green before `review_loop`
+     has observed it.
    - **Rung 2, baseline delta (only if the note asks).** Run the baseline comparison
      the note names, then report how many lines differ, which section/block they
      fall in, a tiny fenced diff excerpt, and an expected-vs-unexpected read scoped
@@ -139,6 +149,8 @@ Your job is to run it exactly, not to reinterpret it.
 
 - Recipe runs and fails → report the failure and return with the stage
   unfinished. A failing e2e recipe is a failed stage.
+- `test-ci-only` has no concrete green command and result in `implement.out` →
+  report missing verification evidence and leave the stage unfinished.
 - `e2e_recipe` missing/empty → workspace misconfiguration (e2e is running without a
   recipe; the bootstrap gate normally prevents this). Report it as failed so the
   user supplies a recipe or explicitly disables e2e (`e2e = "none"`).

@@ -39,8 +39,9 @@ class FakeForge:
 
 
 class GitRunner:
-    def __init__(self, head: str = SHA_A):
+    def __init__(self, head: str = SHA_A, remote_head: str | None = None):
         self.head = head
+        self.remote_head = remote_head or head
         self.calls: list[list[str]] = []
         self.files = {
             "src/scope.py": (
@@ -57,6 +58,8 @@ class GitRunner:
         self.calls.append(args)
         if args == ["git", "rev-parse", "HEAD"]:
             return subprocess.CompletedProcess(args, 0, self.head + "\n", "")
+        if args[:4] == ["git", "ls-remote", "--exit-code", "origin"]:
+            return subprocess.CompletedProcess(args, 0, f"{self.remote_head}\t{args[4]}\n", "")
         if args[:2] == ["git", "show"]:
             path = args[2].split(":", 1)[1]
             value = self.files.get(path)
@@ -215,6 +218,33 @@ def test_render_refuses_when_local_head_is_not_the_pr_head(tmp_path):
 
     with pytest.raises(rb.SnapshotMismatch, match="does not match PR head"):
         rb.render(request, forge=FakeForge(SHA_A), runner=GitRunner(SHA_B))
+
+
+def test_render_expands_matching_abbreviated_pr_head_from_remote(tmp_path):
+    request = _request(tmp_path, _write_content(tmp_path, _content()))
+    runner = GitRunner(SHA_A)
+
+    receipt = rb.render(request, forge=FakeForge(SHA_A[:12]), runner=runner)
+
+    assert receipt.snapshot_sha == SHA_A
+    assert [
+        "git",
+        "ls-remote",
+        "--exit-code",
+        "origin",
+        "refs/heads/feat/review-brief",
+    ] in runner.calls
+
+
+def test_render_refuses_abbreviated_pr_head_that_disagrees_with_remote(tmp_path):
+    request = _request(tmp_path, _write_content(tmp_path, _content()))
+
+    with pytest.raises(rb.SnapshotMismatch, match="does not match remote branch head"):
+        rb.render(
+            request,
+            forge=FakeForge(SHA_A[:12]),
+            runner=GitRunner(SHA_A, remote_head=SHA_B),
+        )
 
 
 @pytest.mark.parametrize(

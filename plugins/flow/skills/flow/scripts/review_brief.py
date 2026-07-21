@@ -41,6 +41,7 @@ SCHEMA_VERSION = 1
 CANONICAL_UNATTENDED_SKIP_REASON = "unattended run has no live human reviewer"
 _ASSET = Path(__file__).resolve().parent / "assets" / "review_brief.css"
 _SHA_RE = re.compile(r"^[0-9a-fA-F]{7,64}$")
+_FULL_SHA_LENGTHS = frozenset({40, 64})
 _ID_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,63}$")
 _RISK = {"low", "medium", "high"}
 _MODE = {"auto", "compact", "full"}
@@ -535,17 +536,42 @@ def _resolve_forge(workspace_root: Path) -> Forge:
     return make_forge(config)
 
 
+def _remote_branch_sha(branch: str, run: Runner) -> str:
+    ref = f"refs/heads/{branch}"
+    raw = _ok(
+        run(["git", "ls-remote", "--exit-code", "origin", ref]),
+        "git ls-remote PR head",
+    )
+    matches: list[str] = []
+    for line in raw.splitlines():
+        fields = line.split()
+        if len(fields) >= 2 and fields[1] == ref:
+            matches.append(fields[0])
+    if len(matches) != 1:
+        raise ReviewBriefError(f"remote PR branch {branch!r} did not resolve to one commit")
+    remote = matches[0].lower()
+    if not _SHA_RE.fullmatch(remote) or len(remote) not in _FULL_SHA_LENGTHS:
+        raise ReviewBriefError(f"remote PR branch resolved to invalid full SHA {remote!r}")
+    return remote
+
+
 def _head_sha(pr: Mapping[str, Any], run: Runner) -> str:
-    value = pr.get("head_sha")
-    if isinstance(value, str) and _SHA_RE.fullmatch(value):
-        return value.lower()
+    raw_value = pr.get("head_sha")
+    value = (
+        raw_value.lower() if isinstance(raw_value, str) and _SHA_RE.fullmatch(raw_value) else None
+    )
+    if value is not None and len(value) in _FULL_SHA_LENGTHS:
+        return value
     branch = pr.get("head")
     if not isinstance(branch, str) or not branch:
-        raise ReviewBriefError("forge PR response has neither head_sha nor head branch")
-    remote = _ok(run(["git", "rev-parse", f"origin/{branch}"]), "git rev-parse PR head").strip()
-    if not _SHA_RE.fullmatch(remote):
-        raise ReviewBriefError(f"forge PR head resolved to invalid SHA {remote!r}")
-    return remote.lower()
+        detail = "an abbreviated head_sha" if value is not None else "no usable head_sha"
+        raise ReviewBriefError(f"forge PR response has {detail} and no head branch")
+    remote = _remote_branch_sha(branch, run)
+    if value is not None and not remote.startswith(value):
+        raise SnapshotMismatch(
+            f"forge-reported PR head {value} does not match remote branch head {remote[:12]}"
+        )
+    return remote
 
 
 def _snapshot(pr_id: str, forge: ReviewBriefForge, run: Runner) -> _Snapshot:
