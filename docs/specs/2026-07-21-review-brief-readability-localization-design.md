@@ -69,3 +69,23 @@ fields to the authored content model, external assets, or a JavaScript framework
 - Adding automatic translation or a language-detection dependency.
 - Replacing the Review Brief design system or adding a frontend framework.
 - Reproducing every Forge diff feature or displaying the entire PR diff.
+
+## Rendering correction
+
+Visual review of the real Perfin brief exposed four defects in the first implementation:
+
+- The diff row class `context` collided with the narrative `.context` layout rule, adding
+  large vertical margins between unchanged lines. Render unchanged rows with a dedicated
+  `unchanged` class instead.
+- A row's background stopped at the visible code viewport while its text continued into
+  horizontal overflow. Place all rows in one max-content-width wrapper and stretch every
+  row across that shared width so added and deleted colors paint the complete line.
+- The old `highlight_lines` metadata added an unexplained light-green gutter on top of the
+  real diff semantics. Remove that field from validation, the provider schema, authoring
+  instructions, fixtures, and rendering. No compatibility layer is required.
+- The expanded navigation toggle was visually louder than the navigation itself. Use an
+  icon-only control in both states while retaining an accessible action label.
+
+Regression coverage must verify consecutive 26px diff rows without narrative margins,
+full-width added/deleted paint after horizontal scrolling, absence of the decisive gutter,
+and icon-only collapse/expand behavior.
