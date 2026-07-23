@@ -48,9 +48,9 @@ the Write/Edit tools, which plan mode blocks regardless of target path. Never au
 repository tree: planning runs in the main checkout before any worktree exists, `.lavish/` is
 not gitignored, and a repo-tree HTML could ride into a commit.
 
-Design source follows Lavish's documented priority, never hand-rolled ad-hoc CSS: the
-user-requested look first, else the subject project's design system, else the
-`npx -y lavish-axi@latest design` DaisyUI fallback. Paste this layout net verbatim into
+Design source: DaisyUI with the `dracula` theme (`data-theme="dracula"` on `<html>`), always;
+never hand-rolled ad-hoc CSS. `npx -y lavish-axi@latest design` prints the CDN snippet and the
+DaisyUI component reference. Paste this layout net verbatim into
 `<head>`; the surface carries dense authored text and must remain sendable at narrow widths:
 
 ```html
