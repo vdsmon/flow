@@ -43,6 +43,7 @@ a { text-underline-offset: 3px; }
   border-radius: 24px;
   background:
     radial-gradient(circle at 87% 3%, rgb(181 138 66 / 13%), transparent 27%),
+    radial-gradient(circle at 4% 98%, rgb(39 79 63 / 9%), transparent 30%),
     var(--paper);
   box-shadow: 0 24px 70px rgb(31 43 35 / 12%);
 }
@@ -210,23 +211,38 @@ h1 {
 .section-head h2 { margin: 0; font: 600 29px / 1.1 Georgia, serif; letter-spacing: -0.02em; }
 .section-head span { color: var(--muted); font-size: 14px; text-align: right; }
 
+.content { counter-reset: topic; }
+.fold { counter-increment: topic; border-top: 1px solid var(--line); }
+.fold:last-of-type { border-bottom: 1px solid var(--line); }
 .fold summary { cursor: pointer; list-style: none; }
 .fold summary::-webkit-details-marker { display: none; }
-.fold summary:focus-visible { outline: 3px solid var(--gold); outline-offset: 3px; border-radius: 10px; }
-.fold .section-head { position: relative; padding-right: 34px; }
-.fold .section-head::after {
+.fold summary:focus-visible { outline: 3px solid var(--gold); outline-offset: -3px; border-radius: 10px; }
+.fold .section-head { position: relative; justify-content: flex-start; gap: 18px; margin: 0; padding: 21px 44px 21px 0; }
+.fold .section-head::before {
+  content: counter(topic, decimal-leading-zero) / "";
+  min-width: 26px;
+  color: var(--rust);
+  font: 750 12px / 1.4 ui-monospace, SFMono-Regular, Consolas, monospace;
+  letter-spacing: 0.1em;
+}
+.fold .section-head h2 { margin-right: auto; font-size: 25px; }
+.fold .section-head span { font: italic 15px / 1.45 Georgia, "Times New Roman", serif; }
+.fold-hint {
   position: absolute;
   top: 50%;
-  right: 6px;
+  right: 10px;
   color: var(--muted);
-  content: "▸";
-  font-size: 19px;
+  font-size: 23px;
+  font-weight: 300;
   line-height: 1;
   transform: translateY(-50%);
-  transition: transform 120ms ease;
+  transition: transform 160ms ease, color 160ms ease;
 }
-.fold details[open] > summary .section-head::after { transform: translateY(-50%) rotate(90deg); }
-.fold summary:hover .section-head::after { color: var(--ink); }
+.fold details[open] summary .fold-hint { transform: translateY(-50%) rotate(45deg); }
+.fold details[open] > summary .section-head { padding-bottom: 14px; }
+.fold details[open] { padding-bottom: 30px; }
+.fold summary:hover h2 { color: var(--moss); }
+.fold summary:hover .fold-hint { color: var(--rust); }
 
 .scenario-set + .scenario-set { margin-top: 18px; }
 .scenario-name { margin: 0 0 10px; color: var(--muted); font-size: 14px; font-weight: 750; }
@@ -349,7 +365,7 @@ h1 {
 
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
-  .fold .section-head::after { transition: none; }
+  .fold-hint { transition: none; }
 }
 
 @media (max-width: 1100px) {
@@ -375,8 +391,9 @@ h1 {
   .scenarios { grid-template-columns: 1fr; }
   .arrow { transform: rotate(90deg); }
   .claims { grid-template-columns: 1fr; }
-  .section-head { align-items: flex-start; flex-direction: column; gap: 6px; }
-  .section-head span { text-align: left; }
+  .fold .section-head { flex-wrap: wrap; row-gap: 4px; padding-right: 36px; }
+  .fold .section-head h2 { flex: 1 1 0; margin-right: 0; }
+  .fold .section-head span { flex-basis: 100%; margin-left: 44px; text-align: left; }
 }
 
 @media print {

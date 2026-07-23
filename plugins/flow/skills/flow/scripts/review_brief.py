@@ -972,9 +972,14 @@ def _anchor(value: str) -> str:
 
 def _section(section_id: str, head: str, body: str, *, unfolded: bool) -> str:
     state = " open" if unfolded else ""
+    # The hint is a real aria-hidden element, not CSS content, so it stays out of
+    # the summary's accessible name. It nests inside the section-head div so its
+    # absolute centering tracks the head, not the margin-inflated summary box.
+    hint = '<span class="fold-hint" aria-hidden="true">+</span>'
+    summary = f"{head.removesuffix('</div>')}{hint}</div>"
     return (
         f'<section id="{_e(section_id)}" class="fold"><details{state}>'
-        f"<summary>{head}</summary>{body}</details></section>"
+        f"<summary>{summary}</summary>{body}</details></section>"
     )
 
 
