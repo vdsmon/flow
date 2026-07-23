@@ -38,6 +38,11 @@ The driver writes and revises one canonical plan containing:
 - proportionate verification, including an E2E recipe only when behavior requires one; and
 - the default-branch SHA used for inspection.
 
+Write the plan in basic English: simple words, short sentences, as brief as completeness
+allows, for a reader arriving with little context. Name files and behaviors explicitly, spell
+out abbreviations on first use, and cut anything that does not change what gets built or
+verified.
+
 Prefer deletion and reuse over new layers. A revision replaces this conversational plan text. Do
 not create a version graph, feedback object, schema, receipt, or model-authored envelope.
 
@@ -90,6 +95,9 @@ Immediately before the human gate, fetch the default branch again.
 - Movement in a planned or behaviorally relevant path, including ambiguous overlap: update the
   plan against the new base and begin a new bounded assessment round.
 
+This recheck and its re-assessment remedy run before presentation. The post-convergence recheck
+in section 5 is settled with the human directly and never re-enters the assessment loop.
+
 ## 5. Human gate
 
 The gate opens only when the unrounded confidence is at least 90.0 and no blocker remains. Show:
@@ -100,6 +108,15 @@ The gate opens only when the unrounded confidence is at least 90.0 and no blocke
 - completed pass count and whether a replacement assessor was used;
 - findings resolved during assessment; and
 - residual non-blocking risks.
+
+Present through the Lavish plan surface when its gate passes (`references/plan-surface.md`); on
+a failed gate, fall back to this plain presentation plus one visible
+`Lavish plan surface: skipped — <reason>` line, never silently. From presentation onward,
+revision is strictly between the human and the driver: annotations revise the plan and the
+surface re-renders, and nothing re-enters the assessment loop; the displayed evidence stays as
+assessed. After the surface's end-session signal, fetch the default branch once more: unchanged
+or proven-disjoint movement proceeds to approval; movement in a planned or behaviorally
+relevant path is shown to the human as a plan delta and settled directly, without an assessor.
 
 The human approves that exact plan and evidence. No branch, worktree, run state, ticket mutation,
 or approval artifact exists before explicit approval. A fresh unattended invocation stops here;
