@@ -217,7 +217,8 @@ conflicts with `--verify`. Full behavior is in `references/command-target.md`.
 
 ## The one approval gate
 
-For a fresh target, the driver plans read-only with the human. Fetch the ticket,
+For a fresh target, the driver first claims the ticket in the tracker (transition to
+`in_progress`, best-effort, never blocking), then plans read-only with the human. Fetch the ticket,
 inspect default-branch code, search relevant memory, settle factual questions, and
 write one complete plan with a verification lane and E2E recipe. The driver alone
 asks human questions or requests access and permission.
@@ -238,7 +239,8 @@ not reset the pass count. Read `references/delivery-plan.md` for the full contra
 Before approval, re-fetch the default branch and restart bounded assessment when
 relevant paths moved. Present the exact plan, base SHA, confidence and category
 scores, pass/replacement facts, resolved findings, and residual risks. No worktree,
-repository edit, run, or ticket mutation exists before explicit human approval. A
+repository edit, or run exists before explicit human approval; the planning-start
+ticket claim is the one prior mutation. A
 fresh unattended invocation stops before mutation; confidence never substitutes for
 human approval.
 

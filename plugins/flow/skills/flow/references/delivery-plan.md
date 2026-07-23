@@ -14,6 +14,20 @@ Keep `owner` for real resource ownership such as leases, repositories, branches,
 
 ## 1. Ground the work
 
+Planning's first act mutates the ticket: transition it to `in_progress` in the tracker backend
+(Atlassian MCP first when available; REST fallback):
+
+```bash
+FLOW_HARNESS="<harness>" "<facade>" tracker \
+  --workspace-root . \
+  transition --key <KEY> --to-state in_progress
+```
+
+The claim is best-effort and never blocks planning: exit 3 (already `in_progress`, or the
+tracker has no such state) continues silently; any other failure logs one warning and
+continues. The point is that the team sees the ticket claimed the moment work starts, not
+after approval. This is the one sanctioned ticket mutation before the human gate.
+
 The driver reads the ticket, relevant repository files, and directly applicable project
 instructions. Fetch the default branch and record its SHA. Resolve factual questions read-only.
 If an answer, access grant, permission, or scope choice is needed, the driver asks the human
@@ -123,8 +137,9 @@ assessed. After the surface's end-session signal, fetch the default branch once 
 or proven-disjoint movement proceeds to approval; movement in a planned or behaviorally
 relevant path is shown to the human as a plan delta and settled directly, without an assessor.
 
-The human approves that exact plan and evidence. No branch, worktree, run state, ticket mutation,
-or approval artifact exists before explicit approval. A fresh unattended invocation stops here;
+The human approves that exact plan and evidence. No branch, worktree, run state, or approval
+artifact exists before explicit approval; the ticket status claim made when planning began is
+the one prior mutation. A fresh unattended invocation stops here;
 it cannot cross the gate.
 
 ## 6. Bootstrap the approved plan
