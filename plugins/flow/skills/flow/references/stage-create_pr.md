@@ -13,11 +13,15 @@ Human-first: skimmable, short prose, rich markdown, a natural top-to-bottom flow
 ````
 **<one-line summary — a scannable anchor; survives PR-list title truncation>**
 
-<why: the problem this solves, 1-3 sentences, plain prose, no header>
+<lead: what thing changed and why, 2-5 short sentences, plain prose, no header>
 
 ## Changes
-- `path/area`: what + why, one line
+Start with `path` — <the heart of the change>; the rest follows from it.
+- `path/area`: what + why, 1-2 short sentences
 - ...
+
+## Decisions
+- <settled choice>: <the reason, one sentence>
 
 ## How to verify
 ```
@@ -37,13 +41,23 @@ Human-first: skimmable, short prose, rich markdown, a natural top-to-bottom flow
 
 Rules:
 - Bold summary line first (anchors the read).
-- Why is a headerless lead paragraph, 1-3 sentences.
+- The lead is a headerless paragraph, 2-5 short sentences, written for a reader with little
+  context: first say in plain words what thing is being changed, then why. When behavior
+  changes, give one sentence for what happened before and one for what happens now.
 - `## Changes` and `## How to verify` are mandatory.
+- The `Start with` line under `## Changes` is optional: use it when the diff spans more than
+  about three files, to point at the file that carries the real change so the reviewer reads the
+  rest as fallout. Omit it on small diffs.
+- An optional `## Decisions` section, right after `## Changes`, lists the settled design
+  choices and the reason for each, one sentence per choice, sourced from planning. Only real
+  choices earn a bullet (a path taken over a concrete alternative); OMIT the section when the
+  change carries none. Settled only — open questions were resolved with the human before this
+  stage (rule below).
 - An optional `## Evidence` section, right after `## How to verify`, renders what the verification runs actually observed (the rerunnable command stays in `## How to verify`; this is the captured proof of running it). One collapsed `<details>` per run: the `<summary>` is the run line in scrub-safe punctuation (`command: N passed, M failed (duration)` — no em-dash, since the scrub floor rewrites em-dashes outside fences), and the body is the fenced transcript tail, plus any fingerprint or delta blocks the run captured. Sources: the e2e stage's captured report (`e2e.out`), read ONLY when its first line carries the `flow:e2e-evidence` sentinel (a `skill:<name>` handler's free-form `.out` lacks it and is skipped); plus the implement stage's verify command + result tail, lifted best-effort from `implement.out` (the same input step 1 already reads for `## How to verify`). ONE degrade rule: render `## Evidence` ONLY IF at least one source yields a real transcript or fingerprint; OMIT the whole section otherwise (e2e skipped and no usable implement transcript means no section, never a placeholder). Fenced content survives both humanize and the scrub floor untouched, so paste transcript tails verbatim. Author the `<details>` wrapper regardless of forge — on a Bitbucket forge `create_pr.py` flattens each `<details>` to a `###` heading + body, since Bitbucket renders no raw HTML in markdown.
 - An optional `## Notes` (edge cases, risk, follow-ups) goes last. OMIT it entirely when empty, never placehold. Reach for `<details>` only on genuine overflow (a long migration list, verbose logs) — authored regardless of forge here too; the script flattens it on Bitbucket.
 - No open-decision section. The code_review stage resolves its ask-user findings with the human in the conversation before it completes, so by the time this stage runs there is nothing left to ask; a PR with open decisions is not ready for review.
-- Keep prose short: people skip walls of text, which defeats the point. Summary 1 line, why ≤3 sentences, each change bullet 1 line.
-- Plain language: short sentences, everyday words. No run or pipeline jargon (stage names, handler terms, internal file paths like `plan.out`) — the reader knows the repository, not this run. If a bullet needs a second reading, rewrite it.
+- Keep prose short: people skip walls of text, which defeats the point. Summary 1 line, lead 2-5 short sentences, each change bullet 1-2 short sentences. Detail a reviewer only needs while reading the diff belongs in the code or the review brief, not here.
+- Basic English: simple words, short sentences, written for a reader with little context. Spell out abbreviations on first use. No run or pipeline jargon (stage names, handler terms, internal file paths like `plan.out`) — the reader knows the repository, not this run. If a bullet needs a second reading, rewrite it.
 - Do NOT write the `Closes` footer; the script appends it.
 
 A worked example (this same change would render as):
@@ -51,12 +65,15 @@ A worked example (this same change would render as):
 ````
 **Decouple the PR description from the commit body and author a human-first template.**
 
-flow's PR body was a scrubbed derivation of the commit, capping it at plain-text-git quality. This authors a separate, skimmable PR body while the commit stays a clean conventional commit.
+flow opens a pull request at the end of each run. Until now its description was a scrubbed copy of the commit message, which capped it at plain-text quality. Now the description is authored on its own, written for the reviewer, while the commit stays a clean conventional commit.
 
 ## Changes
 - `scripts/create_pr.py`: accept an authored `--body-file`; append the deterministic Closes footer + scrub floor.
 - `scripts/pr_body.py`: add `closes_footer`; keep `build_body` as the no-`--body-file` fallback.
 - `references/stage-create_pr.md`: author + humanize the body, then pass it to the script.
+
+## Decisions
+- Author the description separately instead of improving the commit-derived one: a commit message and a PR description have different readers and different jobs.
 
 ## How to verify
 ```
@@ -70,7 +87,8 @@ mise run test   # scripts pytest root green
    - changed files: `git diff --stat "$(git merge-base origin/<base> HEAD)"..HEAD` (`<base>` resolves as the script does: `[create_pr] base`, default `main`),
    - the verify command + result: `$TICKET_DIR/stages/implement.out`,
    - the premeditated file set + per-file rationale: `$TICKET_DIR/stages/plan.out` — its Files-to-change bullets (however the plan renders that section: `- **Files to change**` bold-label list per stage-plan.md, or a heading; each bullet an explicit path + one-line note) seed the `## Changes` bullets below (see the authoring note after this list); plus the ticket (`ticket.json`) for the overall why,
-   - captured verification evidence: `$TICKET_DIR/stages/e2e.out`, read ONLY when its first line carries the `flow:e2e-evidence` sentinel, plus the same `implement.out` verify tail already gathered above (feeds the optional `## Evidence` section below).
+   - captured verification evidence: `$TICKET_DIR/stages/e2e.out`, read ONLY when its first line carries the `flow:e2e-evidence` sentinel, plus the same `implement.out` verify tail already gathered above (feeds the optional `## Evidence` section below),
+   - settled design choices and their reasons: the approved plan's design prose in `plan.out` (and, on an attended run, decisions settled with the human during planning) seed the optional `## Decisions` bullets.
 
    **Compose `## Changes` by carrying the plan's per-file notes onto the diff.** The `git diff --stat` set above is the ground truth of what shipped, so walk THAT set (every bullet then has a real hunk). For each changed file: if it appears in `plan.out`'s Files-to-change list, start its bullet from that file's one-line note and update it where the implementation diverged — carry-then-update, never the plan note verbatim; if it does NOT appear there, it entered via the post-implement reconcile, so append `(added during implementation: <why>)`, taking `<why>` best-effort from a matching `RECONCILE` entry in the friction log (`.flow/<namespace>/friction.jsonl`) or inferring it from what the file is. A planned file absent from the diff gets no bullet. File-level only: mapping a note to a specific hunk is out of scope (no metadata carries it today). When `plan.out` is absent (`plan = "none"`), compose `## Changes` straight from the diff as before, with no carryover or annotation.
 
