@@ -17,8 +17,11 @@ Keep `owner` for real resource ownership such as leases, repositories, branches,
 The driver reads the ticket, relevant repository files, and directly applicable project
 instructions. Fetch the default branch and record its SHA. Resolve factual questions read-only.
 If an answer, access grant, permission, or scope choice is needed, the driver asks the human
-directly through the host adapter's user-input capability and waits. An assessor never relays
-those questions.
+directly through the host adapter's user-input capability and waits. Raise such a blocker as soon
+as it is discovered; do not navigate around it toward an alternative path unless the detour is
+very short and obviously equivalent. Working around a missing grant or decision wastes time and
+tokens and drifts the plan toward a less precise result. An assessor never relays those
+questions.
 
 Optional memory or history reads are useful only when they answer a concrete planning question.
 Do not expand planning into a general repository audit.
@@ -49,7 +52,7 @@ invariants, unnecessary machinery, unverifiable claims, hidden access requiremen
 is incomplete or excessive. A blocker must name a concrete failure mode with repository evidence
 or a specific counterexample; vague preferences are not blockers.
 
-The assessor assigns whole-number scores using this rubric:
+The assessor assigns each dimension a whole-number score from 0 to 100 using this rubric:
 
 | Dimension | Weight |
 |---|---:|
@@ -61,8 +64,8 @@ The assessor assigns whole-number scores using this rubric:
 
 Compute the weighted result without rounding. Display it to one decimal place, but only the
 unrounded value determines the gate. The assessor returns concise Markdown with a verdict, the
-overall score, all five category scores and deductions, blocking findings, non-blocking
-deductions, and findings resolved since the prior pass. A score increase cites the changed plan
+overall score, all five category scores each displayed out of 100, deductions, blocking findings,
+non-blocking deductions, and findings resolved since the prior pass. A score increase cites the changed plan
 text or new repository evidence that earned it.
 
 If confidence is below 90.0 or any blocker remains, the driver updates the same complete plan or
