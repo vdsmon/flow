@@ -61,14 +61,29 @@ model, effort level, clone, or execution receipt.
    accepted fix.
 
 5. Re-read the resulting diff once and update the disposition report. Any unresolved
-   Critical finding fails the stage. Unresolved Major or Minor findings are recorded
-   for the PR reviewer and do not create another loop.
+   Critical finding fails the stage.
 
-6. Write `<ticket-dir>/stages/code_review.out` and complete the stage.
+6. Resolve every `ask-user` finding with the human before completing. These findings
+   surface only now because the reviewer reads the implemented diff; the plan gate
+   could not have seen them. They are the ticket owner's decisions, not the PR
+   reviewer's, so they never ride into the PR:
+   - Attended run: pose each finding in the conversation and wait for the decision.
+     A decision that requires edits directs one fresh fixer pass carrying the
+     human-accepted findings (this human-directed pass is separate from step 4's
+     autonomous pass). A decision to accept as-is moves the finding to `no-op` with
+     the human's rationale.
+   - Unattended run (nobody to answer): fail the stage visibly and return the
+     findings to the user, exactly like an unresolved Critical. Never complete the
+     stage with an open decision.
+
+   Undecided Minor nits that need no decision stay recorded in `no-op` with why; they
+   do not create another loop.
+
+7. Write `<ticket-dir>/stages/code_review.out` and complete the stage.
 
 ## Output
 
-The first line is the stable marker used by PR-body rendering:
+The first line is the stable format marker:
 
 ```text
 <!-- flow:code_review-taxonomy v1 -->
@@ -84,8 +99,10 @@ The first line is the stable marker used by PR-body rendering:
 - [Major] <finding> — fixed in <file>:<line>; check: <command/result>
 ```
 
-Omit empty sections. The report must name the reviewer's overall verdict, the single
-fix pass if one ran, and any residual risk.
+Omit empty sections. `## ask-user` holds decision-needed findings only while the
+stage runs; step 6 resolves them all, so a completed stage's report never carries the
+section. The report must name the reviewer's overall verdict, each fix pass that ran,
+and any residual risk.
 
 ## Errors
 
@@ -93,6 +110,8 @@ fix pass if one ran, and any residual risk.
   <KEY>`, then `retry --stage implement`.
 - Reviewer failure: fail visibly; do not silently self-review.
 - Unresolved Critical finding: fail and return the finding to the user.
+- An `ask-user` finding with no human to answer (unattended run): fail and return the
+  findings to the user.
 - A requested fix needs files outside `planned_files`: leave it unresolved and report
   the required scope decision.
 
