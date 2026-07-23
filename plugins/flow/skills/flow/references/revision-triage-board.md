@@ -1,6 +1,7 @@
 # Revision triage board (Lavish planning surface)
 
-The revision board is the one review-adjacent use of Lavish that remains. It is a
+The revision board is the one review-adjacent use of Lavish; the planning-gate use
+lives in `references/plan-surface.md`. It is a
 planning and disposition surface opened before a same-PR revision sub-run: the human
 decides which unresolved comments to fix now, defer, or dismiss and why. It is not
 the ordinary review companion, not a second Forge diff, and not part of the original
