@@ -14,6 +14,20 @@ Keep `owner` for real resource ownership such as leases, repositories, branches,
 
 ## 1. Ground the work
 
+Planning's first act mutates the ticket: transition it to `in_progress` in the tracker backend
+(Atlassian MCP first when available; REST fallback):
+
+```bash
+FLOW_HARNESS="<harness>" "<facade>" tracker \
+  --workspace-root . \
+  transition --key <KEY> --to-state in_progress
+```
+
+The claim is best-effort and never blocks planning: exit 3 (already `in_progress`, or the
+tracker has no such state) continues silently; any other failure logs one warning and
+continues. The point is that the team sees the ticket claimed the moment work starts, not
+after approval. This is the one sanctioned ticket mutation before the human gate.
+
 The driver reads the ticket, relevant repository files, and directly applicable project
 instructions. Fetch the default branch and record its SHA. Resolve factual questions read-only.
 If an answer, access grant, permission, or scope choice is needed, the driver asks the human
@@ -25,6 +39,10 @@ questions.
 
 Optional memory or history reads are useful only when they answer a concrete planning question.
 Do not expand planning into a general repository audit.
+
+When the ticket names a concrete failing artifact — a generated file, a payload, a load id —
+fetch and inspect the real artifact read-only during grounding. The actual bytes settle questions
+code reading cannot, and they anchor the plan's verification to reality.
 
 ## 2. Write one complete plan
 
@@ -76,7 +94,8 @@ text or new repository evidence that earned it.
 If confidence is below 90.0 or any blocker remains, the driver updates the same complete plan or
 supplies concrete counter-evidence, then asks the same assessor to re-evaluate it. One autonomous
 round permits at most three completed assessments. A failed assessor invocation returning no
-assessment does not consume a pass.
+assessment does not consume a pass. An idle or acknowledgement signal without the full verdict is
+the same failed invocation: prompt the same assessor once for the verdict.
 
 If pass three still misses the gate, stop and show the current plan, scores, unresolved findings,
 and the exact human decision, access, or evidence needed. A substantive human clarification may
@@ -118,8 +137,9 @@ assessed. After the surface's end-session signal, fetch the default branch once 
 or proven-disjoint movement proceeds to approval; movement in a planned or behaviorally
 relevant path is shown to the human as a plan delta and settled directly, without an assessor.
 
-The human approves that exact plan and evidence. No branch, worktree, run state, ticket mutation,
-or approval artifact exists before explicit approval. A fresh unattended invocation stops here;
+The human approves that exact plan and evidence. No branch, worktree, run state, or approval
+artifact exists before explicit approval; the ticket status claim made when planning began is
+the one prior mutation. A fresh unattended invocation stops here;
 it cannot cross the gate.
 
 ## 6. Bootstrap the approved plan

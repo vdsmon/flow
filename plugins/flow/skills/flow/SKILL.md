@@ -82,6 +82,13 @@ journaled and forward-resumable. A live base or revision lease, corrupt evidence
 or two non-empty memory stores is a hard stop; preserve both stores and report the
 conflict. A normal upgrade needs no new workspace setup.
 
+After a successful launcher call on an initialized workspace, read
+`<run_root>/.flow/runtime/skill-root`. When it names a different directory than the
+bound `skill_root`, re-bind `skill_root` to that pinned path and say so in one line.
+The installed skill is the sealed contract for this workspace; the invocation copy
+may be a stale host plugin cache, and references read from it silently drop newer
+contract obligations.
+
 ## Public router
 
 `public-commands.toml` is authoritative for command paths, arguments, options,
@@ -210,7 +217,8 @@ conflicts with `--verify`. Full behavior is in `references/command-target.md`.
 
 ## The one approval gate
 
-For a fresh target, the driver plans read-only with the human. Fetch the ticket,
+For a fresh target, the driver first claims the ticket in the tracker (transition to
+`in_progress`, best-effort, never blocking), then plans read-only with the human. Fetch the ticket,
 inspect default-branch code, search relevant memory, settle factual questions, and
 write one complete plan with a verification lane and E2E recipe. The driver alone
 asks human questions or requests access and permission.
@@ -231,7 +239,8 @@ not reset the pass count. Read `references/delivery-plan.md` for the full contra
 Before approval, re-fetch the default branch and restart bounded assessment when
 relevant paths moved. Present the exact plan, base SHA, confidence and category
 scores, pass/replacement facts, resolved findings, and residual risks. No worktree,
-repository edit, run, or ticket mutation exists before explicit human approval. A
+repository edit, or run exists before explicit human approval; the planning-start
+ticket claim is the one prior mutation. A
 fresh unattended invocation stops before mutation; confidence never substitutes for
 human approval.
 
@@ -252,6 +261,13 @@ The hot path is:
    Log any workaround as best-effort friction (`references/delivery-loop.md`).
 5. Release the lease on every post-acquisition exit path.
 6. Surface the durable result and PR URL.
+
+Resource pressure changes topology, never the loop. Under a host usage-guard warning
+against spawning agents, run an agent-handler stage in the driver instead
+(`references/delivery-loop.md`), still through its descriptor, artifact, and advance.
+Never ship around the dispatcher with raw git or forge calls: the PR may land, but
+the run strands with every stage pending — no commit gate, no review loop, no
+reflect. The run is done when the dispatcher returns done, not when a PR exists.
 
 Parse the returned branches structurally: `{"done": true}` is complete, while
 `{"done": false, "blocked_by": "<stage>", "reason": "<text>"}` is a durable
