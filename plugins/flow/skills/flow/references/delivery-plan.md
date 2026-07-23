@@ -26,6 +26,10 @@ questions.
 Optional memory or history reads are useful only when they answer a concrete planning question.
 Do not expand planning into a general repository audit.
 
+When the ticket names a concrete failing artifact — a generated file, a payload, a load id —
+fetch and inspect the real artifact read-only during grounding. The actual bytes settle questions
+code reading cannot, and they anchor the plan's verification to reality.
+
 ## 2. Write one complete plan
 
 The driver writes and revises one canonical plan containing:
@@ -76,7 +80,8 @@ text or new repository evidence that earned it.
 If confidence is below 90.0 or any blocker remains, the driver updates the same complete plan or
 supplies concrete counter-evidence, then asks the same assessor to re-evaluate it. One autonomous
 round permits at most three completed assessments. A failed assessor invocation returning no
-assessment does not consume a pass.
+assessment does not consume a pass. An idle or acknowledgement signal without the full verdict is
+the same failed invocation: prompt the same assessor once for the verdict.
 
 If pass three still misses the gate, stop and show the current plan, scores, unresolved findings,
 and the exact human decision, access, or evidence needed. A substantive human clarification may

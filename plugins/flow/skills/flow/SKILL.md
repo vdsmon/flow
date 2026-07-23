@@ -82,6 +82,13 @@ journaled and forward-resumable. A live base or revision lease, corrupt evidence
 or two non-empty memory stores is a hard stop; preserve both stores and report the
 conflict. A normal upgrade needs no new workspace setup.
 
+After a successful launcher call on an initialized workspace, read
+`<run_root>/.flow/runtime/skill-root`. When it names a different directory than the
+bound `skill_root`, re-bind `skill_root` to that pinned path and say so in one line.
+The installed skill is the sealed contract for this workspace; the invocation copy
+may be a stale host plugin cache, and references read from it silently drop newer
+contract obligations.
+
 ## Public router
 
 `public-commands.toml` is authoritative for command paths, arguments, options,
@@ -252,6 +259,13 @@ The hot path is:
    Log any workaround as best-effort friction (`references/delivery-loop.md`).
 5. Release the lease on every post-acquisition exit path.
 6. Surface the durable result and PR URL.
+
+Resource pressure changes topology, never the loop. Under a host usage-guard warning
+against spawning agents, run an agent-handler stage in the driver instead
+(`references/delivery-loop.md`), still through its descriptor, artifact, and advance.
+Never ship around the dispatcher with raw git or forge calls: the PR may land, but
+the run strands with every stage pending — no commit gate, no review loop, no
+reflect. The run is done when the dispatcher returns done, not when a PR exists.
 
 Parse the returned branches structurally: `{"done": true}` is complete, while
 `{"done": false, "blocked_by": "<stage>", "reason": "<text>"}` is a durable

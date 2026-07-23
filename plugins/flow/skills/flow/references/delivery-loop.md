@@ -90,6 +90,14 @@ advancing. Prefer the host's exact-write primitive. If unavailable, use a
 collision-safe quoted heredoc from a command rooted in `run_root`; never interpolate
 model output into a shell argument.
 
+When the host cannot or should not launch an independent agent — the capability is
+absent, or the host's usage guard warns against spawning new agents — the driver
+executes the same stage itself: read the stage reference, produce the artifact at
+the declared absolute path, and advance normally. Flow does not attest execution
+provenance, so a driver-executed stage is legitimate. Log one best-effort friction
+event for the downgrade so the pattern stays visible. The downgrade never skips the
+descriptor, the artifact, or the advance.
+
 ### Installed skill
 
 Resolve the configured handler through the facade, then invoke it with the host's
