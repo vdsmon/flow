@@ -66,7 +66,7 @@ test("full brief is stable, accessible, and reviewable on desktop", async ({ pag
     };
   });
   expect(typeScale).toEqual({
-    title: 48,
+    title: 38,
     lead: 20,
     narrative: 18,
     card: 16,
@@ -169,7 +169,7 @@ test("full brief contains wide evidence without clipping the mobile page", async
     await page
       .getByRole("heading", { level: 1 })
       .evaluate((node) => Number.parseFloat(getComputedStyle(node).fontSize)),
-  ).toBe(36);
+  ).toBe(29);
   await expect(page.locator("footer")).toHaveCount(0);
   await expect(page).toHaveScreenshot("review-brief-mobile.png", { fullPage: true });
   await page.evaluate(() => document.querySelectorAll(".fold details").forEach((node) => (node.open = true)));

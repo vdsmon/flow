@@ -78,8 +78,6 @@ _COPY: dict[str, dict[str, str]] = {
         "risk_low": "low risk",
         "risk_medium": "medium risk",
         "risk_high": "high risk",
-        "brief_compact": "compact brief",
-        "brief_full": "full brief",
         "what_happened": "What was happening.",
         "why_matters": "Why it matters.",
         "before_after": "Before and after",
@@ -125,8 +123,6 @@ _COPY: dict[str, dict[str, str]] = {
         "risk_low": "risco baixo",
         "risk_medium": "risco médio",
         "risk_high": "risco alto",
-        "brief_compact": "resumo compacto",
-        "brief_full": "resumo completo",
         "what_happened": "O que estava acontecendo.",
         "why_matters": "Por que isso importa.",
         "before_after": "Antes e depois",
@@ -1305,12 +1301,11 @@ def _document(
         _render_prompts(content["reviewer_prompts"], copy, unfolded=unfolded),
     ]
     risk_label = copy[f"risk_{content['risk']}"]
-    brief_label = copy[f"brief_{mode}"]
     favicon = (
         "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E"
-        "%3Crect width='32' height='32' rx='9' fill='%23274f3f'/%3E"
-        "%3Ctext x='16' y='22.5' text-anchor='middle' font-family='Georgia,serif' "
-        "font-size='19' fill='%23fbfaf6'%3EF%3C/text%3E%3C/svg%3E"
+        "%3Crect width='32' height='32' rx='8' fill='%23e35420'/%3E"
+        "%3Ctext x='16' y='22.5' text-anchor='middle' font-family='Menlo,monospace' "
+        "font-size='18' font-weight='700' fill='%23ffffff'%3EF%3C/text%3E%3C/svg%3E"
     )
     return f'''<!doctype html>
 <html lang="{_e(locale)}">
@@ -1351,7 +1346,6 @@ def _document(
       </nav>
       <div class="content">
         <section id="why">
-          <div class="kicker">{_e(content["change_shape"])} · {_e(brief_label)}</div>
           <h1 id="brief-title">{_e(content["title"])}</h1>
           <p class="deck">{_e(content["outcome"])}</p>
         </section>
