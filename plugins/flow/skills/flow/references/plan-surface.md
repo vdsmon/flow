@@ -22,14 +22,15 @@ section 4 base recheck. A fresh unattended invocation stops before the gate, so 
 structural, not probed. Run the presence check as the first surface action:
 
 ```bash
-npx -y lavish-axi@0.1.35 --help >/dev/null
+npx -y lavish-axi@latest --help >/dev/null
 ```
 
-Use the pinned version for every `open`, `poll`, and `end` operation in the session. The pin is
-a supply-chain freeze, not a currency target: hold it, re-pin only deliberately, and treat a
-re-pin as a coupled edit that syncs every pin site (this file, `revision-triage-board.md`, and
-the user-settings auto-mode Bash pin) plus a smoke render, a poll cycle, and a re-fetch of the
-layout-safety snippet.
+Run `@latest` for every `open`, `poll`, and `end` operation. Version-coupled details must be
+re-verified when behavior shifts: the single-line `dom_snapshot` poll rendering the strip below
+depends on (the strip fails open, so a format change shows up as sudden poll bulk, not an
+error), the layout-safety snippet, and the user-settings Bash allow rule, which must match the
+unpinned form. The revision board (`references/revision-triage-board.md`) keeps its own pinned
+version policy.
 
 If the presence check or any later Lavish action fails at any point, say
 `Lavish plan surface: skipped — <reason>` or
@@ -49,7 +50,7 @@ not gitignored, and a repo-tree HTML could ride into a commit.
 
 Design source follows Lavish's documented priority, never hand-rolled ad-hoc CSS: the
 user-requested look first, else the subject project's design system, else the
-`npx -y lavish-axi@0.1.35 design` DaisyUI fallback. Paste this layout net verbatim into
+`npx -y lavish-axi@latest design` DaisyUI fallback. Paste this layout net verbatim into
 `<head>`; the surface carries dense authored text and must remain sendable at narrow widths:
 
 ```html
@@ -102,7 +103,7 @@ Lavish's built-in end-session signal is the verdict; there is no custom approve 
 for the poll to return `status: ended` carrying the final feedback batch before the approval
 gate; even when the session is backgrounded, the armed poll's return is the wake signal. Never
 pre-empt the gate. A user-ended session is never reopened without an explicit request.
-Agent-side `npx -y lavish-axi@0.1.35 end <html>` is only for agent-initiated termination on a
+Agent-side `npx -y lavish-axi@latest end <html>` is only for agent-initiated termination on a
 mid-loop degradation, never the normal convergence path.
 
 After the ended signal, fetch the default branch once more. Unchanged or proven-disjoint
