@@ -382,6 +382,8 @@ def test_full_mode_folds_topic_sections_and_compact_mode_unfolds_them(tmp_path):
     ):
         assert f'<section id="{section_id}" class="fold"><details><summary>' in document
     assert "<details open>" not in document
+    assert '<details class="excerpt"><summary>' in document
+    assert '<link rel="icon" href="data:image/svg+xml' in document
 
     receipt = rb.render(
         _request(tmp_path, _write_content(tmp_path, _content(mode="compact"))),
@@ -391,6 +393,7 @@ def test_full_mode_folds_topic_sections_and_compact_mode_unfolds_them(tmp_path):
     compact = Path(receipt.html_path).read_text(encoding="utf-8")
     assert '<section id="evidence" class="fold"><details open>' in compact
     assert '<section id="verification" class="fold"><details open>' in compact
+    assert '<details class="excerpt" open><summary>' in compact
 
 
 def test_non_green_verification_never_starts_folded(tmp_path):

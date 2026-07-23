@@ -232,9 +232,10 @@ or Lavish session is involved.
 
 Topic sections are collapsible without JavaScript (native `details`). A full brief
 starts with every topic folded so the reader lands on the title, outcome, and
-motivation and expands only what they want to dig into; a compact brief renders
-everything expanded. One exception: a verification section holding any pending or
-failed check always starts open, so non-green evidence never hides behind a fold.
+motivation and expands only what they want to dig into; each code excerpt inside the
+evidence section folds individually the same way. A compact brief renders everything
+expanded. One exception: a verification section holding any pending or failed check
+always starts open, so non-green evidence never hides behind a fold.
 
 On renderer success, record `STATUS=completed` and advance immediately to `reflect`.
 Do not poll the file, ask for approval, wait for a comment, mark the PR ready, or

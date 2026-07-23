@@ -78,15 +78,10 @@ _COPY: dict[str, dict[str, str]] = {
         "risk_low": "low risk",
         "risk_medium": "medium risk",
         "risk_high": "high risk",
-        "risk_value_low": "low",
-        "risk_value_medium": "medium",
-        "risk_value_high": "high",
         "brief_compact": "compact brief",
         "brief_full": "full brief",
         "what_happened": "What was happening.",
         "why_matters": "Why it matters.",
-        "change_shape": "Change shape",
-        "risk": "Risk",
         "before_after": "Before and after",
         "behavior_note": "Follow the behavior, not the file list",
         "before": "Before",
@@ -130,15 +125,10 @@ _COPY: dict[str, dict[str, str]] = {
         "risk_low": "risco baixo",
         "risk_medium": "risco médio",
         "risk_high": "risco alto",
-        "risk_value_low": "baixo",
-        "risk_value_medium": "médio",
-        "risk_value_high": "alto",
         "brief_compact": "resumo compacto",
         "brief_full": "resumo completo",
         "what_happened": "O que estava acontecendo.",
         "why_matters": "Por que isso importa.",
-        "change_shape": "Formato da mudança",
-        "risk": "Risco",
         "before_after": "Antes e depois",
         "behavior_note": "Acompanhe o comportamento, não a lista de arquivos",
         "before": "Antes",
@@ -1187,15 +1177,19 @@ def _render_evidence(
                 f'<span class="line-number">{_e(number or "")}</span>'
                 f'<span class="code-text">{_highlight_line(line.text)}</span></span>'
             )
+        state = " open" if unfolded else ""
         blocks.append(
-            '<article class="code"><div class="code-copy">'
+            f'<details class="excerpt"{state}><summary>'
             f'<span class="code-file">{_e(excerpt.path)}:{excerpt.start_line}</span>'
-            f"<strong>{_e(excerpt.claim)}</strong><p>{_e(excerpt.explanation)}</p>"
+            f"<strong>{_e(excerpt.claim)}</strong>"
+            '<span class="fold-hint" aria-hidden="true">+</span></summary>'
+            '<article class="code"><div class="code-copy">'
+            f"<p>{_e(excerpt.explanation)}</p>"
             f'<a href="{_e(excerpt.source_url)}">{_e(copy["open_lines"])}</a>'
             f'</div><div class="code-scroll" tabindex="0" '
             f'aria-label="{_e(copy["evidence"])}: {_e(excerpt.path)}">'
             f'<div class="code-lines">'
-            f"{''.join(code_lines)}</div></div></article>"
+            f"{''.join(code_lines)}</div></div></article></details>"
         )
     excerpt_label = copy["excerpt_one"] if len(items) == 1 else copy["excerpt_many"]
     # The full-diff link lives in the body, not the summary: a summary exposes a
@@ -1311,8 +1305,13 @@ def _document(
         _render_prompts(content["reviewer_prompts"], copy, unfolded=unfolded),
     ]
     risk_label = copy[f"risk_{content['risk']}"]
-    risk_value = copy[f"risk_value_{content['risk']}"]
     brief_label = copy[f"brief_{mode}"]
+    favicon = (
+        "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E"
+        "%3Crect width='32' height='32' rx='9' fill='%23274f3f'/%3E"
+        "%3Ctext x='16' y='22.5' text-anchor='middle' font-family='Georgia,serif' "
+        "font-size='19' fill='%23fbfaf6'%3EF%3C/text%3E%3C/svg%3E"
+    )
     return f'''<!doctype html>
 <html lang="{_e(locale)}">
 <head>
@@ -1321,6 +1320,7 @@ def _document(
   <meta http-equiv="Content-Security-Policy" content="{_e(csp)}">
   <meta name="color-scheme" content="light dark">
   <title>{_e(content["title"])} · {_e(copy["brand"])}</title>
+  <link rel="icon" href="{favicon}">
   <style>{style}</style>
 </head>
 <body>
@@ -1359,15 +1359,6 @@ def _document(
           <div class="observation">
             <p><strong>{_e(copy["what_happened"])}</strong> {_e(motivation["observed_problem"])}</p>
             <p><strong>{_e(copy["why_matters"])}</strong> {_e(motivation["why_it_matters"])}</p>
-          </div>
-          <div class="facts">
-            <div class="fact"><span>{_e(copy["change_shape"])}</span>
-              <strong>{_e(content["change_shape"])}</strong>
-            </div>
-            <div class="fact"><span>{_e(copy["risk"])}</span><strong>{_e(risk_value)}</strong></div>
-            <div class="fact"><span>{_e(copy["snapshot"])}</span>
-              <strong>{_e(snapshot.sha[:12])}</strong>
-            </div>
           </div>
         </div>
         {"".join(sections)}

@@ -20,7 +20,8 @@ async function openFixture(page, name) {
     if (["error", "warning"].includes(message.type())) consoleProblems.push(message.text());
   });
   page.on("request", (request) => {
-    if (!request.url().startsWith("file:")) network.push(request.url());
+    const url = request.url();
+    if (!url.startsWith("file:") && !url.startsWith("data:")) network.push(url);
   });
   await page.goto(pathToFileURL(rendered[name]).href);
   return { consoleProblems, network };
@@ -58,7 +59,6 @@ test("full brief is stable, accessible, and reviewable on desktop", async ({ pag
       scenario: size(".step"),
       check: size(".check p"),
       list: size(".plain-list li"),
-      metadata: size(".fact"),
       code: size(".code-line"),
       sidebar: size(".rail a"),
       mapLabel: size(".map-node .label"),
@@ -73,7 +73,6 @@ test("full brief is stable, accessible, and reviewable on desktop", async ({ pag
     scenario: 16,
     check: 16,
     list: 16,
-    metadata: 14,
     code: 15,
     sidebar: 13,
     mapLabel: 15,
@@ -198,7 +197,8 @@ test("compact brief omits absent sections and remains complete without JavaScrip
 
   await expect(page.getByRole("heading", { level: 1 })).toHaveText("Reject ambiguous cleanup scope");
   await expect(page.getByRole("heading", { name: "Focused code evidence" })).toBeVisible();
-  await expect(page.locator("#evidence details")).toHaveAttribute("open", "");
+  await expect(page.locator("#evidence > details")).toHaveAttribute("open", "");
+  await expect(page.locator(".excerpt")).toHaveAttribute("open", "");
   await expect(page.locator(".code-line").first()).toBeVisible();
   await expect(page.locator("#scenarios")).toHaveCount(0);
   await expect(page.locator("#map")).toHaveCount(0);
