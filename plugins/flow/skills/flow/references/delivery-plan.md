@@ -38,6 +38,10 @@ The driver writes and revises one canonical plan containing:
 - proportionate verification, including an E2E recipe only when behavior requires one; and
 - the default-branch SHA used for inspection.
 
+Write the plan in simple, direct language, as short as completeness allows, for a reader
+arriving with little context: name files and behaviors explicitly, spell out abbreviations on
+first use, and cut anything that does not change what gets built or verified.
+
 Prefer deletion and reuse over new layers. A revision replaces this conversational plan text. Do
 not create a version graph, feedback object, schema, receipt, or model-authored envelope.
 
