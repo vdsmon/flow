@@ -43,6 +43,7 @@ Rules:
 - An optional `## Notes` (edge cases, risk, follow-ups) goes last. OMIT it entirely when empty, never placehold. Reach for `<details>` only on genuine overflow (a long migration list, verbose logs) — authored regardless of forge here too; the script flattens it on Bitbucket.
 - No open-decision section. The code_review stage resolves its ask-user findings with the human in the conversation before it completes, so by the time this stage runs there is nothing left to ask; a PR with open decisions is not ready for review.
 - Keep prose short: people skip walls of text, which defeats the point. Summary 1 line, why ≤3 sentences, each change bullet 1 line.
+- Plain language: short sentences, everyday words. No run or pipeline jargon (stage names, handler terms, internal file paths like `plan.out`) — the reader knows the repository, not this run. If a bullet needs a second reading, rewrite it.
 - Do NOT write the `Closes` footer; the script appends it.
 
 A worked example (this same change would render as):

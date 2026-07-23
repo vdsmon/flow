@@ -363,6 +363,51 @@ def test_auto_mode_uses_compact_for_a_small_linear_change(tmp_path):
     assert "Focused code evidence" in document
 
 
+def test_full_mode_folds_topic_sections_and_compact_mode_unfolds_them(tmp_path):
+    receipt = rb.render(
+        _request(tmp_path, _write_content(tmp_path, _content())),
+        forge=FakeForge(),
+        runner=GitRunner(),
+    )
+    document = Path(receipt.html_path).read_text(encoding="utf-8")
+    for section_id in (
+        "scenarios",
+        "map",
+        "decisions",
+        "invariants",
+        "evidence",
+        "verification",
+        "limitations",
+        "prompts",
+    ):
+        assert f'<section id="{section_id}" class="fold"><details><summary>' in document
+    assert "<details open>" not in document
+
+    receipt = rb.render(
+        _request(tmp_path, _write_content(tmp_path, _content(mode="compact"))),
+        forge=FakeForge(),
+        runner=GitRunner(),
+    )
+    compact = Path(receipt.html_path).read_text(encoding="utf-8")
+    assert '<section id="evidence" class="fold"><details open>' in compact
+    assert '<section id="verification" class="fold"><details open>' in compact
+
+
+def test_non_green_verification_never_starts_folded(tmp_path):
+    content = _content()
+    content["verification"].append(
+        {"claim": "Flake probe", "evidence": "Still running in CI.", "status": "pending"}
+    )
+    receipt = rb.render(
+        _request(tmp_path, _write_content(tmp_path, content)),
+        forge=FakeForge(),
+        runner=GitRunner(),
+    )
+    document = Path(receipt.html_path).read_text(encoding="utf-8")
+    assert '<section id="verification" class="fold"><details open>' in document
+    assert '<section id="scenarios" class="fold"><details><summary>' in document
+
+
 def test_render_refuses_when_local_head_is_not_the_pr_head(tmp_path):
     request = _request(tmp_path, _write_content(tmp_path, _content()))
 

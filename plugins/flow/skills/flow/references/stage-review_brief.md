@@ -182,6 +182,10 @@ focused code evidence, and verification.
 
 Authoring rules:
 
+- Write plainly and briefly. Short sentences, everyday words, no run or pipeline
+  jargon (stage names, handler terms, ticket keys as prose). The reader knows the
+  repository, not this run and possibly not this subsystem. Cut any sentence that
+  does not help the reviewer decide.
 - Lead with motivation and consequences. A file inventory is not motivation.
 - Use before/after scenarios when behavior changed; make the causal steps concrete.
 - Map only the relevant system slice. Omit architecture untouched by the change.
@@ -225,6 +229,12 @@ runtime network dependency, restrictive CSP, responsive/print layouts, server-si
 highlighting, an inline SVG system map, exact Forge source links, and the full Forge
 diff link. It is an ephemeral run artifact: no server, package install, durable host,
 or Lavish session is involved.
+
+Topic sections are collapsible without JavaScript (native `details`). A full brief
+starts with every topic folded so the reader lands on the title, outcome, and
+motivation and expands only what they want to dig into; a compact brief renders
+everything expanded. One exception: a verification section holding any pending or
+failed check always starts open, so non-green evidence never hides behind a fold.
 
 On renderer success, record `STATUS=completed` and advance immediately to `reflect`.
 Do not poll the file, ask for approval, wait for a comment, mark the PR ready, or
