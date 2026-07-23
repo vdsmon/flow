@@ -78,15 +78,8 @@ _COPY: dict[str, dict[str, str]] = {
         "risk_low": "low risk",
         "risk_medium": "medium risk",
         "risk_high": "high risk",
-        "risk_value_low": "low",
-        "risk_value_medium": "medium",
-        "risk_value_high": "high",
-        "brief_compact": "compact brief",
-        "brief_full": "full brief",
         "what_happened": "What was happening.",
         "why_matters": "Why it matters.",
-        "change_shape": "Change shape",
-        "risk": "Risk",
         "before_after": "Before and after",
         "behavior_note": "Follow the behavior, not the file list",
         "before": "Before",
@@ -130,15 +123,8 @@ _COPY: dict[str, dict[str, str]] = {
         "risk_low": "risco baixo",
         "risk_medium": "risco médio",
         "risk_high": "risco alto",
-        "risk_value_low": "baixo",
-        "risk_value_medium": "médio",
-        "risk_value_high": "alto",
-        "brief_compact": "resumo compacto",
-        "brief_full": "resumo completo",
         "what_happened": "O que estava acontecendo.",
         "why_matters": "Por que isso importa.",
-        "change_shape": "Formato da mudança",
-        "risk": "Risco",
         "before_after": "Antes e depois",
         "behavior_note": "Acompanhe o comportamento, não a lista de arquivos",
         "before": "Antes",
@@ -970,6 +956,19 @@ def _anchor(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-") or "section"
 
 
+def _section(section_id: str, head: str, body: str, *, unfolded: bool) -> str:
+    state = " open" if unfolded else ""
+    # The hint is a real aria-hidden element, not CSS content, so it stays out of
+    # the summary's accessible name. It nests inside the section-head div so its
+    # absolute centering tracks the head, not the margin-inflated summary box.
+    hint = '<span class="fold-hint" aria-hidden="true">+</span>'
+    summary = f"{head.removesuffix('</div>')}{hint}</div>"
+    return (
+        f'<section id="{_e(section_id)}" class="fold"><details{state}>'
+        f"<summary>{summary}</summary>{body}</details></section>"
+    )
+
+
 def _render_steps(items: Sequence[str], *, final_mark: str) -> str:
     rows = []
     for index, step in enumerate(items):
@@ -980,7 +979,9 @@ def _render_steps(items: Sequence[str], *, final_mark: str) -> str:
     return "".join(rows)
 
 
-def _render_scenarios(items: Sequence[Mapping[str, Any]], copy: Mapping[str, str]) -> str:
+def _render_scenarios(
+    items: Sequence[Mapping[str, Any]], copy: Mapping[str, str], *, unfolded: bool
+) -> str:
     if not items:
         return ""
     blocks = [
@@ -999,11 +1000,11 @@ def _render_scenarios(items: Sequence[Mapping[str, Any]], copy: Mapping[str, str
         )
         for scenario in items
     ]
-    return (
-        f'<section id="scenarios"><div class="section-head"><h2>{_e(copy["before_after"])}</h2>'
+    head = (
+        f'<div class="section-head"><h2>{_e(copy["before_after"])}</h2>'
         f"<span>{_e(copy['behavior_note'])}</span></div>"
-        f"{''.join(blocks)}</section>"
     )
+    return _section("scenarios", head, "".join(blocks), unfolded=unfolded)
 
 
 def _map_layout(system_map: Mapping[str, Any]) -> tuple[dict[str, tuple[int, int]], int, int]:
@@ -1043,7 +1044,9 @@ def _wrapped_map_label(label: str) -> tuple[str, ...]:
     return tuple(lines)
 
 
-def _render_map(system_map: Mapping[str, Any] | None, copy: Mapping[str, str]) -> str:
+def _render_map(
+    system_map: Mapping[str, Any] | None, copy: Mapping[str, str], *, unfolded: bool
+) -> str:
     if system_map is None:
         return ""
     positions, width, height = _map_layout(system_map)
@@ -1076,15 +1079,18 @@ def _render_map(system_map: Mapping[str, Any] | None, copy: Mapping[str, str]) -
             f'<text class="kind" x="16" y="21">{_e(node["kind"].upper())}</text>'
             f'<text class="label">{tspans}</text></g>'
         )
-    return (
-        f'<section id="map"><div class="section-head"><h2>{_e(copy["map"])}</h2>'
-        f'<span>{_e(copy["map_note"])}</span></div><div class="system-map" '
-        f'tabindex="0" aria-label="{_e(copy["map_scroll_aria"])}">'
+    head = (
+        f'<div class="section-head"><h2>{_e(copy["map"])}</h2>'
+        f"<span>{_e(copy['map_note'])}</span></div>"
+    )
+    body = (
+        f'<div class="system-map" tabindex="0" aria-label="{_e(copy["map_scroll_aria"])}">'
         f'<div class="map-note">{_e(system_map["caption"])}</div>'
         f'<div class="map-canvas"><svg viewBox="0 0 {width} {height}" role="img" '
         f'aria-label="{_e(copy["map_image_aria"])}">'
-        f"{''.join(arrows)}{''.join(nodes)}</svg></div></div></section>"
+        f"{''.join(arrows)}{''.join(nodes)}</svg></div></div>"
     )
+    return _section("map", head, body, unfolded=unfolded)
 
 
 def _render_claims(items: Sequence[Mapping[str, str]]) -> str:
@@ -1096,17 +1102,23 @@ def _render_claims(items: Sequence[Mapping[str, str]]) -> str:
     )
 
 
-def _render_guarantees(items: Sequence[Mapping[str, str]], copy: Mapping[str, str]) -> str:
+def _render_guarantees(
+    items: Sequence[Mapping[str, str]], copy: Mapping[str, str], *, unfolded: bool
+) -> str:
     if not items:
         return ""
-    return (
-        f'<section id="invariants"><div class="section-head"><h2>{_e(copy["invariants"])}</h2>'
+    head = (
+        f'<div class="section-head"><h2>{_e(copy["invariants"])}</h2>'
         f"<span>{_e(copy['invariants_note'])}</span></div>"
-        f'<div class="claims">{_render_claims(items)}</div></section>'
+    )
+    return _section(
+        "invariants", head, f'<div class="claims">{_render_claims(items)}</div>', unfolded=unfolded
     )
 
 
-def _render_decisions(items: Sequence[Mapping[str, str]], copy: Mapping[str, str]) -> str:
+def _render_decisions(
+    items: Sequence[Mapping[str, str]], copy: Mapping[str, str], *, unfolded: bool
+) -> str:
     if not items:
         return ""
     cards = "".join(
@@ -1114,11 +1126,11 @@ def _render_decisions(items: Sequence[Mapping[str, str]], copy: Mapping[str, str
         f"<p>{_e(item['body'])}</p></article>"
         for item in items
     )
-    return (
-        f'<section id="decisions"><div class="section-head"><h2>{_e(copy["decisions"])}</h2>'
+    head = (
+        f'<div class="section-head"><h2>{_e(copy["decisions"])}</h2>'
         f"<span>{_e(copy['decisions_note'])}</span></div>"
-        f'<div class="decisions">{cards}</div></section>'
     )
+    return _section("decisions", head, f'<div class="decisions">{cards}</div>', unfolded=unfolded)
 
 
 _TOKEN_RE = re.compile(
@@ -1145,7 +1157,9 @@ def _highlight_line(line: str) -> str:
     return "".join(parts)
 
 
-def _render_evidence(items: Sequence[_Excerpt], pr_url: str, copy: Mapping[str, str]) -> str:
+def _render_evidence(
+    items: Sequence[_Excerpt], pr_url: str, copy: Mapping[str, str], *, unfolded: bool
+) -> str:
     blocks: list[str] = []
     for excerpt in items:
         code_lines: list[str] = []
@@ -1159,26 +1173,37 @@ def _render_evidence(items: Sequence[_Excerpt], pr_url: str, copy: Mapping[str, 
                 f'<span class="line-number">{_e(number or "")}</span>'
                 f'<span class="code-text">{_highlight_line(line.text)}</span></span>'
             )
+        state = " open" if unfolded else ""
         blocks.append(
-            '<article class="code"><div class="code-copy">'
+            f'<details class="excerpt"{state}><summary>'
             f'<span class="code-file">{_e(excerpt.path)}:{excerpt.start_line}</span>'
-            f"<strong>{_e(excerpt.claim)}</strong><p>{_e(excerpt.explanation)}</p>"
+            f"<strong>{_e(excerpt.claim)}</strong>"
+            '<span class="fold-hint" aria-hidden="true">+</span></summary>'
+            '<article class="code"><div class="code-copy">'
+            f"<p>{_e(excerpt.explanation)}</p>"
             f'<a href="{_e(excerpt.source_url)}">{_e(copy["open_lines"])}</a>'
             f'</div><div class="code-scroll" tabindex="0" '
             f'aria-label="{_e(copy["evidence"])}: {_e(excerpt.path)}">'
             f'<div class="code-lines">'
-            f"{''.join(code_lines)}</div></div></article>"
+            f"{''.join(code_lines)}</div></div></article></details>"
         )
     excerpt_label = copy["excerpt_one"] if len(items) == 1 else copy["excerpt_many"]
-    return (
-        f'<section id="evidence"><div class="section-head"><h2>{_e(copy["evidence"])}</h2>'
-        f"<span>{len(items)} {_e(excerpt_label)} · "
-        f'<a href="{_e(pr_url)}">{_e(copy["full_diff"])}</a></span></div>'
-        f'<div class="evidence-list">{"".join(blocks)}</div></section>'
+    # The full-diff link lives in the body, not the summary: a summary exposes a
+    # button role and must not contain focusable content (axe nested-interactive).
+    head = (
+        f'<div class="section-head"><h2>{_e(copy["evidence"])}</h2>'
+        f"<span>{len(items)} {_e(excerpt_label)}</span></div>"
     )
+    body = (
+        f'<div class="evidence-list">{"".join(blocks)}</div>'
+        f'<p class="evidence-diff"><a href="{_e(pr_url)}">{_e(copy["full_diff"])} ↗</a></p>'
+    )
+    return _section("evidence", head, body, unfolded=unfolded)
 
 
-def _render_verification(items: Sequence[Mapping[str, str]], copy: Mapping[str, str]) -> str:
+def _render_verification(
+    items: Sequence[Mapping[str, str]], copy: Mapping[str, str], *, unfolded: bool
+) -> str:
     symbols = {"passed": "✓", "pending": "…", "failed": "!"}
     checks = "".join(
         f'<article class="check panel {_e(item["status"])}">'
@@ -1186,32 +1211,36 @@ def _render_verification(items: Sequence[Mapping[str, str]], copy: Mapping[str, 
         f"<b>{_e(item['claim'])}</b><p>{_e(item['evidence'])}</p></div></article>"
         for item in items
     )
-    return (
-        f'<section id="verification"><div class="section-head"><h2>{_e(copy["verification"])}</h2>'
+    head = (
+        f'<div class="section-head"><h2>{_e(copy["verification"])}</h2>'
         f"<span>{_e(copy['verification_note'])}</span></div>"
-        f'<div class="verification-grid">{checks}</div></section>'
+    )
+    return _section(
+        "verification", head, f'<div class="verification-grid">{checks}</div>', unfolded=unfolded
     )
 
 
-def _render_list_section(section_id: str, heading: str, items: Sequence[str]) -> str:
+def _render_list_section(
+    section_id: str, heading: str, items: Sequence[str], *, unfolded: bool
+) -> str:
     if not items:
         return ""
     rows = "".join(f"<li>{_e(item)}</li>" for item in items)
-    return (
-        f'<section id="{_e(section_id)}"><div class="section-head"><h2>{_e(heading)}</h2>'
-        f'</div><ul class="plain-list panel">{rows}</ul></section>'
+    head = f'<div class="section-head"><h2>{_e(heading)}</h2></div>'
+    return _section(
+        section_id, head, f'<ul class="plain-list panel">{rows}</ul>', unfolded=unfolded
     )
 
 
-def _render_prompts(items: Sequence[str], copy: Mapping[str, str]) -> str:
+def _render_prompts(items: Sequence[str], copy: Mapping[str, str], *, unfolded: bool) -> str:
     if not items:
         return ""
     rows = "".join(f'<li class="panel"><span>{_e(item)}</span></li>' for item in items)
-    return (
-        f'<section id="prompts"><div class="section-head"><h2>{_e(copy["prompts"])}</h2>'
+    head = (
+        f'<div class="section-head"><h2>{_e(copy["prompts"])}</h2>'
         f"<span>{_e(copy['prompts_note'])}</span></div>"
-        f'<ol class="prompt-list">{rows}</ol></section>'
     )
+    return _section("prompts", head, f'<ol class="prompt-list">{rows}</ol>', unfolded=unfolded)
 
 
 def _navigation(content: Mapping[str, Any], copy: Mapping[str, str]) -> list[tuple[str, str]]:
@@ -1255,19 +1284,29 @@ def _document(
     )
     motivation = content["motivation"]
     risk_class = " risk-high" if content["risk"] == "high" else ""
+    # Full briefs fold every topic so the reader expands on demand; a check that is
+    # not green must never start hidden behind a fold.
+    unfolded = mode == "compact"
+    attention = any(item["status"] != "passed" for item in content["verification"])
     sections = [
-        _render_scenarios(content["scenarios"], copy),
-        _render_map(content["system_map"], copy),
-        _render_decisions(content["decisions"], copy),
-        _render_guarantees(content["invariants"], copy),
-        _render_evidence(excerpts, snapshot.pr_url, copy),
-        _render_verification(content["verification"], copy),
-        _render_list_section("limitations", copy["limitations"], content["limitations"]),
-        _render_prompts(content["reviewer_prompts"], copy),
+        _render_scenarios(content["scenarios"], copy, unfolded=unfolded),
+        _render_map(content["system_map"], copy, unfolded=unfolded),
+        _render_decisions(content["decisions"], copy, unfolded=unfolded),
+        _render_guarantees(content["invariants"], copy, unfolded=unfolded),
+        _render_evidence(excerpts, snapshot.pr_url, copy, unfolded=unfolded),
+        _render_verification(content["verification"], copy, unfolded=unfolded or attention),
+        _render_list_section(
+            "limitations", copy["limitations"], content["limitations"], unfolded=unfolded
+        ),
+        _render_prompts(content["reviewer_prompts"], copy, unfolded=unfolded),
     ]
     risk_label = copy[f"risk_{content['risk']}"]
-    risk_value = copy[f"risk_value_{content['risk']}"]
-    brief_label = copy[f"brief_{mode}"]
+    favicon = (
+        "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E"
+        "%3Crect width='32' height='32' rx='8' fill='%23e35420'/%3E"
+        "%3Ctext x='16' y='22.5' text-anchor='middle' font-family='Menlo,monospace' "
+        "font-size='18' font-weight='700' fill='%23ffffff'%3EF%3C/text%3E%3C/svg%3E"
+    )
     return f'''<!doctype html>
 <html lang="{_e(locale)}">
 <head>
@@ -1276,6 +1315,7 @@ def _document(
   <meta http-equiv="Content-Security-Policy" content="{_e(csp)}">
   <meta name="color-scheme" content="light dark">
   <title>{_e(content["title"])} · {_e(copy["brand"])}</title>
+  <link rel="icon" href="{favicon}">
   <style>{style}</style>
 </head>
 <body>
@@ -1306,7 +1346,6 @@ def _document(
       </nav>
       <div class="content">
         <section id="why">
-          <div class="kicker">{_e(content["change_shape"])} · {_e(brief_label)}</div>
           <h1 id="brief-title">{_e(content["title"])}</h1>
           <p class="deck">{_e(content["outcome"])}</p>
         </section>
@@ -1314,15 +1353,6 @@ def _document(
           <div class="observation">
             <p><strong>{_e(copy["what_happened"])}</strong> {_e(motivation["observed_problem"])}</p>
             <p><strong>{_e(copy["why_matters"])}</strong> {_e(motivation["why_it_matters"])}</p>
-          </div>
-          <div class="facts">
-            <div class="fact"><span>{_e(copy["change_shape"])}</span>
-              <strong>{_e(content["change_shape"])}</strong>
-            </div>
-            <div class="fact"><span>{_e(copy["risk"])}</span><strong>{_e(risk_value)}</strong></div>
-            <div class="fact"><span>{_e(copy["snapshot"])}</span>
-              <strong>{_e(snapshot.sha[:12])}</strong>
-            </div>
           </div>
         </div>
         {"".join(sections)}

@@ -20,7 +20,8 @@ async function openFixture(page, name) {
     if (["error", "warning"].includes(message.type())) consoleProblems.push(message.text());
   });
   page.on("request", (request) => {
-    if (!request.url().startsWith("file:")) network.push(request.url());
+    const url = request.url();
+    if (!url.startsWith("file:") && !url.startsWith("data:")) network.push(url);
   });
   await page.goto(pathToFileURL(rendered[name]).href);
   return { consoleProblems, network };
@@ -40,6 +41,14 @@ test("full brief is stable, accessible, and reviewable on desktop", async ({ pag
     1100,
   );
 
+  expect(await page.locator(".fold details").count()).toBeGreaterThan(5);
+  expect(await page.locator(".fold details[open]").count()).toBe(0);
+  await expect(page.locator("#scenarios .scenario.before")).toBeHidden();
+  await page.locator("#scenarios summary").click();
+  await expect(page.locator("#scenarios details")).toHaveAttribute("open", "");
+  await expect(page.locator("#scenarios .scenario.before")).toBeVisible();
+  await page.evaluate(() => document.querySelectorAll(".fold details").forEach((node) => (node.open = true)));
+
   const typeScale = await page.evaluate(() => {
     const size = (selector) => Number.parseFloat(getComputedStyle(document.querySelector(selector)).fontSize);
     return {
@@ -50,7 +59,6 @@ test("full brief is stable, accessible, and reviewable on desktop", async ({ pag
       scenario: size(".step"),
       check: size(".check p"),
       list: size(".plain-list li"),
-      metadata: size(".fact"),
       code: size(".code-line"),
       sidebar: size(".rail a"),
       mapLabel: size(".map-node .label"),
@@ -58,14 +66,13 @@ test("full brief is stable, accessible, and reviewable on desktop", async ({ pag
     };
   });
   expect(typeScale).toEqual({
-    title: 48,
+    title: 38,
     lead: 20,
     narrative: 18,
     card: 16,
     scenario: 16,
     check: 16,
     list: 16,
-    metadata: 14,
     code: 15,
     sidebar: 13,
     mapLabel: 15,
@@ -162,10 +169,11 @@ test("full brief contains wide evidence without clipping the mobile page", async
     await page
       .getByRole("heading", { level: 1 })
       .evaluate((node) => Number.parseFloat(getComputedStyle(node).fontSize)),
-  ).toBe(36);
+  ).toBe(29);
   await expect(page.locator("footer")).toHaveCount(0);
-  expect(await page.locator(".system-map").evaluate((node) => node.scrollWidth > node.clientWidth)).toBe(true);
   await expect(page).toHaveScreenshot("review-brief-mobile.png", { fullPage: true });
+  await page.evaluate(() => document.querySelectorAll(".fold details").forEach((node) => (node.open = true)));
+  expect(await page.locator(".system-map").evaluate((node) => node.scrollWidth > node.clientWidth)).toBe(true);
 });
 
 test("Portuguese authored prose localizes all renderer-owned chrome", async ({ page }) => {
@@ -189,6 +197,9 @@ test("compact brief omits absent sections and remains complete without JavaScrip
 
   await expect(page.getByRole("heading", { level: 1 })).toHaveText("Reject ambiguous cleanup scope");
   await expect(page.getByRole("heading", { name: "Focused code evidence" })).toBeVisible();
+  await expect(page.locator("#evidence > details")).toHaveAttribute("open", "");
+  await expect(page.locator(".excerpt")).toHaveAttribute("open", "");
+  await expect(page.locator(".code-line").first()).toBeVisible();
   await expect(page.locator("#scenarios")).toHaveCount(0);
   await expect(page.locator("#map")).toHaveCount(0);
   await expect(page.locator("script")).toHaveCount(0);
