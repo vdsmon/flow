@@ -240,9 +240,9 @@ schema_version = 1     # closed enum: { 1 }; mismatch = invalid (warning unless 
 name        = "ship-it"   # bundle slug, used by --bundle-name selectors
 description = "Push branch + open draft PR + CI loop"
 
-# One [skills.<stage>] table per stage the bundle provides. `stage` MUST be a
-# closed-vocabulary flow stage (ticket | plan | implement | code_review | e2e |
-# commit | create_pr | review_loop | reflect). Unknown stages = invalid manifest.
+# One [skills.<stage>] table per stage the bundle provides. `stage` MUST name a
+# stage registered in stage-registry.toml (the closed vocabulary's single
+# source). Unknown stages = invalid manifest.
 [skills.create_pr]
 handler_string         = "skill:ship-it:create"   # required; MUST start with "skill:"
 required_capabilities  = []                       # optional, list[str]; CAPABILITY_ENUM names
