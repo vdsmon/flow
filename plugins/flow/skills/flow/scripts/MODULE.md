@@ -182,7 +182,6 @@ The maintainer-gated `FLOW maintain evolution drain` and
 | `flow_friction.py` | Append-only `friction.jsonl` log (the reflect/self-evolution feedstock); imported by recover. | `--ticket --run-id --stage --type --body [--detail --severity]` |
 | `friction_recurrence.py` | Read-only forward-join of `friction.jsonl` to MACHINERY-prefixed `knowledge.jsonl` entries: surfaces friction classes that recurred after a claimed fix, clustered two ways (`signature_classes`, a single distinctive anchor token, cross-cutting stage/type; `structural_classes`, `(stage, type, anchor)`), carrying evidence (entry ids, run ids, fix sha) for a downstream judge. Reads friction/knowledge/ship-events, never writes. | `--workspace-root` |
 | `friction_escalate.py` | Propose-only recurrence escalation: consumes `friction_recurrence.analyze` and files ONE deduped `recurrent`-labelled bead per signature class that recurred `>=K` times since its LATEST claimed MACHINERY fix (not the detector's earliest-anchored `post_fix_count`, which over-counts a multi-fix class). `K` + an exempt-anchor set are `[evolve]` workspace.toml knobs (`recurrence_escalation_k` default 3, `recurrence_exempt_anchors` default `[planned_files]`). Dedup key is the bare anchor (no `::`), so at most one bead per anchor ever and only the exact `evid:` dedup net fires. Labels are `recurrent` only, never `evolve`, so the drain loop never picks these up. Auto-dormant outside maintainer mode via `flow_beads_create.resolve_maintainer_repo`. | `escalate --workspace-root` |
-| `trace_mine.py` | Read-only miner: extracts tool-error/silent-retry/drift-marker/stall-gap events from one flow-dogfood run transcript (`~/.claude` session JSONL), scoped to the target ticket's run window and bucketed by dispatch-stage descriptor; self-target guarded to this workspace's own projects tree. `cluster` groups events into failure signatures and dedups them against `friction.jsonl`, surfacing only MISSED friction; `file` files each surfaced signature as a deduped `["evolve","proposal","trace-mined"]` bead (maintainer-gated propose-only); `runs` enumerates recent finished transcripts for the nightly scheduler. | exit codes per subcommand `--help` |
 
 ## Shared helpers (lib)
 
@@ -219,12 +218,12 @@ markers are overwritten. `—` = none.
 |--------|-------------|-------------|
 | `_atomicio.py` | — | `diff_extract`, `dispatch_stage`, `fleet`, `flow_launcher`, `flow_worktree`, `init`, `lease`, `machinery_edit`, `memory_embed`, `pending_mutations`, `recall_pending`, `review_brief`, `run_report`, `runtime_layout`, `snapshot`, `state`, `ticket_frontmatter` |
 | `_evolve_common.py` | — | `evolve_drain`, `evolve_reap`, `evolve_select`, `evolve_self_merge`, `observe_at_close`, `queue_drain`, `queue_select`, `queue_status`, `sweep_knowledge` |
-| `_jsonl.py` | — | `friction_recurrence`, `memory_append`, `memory_embed`, `metric`, `pending_mutations`, `recall`, `recall_pending`, `recall_usage`, `reflect_inputs`, `run_report`, `senses_deadman`, `sweep_knowledge`, `trace_mine` |
+| `_jsonl.py` | — | `friction_recurrence`, `memory_append`, `memory_embed`, `metric`, `pending_mutations`, `recall`, `recall_pending`, `recall_usage`, `reflect_inputs`, `run_report`, `senses_deadman`, `sweep_knowledge` |
 | `_locking.py` | — | `dispatch_stage`, `fleet`, `flow_friction`, `flow_worktree`, `lease`, `machinery_edit`, `memory_append`, `memory_embed`, `observe_ship_event`, `pending_mutations`, `recall_pending`, `recall_usage`, `runtime_layout`, `state`, `ticket_frontmatter` |
-| `_memory_paths.py` | — | `fleet`, `flow_friction`, `flow_worktree`, `friction_escalate`, `friction_recurrence`, `memory_append`, `memory_embed`, `metric`, `observe_at_close`, `observe_ship_event`, `recall`, `recall_usage`, `reflect_inputs`, `run_report`, `senses_deadman`, `sweep_knowledge`, `trace_mine` |
+| `_memory_paths.py` | — | `fleet`, `flow_friction`, `flow_worktree`, `friction_escalate`, `friction_recurrence`, `memory_append`, `memory_embed`, `metric`, `observe_at_close`, `observe_ship_event`, `recall`, `recall_usage`, `reflect_inputs`, `run_report`, `senses_deadman`, `sweep_knowledge` |
 | `_registry.py` | — | `bundle_discover`, `dispatch_stage`, `init`, `lint_ticket`, `resolve_handler`, `validate_workspace` |
-| `_runner.py` | — | `_evolve_common`, `branch_ticket`, `create_pr`, `diff_extract`, `evolve_drain`, `evolve_reap`, `evolve_select`, `flow_beads_create`, `flow_worktree`, `forge_bitbucket`, `forge_github`, `friction_escalate`, `init`, `queue_drain`, `queue_select`, `queue_status`, `recall_pending`, `review_brief`, `senses_deadman`, `trace_mine`, `tracker_beads`, `version`, `worktree_janitor` |
-| `_timeutil.py` | — | `_evolve_common`, `dispatch_stage`, `evolve_drain`, `evolve_reap`, `fleet`, `flow_friction`, `flow_worktree`, `init`, `lease`, `memory_append`, `memory_embed`, `metric`, `observe_at_close`, `observe_ship_event`, `recall`, `recall_pending`, `recall_usage`, `recover`, `run_report`, `runtime_layout`, `senses_deadman`, `state`, `status`, `sweep_knowledge`, `ticket_frontmatter`, `trace_mine`, `tracker_cli`, `worktree_janitor` |
+| `_runner.py` | — | `_evolve_common`, `branch_ticket`, `create_pr`, `diff_extract`, `evolve_drain`, `evolve_reap`, `evolve_select`, `flow_beads_create`, `flow_worktree`, `forge_bitbucket`, `forge_github`, `friction_escalate`, `init`, `queue_drain`, `queue_select`, `queue_status`, `recall_pending`, `review_brief`, `senses_deadman`, `tracker_beads`, `version`, `worktree_janitor` |
+| `_timeutil.py` | — | `_evolve_common`, `dispatch_stage`, `evolve_drain`, `evolve_reap`, `fleet`, `flow_friction`, `flow_worktree`, `init`, `lease`, `memory_append`, `memory_embed`, `metric`, `observe_at_close`, `observe_ship_event`, `recall`, `recall_pending`, `recall_usage`, `recover`, `run_report`, `runtime_layout`, `senses_deadman`, `state`, `status`, `sweep_knowledge`, `ticket_frontmatter`, `tracker_cli`, `worktree_janitor` |
 | `_workspace.py` | — | `_evolve_common`, `branch_ticket`, `create_pr`, `flow_friction`, `flow_worktree`, `forge`, `friction_escalate`, `maintainer`, `metric`, `model_resolve`, `observe_ship_event`, `recover`, `reflect_inputs`, `revise_config`, `snapshot`, `status`, `tracker_cli`, `triage` |
 | `branch_ticket.py` | — | `worktree_janitor` |
 | `bundle_discover.py` | — | `flow_launcher`, `flowctl`, `init`, `resolve_handler` |
@@ -241,7 +240,7 @@ markers are overwritten. `—` = none.
 | `evolve_select.py` | — | `evolve_drain` |
 | `evolve_self_merge.py` | — | — |
 | `fleet.py` | `deregister` `is-live` `list` `live-keys` `prune` `register` | `_evolve_common`, `dispatch_stage` |
-| `flow_beads_create.py` | — | `friction_escalate`, `trace_mine` |
+| `flow_beads_create.py` | — | `friction_escalate` |
 | `flow_friction.py` | — | `recover` |
 | `flow_launcher.py` | — | `flow_worktree`, `init` |
 | `flow_worktree.py` | `create` `locate-or-reseed` `reap` | `worktree_janitor` |
@@ -251,7 +250,7 @@ markers are overwritten. `—` = none.
 | `forge_cli.py` | `ci-rollup` `delete-branch` `detect-pr` `mark-ready` `merge` `post-reply` `pr-info` `resolve-thread` `review-status` `review-threads` | — |
 | `forge_github.py` | — | `forge`, `main_ci_health` |
 | `friction_escalate.py` | `escalate` | — |
-| `friction_recurrence.py` | — | `friction_escalate`, `metric`, `reflect_inputs`, `trace_mine` |
+| `friction_recurrence.py` | — | `friction_escalate`, `metric`, `reflect_inputs` |
 | `group_candidates.py` | — | — |
 | `group_persist.py` | `derive` `persist` | — |
 | `harness_corpus.py` | — | `harness_eval`, `reflect_inputs` |
@@ -302,7 +301,6 @@ markers are overwritten. `—` = none.
 | `sync.py` | — | — |
 | `ticket_frontmatter.py` | `read` `update` | `diff_extract`, `evolve_self_merge`, `flow_worktree`, `lint_ticket`, `observe_at_close`, `reflect_inputs`, `review_brief`, `stage_merge` |
 | `tier_policy.py` | — | `flow_worktree`, `triage` |
-| `trace_mine.py` | `cluster` `extract` `file` `runs` | — |
 | `tracker.py` | — | `flow_worktree`, `group_candidates`, `group_persist`, `observe_at_close`, `senses_deadman`, `sync`, `tracker_beads`, `tracker_cli`, `tracker_jira`, `worktree_janitor` |
 | `tracker_beads.py` | — | `tracker`, `triage` |
 | `tracker_cli.py` | `comment` `create` `download-attachments` `get` `is-shipped` `link` `list-epics` `list-sprints` `list-types` `set-sprint` `state` `transition` | `group_candidates`, `group_persist`, `observe_at_close`, `senses_deadman`, `sync`, `triage`, `worktree_janitor` |
