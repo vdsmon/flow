@@ -1213,6 +1213,28 @@ def role_literal_drift(
     return drifts
 
 
+# flowctl entries deliberately kept without a prose recipe (operator escape
+# hatches). Every addition needs a comment naming why the entry has no recipe.
+_LIBRARY_ONLY: frozenset[str] = frozenset()
+
+
+def facade_entries_without_caller(invocations: list[Invocation]) -> set[str]:
+    """flowctl allowlist entries no seam-checked doc ever invokes.
+
+    The forward gates prove every prose recipe resolves to a real entry; without
+    the reverse direction a prose rewrite can strand an entry silently
+    (witnessed: bead flow-lhhn found revise-config's facade entry orphaned only
+    because a human happened to re-read the recipes). Deliberate CLI-only
+    entries go in _LIBRARY_ONLY with a reason.
+    """
+    called = {inv.script for inv in invocations if inv.facade_command is not None}
+    return {
+        cmd
+        for cmd, script in flowctl.COMMANDS.items()
+        if script not in called and cmd not in _LIBRARY_ONLY
+    }
+
+
 def docs_to_check() -> list[Path]:
     docs = [SKILL_ROOT / "SKILL.md"]
     refs = SKILL_ROOT / "references"
@@ -1244,6 +1266,17 @@ def main(argv: list[str]) -> int:
 
     for inv in all_invs:
         problems.extend(validate(inv))
+
+    problems.extend(
+        Problem(
+            doc="flowctl.py",
+            line=0,
+            level="ERROR",
+            msg=f"facade entry {cmd!r} has no prose recipe in any seam-checked doc",
+            raw="",
+        )
+        for cmd in sorted(facade_entries_without_caller(all_invs))
+    )
 
     problems.extend(
         Problem(

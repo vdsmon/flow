@@ -1300,3 +1300,30 @@ def test_review_brief_treats_revision_sub_run_as_attended() -> None:
     )
     assert "/revisions/" in text
     assert "treat the run as attended" in text
+
+
+# --- facade reverse coverage: every allowlist entry has a prose recipe ---------
+
+
+def test_facade_entry_without_caller_flagged() -> None:
+    inv = seam_check.find_facade_invocations(
+        "t.md", 'FLOW_HARNESS="<harness>" "<facade>" status --workspace-root .'
+    )
+    orphans = seam_check.facade_entries_without_caller(inv)
+    assert "status" not in orphans
+    assert "dispatch" in orphans
+
+
+def test_live_facade_entries_all_have_callers() -> None:
+    invs: list[seam_check.Invocation] = []
+    for doc in seam_check.docs_to_check():
+        text = doc.read_text(encoding="utf-8")
+        invs.extend(seam_check.find_facade_invocations(doc.name, text))
+    assert seam_check.facade_entries_without_caller(invs) == set()
+
+
+def test_main_fails_on_facade_orphan(monkeypatch) -> None:
+    monkeypatch.setattr(
+        seam_check, "facade_entries_without_caller", lambda *a, **k: {"ghost-entry"}
+    )
+    assert seam_check.main([]) == 1
