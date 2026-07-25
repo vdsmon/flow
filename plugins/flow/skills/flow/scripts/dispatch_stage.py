@@ -712,7 +712,6 @@ def cmd_next(
     payload: dict[str, Any] = {
         "done": False,
         "stage": next_stage,
-        "timeout_min": stage_meta.default_timeout_min if stage_meta else 10,
         "head_sha": head_sha,
         "ticket_dir": str(td),
         "output_path": str(output_path),

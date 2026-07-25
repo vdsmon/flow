@@ -38,6 +38,12 @@ command does not design the solution; delivery planning belongs to the target pa
 6. Best-effort, transition to the configured open state and add the active sprint
    when requested and supported. A backend that lacks sprint support degrades
    visibly but does not invalidate the created ticket.
+
+   ```bash
+   FLOW_HARNESS="<harness>" "<facade>" tracker --workspace-root . list-sprints
+   FLOW_HARNESS="<harness>" "<facade>" tracker --workspace-root . set-sprint \
+     --key "<key>" --sprint-id "<sprint-id>"
+   ```
 7. Print `Created <KEY>: <summary>` and offer to run `FLOW <KEY>` immediately. A yes
    enters the ordinary target lifecycle in the same conversation; it does not bypass
    planning or approval.
@@ -72,9 +78,13 @@ need one plan, one diff, and one PR. It is not a general project or label bucket
 6. Render lead, covers, dependency/coupling evidence, solo tickets, and confirmed
    duplicates. Ask whether to run now, persist for later, or leave it as a read-only
    proposal.
-7. For persistence, confirm and invoke the internal group-persistence seam with the
-   lead and complete covered-ticket set. It writes an idempotent marker on the lead;
-   repeating the same set is a no-op.
+7. For persistence, confirm and record the cover set as a marker comment on the
+   lead; repeating the same set is a no-op, and a later plan derives it back:
+
+   ```bash
+   FLOW_HARNESS="<harness>" "<facade>" group-persist persist \
+     --lead "<lead>" --covers "<c1>,<c2>" --workspace-root .
+   ```
 
 8. For run now, enter `FLOW <lead> <key1> <key2> --together` in the same
    conversation. The target path revalidates freshness and groupability before the

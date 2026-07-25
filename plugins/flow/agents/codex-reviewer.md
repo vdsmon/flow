@@ -19,6 +19,8 @@ Your prompt carries the stage contract. Bind it before anything else:
 ```text
 Workspace root: <absolute run_root>
 Skill root: <absolute skill_root>
+Facade: <absolute facade>
+Harness: <claude-code|codex|generic>
 Ticket and stage: <ticket> / code_review
 Ticket dir: <absolute ticket_dir>
 Reference path: <absolute reference doc>
@@ -38,17 +40,24 @@ change itself, and carries the review questions and severity definitions from th
 reference: `Critical` unsafe or incorrect to ship, `Major` materially worth fixing,
 `Minor` optional improvement. Require every finding to cite a real path and line.
 
-Read `reviewer_model` and `reviewer_effort` from the workspace's `[code_review]` table.
-Pass a present `reviewer_model` as `-m` and a present `reviewer_effort` as
-`-c model_reasoning_effort=<value>`. Omit either flag when its key is absent, so Codex
-falls back to the operator's own configuration.
+Resolve the reviewer hint through the facade, one field per call, so OFF semantics
+(`off`/`none`/`false` mean inherit) have exactly one implementation:
+
+```bash
+FLOW_HARNESS="<harness>" "<facade>" model --workspace-root . --stage code_review --role reviewer
+FLOW_HARNESS="<harness>" "<facade>" model --workspace-root . --stage code_review --role reviewer --field effort
+```
+
+Pass a non-empty model as `-m` and a non-empty effort as
+`-c model_reasoning_effort=<value>`. Omit either flag when its call prints nothing,
+so Codex falls back to the operator's own configuration.
 
 Run exactly one foreground call with an explicit 600000 ms timeout:
 
 ```bash
 codex exec -C "<workspace root>" -s read-only \
   --ignore-rules --ephemeral \
-  [-m <reviewer_model>] [-c model_reasoning_effort=<reviewer_effort>] \
+  [-m <reviewer model>] [-c model_reasoning_effort=<reviewer effort>] \
   --output-schema "<skill_root>/scripts/assets/codex-review.schema.json" \
   -o "<ticket_dir>/stages/codex-review.json" \
   - < "<prompt file>"
@@ -60,7 +69,7 @@ already landed, so treat the top of the range as a manual, ungated choice rather
 pipeline default.
 
 **A rejected launch parameter degrades; it does not fail the stage.** Flow checks that
-`reviewer_model` and `reviewer_effort` are strings and deliberately does not police their
+the reviewer's `model` and `effort` are strings and deliberately does not police their
 values, because that vocabulary is the CLI's and it moves. So the CLI is what rejects a
 stale or mistyped value, and it does so before any review happens. When the call fails in
 a way that names one of these parameters rather than the review itself, drop that flag,
@@ -125,8 +134,8 @@ Any of these is a missing reviewer, which the reference makes a visible stage fa
 - `<ticket_dir>/stages/codex-review.json` is absent, does not parse as JSON, or does not
   match the schema.
 
-The one exception is the launch-parameter retry above: a first call rejected for
-`reviewer_model` or `reviewer_effort` is not yet a missing reviewer, because no review was
+The one exception is the launch-parameter retry above: a first call rejected for the
+reviewer's model or effort hint is not yet a missing reviewer, because no review was
 attempted. Only the retry's outcome counts here.
 
 Report the command and its stderr plainly and fail. Never substitute your own review for

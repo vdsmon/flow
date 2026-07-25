@@ -37,8 +37,20 @@ very short and obviously equivalent. Working around a missing grant or decision 
 tokens and drifts the plan toward a less precise result. An assessor never relays those
 questions.
 
-Optional memory or history reads are useful only when they answer a concrete planning question.
-Do not expand planning into a general repository audit.
+When the workspace compounds memory (`[memory] compounding = true`), recall prior
+knowledge before writing the plan — this read is what makes past runs pay into this
+one. Write the ticket's intent plus its text to a temporary file and query:
+
+```bash
+FLOW_HARNESS="<harness>" "<facade>" recall \
+  --query-file "<absolute-intent-file>" [--semantic] \
+  --top-n 5 --workspace-root .
+```
+
+Weave genuinely relevant entries into the plan's approach and risks, citing their ids.
+An empty result is normal. Further memory or history reads are useful only when they
+answer a concrete planning question; do not expand planning into a general repository
+audit.
 
 When the ticket names a concrete failing artifact — a generated file, a payload, a load id —
 fetch and inspect the real artifact read-only during grounding. The actual bytes settle questions
@@ -166,6 +178,27 @@ prefix; `--commit-type` carries the actual change type. Do not translate a bug-f
 commit into a non-`feat/` Flow branch.
 
 Do not pass `--recover-spill` automatically; it is an explicit operator recovery action.
+
+If grounding recalled entries that shaped the plan, record them right after the
+worktree exists — rooted at the NEW run root and reusing §1's exact query file, so
+the recorded surfaced set is the one the plan actually saw and the dispatcher's
+init-time promotion (which joins on the run root and branch) can pick it up:
+
+```bash
+FLOW_HARNESS="<harness>" "<facade>" recall \
+  --query-file "<absolute-intent-file>" [--semantic] --top-n 5 \
+  --record-pending --branch "feat/<ticket-slug>" --ticket "<KEY>" \
+  --workspace-root "<worktree>"
+```
+
+Best-effort, never blocking: a failed record costs recall observability, not the run.
+
+For a grouped run whose cover set was persisted earlier (`FLOW ticket group`), derive
+it back and pass it as `--covers`:
+
+```bash
+FLOW_HARNESS="<harness>" "<facade>" group-persist derive --lead "<ticket>" --workspace-root .
+```
 
 Bootstrap preserves the isolated ticket worktree, single-ticket claim, current-base resolution,
 atomic run state, planned-file ownership, and spill protection. It writes the approved text to

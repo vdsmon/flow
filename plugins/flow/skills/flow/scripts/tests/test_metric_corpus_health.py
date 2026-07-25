@@ -264,30 +264,3 @@ def test_cli_recall_hit_rate_autoresolves_namespace(tmp_path: Path, capsys) -> N
     assert rc == 0
     err = capsys.readouterr().err
     assert "namespace is required" not in err
-
-
-def test_passthrough_from_recall(tmp_path: Path, capsys) -> None:
-    import recall
-
-    _seed_workspace(tmp_path)
-    _write_knowledge(
-        tmp_path,
-        [
-            {"id": "a", "ts": "2026-06-02T00:00:00Z", "type": "DECISION"},
-        ],
-    )
-    rc = recall.cli_main(
-        [
-            "--metric",
-            "corpus-health",
-            "--namespace",
-            "demo",
-            "--workspace-root",
-            str(tmp_path),
-        ]
-    )
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["total_entries"] == 1
-    assert payload["decisions_total"] == 1
-    assert payload["decisions_live"] == 1

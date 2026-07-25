@@ -231,21 +231,3 @@ def test_cli_no_flow_dir(tmp_path: Path, capsys) -> None:
     )
     assert rc == 1
     assert "no .flow" in capsys.readouterr().err
-
-
-def test_passthrough_from_recall(tmp_path: Path, capsys) -> None:
-    import recall
-
-    _seed_workspace(tmp_path)
-    _write_friction(tmp_path, [_entry(ts="2026-06-02T10:00:00.000Z")])
-    rc = recall.cli_main(
-        [
-            "--metric",
-            "friction-per-run",
-            "--namespace",
-            "demo",
-            "--workspace-root",
-            str(tmp_path),
-        ]
-    )
-    assert rc == 0

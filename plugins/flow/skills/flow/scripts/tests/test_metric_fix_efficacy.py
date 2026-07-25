@@ -881,16 +881,3 @@ def test_cli_no_flow_dir(tmp_path: Path, capsys) -> None:
 
     assert rc == 1
     assert "no .flow" in capsys.readouterr().err
-
-
-def test_forwarder_from_recall(tmp_path: Path, capsys) -> None:
-    import recall
-
-    _seed_workspace(tmp_path)
-
-    rc = recall.cli_main(
-        ["--metric", "fix-efficacy", "--namespace", "demo", "--workspace-root", str(tmp_path)]
-    )
-
-    assert rc == 0
-    assert "fix-efficacy" in capsys.readouterr().out

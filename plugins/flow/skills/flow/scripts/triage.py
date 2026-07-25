@@ -414,18 +414,6 @@ def _cmd_lane(args: argparse.Namespace, runner: Any) -> int:
     return 0
 
 
-def _cmd_adjudicate_enabled(args: argparse.Namespace) -> int:
-    workspace_root = Path(args.workspace_root).expanduser().resolve()
-    sys.stdout.write("true\n" if advisor_adjudicates(workspace_root) else "false\n")
-    return 0
-
-
-def _cmd_adjudicate_hot_enabled(args: argparse.Namespace) -> int:
-    workspace_root = Path(args.workspace_root).expanduser().resolve()
-    sys.stdout.write("true\n" if adjudicate_hot(workspace_root) else "false\n")
-    return 0
-
-
 def _default_to_list(argv: list[str]) -> list[str]:
     """Prepend `list` when the first non-flag token is not a known subcommand.
 
@@ -439,7 +427,7 @@ def _default_to_list(argv: list[str]) -> list[str]:
             return argv
         if tok.startswith("-"):
             continue
-        if tok in ("list", "decided", "lane", "adjudicate-enabled", "adjudicate-hot-enabled"):
+        if tok in ("list", "decided", "lane"):
             return argv
         break
     return ["list", *argv]
@@ -469,28 +457,12 @@ def cli_main(argv: list[str], runner: Any = None) -> int:
     p_lane.add_argument("--workspace-root", default=".")
     p_lane.add_argument("--key", required=True)
 
-    p_adj = sub.add_parser(
-        "adjudicate-enabled",
-        help="print whether [evolve] advisor_adjudicates is on (true/false)",
-    )
-    p_adj.add_argument("--workspace-root", default=".")
-
-    p_adj_hot = sub.add_parser(
-        "adjudicate-hot-enabled",
-        help="print whether [evolve] adjudicate_hot is on (true/false)",
-    )
-    p_adj_hot.add_argument("--workspace-root", default=".")
-
     args = parser.parse_args(_default_to_list(argv))
 
     if args.command == "decided":
         return _cmd_decided(args, runner)
     if args.command == "lane":
         return _cmd_lane(args, runner)
-    if args.command == "adjudicate-enabled":
-        return _cmd_adjudicate_enabled(args)
-    if args.command == "adjudicate-hot-enabled":
-        return _cmd_adjudicate_hot_enabled(args)
     return _cmd_list(args, runner)
 
 

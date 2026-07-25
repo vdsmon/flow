@@ -448,7 +448,6 @@ def _render_workspace_toml(
         assert config.beads is not None
         lines.append("[tracker.beads]")
         lines.append(f"prefix = {_toml_escape(config.beads.prefix)}")
-        lines.append("shared_server = true")
         lines.append("")
 
     lines.append("[pipeline]")
@@ -463,9 +462,6 @@ def _render_workspace_toml(
 
     lines.append("[memory]")
     lines.append(f"namespace = {_toml_escape(namespace)}")
-    lines.append("auto_recall = true")
-    lines.append('recall_by = ["branch", "current-ticket", "ready-tickets"]')
-    lines.append("recall_top_n = 5")
     lines.append("label_facets = []")
     lines.append(f"compounding = {str(config.memory_compounding).lower()}")
     lines.append("")
@@ -488,24 +484,43 @@ def _render_workspace_toml(
 
 
 def _preserved_models_toml(workspace_toml_text: str | None) -> str:
-    """Keep optional native-agent model hints during reconfiguration."""
+    """Keep optional agent hints during reconfiguration.
+
+    Round-trips the full shape: bare stage strings under ``[models]`` plus one
+    ``[models.<stage>]`` section per role-keyed table (role values re-serialize
+    as strings or inline ``{ model = ..., effort = ... }`` tables). Emitting
+    only the string half would silently drop reviewer tuning on reconfigure.
+    """
     if not workspace_toml_text:
         return ""
     try:
         data = tomllib.loads(workspace_toml_text)
     except tomllib.TOMLDecodeError:
         return ""
-    lines: list[str] = []
     models = data.get("models")
-    if isinstance(models, dict):
-        lines.append("[models]")
-        lines.extend(
-            f"{key} = {_toml_escape(value)}"
-            for key, value in models.items()
-            if isinstance(value, str)
-        )
+    if not isinstance(models, dict):
+        return ""
+    lines: list[str] = ["[models]"]
+    lines.extend(
+        f"{key} = {_toml_escape(value)}" for key, value in models.items() if isinstance(value, str)
+    )
+    for stage, entry in models.items():
+        if not isinstance(entry, dict):
+            continue
         lines.append("")
-    return "\n".join(lines).rstrip() + ("\n" if lines else "")
+        lines.append(f"[models.{stage}]")
+        for role, value in entry.items():
+            if isinstance(value, str):
+                lines.append(f"{role} = {_toml_escape(value)}")
+            elif isinstance(value, dict):
+                fields = ", ".join(
+                    f"{name} = {_toml_escape(field_value)}"
+                    for name, field_value in value.items()
+                    if isinstance(field_value, str)
+                )
+                lines.append(f"{role} = {{ {fields} }}")
+    lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
 
 
 # ─── Handler composition ────────────────────────────────────────────────────

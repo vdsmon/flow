@@ -255,6 +255,29 @@ def test_reconfigure_preserves_optional_model_hints(tmp_path: Path) -> None:
     assert "agents" not in data
 
 
+def test_reconfigure_preserves_role_keyed_model_hints(tmp_path: Path) -> None:
+    # The nested half of the table (reviewer tuning) must survive reconfigure too;
+    # a str-only round-trip would silently drop it.
+    first = initmod.run_init(_jira_config(tmp_path))
+    workspace = first.workspace_toml_path
+    workspace.write_text(
+        workspace.read_text(encoding="utf-8")
+        + '[models]\nimplement = "opus"\n'
+        + "[models.code_review]\n"
+        + 'reviewer = { model = "gpt-5.6-sol", effort = "high" }\n'
+        + 'fixer = "sonnet"\n',
+        encoding="utf-8",
+    )
+
+    initmod.run_init(_jira_config(tmp_path), reconfigure=True)
+    data = tomllib.loads(workspace.read_text(encoding="utf-8"))
+    assert data["models"]["implement"] == "opus"
+    assert data["models"]["code_review"] == {
+        "reviewer": {"model": "gpt-5.6-sol", "effort": "high"},
+        "fixer": "sonnet",
+    }
+
+
 # ─── L1: AGENTS.md cross-harness entry point (opt-in, CC-neutral by default) ──
 
 
@@ -371,7 +394,6 @@ def test_bare_beads_init_runs_bd_and_writes_workspace_toml(tmp_path: Path) -> No
     data = tomllib.loads(result.workspace_toml_path.read_text(encoding="utf-8"))
     assert data["tracker"]["backend"] == "beads"
     assert data["tracker"]["beads"]["prefix"] == "testpkg"
-    assert data["tracker"]["beads"]["shared_server"] is True
     # Beads workspaces still get FT/code_review/etc handlers from defaults.
     assert data["pipeline"]["handlers"]["plan"] == "inline"
 

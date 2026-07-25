@@ -228,11 +228,6 @@ def test_unchanged_evidence_falls_back_to_commit_pinned_source(tmp_path):
 
 
 def test_highlight_lines_is_not_part_of_the_authoring_contract():
-    schema = rb.provider_schema()
-    evidence = schema["properties"]["code_evidence"]["items"]
-    assert "highlight_lines" not in evidence["properties"]
-    assert "highlight_lines" not in evidence["required"]
-
     content = _content()
     content["code_evidence"][0]["highlight_lines"] = [1]
     with pytest.raises(rb.ValidationError, match="unknown fields: highlight_lines"):

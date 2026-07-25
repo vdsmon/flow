@@ -1,8 +1,11 @@
-# inventory: API/contract reference + build log
+# inventory: API/contract reference
 
-> **Navigation.** The CURRENT script map is `MODULE.md`. Build status / release notes are in `dev-history.md`. This file keeps the API/contract tables (Jira REST mapping, beads CLI surface, `.flow-bundle.toml` schema, `state.json` schema) plus the phase-by-phase build narrative. The "Phase X" / "Known holes" sections below are archived history, not current status — read them as the build log, not as a description of how flow works today.
+> **Navigation.** The CURRENT script map is `MODULE.md`. This file keeps the
+> API/contract tables (Jira REST mapping, beads CLI surface, `.flow-bundle.toml`
+> schema, `state.json` schema) a reader needs assembled in one place. Build history
+> lives in git.
 
-Live contract sections (grep the heading; everything else here is build log):
+Contract sections (grep the heading):
 
 - §Jira API inventory + §Status normalization mapping + §HTTP error → exception / TransitionResult mapping
 - §Forge (PR host) surface: operation surface, `[forge]`, and optional `[models]` workspace schemas
@@ -10,7 +13,7 @@ Live contract sections (grep the heading; everything else here is build log):
 - §Beads CLI surface — subcommands, state normalization, transition synthesis, is_shipped contract
 - §Dispatcher state machine — stage lifecycle, `state.json` schema, atomic-write contract, quarantine, exit codes, handler-descriptor shape, revision sub-run, TOCTOU invariant
 - §Memory cohort — `memory_append` / `recall` / `memory_embed` + `[memory.semantic]` config
-- §Integration layer — `tracker_cli` per-backend contract, descriptor extension, verb router
+- §Integration layer — `tracker_cli` per-backend contract, descriptor extension
 
 ## Jira API inventory
 
@@ -49,7 +52,7 @@ No reference in jira-workflow — implemented from Atlassian REST API v3 docs + 
 | `link(from,to,kind)`       | `POST /rest/api/3/issueLink` `{type:{name:<mapped>}, inwardIssue:from, outwardIssue:to}` | seam kind→Jira name: `blocks`/`depends_on`→`Blocks`, `relates`→`Relates`; unknown passes raw. Direction: `inwardIssue`=from=the blocked/dependent issue, `outwardIssue`=to=the blocker. |
 | `state(key)`               | `GET /rest/api/3/issue/{key}?fields=status,resolution`                          | derives `TicketState` with normalized + diagnostic |
 | `project_requires_pr()`    | `GET /rest/api/3/workflow/search?projectKey=<P>&expand=transitions.rules` (workflow scheme) | flag iff any transition to Done category has linked-PR validator. **Conservative default = False** if endpoint unauthorized. |
-| `is_shipped(key)`          | PURE READ: frozen `.flow/<ns>/ship-events/<key>.json` → return shipped; else `state()` + ship predicate | adapter MUST NOT write |
+| `is_shipped(key)`          | PURE READ: frozen `.flow/memory/<ns>/ship-events/<key>.json` → return shipped; else `state()` + ship predicate | adapter MUST NOT write |
 | `set_sprint(key, sprint_id)` | `POST /rest/agile/1.0/sprint/{sprintId}/issue` `{issues:[key]}`                | capability: `sprints` |
 | `list_sprints(project)`    | `GET /rest/agile/1.0/board/{boardId}/sprint?state=active,future,closed` (needs board lookup) | capability: `sprints` |
 | `get_attachments(key)`     | `GET /rest/api/3/issue/{key}?fields=attachment`                                 | capability: `attachments` |
@@ -205,20 +208,29 @@ repo_slug = "rs"
 
 ### Optional `[models]` workspace schema
 
-A workspace may give a native stage agent a model hint. Missing keys inherit the
+A workspace may give a stage's agents a model/effort hint. Missing keys inherit the
 driver session model, and a host that does not accept a hint ignores it. These are
 preferences, not execution provenance.
 
 ```toml
 [models]
-implement = "sonnet"
-code_review = "opus"
-e2e = "sonnet"
+implement = "sonnet"          # one string = every agent this stage launches
+
+[models.code_review]          # or keyed by the ROLE the stage launches
+reviewer = { model = "gpt-5.6-sol", effort = "high" }
+fixer = "sonnet"
 ```
 
-The resolver reads only `[models].<stage>`. Values `off`, `none`, `false`, and the
-empty string mean inherit. There is no provider matrix, effort contract, snapshot,
-attestation, or route override.
+The resolver is `model_resolve.resolve_agent_hint(root, stage, role, field)` (facade:
+`model --stage <s> [--role <r>] [--field model|effort]`). Values `off`, `none`,
+`false`, and the empty string mean inherit. A role-keyed table naming exactly one
+role resolves without `--role` (the generic launch recipe carries none); two or more
+roles require the caller to name one. Liveness is judged against THIS workspace
+(`validate_workspace._validate_stage_hint`): an inline/none-handled stage is checked
+against `_LAUNCH_SITES` (the roles its prose launches), while a `subagent:`-wired
+stage accepts a string hint anywhere — and a hint for a stage outside the pipeline
+is rejected outright. There is no provider matrix, snapshot, attestation, or route
+override.
 
 ### Planning handoff
 
@@ -240,9 +252,9 @@ schema_version = 1     # closed enum: { 1 }; mismatch = invalid (warning unless 
 name        = "ship-it"   # bundle slug, used by --bundle-name selectors
 description = "Push branch + open draft PR + CI loop"
 
-# One [skills.<stage>] table per stage the bundle provides. `stage` MUST be a
-# closed-vocabulary flow stage (ticket | plan | implement | code_review | e2e |
-# commit | create_pr | review_loop | reflect). Unknown stages = invalid manifest.
+# One [skills.<stage>] table per stage the bundle provides. `stage` MUST name a
+# stage registered in stage-registry.toml (the closed vocabulary's single
+# source). Unknown stages = invalid manifest.
 [skills.create_pr]
 handler_string         = "skill:ship-it:create"   # required; MUST start with "skill:"
 required_capabilities  = []                       # optional, list[str]; CAPABILITY_ENUM names
@@ -303,8 +315,7 @@ Pre-flight refusal:
    `memory.compounding = false`).
 4. `[pipeline.handlers]` contains an entry for every stage in
    `[pipeline.stages]`.
-5. `[memory]` block has `namespace`, `compounding`, `auto_recall`, `recall_by`,
-   `recall_top_n`.
+5. `[memory]` block has `namespace` and `compounding`.
 6. For backend=beads: `bd ready --json` returns parseable JSON.
 
 ## Beads CLI surface
@@ -399,11 +410,6 @@ Every other capability is false → `set_sprint`, `list_sprints`, `get_attachmen
    `not_yet_observed` into a frozen `<key>.json` ship-event record. Adapter
    never returns `state="shipped"` — that's the frozen-file reader's domain.
 
-### Transient-failure handling (deferred to phase 8)
-
-Plan line 990 calls for transient `bd` failures (network blips, lock contention) to append to `.flow/pending-mutations.jsonl` so `/flow sync` can retry.
-`pending-mutations.py` is phase-8 work; the adapter currently surfaces the error as `_BeadsError(TrackerError)` and lets the dispatcher (phase 7) decide.
-
 ## Dispatcher state machine
 
 The dispatcher is a state-machine driver — NOT an orchestrator.
@@ -479,7 +485,7 @@ Never-destroy invariant: a corrupt artifact is renamed or copied aside, never de
 | dispatch_stage      | 2    | no ticket dir / not yet initialized             |
 | dispatch_stage      | 3    | revise-open: original run not terminal          |
 | dispatch_stage      | 4    | revise-open: a revision is already live         |
-| dispatch_stage      | 5    | stale foreign lease (needs /flow recover --takeover) |
+| dispatch_stage      | 5    | stale foreign lease (needs `FLOW workspace repair` takeover) |
 | dispatch_stage      | 7    | lost lease (another run took over)               |
 
 ### Handler-descriptor JSON shape (`dispatch next` stdout)
@@ -493,7 +499,6 @@ Never-destroy invariant: a corrupt artifact is renamed or copied aside, never de
   "reference_doc": "references/stage-plan.md",
   "skill_name": "ship-it",
   "skill_args": "create",
-  "timeout_min": 10,
   "head_sha": "<current git HEAD>",
   "ticket_dir": ".flow/runs/FT-1234",
   "output_path": ".flow/runs/FT-1234/stages/plan.out",
@@ -535,37 +540,6 @@ Cheap (parses 2-3 small TOML files).
 Catches mid-run workspace.toml edits.
 The canonical-snapshot pattern is live: a content hash is captured once at `init` and compared on each `next` call via `snapshot.py`. The hash covers four components (see the snapshot.py module docstring): workspace.toml text, stage-registry.toml text, each `skill:` handler's manifest + plugin tree hash, and — only while the main checkout sits on a protected branch — the engine's own skill tree (the marketplace-tracks-main window where a mid-run checkout advance swaps engine code).
 
-### Deferred to phase 7-full / 8
-
-| Concern                                          | Phase     |
-|--------------------------------------------------|-----------|
-| ~~Lease-style run.lock (pid + boot_id + ...)~~ (shipped as lease.py: acquire/refresh/release/expiry + takeover detection) | 7-full ✓ |
-| ~~Background lease refresher thread~~ (deliberately NOT built — mutual exclusion comes from lease identity under flock, refreshed per dispatch call + session nonce; see the lease.py module docstring) | 7-full ✓ |
-| ~~`--emit-canonical-snapshot` content-tree hash~~ (shipped as snapshot.py + the dispatch-init write; the standalone flag was retired 2026-07) | 7-full ✓ |
-| FS capability probe (flock detection)            | 7-full    |
-| `lint-ticket.py` HARD GATE pre-stage             | 8-mvp ✓   |
-| `branch-ticket.py` ticket resolution             | 8-mvp ✓   |
-| `ticket-frontmatter.py` TOML r/w                 | 8-mvp ✓   |
-| `diff-extract.py` baseline + since-stage         | 8-mvp ✓   |
-| `compose-commit.py` skeleton emitter             | 8-mvp ✓   |
-| `recover.py` takeover modes                      | 8c        |
-| `memory-append.py` + `recall.py` + ship-event    | 8b        |
-| `pending-mutations.py` + `sync.py`               | 8d        |
-| Capability cross-check (handler vs adapter)      | 7-full    |
-| Subagent / skill handler spawn harness           | 7-full    |
-
-## Out-of-scope for phase 3
-
-- `comments_markdown=true` (Jira would need a separate markdown wrapper; ADF
-  satisfies all current call sites).
-- Webhook subscription / live event push (the plan's ship-event observer is the
-  workspace's job, not the adapter's).
-- Bulk operations (`bulkCreateIssue`, `bulkEditIssues`). Adapter sticks to
-  single-issue endpoints; the dispatcher batches client-side.
-- Jira Server / Data Center (Cloud only — REST v3 + agile/1.0 differs on-prem).
-
----
-
 ## Bookkeeping helpers
 
 Five bookkeeping scripts.
@@ -579,13 +553,15 @@ Resolves ticket key from current git branch.
 CLI surface: MODULE.md §Bootstrap (seam-checked there; this file keeps only the contract).
 
 Backend-aware key regexes: jira `<PROJECT_KEY>-\d+`; beads `<prefix>-[0-9a-z]{3,}(\.\d+)*` (dotted child keys resolve too).
-`--branch` resolves from an explicit branch (no git call) — the PR->ticket enabler for `/flow revise <pr#>`; absent = current branch.
+`--branch` resolves from an explicit branch (no git call) — the PR->ticket enabler for a `FLOW pr:<number>` revision; absent = current branch.
 Exit 0=match, 1=env-error, 3=no-match.
 
 ### `ticket_frontmatter.py`
 
 TOML frontmatter r/w under flock + atomic rename.
 Frontmatter delimiter is `+++` (deviation from plan-source "YAML" wording — locked at design review).
+Scope is deliberately flat scalars + string lists only: a nested table on hand-edit
+triggers read-side quarantine, and the write side aborts with exit 2.
 
 | Subcommand | Flags | Exits | Notes |
 |------------|-------|-------|-------|
@@ -622,7 +598,7 @@ Flag surface: MODULE.md §Frontmatter / diff / commit (seam-checked there); this
 | `since-stage` | 0=ok, 1=missing-state, 2=git-error | Reads `state.json` for `stages.<name>.started_at_sha`, diffs `<sha>..HEAD` → `{files_touched, insertions, deletions, binary}` JSON. |
 | `record-baseline` | 0=ok, 2=git-error | Writes `<ticket-dir>/baseline.json` with `{stage, head_sha, planned_files, blobs}`. |
 | `capture-implement-diff` | 0=ok, 1=missing-baseline / gitignored planned file, 2=git-error | Writes `<ticket-dir>/implement.diff` via `git diff --binary --raw`. |
-| `check-ownership` | 0=ok, 3=ownership violation (unowned paths), 1=missing/malformed baseline, 2=git-error | `{ok, planned_files, changed, unowned_changes}` JSON. Branch-wide: scans the dirty working tree AND the committed delta `baseline.head_sha..HEAD`, so a rogue mid-implement commit is seen too. Wired as stage-commit step 2b. THIS is the content-ownership commit gate AGENTS.md names. |
+| `check-ownership` | 0=ok, 3=ownership violation (unowned paths), 1=missing/malformed baseline, 2=git-error | `{ok, planned_files, changed, unowned_changes}` JSON. Branch-wide: scans the dirty working tree AND the committed delta `baseline.head_sha..HEAD`, so a rogue mid-implement commit is seen too. Wired as stage-commit step 2b. Filename-level by design; hunk-level ownership stays a deliberate non-goal (bd flow-bq4). THIS is the content-ownership commit gate AGENTS.md names. |
 
 ### `compose_commit.py`
 
@@ -642,32 +618,9 @@ Flag surface: MODULE.md §Self-evolution.
 Payload contract: JSON `{file, old, new}` via `--payload <file>` or stdin; `file` is rel-to-skill-root or absolute; `old` must be a unique anchor.
 Exit 0=applied or already_applied (idempotent), 1=usage/IO error, 2=refused (out-of-tree or snapshot-pinned), 3=anchor_not_found, 4=ambiguous (non-unique anchor).
 
-## Known phase 8-mvp holes (deferred to 8b/8c/8d)
-
-1. **TOML frontmatter scope** — flat scalars + string lists only. Nested tables
-   on hand-edit trigger read-side quarantine; write-side aborts with exit 2.
-2. **Content-ownership check on commit — RESOLVED (v0.25.18).** `diff_extract
-   check-ownership` is now wired into the `commit` stage
-   (`references/stage-commit.md`): it refuses changes outside the reconciled
-   `planned_files` across the whole branch delta — the dirty working tree AND
-   commits since `baseline.head_sha` — fail-safe (a clean exit-3 refusal, never
-   a silent commit). Filename-level; a hunk-level ownership check stays a
-   deeper future refinement.
-3. **lint-ticket `required_fields`** — only 3 stages get non-empty lists. Other
-   stages get universal-only.
-4. **No retry knob** for ticket-frontmatter lock contention — hard-coded 3×1s.
-   Sufficient for serial human use; 8b can pull from workspace.toml.
-5. **`since`/`since-stage`** uses `--numstat`; renames surface only in
-   `capture-implement-diff` (`--raw`).
-6. **Dispatcher integration** — helpers ship as standalone CLIs. Subprocess
-   wiring into `dispatch_stage.py` (with exit-code matrix) lands in phase 5
-   or phase 8-glue.
-
----
-
 ## Memory cohort
 
-Four stdlib-only scripts that own `.flow/<namespace>/knowledge.jsonl`, `.flow/<namespace>/ship-events/<ticket>.json`, and the reflect-stage input bundle.
+Four stdlib-only scripts that own `.flow/memory/<namespace>/knowledge.jsonl`, `.flow/memory/<namespace>/ship-events/<ticket>.json`, and the reflect-stage input bundle.
 Same library + thin-CLI shape as 8-mvp.
 Shared `_memory_paths.py` module handles namespace resolution + path conventions.
 
@@ -772,7 +725,7 @@ else the shipped default `uvx --with fastembed python embedder_fastembed.py
 cannot import it). Missing command / `uvx` absent / nonzero exit / unparseable /
 wrong vector count → `_EmbedderUnavailable` (recall catches → BM25 fallback).
 
-**Sidecar index** `.flow/<namespace>/knowledge.embed` (derived; `knowledge.jsonl` stays
+**Sidecar index** `.flow/memory/<namespace>/knowledge.embed` (derived; `knowledge.jsonl` stays
 the source of truth):
 - line 1 header: `{"_header": {"model": "<id>", "dim": <int>, "ts": "<iso>"}}`
 - body: `{"id": "<entry-id>", "v": [<float>, ...]}` per live entry.
@@ -795,22 +748,22 @@ First-enable on an existing workspace starts with an EMPTY index, so plan-phase 
 BM25-only until a one-time bulk backfill: `recall.py --reindex --workspace-root .` (or
 `memory_embed.py reindex`). Document/run this when flipping `enabled = true`.
 
-### `embedder_fastembed.py` (default) / `embedder_model2vec.py` (alt)
+### `embedder_fastembed.py`
 
-Two reference embedders, each run BY `uvx`, standalone subprocess entrypoints (imported
-by nothing). Read newline texts on stdin, print `[[float, ...], ...]` JSON.
-- **`embedder_fastembed.py`** — the shipped DEFAULT. `uvx --with fastembed`,
-  `fastembed.TextEmbedding(<model>).embed(texts)`. ONNX runtime, no torch. Default model
-  `BAAI/bge-small-en-v1.5` (384-dim). Empty stdin → `[]` (skips the model download).
-- **`embedder_model2vec.py`** — lighter static ALTERNATIVE (select via
-  `[memory.semantic].embedder`). `uvx --with model2vec[inference]`,
-  `StaticModel.from_pretrained(<model>).encode(texts)`. Default `minishlab/potion-retrieval-32M`.
+The shipped DEFAULT reference embedder, run BY `uvx`, a standalone subprocess
+entrypoint (imported by nothing). Reads newline texts on stdin, prints
+`[[float, ...], ...]` JSON. `uvx --with fastembed`,
+`fastembed.TextEmbedding(<model>).embed(texts)`. ONNX runtime, no torch. Default model
+`BAAI/bge-small-en-v1.5` (384-dim). Empty stdin → `[]` (skips the model download).
+Exit 0 ok, 1 on load/encode failure.
 
-Both exit 0 ok, 1 on load/encode failure. **CI does not install either embedder**, so the
-real path is NOT CI-exercised (tests guarded by `pytest.importorskip`); "tests green" ≠
-"real embedder validated". The runtime-availability check (does the shipped uvx command
-return vectors from the runtime python3 context) is manual + observable via recall's
-stderr status line.
+`[memory.semantic].embedder` accepts ANY command honoring the same
+stdin-texts/JSON-vectors wire protocol — that config string is the extension point; a
+different embedder needs no file in this repo. **CI does not install the embedder**, so
+the real path is NOT CI-exercised (tests guarded by `pytest.importorskip`); "tests
+green" ≠ "real embedder validated". The runtime-availability check (does the shipped
+uvx command return vectors from the runtime python3 context) is manual + observable via
+recall's stderr status line.
 
 ### `[memory.semantic]` config block
 
@@ -823,17 +776,13 @@ Optional `workspace.toml` block (off by default; absent → semantic off → pur
 | `threshold` | `0.0` | low cosine floor (drop non-positive cosines); candidates are selected by rank (top-K), not τ. |
 | `embedder` | `""` | override the shipped uvx command; blank → default. |
 
-`init.py` writes a commented template of this block. `recall_by` / `recall_top_n` in
-`[memory]` are now UNREAD (the SessionStart recall path was removed; plan-phase recall
-has its own `--top-n`/`--threshold`) — they stay harmless, postcondition #5 still expects
-them so `init` keeps writing them.
+`init.py` writes a commented template of this block.
 
 ### `[memory] label_facets` key
 
 Optional `list[str]`, default `[]`. Names the facet(s) a knowledge entry can be
 tagged with via `memory_append --labels <facet>:<value>` (e.g. `label_facets =
-["form"]` -> `--labels form:iva_2083`). Unlike `recall_by`/`recall_top_n` above,
-this key is forward-wired, not vestigial:
+["form"]` -> `--labels form:iva_2083`). This key is forward-wired:
 - `init.py` seeds `label_facets = []` into the generated `[memory]` block.
 - `validate_workspace.py` type-checks it (`list[str]`) ONLY when present
   (absent is valid — mirrors the `root` optional-key pattern); a present
@@ -850,9 +799,9 @@ convention ships `label_facets = []` and the tagging step is a no-op.
 
 ### `recall_usage.py`
 
-Recall observability (flow-nylh.2). Append-only `.flow/<ns>/recall-usage.jsonl`, two
+Recall observability (flow-nylh.2). Append-only `.flow/memory/<ns>/recall-usage.jsonl`, two
 record kinds, read by `metric.py recall-hit-rate`. Reflect drives both (stage-reflect
-3d/3e); both are best-effort and deduped per-run so a `/flow recover` rerun never
+3d/3e); both are best-effort and deduped per-run so a repair rerun never
 double-counts.
 
 | Subcommand | Description |
@@ -923,7 +872,7 @@ Script-owned top-level keys (rejected as `--evidence-json` inputs): `observed_at
 `plugins/flow/.claude-plugin/plugin.json`, `""` on any failure).
 
 On non-EEXIST I/O error: write intent log to `<ticket>.json.quarantine-intent.<ts>.json` (best-effort) BEFORE re-raising.
-`/flow recover` in phase 8c replays the intent log.
+Workspace repair replays the intent log.
 
 Exit codes: 0=primary success, 1=evidence JSON invalid, 2=dupe (informational),
 3=I/O error (intent log written).
@@ -955,27 +904,9 @@ friction/knowledge read) — returns/prints `{"maintainer": false, ...}` with no
 
 Exit codes: 0=ok (including the dormant no-op), 3=OSError, 4=`_memory_paths._MemoryConfigError`.
 
-## Known phase 8b-mvp holes (deferred to 8c/8d)
-
-1. **No cross-namespace IDF** — recall.py IDF is per-namespace.
-2. **BM25 hand-rolled, not rank-bm25** — stdlib-only convention. Swap in if
-   corpus > 10K entries per namespace.
-3. **No recover.py dupe reconciliation** — `.dupe.<n>.json` files sit until 8c.
-4. **No SessionStart hook script** — observe/recall/reflect are
-   write/read primitives only. SessionStart prose = phase 5.
-5. **No retry knob for memory-append flock** — hardcoded 3×1s.
-6. **observe-ship-event intent log write-only** — phase 8c recover reads it.
-7. **Idempotency formula collapses near-duplicates** — `"Foo."` and `"foo"`
-   dedup. First-write wins; second gets exit 1 no-op.
-8. **Dedup scan is O(N) per append** — fine for mvp corpus sizes. Swap in
-   `.idx` sidecar if corpus grows.
-
----
-
 ## Integration layer
 
-SKILL.md rewrite + 4 reference docs + `tracker_cli.py` + a small dispatcher descriptor extension.
-`/flow do <ticket>` now runs end-to-end against a bare workspace.
+The per-backend `tracker_cli.py` contract plus the dispatcher descriptor extension.
 
 ### `tracker_cli.py`
 
@@ -989,7 +920,7 @@ Flag surface: MODULE.md §Tracker (seam-checked there); this table keeps the per
 |------------|-------|
 | `get` | `tracker.get(key)` → JSON |
 | `state` | `tracker.state(key)` → JSON |
-| `transition` | Looks up transition id by `to_normalized_state` / `to_state` / `name` (any match). `--field k=v` pairs string-only in mvp. `--enqueue-on-transient`: on a transient failure (exit 1), durably queue the transition to `.flow/pending-mutations.jsonl` for `/flow sync`. |
+| `transition` | Looks up transition id by `to_normalized_state` / `to_state` / `name` (any match). `--field k=v` pairs string-only in mvp. `--enqueue-on-transient`: on a transient failure (exit 1), durably queue the transition to `.flow/pending-mutations.jsonl` for `FLOW workspace sync`. |
 | `comment` | Wraps body as `{"body": text, "fmt": "md"}` (Content TypedDict: fmt in {md, adf, plain}). |
 | `create` | `tracker.create(...)` → `{"key": new_key}` JSON. |
 | `is-shipped` | `tracker.is_shipped(key)` → JSON. |
@@ -1009,57 +940,3 @@ Tests via injectable `tracker_factory` shim — no real tracker construction.
 `dispatch_stage.py cmd_next` now surfaces the stage's `roles` list in its JSON descriptor (read from stage-registry.toml).
 SKILL.md prose uses `roles` to know when to run the `records_diff_baseline` pre-handler hook (implement stage).
 Without this, commit-stage's `capture_implement_diff` would fail with `_BaselineMissing`.
-
-### SKILL.md verb router
-
-Replaces the 28-line skeleton with ~250 lines of prose.
-Verbs:
-
-- `init` — AskUserQuestion-driven; writes answers to tmp JSON, calls
-  `init.py --config <path>`.
-- `do <ticket>` — orchestration loop: `branch_ticket` → `validate_workspace`
-  → `dispatch_stage init` → loop(`next` → pre-handler-hook → handler
-  dispatch → `git rev-parse HEAD` → `finish`).
-- `recall <query>` — passthrough to `recall.py`.
-- `status` / `recover` / `sync` / `baseline` — stubs with workaround
-  hints.
-
-Handler dispatch:
-- `inline` → Read reference doc, follow prose.
-- `subagent:<type>` → Spawn Agent, capture response, write to
-  `<ticket-dir>/stages/<stage>.out`, pass `--output-path` to finish.
-- `skill:<name>` → not implemented in 5-mvp; surface error + abort.
-- `none` → skip; immediately finish with status=completed.
-
-### Reference docs
-
-Four files in `references/`:
-
-| File | Stage | Purpose |
-|------|-------|---------|
-| `stage-ticket.md` | ticket | Resolve key, fetch ticket via tracker_cli, cache to ticket.json, stamp frontmatter. |
-| `stage-code_review.md` | code_review | Inline main-agent diff review. No tracker calls. |
-| `stage-commit.md` | commit | lint_ticket HARD GATE → capture-implement-diff → compose_commit → user fills body → git apply + commit → tracker transition. |
-| `stage-reflect.md` | reflect | reflect_inputs bundle → extract knowledge per 6-type taxonomy → memory_append per entry → if shipped, observe_ship_event. Zero-novel-signal path documented. |
-
-## Known phase 5-mvp holes (deferred to 5b / 7-full / 8c / 8d)
-
-1. `/flow status` + `/flow recover` are stubs → 8c.
-2. No `skill:<name>` handler dispatch → 5b.
-3. No SessionStart recall hook (`recall-pending.jsonl` writer) → 5b.
-4. No subagent stage reference docs (plan / implement) → 5b. Spawned
-   agents work from stage name + ticket dir only.
-5. `/flow do` orchestration is in prose, not a script. Cannot run
-   unattended; Claude must be in the loop.
-6. No retry/backoff on tracker-cli failures → tunable in later phase.
-7. `tracker_cli` exit code 1 lumps network/auth/not-found → split in
-   later phase.
-8. `timeout_min` in handler descriptor is informational only. No
-   enforcement; the progress producer (`write_progress` / the `write`
-   CLI / `quarantine_stale`) was deleted as dead (flow-dwd) rather than
-   wired, so there is no producer to enforce against. The read-only
-   hung-detection remnant was deleted too (flow-qp7).
-9. The do-loop bash prose uses `"<KEY>"` / `"$STAGE"` syntax — variable
-   substitution into the actual Bash invocations is on Claude. Reference
-   docs document the variable names; the loop in SKILL.md sets them from
-   the descriptor JSON.

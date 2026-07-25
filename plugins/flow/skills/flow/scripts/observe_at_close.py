@@ -32,10 +32,8 @@ observed/skipped, 1 on failed (advisory only; the drain invokes with `|| true`).
 
 from __future__ import annotations
 
-import argparse
 import json
 import re
-import sys
 from pathlib import Path
 from typing import Any
 
@@ -189,31 +187,4 @@ def observe_at_close(
 # ─── CLI ─────────────────────────────────────────────────────────────────────
 
 
-def _parse_args(argv: list[str]) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Freeze the ship event before a merged run's worktree is reaped."
-    )
-    parser.add_argument("--workspace-root", required=True, help="the MAIN root (store owner).")
-    parser.add_argument("--key", required=True)
-    parser.add_argument(
-        "--worktree",
-        default=None,
-        help="the doomed worktree root; omitted -> auto-resolve from the pool.",
-    )
-    return parser.parse_args(argv)
-
-
-def cli_main(argv: list[str]) -> int:
-    args = _parse_args(argv)
-    workspace_root = Path(args.workspace_root).resolve()
-    worktree = Path(args.worktree) if args.worktree else None
-    result = observe_at_close(workspace_root, args.key, worktree)
-    sys.stdout.write(json.dumps(result) + "\n")
-    return 1 if result.get("action") == "failed" else 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(cli_main(sys.argv[1:]))
-
-
-__all__ = ["cli_main", "observe_at_close"]
+__all__ = ["observe_at_close"]

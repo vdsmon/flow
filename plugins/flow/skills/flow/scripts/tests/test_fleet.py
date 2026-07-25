@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import subprocess
 import sys
 from datetime import timedelta
@@ -260,37 +259,6 @@ def _run_cli(argv: list[str]) -> subprocess.CompletedProcess[str]:
         text=True,
         check=False,
     )
-
-
-def test_cli_register_then_live_keys_json(tmp_path):
-    repo = _marked(tmp_path, "flow")
-    reg = _run_cli(["register", "--key", "flow-a", "--workspace-root", str(repo)])
-    assert reg.returncode == 0, reg.stderr
-    listed = _run_cli(["live-keys", "--workspace-root", str(repo), "--json"])
-    assert listed.returncode == 0, listed.stderr
-    assert json.loads(listed.stdout) == ["flow-a"]
-
-
-def test_cli_register_omitting_run_id_is_allowed(tmp_path):
-    # the drain launch prose calls `register --key <key> --workspace-root .` (no run-id)
-    repo = _marked(tmp_path, "flow")
-    reg = _run_cli(["register", "--key", "flow-a", "--workspace-root", str(repo)])
-    assert reg.returncode == 0, reg.stderr
-    listed = _run_cli(["list", "--workspace-root", str(repo), "--json"])
-    entry = json.loads(listed.stdout)[0]
-    assert entry["key"] == "flow-a"
-    assert entry["run_id"] == ""
-
-
-def test_cli_not_maintainer_exit_4(tmp_path, monkeypatch):
-    plain = tmp_path / "proj"
-    (plain / ".flow").mkdir(parents=True)
-    (plain / ".flow" / "workspace.toml").write_text(
-        '[tracker]\nbackend = "beads"\n', encoding="utf-8"
-    )
-    monkeypatch.setenv("HOME", str(tmp_path / "no-home"))
-    out = _run_cli(["live-keys", "--workspace-root", str(plain)])
-    assert out.returncode == 4, out.stdout + out.stderr
 
 
 # ─── is-live: the drain destructive-act re-check (flow-8by2.3) ─────────────────

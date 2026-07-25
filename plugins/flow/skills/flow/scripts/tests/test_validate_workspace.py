@@ -41,10 +41,7 @@ def _make_workspace(
     if memory is None:
         memory = {
             "namespace": "FT",
-            "auto_recall": True,
             "compounding": True,
-            "recall_by": ["branch", "current-ticket"],
-            "recall_top_n": 5,
         }
 
     lines: list[str] = []
@@ -142,10 +139,7 @@ stages = ["ticket"]
 ticket = "inline"
 [memory]
 namespace = "x"
-auto_recall = true
 compounding = true
-recall_by = ["branch"]
-recall_top_n = 5
 """,
     )
     result, _ = vw.validate(tmp_path)
@@ -163,10 +157,7 @@ stages = ["ticket"]
 ticket = "inline"
 [memory]
 namespace = "x"
-auto_recall = true
 compounding = true
-recall_by = ["branch"]
-recall_top_n = 5
 """,
     )
     result, _ = vw.validate(tmp_path)
@@ -186,10 +177,7 @@ stages = ["ticket"]
 ticket = "inline"
 [memory]
 namespace = "x"
-auto_recall = true
 compounding = true
-recall_by = ["branch"]
-recall_top_n = 5
 """,
     )
     result, _ = vw.validate(tmp_path)
@@ -208,10 +196,7 @@ stages = ["ticket"]
 ticket = "inline"
 [memory]
 namespace = "x"
-auto_recall = true
 compounding = true
-recall_by = ["branch"]
-recall_top_n = 5
 """,
     )
     result, _ = vw.validate(tmp_path)
@@ -294,10 +279,7 @@ def test_required_when_compounding_skip_when_compounding_false(tmp_path: Path) -
         handlers={"ticket": "inline", "plan": "inline"},
         memory={
             "namespace": "x",
-            "auto_recall": True,
             "compounding": False,
-            "recall_by": ["branch"],
-            "recall_top_n": 5,
         },
     )
     result, _ = vw.validate(tmp_path)
@@ -327,10 +309,7 @@ def test_legal_handler_strings_accepted(tmp_path: Path, handler: str) -> None:
         handlers={"ticket": handler},
         memory={
             "namespace": "x",
-            "auto_recall": True,
             "compounding": False,  # disable reflect-required check
-            "recall_by": ["branch"],
-            "recall_top_n": 5,
         },
     )
     result, snapshot = vw.validate(tmp_path)
@@ -359,10 +338,7 @@ def test_illegal_handler_strings_rejected(tmp_path: Path, handler: str) -> None:
         handlers={"ticket": handler},
         memory={
             "namespace": "x",
-            "auto_recall": True,
             "compounding": False,
-            "recall_by": ["branch"],
-            "recall_top_n": 5,
         },
     )
     result, _ = vw.validate(tmp_path)
@@ -376,42 +352,11 @@ def test_missing_memory_namespace_fails(tmp_path: Path) -> None:
     _make_workspace(
         tmp_path,
         memory={
-            "auto_recall": True,
             "compounding": True,
-            "recall_by": ["branch"],
-            "recall_top_n": 5,
         },
     )
     result, _ = vw.validate(tmp_path)
     assert any("memory.namespace" in v for v in result.violations)
-
-
-def test_memory_recall_top_n_must_be_int(tmp_path: Path) -> None:
-    _make_workspace(
-        tmp_path,
-        workspace_toml_content="""[tracker]
-backend = "jira"
-[tracker.jira]
-cloud_id = "x"
-project_key = "FT"
-[pipeline]
-stages = ["ticket", "plan", "implement", "commit", "reflect"]
-[pipeline.handlers]
-ticket = "inline"
-plan = "inline"
-implement = "inline"
-commit = "inline"
-reflect = "inline"
-[memory]
-namespace = "x"
-auto_recall = true
-compounding = true
-recall_by = ["branch"]
-recall_top_n = "five"
-""",
-    )
-    result, _ = vw.validate(tmp_path)
-    assert any("memory.recall_top_n" in v for v in result.violations)
 
 
 # ─── CLI ─────────────────────────────────────────────────────────────────────
@@ -556,24 +501,56 @@ def test_agents_table_is_rejected_with_simple_replacement_hint(tmp_path: Path) -
     assert any("no longer supported" in violation for violation in result.violations)
 
 
-def test_models_accept_known_stage_string_hints_only(tmp_path: Path) -> None:
-    root = _make_workspace(tmp_path, backend="beads")
-    _append_forge(root, '[models]\nimplement = "sonnet"\ne2e = "off"\n')
-    result, _ = vw.validate(root)
-    assert result.ok
-
-
-def test_models_reject_unknown_stage_and_non_string(tmp_path: Path) -> None:
-    root = _make_workspace(tmp_path, backend="beads")
-    _append_forge(root, '[models]\nwork_model = "opus"\nimplement = 3\n')
-    result, _ = vw.validate(root)
-    assert any(
-        "models.work_model" in violation and "unknown stage" in violation
-        for violation in result.violations
+def test_models_accept_stage_string_and_role_table(tmp_path: Path) -> None:
+    stages = ["ticket", "plan", "implement", "code_review", "e2e", "commit", "reflect"]
+    handlers = dict.fromkeys(stages, "inline")
+    handlers["implement"] = "subagent:general-purpose"
+    handlers["e2e"] = "subagent:general-purpose"
+    root = _make_workspace(tmp_path, backend="beads", stages=stages, handlers=handlers)
+    _append_forge(
+        root,
+        '[models]\nimplement = "sonnet"\ne2e = "off"\n'
+        '[models.code_review]\nreviewer = { model = "gpt-5.6-sol", effort = "high" }\n'
+        'fixer = "sonnet"\n',
     )
+    result, _ = vw.validate(root)
+    assert result.ok, result.violations
+
+
+def test_models_reject_stage_without_launch_site(tmp_path: Path) -> None:
+    # reflect runs in-driver and launches nothing; a hint there would silently no-op,
+    # so it is a violation naming the valid stages.
+    root = _make_workspace(tmp_path, backend="beads")
+    _append_forge(root, '[models]\nreflect = "opus"\ncommit = "sonnet"\n')
+    result, _ = vw.validate(root)
+    assert any("models.reflect" in v and "launches no agent" in v for v in result.violations)
+    assert any("models.commit" in v and "launches no agent" in v for v in result.violations)
+
+
+def test_models_reject_unknown_role_and_bad_field(tmp_path: Path) -> None:
+    stages = ["ticket", "plan", "implement", "code_review", "commit", "reflect"]
+    handlers = dict.fromkeys(stages, "inline")
+    handlers["implement"] = "subagent:general-purpose"
+    root = _make_workspace(tmp_path, backend="beads", stages=stages, handlers=handlers)
+    _append_forge(
+        root,
+        '[models.code_review]\nauthor = "opus"\nreviewer = { model = "m", temperature = "1" }\n',
+    )
+    result, _ = vw.validate(root)
+    assert any("models.code_review.author" in v and "no such role" in v for v in result.violations)
     assert any(
-        "models.implement" in violation and "must be a string" in violation
-        for violation in result.violations
+        "models.code_review.reviewer.temperature" in v and "unknown field" in v
+        for v in result.violations
+    )
+
+
+def test_models_reject_non_string_entry(tmp_path: Path) -> None:
+    root = _make_workspace(tmp_path, backend="beads")
+    _append_forge(root, "[models]\nimplement = 3\n")
+    result, _ = vw.validate(root)
+    assert any(
+        "models.implement" in v and "model string or a role-keyed table" in v
+        for v in result.violations
     )
 
 
@@ -604,10 +581,7 @@ def test_label_facets_list_str_valid(tmp_path: Path) -> None:
         tmp_path,
         memory={
             "namespace": "x",
-            "auto_recall": True,
             "compounding": True,
-            "recall_by": ["branch"],
-            "recall_top_n": 5,
             "label_facets": ["form"],
         },
     )
@@ -620,10 +594,7 @@ def test_label_facets_non_list_fails(tmp_path: Path) -> None:
         tmp_path,
         memory={
             "namespace": "x",
-            "auto_recall": True,
             "compounding": True,
-            "recall_by": ["branch"],
-            "recall_top_n": 5,
         },
         workspace_toml_content=None,
     )
@@ -639,10 +610,7 @@ def test_label_facets_non_str_element_fails(tmp_path: Path) -> None:
         tmp_path,
         memory={
             "namespace": "x",
-            "auto_recall": True,
             "compounding": True,
-            "recall_by": ["branch"],
-            "recall_top_n": 5,
         },
         workspace_toml_content=None,
     )
@@ -662,55 +630,46 @@ def test_code_review_block_absent_is_valid(tmp_path: Path) -> None:
     assert result.ok, result.violations
 
 
-def test_reviewer_model_string_accepted(tmp_path: Path) -> None:
+def test_code_review_block_hard_fails_naming_replacement(tmp_path: Path) -> None:
+    # Breaking change, no alias: the message must name the [models.code_review] shape.
     root = _make_workspace(tmp_path, backend="beads")
     _append_forge(root, '[code_review]\nreviewer_model = "gpt-5.6-sol"\n')
     result, _ = vw.validate(root)
+    assert not result.ok
+    assert any("code_review" in v and "models.code_review" in v for v in result.violations)
+
+
+def test_models_string_hint_allowed_on_subagent_wired_stage_off_the_map(tmp_path: Path) -> None:
+    # reflect launches nothing inline, but a workspace that wires it to a
+    # subagent launches by construction — the hint is live there.
+    stages = ["ticket", "plan", "implement", "commit", "reflect"]
+    handlers = dict.fromkeys(stages, "inline")
+    handlers["implement"] = "subagent:general-purpose"
+    handlers["reflect"] = "subagent:general-purpose"
+    root = _make_workspace(tmp_path, backend="beads", stages=stages, handlers=handlers)
+    _append_forge(root, '[models]\nreflect = "opus"\n')
+    result, _ = vw.validate(root)
     assert result.ok, result.violations
 
 
-def test_reviewer_effort_string_accepted(tmp_path: Path) -> None:
-    root = _make_workspace(tmp_path, backend="beads")
-    _append_forge(root, '[code_review]\nreviewer_effort = "high"\n')
+def test_models_role_table_rejected_off_the_map_even_when_subagent_wired(tmp_path: Path) -> None:
+    stages = ["ticket", "plan", "implement", "commit", "reflect"]
+    handlers = dict.fromkeys(stages, "inline")
+    handlers["implement"] = "subagent:general-purpose"
+    handlers["reflect"] = "subagent:general-purpose"
+    root = _make_workspace(tmp_path, backend="beads", stages=stages, handlers=handlers)
+    _append_forge(root, '[models.reflect]\nrunner = "opus"\n')
     result, _ = vw.validate(root)
-    assert result.ok, result.violations
+    assert any("models.reflect" in v and "string hint" in v for v in result.violations)
 
 
-def test_reviewer_effort_value_is_not_policed(tmp_path: Path) -> None:
-    # The effort vocabulary belongs to the reviewer CLI and moves; a stale allow-list
-    # here would reject a working config.
-    root = _make_workspace(tmp_path, backend="beads")
-    _append_forge(root, '[code_review]\nreviewer_effort = "some-future-tier"\n')
+def test_models_hint_for_stage_outside_pipeline_rejected(tmp_path: Path) -> None:
+    # e2e launches by construction when wired, but this workspace's pipeline
+    # does not run it at all — the hint is provably dead here.
+    stages = ["ticket", "plan", "implement", "commit", "reflect"]
+    handlers = dict.fromkeys(stages, "inline")
+    handlers["implement"] = "subagent:general-purpose"
+    root = _make_workspace(tmp_path, backend="beads", stages=stages, handlers=handlers)
+    _append_forge(root, '[models]\ne2e = "sonnet"\n')
     result, _ = vw.validate(root)
-    assert result.ok, result.violations
-
-
-def test_reviewer_effort_non_string_is_violation(tmp_path: Path) -> None:
-    root = _make_workspace(tmp_path, backend="beads")
-    _append_forge(root, "[code_review]\nreviewer_effort = 3\n")
-    result, _ = vw.validate(root)
-    assert not result.ok
-    assert any(
-        "code_review.reviewer_effort" in v and "must be a string" in v for v in result.violations
-    )
-
-
-def test_reviewer_model_non_string_is_violation(tmp_path: Path) -> None:
-    root = _make_workspace(tmp_path, backend="beads")
-    _append_forge(root, "[code_review]\nreviewer_model = 3\n")
-    result, _ = vw.validate(root)
-    assert not result.ok
-    assert any(
-        "code_review.reviewer_model" in v and "must be a string" in v for v in result.violations
-    )
-
-
-def test_code_review_not_a_table_is_violation(tmp_path: Path) -> None:
-    root = _make_workspace(tmp_path, backend="beads")
-    # Prepended, not appended: a bare key after the last table header would parse
-    # into that table instead of at the top level.
-    p = root / ".flow" / "workspace.toml"
-    p.write_text('code_review = "codex"\n' + p.read_text(encoding="utf-8"), encoding="utf-8")
-    result, _ = vw.validate(root)
-    assert not result.ok
-    assert any("code_review" in v and "not a table" in v for v in result.violations)
+    assert any("models.e2e" in v and "not in [pipeline].stages" in v for v in result.violations)

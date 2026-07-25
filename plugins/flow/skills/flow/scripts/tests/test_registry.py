@@ -30,18 +30,14 @@ def test_load_real_registry():
 def test_registry_by_name_fields():
     by = registry_by_name(REAL_REGISTRY)
     assert by["commit"].required_fields == ["commit_type", "commit_summary"]
+    # implement is the only stage with a live role hook; the per-stage empty
+    # pins said the same thing six more times (and one handler pin twice).
+    assert {name for name, entry in by.items() if entry.roles} == {"implement"}
     assert by["implement"].roles == ["records_diff_baseline"]
-    assert by["e2e"].roles == []
     assert by["implement"].default_timeout_min == 30
     assert by["review_brief"].default_handler == "inline"
     assert by["review_brief"].required_predecessors == ["create_pr"]
-    assert by["review_brief"].roles == []
-    assert by["plan"].roles == []
     assert by["plan"].default_handler == "inline"
-    assert by["code_review"].roles == []
-    assert by["reflect"].roles == ["reflect_anchor", "ship_observer"]
-    assert by["merge"].roles == []
-    assert by["review_brief"].default_handler == "inline"
     assert by["reflect"].default_handler == "inline"
 
 

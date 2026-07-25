@@ -1001,7 +1001,6 @@ def test_probe_never_merges_closes_or_deletes(tmp_path):
         ("forge_cli.py", ["--workspace-root", ".", "merge", "--pr", "1", "--squash"]),
         ("forge_cli.py", ["--workspace-root", ".", "delete-branch", "--branch", "feat/x"]),
         ("forge_cli.py", ["--workspace-root", ".", "ci-rollup", "--pr", "1"]),
-        ("forge_cli.py", ["--workspace-root", ".", "pr-info", "--pr", "1"]),
         ("main_ci_health.py", ["probe", "--workspace-root", "."]),
         ("harness_eval.py", ["score", "--candidate", "."]),
         (

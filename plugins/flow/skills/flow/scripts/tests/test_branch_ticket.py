@@ -43,123 +43,74 @@ def _fake_runner(branch_name: str, returncode: int = 0):
     return run
 
 
-# ─── Happy path: jira ────────────────────────────────────────────────────────
+# ─── Key-shape truth table (jira + beads happy/negative paths) ───────────────
+# One (backend-config, branch, expected) row per shape; ids carry the old test
+# names so a failure still names its case.
 
 
-def test_jira_simple_branch(tmp_path: Path) -> None:
-    _jira_workspace(tmp_path)
-    runner = _fake_runner("feature/FT-1234-add-cooldown")
-    assert branch_ticket.resolve(tmp_path, tmp_path, runner) == "FT-1234"
-
-
-def test_jira_bare_key_branch(tmp_path: Path) -> None:
-    _jira_workspace(tmp_path)
-    runner = _fake_runner("FT-42")
-    assert branch_ticket.resolve(tmp_path, tmp_path, runner) == "FT-42"
-
-
-def test_jira_first_match_wins(tmp_path: Path) -> None:
-    _jira_workspace(tmp_path)
-    runner = _fake_runner("FT-1-and-FT-2")
-    assert branch_ticket.resolve(tmp_path, tmp_path, runner) == "FT-1"
-
-
-def test_jira_no_match(tmp_path: Path) -> None:
-    _jira_workspace(tmp_path)
-    runner = _fake_runner("feature/something-without-key")
-    assert branch_ticket.resolve(tmp_path, tmp_path, runner) is None
-
-
-def test_jira_project_key_with_dash(tmp_path: Path) -> None:
-    _jira_workspace(tmp_path, project_key="MY-PROJ")
-    runner = _fake_runner("MY-PROJ-77-feature")
-    assert branch_ticket.resolve(tmp_path, tmp_path, runner) == "MY-PROJ-77"
-
-
-def test_jira_does_not_match_other_project_prefix(tmp_path: Path) -> None:
-    _jira_workspace(tmp_path, project_key="FT")
-    runner = _fake_runner("XYZ-1234-some-feature")
-    assert branch_ticket.resolve(tmp_path, tmp_path, runner) is None
-
-
-# ─── Happy path: beads ───────────────────────────────────────────────────────
-
-
-def test_beads_simple_branch(tmp_path: Path) -> None:
-    _beads_workspace(tmp_path, prefix="bd")
-    runner = _fake_runner("feature/bd-a4f7-add-rate-limit")
-    assert branch_ticket.resolve(tmp_path, tmp_path, runner) == "bd-a4f7"
-
-
-def test_beads_long_hash_id(tmp_path: Path) -> None:
-    _beads_workspace(tmp_path, prefix="bd")
-    runner = _fake_runner("bd-abc12345/feature")
-    assert branch_ticket.resolve(tmp_path, tmp_path, runner) == "bd-abc12345"
-
-
-def test_beads_custom_prefix(tmp_path: Path) -> None:
-    _beads_workspace(tmp_path, prefix="myrepo")
-    runner = _fake_runner("feature/myrepo-9zzz/x")
-    assert branch_ticket.resolve(tmp_path, tmp_path, runner) == "myrepo-9zzz"
-
-
-def test_beads_no_match_below_min_length(tmp_path: Path) -> None:
-    _beads_workspace(tmp_path, prefix="bd")
-    runner = _fake_runner("feature/bd-12")
-    assert branch_ticket.resolve(tmp_path, tmp_path, runner) is None
-
-
-def test_beads_no_match_other_prefix(tmp_path: Path) -> None:
-    _beads_workspace(tmp_path, prefix="bd")
-    runner = _fake_runner("feature/other-abcd")
-    assert branch_ticket.resolve(tmp_path, tmp_path, runner) is None
-
-
-def test_beads_dotted_child_key(tmp_path: Path) -> None:
-    _beads_workspace(tmp_path, prefix="flow")
-    runner = _fake_runner("feature/flow-kx17.2-revision-lifecycle-seam")
-    assert branch_ticket.resolve(tmp_path, tmp_path, runner) == "flow-kx17.2"
-
-
-def test_beads_dotted_child_never_resolves_as_parent(tmp_path: Path) -> None:
-    # longest match wins: flow-kx17.2 is a distinct bead from its parent epic
-    # flow-kx17; stopping at the pre-dot word boundary silently operates on the
-    # wrong bead (recover / recall / revise all consume this raw)
-    _beads_workspace(tmp_path, prefix="flow")
-    runner = _fake_runner("feat/flow-kx17.2")
-    assert branch_ticket.resolve(tmp_path, tmp_path, runner) == "flow-kx17.2"
-
-
-def test_beads_parent_key_unchanged(tmp_path: Path) -> None:
-    _beads_workspace(tmp_path, prefix="flow")
-    runner = _fake_runner("feat/flow-kx17-revision-lifecycle")
-    assert branch_ticket.resolve(tmp_path, tmp_path, runner) == "flow-kx17"
-
-
-def test_beads_three_char_stem(tmp_path: Path) -> None:
-    _beads_workspace(tmp_path, prefix="flow")
-    runner = _fake_runner("feat/flow-820-fix-the-thing")
-    assert branch_ticket.resolve(tmp_path, tmp_path, runner) == "flow-820"
-
-
-def test_beads_three_char_stem_dotted_child(tmp_path: Path) -> None:
-    _beads_workspace(tmp_path, prefix="flow")
-    runner = _fake_runner("feature/flow-ml7.1-metric-attribution-stamp")
-    assert branch_ticket.resolve(tmp_path, tmp_path, runner) == "flow-ml7.1"
-
-
-def test_beads_multi_level_dotted_child(tmp_path: Path) -> None:
-    _beads_workspace(tmp_path, prefix="bd")
-    runner = _fake_runner("feat/bd-abc1.2.3-x")
-    assert branch_ticket.resolve(tmp_path, tmp_path, runner) == "bd-abc1.2.3"
-
-
-def test_beads_non_numeric_dot_suffix_falls_back_to_stem(tmp_path: Path) -> None:
-    # only `.N` child suffixes extend the key; a stray non-numeric dot segment
-    # is not part of any bead key
-    _beads_workspace(tmp_path, prefix="flow")
-    runner = _fake_runner("feat/flow-kx17.next")
-    assert branch_ticket.resolve(tmp_path, tmp_path, runner) == "flow-kx17"
+@pytest.mark.parametrize(
+    ("backend", "key", "branch", "expected"),
+    [
+        pytest.param("jira", "FT", "feature/FT-1234-add-cooldown", "FT-1234", id="jira-simple"),
+        pytest.param("jira", "FT", "FT-42", "FT-42", id="jira-bare-key"),
+        pytest.param("jira", "FT", "FT-1-and-FT-2", "FT-1", id="jira-first-match-wins"),
+        pytest.param("jira", "FT", "feature/something-without-key", None, id="jira-no-match"),
+        pytest.param("jira", "MY-PROJ", "MY-PROJ-77-feature", "MY-PROJ-77", id="jira-dash-key"),
+        pytest.param("jira", "FT", "XYZ-1234-some-feature", None, id="jira-other-project-prefix"),
+        pytest.param("beads", "bd", "feature/bd-a4f7-add-rate-limit", "bd-a4f7", id="beads-simple"),
+        pytest.param("beads", "bd", "bd-abc12345/feature", "bd-abc12345", id="beads-long-hash"),
+        pytest.param(
+            "beads", "myrepo", "feature/myrepo-9zzz/x", "myrepo-9zzz", id="beads-custom-prefix"
+        ),
+        pytest.param("beads", "bd", "feature/bd-12", None, id="beads-below-min-length"),
+        pytest.param("beads", "bd", "feature/other-abcd", None, id="beads-other-prefix"),
+        pytest.param(
+            "beads",
+            "flow",
+            "feature/flow-kx17.2-revision-lifecycle-seam",
+            "flow-kx17.2",
+            id="beads-dotted-child",
+        ),
+        # longest match wins: flow-kx17.2 is a distinct bead from its parent epic
+        # flow-kx17; stopping at the pre-dot word boundary silently operates on the
+        # wrong bead (recover / recall / revise all consume this raw)
+        pytest.param(
+            "beads",
+            "flow",
+            "feat/flow-kx17.2",
+            "flow-kx17.2",
+            id="beads-dotted-child-never-parent",
+        ),
+        pytest.param(
+            "beads", "flow", "feat/flow-kx17-revision-lifecycle", "flow-kx17", id="beads-parent-key"
+        ),
+        pytest.param(
+            "beads", "flow", "feat/flow-820-fix-the-thing", "flow-820", id="beads-three-char-stem"
+        ),
+        pytest.param(
+            "beads",
+            "flow",
+            "feature/flow-ml7.1-metric-attribution-stamp",
+            "flow-ml7.1",
+            id="beads-three-char-dotted-child",
+        ),
+        pytest.param(
+            "beads", "bd", "feat/bd-abc1.2.3-x", "bd-abc1.2.3", id="beads-multi-level-dotted"
+        ),
+        # only `.N` child suffixes extend the key; a stray non-numeric dot segment
+        # is not part of any bead key
+        pytest.param(
+            "beads", "flow", "feat/flow-kx17.next", "flow-kx17", id="beads-non-numeric-dot"
+        ),
+    ],
+)
+def test_resolve_key_shapes(tmp_path: Path, backend, key, branch, expected) -> None:
+    if backend == "jira":
+        _jira_workspace(tmp_path, project_key=key)
+    else:
+        _beads_workspace(tmp_path, prefix=key)
+    runner = _fake_runner(branch)
+    assert branch_ticket.resolve(tmp_path, tmp_path, runner) == expected
 
 
 # ─── Explicit --branch (PR→ticket enabler) ───────────────────────────────────

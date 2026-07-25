@@ -110,6 +110,13 @@ its verification/model policy, but launches nothing and writes no fleet entry. H
 hot, evolution, proposal, and epic tickets remain outside the ordinary ready set.
 Actionable review rows point to `FLOW pr:<number>`.
 
+The deferred and decided-mode blocked queues (with each ticket's defer reason) are a
+separate read-only lens; `--ready` folds the ready queues in, partitioned by queue:
+
+```bash
+FLOW_HARNESS="<harness>" "<facade>" triage list --workspace-root . [--ready] [--json]
+```
+
 ## `FLOW maintain backlog drain [--dry-run]`
 
 The ordinary backlog drain classifies existing day-job delivery and reports fresh
@@ -338,8 +345,10 @@ priority is recover, then wait, then plan-required, then done.
   enter driver-authored planning, adversarial assessment, and explicit human approval.
 - `done`: report merged, delivered, parked, recovered, blocked, and held work.
 
-Tier and model hints are policy inputs, not worker identity. Claude Code may apply a
-supported Claude model hint; Codex inherits the active model while preserving the
+Tier and model hints are policy inputs, not worker identity. The worker hint is
+`[evolve] worker_model` in workspace.toml (per-key in the select output as
+`model_per_key`; trivial/light tiers step down independently). Claude Code may apply
+a supported Claude model hint; Codex inherits the active model while preserving the
 same verification lane. Hot work takes the configured high-scrutiny lane and only
 one hot slot.
 

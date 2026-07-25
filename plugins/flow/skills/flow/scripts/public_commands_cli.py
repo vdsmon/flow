@@ -73,7 +73,7 @@ def _route_payload(registry: Registry, tokens: list[str], patterns: list[str]) -
 
 
 def cli_main(argv: list[str]) -> int:
-    if argv and argv[0] == "route" and "--" not in argv:
+    if argv and argv[0] == "route" and "--" not in argv and not {"-h", "--help"} & set(argv):
         sys.stderr.write("commands: pass public command tokens after --\n")
         return 2
 

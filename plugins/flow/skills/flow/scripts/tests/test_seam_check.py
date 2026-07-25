@@ -27,7 +27,7 @@ def test_logical_lines_join_backslash_continuations() -> None:
 def test_find_invocations_strips_command_substitution() -> None:
     # `--abbrev-ref` lives inside $(...) and must NOT be attributed to this script.
     text = (
-        "python3 ${CLAUDE_SKILL_DIR}/scripts/flow_worktree.py create \\\n"
+        "python3 <skill_root>/scripts/flow_worktree.py create \\\n"
         '  --base "$(git rev-parse --abbrev-ref HEAD)" --branch x'
     )
     invs = seam_check.find_invocations("t.md", text)
@@ -43,7 +43,7 @@ def test_find_invocations_quoted_value_with_sequencing_char() -> None:
     # A `;` inside a quoted --text value must not truncate the span: the inner
     # `--auto` is part of the value, not a flag of this command.
     text = (
-        "${CLAUDE_SKILL_DIR}/scripts/tracker_cli.py comment --key X "
+        "<skill_root>/scripts/tracker_cli.py comment --key X "
         '--text "Judgment --auto settled; this is a safety hold"'
     )
     invs = seam_check.find_invocations("t.md", text)
@@ -57,18 +57,19 @@ def test_find_invocations_quoted_value_with_sequencing_char() -> None:
 
 def test_find_invocations_matches_digit_bearing_script() -> None:
     # Guards the [a-z_]+ regression: without the digit in _SCRIPT_RE, the `2`
-    # in embedder_model2vec.py breaks the match and the invocation goes unlinted.
-    text = "${CLAUDE_SKILL_DIR}/scripts/embedder_model2vec.py --texts-file X"
+    # in a digit-bearing basename breaks the match and the invocation goes unlinted.
+    # (Synthetic name: keeps the 0-9 class guarded now that no live script has a digit.)
+    text = "<skill_root>/scripts/fake_embedder2vec.py --texts-file X"
     invs = seam_check.find_invocations("t.md", text)
     assert len(invs) == 1
-    assert invs[0].script == "embedder_model2vec.py"
+    assert invs[0].script == "fake_embedder2vec.py"
 
 
 def test_find_invocations_two_commands_on_one_line() -> None:
     # Both commands of a &&-joined recipe must lint, each with its own flags.
     text = (
-        "${CLAUDE_SKILL_DIR}/scripts/state.py read --key X && "
-        "${CLAUDE_SKILL_DIR}/scripts/tracker_cli.py get --key Y"
+        "<skill_root>/scripts/state.py read --key X && "
+        "<skill_root>/scripts/tracker_cli.py get --key Y"
     )
     invs = seam_check.find_invocations("t.md", text)
     assert len(invs) == 2
@@ -79,7 +80,7 @@ def test_find_invocations_two_commands_on_one_line() -> None:
 
 
 def test_find_invocations_handles_bare_form() -> None:
-    text = "   ${CLAUDE_SKILL_DIR}/scripts/tracker_cli.py --workspace-root . get --key X"
+    text = "   <skill_root>/scripts/tracker_cli.py --workspace-root . get --key X"
     invs = seam_check.find_invocations("t.md", text)
     assert len(invs) == 1
     assert invs[0].script == "tracker_cli.py"
@@ -88,7 +89,7 @@ def test_find_invocations_handles_bare_form() -> None:
 
 
 def test_find_invocations_handles_harness_neutral_skill_root_placeholder() -> None:
-    text = 'python3 "<skill-root>/scripts/init.py" --config "$ANSWERS"'
+    text = 'python3 "<skill_root>/scripts/init.py" --config "$ANSWERS"'
     invs = seam_check.find_invocations("t.md", text)
     assert len(invs) == 1
     assert invs[0].script == "init.py"
@@ -252,7 +253,7 @@ def test_facade_global_flag_before_subcommand_remains_valid() -> None:
 
 
 def test_surface_parent_usage_flags_derived_from_usage_prefix_only() -> None:
-    # tracker_cli.py, forge_cli.py, and pending_mutations.py declare --workspace-root before `{...}
+    # tracker_cli.py and forge_cli.py declare --workspace-root before `{...}
     # ...` in their top-level usage. review_brief.py declares no top-level parent flag; its
     # docstring prose merely mentions a wrapped `--ticket-dir` (the over-capture regression
     # `global_flags`, which scans the WHOLE help text, is prone to). The `[: um.start()]` slice at
@@ -260,15 +261,12 @@ def test_surface_parent_usage_flags_derived_from_usage_prefix_only() -> None:
     # what _usage_block itself actually contributes: wrap-continuation capture).
     tracker = seam_check.surface_of("tracker_cli.py")
     forge = seam_check.surface_of("forge_cli.py")
-    pending_mutations = seam_check.surface_of("pending_mutations.py")
     review_brief = seam_check.surface_of("review_brief.py")
     assert tracker is not None
     assert forge is not None
-    assert pending_mutations is not None
     assert review_brief is not None
     assert tracker.parent_usage_flags == {"--workspace-root"}
     assert forge.parent_usage_flags == {"--workspace-root"}
-    assert pending_mutations.parent_usage_flags == {"--workspace-root"}
     assert review_brief.parent_usage_flags == frozenset()
 
 
@@ -297,7 +295,6 @@ def test_usage_block_captures_wrap_continuation_and_excludes_description_only_fl
     [
         ("tracker", "is-shipped", "--key K"),
         ("forge", "detect-pr", "--branch B"),
-        ("pending-mutations", "compact", ""),
     ],
 )
 def test_facade_parent_flag_after_subcommand_is_rejected(
@@ -321,7 +318,6 @@ def test_facade_parent_flag_after_subcommand_is_rejected(
     [
         ("tracker", "is-shipped", "--key K"),
         ("forge", "detect-pr", "--branch B"),
-        ("pending-mutations", "compact", ""),
     ],
 )
 def test_facade_parent_flag_before_subcommand_remains_green(
@@ -421,7 +417,7 @@ def test_facade_parent_flag_after_end_of_options_sentinel_is_not_flagged() -> No
 
 
 def test_direct_launcher_repair_is_parsed_from_flow_skill_variable() -> None:
-    text = 'python3 "${FLOW_SKILL_DIR}/scripts/flow_launcher.py" --workspace-root .'
+    text = 'python3 "<skill_root>/scripts/flow_launcher.py" --workspace-root .'
     invs = seam_check.find_invocations("t.md", text)
     assert len(invs) == 1
     assert invs[0].script == "flow_launcher.py"
@@ -429,12 +425,12 @@ def test_direct_launcher_repair_is_parsed_from_flow_skill_variable() -> None:
 
 def test_stale_direct_invocation_rejected_outside_bootstrap_allowlist() -> None:
     stale = seam_check.find_invocations(
-        "t.md", "${CLAUDE_SKILL_DIR}/scripts/dispatch_stage.py next --ticket X"
+        "t.md", "<skill_root>/scripts/dispatch_stage.py next --ticket X"
     )
     allowed = seam_check.find_invocations(
         "t.md",
-        "${CLAUDE_SKILL_DIR}/scripts/init.py --reconfigure\n"
-        "${FLOW_SKILL_DIR}/scripts/flow_launcher.py --workspace-root .",
+        "<skill_root>/scripts/init.py --reconfigure\n"
+        "<skill_root>/scripts/flow_launcher.py --workspace-root .",
     )
     assert len(seam_check.stale_direct_invocation_problems(stale)) == 1
     assert seam_check.stale_direct_invocation_problems(allowed) == []
@@ -617,19 +613,6 @@ def test_validate_known_flags_pass() -> None:
         subcommand=None,
         flags=["--ticket", "--workspace-root", "--stage", "--status"],
         raw="dispatch_stage.py advance --ticket X --workspace-root . --stage s --status completed",
-    )
-    assert [p for p in seam_check.validate(inv) if p.level == "ERROR"] == []
-
-
-def test_forwarder_folds_metric_surface() -> None:
-    # recall.py --metric forwards to metric.cli_main, so metric's flags resolve.
-    inv = seam_check.Invocation(
-        doc="t.md",
-        line=1,
-        script="recall.py",
-        subcommand=None,
-        flags=["--metric", "--namespace", "--workspace-root"],
-        raw="recall.py --metric tickets-per-week --namespace ns --workspace-root .",
     )
     assert [p for p in seam_check.validate(inv) if p.level == "ERROR"] == []
 
@@ -877,23 +860,9 @@ def test_managed_agents_guidance_requires_call_local_harness_selection(tmp_path)
     assert any("harness selector" in detail for detail in drift)
 
 
-def test_main_fails_on_managed_agents_guidance_drift(monkeypatch) -> None:
-    monkeypatch.setattr(
-        seam_check,
-        "managed_agents_guidance_drift",
-        lambda *args, **kwargs: ["missing facade guidance"],
-    )
-    assert seam_check.main([]) == 1
-
-
 def test_module_md_covers_all_live_scripts() -> None:
     """Every non-test script on disk must be named in the real MODULE.md."""
     assert seam_check.scripts_missing_from_module_md() == set()
-
-
-def test_main_fails_on_module_md_gap(monkeypatch) -> None:
-    monkeypatch.setattr(seam_check, "scripts_missing_from_module_md", lambda *a, **k: {"foo.py"})
-    assert seam_check.main([]) == 1
 
 
 def test_flags_script_missing_from_module_md(tmp_path) -> None:
@@ -960,115 +929,6 @@ def test_registry_description_hyphen_basename_matched() -> None:
     ]
 
 
-def test_main_fails_on_registry_description_gap(monkeypatch) -> None:
-    monkeypatch.setattr(seam_check, "scripts_missing_from_module_md", lambda *a, **k: set())
-    monkeypatch.setattr(
-        seam_check, "scripts_missing_from_registry_descriptions", lambda *a, **k: {"foo.py"}
-    )
-    assert seam_check.main([]) == 1
-
-
-# --- MODULE.md 'imported by' row drift ---------------------------------------
-
-
-def test_importer_drift_clean_row_matches(tmp_path) -> None:
-    (tmp_path / "a.py").write_text("")
-    (tmp_path / "b.py").write_text("import a\n")
-    text = "| `a.py` (lib) | x | imported by b |\n"
-    assert seam_check.module_md_importer_drift(scripts_dir=tmp_path, module_text=text) == []
-
-
-def test_importer_drift_phantom_importer(tmp_path) -> None:
-    (tmp_path / "a.py").write_text("")
-    (tmp_path / "b.py").write_text("import a\n")
-    (tmp_path / "c.py").write_text("")  # real stem, but does not import a
-    text = "| `a.py` (lib) | x | imported by b, c |\n"
-    drifts = seam_check.module_md_importer_drift(scripts_dir=tmp_path, module_text=text)
-    assert len(drifts) == 1
-    assert "c" in drifts[0].phantom
-    assert drifts[0].missing == frozenset()
-
-
-def test_importer_drift_missing_importer(tmp_path) -> None:
-    (tmp_path / "a.py").write_text("")
-    (tmp_path / "b.py").write_text("import a\n")
-    (tmp_path / "c.py").write_text("import a\n")
-    text = "| `a.py` (lib) | x | imported by b |\n"
-    drifts = seam_check.module_md_importer_drift(scripts_dir=tmp_path, module_text=text)
-    assert len(drifts) == 1
-    assert "c" in drifts[0].missing
-    assert drifts[0].phantom == frozenset()
-
-
-def test_importer_drift_prose_row_skipped_per_row(tmp_path) -> None:
-    (tmp_path / "a.py").write_text("")
-    (tmp_path / "x.py").write_text("import a\n")
-    (tmp_path / "foo.py").write_text("")
-    # `adapters` is not a real stem -> the whole row is skipped (not flagged).
-    # The second, enumerable row IS still checked: x imports a, so it is clean.
-    text = (
-        "| `a.py` (lib) | y | imported by the adapters + foo |\n"
-        "| `a.py` (lib) | z | imported by x |\n"
-    )
-    assert seam_check.module_md_importer_drift(scripts_dir=tmp_path, module_text=text) == []
-
-
-def test_importer_drift_reverse_direction_guard(tmp_path) -> None:
-    # `vp.py` declares `imports a, b, c` (real stems) but NOT `imported by`.
-    # The anchor must skip it so it is never inverted into a phantom row.
-    (tmp_path / "vp.py").write_text("")
-    (tmp_path / "a.py").write_text("")
-    (tmp_path / "b.py").write_text("")
-    (tmp_path / "c.py").write_text("")
-    text = "| `vp.py` (lib) | imports a, b, c |\n"
-    assert seam_check.module_md_importer_drift(scripts_dir=tmp_path, module_text=text) == []
-
-
-def test_importer_drift_natural_language_and_separator_matches_when_complete(tmp_path) -> None:
-    (tmp_path / "a.py").write_text("")
-    (tmp_path / "b.py").write_text("import a\n")
-    (tmp_path / "c.py").write_text("import a\n")
-    text = "| `a.py` (lib) | x | imported by b and c |\n"
-    assert seam_check.module_md_importer_drift(scripts_dir=tmp_path, module_text=text) == []
-
-
-def test_importer_drift_natural_language_and_separator_catches_missing_importer(tmp_path) -> None:
-    # Regression for a row with two natural-language importers: the "and" separator must not
-    # hide a third real import edge.
-    (tmp_path / "shared.py").write_text("")
-    (tmp_path / "first.py").write_text("import shared\n")
-    (tmp_path / "middle.py").write_text("import shared\n")
-    (tmp_path / "last.py").write_text("import shared\n")
-    text = "| `shared.py` (lib) | x | imported by first and last |\n"
-    drifts = seam_check.module_md_importer_drift(scripts_dir=tmp_path, module_text=text)
-    assert len(drifts) == 1
-    assert drifts[0].missing == frozenset({"middle"})
-    assert drifts[0].phantom == frozenset()
-
-
-def test_true_importers_captures_lazy_in_function_import(tmp_path) -> None:
-    (tmp_path / "a.py").write_text("")
-    (tmp_path / "b.py").write_text("def f():\n    from a import X\n    return X\n")
-    importers = seam_check.true_importers(scripts_dir=tmp_path)
-    assert importers.get("a") == {"b"}
-
-
-def test_main_fails_on_importer_drift(monkeypatch) -> None:
-    monkeypatch.setattr(
-        seam_check,
-        "module_md_importer_drift",
-        lambda *a, **k: [
-            seam_check.ImporterDrift(module="a", missing=frozenset({"c"}), phantom=frozenset())
-        ],
-    )
-    assert seam_check.main([]) == 1
-
-
-def test_module_md_importer_rows_match_imports() -> None:
-    """Every enumerable MODULE.md 'imported by' row must match the AST truth."""
-    assert seam_check.module_md_importer_drift() == []
-
-
 # --- MODULE.md phantom rows ---------------------------------------------------
 
 
@@ -1095,234 +955,6 @@ def test_phantom_check_resolves_test_files_against_tests_dir(tmp_path) -> None:
 def test_module_md_has_no_phantom_rows() -> None:
     """Every row in the real MODULE.md must document a script that exists."""
     assert seam_check.phantom_module_md_rows() == set()
-
-
-def test_main_fails_on_phantom_row(monkeypatch) -> None:
-    monkeypatch.setattr(seam_check, "phantom_module_md_rows", lambda *a, **k: {"gone.py"})
-    assert seam_check.main([]) == 1
-
-
-# --- MODULE.md forward "imports x, y" claims ----------------------------------
-
-
-def test_forward_import_claim_clean(tmp_path) -> None:
-    (tmp_path / "a.py").write_text("")
-    (tmp_path / "vp.py").write_text("import a\n")
-    text = "| `vp.py` (lib) | x | imports a |\n"
-    assert seam_check.module_md_forward_import_drift(scripts_dir=tmp_path, module_text=text) == []
-
-
-def test_forward_import_claim_stale(tmp_path) -> None:
-    (tmp_path / "a.py").write_text("")
-    (tmp_path / "b.py").write_text("")
-    (tmp_path / "vp.py").write_text("import a\n")
-    text = "| `vp.py` (lib) | x | imports a, b |\n"
-    drifts = seam_check.module_md_forward_import_drift(scripts_dir=tmp_path, module_text=text)
-    assert drifts == [("vp", "b")]
-
-
-def test_forward_import_prose_claim_skipped(tmp_path) -> None:
-    (tmp_path / "vp.py").write_text("")
-    # `nothing` is not a local stem -> the claim is prose, skipped.
-    text = "| `vp.py` (lib) | x | imports nothing at dispatch time |\n"
-    assert seam_check.module_md_forward_import_drift(scripts_dir=tmp_path, module_text=text) == []
-
-
-def test_module_md_forward_import_rows_match_imports() -> None:
-    """Every enumerable forward 'imports' claim in the real MODULE.md holds."""
-    assert seam_check.module_md_forward_import_drift() == []
-
-
-def test_main_fails_on_forward_import_drift(monkeypatch) -> None:
-    monkeypatch.setattr(seam_check, "module_md_forward_import_drift", lambda *a, **k: [("vp", "b")])
-    assert seam_check.main([]) == 1
-
-
-# --- guard-file list <-> triage._GUARD_FILES ----------------------------------
-
-
-def test_triage_guard_files_parsed_from_source() -> None:
-    parsed = seam_check.triage_guard_files()
-    assert "flow_worktree.py" in parsed
-    assert "SKILL.md" in parsed
-
-
-def test_guard_lists_match_triage() -> None:
-    """The canonical prose guard-file enumeration must equal triage._GUARD_FILES."""
-    assert seam_check.guard_file_list_drift() == []
-
-
-def test_guard_list_divergence_flagged(tmp_path) -> None:
-    guard = frozenset({"a.py", "b.py", "SKILL.md"})
-    doc1 = tmp_path / "one.md"
-    doc1.write_text("a safety-machinery guard file (`a.py`, `b.py`) is hot\n")
-    doc2 = tmp_path / "two.md"
-    doc2.write_text("a safety-machinery guard file (`a.py`) is hot\n")
-    drifts = seam_check.guard_file_list_drift(docs=[doc1, doc2], guard_files=guard)
-    assert len(drifts) == 1
-    assert drifts[0][0] == "two.md"
-    assert "b.py" in drifts[0][2]
-
-
-def test_guard_list_extra_member_flagged(tmp_path) -> None:
-    guard = frozenset({"a.py", "b.py"})
-    doc1 = tmp_path / "one.md"
-    doc1.write_text("a safety-machinery guard file (`a.py`, `b.py`) is hot\n")
-    doc2 = tmp_path / "two.md"
-    doc2.write_text("a safety-machinery guard file (`a.py`, `b.py`, `c.py`) is hot\n")
-    drifts = seam_check.guard_file_list_drift(docs=[doc1, doc2], guard_files=guard)
-    assert len(drifts) == 1
-    assert "c.py" in drifts[0][2]
-
-
-def test_guard_list_missing_anchors_is_a_drift(tmp_path) -> None:
-    # The phrase moving out of the docs must not silently disarm the gate.
-    doc = tmp_path / "one.md"
-    doc.write_text("no anchor here\n")
-    drifts = seam_check.guard_file_list_drift(docs=[doc], guard_files=frozenset({"a.py"}))
-    assert len(drifts) == 1
-    assert "expected >= 1" in drifts[0][2]
-
-
-def test_main_fails_on_guard_list_drift(monkeypatch) -> None:
-    monkeypatch.setattr(
-        seam_check, "guard_file_list_drift", lambda *a, **k: [("one.md", 3, "missing ['b.py']")]
-    )
-    assert seam_check.main([]) == 1
-
-
-# --- MODULE.md surface-cell completeness ------------------------------------
-
-
-def _surface(*subs: str) -> seam_check.Surface:
-    return seam_check.Surface(subcommands=frozenset(subs), global_flags=frozenset(), sub_flags={})
-
-
-def test_surface_cell_clean_row_matches() -> None:
-    text = "| `a.py` | x | `create` / `reap` |\n"
-    lookup = lambda name: _surface("create", "reap")  # noqa: E731
-    assert seam_check.module_md_surface_cell_drift(module_text=text, surface_lookup=lookup) == []
-
-
-def test_surface_cell_under_enumerated_row() -> None:
-    text = "| `a.py` | x | `create` |\n"
-    lookup = lambda name: _surface("create", "reap")  # noqa: E731
-    drifts = seam_check.module_md_surface_cell_drift(module_text=text, surface_lookup=lookup)
-    assert len(drifts) == 1
-    assert drifts[0].module == "a"
-    assert drifts[0].missing == frozenset({"reap"})
-    assert drifts[0].phantom == frozenset()
-
-
-def test_surface_cell_lib_row_skipped() -> None:
-    # `(lib)` rows are documented by importer list, not a CLI surface -> skipped
-    # even when the surface would be under-enumerated.
-    text = "| `a.py` (lib) | x | imported by `create` |\n"
-    lookup = lambda name: _surface("create", "reap")  # noqa: E731
-    assert seam_check.module_md_surface_cell_drift(module_text=text, surface_lookup=lookup) == []
-
-
-def test_surface_cell_zero_enumerated_row_skipped() -> None:
-    # The cell names none of the real subs (e.g. metric.py's `(via recall.py
-    # --metric)`) -> not a surface listing -> skipped.
-    text = "| `a.py` | x | (via recall.py --metric) |\n"
-    lookup = lambda name: _surface("create", "reap")  # noqa: E731
-    assert seam_check.module_md_surface_cell_drift(module_text=text, surface_lookup=lookup) == []
-
-
-def test_surface_cell_boundary_list_assigned() -> None:
-    # `list-assigned` in the cell must NOT count as enumerating a `list` sub.
-    text = "| `a.py` | x | `list-assigned` |\n"
-    lookup = lambda name: _surface("list", "list-assigned")  # noqa: E731
-    drifts = seam_check.module_md_surface_cell_drift(module_text=text, surface_lookup=lookup)
-    assert len(drifts) == 1
-    assert drifts[0].missing == frozenset({"list"})
-    assert drifts[0].phantom == frozenset()
-
-
-def test_surface_cell_phantom_only_row() -> None:
-    # A stale `retired` citation alongside real `create` is a phantom, not a missing-only drift.
-    text = "| `a.py` | x | `create` / `retired` |\n"
-    lookup = lambda name: _surface("create")  # noqa: E731
-    drifts = seam_check.module_md_surface_cell_drift(module_text=text, surface_lookup=lookup)
-    assert len(drifts) == 1
-    assert drifts[0].missing == frozenset()
-    assert drifts[0].phantom == frozenset({"retired"})
-
-
-def test_surface_cell_missing_and_phantom_together() -> None:
-    text = "| `a.py` | x | `create` / `retired` |\n"
-    lookup = lambda name: _surface("create", "reap")  # noqa: E731
-    drifts = seam_check.module_md_surface_cell_drift(module_text=text, surface_lookup=lookup)
-    assert len(drifts) == 1
-    assert drifts[0].missing == frozenset({"reap"})
-    assert drifts[0].phantom == frozenset({"retired"})
-
-
-def test_surface_cell_all_phantom_row_not_masked_by_zero_real_skip() -> None:
-    # Every citation is stale: the zero-REAL-subcommand skip must not swallow this row, since it has
-    # citations (none real). Both directions surface.
-    text = "| `a.py` | x | `retired` |\n"
-    lookup = lambda name: _surface("create", "reap")  # noqa: E731
-    drifts = seam_check.module_md_surface_cell_drift(module_text=text, surface_lookup=lookup)
-    assert len(drifts) == 1
-    assert drifts[0].missing == frozenset({"create", "reap"})
-    assert drifts[0].phantom == frozenset({"retired"})
-
-
-def test_surface_cell_facade_name_annotation_not_a_phantom() -> None:
-    # "facade name `x`" documents the CLI's registered public alias, not a subcommand; it must never
-    # count as a stale citation.
-    text = "| `a.py` | x | `create` / `reap` subcommands; facade name `a-cli` |\n"
-    lookup = lambda name: _surface("create", "reap")  # noqa: E731
-    assert seam_check.module_md_surface_cell_drift(module_text=text, surface_lookup=lookup) == []
-
-
-def test_surface_cell_pipe_inside_backtick_span_not_a_cell_boundary() -> None:
-    # A `|` inside a backtick span (trace_mine.py-shaped: `extract (--transcript | --session)`)
-    # must not fracture the row into the wrong number of cells (flow-xm0x). If it did, citation
-    # extraction would collapse to near-empty and the row would be silently skipped as making
-    # "no enumerable surface claim" -- dropping it from coverage entirely rather than catching the
-    # real missing/phantom drift below.
-    text = (
-        "| `a.py` | x | `extract (--transcript | --session) --ticket` / "
-        "`cluster [--events-file]` / `retired-sub` |\n"
-    )
-    lookup = lambda name: _surface("extract", "cluster", "file")  # noqa: E731
-    drifts = seam_check.module_md_surface_cell_drift(module_text=text, surface_lookup=lookup)
-    assert len(drifts) == 1
-    assert drifts[0].missing == frozenset({"file"})
-    assert drifts[0].phantom == frozenset({"retired-sub"})
-
-
-def test_surface_cell_stray_pipe_in_prose_is_not_a_row() -> None:
-    # A `|` used as regex alternation inside prose, not a table row, must not be mistaken for one
-    # (flow-xm0x): the line does not start with `|`.
-    text = (
-        'Selected by `[forge] backend = "github" | "bitbucket"` in `a.py`, '
-        "the read `create` verb.\n"
-    )
-    lookup = lambda name: _surface("create", "reap")  # noqa: E731
-    assert seam_check.module_md_surface_cell_drift(module_text=text, surface_lookup=lookup) == []
-
-
-def test_main_fails_on_surface_cell_drift(monkeypatch) -> None:
-    monkeypatch.setattr(seam_check, "scripts_missing_from_module_md", lambda *a, **k: set())
-    monkeypatch.setattr(
-        seam_check, "scripts_missing_from_registry_descriptions", lambda *a, **k: set()
-    )
-    monkeypatch.setattr(seam_check, "module_md_importer_drift", lambda *a, **k: [])
-    monkeypatch.setattr(
-        seam_check,
-        "module_md_surface_cell_drift",
-        lambda *a, **k: [seam_check.SurfaceCellDrift(module="a", missing=frozenset({"reap"}))],
-    )
-    assert seam_check.main([]) == 1
-
-
-def test_module_md_surface_cells_match_argparse() -> None:
-    """Every live MODULE.md surface cell must fully enumerate the script's subcommands."""
-    assert seam_check.module_md_surface_cell_drift() == []
 
 
 # --- stage->reference_doc map re-enumeration drift ---------------------------
@@ -1391,18 +1023,6 @@ def test_non_registry_token_does_not_inflate(tmp_path) -> None:
     )
     over = seam_check.docs_over_stage_doc_citation_limit(registry_path=registry, docs=[doc])
     assert over == {}
-
-
-def test_main_fails_on_stage_doc_citation_offender(monkeypatch) -> None:
-    monkeypatch.setattr(seam_check, "scripts_missing_from_module_md", lambda *a, **k: set())
-    monkeypatch.setattr(
-        seam_check, "scripts_missing_from_registry_descriptions", lambda *a, **k: set()
-    )
-    monkeypatch.setattr(seam_check, "module_md_importer_drift", lambda *a, **k: [])
-    monkeypatch.setattr(
-        seam_check, "docs_over_stage_doc_citation_limit", lambda *a, **k: {"SKILL.md": 4}
-    )
-    assert seam_check.main([]) == 1
 
 
 def test_live_corpus_no_stage_doc_reenumeration() -> None:
@@ -1481,21 +1101,6 @@ def test_descriptor_key_drift_noop_without_emitted(tmp_path) -> None:
     assert seam_check.descriptor_key_drift(docs=[doc], emitted=set()) == []
 
 
-def test_main_fails_on_descriptor_key_drift(monkeypatch) -> None:
-    monkeypatch.setattr(seam_check, "scripts_missing_from_module_md", lambda *a, **k: set())
-    monkeypatch.setattr(
-        seam_check, "scripts_missing_from_registry_descriptions", lambda *a, **k: set()
-    )
-    monkeypatch.setattr(seam_check, "module_md_importer_drift", lambda *a, **k: [])
-    monkeypatch.setattr(seam_check, "module_md_surface_cell_drift", lambda *a, **k: [])
-    monkeypatch.setattr(seam_check, "docs_over_stage_doc_citation_limit", lambda *a, **k: {})
-    monkeypatch.setattr(seam_check, "role_literal_drift", lambda *a, **k: [])
-    monkeypatch.setattr(
-        seam_check, "descriptor_key_drift", lambda *a, **k: [("SKILL.md", 7, "head_commit")]
-    )
-    assert seam_check.main([]) == 1
-
-
 def test_live_descriptor_keys_all_emitted() -> None:
     """Every descriptor key cited in the live docs is emitted by dispatch_stage."""
     assert seam_check.descriptor_key_drift() == []
@@ -1572,21 +1177,6 @@ def test_role_literal_drift_clean(tmp_path) -> None:
     assert seam_check.role_literal_drift(docs=[doc], roles={"records_diff_baseline"}) == []
 
 
-def test_main_fails_on_role_literal_drift(monkeypatch) -> None:
-    monkeypatch.setattr(seam_check, "scripts_missing_from_module_md", lambda *a, **k: set())
-    monkeypatch.setattr(
-        seam_check, "scripts_missing_from_registry_descriptions", lambda *a, **k: set()
-    )
-    monkeypatch.setattr(seam_check, "module_md_importer_drift", lambda *a, **k: [])
-    monkeypatch.setattr(seam_check, "module_md_surface_cell_drift", lambda *a, **k: [])
-    monkeypatch.setattr(seam_check, "docs_over_stage_doc_citation_limit", lambda *a, **k: {})
-    monkeypatch.setattr(seam_check, "descriptor_key_drift", lambda *a, **k: [])
-    monkeypatch.setattr(
-        seam_check, "role_literal_drift", lambda *a, **k: [("SKILL.md", 116, "records_baseline")]
-    )
-    assert seam_check.main([]) == 1
-
-
 def test_live_role_citations_all_in_registry() -> None:
     """Every role literal cited in the live docs exists in a registry roles array."""
     assert seam_check.role_literal_drift() == []
@@ -1647,3 +1237,75 @@ def test_review_brief_treats_revision_sub_run_as_attended() -> None:
     )
     assert "/revisions/" in text
     assert "treat the run as attended" in text
+
+
+# --- facade reverse coverage: every allowlist entry has a prose recipe ---------
+
+
+def test_facade_entry_without_caller_flagged() -> None:
+    inv = seam_check.find_facade_invocations(
+        "t.md", 'FLOW_HARNESS="<harness>" "<facade>" status --workspace-root .'
+    )
+    orphans = seam_check.facade_entries_without_caller(inv)
+    assert "status" not in orphans
+    assert "dispatch" in orphans
+
+
+def test_live_facade_entries_all_have_callers() -> None:
+    invs: list[seam_check.Invocation] = []
+    for doc in seam_check.docs_to_check():
+        text = doc.read_text(encoding="utf-8")
+        invs.extend(seam_check.find_facade_invocations(doc.name, text))
+    assert seam_check.facade_entries_without_caller(invs) == set()
+
+
+def test_stage_agent_prompt_fences_are_identical() -> None:
+    # Two authored copies remain by design (SKILL.md's do-loop is the hot path,
+    # delivery-loop.md is the canonical contract). They diverged once at birth
+    # (#479 shipped SKILL.md without 'Ticket and stage'); this pins equality.
+    import re
+
+    def fence(path):
+        text = path.read_text(encoding="utf-8")
+        m = re.search(r"```text\n(Workspace root:.*?)```", text, re.DOTALL)
+        assert m, f"no prompt fence in {path.name}"
+        return m.group(1)
+
+    skill = fence(seam_check.SKILL_ROOT / "SKILL.md")
+    loop = fence(seam_check.SKILL_ROOT / "references" / "delivery-loop.md")
+    assert skill == loop
+
+
+def test_prose_docs_to_check_includes_scripts_markdown() -> None:
+    names = {p.name for p in seam_check.prose_docs_to_check()}
+    assert "MODULE.md" in names
+    assert "inventory.md" in names
+    assert "SKILL.md" in names
+
+
+# --- main() folds every gate into problems (one patch per case, no cross-silencing:
+# --- test_live_docs_are_green proves the live corpus needs no muting) ----------
+
+
+_MAIN_GATE_CASES = [
+    ("scripts_missing_from_module_md", {"x.py"}),
+    ("scripts_missing_from_registry_descriptions", {"x.py"}),
+    ("phantom_module_md_rows", {"x.py"}),
+    ("docs_over_stage_doc_citation_limit", {"SKILL.md": 4}),
+    ("descriptor_key_drift", [("SKILL.md", 1, "gone")]),
+    ("role_literal_drift", [("SKILL.md", 1, "gone")]),
+    ("managed_agents_guidance_drift", ["missing contract"]),
+    ("facade_entries_without_caller", {"ghost-entry"}),
+]
+
+
+@pytest.mark.parametrize(("gate", "drift"), _MAIN_GATE_CASES, ids=[c[0] for c in _MAIN_GATE_CASES])
+def test_main_fails_on_gate_drift(monkeypatch, gate, drift) -> None:
+    monkeypatch.setattr(seam_check, gate, lambda *a, **k: drift)
+    assert seam_check.main([]) == 1
+
+
+def test_main_gate_case_table_covers_module_map_too(monkeypatch) -> None:
+    # module_map.check is wired through the imported module, not a seam_check attr.
+    monkeypatch.setattr(seam_check.module_map, "check", lambda *a, **k: ["stale block"])
+    assert seam_check.main([]) == 1

@@ -46,8 +46,14 @@ Descriptor cases:
 - otherwise: execute the declared stage descriptor.
 
 If `roles` contains `records_diff_baseline`, record the planned-file baseline with
-blob capture before the handler. Failure marks the stage failed. The baseline and
-planned-file list are the commit ownership boundary.
+blob capture before the handler; a non-zero exit marks the stage failed. The
+baseline and planned-file list are the commit ownership boundary:
+
+```bash
+FLOW_HARNESS="<harness>" "<facade>" diff record-baseline \
+  --stage "<stage>" --ticket "<ticket>" --ticket-dir "<ticket_dir>" \
+  --files "<comma-separated planned_files>" --capture-blobs --cwd .
+```
 
 ## Handler dispatch
 
@@ -75,10 +81,14 @@ Artifact path: <absolute output_path>
 State that inherited cwd is non-authoritative, every repository operation stays
 beneath the workspace, and every facade call applies the call-local `FLOW_HARNESS`
 selector to the absolute bound `facade`.
-A workspace may provide an optional stage model hint:
+A workspace may provide an optional agent hint per stage, or per role within a
+stage. A bare stage string and a single-role table both resolve with no `--role`;
+only a stage that launches several roles (code_review's reviewer and fixer) needs
+the launching role named. `--field effort` reads the optional effort hint:
 
 ```bash
-FLOW_HARNESS="<harness>" "<facade>" model --workspace-root . --stage "<stage>"
+FLOW_HARNESS="<harness>" "<facade>" model --workspace-root . --stage "<stage>" \
+  [--role "<role>"] [--field model|effort]
 ```
 
 An empty result means inherit the driver session model. Apply a non-empty hint only
@@ -101,8 +111,15 @@ descriptor, the artifact, or the advance.
 ### Installed skill
 
 Resolve the configured handler through the facade, then invoke it with the host's
-native skill loader and exact declared arguments. A missing or invalid handler fails
-the stage. Capture the full skill response before advancing. An inline skill response
+native skill loader and exact declared arguments:
+
+```bash
+FLOW_HARNESS="<harness>" "<facade>" handler --handler "<handler-string>"
+```
+
+Exit 1 (bundle not installed) or 2 (manifest invalid) fails the stage before any
+skill call; the JSON result carries the concrete `skill_name`/`skill_args` to load.
+Capture the full skill response before advancing. An inline skill response
 is not a legitimate turn boundary: continue through artifact capture and advance in
 the same turn.
 
@@ -134,9 +151,9 @@ descriptor.
   stops for repair.
 - Lost lease stops immediately. Never continue with a rotated nonce or missing lock.
 - Workspace violations and unrecoverable state stop for diagnosis.
-- A descriptor timeout is advisory where the host has no cross-agent deadline. Agents
-  run long commands in bounded foreground calls and never return while owning a
-  background task needed for continuation.
+- No cross-agent deadline exists; a stage's timeout lives only in the run-lease TTL.
+  Agents run long commands in bounded foreground calls and never return while owning
+  a background task needed for continuation.
 
 Log friction before working around drift, lease loss, reconciliation, missing tools,
 blockers, failed stages, retries, and state rollback. Friction logging is best-effort

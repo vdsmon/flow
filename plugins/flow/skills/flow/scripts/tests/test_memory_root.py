@@ -190,10 +190,7 @@ def test_base_tolerates_unparseable_workspace(tmp_path: Path) -> None:
 def _memory_data(root: object) -> dict:
     mem: dict[str, object] = {
         "namespace": "demo",
-        "auto_recall": True,
         "compounding": True,
-        "recall_by": ["branch"],
-        "recall_top_n": 5,
     }
     if root is not None:
         mem["root"] = root

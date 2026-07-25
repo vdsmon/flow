@@ -636,7 +636,7 @@ def test_lane_non_beads_is_full(tmp_path: Path) -> None:
     assert runner.calls == []
 
 
-# --- advisor_adjudicates flag + adjudicate-enabled CLI ------------------------
+# --- advisor_adjudicates flag ------------------------------------------------
 
 
 def _seed_evolve(root: Path, body: str) -> None:
@@ -673,22 +673,7 @@ def test_advisor_adjudicates_default_on_when_no_workspace(tmp_path: Path) -> Non
     assert triage.advisor_adjudicates(tmp_path) is True
 
 
-def test_adjudicate_enabled_cli_prints_true_by_default(tmp_path: Path) -> None:
-    _seed_workspace(tmp_path, backend="beads")  # no [evolve] -> default on
-    code, out, _ = _run(["adjudicate-enabled", "--workspace-root", str(tmp_path)], _FakeRunner([]))
-    assert code == 0
-    assert out.strip() == "true"
-
-
-def test_adjudicate_enabled_cli_prints_false_when_opted_out(tmp_path: Path) -> None:
-    _seed_workspace(tmp_path, backend="beads")
-    _seed_evolve(tmp_path, "\n[evolve]\nadvisor_adjudicates = false\n")
-    code, out, _ = _run(["adjudicate-enabled", "--workspace-root", str(tmp_path)], _FakeRunner([]))
-    assert code == 0
-    assert out.strip() == "false"
-
-
-# --- adjudicate_hot flag + adjudicate-hot-enabled CLI ------------------------
+# --- adjudicate_hot flag -----------------------------------------------------
 
 
 def test_adjudicate_hot_true_when_explicitly_true(tmp_path: Path) -> None:
@@ -717,25 +702,6 @@ def test_adjudicate_hot_false_when_explicitly_false(tmp_path: Path) -> None:
 def test_adjudicate_hot_default_off_when_no_workspace(tmp_path: Path) -> None:
     # absent workspace.toml -> WorkspaceConfigError -> default off
     assert triage.adjudicate_hot(tmp_path) is False
-
-
-def test_adjudicate_hot_enabled_cli_prints_false_by_default(tmp_path: Path) -> None:
-    _seed_workspace(tmp_path, backend="beads")  # no [evolve] -> default off
-    code, out, _ = _run(
-        ["adjudicate-hot-enabled", "--workspace-root", str(tmp_path)], _FakeRunner([])
-    )
-    assert code == 0
-    assert out.strip() == "false"
-
-
-def test_adjudicate_hot_enabled_cli_prints_true_when_opted_in(tmp_path: Path) -> None:
-    _seed_workspace(tmp_path, backend="beads")
-    _seed_evolve(tmp_path, "\n[evolve]\nadjudicate_hot = true\n")
-    code, out, _ = _run(
-        ["adjudicate-hot-enabled", "--workspace-root", str(tmp_path)], _FakeRunner([])
-    )
-    assert code == 0
-    assert out.strip() == "true"
 
 
 def test_render_table_tags_advisor_rows() -> None:
