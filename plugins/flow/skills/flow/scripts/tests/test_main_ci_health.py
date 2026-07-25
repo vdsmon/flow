@@ -4,6 +4,8 @@ import json
 import subprocess
 from pathlib import Path
 
+import pytest
+
 import main_ci_health as mch
 
 
@@ -34,18 +36,9 @@ def test_in_progress_is_pending():
     assert mch.classify_main_ci(runs)["status"] == "pending"
 
 
-def test_cancelled_folds_to_pending():
-    runs = [{"name": "lint-and-test", "status": "completed", "conclusion": "cancelled"}]
-    assert mch.classify_main_ci(runs)["status"] == "pending"
-
-
-def test_skipped_folds_to_pending():
-    runs = [{"name": "lint-and-test", "status": "completed", "conclusion": "skipped"}]
-    assert mch.classify_main_ci(runs)["status"] == "pending"
-
-
-def test_neutral_folds_to_pending():
-    runs = [{"name": "lint-and-test", "status": "completed", "conclusion": "neutral"}]
+@pytest.mark.parametrize("conclusion", ["cancelled", "skipped", "neutral"])
+def test_nonfailing_verdict_folds_to_pending(conclusion: str):
+    runs = [{"name": "lint-and-test", "status": "completed", "conclusion": conclusion}]
     assert mch.classify_main_ci(runs)["status"] == "pending"
 
 

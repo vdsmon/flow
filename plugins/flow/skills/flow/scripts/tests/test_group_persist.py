@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 import group_persist as gp
 
 
@@ -48,36 +50,37 @@ def test_latest_covers_none_when_absent() -> None:
     assert gp.latest_covers([{"body": {"body": "hi"}, "created_at": "x"}]) is None
 
 
-def test_persist_writes_marker_comment() -> None:
-    tracker = _FakeTracker()
+@pytest.mark.parametrize(
+    "seed_comments",
+    [
+        pytest.param([], id="fresh_write"),
+        pytest.param(
+            [_marker_comment("FT-1207", "2026-06-01T00:00:00Z")], id="rewrite_when_set_changes"
+        ),
+    ],
+)
+def test_persist_writes_marker_comment(seed_comments: list[dict]) -> None:
+    tracker = _FakeTracker(seed_comments)
     out = gp.persist(tracker, "FT-1184", ["FT-1207", "FT-1208"])
     assert out["persisted"] is True
     # round-trips: derive reads back what persist wrote
     assert gp.derive(tracker, "FT-1184")["covers"] == ["FT-1207", "FT-1208"]
 
 
-def test_persist_idempotent_when_unchanged() -> None:
+@pytest.mark.parametrize(
+    "covers",
+    [
+        pytest.param(["FT-1207", "FT-1208"], id="same_order"),
+        pytest.param(["FT-1208", "FT-1207"], id="same_set_reordered"),
+    ],
+)
+def test_persist_idempotent_when_unchanged(covers: list[str]) -> None:
     tracker = _FakeTracker([_marker_comment("FT-1207, FT-1208", "2026-06-01T00:00:00Z")])
-    out = gp.persist(tracker, "FT-1184", ["FT-1207", "FT-1208"])
+    out = gp.persist(tracker, "FT-1184", covers)
     assert out["persisted"] is False
     assert out["reason"] == "unchanged"
     # no second comment appended
     assert len(tracker.get("FT-1184")["comments"]) == 1
-
-
-def test_persist_unchanged_when_same_set_reordered() -> None:
-    tracker = _FakeTracker([_marker_comment("FT-1207, FT-1208", "2026-06-01T00:00:00Z")])
-    out = gp.persist(tracker, "FT-1184", ["FT-1208", "FT-1207"])
-    assert out["persisted"] is False
-    assert out["reason"] == "unchanged"
-    assert len(tracker.get("FT-1184")["comments"]) == 1
-
-
-def test_persist_rewrites_when_set_changes() -> None:
-    tracker = _FakeTracker([_marker_comment("FT-1207", "2026-06-01T00:00:00Z")])
-    out = gp.persist(tracker, "FT-1184", ["FT-1207", "FT-1208"])
-    assert out["persisted"] is True
-    assert gp.derive(tracker, "FT-1184")["covers"] == ["FT-1207", "FT-1208"]
 
 
 def test_derive_empty_when_no_marker() -> None:

@@ -68,30 +68,26 @@ def test_embed_empty_input_no_shell(stub_cmd: str) -> None:
     assert memory_embed.embed([], embedder=stub_cmd) == []
 
 
-def test_embed_missing_command_raises_unavailable() -> None:
+@pytest.mark.parametrize(
+    ("stub_source", "texts"),
+    [
+        pytest.param(None, ["x"], id="missing_command"),
+        pytest.param("import sys; sys.exit(1)\n", ["x"], id="nonzero_exit"),
+        pytest.param("print('not json')\n", ["x"], id="unparseable_stdout"),
+        pytest.param("import json; print(json.dumps([[1.0]]))\n", ["a", "b"], id="wrong_count"),
+    ],
+)
+def test_embed_raises_unavailable(
+    tmp_path: Path, stub_source: str | None, texts: list[str]
+) -> None:
+    if stub_source is None:
+        embedder = "/nonexistent/embedder-binary-xyz"
+    else:
+        stub = tmp_path / "stub.py"
+        stub.write_text(stub_source, encoding="utf-8")
+        embedder = f"{sys.executable} {stub}"
     with pytest.raises(memory_embed._EmbedderUnavailable):
-        memory_embed.embed(["x"], embedder="/nonexistent/embedder-binary-xyz")
-
-
-def test_embed_nonzero_exit_raises_unavailable(tmp_path: Path) -> None:
-    boom = tmp_path / "boom.py"
-    boom.write_text("import sys; sys.exit(1)\n", encoding="utf-8")
-    with pytest.raises(memory_embed._EmbedderUnavailable):
-        memory_embed.embed(["x"], embedder=f"{sys.executable} {boom}")
-
-
-def test_embed_unparseable_stdout_raises_unavailable(tmp_path: Path) -> None:
-    junk = tmp_path / "junk.py"
-    junk.write_text("print('not json')\n", encoding="utf-8")
-    with pytest.raises(memory_embed._EmbedderUnavailable):
-        memory_embed.embed(["x"], embedder=f"{sys.executable} {junk}")
-
-
-def test_embed_wrong_count_raises_unavailable(tmp_path: Path) -> None:
-    short = tmp_path / "short.py"
-    short.write_text("import json; print(json.dumps([[1.0]]))\n", encoding="utf-8")
-    with pytest.raises(memory_embed._EmbedderUnavailable):
-        memory_embed.embed(["a", "b"], embedder=f"{sys.executable} {short}")
+        memory_embed.embed(texts, embedder=embedder)
 
 
 # ─── index build ───────────────────────────────────────────────────────────────

@@ -3,25 +3,9 @@ from __future__ import annotations
 import json
 import subprocess
 
-import lease
 import queue_drain as qd
-from _timeutil import utcnow_iso
 from tests.wsfactory import make_workspace, tracker
-
-
-def _write_lease(run_dir, *, expired: bool = False) -> None:
-    now = "2020-01-01T00:00:00Z" if expired else utcnow_iso()
-    ttl = 1 if expired else 3600
-    lease.acquire(
-        run_dir,
-        "run-test",
-        ttl,
-        now,
-        stage="implement",
-        current_boot="boot-A",
-        hostname="host-1",
-        cwd=str(run_dir),
-    )
+from tests.wsfactory import write_lease as _write_lease
 
 
 def _pool_run_dir(repo, key, slug="wip"):

@@ -11,6 +11,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 import metric
 from tests.wsfactory import make_workspace, memory, tracker
 
@@ -168,8 +170,11 @@ def test_list_valued_tombstone_counts_every_member(tmp_path: Path) -> None:
     assert result["live_entries"] == 1
 
 
-def test_missing_file_zeros(tmp_path: Path) -> None:
+@pytest.mark.parametrize("write_empty_file", [False, True], ids=["missing_file", "empty_file"])
+def test_no_entries_zeros(tmp_path: Path, write_empty_file: bool) -> None:
     _seed_workspace(tmp_path)
+    if write_empty_file:
+        (tmp_path / ".flow" / "demo" / "knowledge.jsonl").write_text("", encoding="utf-8")
     result = _compute(tmp_path)
     assert result["total_entries"] == 0
     assert result["live_entries"] == 0
@@ -179,14 +184,6 @@ def test_missing_file_zeros(tmp_path: Path) -> None:
     assert result["decisions_total"] == 0
     assert result["decisions_live"] == 0
     assert result["oldest_live_decision"] is None
-
-
-def test_empty_file_zeros(tmp_path: Path) -> None:
-    _seed_workspace(tmp_path)
-    (tmp_path / ".flow" / "demo" / "knowledge.jsonl").write_text("", encoding="utf-8")
-    result = _compute(tmp_path)
-    assert result["total_entries"] == 0
-    assert result["supersession_rate"] == 0.0
 
 
 def test_malformed_line_quarantined(tmp_path: Path) -> None:

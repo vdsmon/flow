@@ -3,7 +3,8 @@
 The suite is full of `.flow/workspace.toml` seeders that were copied file to file
 until dozens of them were byte-identical. This module holds the one builder they
 all delegate to; each test file keeps its own helper name and signature so test
-bodies stay untouched.
+bodies stay untouched. Run-state seeders that were copied the same way
+(`write_lease`) live here too.
 
 Defaults are deliberately minimal: a block emits only what the caller asked for.
 Emitting a helpful extra (a tracker subtable nobody requested, a `[maintainer]`
@@ -15,6 +16,9 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from pathlib import Path
+
+import lease
+from _timeutil import utcnow_iso
 
 # One or more TOML sections. Keys are section paths, so a subtable is spelled
 # out flat: {"tracker": {...}, "tracker.jira": {...}}. Section order is
@@ -84,6 +88,22 @@ def make_workspace(
     text = body if body is not None else render_toml(*blocks)
     (flow / "workspace.toml").write_text(text, encoding="utf-8")
     return root
+
+
+def write_lease(run_dir: Path, *, expired: bool = False) -> None:
+    """Acquire a real lease in run_dir (live by default, expired on request)."""
+    now = "2020-01-01T00:00:00Z" if expired else utcnow_iso()
+    ttl = 1 if expired else 3600
+    lease.acquire(
+        run_dir,
+        "run-test",
+        ttl,
+        now,
+        stage="implement",
+        current_boot="boot-A",
+        hostname="host-1",
+        cwd=str(run_dir),
+    )
 
 
 def _fmt(value: object) -> str:

@@ -10,11 +10,11 @@ import pytest
 
 import _evolve_common
 import fleet
-import lease
 import queue_status as qst
 from _timeutil import utcnow_iso
 from forge import ForgeError, NotSupported
 from tests.wsfactory import MAINTAINER, make_workspace
+from tests.wsfactory import write_lease as _write_lease
 
 Recorder = list[list[str]]
 
@@ -25,22 +25,6 @@ _READ_ONLY_PREFIXES = (
     ["gh", "pr", "list"],
     ["git", "for-each-ref"],
 )
-
-
-def _write_lease(run_dir: Path, *, expired: bool = False) -> None:
-    """Acquire a real lease in run_dir (live by default, expired on request)."""
-    now = "2020-01-01T00:00:00Z" if expired else utcnow_iso()
-    ttl = 1 if expired else 3600
-    lease.acquire(
-        run_dir,
-        "run-test",
-        ttl,
-        now,
-        stage="implement",
-        current_boot="boot-A",
-        hostname="host-1",
-        cwd=str(run_dir),
-    )
 
 
 def _pool_run_dir(repo: Path, key: str, slug: str = "wip") -> Path:

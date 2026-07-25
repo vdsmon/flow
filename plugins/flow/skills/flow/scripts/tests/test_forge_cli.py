@@ -131,22 +131,26 @@ def test_ci_rollup(ws, capsys):
     assert json.loads(capsys.readouterr().out)["status"] == "green"
 
 
-def test_merge(ws, capsys):
-    rc, fake = _run(["merge", "--pr", "7", "--squash"], ws)
-    assert rc == 0
-    assert json.loads(capsys.readouterr().out)["ok"] is True
-    assert ("merge", "7", True) in fake.calls
-
-
 def test_resolve_thread(ws, capsys):
     rc, _ = _run(["resolve-thread", "--pr", "7", "--thread", "1"], ws)
     assert rc == 0
     assert json.loads(capsys.readouterr().out)["resolved"] is True
 
 
-def test_review_threads_degrades_on_not_supported(ws, capsys):
-    rc, _ = _run(["review-threads", "--pr", "7"], ws, threads_supported=False)
-    assert rc == 0  # degrade, not error
+@pytest.mark.parametrize(
+    ("argv", "fake_kwargs"),
+    [
+        pytest.param(
+            ["review-threads", "--pr", "7"], {"threads_supported": False}, id="review_threads"
+        ),
+        pytest.param(
+            ["review-status", "--pr", "7"], {"bot_review_supported": False}, id="review_status"
+        ),
+    ],
+)
+def test_degrades_on_not_supported(ws, capsys, argv, fake_kwargs):
+    rc, _ = _run(argv, ws, **fake_kwargs)
+    assert rc == 0  # degrade, not error; for review-status, review_loop skips the wait
     assert json.loads(capsys.readouterr().out) == {"supported": False}
 
 
@@ -155,12 +159,6 @@ def test_review_status_emits_reviewed(ws, capsys):
     assert rc == 0
     assert json.loads(capsys.readouterr().out) == {"reviewed": True}
     assert ("bot_review_present", "7") in fake.calls
-
-
-def test_review_status_degrades_on_not_supported(ws, capsys):
-    rc, _ = _run(["review-status", "--pr", "7"], ws, bot_review_supported=False)
-    assert rc == 0  # degrade, not error, review_loop skips the wait
-    assert json.loads(capsys.readouterr().out) == {"supported": False}
 
 
 def test_missing_forge_block_is_config_error(tmp_path):
@@ -182,25 +180,28 @@ def test_forge_error_returns_1(ws, capsys):
     assert "forge error" in capsys.readouterr().err
 
 
-def test_post_reply_dispatches_args(ws, capsys):
-    rc, fake = _run(["post-reply", "--pr", "7", "--thread", "42", "--text", "lgtm"], ws)
+@pytest.mark.parametrize(
+    ("argv", "expected_call"),
+    [
+        pytest.param(["merge", "--pr", "7", "--squash"], ("merge", "7", True), id="merge"),
+        pytest.param(
+            ["post-reply", "--pr", "7", "--thread", "42", "--text", "lgtm"],
+            ("post_reply", "7", "42"),
+            id="post_reply",
+        ),
+        pytest.param(["mark-ready", "--pr", "7"], ("mark_ready", "7"), id="mark_ready"),
+        pytest.param(
+            ["delete-branch", "--branch", "feature/flow-x"],
+            ("delete_branch", "feature/flow-x"),
+            id="delete_branch",
+        ),
+    ],
+)
+def test_ok_dispatch(ws, capsys, argv, expected_call):
+    rc, fake = _run(argv, ws)
     assert rc == 0
     assert json.loads(capsys.readouterr().out) == {"ok": True}
-    assert ("post_reply", "7", "42") in fake.calls
-
-
-def test_mark_ready_dispatches(ws, capsys):
-    rc, fake = _run(["mark-ready", "--pr", "7"], ws)
-    assert rc == 0
-    assert json.loads(capsys.readouterr().out) == {"ok": True}
-    assert ("mark_ready", "7") in fake.calls
-
-
-def test_delete_branch_dispatches(ws, capsys):
-    rc, fake = _run(["delete-branch", "--branch", "feature/flow-x"], ws)
-    assert rc == 0
-    assert json.loads(capsys.readouterr().out) == {"ok": True}
-    assert ("delete_branch", "feature/flow-x") in fake.calls
+    assert expected_call in fake.calls
 
 
 def test_factory_error_returns_2(ws, capsys):

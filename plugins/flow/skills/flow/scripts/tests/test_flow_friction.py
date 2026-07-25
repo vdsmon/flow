@@ -9,6 +9,8 @@ import os
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 import _memory_paths
 import flow_friction
 from tests.wsfactory import make_workspace, memory, tracker
@@ -60,24 +62,17 @@ def test_append_accumulates_no_dedup(tmp_path: Path) -> None:
     assert rows[0]["id"] != rows[1]["id"]
 
 
-def test_invalid_type_raises(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        pytest.param({"type_": "BOGUS"}, id="invalid_type"),
+        pytest.param({"type_": "RETRY", "severity": "loud"}, id="invalid_severity"),
+    ],
+)
+def test_invalid_enum_raises(tmp_path: Path, kwargs: dict[str, str]) -> None:
     _seed_workspace(tmp_path)
-    try:
-        flow_friction.append(tmp_path, "FT-1", "r", "implement", "BOGUS", "x")
-    except flow_friction._InvalidType:
-        pass
-    else:
-        raise AssertionError("expected _InvalidType")
-
-
-def test_invalid_severity_raises(tmp_path: Path) -> None:
-    _seed_workspace(tmp_path)
-    try:
-        flow_friction.append(tmp_path, "FT-1", "r", "implement", "RETRY", "x", severity="loud")
-    except flow_friction._InvalidType:
-        pass
-    else:
-        raise AssertionError("expected _InvalidType")
+    with pytest.raises(flow_friction._InvalidType):
+        flow_friction.append(tmp_path, "FT-1", "r", "implement", body="x", **kwargs)
 
 
 def test_cli_happy_path(tmp_path: Path) -> None:

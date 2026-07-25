@@ -10,59 +10,40 @@ import pytest
 import _runner
 
 
-def test_default_runner_returns_completed_process(tmp_path):
-    r = _runner.default_runner()
-    cp = r([sys.executable, "-c", "import sys; sys.exit(0)"], tmp_path)
+# default_runner takes cwd positionally per call; cwd_default_runner binds it at
+# construction. Same subprocess.run call underneath, so one contract, two entry points.
+def _invoke_positional_cwd(argv, cwd):
+    return _runner.default_runner()(argv, cwd)
+
+
+def _invoke_bound_cwd(argv, cwd):
+    return _runner.cwd_default_runner(cwd)(argv)
+
+
+@pytest.mark.parametrize(
+    "invoke",
+    [
+        pytest.param(_invoke_positional_cwd, id="positional_cwd"),
+        pytest.param(_invoke_bound_cwd, id="bound_cwd"),
+    ],
+)
+def test_runner_contract(tmp_path, invoke):
+    cp = invoke([sys.executable, "-c", "import sys; sys.exit(0)"], tmp_path)
     assert isinstance(cp, subprocess.CompletedProcess)
     assert cp.returncode == 0
 
-
-def test_default_runner_does_not_raise_on_failure(tmp_path):
-    r = _runner.default_runner()
-    cp = r([sys.executable, "-c", "import sys; sys.exit(3)"], tmp_path)
+    cp = invoke([sys.executable, "-c", "import sys; sys.exit(3)"], tmp_path)
     assert cp.returncode == 3
 
-
-def test_default_runner_captures_text(tmp_path):
-    r = _runner.default_runner()
-    cp = r([sys.executable, "-c", "import sys; print('out'); sys.stderr.write('err')"], tmp_path)
+    cp = invoke(
+        [sys.executable, "-c", "import sys; print('out'); sys.stderr.write('err')"], tmp_path
+    )
     assert isinstance(cp.stdout, str)
     assert isinstance(cp.stderr, str)
     assert "out" in cp.stdout
     assert "err" in cp.stderr
 
-
-def test_default_runner_honors_cwd(tmp_path):
-    r = _runner.default_runner()
-    cp = r([sys.executable, "-c", "import os; print(os.getcwd())"], tmp_path)
-    assert cp.stdout.strip() == str(tmp_path)
-
-
-def test_cwd_default_runner_returns_completed_process(tmp_path):
-    r = _runner.cwd_default_runner(tmp_path)
-    cp = r([sys.executable, "-c", "import sys; sys.exit(0)"])
-    assert isinstance(cp, subprocess.CompletedProcess)
-    assert cp.returncode == 0
-
-
-def test_cwd_default_runner_does_not_raise_on_failure(tmp_path):
-    r = _runner.cwd_default_runner(tmp_path)
-    cp = r([sys.executable, "-c", "import sys; sys.exit(3)"])
-    assert cp.returncode == 3
-
-
-def test_cwd_default_runner_captures_text(tmp_path):
-    r = _runner.cwd_default_runner(tmp_path)
-    cp = r([sys.executable, "-c", "import sys; print('out'); sys.stderr.write('err')"])
-    assert isinstance(cp.stdout, str)
-    assert isinstance(cp.stderr, str)
-    assert "out" in cp.stdout
-    assert "err" in cp.stderr
-
-
-def test_cwd_default_runner_honors_bound_cwd(tmp_path):
-    r = _runner.cwd_default_runner(tmp_path)
-    cp = r([sys.executable, "-c", "import os; print(os.getcwd())"])
+    cp = invoke([sys.executable, "-c", "import os; print(os.getcwd())"], tmp_path)
     assert cp.stdout.strip() == str(tmp_path)
 
 

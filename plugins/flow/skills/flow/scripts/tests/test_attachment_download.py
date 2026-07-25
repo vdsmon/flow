@@ -80,17 +80,23 @@ def test_jira_download_returns_bytes_with_auth(monkeypatch: pytest.MonkeyPatch) 
     assert not ua.startswith("Python-urllib")
 
 
-def test_jira_download_no_url_raises(monkeypatch: pytest.MonkeyPatch) -> None:
-    adapter = _jira(monkeypatch, _FakeHttp([]))
+@pytest.mark.parametrize(
+    ("att_override", "responses"),
+    [
+        pytest.param({"url": None}, [], id="no_url"),
+        pytest.param(
+            {"url": "https://x/y"},
+            [urllib.error.HTTPError("u", 404, "nf", Message(), io.BytesIO(b""))],
+            id="http_error_wrapped",
+        ),
+    ],
+)
+def test_jira_download_raises(
+    monkeypatch: pytest.MonkeyPatch, att_override: dict[str, Any], responses: list[Any]
+) -> None:
+    adapter = _jira(monkeypatch, _FakeHttp(responses))
     with pytest.raises(TrackerError):
-        adapter.download_attachment(_att(url=None))
-
-
-def test_jira_download_http_error_wrapped(monkeypatch: pytest.MonkeyPatch) -> None:
-    err = urllib.error.HTTPError("u", 404, "nf", Message(), io.BytesIO(b""))
-    adapter = _jira(monkeypatch, _FakeHttp([err]))
-    with pytest.raises(TrackerError):
-        adapter.download_attachment(_att(url="https://x/y"))
+        adapter.download_attachment(_att(**att_override))
 
 
 # ─── beads adapter ──────────────────────────────────────────────────────────

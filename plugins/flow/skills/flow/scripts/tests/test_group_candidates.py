@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 import group_candidates as gc
 
 
@@ -46,18 +48,22 @@ def test_dup_hint_flags_empty_body_twin_directionally() -> None:
     assert hints == [{"key": "FT-1190", "duplicate_of": "FT-1207", "title_overlap": 1.0}]
 
 
-def test_no_dup_hint_when_body_present() -> None:
+@pytest.mark.parametrize(
+    "tickets",
+    [
+        pytest.param(
+            [("FT-1", "Sheet 3 Arca", "x"), ("FT-2", "Sheet 3 Arca", "y")], id="body_present"
+        ),
+        pytest.param(
+            [("FT-1", "Sheet 2 ventas", ""), ("FT-2", "compras date filter", "z")],
+            id="titles_diverge",
+        ),
+    ],
+)
+def test_no_dup_hint(tickets: list[tuple[str, str, str]]) -> None:
     records = [
-        gc._normalize(_t("FT-1", "Sheet 3 Arca", description="x")),
-        gc._normalize(_t("FT-2", "Sheet 3 Arca", description="y")),
-    ]
-    assert gc._dup_hints(records) == []
-
-
-def test_no_dup_hint_when_titles_diverge() -> None:
-    records = [
-        gc._normalize(_t("FT-1", "Sheet 2 ventas", description="")),
-        gc._normalize(_t("FT-2", "compras date filter", description="z")),
+        gc._normalize(_t(key, summary, description=description))
+        for key, summary, description in tickets
     ]
     assert gc._dup_hints(records) == []
 
