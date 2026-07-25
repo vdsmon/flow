@@ -58,11 +58,10 @@ the human every factual/access/permission question, and writes one complete Mark
 driver then launches one fresh independent host-native assessor with the plan, base SHA, relevant
 repository context, and the adversarial confidence contract from `delivery-plan.md`.
 
-The same assessor receives every complete revision for at most three completed passes in the
-round. The gate requires unrounded weighted confidence of at least 90.0 and zero blockers. One
-disclosed replacement is allowed if the original assessor is lost; replacement does not reset the
-pass count. The driver rechecks the default branch, presents the exact plan and confidence evidence,
-and waits for explicit human approval. Confidence cannot replace approval.
+The pass budget, replacement rule, and confidence threshold are `delivery-plan.md`'s contract —
+stated there and summarized in SKILL.md's gate, nowhere else. The driver rechecks the default
+branch, presents the exact plan and confidence evidence, and waits for explicit human approval.
+Confidence cannot replace approval.
 
 No worktree, branch, run, ticket mutation, or approval artifact exists before the gate. A fresh
 unattended invocation stops without mutation. The approved plan and base SHA pass directly to
