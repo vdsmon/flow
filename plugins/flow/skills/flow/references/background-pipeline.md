@@ -13,8 +13,9 @@ native workspace switch never replaces the absolute binding.
 If the human backgrounds that conversation, the same driver keeps driving dispatcher
 descriptors and refreshing the lease. Flow does not spawn a detached `claude` or
 `codex` CLI, inspect host job directories, poll transcripts, stop a host session, or
-delete session files. A foreground driver and a backgrounded driver are the same
-lifecycle state.
+delete session files. A bundled stage handler running an external reviewer as one
+bounded foreground call is not that: it detaches nothing and leaves nothing to poll.
+A foreground driver and a backgrounded driver are the same lifecycle state.
 
 ## Worker contract
 

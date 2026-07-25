@@ -118,6 +118,12 @@ their declared stage/file boundary. Before a read-only fan-out, the driver may u
 snapshot and guard commands to prove that collaborators did not mutate Git state. Flow does not
 launch detached host CLIs or pretend a Python subprocess can invoke a host-native agent tool.
 
+Detached is the operative word. A bundled stage handler may run an external reviewer CLI as one
+bounded foreground call rooted in `run_root`, reading its report from a file the call wrote before
+it returned. That leaves no job directory, transcript, or session for Flow to inspect, and no
+continuation for Flow to own. The handler, not the CLI, produces the stage artifact, and no route
+receipt, capsule, or model attestation is created or required.
+
 Maintenance adapters create, wait for, and cancel native agents through host collaboration tools.
 They use the `worker-pool` facade for enforceable capacity and durable recovery, reserving one host
 slot for the driver. Handles belong to the driver session and are disposable; durable evidence

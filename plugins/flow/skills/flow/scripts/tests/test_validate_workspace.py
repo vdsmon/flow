@@ -314,6 +314,7 @@ def test_required_when_compounding_skip_when_compounding_false(tmp_path: Path) -
         "none",
         "subagent:Plan",
         "subagent:general-purpose",
+        "subagent:flow:codex-reviewer",  # plugin-namespaced agent type
         "skill:ship-it",
         "skill:ship-it:create",
         "skill:ship-it:feedback",
@@ -342,6 +343,9 @@ def test_legal_handler_strings_accepted(tmp_path: Path, handler: str) -> None:
     "handler",
     [
         "subagent:",  # empty subagent type
+        "subagent:flow:",  # empty type after the plugin namespace
+        "subagent:flow:codex:reviewer",  # one namespace colon only
+        "subagent:flow codex-reviewer",  # whitespace is not an identifier
         "inline-with-suffix",
         "agent:Plan",
         "skill:",  # empty skill name
@@ -647,3 +651,40 @@ def test_label_facets_non_str_element_fails(tmp_path: Path) -> None:
     result, _ = vw.validate(root)
     assert not result.ok
     assert sum("memory.label_facets" in v for v in result.violations) == 1
+
+
+# ─── [code_review] reviewer_model ────────────────────────────────────────────
+
+
+def test_code_review_block_absent_is_valid(tmp_path: Path) -> None:
+    root = _make_workspace(tmp_path, backend="beads")
+    result, _ = vw.validate(root)
+    assert result.ok, result.violations
+
+
+def test_reviewer_model_string_accepted(tmp_path: Path) -> None:
+    root = _make_workspace(tmp_path, backend="beads")
+    _append_forge(root, '[code_review]\nreviewer_model = "gpt-5.6-sol"\n')
+    result, _ = vw.validate(root)
+    assert result.ok, result.violations
+
+
+def test_reviewer_model_non_string_is_violation(tmp_path: Path) -> None:
+    root = _make_workspace(tmp_path, backend="beads")
+    _append_forge(root, "[code_review]\nreviewer_model = 3\n")
+    result, _ = vw.validate(root)
+    assert not result.ok
+    assert any(
+        "code_review.reviewer_model" in v and "must be a string" in v for v in result.violations
+    )
+
+
+def test_code_review_not_a_table_is_violation(tmp_path: Path) -> None:
+    root = _make_workspace(tmp_path, backend="beads")
+    # Prepended, not appended: a bare key after the last table header would parse
+    # into that table instead of at the top level.
+    p = root / ".flow" / "workspace.toml"
+    p.write_text('code_review = "codex"\n' + p.read_text(encoding="utf-8"), encoding="utf-8")
+    result, _ = vw.validate(root)
+    assert not result.ok
+    assert any("code_review" in v and "not a table" in v for v in result.violations)
