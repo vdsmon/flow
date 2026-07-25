@@ -252,7 +252,7 @@ def test_facade_global_flag_before_subcommand_remains_valid() -> None:
 
 
 def test_surface_parent_usage_flags_derived_from_usage_prefix_only() -> None:
-    # tracker_cli.py, forge_cli.py, and pending_mutations.py declare --workspace-root before `{...}
+    # tracker_cli.py and forge_cli.py declare --workspace-root before `{...}
     # ...` in their top-level usage. review_brief.py declares no top-level parent flag; its
     # docstring prose merely mentions a wrapped `--ticket-dir` (the over-capture regression
     # `global_flags`, which scans the WHOLE help text, is prone to). The `[: um.start()]` slice at
@@ -260,15 +260,12 @@ def test_surface_parent_usage_flags_derived_from_usage_prefix_only() -> None:
     # what _usage_block itself actually contributes: wrap-continuation capture).
     tracker = seam_check.surface_of("tracker_cli.py")
     forge = seam_check.surface_of("forge_cli.py")
-    pending_mutations = seam_check.surface_of("pending_mutations.py")
     review_brief = seam_check.surface_of("review_brief.py")
     assert tracker is not None
     assert forge is not None
-    assert pending_mutations is not None
     assert review_brief is not None
     assert tracker.parent_usage_flags == {"--workspace-root"}
     assert forge.parent_usage_flags == {"--workspace-root"}
-    assert pending_mutations.parent_usage_flags == {"--workspace-root"}
     assert review_brief.parent_usage_flags == frozenset()
 
 
@@ -297,7 +294,6 @@ def test_usage_block_captures_wrap_continuation_and_excludes_description_only_fl
     [
         ("tracker", "is-shipped", "--key K"),
         ("forge", "detect-pr", "--branch B"),
-        ("pending-mutations", "compact", ""),
     ],
 )
 def test_facade_parent_flag_after_subcommand_is_rejected(
@@ -321,7 +317,6 @@ def test_facade_parent_flag_after_subcommand_is_rejected(
     [
         ("tracker", "is-shipped", "--key K"),
         ("forge", "detect-pr", "--branch B"),
-        ("pending-mutations", "compact", ""),
     ],
 )
 def test_facade_parent_flag_before_subcommand_remains_green(

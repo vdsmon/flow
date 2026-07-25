@@ -332,33 +332,3 @@ def test_auto_resolution_absent_pool_skips_no_run_state(tmp_path, monkeypatch):
 
 
 # ─── 8. CLI: JSON shape + exit codes ─────────────────────────────────────────
-
-
-def test_cli_observed_prints_json_exit_0(tmp_path, monkeypatch, capsys):
-    main, wt = tmp_path / "main", tmp_path / "wt"
-    _seed_workspace(main)
-    _seed_state(wt, "flow-a")
-    _install_tracker(monkeypatch, _FakeTracker(_ship()))
-
-    rc = observe_at_close.cli_main(
-        ["--workspace-root", str(main), "--key", "flow-a", "--worktree", str(wt)]
-    )
-
-    assert rc == 0
-    out = json.loads(capsys.readouterr().out)
-    assert out["action"] == "observed"
-    assert "path" in out
-
-
-def test_cli_failed_exit_1(tmp_path, monkeypatch, capsys):
-    main, wt = tmp_path / "main", tmp_path / "wt"
-    _seed_workspace(main)
-    _seed_state(wt, "flow-a")
-    _install_tracker(monkeypatch, _FakeTracker(_ship(), is_shipped_error=True))
-
-    rc = observe_at_close.cli_main(
-        ["--workspace-root", str(main), "--key", "flow-a", "--worktree", str(wt)]
-    )
-
-    assert rc == 1
-    assert json.loads(capsys.readouterr().out)["action"] == "failed"

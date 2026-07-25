@@ -110,6 +110,13 @@ its verification/model policy, but launches nothing and writes no fleet entry. H
 hot, evolution, proposal, and epic tickets remain outside the ordinary ready set.
 Actionable review rows point to `FLOW pr:<number>`.
 
+The deferred and decided-mode blocked queues (with each ticket's defer reason) are a
+separate read-only lens; `--ready` folds the ready queues in, partitioned by queue:
+
+```bash
+FLOW_HARNESS="<harness>" "<facade>" triage list --workspace-root . [--ready] [--json]
+```
+
 ## `FLOW maintain backlog drain [--dry-run]`
 
 The ordinary backlog drain classifies existing day-job delivery and reports fresh

@@ -125,15 +125,6 @@ def test_detect_pr_passes_state_selector(ws, capsys):
     assert ("detect_pr", "feature/flow-x", "merged") in fake.calls
 
 
-def test_pr_info(ws, capsys):
-    rc, fake = _run(["pr-info", "--pr", "7"], ws)
-    assert rc == 0
-    out = json.loads(capsys.readouterr().out)
-    assert out["number"] == 7
-    assert out["head"] == "feature/flow-x"
-    assert ("pr_info", "7") in fake.calls
-
-
 def test_ci_rollup(ws, capsys):
     rc, _ = _run(["ci-rollup", "--pr", "7"], ws)
     assert rc == 0

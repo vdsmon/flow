@@ -238,7 +238,7 @@ markers are overwritten. `—` = none.
 | `evolve_reap.py` | — | — |
 | `evolve_select.py` | — | `evolve_drain` |
 | `evolve_self_merge.py` | — | — |
-| `fleet.py` | `deregister` `is-live` `list` `live-keys` `prune` `register` | `_evolve_common`, `dispatch_stage` |
+| `fleet.py` | `is-live` | `_evolve_common`, `dispatch_stage` |
 | `flow_beads_create.py` | — | `friction_escalate` |
 | `flow_friction.py` | — | `recover` |
 | `flow_launcher.py` | — | `flow_worktree`, `init` |
@@ -246,7 +246,7 @@ markers are overwritten. `—` = none.
 | `flowctl.py` | — | `seam_check` |
 | `forge.py` | — | `create_pr`, `forge_bitbucket`, `forge_cli`, `forge_github`, `queue_status`, `review_brief`, `revise_config`, `worktree_janitor` |
 | `forge_bitbucket.py` | — | `forge` |
-| `forge_cli.py` | `ci-rollup` `delete-branch` `detect-pr` `mark-ready` `merge` `post-reply` `pr-info` `resolve-thread` `review-status` `review-threads` | — |
+| `forge_cli.py` | `ci-rollup` `delete-branch` `detect-pr` `mark-ready` `merge` `post-reply` `resolve-thread` `review-status` `review-threads` | — |
 | `forge_github.py` | — | `forge`, `main_ci_health` |
 | `friction_escalate.py` | `escalate` | — |
 | `friction_recurrence.py` | — | `friction_escalate`, `metric`, `reflect_inputs` |
@@ -271,7 +271,7 @@ markers are overwritten. `—` = none.
 | `module_map.py` | — | `seam_check` |
 | `observe_at_close.py` | — | `worktree_janitor` |
 | `observe_ship_event.py` | — | `metric`, `observe_at_close` |
-| `pending_mutations.py` | `compact` | `sync`, `tracker_cli` |
+| `pending_mutations.py` | — | `sync`, `tracker_cli` |
 | `pr_body.py` | — | `create_pr` |
 | `public_commands.py` | — | `module_map`, `public_commands_check`, `public_commands_cli` |
 | `public_commands_check.py` | — | — |

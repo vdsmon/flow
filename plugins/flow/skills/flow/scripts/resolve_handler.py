@@ -24,10 +24,7 @@ Exit codes (CLI):
 
 from __future__ import annotations
 
-import argparse
-import json
-import sys
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from pathlib import Path
 
 import bundle_discover as bd
@@ -165,37 +162,4 @@ def _exit_code(resolution: HandlerResolution) -> int:
     return 0
 
 
-def _parse_args(argv: list[str]) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Resolve a workspace handler string to a concrete invocation.",
-    )
-    parser.add_argument("--handler", required=True, help="handler string to resolve")
-    parser.add_argument(
-        "--search-roots",
-        default=None,
-        help="colon-separated plugin search dirs (overrides bundle_discover defaults)",
-    )
-    return parser.parse_args(argv)
-
-
-def cli_main(argv: list[str]) -> int:
-    args = _parse_args(argv)
-    search_roots: list[Path] | None = None
-    if args.search_roots is not None:
-        search_roots = [Path(p).expanduser() for p in args.search_roots.split(":") if p]
-
-    try:
-        resolution = resolve(args.handler, search_roots=search_roots)
-    except bd.HarnessError as exc:
-        sys.stderr.write(f"resolve-handler: {exc}\n")
-        return 3
-    sys.stdout.write(json.dumps(asdict(resolution), indent=2, sort_keys=True))
-    sys.stdout.write("\n")
-    return _exit_code(resolution)
-
-
-if __name__ == "__main__":
-    raise SystemExit(cli_main(sys.argv[1:]))
-
-
-__all__ = ["HandlerResolution", "cli_main", "resolve"]
+__all__ = ["HandlerResolution", "resolve"]

@@ -168,15 +168,3 @@ def test_compact_unknown_keys_remove_nothing(tmp_path: Path) -> None:
     removed = pm.compact(tmp_path, {"notarealkey0000"})
     assert removed == 0
     assert len(pm.list_mutations(tmp_path)) == 1
-
-
-# ─── CLI ─────────────────────────────────────────────────────────────────────
-
-
-def test_cli_compact_drop_keys(tmp_path: Path) -> None:
-    e = pm.append_mutation(tmp_path, ticket="FT-14", op="comment", args={"a": 1}, intent_at=_INTENT)
-    rc = pm.cli_main(
-        ["--workspace-root", str(tmp_path), "compact", "--drop-keys", e["idempotency_key"]]
-    )
-    assert rc == 0
-    assert pm.list_mutations(tmp_path) == []

@@ -29,18 +29,16 @@ CLI is `compact --drop-keys` only; append/list are library calls
 
 from __future__ import annotations
 
-import argparse
 import hashlib
 import json
 import os
-import sys
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 from _atomicio import atomic_write_text
 from _jsonl import iter_jsonl
-from _locking import LockContention, flock_retry
+from _locking import flock_retry
 
 # "edit" is not a valid op: the Tracker protocol dropped generic edit(fields)
 # (see tracker.py), so a queued edit could never be replayed by FLOW workspace sync.
@@ -212,50 +210,9 @@ def compact(workspace_root: Path, drop_keys: set[str]) -> int:
     return removed
 
 
-# ─── CLI ─────────────────────────────────────────────────────────────────────
-
-
-def _parse_args(argv: list[str]) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Durable queue of failed tracker mutations.")
-    parser.add_argument("--workspace-root", default=".")
-    sub = parser.add_subparsers(dest="command", required=True)
-
-    p_compact = sub.add_parser("compact", help="drop named keys, rewrite the file.")
-    p_compact.add_argument("--drop-keys", default="", help="comma-separated idempotency_keys.")
-
-    return parser.parse_args(argv)
-
-
-def _cmd_compact(args: argparse.Namespace, workspace_root: Path) -> int:
-    drop_keys = {k.strip() for k in args.drop_keys.split(",") if k.strip()}
-    try:
-        removed = compact(workspace_root, drop_keys)
-    except LockContention as exc:
-        sys.stderr.write(f"pending-mutations: {exc}\n")
-        return 2
-    except OSError as exc:
-        sys.stderr.write(f"pending-mutations: I/O error: {exc}\n")
-        return 4
-    sys.stdout.write(json.dumps({"removed": removed}) + "\n")
-    return 0
-
-
-def cli_main(argv: list[str]) -> int:
-    args = _parse_args(argv)
-    workspace_root = Path(args.workspace_root).resolve()
-    if args.command == "compact":
-        return _cmd_compact(args, workspace_root)
-    return 3  # unreachable: argparse requires a subcommand.
-
-
-if __name__ == "__main__":
-    raise SystemExit(cli_main(sys.argv[1:]))
-
-
 __all__ = [
     "VALID_OPS",
     "append_mutation",
-    "cli_main",
     "compact",
     "compute_key",
     "list_mutations",

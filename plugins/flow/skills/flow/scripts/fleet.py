@@ -33,16 +33,9 @@ at once instead of lingering until the staleness window; DNF/crashed runs (which
 but stop heartbeating) are still covered by `live_keys`' staleness fallback. The reconciled read
 itself lives in `_evolve_common.fleet_live_keys` (lease | fleet).
 
-CLI:
-  fleet.py register   --key <K> [--run-id <R> --hostname <H> --boot-id <B>] --workspace-root <dir>
-  fleet.py deregister --key <K> [--run-id <R>] --workspace-root <dir>
-  fleet.py live-keys  --workspace-root <dir> [--json]
-  fleet.py prune      --workspace-root <dir>
-  fleet.py list       --workspace-root <dir> [--json]
-
-Exit codes:
-  0 = ok
-  4 = not a maintainer setup (dormant; nothing to do)
+CLI: `is-live --key <K> [--workspace-root <dir>]` only (exit 0 live / 1 not) — the
+drain re-check before destructive actions. The write legs (register / deregister /
+live_keys / prune / entries) are library API for dispatch_stage and _evolve_common.
 """
 
 from __future__ import annotations
@@ -359,29 +352,6 @@ def cli_main(argv: list[str]) -> int:
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
 
-    p_reg = sub.add_parser("register", help="register/heartbeat a run for a key (upsert)")
-    p_reg.add_argument("--key", required=True)
-    p_reg.add_argument("--run-id", default="")
-    p_reg.add_argument("--hostname", default="")
-    p_reg.add_argument("--boot-id", default="")
-    p_reg.add_argument("--workspace-root", default=".")
-
-    p_dereg = sub.add_parser("deregister", help="drop a key's entry (run-id-gated)")
-    p_dereg.add_argument("--key", required=True)
-    p_dereg.add_argument("--run-id", default=None)
-    p_dereg.add_argument("--workspace-root", default=".")
-
-    p_live = sub.add_parser("live-keys", help="print keys with a fresh heartbeat")
-    p_live.add_argument("--workspace-root", default=".")
-    p_live.add_argument("--json", action="store_true")
-
-    p_prune = sub.add_parser("prune", help="drop stale (un-heartbeated) entries")
-    p_prune.add_argument("--workspace-root", default=".")
-
-    p_list = sub.add_parser("list", help="print all entries")
-    p_list.add_argument("--workspace-root", default=".")
-    p_list.add_argument("--json", action="store_true")
-
     p_islive = sub.add_parser(
         "is-live", help="exit 0 if key's lease is live (fail-safe), 1 if provably not"
     )
@@ -391,46 +361,9 @@ def cli_main(argv: list[str]) -> int:
     args = parser.parse_args(argv)
 
     # is-live is the drain re-check: it works regardless of maintainer mode (the lease
-    # side always applies) and returns 0=live / 1=not-live, so it bypasses the exit-4
-    # maintainer gate below.
-    if args.cmd == "is-live":
-        return 0 if is_live(Path(args.workspace_root), args.key) else 1
-
-    try:
-        fleet_dir = _resolve(Path(args.workspace_root))
-    except NotMaintainer as exc:
-        print(str(exc), file=sys.stderr)
-        return 4
-
-    if args.cmd == "register":
-        register(
-            fleet_dir,
-            args.key,
-            args.run_id,
-            now=utcnow_iso(),
-            hostname=args.hostname,
-            boot_id=args.boot_id,
-        )
-        print(args.key)
-        return 0
-    if args.cmd == "deregister":
-        deregister(fleet_dir, args.key, run_id=args.run_id)
-        print(args.key)
-        return 0
-    if args.cmd == "prune":
-        print("\n".join(sorted(prune(fleet_dir, now=utcnow_iso()))))
-        return 0
-    if args.cmd == "live-keys":
-        keys = sorted(live_keys(fleet_dir, now=utcnow_iso()))
-        print(json.dumps(keys) if args.json else "\n".join(keys))
-        return 0
-    # list
-    items = entries(fleet_dir)
-    if args.json:
-        print(json.dumps(items, sort_keys=True))
-    else:
-        print("\n".join(sorted(str(e.get("key", "")) for e in items)))
-    return 0
+    # side always applies) and returns 0=live / 1=not-live. The register/deregister/
+    # live-keys writers are library API only (dispatch_stage, _evolve_common).
+    return 0 if is_live(Path(args.workspace_root), args.key) else 1
 
 
 __all__ = [
