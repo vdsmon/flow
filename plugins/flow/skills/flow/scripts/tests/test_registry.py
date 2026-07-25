@@ -39,7 +39,7 @@ def test_registry_by_name_fields():
     assert by["plan"].roles == []
     assert by["plan"].default_handler == "inline"
     assert by["code_review"].roles == []
-    assert by["reflect"].roles == ["reflect_anchor", "ship_observer"]
+    assert by["reflect"].roles == []
     assert by["merge"].roles == []
     assert by["review_brief"].default_handler == "inline"
     assert by["reflect"].default_handler == "inline"
