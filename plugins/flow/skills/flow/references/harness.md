@@ -11,27 +11,9 @@ The **driver** is the main agent/session that talks to the human and continues t
 **human** approves plans and supplies decisions. The **host** is the Claude Code, Codex, or generic
 adapter. Keep `owner` for actual resource ownership such as leases, repositories, or content.
 
-At entry, bind these absolute logical values in conversation state:
-
-```text
-arguments      request text after the host trigger
-skill_root     directory containing the loaded SKILL.md
-task_root      checkout where the request started
-run_root       checkout that currently owns the run
-facade         <run_root>/.flow/runtime/flow
-harness        claude-code | codex | generic
-capabilities   available native operations
-```
-
-A Codex cache path is bound through the final skill directory, for example
-`<codex-home>/plugins/cache/vdsmon-flow/flow/<version>/skills/flow`, not the plugin
-package above it. Before launcher execution, require both `<skill_root>/SKILL.md` and
-`<skill_root>/scripts/flow_launcher.py`; a missing file means the binding is wrong.
-
-Shell state does not carry across calls. Every facade invocation uses an explicit `run_root`
-workdir and a call-local `FLOW_HARNESS=<harness>`. After worktree creation or adoption, replace
-both `run_root` and `facade` immediately and never fall back to `task_root`. Root every read, edit,
-git operation, artifact, and agent prompt there.
+The entry binding (the seven logical values), the two-file `skill_root` precondition, the
+launcher bootstrap recipe, and the rooted-call rules are SKILL.md §Entry contract — one
+statement, read at every entry. This file adds only what differs per host:
 
 Claude Code's native worktree switch is a convenience. Codex uses explicit workdirs. Neither
 replaces the absolute binding. If the worktree is outside a host's writable roots, the driver asks
@@ -60,18 +42,11 @@ Both plugin manifests expose the same `skills/` tree. Codex and Claude Code use 
 discovery. Managed `AGENTS.md` guidance is optional and is the generic fallback, not another
 installation locator.
 
-Before using an initialized workspace facade, invoke the loaded launcher directly:
-
-```bash
-FLOW_HARNESS="<codex|claude-code|generic>" \
-  python3 "<skill_root>/scripts/flow_launcher.py" \
-  --workspace-root "<absolute task_root>"
-```
-
-This installs or migrates `.flow/runtime/{flow,skill-root,memory-root,layout-version}`. It never
-searches arbitrary plugin caches. The generated facade reads its sibling `skill-root`, enters its
-own workspace, and executes only an allowlisted internal command. It supplies compatibility
-environment variables to child processes; those variables are engine details, not driver state.
+The launcher bootstrap (SKILL.md §Entry contract) installs or migrates
+`.flow/runtime/{flow,skill-root,memory-root,layout-version}`. It never searches arbitrary plugin
+caches. The generated facade reads its sibling `skill-root`, enters its own workspace, and
+executes only an allowlisted internal command. It supplies compatibility environment variables to
+child processes; those variables are engine details, not driver state.
 
 Fresh setup calls the loaded setup script directly because no facade exists. Existing workspace
 guidance uses that script's guidance-only mode; configuration is not rerun.
