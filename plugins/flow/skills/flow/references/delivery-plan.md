@@ -37,8 +37,20 @@ very short and obviously equivalent. Working around a missing grant or decision 
 tokens and drifts the plan toward a less precise result. An assessor never relays those
 questions.
 
-Optional memory or history reads are useful only when they answer a concrete planning question.
-Do not expand planning into a general repository audit.
+When the workspace compounds memory (`[memory] compounding = true`), recall prior
+knowledge before writing the plan — this read is what makes past runs pay into this
+one. Write the ticket's intent plus its text to a temporary file and query:
+
+```bash
+FLOW_HARNESS="<harness>" "<facade>" recall \
+  --query-file "<absolute-intent-file>" [--semantic] \
+  --ticket "<KEY>" --top-n 5 --workspace-root .
+```
+
+Weave genuinely relevant entries into the plan's approach and risks, citing their ids.
+An empty result is normal. Further memory or history reads are useful only when they
+answer a concrete planning question; do not expand planning into a general repository
+audit.
 
 When the ticket names a concrete failing artifact — a generated file, a payload, a load id —
 fetch and inspect the real artifact read-only during grounding. The actual bytes settle questions
@@ -143,6 +155,14 @@ the one prior mutation. A fresh unattended invocation stops here;
 it cannot cross the gate.
 
 ## 6. Bootstrap the approved plan
+
+If grounding recalled entries that shaped the plan, record them (best-effort, never
+blocking) so the run's reflect stage can judge recall quality and supersession:
+
+```bash
+FLOW_HARNESS="<harness>" "<facade>" recall "<one-line plan intent>" \
+  --record-pending --branch "feat/<ticket-slug>" --ticket "<KEY>" --workspace-root .
+```
 
 Write the approved Markdown to a plan file and create the ticket worktree:
 
