@@ -33,6 +33,7 @@ import argparse
 import json
 import os
 import re
+import shutil
 import sys
 import tomllib
 import unicodedata
@@ -514,6 +515,31 @@ def _legal_handler_string(value: str) -> bool:
     return parse_handler(value) is not None
 
 
+_BUNDLED_CODEX_REVIEWER = "subagent:flow:codex-reviewer"
+
+# Handler values derived from a machine probe rather than chosen by the operator.
+# They are re-derived on every reconfigure, so preserving one as a customization
+# would keep a dead handler wired after its tool is uninstalled.
+_PROBE_OWNED_HANDLERS = frozenset({_BUNDLED_CODEX_REVIEWER})
+
+
+def _codex_reviewer_handler() -> str:
+    """The bundled Codex reviewer when this machine and harness can run it, else "".
+
+    Codex must be on PATH, and the harness must be Claude Code: `subagent:` names a
+    Claude Code agent type that a Codex-hosted run cannot launch, and under Codex the
+    fresh native reviewer is already Codex.
+    """
+    if shutil.which("codex") is None:
+        return ""
+    try:
+        if flow_harness() != "claude-code":
+            return ""
+    except HarnessError:
+        return ""
+    return _BUNDLED_CODEX_REVIEWER
+
+
 def _preserved_handlers(
     existing_handlers: dict[str, str] | None, defaults: dict[str, str]
 ) -> tuple[dict[str, str], list[str]]:
@@ -522,7 +548,7 @@ def _preserved_handlers(
     preserved = {
         stage: val
         for stage, val in (existing_handlers or {}).items()
-        if stage in defaults and val != defaults[stage]
+        if stage in defaults and val != defaults[stage] and val not in _PROBE_OWNED_HANDLERS
     }
     lines = [
         f"reconfigure preserved {stage}={val} (registry default: {defaults[stage]})"
@@ -573,6 +599,14 @@ def _compose_handlers(
         s.name: s.default_handler for s in registry if s.name in pipeline_stages
     }
     warnings: list[str] = []
+
+    if "code_review" in handlers and (codex_reviewer := _codex_reviewer_handler()):
+        handlers["code_review"] = codex_reviewer
+        warnings.append(
+            f"code_review defaults to {codex_reviewer} (codex found on PATH); verify "
+            "`codex exec review` runs authenticated, or set code_review=inline"
+        )
+
     preserved, preserved_warnings = _preserved_handlers(existing_handlers, dict(handlers))
 
     if config.bundle == "bare":
