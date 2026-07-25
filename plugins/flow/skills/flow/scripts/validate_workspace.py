@@ -14,7 +14,7 @@ Validates:
 5. `[pipeline]`: `stages` non-empty list[str]; every stage registered in
    stage-registry.toml; `pipeline.handlers` covers every stage.
 6. Per stage: handler-string parses as `inline | none | subagent:<type> |
-   skill:<name>[:<args>]`.
+   subagent:<plugin>:<type> | skill:<name>[:<args>]`.
 7. Required predecessors precede the stage.
 8. `required = true` stages appear.
 9. `required_when_compounding = true` stages appear iff
@@ -90,6 +90,24 @@ def _validate_tracker_block(data: dict[str, Any], result: ValidationResult) -> s
         elif not isinstance(beads.get("prefix"), str) or not beads["prefix"]:
             result.add("tracker.beads.prefix", "missing or not a non-empty string")
     return backend
+
+
+def _validate_code_review_block(data: dict[str, Any], result: ValidationResult) -> None:
+    """Validate the OPTIONAL `[code_review]` block, only when present.
+
+    `reviewer_model` names the model the bundled Codex reviewer runs. It is separate
+    from `[models]` because that table is keyed by stage and carries host model names;
+    one key whose vocabulary changed with the selected handler would be worse than two.
+    """
+    block = data.get("code_review")
+    if block is None:
+        return
+    if not isinstance(block, dict):
+        result.add("code_review", "not a table")
+        return
+    model = block.get("reviewer_model")
+    if model is not None and not isinstance(model, str):
+        result.add("code_review.reviewer_model", "must be a string")
 
 
 def _validate_forge_block(data: dict[str, Any], result: ValidationResult) -> None:
@@ -353,6 +371,7 @@ def validate(
 
     backend = _validate_tracker_block(data, result)
     _validate_forge_block(data, result)
+    _validate_code_review_block(data, result)
     compounding = _validate_memory_block(data, result)
 
     registry = stage_registry or load_registry(_stage_registry_path())
