@@ -14,6 +14,7 @@ import lease
 import queue_status as qst
 from _timeutil import utcnow_iso
 from forge import ForgeError, NotSupported
+from tests.wsfactory import MAINTAINER, make_workspace
 
 Recorder = list[list[str]]
 
@@ -67,12 +68,7 @@ def _cand(
 
 
 def _marked_ws(tmp_path: Path) -> Path:
-    d = tmp_path / "flow"
-    (d / ".flow").mkdir(parents=True)
-    (d / ".flow" / "workspace.toml").write_text(
-        "[maintainer]\nself_target = true\n", encoding="utf-8"
-    )
-    return d
+    return make_workspace(tmp_path / "flow", MAINTAINER)
 
 
 def _dispatch(

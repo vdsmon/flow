@@ -14,17 +14,18 @@ from pathlib import Path
 
 import _memory_paths
 import metric
+from tests.wsfactory import make_workspace, memory, tracker
 
 
 def _seed_workspace(
     root: Path, namespace: str = "demo", backend: str = "beads", *, git: bool = True
 ) -> None:
-    flow = root / ".flow"
-    (flow / namespace).mkdir(parents=True, exist_ok=True)
-    (flow / ".initialized").write_text("", encoding="utf-8")
-    (flow / "workspace.toml").write_text(
-        f'[tracker]\nbackend = "{backend}"\n\n[memory]\nnamespace = "{namespace}"\n',
-        encoding="utf-8",
+    make_workspace(
+        root,
+        tracker(backend, subtable=False),
+        memory(namespace),
+        initialized=True,
+        namespace_dir=namespace,
     )
     if git:
         _git_init(root)

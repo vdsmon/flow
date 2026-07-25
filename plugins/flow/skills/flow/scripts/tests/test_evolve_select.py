@@ -12,6 +12,7 @@ import fleet
 import lease
 from _evolve_common import ToolError
 from _timeutil import utcnow_iso
+from tests.wsfactory import MAINTAINER, make_workspace
 
 Recorder = list[list[str]]
 
@@ -166,22 +167,11 @@ def test_is_inflight_prefix_match():
 
 
 def _marked_ws(tmp_path: Path) -> Path:
-    d = tmp_path / "flow"
-    (d / ".flow").mkdir(parents=True)
-    (d / ".flow" / "workspace.toml").write_text(
-        "[maintainer]\nself_target = true\n", encoding="utf-8"
-    )
-    return d
+    return make_workspace(tmp_path / "flow", MAINTAINER)
 
 
 def _worker_ws(tmp_path: Path) -> Path:
-    d = tmp_path / "flow"
-    (d / ".flow").mkdir(parents=True)
-    (d / ".flow" / "workspace.toml").write_text(
-        '[maintainer]\nself_target = true\n\n[evolve]\nworker_model = "opus"\n',
-        encoding="utf-8",
-    )
-    return d
+    return make_workspace(tmp_path / "flow", MAINTAINER, {"evolve": {"worker_model": "opus"}})
 
 
 def _dispatch(
@@ -665,10 +655,7 @@ def test_select_budget_shrinks_with_launched_pending(tmp_path):
 
 
 def _ws_with_toml(tmp_path: Path, body: str) -> Path:
-    d = tmp_path / "flow"
-    (d / ".flow").mkdir(parents=True)
-    (d / ".flow" / "workspace.toml").write_text(body, encoding="utf-8")
-    return d
+    return make_workspace(tmp_path / "flow", body=body)
 
 
 def test_config_defaults_reads_evolve_section(tmp_path):

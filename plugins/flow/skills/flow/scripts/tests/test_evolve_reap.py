@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 import evolve_reap as er
+from tests.wsfactory import MAINTAINER, make_workspace
 
 Recorder = list[list[str]]
 
@@ -536,12 +537,7 @@ def test_covers_dedups_across_multiple_commits():
 
 
 def _marked_ws(tmp_path: Path) -> Path:
-    d = tmp_path / "flow"
-    (d / ".flow").mkdir(parents=True)
-    (d / ".flow" / "workspace.toml").write_text(
-        "[maintainer]\nself_target = true\n", encoding="utf-8"
-    )
-    return d
+    return make_workspace(tmp_path / "flow", MAINTAINER)
 
 
 def _dispatch(

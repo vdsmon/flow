@@ -23,27 +23,14 @@ import pytest
 import tracker_beads as tb
 import tracker_cli
 import tracker_jira as tj
+from tests.wsfactory import make_workspace, memory, tracker
 from tracker import TrackerError
 
 # ─── CLI layer ───────────────────────────────────────────────────────────────
 
 
 def _seed_workspace(root: Path, backend: str = "jira") -> None:
-    flow = root / ".flow"
-    flow.mkdir(parents=True, exist_ok=True)
-    if backend == "jira":
-        body = (
-            '[tracker]\nbackend = "jira"\n\n'
-            '[tracker.jira]\ncloud_id = "x"\nproject_key = "FT"\n\n'
-            '[memory]\nnamespace = "demo"\n'
-        )
-    else:
-        body = (
-            '[tracker]\nbackend = "beads"\n\n'
-            '[tracker.beads]\nprefix = "bd"\n\n'
-            '[memory]\nnamespace = "demo"\n'
-        )
-    (flow / "workspace.toml").write_text(body, encoding="utf-8")
+    make_workspace(root, tracker(backend), memory())
 
 
 class _FakeTracker:

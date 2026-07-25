@@ -16,6 +16,8 @@ import pytest
 
 import observe_at_close
 import tracker
+from tests.wsfactory import make_workspace, memory
+from tests.wsfactory import tracker as tracker_block
 
 
 class _FakeTracker:
@@ -39,12 +41,7 @@ class _FakeTracker:
 
 
 def _seed_workspace(root: Path, namespace: str = "demo") -> None:
-    flow = root / ".flow"
-    flow.mkdir(parents=True, exist_ok=True)
-    (flow / "workspace.toml").write_text(
-        '[tracker]\nbackend = "beads"\n\n[memory]\nnamespace = "demo"\n',
-        encoding="utf-8",
-    )
+    make_workspace(root, tracker_block("beads", subtable=False), memory(namespace))
 
 
 def _seed_state(

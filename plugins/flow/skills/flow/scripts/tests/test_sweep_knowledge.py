@@ -11,6 +11,7 @@ import _memory_paths
 import recall
 import sweep_knowledge
 from _jsonl import iter_jsonl
+from tests.wsfactory import make_workspace, memory, tracker
 
 # Real fixture ids from the acceptance proof (flow-8we / flow-014).
 FLOW_8WE_ID = "a0637df9ff529353"
@@ -18,13 +19,7 @@ FLOW_014_ID = "8c575fe06d41ad29"
 
 
 def _seed_workspace(root: Path, namespace: str = "demo") -> None:
-    flow = root / ".flow"
-    flow.mkdir(parents=True, exist_ok=True)
-    (flow / "workspace.toml").write_text(
-        '[tracker]\nbackend = "jira"\n[tracker.jira]\ncloud_id = "x"\nproject_key = "FT"\n'
-        f'\n[memory]\nnamespace = "{namespace}"\n',
-        encoding="utf-8",
-    )
+    make_workspace(root, tracker("jira"), memory(namespace))
 
 
 def _write_entries(root: Path, entries: list[dict], namespace: str = "demo") -> None:

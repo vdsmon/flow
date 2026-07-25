@@ -9,16 +9,11 @@ import pytest
 
 import _memory_paths
 import recall
+from tests.wsfactory import make_workspace, memory, tracker
 
 
 def _seed_workspace(root: Path, namespace: str = "demo") -> None:
-    flow = root / ".flow"
-    flow.mkdir(parents=True, exist_ok=True)
-    (flow / "workspace.toml").write_text(
-        '[tracker]\nbackend = "jira"\n[tracker.jira]\ncloud_id = "x"\nproject_key = "FT"\n\n'
-        f'[memory]\nnamespace = "{namespace}"\n',
-        encoding="utf-8",
-    )
+    make_workspace(root, tracker("jira"), memory(namespace))
 
 
 def _write_entries(root: Path, namespace: str, entries: list[dict]) -> Path:
@@ -489,17 +484,18 @@ def _stub_embedder_cmd(tmp_path: Path) -> str:
 
 
 def _seed_semantic_workspace(root: Path, *, embedder: str, threshold: float = 0.0) -> None:
-    flow = root / ".flow"
-    flow.mkdir(parents=True, exist_ok=True)
-    (flow / "workspace.toml").write_text(
-        '[tracker]\nbackend = "jira"\n[tracker.jira]\ncloud_id = "x"\nproject_key = "FT"\n\n'
-        '[memory]\nnamespace = "demo"\n\n'
-        "[memory.semantic]\n"
-        "enabled = true\n"
-        'model = "stub-model"\n'
-        f"threshold = {threshold}\n"
-        f'embedder = "{embedder}"\n',
-        encoding="utf-8",
+    make_workspace(
+        root,
+        tracker("jira"),
+        memory(),
+        {
+            "memory.semantic": {
+                "enabled": True,
+                "model": "stub-model",
+                "threshold": threshold,
+                "embedder": embedder,
+            }
+        },
     )
 
 

@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 import triage
+from tests.wsfactory import make_workspace, memory, tracker
 
 
 def _cp(
@@ -49,21 +50,7 @@ def _version_ok() -> subprocess.CompletedProcess[str]:
 
 
 def _seed_workspace(root: Path, backend: str = "beads") -> None:
-    flow = root / ".flow"
-    flow.mkdir(parents=True, exist_ok=True)
-    if backend == "jira":
-        body = (
-            '[tracker]\nbackend = "jira"\n\n'
-            '[tracker.jira]\ncloud_id = "x"\nproject_key = "FT"\n\n'
-            '[memory]\nnamespace = "demo"\n'
-        )
-    else:
-        body = (
-            '[tracker]\nbackend = "beads"\n\n'
-            '[tracker.beads]\nprefix = "bd"\n\n'
-            '[memory]\nnamespace = "demo"\n'
-        )
-    (flow / "workspace.toml").write_text(body, encoding="utf-8")
+    make_workspace(root, tracker(backend), memory())
 
 
 def _run(argv: list[str], runner: _FakeRunner) -> tuple[int, str, str]:

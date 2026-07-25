@@ -8,6 +8,7 @@ import pytest
 import evolve_drain as ed
 import lease
 from _timeutil import utcnow_iso
+from tests.wsfactory import make_workspace, tracker
 
 
 def _write_lease(run_dir, *, expired: bool = False) -> None:
@@ -208,10 +209,7 @@ def test_cli_include_proposals_threads_to_select(monkeypatch, tmp_path, capsys):
 
 
 def _plain_ws(tmp_path):
-    d = tmp_path / "proj"
-    (d / ".flow").mkdir(parents=True)
-    (d / ".flow" / "workspace.toml").write_text('[tracker]\nbackend = "beads"\n', encoding="utf-8")
-    return d
+    return make_workspace(tmp_path / "proj", tracker("beads", subtable=False))
 
 
 def test_cli_not_maintainer_dormant_exit_4(tmp_path, monkeypatch, capsys):

@@ -20,16 +20,16 @@ from collections.abc import Sequence
 from pathlib import Path
 
 import metric
+from tests.wsfactory import make_workspace, memory, tracker
 
 
 def _seed_workspace(root: Path, namespace: str = "demo", *, initialized: bool = True) -> None:
-    flow = root / ".flow"
-    (flow / namespace).mkdir(parents=True, exist_ok=True)
-    if initialized:
-        (flow / ".initialized").write_text("", encoding="utf-8")
-    (flow / "workspace.toml").write_text(
-        f'[tracker]\nbackend = "beads"\n\n[memory]\nnamespace = "{namespace}"\n',
-        encoding="utf-8",
+    make_workspace(
+        root,
+        tracker("beads", subtable=False),
+        memory(namespace),
+        initialized=initialized,
+        namespace_dir=namespace,
     )
 
 

@@ -14,6 +14,7 @@ import pytest
 
 import _memory_paths
 import memory_embed
+from tests.wsfactory import make_workspace, memory, tracker
 
 # A stub embedder: reads newline texts on stdin, emits a deterministic 4-dim vector
 # per line (a hash-bucketed one-hot-ish vector), as JSON. Same contract as the real
@@ -38,13 +39,7 @@ def stub_cmd(tmp_path: Path) -> str:
 
 
 def _seed_workspace(root: Path, namespace: str = "demo") -> None:
-    flow = root / ".flow"
-    flow.mkdir(parents=True, exist_ok=True)
-    (flow / "workspace.toml").write_text(
-        f'[tracker]\nbackend = "jira"\n[tracker.jira]\ncloud_id = "x"\nproject_key = "FT"\n\n'
-        f'[memory]\nnamespace = "{namespace}"\n',
-        encoding="utf-8",
-    )
+    make_workspace(root, tracker("jira"), memory(namespace))
 
 
 def _write_entries(root: Path, namespace: str, entries: list[dict]) -> Path:

@@ -8,6 +8,7 @@ from pathlib import Path
 import fleet
 import lease
 from _timeutil import utcnow_iso
+from tests.wsfactory import MAINTAINER, make_workspace
 
 T0 = "2020-01-01T00:00:00Z"
 
@@ -185,12 +186,7 @@ def test_entries_returns_valid_skips_corrupt(tmp_path):
 
 
 def _marked(tmp_path: Path, name: str) -> Path:
-    repo = tmp_path / name
-    (repo / ".flow").mkdir(parents=True)
-    (repo / ".flow" / "workspace.toml").write_text(
-        "[maintainer]\nself_target = true\n", encoding="utf-8"
-    )
-    return repo
+    return make_workspace(tmp_path / name, MAINTAINER)
 
 
 def test_resolve_fleet_dir_follows_memory_root_redirect(tmp_path):

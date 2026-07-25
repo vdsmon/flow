@@ -7,24 +7,17 @@ from pathlib import Path
 import pytest
 
 import flow_beads_create as fbc
+from tests.wsfactory import MAINTAINER, make_workspace, tracker
 
 Recorder = list[tuple[list[str], Path]]
 
 
 def _marked_ws(tmp_path: Path) -> Path:
-    d = tmp_path / "flow"
-    (d / ".flow").mkdir(parents=True)
-    (d / ".flow" / "workspace.toml").write_text(
-        "[maintainer]\nself_target = true\n", encoding="utf-8"
-    )
-    return d
+    return make_workspace(tmp_path / "flow", MAINTAINER)
 
 
 def _plain_ws(tmp_path: Path) -> Path:
-    d = tmp_path / "proj"
-    (d / ".flow").mkdir(parents=True)
-    (d / ".flow" / "workspace.toml").write_text('[tracker]\nbackend = "beads"\n', encoding="utf-8")
-    return d
+    return make_workspace(tmp_path / "proj", tracker("beads", subtable=False))
 
 
 def _runner(
