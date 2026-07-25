@@ -46,8 +46,14 @@ Descriptor cases:
 - otherwise: execute the declared stage descriptor.
 
 If `roles` contains `records_diff_baseline`, record the planned-file baseline with
-blob capture before the handler. Failure marks the stage failed. The baseline and
-planned-file list are the commit ownership boundary.
+blob capture before the handler; a non-zero exit marks the stage failed. The
+baseline and planned-file list are the commit ownership boundary:
+
+```bash
+FLOW_HARNESS="<harness>" "<facade>" diff record-baseline \
+  --stage "<stage>" --ticket "<ticket>" --ticket-dir "<ticket_dir>" \
+  --files "<comma-separated planned_files>" --capture-blobs --cwd .
+```
 
 ## Handler dispatch
 
