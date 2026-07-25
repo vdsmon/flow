@@ -198,5 +198,4 @@ if __name__ == "__main__":
     raise SystemExit(cli_main(sys.argv[1:]))
 
 
-
 __all__ = ["HandlerResolution", "cli_main", "resolve"]
