@@ -14,21 +14,9 @@ The standalone home of `flow` — an autonomous, self-evolving ticket→PR pipel
 
 ## Layout (marketplace-of-one)
 
-```
-.claude-plugin/marketplace.json   # the marketplace, lists the one plugin (source ./plugins/flow)
-plugins/flow/
-  .claude-plugin/plugin.json      # plugin manifest (name=flow, version)
-  skills/flow/
-    SKILL.md                      # generated router + the one gate + do-loop skeleton
-    public-commands.toml          # authored public grammar/effect/harness registry
-    references/                   # command-*.md + delivery/stage internals, loaded on demand
-    scripts/                      # the engine + tests + mise.toml + pyproject.toml
-      MODULE.md                   # live map of the engine (read this to find a script)
-      inventory.md                # API/contract tables + archived build log
-      dev-history.md              # archived build status
-```
-
 Keeping the `plugins/flow/` nesting (option a) means the marketplace can later hold companion bundles, and the reflect self-edit path (`plugins/flow/.claude-plugin/plugin.json`) stays valid.
+
+`plugins/flow/skills/flow/scripts/MODULE.md` is the live map of the engine — read it to find a script.
 
 ## Dev commands
 
@@ -46,7 +34,7 @@ python3 public_commands_check.py  # registry↔router/help/trigger drift check
 
 Runtime is stdlib-only (`python3`); the venv/mise is dev tooling only.
 
-**Fail-fast hooks (prek, opt-in).** `.pre-commit-config.yaml` at the repo root wires the CI checks as [prek](https://github.com/j178/prek) hooks so commits fail before CI: pre-commit stage = ruff check + ruff format --check + seam_check (sub-second); pre-push stage = ty (seconds). prek is pinned in the repo-root `mise.toml`; install once per clone (from repo root): `mise install && prek install`. Hooks are `repo: local`, shell out to the `lint:*` mise sub-tasks (one source of truth with CI), and are **check-only** — see the invariant below.
+**Fail-fast hooks (prek, opt-in).** `.pre-commit-config.yaml` at the repo root wires the CI checks as [prek](https://github.com/j178/prek) hooks so commits fail before CI. prek is pinned in the repo-root `mise.toml`; install once per clone (from repo root): `mise install && prek install`. Stage split and the check-only rule: see the invariant below.
 
 ## Working here (gotchas)
 
