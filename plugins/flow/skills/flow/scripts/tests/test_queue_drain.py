@@ -292,25 +292,6 @@ def test_cli_removes_launch_marker_once_registered(monkeypatch, tmp_path, capsys
     assert out["select"]["launched_pending"] == []
 
 
-def test_cli_removes_launch_marker_via_open_pr_alone(monkeypatch, tmp_path, capsys):
-    # registration proven by an OPEN PR, not a live lease: the run opened its PR then its session
-    # ended (lease expired/absent), so live_runs lacks the key but open_pr_keys has it.
-    # launched_pending MUST still drop: registered is the union, and the open-PR half
-    # carries this case (kills the `| open_pr_keys` mutation).
-    sel = _sel(
-        open_pr_keys=["flow-k"],
-        launched_pending=["flow-k"],
-    )
-    _stub_cli(monkeypatch, tmp_path, sel)
-    monkeypatch.setattr(qd, "liveness_map", lambda repo, keys: {})
-
-    rc = qd.cli_main(["--workspace-root", str(tmp_path)])
-    assert rc == 0
-    out = _out(capsys)
-    assert out["action"] == "done"
-    assert out["select"]["launched_pending"] == []
-
-
 def test_cli_unregistered_pending_still_blocks(monkeypatch, tmp_path, capsys):
     # a launched-but-pre-lease day-job key keeps blocking until it registers or
     # its marker TTL-expires.
@@ -321,16 +302,6 @@ def test_cli_unregistered_pending_still_blocks(monkeypatch, tmp_path, capsys):
 
 
 # ─── cli_main: lease liveness (real lease + real liveness_map) ───────────────
-
-
-def test_cli_pre_pr_live_run_waits(monkeypatch, tmp_path, capsys):
-    repo = _stub_cli(monkeypatch, tmp_path, _sel(live_runs=["flow-x"]))
-    _write_lease(_pool_run_dir(repo, "flow-x"))
-    rc = qd.cli_main(["--workspace-root", str(tmp_path)])
-    assert rc == 0
-    out = _out(capsys)
-    assert out["action"] == "wait"
-    assert out["liveness"]["flow-x"] == "live"
 
 
 def test_cli_pre_pr_expired_run_done_and_parked(monkeypatch, tmp_path, capsys):

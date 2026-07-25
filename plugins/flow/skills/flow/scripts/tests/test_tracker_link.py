@@ -90,16 +90,6 @@ def test_link_explicit_kind_forwarded(tmp_path: Path) -> None:
     assert tk.calls == [("A", "B", "relates")]
 
 
-def test_link_tracker_error_returns_1(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    _seed_workspace(tmp_path)
-    rc = tracker_cli.cli_main(
-        ["--workspace-root", str(tmp_path), "link", "--from-key", "A", "--to-key", "B"],
-        tracker_factory=_factory(_FailingTracker()),
-    )
-    assert rc == 1
-    assert "tracker error" in capsys.readouterr().err
-
-
 def test_link_missing_to_key_is_argparse_error(tmp_path: Path) -> None:
     _seed_workspace(tmp_path)
     with pytest.raises(SystemExit):

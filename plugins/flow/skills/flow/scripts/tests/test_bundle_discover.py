@@ -213,7 +213,10 @@ handler_string = "{handler}"
 
 @pytest.mark.parametrize(
     "field",
-    ["required_capabilities", "required_outputs", "side_effects", "stage_compatibility"],
+    # One representative: the four keys share one loop body with no per-key
+    # branch (mutation-verified; per-key tuple membership is pinned by the
+    # constructor KeyError the valid-manifest tests hit).
+    ["required_capabilities"],
 )
 def test_list_field_not_a_list_rejected(tmp_path: Path, field: str) -> None:
     _write_manifest(

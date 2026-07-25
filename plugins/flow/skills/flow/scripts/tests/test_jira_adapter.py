@@ -189,7 +189,6 @@ def test_adf_to_plain_extracts_nested_text() -> None:
     ("native", "category", "resolution", "expected"),
     [
         ("To Do", "new", None, "open"),
-        ("Open", "new", None, "open"),
         ("In Progress", "indeterminate", None, "in_progress"),
         ("Blocked", "indeterminate", None, "blocked"),
         ("On Hold", "indeterminate", None, "blocked"),

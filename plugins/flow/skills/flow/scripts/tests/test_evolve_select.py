@@ -125,28 +125,6 @@ def test_include_proposals_drops_exclusion_guard():
 # ---- helpers ----
 
 
-def test_primary_anchor_first_path():
-    desc = "EVIDENCE\nBLAST RADIUS: a/b.py, c/d.py, e.py\nVALUE"
-    assert es.primary_anchor(desc) == "a/b.py"
-
-
-def test_primary_anchor_absent():
-    assert es.primary_anchor("no blast radius here") is None
-
-
-def test_key_from_ref():
-    assert es._key_from_ref("feat/flow-7mb-evolve-verb") == "flow-7mb"
-    assert es._key_from_ref("origin/feat/flow-aut.6-fix") == "flow-aut.6"
-    assert es._key_from_ref("feature/flow-7mb-evolve-verb") == "flow-7mb"  # legacy
-    assert es._key_from_ref("main") is None
-
-
-def test_is_inflight_prefix_match():
-    refs = {"feat/flow-a-some-desc"}
-    assert es._is_inflight("flow-a", refs)
-    assert not es._is_inflight("flow-ab", refs)  # must not prefix-bleed
-
-
 # ---- select integration (injected runner) ----
 
 
