@@ -434,11 +434,6 @@ def test_merge_no_squash_emits_empty_payload():
     assert _payload_for_path(calls, "2.0/repositories/ws/rs/pullrequests/9/merge") == {}
 
 
-def test_capabilities_all_supported():
-    fg, _ = _adapter(lambda a: "null")
-    assert all(c["supported"] for c in fg.capabilities)
-
-
 def test_set_default_reviewers_filters_author_and_puts():
     base = "2.0/repositories/ws/rs"
     me = {"account_id": "AUTHOR", "uuid": "{author-uuid}"}

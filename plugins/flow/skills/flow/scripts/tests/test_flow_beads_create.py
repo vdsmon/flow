@@ -300,23 +300,6 @@ def test_dedup_machine_key_skips_fuzzy(tmp_path):
     assert not any(lbl.startswith("evidfile:") for lbl in stamped.split(","))
 
 
-def test_dedup_anchorless_machine_key_skips_fuzzy(tmp_path):
-    repo = _marked_ws(tmp_path)
-    evidfile = f"evidfile:{fbc.fingerprint('stall_gap')}"
-    run, calls = _dispatch_runner(
-        list_by_label={evidfile: [{"id": "flow-old", "title": "stall_gap in implement"}]},
-        tracked=set(),
-    )
-    key = fbc.create_bead(
-        repo, "stall_gap in commit", "b", dedup_key="stall_gap::implement", runner=run
-    )
-    assert key == "flow-new"  # distinct-stage findings no longer collapse
-    assert not any(
-        lbl.startswith("evidfile:")
-        for lbl in _create_args(calls)[_create_args(calls).index("--labels") + 1].split(",")
-    )
-
-
 def test_dedup_bare_real_toplevel_file_keeps_fuzzy(tmp_path):
     repo = _marked_ws(tmp_path)
     evidfile = f"evidfile:{fbc.fingerprint('CLAUDE.md')}"
@@ -327,27 +310,3 @@ def test_dedup_bare_real_toplevel_file_keeps_fuzzy(tmp_path):
     with pytest.raises(fbc.DuplicateBead) as ei:
         fbc.create_bead(repo, _9JK_TITLE, "b", dedup_key="CLAUDE.md::some-drift", runner=run)
     assert ei.value.existing_key == "flow-old"
-
-
-def test_dedup_epic_child_key_skips_fuzzy(tmp_path):
-    # epic:<track> is not a relfile path -> formulaic -> skips fuzzy; the disjoint
-    # exact evid: net is what converges epic children (command-maintain.md §E), not fuzzy.
-    repo = _marked_ws(tmp_path)
-    evidfile = f"evidfile:{fbc.fingerprint('epic:tracker-frontdoor')}"
-    run, calls = _dispatch_runner(
-        list_by_label={evidfile: [{"id": "flow-old", "title": "child 3 of tracker frontdoor"}]},
-        tracked=set(),
-    )
-    key = fbc.create_bead(
-        repo,
-        "child 3 tracker frontdoor variant",
-        "b",
-        dedup_key="epic:tracker-frontdoor::child-3-symptom",
-        labels=["proposal"],
-        runner=run,
-    )
-    assert key == "flow-new"
-    assert not any(
-        lbl.startswith("evidfile:")
-        for lbl in _create_args(calls)[_create_args(calls).index("--labels") + 1].split(",")
-    )

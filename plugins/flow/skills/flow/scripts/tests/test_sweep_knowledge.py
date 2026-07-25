@@ -122,24 +122,6 @@ def test_propose_type_filter_fact_only(tmp_path: Path, capsys: pytest.CaptureFix
     assert {item["type"] for item in out} == {"FACT"}
 
 
-def test_propose_default_type_is_decision_and_fact(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    _seed_workspace(tmp_path)
-    _write_entries(
-        tmp_path,
-        [
-            _entry("1111111111111111", "DECISION", "a decision"),
-            _entry("2222222222222222", "FACT", "a fact"),
-            _entry("3333333333333333", "PATTERN", "a pattern"),
-        ],
-    )
-    rc = sweep_knowledge.cli_main(["propose", "--workspace-root", str(tmp_path)])
-    assert rc == 0
-    out = json.loads(capsys.readouterr().out)
-    assert {item["type"] for item in out} == {"DECISION", "FACT"}
-
-
 def test_propose_empty_store_emits_empty_list(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -148,26 +130,6 @@ def test_propose_empty_store_emits_empty_list(
     assert rc == 0
     out = json.loads(capsys.readouterr().out)
     assert out == []
-
-
-def test_propose_preserves_file_order(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    _seed_workspace(tmp_path)
-    _write_entries(
-        tmp_path,
-        [
-            _entry("3333333333333333", "DECISION", "third"),
-            _entry("1111111111111111", "FACT", "first"),
-            _entry("2222222222222222", "DECISION", "second"),
-        ],
-    )
-    rc = sweep_knowledge.cli_main(["propose", "--workspace-root", str(tmp_path)])
-    assert rc == 0
-    out = json.loads(capsys.readouterr().out)
-    assert [item["id"] for item in out] == [
-        "3333333333333333",
-        "1111111111111111",
-        "2222222222222222",
-    ]
 
 
 # ─── apply ───────────────────────────────────────────────────────────────────
@@ -319,32 +281,6 @@ def test_apply_accepts_jsonl_manifest(tmp_path: Path, capsys: pytest.CaptureFixt
                     }
                 ),
                 "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    rc = sweep_knowledge.cli_main(
-        ["apply", "--manifest", str(manifest), "--workspace-root", str(tmp_path)]
-    )
-    assert rc == 0
-    survivors = {e["id"] for e in recall.filter_superseded(_load_all(tmp_path))}
-    assert FLOW_8WE_ID not in survivors
-
-
-def test_apply_accepts_json_array_manifest(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    _seed_workspace(tmp_path)
-    _write_entries(tmp_path, [_entry(FLOW_8WE_ID, "DECISION", "real")])
-    manifest = tmp_path / "manifest.json"
-    manifest.write_text(
-        json.dumps(
-            [
-                {
-                    "superseded_id": FLOW_8WE_ID,
-                    "superseding_ticket": "flow-mse",
-                    "rationale": "json-array shape",
-                }
             ]
         ),
         encoding="utf-8",

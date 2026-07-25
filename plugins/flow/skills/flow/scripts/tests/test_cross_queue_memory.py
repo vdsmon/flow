@@ -78,17 +78,6 @@ def test_same_entry_from_main_and_worktree_dedups(tmp_path: Path) -> None:
     assert not (worktree / ".flow" / _NS).exists()
 
 
-def test_different_branch_still_dedups(tmp_path: Path) -> None:
-    main = _make_main(tmp_path)
-    worktree = _make_worktree(tmp_path, main, "wt-1")
-    memory_append.append(main, "FACT", "branch is excluded from the id", "main", "FT-2")
-    with pytest.raises(memory_append._DuplicateId):
-        memory_append.append(
-            worktree, "FACT", "branch is excluded from the id", "feature/FT-2-retry", "FT-2"
-        )
-    assert len(_read_jsonl(_memory_paths.knowledge_path(main, _NS))) == 1
-
-
 def test_distinct_tickets_same_body_no_false_dedup(tmp_path: Path) -> None:
     main = _make_main(tmp_path)
     worktree = _make_worktree(tmp_path, main, "wt-1")

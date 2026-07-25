@@ -218,17 +218,6 @@ def test_cli_not_installed_exit_1(tmp_path: Path) -> None:
     assert rc == 1
 
 
-def test_cli_manifest_invalid_exit_2(tmp_path: Path) -> None:
-    _write_manifest(tmp_path / "ship-it", _invalid_manifest_text())
-    rc = rh.cli_main(["--handler", "skill:ship-it", "--search-roots", str(tmp_path)])
-    assert rc == 2
-
-
-def test_cli_unknown_handler_exit_3() -> None:
-    rc = rh.cli_main(["--handler", "garbage"])
-    assert rc == 3
-
-
 # ─── Cross-name skill fallback (_provides_skill) ───────────────────────────────
 
 

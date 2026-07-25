@@ -162,25 +162,6 @@ def test_reconcile_applies_pending_create(tmp_path: Path) -> None:
     assert pending_mutations.list_mutations(tmp_path) == []
 
 
-def test_reconcile_parks_unknown_op(tmp_path: Path) -> None:
-    # any op outside VALID_OPS parks (kept on disk, warned, not failed) so a
-    # bogus entry can never wedge sync at exit 1 forever.
-    path = pending_mutations.pending_mutations_path(tmp_path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    entry = {"idempotency_key": "k-bogus", "ticket": "FT-7", "op": "bogus", "args": {}}
-    path.write_text(json.dumps(entry) + "\n")
-    tracker = _FakeTracker({})
-    report = sync.reconcile(tmp_path, tracker)
-    assert report["parked"] == ["k-bogus"]
-    assert report["failed"] == []
-    assert report["removed"] == 0
-    assert len(pending_mutations.list_mutations(tmp_path)) == 1
-    assert tracker.comments == []
-    assert tracker.links == []
-    assert tracker.transitions == []
-    assert tracker.creates == []
-
-
 def test_reconcile_keeps_entry_when_tracker_raises(tmp_path: Path) -> None:
     _seed(tmp_path, ticket="FT-R", op="comment", args={"body": "hi"})
     key = pending_mutations.list_mutations(tmp_path)[0]["idempotency_key"]

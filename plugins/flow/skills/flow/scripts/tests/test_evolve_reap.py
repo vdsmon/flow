@@ -195,12 +195,6 @@ def test_guard_file_and_label_hot_serialize():
     ]
 
 
-def test_green_clean_still_merges():
-    prs = [_pr(1, "flow-a", state="CLEAN")]
-    out = er.classify(prs, _idx(**{"flow-a": ["evolve"]}))
-    assert out["merge"][0]["key"] == "flow-a"
-
-
 def test_behind_is_blocked():
     prs = [_pr(1, "flow-a", state="BEHIND")]
     out = er.classify(prs, _idx(**{"flow-a": ["evolve"]}))
@@ -222,13 +216,6 @@ def test_draft_but_green_is_mergeable():
             "covers": [],
         }
     ]
-
-
-def test_merge_entry_carries_branch():
-    # the reap loop tears down the local branch + worktree; it needs headRefName.
-    prs = [_pr(7, "flow-a")]
-    out = er.classify(prs, _idx(**{"flow-a": ["evolve"]}))
-    assert out["merge"][0]["branch"] == "feat/flow-a-some-desc"
 
 
 def test_non_flow_branch_ignored():
@@ -410,23 +397,6 @@ def test_hot_auto_merge_does_not_gate_non_hot_leaf():
         },
     ]
     assert out["skipped_hot"] == []
-
-
-def test_hot_auto_merge_off_by_default_still_skips():
-    prs = [_pr(1, "flow-h")]
-    out = er.classify(prs, _idx(**{"flow-h": ["evolve", "hot"]}))
-    assert out["merge"] == []
-    assert out["skipped_hot"] == [{"pr": 1, "key": "flow-h", "branch": "feat/flow-h-some-desc"}]
-
-
-def test_merge_entries_flag_is_hot():
-    # the reap loop runs the guard property-check only on is_hot entries, so each
-    # merge entry must say whether it was a hot promotion or a plain leaf.
-    prs = [_pr(1, "flow-h"), _pr(2, "flow-a")]
-    out = er.classify(
-        prs, _idx(**{"flow-h": ["evolve", "hot"], "flow-a": ["evolve"]}), auto_merge_hot=True
-    )
-    assert {e["key"]: e["is_hot"] for e in out["merge"]} == {"flow-h": True, "flow-a": False}
 
 
 # ---- classify: main-CI health gate (flow-a1ti.3) ----

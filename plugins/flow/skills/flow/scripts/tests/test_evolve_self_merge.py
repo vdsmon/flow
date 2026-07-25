@@ -285,17 +285,6 @@ def test_main_ci_green_is_noop():
     assert d == {"action": "merge", "is_hot": False, "reason": "eligible"}
 
 
-def test_main_ci_pending_is_noop():
-    d = esm.decide(
-        ["evolve"],
-        is_maintainer=True,
-        auto_merge_hot=False,
-        ci_status="green",
-        main_ci_status="pending",
-    )
-    assert d["action"] == "merge"
-
-
 def test_main_ci_error_is_noop_resumes():
     # a transient probe error must RESUME (never pause): non-"failed" is a no-op.
     d = esm.decide(

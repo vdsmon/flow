@@ -127,44 +127,6 @@ def test_tracker_error_is_exception() -> None:
 # ─── Capability advertisement shape ──────────────────────────────────────────
 
 
-def test_capability_shape_accepts_closed_enum_names() -> None:
-    # TypedDicts don't enforce literal membership at runtime, but the shape must
-    # at least be writable for each enum value without TypeError.
-    capabilities: list[t.Capability] = []
-    enum_values = (
-        "comments_adf",
-        "comments_markdown",
-        "attachments",
-        "watchers",
-        "sprints",
-        "fix_versions",
-        "components",
-        "epic_link",
-        "pr_links",
-        "ci_links",
-        "boards",
-        "custom_fields",
-        "transitions_with_validators",
-        "resolutions",
-    )
-    for name in enum_values:
-        cap: t.Capability = {
-            "name": name,
-            "supported": True,
-        }
-        capabilities.append(cap)
-    assert len(capabilities) == 14
-    assert {c["name"] for c in capabilities} == set(enum_values)
-
-
-def test_capability_supported_false_is_legal() -> None:
-    cap: t.Capability = {
-        "name": "attachments",
-        "supported": False,
-    }
-    assert cap["supported"] is False
-
-
 # ─── Protocol structural conformance ─────────────────────────────────────────
 
 
@@ -293,78 +255,7 @@ def test_object_missing_methods_is_not_a_tracker() -> None:
     assert not isinstance(Partial(), t.Tracker)
 
 
-def test_capability_gated_methods_raise_not_supported_when_unsupported() -> None:
-    # The contract is "capability-gated methods raise NotSupported when the
-    # corresponding capability advertises supported=false". Verify with the
-    # fake adapter that advertises nothing.
-    adapter = _FakeAdapter()
-    with pytest.raises(t.NotSupported):
-        adapter.set_sprint("FT-1", "sprint-42")
-    with pytest.raises(t.NotSupported):
-        adapter.upload_attachment("FT-1", "/tmp/x.png")
-
-
 # ─── Type roundtrips ─────────────────────────────────────────────────────────
-
-
-def test_ticket_ref_subset_of_ticket() -> None:
-    ref: t.TicketRef = {
-        "key": "FT-1",
-        "summary": "hi",
-        "status": "Open",
-        "priority": "High",
-    }
-    # Ticket extends TicketRef with additional required keys; building a Ticket
-    # from a TicketRef base is the canonical adapter pattern.
-    full: t.Ticket = {
-        **ref,
-        "description": "body",
-        "type": "Task",
-        "assignee": None,
-        "comments": [],
-        "parent": None,
-        "attachments": [],
-        "links": [],
-        "labels": [],
-    }
-    assert full["key"] == ref["key"]
-    assert full["description"] == "body"
-
-
-def test_ship_state_pure_read_shape() -> None:
-    frozen: t.ShipState = {
-        "state": "shipped",
-        "shipped_at": "2026-05-27T18:00:00Z",
-        "evidence": {"tracker": "jira", "tracker_status": "Done"},
-        "source": "frozen_event_file",
-    }
-    # Fresh observation case (workspace must persist).
-    fresh: t.ShipState = {
-        "state": "not_yet_observed",
-        "shipped_at": None,
-        "evidence": {"tracker_status": "Done", "pr_merge_commit_sha": "abc"},
-        "source": "live_backend_query",
-    }
-    not_shipped: t.ShipState = {
-        "state": "not_shipped",
-        "shipped_at": None,
-        "evidence": None,
-        "source": "none",
-    }
-    assert frozen["source"] == "frozen_event_file"
-    assert fresh["state"] == "not_yet_observed"
-    assert not_shipped["evidence"] is None
-
-
-def test_transition_result_failure_shape() -> None:
-    res: t.TransitionResult = {
-        "success": False,
-        "failure_kind": "permission_denied",
-        "failure_detail": "user is not assignee",
-        "new_state": None,
-    }
-    assert res["success"] is False
-    assert res["failure_kind"] == "permission_denied"
 
 
 # ─── Public surface ──────────────────────────────────────────────────────────

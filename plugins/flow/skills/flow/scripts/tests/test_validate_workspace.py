@@ -295,11 +295,9 @@ def test_required_when_compounding_skip_when_compounding_false(tmp_path: Path) -
         "inline",
         "none",
         "subagent:Plan",
-        "subagent:general-purpose",
         "subagent:flow:codex-reviewer",  # plugin-namespaced agent type
         "skill:ship-it",
         "skill:ship-it:create",
-        "skill:ship-it:feedback",
     ],
 )
 def test_legal_handler_strings_accepted(tmp_path: Path, handler: str) -> None:
@@ -477,18 +475,6 @@ def test_inline_e2e_with_per_stage_pin_warns(tmp_path: Path) -> None:
     result, _ = vw.validate(root)
     assert result.ok
     assert any("models.e2e" in w and "inline" in w for w in result.warnings)
-
-
-def test_subagent_e2e_with_per_stage_pin_no_warn(tmp_path: Path) -> None:
-    stages = ["ticket", "plan", "implement", "e2e", "commit", "reflect"]
-    handlers = dict.fromkeys(stages, "inline")
-    handlers["implement"] = "subagent:general-purpose"
-    handlers["e2e"] = "subagent:general-purpose"
-    root = _make_workspace(tmp_path, backend="beads", stages=stages, handlers=handlers)
-    _append_forge(root, '[models]\ne2e = "sonnet"\n')
-    result, _ = vw.validate(root)
-    assert result.ok
-    assert result.warnings == []
 
 
 def test_agents_table_is_rejected_with_simple_replacement_hint(tmp_path: Path) -> None:

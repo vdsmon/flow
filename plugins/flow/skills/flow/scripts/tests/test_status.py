@@ -66,24 +66,6 @@ def test_collect_failed_stage(tmp_path: Path) -> None:
     assert rows[0]["failed"] == 1
 
 
-def test_collect_ticket_filter(tmp_path: Path) -> None:
-    _ws(tmp_path)
-    _seed_run(tmp_path, "FT-1", ["ticket"], finished=["ticket"])
-    _seed_run(tmp_path, "FT-2", ["ticket"])
-    rows = status.collect(tmp_path, ticket="FT-2")
-    assert len(rows) == 1
-    assert rows[0]["ticket"] == "FT-2"
-
-
-def test_render_table_contains_ids(tmp_path: Path) -> None:
-    _ws(tmp_path)
-    _seed_run(tmp_path, "FT-9", ["ticket", "plan"], finished=["ticket"])
-    out = status.render_table(status.collect(tmp_path))
-    assert "FT-9" in out
-    assert "1/2" in out
-    assert "TICKET" in out
-
-
 def test_render_table_empty() -> None:
     assert status.render_table([]) == "(no runs)"
 

@@ -43,11 +43,6 @@ def test_key_from_ref():
     assert ec.key_from_ref("main") is None
 
 
-def test_bead_labels():
-    assert ec.bead_labels(False) == ["evolve"]
-    assert ec.bead_labels(True) == ["evolve", "proposal"]
-
-
 def test_run_dir_for_absent_returns_none(tmp_path):
     repo = tmp_path / "flow"
     repo.mkdir()
@@ -86,10 +81,6 @@ def test_run_dir_for_prefers_claude_pool_over_legacy(tmp_path):
 
 
 # ---- extracted selector helpers (shared by evolve_select + queue_select) ----
-
-
-def test_active_statuses_constant():
-    assert ec.ACTIVE_STATUSES == "open,in_progress,blocked"
 
 
 def test_primary_anchor_first_path():

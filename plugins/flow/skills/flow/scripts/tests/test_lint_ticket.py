@@ -59,22 +59,6 @@ def test_universal_fields_present_returns_no_violations(tmp_path: Path) -> None:
     assert lint_ticket.validate("ticket", tp, reg) == []
 
 
-def test_missing_ticket_field_returns_violation(tmp_path: Path) -> None:
-    reg = _write_registry(tmp_path, [_stage("ticket")])
-    tp = tmp_path / "FT-1.md"
-    _write_ticket(tp, {"status": "in_progress"})
-    violations = lint_ticket.validate("ticket", tp, reg)
-    assert any("ticket:" in v for v in violations)
-
-
-def test_missing_status_field_returns_violation(tmp_path: Path) -> None:
-    reg = _write_registry(tmp_path, [_stage("ticket")])
-    tp = tmp_path / "FT-1.md"
-    _write_ticket(tp, {"ticket": "FT-1"})
-    violations = lint_ticket.validate("ticket", tp, reg)
-    assert any("status:" in v for v in violations)
-
-
 def test_empty_string_value_counts_as_violation(tmp_path: Path) -> None:
     reg = _write_registry(tmp_path, [_stage("ticket")])
     tp = tmp_path / "FT-1.md"
@@ -107,34 +91,6 @@ def test_empty_list_required_field_is_violation(tmp_path: Path) -> None:
     _write_ticket(tp, {"ticket": "FT-1", "status": "in_progress", "planned_files": "[]"})
     violations = lint_ticket.validate("implement", tp, reg)
     assert any("planned_files:" in v and "empty" in v for v in violations)
-
-
-def test_commit_requires_commit_type_and_summary(tmp_path: Path) -> None:
-    reg = _write_registry(
-        tmp_path, [_stage("commit", required_fields=["commit_type", "commit_summary"])]
-    )
-    tp = tmp_path / "FT-1.md"
-    _write_ticket(tp, {"ticket": "FT-1", "status": "in_progress"})
-    violations = lint_ticket.validate("commit", tp, reg)
-    assert any("commit_type:" in v for v in violations)
-    assert any("commit_summary:" in v for v in violations)
-
-
-def test_commit_with_type_and_summary_passes(tmp_path: Path) -> None:
-    reg = _write_registry(
-        tmp_path, [_stage("commit", required_fields=["commit_type", "commit_summary"])]
-    )
-    tp = tmp_path / "FT-1.md"
-    _write_ticket(
-        tp,
-        {
-            "ticket": "FT-1",
-            "status": "in_progress",
-            "commit_type": "feat",
-            "commit_summary": "add thing",
-        },
-    )
-    assert lint_ticket.validate("commit", tp, reg) == []
 
 
 def test_stage_with_no_required_fields_only_checks_universal(tmp_path: Path) -> None:

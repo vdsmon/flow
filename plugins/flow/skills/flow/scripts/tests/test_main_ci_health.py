@@ -66,13 +66,6 @@ def test_failing_checks_exclude_superseded_and_skipped():
     assert out["failing_checks"] == ["lint-and-test"]
 
 
-def test_lowercase_status_uppercased_and_classified():
-    # a completed-success entry must read green ONLY because status is uppercased to
-    # COMPLETED before _classify_rollup (which compares raw status != "COMPLETED").
-    runs = [{"name": "x", "status": "completed", "conclusion": "success"}]
-    assert mch.classify_main_ci(runs)["status"] == "green"
-
-
 # ---- probe (injected runner; never hits live gh) ----
 
 

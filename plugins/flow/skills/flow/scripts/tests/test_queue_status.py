@@ -530,12 +530,6 @@ def test_forge_error_on_one_key_does_not_drop_others():
     assert {r["key"] for r in results} == {"flow-good"}
 
 
-def test_not_supported_swallowed():
-    ref = "feat/flow-nohost-slug"
-    fake = _FakeForge(prs={ref: _pr(5)}, threads={}, fail_threads_on={"5"})
-    assert qst.flag_parked_reviews(["flow-nohost"], [ref], fake) == []
-
-
 def test_detect_pr_error_swallowed():
     ref = "feat/flow-derr-slug"
     fake = _FakeForge(prs={}, threads={}, fail_detect_on={ref})

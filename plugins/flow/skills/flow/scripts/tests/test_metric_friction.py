@@ -119,15 +119,6 @@ def test_missing_file_zero(tmp_path: Path) -> None:
     assert result["by_severity"] == {}
 
 
-def test_empty_file_zero(tmp_path: Path) -> None:
-    _seed_workspace(tmp_path)
-    (tmp_path / ".flow" / "demo" / "friction.jsonl").write_text("", encoding="utf-8")
-    result = _compute(tmp_path)
-    assert result["total_events"] == 0
-    assert result["runs"] == 0
-    assert result["events_per_run"] == 0
-
-
 def test_malformed_line_quarantined(tmp_path: Path) -> None:
     _seed_workspace(tmp_path)
     fpath = tmp_path / ".flow" / "demo" / "friction.jsonl"

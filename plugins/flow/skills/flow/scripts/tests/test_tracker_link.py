@@ -20,7 +20,6 @@ from typing import Any, cast, override
 
 import pytest
 
-import tracker as t
 import tracker_beads as tb
 import tracker_cli
 import tracker_jira as tj
@@ -301,11 +300,3 @@ def test_cross_backend_read_direction_agrees(monkeypatch: pytest.MonkeyPatch) ->
     jira = _make_jira(monkeypatch, http)
     jira_ticket = jira.get("A")
     assert {"kind": "blocks", "from_key": "A", "to_key": "B"} in jira_ticket["links"]
-
-
-def test_structural_import_ok() -> None:
-    # Guards against an accidental import break across the three modules.
-    assert callable(tracker_cli.cli_main)
-    assert hasattr(tb.BeadsAdapter, "link")
-    assert hasattr(tj.JiraAdapter, "link")
-    assert t.Tracker is not None

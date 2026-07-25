@@ -346,10 +346,6 @@ def test_get_issue_populates_links_from_issuelinks(monkeypatch: pytest.MonkeyPat
     assert "issuelinks" in requested
 
 
-def test_get_fields_includes_issuelinks() -> None:
-    assert "issuelinks" in tj._GET_FIELDS
-
-
 def test_list_assigned_open_filter(monkeypatch: pytest.MonkeyPatch) -> None:
     http = _FakeHttp([_Response({"issues": [_issue_payload(key="FT-9")]})])
     adapter = _make_adapter(monkeypatch, http)

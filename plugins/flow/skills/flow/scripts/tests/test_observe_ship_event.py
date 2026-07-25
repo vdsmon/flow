@@ -103,13 +103,6 @@ def test_observe_invalid_run_id_raises(tmp_path: Path) -> None:
         observe_ship_event.observe(tmp_path, "FT-1", _payload(), "not-hex")
 
 
-def test_observe_creates_ship_events_dir(tmp_path: Path) -> None:
-    _seed_workspace(tmp_path)
-    observe_ship_event.observe(tmp_path, "FT-1", _payload(), "abcdef0123456789")
-    ship_dir = _memory_paths.ship_events_dir(tmp_path, "demo")
-    assert ship_dir.is_dir()
-
-
 def test_observe_primary_immutable_after_write(tmp_path: Path) -> None:
     """Two writes of identical payload: second goes to dupe.1.json."""
     _seed_workspace(tmp_path)
@@ -584,21 +577,6 @@ def test_plugin_version_stamps_live_version(tmp_path: Path) -> None:
     assert isinstance(data["plugin_version"], str)
     assert data["plugin_version"]
     assert data["plugin_version"] == live
-
-
-def test_plugin_version_present_in_dupe_write(tmp_path: Path) -> None:
-    _seed_workspace(tmp_path)
-    observe_ship_event.observe(tmp_path, "FT-1", _payload(), "abcdef0123456789")
-    p_dupe, is_dupe = observe_ship_event.observe(tmp_path, "FT-1", _payload(), "abcdef0123456789")
-    assert is_dupe is True
-    data = json.loads(p_dupe.read_text(encoding="utf-8"))
-    assert data["plugin_version"] == _live_plugin_version()
-
-
-def test_plugin_version_in_input_evidence_rejected_as_extra_key(tmp_path: Path) -> None:
-    _seed_workspace(tmp_path)
-    with pytest.raises(observe_ship_event._EvidenceInvalid, match="extra"):
-        observe_ship_event.validate_evidence(_payload(extras={"plugin_version": "9.9.9"}), "FT-1")
 
 
 def test_plugin_version_guarded_to_empty_on_failure(

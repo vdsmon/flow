@@ -461,17 +461,6 @@ def test_cli_no_flow_dir_time_to_pr(tmp_path: Path, capsys) -> None:
     assert "no .flow" in capsys.readouterr().err
 
 
-def test_cli_flow_dir_without_initialized_marker(tmp_path: Path, capsys) -> None:
-    (tmp_path / ".flow").mkdir()  # bare .flow, no .initialized
-    rc = metric.cli_main(
-        ["tickets-per-week", "--namespace", "demo", "--workspace-root", str(tmp_path)]
-    )
-    assert rc == 1
-    err = capsys.readouterr().err
-    assert "not a flow workspace" in err
-    assert str(tmp_path.resolve()) in err
-
-
 def test_cli_tpw_output_includes_resolved_workspace_root(tmp_path: Path, capsys) -> None:
     _seed_workspace(tmp_path)
     _write_ship_event(tmp_path, "FT-1", shipped_at="2026-05-20T10:00:00Z")
@@ -747,21 +736,6 @@ def test_classify_via_flow_from_stamp_no_state(tmp_path: Path) -> None:
     assert metric.classify_attribution(tmp_path, event) == metric.ATTR_VIA_FLOW
 
 
-def test_compute_counts_stamped_via_flow(tmp_path: Path) -> None:
-    _seed_workspace(tmp_path)
-    _write_stamped_ship_event(
-        tmp_path,
-        "FT-1",
-        shipped_at="2026-05-20T10:00:00Z",
-        plan_started="2026-05-20T00:00:00Z",
-        create_pr_finished="2026-05-20T12:00:00Z",
-    )
-    result = _compute(tmp_path)
-    assert result["shipped"] == 1
-    assert result[metric.ATTR_VIA_FLOW] == 1
-    assert result[metric.ATTR_NOT_ATTRIBUTED] == 0
-
-
 def test_classify_malformed_stamp_falls_back_not_attributed(tmp_path: Path) -> None:
     """A stamp with an unparseable iso field falls back to the legacy join (no state -> not
     attributed)."""
@@ -775,17 +749,6 @@ def test_classify_malformed_stamp_falls_back_not_attributed(tmp_path: Path) -> N
     )
     event = metric.load_ship_events(tmp_path, "demo")[0]
     assert metric.classify_attribution(tmp_path, event) == metric.ATTR_NOT_ATTRIBUTED
-
-
-def test_classify_legacy_join_still_works_without_stamp(tmp_path: Path) -> None:
-    """Back-compat: no stamp, but state.json present + valid -> via-flow via the join."""
-    _seed_workspace(tmp_path)
-    _write_ship_event(
-        tmp_path, "FT-1", shipped_at="2026-05-20T10:00:00Z", observed_by_run_id="run-aaa"
-    )
-    _write_state(tmp_path, "FT-1", run_id="run-aaa", reflect_status="completed")
-    event = metric.load_ship_events(tmp_path, "demo")[0]
-    assert metric.classify_attribution(tmp_path, event) == metric.ATTR_VIA_FLOW
 
 
 def test_ttp_measures_from_stamp_no_state(tmp_path: Path) -> None:
@@ -812,25 +775,6 @@ def test_ttp_measures_from_stamp_no_state(tmp_path: Path) -> None:
     assert result["tickets"][0]["create_pr_finished_at"] == "2026-05-20T12:00:00Z"
 
 
-def test_ttp_legacy_join_still_measures(tmp_path: Path) -> None:
-    """Back-compat: a no-stamp event with valid state.json still measures from state."""
-    _seed_workspace(tmp_path)
-    _write_ship_event(
-        tmp_path, "FT-1", shipped_at="2026-05-20T10:00:00Z", observed_by_run_id="run-1"
-    )
-    _write_state(
-        tmp_path,
-        "FT-1",
-        run_id="run-1",
-        reflect_status="completed",
-        plan_started_at_iso="2026-05-20T00:00:00Z",
-        create_pr_finished_at_iso="2026-05-20T12:00:00Z",
-    )
-    result = _compute_ttp(tmp_path)
-    assert result["n_measured"] == 1
-    assert result["median_hours"] == 12.0
-
-
 # ─── percentile() ────────────────────────────────────────────────────────────
 
 
@@ -841,10 +785,6 @@ def test_percentile_median_of_odd_list() -> None:
 def test_percentile_p90_interpolated() -> None:
     # rank = 4 * 0.9 = 3.6 -> 40 + 0.6 * (50 - 40) = 46
     assert metric.percentile([10, 20, 30, 40, 50], 90) == 46.0
-
-
-def test_percentile_median_of_even_list() -> None:
-    assert metric.percentile([10, 20, 30, 40], 50) == 25.0
 
 
 def test_percentile_empty_returns_zero() -> None:

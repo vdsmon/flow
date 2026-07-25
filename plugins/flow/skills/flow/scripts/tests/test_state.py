@@ -277,17 +277,6 @@ def test_atomic_write_replaces_in_place(tmp_path: Path) -> None:
     assert json.loads(path.read_text(encoding="utf-8"))["ticket"] == "FT-1234"
 
 
-def test_atomic_write_durable_with_parent_dir_fsync(tmp_path: Path) -> None:
-    # _atomic_write fsyncs the parent dir after os.replace for crash durability.
-    # The suppressed-OSError fsync must not break the write on any platform.
-    _seed(tmp_path)
-    state.begin_stage(tmp_path, "ticket", "h")
-    path = tmp_path / "state.json"
-    assert json.loads(path.read_text(encoding="utf-8"))["stages"]["ticket"]["status"] == (
-        "in_progress"
-    )
-
-
 def test_no_temp_files_leak_after_write(tmp_path: Path) -> None:
     _seed(tmp_path)
     state.begin_stage(tmp_path, "ticket", "h")

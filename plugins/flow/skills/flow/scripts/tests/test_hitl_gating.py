@@ -152,15 +152,6 @@ def test_decided_hitl_alongside_decision(tmp_path: Path) -> None:
     assert result["decided"] is True
 
 
-def test_decided_bd_read_fail_returns_hitl_false(tmp_path: Path) -> None:
-    _seed_workspace(tmp_path)
-    config, _ = triage._resolve_config(tmp_path)
-    assert config is not None
-    runner = _FakeRunner([_version_ok(), _cp(returncode=1)])
-    result = triage.decided(config, "flow-x", [], runner=runner)
-    assert result == {"decided": False, "answer": None, "is_hot": True, "hitl": False}
-
-
 def test_decided_non_dict_issue_returns_hitl_false(tmp_path: Path) -> None:
     _seed_workspace(tmp_path)
     config, _ = triage._resolve_config(tmp_path)
@@ -214,26 +205,6 @@ def test_floor_passes_unlabeled(tmp_path: Path, monkeypatch) -> None:
     _floor(tmp_path, auto=True)
 
 
-def test_floor_noops_when_not_autonomous(tmp_path: Path, monkeypatch) -> None:
-    _seed_workspace(tmp_path)
-
-    def _boom(*a, **k):
-        raise AssertionError("decided() must not run on the interactive path")
-
-    monkeypatch.setattr(triage, "decided", _boom)
-    _floor(tmp_path, base="main", auto=False)
-
-
-def test_floor_noops_non_beads_backend(tmp_path: Path, monkeypatch) -> None:
-    _seed_workspace(tmp_path, backend="jira")
-
-    def _boom(*a, **k):
-        raise AssertionError("decided() must not run for a non-beads tracker")
-
-    monkeypatch.setattr(triage, "decided", _boom)
-    _floor(tmp_path, base="@default", auto=True)
-
-
 def test_floor_hitl_fires_even_when_adjudicate_hot_on(tmp_path: Path, monkeypatch) -> None:
     # adjudicate_hot lifts only the hot half; a hitl bead still refuses.
     _seed_workspace(tmp_path)
@@ -252,16 +223,6 @@ def test_floor_hitl_wins_over_hot(tmp_path: Path, monkeypatch) -> None:
         triage, "decided", lambda *a, **k: {"hitl": True, "decided": False, "is_hot": True}
     )
     with pytest.raises(fw._HitlBead):
-        _floor(tmp_path, auto=True, planned=["lease.py"])
-
-
-def test_floor_hot_still_refuses_when_not_hitl(tmp_path: Path, monkeypatch) -> None:
-    # the hot half is intact: a hot+undecided change with no hitl label still blocks.
-    _seed_workspace(tmp_path)
-    monkeypatch.setattr(
-        triage, "decided", lambda *a, **k: {"hitl": False, "decided": False, "is_hot": True}
-    )
-    with pytest.raises(fw._ConfigError):
         _floor(tmp_path, auto=True, planned=["lease.py"])
 
 

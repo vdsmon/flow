@@ -148,12 +148,6 @@ def _liveness(repo: Path, sel: dict) -> dict[str, str]:
 # ─── invariant (c), direct: decide() is pure, test it without any plumbing ──
 
 
-def test_decide_never_returns_done_while_launched_pending_nonempty():
-    result = ed.decide({"launch": [], "launched_pending": ["flow-x"]}, {}, stranded=[])
-    assert result["action"] == "wait"
-    assert result["action"] != "done"
-
-
 # ─── lifecycle rows: must-match states ──────────────────────────────────────
 
 

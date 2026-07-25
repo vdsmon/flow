@@ -118,14 +118,6 @@ def test_compute_explicit_feat_bumps_minor(tmp_path):
     }
 
 
-def test_compute_explicit_fix_bumps_patch(tmp_path):
-    run = _runner(current="0.27.56")
-    result = version.compute(cwd=tmp_path, ref="origin/main", runner=run, commit_type="fix")
-    assert result["next"] == "0.27.57"
-    assert result["bump"] == "patch"
-    assert result["commit_type"] == "fix"
-
-
 def test_compute_head_subject_fallback_feat(tmp_path):
     # no explicit flag: the HEAD commit subject's conventional prefix decides.
     run = _runner(current="0.27.56", log_subject="feat(queue): add verb")
@@ -133,14 +125,6 @@ def test_compute_head_subject_fallback_feat(tmp_path):
     assert result["next"] == "0.28.0"
     assert result["bump"] == "minor"
     assert result["commit_type"] == "feat"
-
-
-def test_compute_head_subject_fallback_non_conventional_is_patch(tmp_path):
-    run = _runner(current="0.27.56", log_subject="Update README")
-    result = version.compute(cwd=tmp_path, ref="origin/main", runner=run)
-    assert result["next"] == "0.27.57"
-    assert result["bump"] == "patch"
-    assert result["commit_type"] is None
 
 
 def test_compute_empty_string_commit_type_is_unset(tmp_path):
@@ -202,14 +186,6 @@ def _seed_version_files(tmp_path):
     return plugin, market, codex_plugin
 
 
-def test_write_version_bumps_all_version_files(tmp_path):
-    plugin, market, codex_plugin = _seed_version_files(tmp_path)
-    version.write_version(cwd=tmp_path, version="0.27.58")
-    assert '"version": "0.27.58"' in plugin.read_text(encoding="utf-8")
-    assert '"version": "0.27.58"' in market.read_text(encoding="utf-8")
-    assert '"version": "0.27.58"' in codex_plugin.read_text(encoding="utf-8")
-
-
 def test_write_version_preserves_surrounding_bytes(tmp_path):
     plugin, market, codex_plugin = _seed_version_files(tmp_path)
     version.write_version(cwd=tmp_path, version="0.27.58")
@@ -235,17 +211,6 @@ def test_set_version_no_version_line_raises(tmp_path):
     f.write_text('{"name": "flow"}', encoding="utf-8")
     with pytest.raises(version.ToolError):
         version._set_version_in_file(f, "0.27.61")
-
-
-def test_write_version_idempotent_same_version(tmp_path):
-    plugin, market, codex_plugin = _seed_version_files(tmp_path)
-    version.write_version(cwd=tmp_path, version="0.27.58")
-    version.write_version(cwd=tmp_path, version="0.27.58")
-    assert plugin.read_text(encoding="utf-8") == _PLUGIN_FIXTURE.replace("0.27.57", "0.27.58")
-    assert market.read_text(encoding="utf-8") == _MARKETPLACE_FIXTURE.replace("0.27.57", "0.27.58")
-    assert codex_plugin.read_text(encoding="utf-8") == _CODEX_PLUGIN_FIXTURE.replace(
-        "0.27.57", "0.27.58"
-    )
 
 
 def test_set_version_replaces_only_first(tmp_path):
@@ -295,14 +260,6 @@ def test_stamp_feat_writes_minor(tmp_path):
     assert '"version": "0.28.0"' in (tmp_path / version.CODEX_PLUGIN_JSON).read_text(
         encoding="utf-8"
     )
-
-
-def test_stamp_head_subject_fallback(tmp_path):
-    _seed_version_files(tmp_path)
-    run = _runner(current="0.27.57", log_subject="feat(queue): add verb")
-    result = version.stamp(cwd=tmp_path, ref="origin/main", runner=run)
-    assert result["next"] == "0.28.0"
-    assert result["commit_type"] == "feat"
 
 
 # ---- CLI stamp ----

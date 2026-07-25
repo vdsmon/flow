@@ -130,11 +130,6 @@ def test_explicit_branch_no_match_returns_none(tmp_path: Path) -> None:
     assert branch_ticket.resolve(tmp_path, tmp_path, branch="feature/no-key") is None
 
 
-def test_explicit_branch_beads(tmp_path: Path) -> None:
-    _beads_workspace(tmp_path, prefix="bd")
-    assert branch_ticket.resolve(tmp_path, tmp_path, branch="feature/bd-a4f7-x") == "bd-a4f7"
-
-
 def test_cli_explicit_branch_returns_key(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

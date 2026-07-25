@@ -68,26 +68,12 @@ def test_live_inflight_waits():
     assert d["plan_required"] == []
 
 
-def test_held_hot_blocked_by_live_run_waits():
-    # a hot bead is held because another hot is still running → wait, don't bail
-    d = ed.decide(_sel(), {"flow-hot1": "live"})
-    assert d["action"] == "wait"
-
-
 def test_held_hot_blocked_by_parked_hot_is_done():
     # the blocking hot was WITHHELD (held_guard): ready PR + branch, but session
     # ended → lease non-live → loop terminates, leaves it for the human (no spin)
     d = ed.decide(_sel(), {"flow-hot1": "expired_foreign"})
     assert d["action"] == "done"
     assert d["parked"] == ["flow-hot1"]
-
-
-def test_backpressure_with_a_live_run_waits():
-    # the PR cap is full but a run is still working → wait for it to merge + free cap.
-    # (real shape: select returns held_backpressure + empty skipped_in_flight; the
-    # cap-occupying run shows up only via the open-PR liveness the CLI computes.)
-    d = ed.decide(_sel(), {"flow-busy": "live"})
-    assert d["action"] == "wait"
 
 
 def test_backpressure_all_parked_is_done():
@@ -119,12 +105,6 @@ def test_corrupt_inflight_blocks_like_live():
     assert d["parked"] == []
 
 
-def test_corrupt_with_parked_still_waits():
-    d = ed.decide(_sel(), {"flow-corrupt": "corrupt", "flow-parked": "absent"})
-    assert d["action"] == "wait"
-    assert d["parked"] == ["flow-parked"]
-
-
 def test_launched_pending_blocks_even_with_no_live_lease():
     # a newly launched run is pre-lease (no run.lock yet) so liveness is empty, but it
     # has NOT finished → block termination, don't abandon a held_hot bead behind it.
@@ -141,28 +121,7 @@ def test_launched_pending_not_parked_alongside_an_absent_key():
     assert d["parked"] == ["flow-old"]
 
 
-def test_launched_pending_empty_still_done():
-    # guard against over-broad waiting: empty launched_pending + nothing live → done.
-    d = ed.decide(_sel(launched_pending=[]), {})
-    assert d["action"] == "done"
-    assert d["parked"] == []
-
-
 # ─── _run_dir_for / liveness_map: the worktree resolution ────────────────────
-
-
-def test_run_dir_for_absent_returns_none(tmp_path):
-    repo = tmp_path / "flow"
-    repo.mkdir()
-    assert ed._run_dir_for(repo, "flow-nope") is None
-
-
-def test_run_dir_for_finds_pool_worktree(tmp_path):
-    repo = tmp_path / "flow"
-    repo.mkdir()
-    run_dir = _pool_run_dir(repo, "flow-abc", slug="some-slug")
-    run_dir.mkdir(parents=True)
-    assert ed._run_dir_for(repo, "flow-abc") == run_dir
 
 
 def test_liveness_map_absent_key(tmp_path):

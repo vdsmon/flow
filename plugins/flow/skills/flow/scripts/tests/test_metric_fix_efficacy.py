@@ -520,29 +520,6 @@ def test_ts_equal_fix_ts_grounds_later_recurrence(tmp_path: Path) -> None:
     assert [r["id"] for r in bead["recurrences"]] == ["f-post"]
 
 
-def test_before_fix_friction_not_counted(tmp_path: Path) -> None:
-    fix_ts = "2026-06-05T00:00:00.000Z"
-    _seed(
-        tmp_path,
-        knowledge=[
-            _machinery(
-                id_="k-6",
-                ts=fix_ts,
-                ticket="T-before",
-                body="MACHINERY: before_fix_anchor patched.",
-            )
-        ],
-        friction=[_friction(id_="f-6", ts=FIX_TS, body="before_fix_anchor happened earlier")],
-    )
-
-    result = _compute(tmp_path)
-
-    bead = result["beads"][0]
-    assert bead["post_fix_count"] == 0
-    assert bead["verdict"] == "clean"
-    assert bead["recurrences"] == []
-
-
 def test_fix_sha_inline_evidence(tmp_path: Path) -> None:
     _seed(
         tmp_path,

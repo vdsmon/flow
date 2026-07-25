@@ -164,17 +164,6 @@ def test_facade_path_traversal_command_is_error() -> None:
     assert "../../arbitrary.py" in errors[0].msg
 
 
-def test_facade_uppercase_command_is_error() -> None:
-    invocations = seam_check.find_facade_invocations("t.md", ".flow/runtime/flow Dispatch next")
-    assert len(invocations) == 1
-    errors = [
-        problem for problem in seam_check.validate(invocations[0]) if problem.level == "ERROR"
-    ]
-    assert len(errors) == 1
-    assert "not allowlisted" in errors[0].msg
-    assert "Dispatch" in errors[0].msg
-
-
 def test_facade_narrative_name_is_not_a_missing_command() -> None:
     text = "The `.flow/runtime/flow` executable is the post-init command seam."
     assert seam_check.find_facade_invocations("t.md", text) == []

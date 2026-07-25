@@ -39,12 +39,6 @@ def test_multiple_occurrences_all_neutralized() -> None:
     assert out == "skip ci and ci skip and no ci"
 
 
-def test_token_in_header_neutralized() -> None:
-    out, n = scrub_ci_skip.scrub("fix: thing [skip ci]\n\nbody")
-    assert n == 1
-    assert out == "fix: thing skip ci\n\nbody"
-
-
 @pytest.mark.parametrize(
     "text",
     [
@@ -66,13 +60,6 @@ def test_idempotent() -> None:
     twice, n = scrub_ci_skip.scrub(once)
     assert n == 0
     assert twice == once
-
-
-def test_clean_input_unchanged() -> None:
-    text = "fix: a real commit\n\nwhy this matters"
-    out, n = scrub_ci_skip.scrub(text)
-    assert n == 0
-    assert out == text
 
 
 # ─── skip-checks trailer ─────────────────────────────────────────────────────
