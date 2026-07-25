@@ -128,6 +128,7 @@ FLOW <target> [<target> ...] [--unattended] [--together] [--verify express|light
 FLOW ticket create [--request <problem>]
 FLOW ticket group (<ticket> ... | --mine) [--state open]
 FLOW ticket split <ticket>
+FLOW ticket finalize <ticket> [--dry-run]
 FLOW memory search [<query>] [--ticket <key>]... [--label <facet:value>] [--digest] [--semantic] [--threshold <float>] [--branch <branch>] [--limit <n>]
 FLOW memory prune
 FLOW memory rebuild [--full]

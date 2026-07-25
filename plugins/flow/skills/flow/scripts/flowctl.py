@@ -20,6 +20,7 @@ COMMANDS = {
     "diff": "diff_extract.py",
     "dispatch": "dispatch_stage.py",
     "evolve-drain": "evolve_drain.py",
+    "finalize": "finalize.py",
     "evolve-reap": "evolve_reap.py",
     "fleet": "fleet.py",
     "flow-beads-create": "flow_beads_create.py",
