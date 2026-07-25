@@ -62,6 +62,7 @@ _GUARD_FILES = frozenset(
         "SKILL.md",
         "stage-registry.toml",
         "CLAUDE.md",
+        "AGENTS.md",
     }
 )
 
