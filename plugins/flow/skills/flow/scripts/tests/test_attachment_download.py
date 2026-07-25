@@ -72,6 +72,11 @@ def test_jira_download_returns_bytes_with_auth(monkeypatch: pytest.MonkeyPatch) 
     req = http.calls[0]
     assert req.full_url.endswith("/attachment/content/10001")
     assert req.get_header("Authorization") is not None
+    ua = req.get_header("User-agent")
+    assert ua == tj._USER_AGENT
+    # Independent of the constant: catches a future bad edit that the constant couldn't certify
+    # against itself.
+    assert not ua.startswith("Python-urllib")
 
 
 def test_jira_download_no_url_raises(monkeypatch: pytest.MonkeyPatch) -> None:
