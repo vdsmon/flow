@@ -448,7 +448,6 @@ def _render_workspace_toml(
         assert config.beads is not None
         lines.append("[tracker.beads]")
         lines.append(f"prefix = {_toml_escape(config.beads.prefix)}")
-        lines.append("shared_server = true")
         lines.append("")
 
     lines.append("[pipeline]")

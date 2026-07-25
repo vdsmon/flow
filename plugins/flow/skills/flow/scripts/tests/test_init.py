@@ -371,7 +371,6 @@ def test_bare_beads_init_runs_bd_and_writes_workspace_toml(tmp_path: Path) -> No
     data = tomllib.loads(result.workspace_toml_path.read_text(encoding="utf-8"))
     assert data["tracker"]["backend"] == "beads"
     assert data["tracker"]["beads"]["prefix"] == "testpkg"
-    assert data["tracker"]["beads"]["shared_server"] is True
     # Beads workspaces still get FT/code_review/etc handlers from defaults.
     assert data["pipeline"]["handlers"]["plan"] == "inline"
 

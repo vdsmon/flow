@@ -1975,7 +1975,6 @@ def _main_beads(tmp: Path, *, maintainer: bool = True) -> Path:
         'backend = "beads"',
         "[tracker.beads]",
         'prefix = "flow"',
-        "shared_server = true",
         "[pipeline]",
         'stages = ["ticket", "plan", "implement", "commit", "reflect"]',
         "[memory]",

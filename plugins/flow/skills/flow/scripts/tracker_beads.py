@@ -10,7 +10,6 @@ from `BEADS_DIR` env or cwd.
 Workspace config (`[tracker.beads]` block in `.flow/workspace.toml`):
 
 - `prefix`: repo-derived slug used by `bd init`. Already created by init.py.
-- `shared_server`: bool, default True. Adapter doesn't read this; bd does.
 - `actor`: optional. Defaults to `$USER`. Used by `list_assigned`.
 
 See `inventory.md` "Beads CLI surface" section for the full subcommand table,
