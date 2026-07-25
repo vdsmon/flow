@@ -1,8 +1,12 @@
-"""Resolve an optional native-agent model hint from ``[models]``.
+"""Resolve an optional native-agent hint from ``[models]``.
 
-``[models].<stage>`` may name a model for a stage that launches a fresh native
-agent. Missing, disabled, or unreadable configuration means "inherit the driver
-session model". Flow does not attest which provider or model actually ran.
+``[models].<stage>`` may be a bare string — one model hint for every agent that
+stage launches — or a table keyed by ROLE (``[models.code_review].reviewer``),
+where each role's value is a model string or an inline table with ``model`` and
+``effort``. Missing, disabled, or unreadable configuration means "inherit the
+driver session model". Flow does not attest which provider or model actually ran;
+the vocabulary of a value belongs to whatever launches the agent (a host model
+name for a native agent, a reviewer-CLI model name for a bundled reviewer).
 """
 
 from __future__ import annotations
@@ -15,31 +19,60 @@ from _workspace import load_workspace_toml
 
 OFF_VALUES = frozenset({"", "off", "none", "false"})
 
+FIELDS = ("model", "effort")
 
-def resolve_stage_model(workspace_root: Path, stage: str) -> str:
-    """Return the configured model hint for ``stage``, or ``""`` to inherit."""
+
+def _clean(value: object) -> str:
+    if not isinstance(value, str) or value.strip().lower() in OFF_VALUES:
+        return ""
+    return value
+
+
+def resolve_agent_hint(
+    workspace_root: Path, stage: str, role: str = "", field: str = "model"
+) -> str:
+    """Return the configured hint for ``stage``/``role``, or ``""`` to inherit.
+
+    A bare-string stage entry is the explicit stage-wide model hint: it applies
+    to every role and carries no effort. A table entry yields hints only for the
+    roles it names — there is no wildcard inside a table.
+    """
     try:
         models = load_workspace_toml(workspace_root).get("models")
-        model = models.get(stage) if isinstance(models, dict) else None
-        if not isinstance(model, str):
+        entry = models.get(stage) if isinstance(models, dict) else None
+        if isinstance(entry, str):
+            return _clean(entry) if field == "model" else ""
+        if not isinstance(entry, dict):
             return ""
-        if model.strip().lower() in OFF_VALUES:
-            return ""
-        return model
+        role_value = entry.get(role) if role else None
+        if isinstance(role_value, str):
+            return _clean(role_value) if field == "model" else ""
+        if isinstance(role_value, dict):
+            return _clean(role_value.get(field))
+        return ""
     except Exception:
         return ""
 
 
 def cli_main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(
-        description="Print the subagent model to pin for a stage (empty = inherit session)."
+        description=(
+            "Print the model or effort hint for a stage's agent (empty = inherit session)."
+        )
     )
     parser.add_argument("--workspace-root", default=".")
     parser.add_argument("--stage", required=True)
+    parser.add_argument("--role", default="", help="the launching role (reviewer, fixer, ...)")
+    parser.add_argument("--field", choices=FIELDS, default="model")
     args = parser.parse_args(argv)
-    model = resolve_stage_model(Path(args.workspace_root).expanduser().resolve(), args.stage)
-    if model:
-        sys.stdout.write(model + "\n")
+    hint = resolve_agent_hint(
+        Path(args.workspace_root).expanduser().resolve(),
+        args.stage,
+        role=args.role,
+        field=args.field,
+    )
+    if hint:
+        sys.stdout.write(hint + "\n")
     return 0
 
 
@@ -47,4 +80,4 @@ if __name__ == "__main__":
     raise SystemExit(cli_main(sys.argv[1:]))
 
 
-__all__ = ["OFF_VALUES", "cli_main", "resolve_stage_model"]
+__all__ = ["FIELDS", "OFF_VALUES", "cli_main", "resolve_agent_hint"]

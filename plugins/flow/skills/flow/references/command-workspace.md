@@ -74,21 +74,22 @@ Success reports tracker backend, namespace, runtime layout version, facade path,
 the host-rendered invocation for bare `FLOW`. A healthy second setup is a successful
 validation, not an error and not a destructive reconfiguration.
 
-An optional `[models]` table may provide host-native stage hints. Reconfiguration
-preserves those hints. Setup does not create provider matrices or require model
-identity as execution evidence.
+An optional `[models]` table may provide agent hints, keyed by stage. A stage's value
+is either one model string — applied to every agent that stage launches — or a table
+keyed by the ROLE the stage launches (`[models.code_review]` with `reviewer` and
+`fixer`), where each role takes a model string or `{ model = "...", effort = "..." }`.
+The validator rejects a hint for a stage or role that launches nothing, so a dead key
+fails loudly instead of silently doing nothing. Reconfiguration preserves the whole
+table. Setup does not create provider matrices or require model identity as execution
+evidence.
 
-Optional `[code_review] reviewer_model` and `[code_review] reviewer_effort` tune the
-bundled Codex reviewer, when that handler is configured. Leaving either unset uses the
-operator's own Codex configuration. Flow checks their type but not their values, because
-that vocabulary belongs to the reviewer CLI and moves independently of Flow. A value the
-CLI rejects therefore surfaces at review time, where the reviewer drops that flag, runs
-once more without it, and reports the substitution: a mistyped tuning key degrades the
-review to the CLI default rather than stranding a ticket. Effort buys
-review depth at the cost of wall clock against a fail-closed stage timeout, so the top of
-the range suits a manual review rather than a pipeline default. They are separate keys
-from `[models]` on purpose: that table is keyed by stage and carries host model names, so
-reusing it would make one value's vocabulary depend on which handler is selected.
+A value's vocabulary belongs to whatever launches the agent: a host model name for a
+native agent, the reviewer CLI's own model and effort names for the bundled Codex
+reviewer (`[models.code_review].reviewer`). Flow checks types, never values — a value
+the CLI rejects surfaces at review time, where the reviewer drops that flag, runs once
+more without it, and reports the substitution. Effort buys review depth at the cost of
+wall clock against a fail-closed stage timeout, so the top of the range suits a manual
+review rather than a pipeline default.
 
 Setup writes `code_review` to the bundled reviewer
 when the `codex` executable resolves and the harness is Claude Code, and to `inline`

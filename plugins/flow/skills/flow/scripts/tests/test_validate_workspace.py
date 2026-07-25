@@ -505,24 +505,49 @@ def test_agents_table_is_rejected_with_simple_replacement_hint(tmp_path: Path) -
     assert any("no longer supported" in violation for violation in result.violations)
 
 
-def test_models_accept_known_stage_string_hints_only(tmp_path: Path) -> None:
+def test_models_accept_stage_string_and_role_table(tmp_path: Path) -> None:
     root = _make_workspace(tmp_path, backend="beads")
-    _append_forge(root, '[models]\nimplement = "sonnet"\ne2e = "off"\n')
-    result, _ = vw.validate(root)
-    assert result.ok
-
-
-def test_models_reject_unknown_stage_and_non_string(tmp_path: Path) -> None:
-    root = _make_workspace(tmp_path, backend="beads")
-    _append_forge(root, '[models]\nwork_model = "opus"\nimplement = 3\n')
-    result, _ = vw.validate(root)
-    assert any(
-        "models.work_model" in violation and "unknown stage" in violation
-        for violation in result.violations
+    _append_forge(
+        root,
+        '[models]\nimplement = "sonnet"\ne2e = "off"\n'
+        '[models.code_review]\nreviewer = { model = "gpt-5.6-sol", effort = "high" }\n'
+        'fixer = "sonnet"\n',
     )
+    result, _ = vw.validate(root)
+    assert result.ok, result.violations
+
+
+def test_models_reject_stage_without_launch_site(tmp_path: Path) -> None:
+    # reflect runs in-driver and launches nothing; a hint there would silently no-op,
+    # so it is a violation naming the valid stages.
+    root = _make_workspace(tmp_path, backend="beads")
+    _append_forge(root, '[models]\nreflect = "opus"\ncommit = "sonnet"\n')
+    result, _ = vw.validate(root)
+    assert any("models.reflect" in v and "launches no agent" in v for v in result.violations)
+    assert any("models.commit" in v and "launches no agent" in v for v in result.violations)
+
+
+def test_models_reject_unknown_role_and_bad_field(tmp_path: Path) -> None:
+    root = _make_workspace(tmp_path, backend="beads")
+    _append_forge(
+        root,
+        '[models.code_review]\nauthor = "opus"\nreviewer = { model = "m", temperature = "1" }\n',
+    )
+    result, _ = vw.validate(root)
+    assert any("models.code_review.author" in v and "no such role" in v for v in result.violations)
     assert any(
-        "models.implement" in violation and "must be a string" in violation
-        for violation in result.violations
+        "models.code_review.reviewer.temperature" in v and "unknown field" in v
+        for v in result.violations
+    )
+
+
+def test_models_reject_non_string_entry(tmp_path: Path) -> None:
+    root = _make_workspace(tmp_path, backend="beads")
+    _append_forge(root, "[models]\nimplement = 3\n")
+    result, _ = vw.validate(root)
+    assert any(
+        "models.implement" in v and "model string or a role-keyed table" in v
+        for v in result.violations
     )
 
 
@@ -605,55 +630,10 @@ def test_code_review_block_absent_is_valid(tmp_path: Path) -> None:
     assert result.ok, result.violations
 
 
-def test_reviewer_model_string_accepted(tmp_path: Path) -> None:
+def test_code_review_block_hard_fails_naming_replacement(tmp_path: Path) -> None:
+    # Breaking change, no alias: the message must name the [models.code_review] shape.
     root = _make_workspace(tmp_path, backend="beads")
     _append_forge(root, '[code_review]\nreviewer_model = "gpt-5.6-sol"\n')
     result, _ = vw.validate(root)
-    assert result.ok, result.violations
-
-
-def test_reviewer_effort_string_accepted(tmp_path: Path) -> None:
-    root = _make_workspace(tmp_path, backend="beads")
-    _append_forge(root, '[code_review]\nreviewer_effort = "high"\n')
-    result, _ = vw.validate(root)
-    assert result.ok, result.violations
-
-
-def test_reviewer_effort_value_is_not_policed(tmp_path: Path) -> None:
-    # The effort vocabulary belongs to the reviewer CLI and moves; a stale allow-list
-    # here would reject a working config.
-    root = _make_workspace(tmp_path, backend="beads")
-    _append_forge(root, '[code_review]\nreviewer_effort = "some-future-tier"\n')
-    result, _ = vw.validate(root)
-    assert result.ok, result.violations
-
-
-def test_reviewer_effort_non_string_is_violation(tmp_path: Path) -> None:
-    root = _make_workspace(tmp_path, backend="beads")
-    _append_forge(root, "[code_review]\nreviewer_effort = 3\n")
-    result, _ = vw.validate(root)
     assert not result.ok
-    assert any(
-        "code_review.reviewer_effort" in v and "must be a string" in v for v in result.violations
-    )
-
-
-def test_reviewer_model_non_string_is_violation(tmp_path: Path) -> None:
-    root = _make_workspace(tmp_path, backend="beads")
-    _append_forge(root, "[code_review]\nreviewer_model = 3\n")
-    result, _ = vw.validate(root)
-    assert not result.ok
-    assert any(
-        "code_review.reviewer_model" in v and "must be a string" in v for v in result.violations
-    )
-
-
-def test_code_review_not_a_table_is_violation(tmp_path: Path) -> None:
-    root = _make_workspace(tmp_path, backend="beads")
-    # Prepended, not appended: a bare key after the last table header would parse
-    # into that table instead of at the top level.
-    p = root / ".flow" / "workspace.toml"
-    p.write_text('code_review = "codex"\n' + p.read_text(encoding="utf-8"), encoding="utf-8")
-    result, _ = vw.validate(root)
-    assert not result.ok
-    assert any("code_review" in v and "not a table" in v for v in result.violations)
+    assert any("code_review" in v and "models.code_review" in v for v in result.violations)

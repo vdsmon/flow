@@ -205,19 +205,24 @@ repo_slug = "rs"
 
 ### Optional `[models]` workspace schema
 
-A workspace may give a native stage agent a model hint. Missing keys inherit the
+A workspace may give a stage's agents a model/effort hint. Missing keys inherit the
 driver session model, and a host that does not accept a hint ignores it. These are
 preferences, not execution provenance.
 
 ```toml
 [models]
-implement = "sonnet"
-code_review = "opus"
-e2e = "sonnet"
+implement = "sonnet"          # one string = every agent this stage launches
+
+[models.code_review]          # or keyed by the ROLE the stage launches
+reviewer = { model = "gpt-5.6-sol", effort = "high" }
+fixer = "sonnet"
 ```
 
-The resolver reads only `[models].<stage>`. Values `off`, `none`, `false`, and the
-empty string mean inherit. There is no provider matrix, effort contract, snapshot,
+The resolver is `model_resolve.resolve_agent_hint(root, stage, role, field)` (facade:
+`model --stage <s> [--role <r>] [--field model|effort]`). Values `off`, `none`,
+`false`, and the empty string mean inherit. `validate_workspace._LAUNCH_SITES` is the
+closed stage→roles map: a hint for a stage or role that launches nothing is a
+violation, so a dead key fails loudly. There is no provider matrix, snapshot,
 attestation, or route override.
 
 ### Planning handoff

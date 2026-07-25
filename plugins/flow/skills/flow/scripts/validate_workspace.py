@@ -92,27 +92,13 @@ def _validate_tracker_block(data: dict[str, Any], result: ValidationResult) -> s
 
 
 def _validate_code_review_block(data: dict[str, Any], result: ValidationResult) -> None:
-    """Validate the OPTIONAL `[code_review]` block, only when present.
-
-    `reviewer_model` and `reviewer_effort` tune the bundled Codex reviewer. They are
-    separate from `[models]` because that table is keyed by stage and carries host model
-    names; one key whose vocabulary changed with the selected handler would be worse
-    than two.
-
-    Both are checked for type only. Their vocabularies belong to the reviewer CLI, not
-    to Flow, and that vocabulary moves: `max` is a valid effort level that an earlier
-    reading of the CLI missed. A stale allow-list here would reject a working config.
-    """
-    block = data.get("code_review")
-    if block is None:
-        return
-    if not isinstance(block, dict):
-        result.add("code_review", "not a table")
-        return
-    for key in ("reviewer_model", "reviewer_effort"):
-        value = block.get(key)
-        if value is not None and not isinstance(value, str):
-            result.add(f"code_review.{key}", "must be a string")
+    """Hard-fail a `[code_review]` table: reviewer tuning moved into `[models]`."""
+    if data.get("code_review") is not None:
+        result.add(
+            "code_review",
+            "removed; reviewer tuning lives in [models.code_review] now — "
+            'reviewer = { model = "<model>", effort = "<effort>" }',
+        )
 
 
 def _validate_forge_block(data: dict[str, Any], result: ValidationResult) -> None:
@@ -264,10 +250,12 @@ def _warn_inline_stage_model(
     for stage in ("implement", "e2e"):
         per_stage = models.get(stage)
         if isinstance(per_stage, str):
-            field, value = f"models.{stage}", per_stage
+            field = f"models.{stage}"
+            if per_stage.strip().lower() in OFF_VALUES:
+                continue
+        elif isinstance(per_stage, dict) and per_stage:
+            field = f"models.{stage}"
         else:
-            continue
-        if value.strip().lower() in OFF_VALUES:
             continue
         if handlers.get(stage) == "inline":
             result.warn(
@@ -277,27 +265,78 @@ def _warn_inline_stage_model(
             )
 
 
-def _validate_model_hints(
-    data: dict[str, Any], registry: list[StageEntry], result: ValidationResult
-) -> None:
+# The stages that actually launch an agent, and the roles they launch. This is the
+# liveness truth for [models] keys: a hint for a stage outside this map (or a role a
+# stage never launches) would silently do nothing, so it is a violation, not a no-op.
+# Sources: delivery-plan.md (plan assessor), stage-registry.toml subagent handlers
+# (implement, e2e), stage-code_review.md (reviewer + fixer), stage-review_loop.md §3
+# (fixer), stage-review_brief.md (author), stage-merge.md §2 (reviewer).
+_LAUNCH_SITES: dict[str, frozenset[str]] = {
+    "plan": frozenset({"assessor"}),
+    "implement": frozenset({"implementer"}),
+    "code_review": frozenset({"reviewer", "fixer"}),
+    "e2e": frozenset({"runner"}),
+    "review_loop": frozenset({"fixer"}),
+    "review_brief": frozenset({"author"}),
+    "merge": frozenset({"reviewer"}),
+}
+
+_HINT_FIELDS = frozenset({"model", "effort"})
+
+
+def _validate_model_hints(data: dict[str, Any], result: ValidationResult) -> None:
+    """Validate `[models]`: stage keys must name a launch site; a stage entry is a
+    bare model string (stage-wide) or a role-keyed table whose values are a model
+    string or an inline `{ model, effort }` table. Values are type-checked only —
+    their vocabulary belongs to whatever launches the agent."""
     if "agents" in data:
         result.add(
             "agents",
             "provider route tables are no longer supported; delete [agents] and use optional "
-            "[models].<stage> hints",
+            "[models] hints",
         )
     models = data.get("models")
     if models is None:
         return
     if not isinstance(models, dict):
-        result.add("models", "must be a table of stage = model hints")
+        result.add("models", "must be a table keyed by stage")
         return
-    stages = {entry.name for entry in registry}
-    for stage, model in models.items():
-        if stage not in stages:
-            result.add(f"models.{stage}", "unknown stage")
-        if not isinstance(model, str):
-            result.add(f"models.{stage}", "must be a string")
+    for stage, entry in models.items():
+        roles = _LAUNCH_SITES.get(stage)
+        if roles is None:
+            result.add(
+                f"models.{stage}",
+                f"stage launches no agent; valid stages: {sorted(_LAUNCH_SITES)}",
+            )
+            continue
+        if isinstance(entry, str):
+            continue
+        if not isinstance(entry, dict):
+            result.add(f"models.{stage}", "must be a model string or a role-keyed table")
+            continue
+        for role, value in entry.items():
+            if role not in roles:
+                result.add(
+                    f"models.{stage}.{role}",
+                    f"stage launches no such role; valid roles: {sorted(roles)}",
+                )
+                continue
+            if isinstance(value, str):
+                continue
+            if not isinstance(value, dict):
+                result.add(
+                    f"models.{stage}.{role}",
+                    'must be a model string or { model = "...", effort = "..." }',
+                )
+                continue
+            for field_name, field_value in value.items():
+                if field_name not in _HINT_FIELDS:
+                    result.add(
+                        f"models.{stage}.{role}.{field_name}",
+                        f"unknown field; valid fields: {sorted(_HINT_FIELDS)}",
+                    )
+                elif not isinstance(field_value, str):
+                    result.add(f"models.{stage}.{role}.{field_name}", "must be a string")
 
 
 def _validate_memory_block(data: dict[str, Any], result: ValidationResult) -> bool:
@@ -374,7 +413,7 @@ def validate(
     compounding = _validate_memory_block(data, result)
 
     registry = stage_registry or load_registry(_stage_registry_path())
-    _validate_model_hints(data, registry, result)
+    _validate_model_hints(data, result)
     stages, handlers = _validate_pipeline_block(data, registry, compounding, result)
 
     _warn_inline_stage_model(data, handlers, result)
