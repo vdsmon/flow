@@ -11,7 +11,7 @@ calculator:
 | `lead-time` | `time-to-pr` | median and p90 plan-to-PR hours |
 | `friction` | `friction-per-run` | events per run, type, and severity |
 | `reverts` | `revert-rate` | revert rate and tracker/git attribution |
-| `experiment` | configured experiment report | cohort outcome against its manifest |
+| `experiment` | `arm-compare` | per-arm flow-vs-control comparison |
 | `trend` | `trend` | combined delivery and memory window |
 | `memory-health` | `corpus-health` | live, superseded, and aging knowledge |
 | `recall-quality` | `recall-hit-rate` | surfaced, used, and miss proxy |
@@ -68,9 +68,11 @@ loud rather than returning a misleading zero.
 
 ### Experiment
 
-Read the configured experiment manifest and its immutable cohort evidence. State the
-hypothesis, cohort boundaries, metric, sample size, and outcome. Missing cohort data
-is `insufficient`, not success or failure.
+`arm-compare` partitions ship events by their recorded `arm` (flow vs control) and
+compares the arms on throughput, time-to-PR, and revert rate, with a >=2-of-3
+verdict; a revert regression overrides toward GUARD. An empty window exits 1 loudly
+rather than reporting an all-zeros verdict. Output is JSON-only (the `--json` note
+above does not apply to it).
 
 ### Trend
 

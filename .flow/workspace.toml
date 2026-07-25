@@ -30,8 +30,6 @@ adjudicate_hot = true
 implement = "sonnet"
 code_review = "opus"
 review_loop = "sonnet"
-e2e = "sonnet"
-review_brief = "sonnet"
 
 # This repo opens PRs ready for review (maintainer preference). The engine
 # default is draft (create_pr.py returns true when this key is unset), so

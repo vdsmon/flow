@@ -502,7 +502,11 @@ def test_agents_table_is_rejected_with_simple_replacement_hint(tmp_path: Path) -
 
 
 def test_models_accept_stage_string_and_role_table(tmp_path: Path) -> None:
-    root = _make_workspace(tmp_path, backend="beads")
+    stages = ["ticket", "plan", "implement", "code_review", "e2e", "commit", "reflect"]
+    handlers = dict.fromkeys(stages, "inline")
+    handlers["implement"] = "subagent:general-purpose"
+    handlers["e2e"] = "subagent:general-purpose"
+    root = _make_workspace(tmp_path, backend="beads", stages=stages, handlers=handlers)
     _append_forge(
         root,
         '[models]\nimplement = "sonnet"\ne2e = "off"\n'
@@ -524,7 +528,10 @@ def test_models_reject_stage_without_launch_site(tmp_path: Path) -> None:
 
 
 def test_models_reject_unknown_role_and_bad_field(tmp_path: Path) -> None:
-    root = _make_workspace(tmp_path, backend="beads")
+    stages = ["ticket", "plan", "implement", "code_review", "commit", "reflect"]
+    handlers = dict.fromkeys(stages, "inline")
+    handlers["implement"] = "subagent:general-purpose"
+    root = _make_workspace(tmp_path, backend="beads", stages=stages, handlers=handlers)
     _append_forge(
         root,
         '[models.code_review]\nauthor = "opus"\nreviewer = { model = "m", temperature = "1" }\n',
@@ -654,3 +661,15 @@ def test_models_role_table_rejected_off_the_map_even_when_subagent_wired(tmp_pat
     _append_forge(root, '[models.reflect]\nrunner = "opus"\n')
     result, _ = vw.validate(root)
     assert any("models.reflect" in v and "string hint" in v for v in result.violations)
+
+
+def test_models_hint_for_stage_outside_pipeline_rejected(tmp_path: Path) -> None:
+    # e2e launches by construction when wired, but this workspace's pipeline
+    # does not run it at all — the hint is provably dead here.
+    stages = ["ticket", "plan", "implement", "commit", "reflect"]
+    handlers = dict.fromkeys(stages, "inline")
+    handlers["implement"] = "subagent:general-purpose"
+    root = _make_workspace(tmp_path, backend="beads", stages=stages, handlers=handlers)
+    _append_forge(root, '[models]\ne2e = "sonnet"\n')
+    result, _ = vw.validate(root)
+    assert any("models.e2e" in v and "not in [pipeline].stages" in v for v in result.violations)

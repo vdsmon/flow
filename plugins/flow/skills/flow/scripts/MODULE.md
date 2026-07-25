@@ -301,7 +301,7 @@ markers are overwritten. `—` = none.
 | `tracker_beads.py` | — | `tracker`, `triage` |
 | `tracker_cli.py` | `comment` `create` `download-attachments` `get` `is-shipped` `link` `list-epics` `list-sprints` `list-types` `set-sprint` `state` `transition` | `group_candidates`, `group_persist`, `observe_at_close`, `senses_deadman`, `sync`, `triage`, `worktree_janitor` |
 | `tracker_jira.py` | — | `tracker` |
-| `triage.py` | `adjudicate-enabled` `adjudicate-hot-enabled` `decided` `lane` `list` | `evolve_reap`, `evolve_self_merge`, `flow_worktree` |
+| `triage.py` | `decided` `lane` `list` | `evolve_reap`, `evolve_self_merge`, `flow_worktree` |
 | `validate_workspace.py` | — | `dispatch_stage` |
 | `version.py` | `stamp` | — |
 | `worker_pool.py` | `guard` `limit` `recover` `snapshot` | — |

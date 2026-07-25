@@ -308,12 +308,15 @@ def _validate_model_hints(
         result.add("models", "must be a table keyed by stage")
         return
     for stage, entry in models.items():
-        _validate_stage_hint(stage, entry, handlers.get(stage, ""), result)
+        if stage not in handlers:
+            result.add(f"models.{stage}", "stage is not in [pipeline].stages here")
+            continue
+        _validate_stage_hint(stage, entry, handlers[stage], result)
 
 
 def _validate_stage_hint(stage: str, entry: Any, handler: str, result: ValidationResult) -> None:
     roles = _LAUNCH_SITES.get(stage)
-    handler_launches = handler.startswith(("subagent:", "skill:"))
+    handler_launches = handler.startswith("subagent:")
     if roles is None and handler_launches and isinstance(entry, str):
         return
     if roles is None:

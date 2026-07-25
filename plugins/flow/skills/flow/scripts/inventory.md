@@ -223,10 +223,14 @@ fixer = "sonnet"
 
 The resolver is `model_resolve.resolve_agent_hint(root, stage, role, field)` (facade:
 `model --stage <s> [--role <r>] [--field model|effort]`). Values `off`, `none`,
-`false`, and the empty string mean inherit. `validate_workspace._LAUNCH_SITES` is the
-closed stage→roles map: a hint for a stage or role that launches nothing is a
-violation, so a dead key fails loudly. There is no provider matrix, snapshot,
-attestation, or route override.
+`false`, and the empty string mean inherit. A role-keyed table naming exactly one
+role resolves without `--role` (the generic launch recipe carries none); two or more
+roles require the caller to name one. Liveness is judged against THIS workspace
+(`validate_workspace._validate_stage_hint`): an inline/none-handled stage is checked
+against `_LAUNCH_SITES` (the roles its prose launches), while a `subagent:`-wired
+stage accepts a string hint anywhere — and a hint for a stage outside the pipeline
+is rejected outright. There is no provider matrix, snapshot, attestation, or route
+override.
 
 ### Planning handoff
 
