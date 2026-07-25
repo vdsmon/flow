@@ -24,6 +24,7 @@ COMMANDS = {
     "fleet": "fleet.py",
     "flow-beads-create": "flow_beads_create.py",
     "forge": "forge_cli.py",
+    "handler": "resolve_handler.py",
     "friction": "flow_friction.py",
     "friction-escalate": "friction_escalate.py",
     "frontmatter": "ticket_frontmatter.py",

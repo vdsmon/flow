@@ -7,6 +7,7 @@ manifest invalid -> manifest_valid False, exit 2.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -197,6 +198,35 @@ def test_broken_unrelated_bundle_does_not_false_match(tmp_path: Path) -> None:
     res = rh.resolve("skill:review", search_roots=[tmp_path])
     assert res.installed is False
     assert rh._exit_code(res) == 1
+
+
+# ─── CLI ───────────────────────────────────────────────────────────────────────
+
+
+def test_cli_emits_json_and_exit_0(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    _write_manifest(tmp_path / "ship-it", _full_manifest_text())
+    rc = rh.cli_main(["--handler", "skill:ship-it:create", "--search-roots", str(tmp_path)])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["handler_type"] == "skill"
+    assert payload["installed"] is True
+    assert payload["plugin_root"] == str(tmp_path / "ship-it")
+
+
+def test_cli_not_installed_exit_1(tmp_path: Path) -> None:
+    rc = rh.cli_main(["--handler", "skill:ghost", "--search-roots", str(tmp_path)])
+    assert rc == 1
+
+
+def test_cli_manifest_invalid_exit_2(tmp_path: Path) -> None:
+    _write_manifest(tmp_path / "ship-it", _invalid_manifest_text())
+    rc = rh.cli_main(["--handler", "skill:ship-it", "--search-roots", str(tmp_path)])
+    assert rc == 2
+
+
+def test_cli_unknown_handler_exit_3() -> None:
+    rc = rh.cli_main(["--handler", "garbage"])
+    assert rc == 3
 
 
 # ─── Cross-name skill fallback (_provides_skill) ───────────────────────────────
