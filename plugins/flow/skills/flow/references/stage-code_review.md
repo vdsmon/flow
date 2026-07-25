@@ -64,8 +64,7 @@ model, effort level, clone, or execution receipt.
 
 4. Perform at most one fix pass. If there are confident, in-scope Critical or Major
    fixes, launch one fresh native fixer with only the accepted findings and the
-   The fixer's hint role is `fixer` (`model --stage code_review --role fixer`).
-   ownership boundary. The fixer edits directly in the authoritative ticket
+   ownership boundary. The fixer's hint role is `fixer` (`model --stage code_review --role fixer`). The fixer edits directly in the authoritative ticket
    worktree, runs the checks affected by its edits once, and returns. Do not create a
    private clone, import a patch, retry with another model, or start a second fix
    pass. Minor findings remain for the human unless they are inseparable from an

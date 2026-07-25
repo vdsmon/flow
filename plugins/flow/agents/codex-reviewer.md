@@ -19,6 +19,8 @@ Your prompt carries the stage contract. Bind it before anything else:
 ```text
 Workspace root: <absolute run_root>
 Skill root: <absolute skill_root>
+Facade: <absolute facade>
+Harness: <claude-code|codex|generic>
 Ticket and stage: <ticket> / code_review
 Ticket dir: <absolute ticket_dir>
 Reference path: <absolute reference doc>

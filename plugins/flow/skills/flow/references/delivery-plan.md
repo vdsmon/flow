@@ -44,7 +44,7 @@ one. Write the ticket's intent plus its text to a temporary file and query:
 ```bash
 FLOW_HARNESS="<harness>" "<facade>" recall \
   --query-file "<absolute-intent-file>" [--semantic] \
-  --ticket "<KEY>" --top-n 5 --workspace-root .
+  --top-n 5 --workspace-root .
 ```
 
 Weave genuinely relevant entries into the plan's approach and risks, citing their ids.
@@ -156,14 +156,6 @@ it cannot cross the gate.
 
 ## 6. Bootstrap the approved plan
 
-If grounding recalled entries that shaped the plan, record them (best-effort, never
-blocking) so the run's reflect stage can judge recall quality and supersession:
-
-```bash
-FLOW_HARNESS="<harness>" "<facade>" recall "<one-line plan intent>" \
-  --record-pending --branch "feat/<ticket-slug>" --ticket "<KEY>" --workspace-root .
-```
-
 Write the approved Markdown to a plan file and create the ticket worktree:
 
 ```bash
@@ -186,6 +178,20 @@ prefix; `--commit-type` carries the actual change type. Do not translate a bug-f
 commit into a non-`feat/` Flow branch.
 
 Do not pass `--recover-spill` automatically; it is an explicit operator recovery action.
+
+If grounding recalled entries that shaped the plan, record them right after the
+worktree exists — rooted at the NEW run root and reusing §1's exact query file, so
+the recorded surfaced set is the one the plan actually saw and the dispatcher's
+init-time promotion (which joins on the run root and branch) can pick it up:
+
+```bash
+FLOW_HARNESS="<harness>" "<facade>" recall \
+  --query-file "<absolute-intent-file>" [--semantic] --top-n 5 \
+  --record-pending --branch "feat/<ticket-slug>" --ticket "<KEY>" \
+  --workspace-root "<worktree>"
+```
+
+Best-effort, never blocking: a failed record costs recall observability, not the run.
 
 For a grouped run whose cover set was persisted earlier (`FLOW ticket group`), derive
 it back and pass it as `--covers`:

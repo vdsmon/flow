@@ -118,7 +118,8 @@ FLOW_HARNESS="<harness>" "<facade>" handler --handler "<handler-string>"
 ```
 
 Exit 1 (bundle not installed) or 2 (manifest invalid) fails the stage before any
-skill call; the JSON result carries the concrete `skill_name`/`skill_args` to load. Capture the full skill response before advancing. An inline skill response
+skill call; the JSON result carries the concrete `skill_name`/`skill_args` to load.
+Capture the full skill response before advancing. An inline skill response
 is not a legitimate turn boundary: continue through artifact capture and advance in
 the same turn.
 
