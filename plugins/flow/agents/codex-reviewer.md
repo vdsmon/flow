@@ -29,28 +29,39 @@ Inherited cwd is not authoritative. Root every command at the workspace root.
 
 ## Step 2: Codex reviews
 
-Resolve the review payload as the reference describes, then write it nowhere and pass
-nothing through argv. Codex inspects the worktree itself.
+Resolve the implementation baseline as the reference describes. Compose the review
+prompt and pass it on **stdin**, never through argv: a real diff overruns argument
+limits, and nothing should be interpolated into the command line.
 
-Read `reviewer_model` from the workspace's `[code_review]` table if present, and pass
-it as `-m`. When it is absent, omit `-m` so Codex uses the operator's configured
-default.
+The prompt states the baseline SHA, tells Codex to inspect the uncommitted working-tree
+change itself, and carries the review questions and severity definitions from the
+reference: `Critical` unsafe or incorrect to ship, `Major` materially worth fixing,
+`Minor` optional improvement. Require every finding to cite a real path and line.
+
+Read `reviewer_model` from the workspace's `[code_review]` table if present, and pass it
+as `-m`. When it is absent, omit `-m` so Codex uses the operator's configured default.
 
 Run exactly one foreground call with an explicit 600000 ms timeout:
 
 ```bash
-codex exec review --uncommitted \
-  -c sandbox_mode=read-only \
+codex exec -C "<workspace root>" -s read-only \
   --ignore-rules --ephemeral \
   --output-schema "<skill_root>/scripts/assets/codex-review.schema.json" \
-  -o "<ticket_dir>/stages/codex-review.json"
+  -o "<ticket_dir>/stages/codex-review.json" \
+  - < "<prompt file>"
 ```
 
-`-c sandbox_mode=read-only` is how read-only is enforced; the `review` subcommand has
-no `-s` flag. `--ignore-rules` stops the branch under review from reconfiguring its own
-reviewer through project execpolicy files. Never add
-`--dangerously-bypass-approvals-and-sandbox`, and never give Codex a write sandbox: the
-reviewer does not edit.
+`-C` roots Codex at the workspace, because your inherited cwd is not authoritative and
+an unrooted call would review whatever repository it happened to start in. `-s read-only`
+keeps the reviewer from editing; never add `--dangerously-bypass-approvals-and-sandbox`
+or a write sandbox. `--ignore-rules` stops the branch under review from reconfiguring its
+own reviewer through project execpolicy files. The trailing `-` is what makes Codex read
+the prompt from stdin; without it a piped prompt is appended rather than read.
+
+Use `codex exec`, not `codex exec review`. The `review` subcommand accepts
+`--output-schema` but ignores it, writing rendered prose to `-o` under its own P1/P2/P3
+severities. Plain `exec` honors the schema, which is what makes the normalization below
+mechanical instead of a prose-parsing exercise.
 
 Do not background this call and do not wrap it in a poll loop. You are a spawned agent,
 so a backgrounded command strands the turn.
@@ -89,7 +100,8 @@ Any of these is a missing reviewer, which the reference makes a visible stage fa
 
 - `codex` is not on PATH, or the call exits non-zero;
 - the call exceeds its timeout;
-- `<ticket_dir>/stages/codex-review.json` is absent or does not parse.
+- `<ticket_dir>/stages/codex-review.json` is absent, does not parse as JSON, or does not
+  match the schema.
 
 Report the command and its stderr plainly and fail. Never substitute your own review for
 the Codex one, and never report a review that did not run.

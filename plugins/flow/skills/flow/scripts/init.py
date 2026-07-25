@@ -517,9 +517,13 @@ def _legal_handler_string(value: str) -> bool:
 
 _BUNDLED_CODEX_REVIEWER = "subagent:flow:codex-reviewer"
 
-# Handler values derived from a machine probe rather than chosen by the operator.
-# They are re-derived on every reconfigure, so preserving one as a customization
-# would keep a dead handler wired after its tool is uninstalled.
+# Handler values only the probe produces, so preserving one as an operator
+# customization would keep a dead handler wired after its tool is uninstalled.
+#
+# The rule is deliberately one-way. Going the other direction, a stored `inline` is
+# indistinguishable from an operator who wants inline review, so installing Codex after
+# setup does not retroactively switch an existing workspace; that needs an explicit
+# --handler code_review=... or a fresh init.
 _PROBE_OWNED_HANDLERS = frozenset({_BUNDLED_CODEX_REVIEWER})
 
 
