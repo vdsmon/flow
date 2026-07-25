@@ -38,11 +38,17 @@ change itself, and carries the review questions and severity definitions from th
 reference: `Critical` unsafe or incorrect to ship, `Major` materially worth fixing,
 `Minor` optional improvement. Require every finding to cite a real path and line.
 
-Read the reviewer hint from the workspace's `[models.code_review]` table: `reviewer`
-is a model string, or a `{ model = "...", effort = "..." }` inline table. Pass a
-present model as `-m` and a present effort as `-c model_reasoning_effort=<value>`.
-Omit either flag when its field is absent (or the whole `reviewer` key is), so Codex
-falls back to the operator's own configuration.
+Resolve the reviewer hint through the facade, one field per call, so OFF semantics
+(`off`/`none`/`false` mean inherit) have exactly one implementation:
+
+```bash
+FLOW_HARNESS="<harness>" "<facade>" model --workspace-root . --stage code_review --role reviewer
+FLOW_HARNESS="<harness>" "<facade>" model --workspace-root . --stage code_review --role reviewer --field effort
+```
+
+Pass a non-empty model as `-m` and a non-empty effort as
+`-c model_reasoning_effort=<value>`. Omit either flag when its call prints nothing,
+so Codex falls back to the operator's own configuration.
 
 Run exactly one foreground call with an explicit 600000 ms timeout:
 

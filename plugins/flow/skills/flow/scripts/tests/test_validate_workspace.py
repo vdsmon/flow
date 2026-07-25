@@ -637,3 +637,27 @@ def test_code_review_block_hard_fails_naming_replacement(tmp_path: Path) -> None
     result, _ = vw.validate(root)
     assert not result.ok
     assert any("code_review" in v and "models.code_review" in v for v in result.violations)
+
+
+def test_models_string_hint_allowed_on_subagent_wired_stage_off_the_map(tmp_path: Path) -> None:
+    # reflect launches nothing inline, but a workspace that wires it to a
+    # subagent launches by construction — the hint is live there.
+    stages = ["ticket", "plan", "implement", "commit", "reflect"]
+    handlers = dict.fromkeys(stages, "inline")
+    handlers["implement"] = "subagent:general-purpose"
+    handlers["reflect"] = "subagent:general-purpose"
+    root = _make_workspace(tmp_path, backend="beads", stages=stages, handlers=handlers)
+    _append_forge(root, '[models]\nreflect = "opus"\n')
+    result, _ = vw.validate(root)
+    assert result.ok, result.violations
+
+
+def test_models_role_table_rejected_off_the_map_even_when_subagent_wired(tmp_path: Path) -> None:
+    stages = ["ticket", "plan", "implement", "commit", "reflect"]
+    handlers = dict.fromkeys(stages, "inline")
+    handlers["implement"] = "subagent:general-purpose"
+    handlers["reflect"] = "subagent:general-purpose"
+    root = _make_workspace(tmp_path, backend="beads", stages=stages, handlers=handlers)
+    _append_forge(root, '[models.reflect]\nrunner = "opus"\n')
+    result, _ = vw.validate(root)
+    assert any("models.reflect" in v and "string hint" in v for v in result.violations)

@@ -34,8 +34,11 @@ def resolve_agent_hint(
     """Return the configured hint for ``stage``/``role``, or ``""`` to inherit.
 
     A bare-string stage entry is the explicit stage-wide model hint: it applies
-    to every role and carries no effort. A table entry yields hints only for the
-    roles it names — there is no wildcard inside a table.
+    to every role and carries no effort. A table entry yields hints for the roles
+    it names; when the caller passes no role and the table names exactly one, that
+    one applies — the generic launch recipe carries no role, so a single-role
+    table must not silently resolve to nothing. Two or more roles need the caller
+    to say which.
     """
     try:
         models = load_workspace_toml(workspace_root).get("models")
@@ -44,6 +47,8 @@ def resolve_agent_hint(
             return _clean(entry) if field == "model" else ""
         if not isinstance(entry, dict):
             return ""
+        if not role and len(entry) == 1:
+            role = str(next(iter(entry)))
         role_value = entry.get(role) if role else None
         if isinstance(role_value, str):
             return _clean(role_value) if field == "model" else ""

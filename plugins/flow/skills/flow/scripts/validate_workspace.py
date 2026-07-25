@@ -284,11 +284,17 @@ _LAUNCH_SITES: dict[str, frozenset[str]] = {
 _HINT_FIELDS = frozenset({"model", "effort"})
 
 
-def _validate_model_hints(data: dict[str, Any], result: ValidationResult) -> None:
+def _validate_model_hints(
+    data: dict[str, Any], handlers: dict[str, str], result: ValidationResult
+) -> None:
     """Validate `[models]`: stage keys must name a launch site; a stage entry is a
     bare model string (stage-wide) or a role-keyed table whose values are a model
     string or an inline `{ model, effort }` table. Values are type-checked only —
-    their vocabulary belongs to whatever launches the agent."""
+    their vocabulary belongs to whatever launches the agent.
+
+    Liveness is judged against THIS workspace: a `subagent:`/`skill:`-wired stage
+    launches by construction (string hints allowed even off the map), while an
+    inline/none stage launches only when its prose does (_LAUNCH_SITES)."""
     if "agents" in data:
         result.add(
             "agents",
@@ -302,41 +308,50 @@ def _validate_model_hints(data: dict[str, Any], result: ValidationResult) -> Non
         result.add("models", "must be a table keyed by stage")
         return
     for stage, entry in models.items():
-        roles = _LAUNCH_SITES.get(stage)
-        if roles is None:
+        _validate_stage_hint(stage, entry, handlers.get(stage, ""), result)
+
+
+def _validate_stage_hint(stage: str, entry: Any, handler: str, result: ValidationResult) -> None:
+    roles = _LAUNCH_SITES.get(stage)
+    handler_launches = handler.startswith(("subagent:", "skill:"))
+    if roles is None and handler_launches and isinstance(entry, str):
+        return
+    if roles is None:
+        detail = (
+            "role tables need a stage with named roles; use a string hint"
+            if handler_launches
+            else f"stage launches no agent here; valid stages: {sorted(_LAUNCH_SITES)}"
+        )
+        result.add(f"models.{stage}", detail)
+        return
+    if isinstance(entry, str):
+        return
+    if not isinstance(entry, dict):
+        result.add(f"models.{stage}", "must be a model string or a role-keyed table")
+        return
+    for role, value in entry.items():
+        if role not in roles:
             result.add(
-                f"models.{stage}",
-                f"stage launches no agent; valid stages: {sorted(_LAUNCH_SITES)}",
+                f"models.{stage}.{role}",
+                f"stage launches no such role; valid roles: {sorted(roles)}",
             )
             continue
-        if isinstance(entry, str):
+        if isinstance(value, str):
             continue
-        if not isinstance(entry, dict):
-            result.add(f"models.{stage}", "must be a model string or a role-keyed table")
+        if not isinstance(value, dict):
+            result.add(
+                f"models.{stage}.{role}",
+                'must be a model string or { model = "...", effort = "..." }',
+            )
             continue
-        for role, value in entry.items():
-            if role not in roles:
+        for field_name, field_value in value.items():
+            if field_name not in _HINT_FIELDS:
                 result.add(
-                    f"models.{stage}.{role}",
-                    f"stage launches no such role; valid roles: {sorted(roles)}",
+                    f"models.{stage}.{role}.{field_name}",
+                    f"unknown field; valid fields: {sorted(_HINT_FIELDS)}",
                 )
-                continue
-            if isinstance(value, str):
-                continue
-            if not isinstance(value, dict):
-                result.add(
-                    f"models.{stage}.{role}",
-                    'must be a model string or { model = "...", effort = "..." }',
-                )
-                continue
-            for field_name, field_value in value.items():
-                if field_name not in _HINT_FIELDS:
-                    result.add(
-                        f"models.{stage}.{role}.{field_name}",
-                        f"unknown field; valid fields: {sorted(_HINT_FIELDS)}",
-                    )
-                elif not isinstance(field_value, str):
-                    result.add(f"models.{stage}.{role}.{field_name}", "must be a string")
+            elif not isinstance(field_value, str):
+                result.add(f"models.{stage}.{role}.{field_name}", "must be a string")
 
 
 def _validate_memory_block(data: dict[str, Any], result: ValidationResult) -> bool:
@@ -413,8 +428,8 @@ def validate(
     compounding = _validate_memory_block(data, result)
 
     registry = stage_registry or load_registry(_stage_registry_path())
-    _validate_model_hints(data, result)
     stages, handlers = _validate_pipeline_block(data, registry, compounding, result)
+    _validate_model_hints(data, handlers, result)
 
     _warn_inline_stage_model(data, handlers, result)
 

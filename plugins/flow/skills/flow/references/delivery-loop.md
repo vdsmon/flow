@@ -76,12 +76,13 @@ State that inherited cwd is non-authoritative, every repository operation stays
 beneath the workspace, and every facade call applies the call-local `FLOW_HARNESS`
 selector to the absolute bound `facade`.
 A workspace may provide an optional agent hint per stage, or per role within a
-stage (reviewer, fixer, ...). Pass `--role` when the stage distinguishes its
-launches; `--field effort` reads the optional effort hint:
+stage. A bare stage string and a single-role table both resolve with no `--role`;
+only a stage that launches several roles (code_review's reviewer and fixer) needs
+the launching role named. `--field effort` reads the optional effort hint:
 
 ```bash
 FLOW_HARNESS="<harness>" "<facade>" model --workspace-root . --stage "<stage>" \
-  [--role "<role>"] [--field model]
+  [--role "<role>"] [--field model|effort]
 ```
 
 An empty result means inherit the driver session model. Apply a non-empty hint only

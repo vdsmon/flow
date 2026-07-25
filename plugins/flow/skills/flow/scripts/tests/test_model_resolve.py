@@ -63,10 +63,16 @@ def test_role_table_string_and_inline_table(tmp_path: Path) -> None:
     assert model_resolve.resolve_agent_hint(root, "code_review", role="fixer", field="effort") == ""
 
 
-def test_role_table_has_no_wildcard(tmp_path: Path) -> None:
-    # A table names its roles explicitly; an unnamed role inherits.
+def test_single_role_table_applies_without_role(tmp_path: Path) -> None:
+    # The generic launch recipe carries no role; a single-role table must not
+    # silently resolve to nothing. A named-but-different role still inherits.
     root = _workspace(tmp_path, ["[models.code_review]", 'reviewer = "opus"'])
+    assert model_resolve.resolve_agent_hint(root, "code_review") == "opus"
     assert model_resolve.resolve_agent_hint(root, "code_review", role="fixer") == ""
+
+
+def test_multi_role_table_needs_an_explicit_role(tmp_path: Path) -> None:
+    root = _workspace(tmp_path, ["[models.code_review]", 'reviewer = "opus"', 'fixer = "sonnet"'])
     assert model_resolve.resolve_agent_hint(root, "code_review") == ""
 
 
