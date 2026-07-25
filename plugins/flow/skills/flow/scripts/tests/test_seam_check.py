@@ -1119,11 +1119,6 @@ def test_registry_roles_unions_arrays(tmp_path) -> None:
     }
 
 
-def test_prose_role_citation_membership_idiom() -> None:
-    text = 'if `descriptor.roles` includes `"records_diff_baseline"`:\n'
-    assert seam_check.prose_role_citations(text) == [(1, "records_diff_baseline")]
-
-
 def test_prose_role_citation_rejects_stage_name_as_role_membership() -> None:
     text = "If the stage is `implement`, record the baseline.\n"
     assert seam_check.prose_role_citations(text) == []

@@ -229,9 +229,3 @@ def test_invalid_argument_returns_3(ws, capsys):
     )
     assert rc == 3
     assert "invalid argument" in capsys.readouterr().err
-
-
-class _PostReplyNotSupportedForge(_FakeForge):
-    @override
-    def post_reply(self, pr_id, thread_id, body):
-        raise NotSupported("no replies")

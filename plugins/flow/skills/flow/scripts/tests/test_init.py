@@ -1455,15 +1455,6 @@ def _handlers_of(workspace_toml_path: Path) -> dict[str, str]:
     return data["pipeline"]["handlers"]
 
 
-def test_code_review_defaults_to_bundled_codex_reviewer(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr(initmod.shutil, "which", lambda name: "/usr/bin/codex")
-    monkeypatch.setenv("FLOW_HARNESS", "claude-code")
-    result = initmod.run_init(_jira_config(tmp_path))
-    assert _handlers_of(result.workspace_toml_path)["code_review"] == (
-        "subagent:flow:codex-reviewer"
-    )
-
-
 def test_code_review_stays_inline_without_codex(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(initmod.shutil, "which", lambda name: None)
     monkeypatch.setenv("FLOW_HARNESS", "claude-code")

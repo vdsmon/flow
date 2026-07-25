@@ -73,13 +73,6 @@ def _stub_git_head(monkeypatch: pytest.MonkeyPatch, sha: str = "deadbeef") -> No
     monkeypatch.setattr(subprocess, "run", fake_run)
 
 
-def _write_ticket_lane(root: Path, ticket: str, lane: str) -> None:
-    """Seed the ticket frontmatter dispatch reads to resolve a lane-gated substep's lane."""
-    tickets = root / ".flow" / "tickets"
-    tickets.mkdir(parents=True, exist_ok=True)
-    (tickets / f"{ticket}.md").write_text(f'+++\nlane = "{lane}"\n+++\n', encoding="utf-8")
-
-
 # ─── init ────────────────────────────────────────────────────────────────────
 
 

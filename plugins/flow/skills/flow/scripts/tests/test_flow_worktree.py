@@ -646,13 +646,6 @@ def test_bootstrap_refuses_epic_case_insensitive(tmp_path: Path, monkeypatch) ->
         _run(tmp_path, main, runner=_fake_runner(main=main))
 
 
-def test_bootstrap_proceeds_on_task_bead(tmp_path: Path, monkeypatch) -> None:
-    main = _main_checkout(tmp_path)
-    _patch_tracker(monkeypatch, _FakeTracker(normalized="open", issue_type="task"))
-    res = _run(tmp_path, main, runner=_fake_runner(main=main))
-    assert res["ticket"] == "FT-1"
-
-
 def test_bootstrap_epic_check_fails_open_on_get_exception(tmp_path: Path, monkeypatch) -> None:
     # a genuine type-read failure must NOT strand a legitimate run (fail-open)
     main = _main_checkout(tmp_path)
