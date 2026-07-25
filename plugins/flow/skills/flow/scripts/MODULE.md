@@ -1,6 +1,6 @@
 # Script map (current)
 
-The live "which script does what" map. One authored row per script: purpose plus the contract notes argparse cannot express (exit codes, artifact paths, who consumes it). The mechanical surface — every script's subcommand names and true importers — is the generated table in §Derived surfaces at the bottom: regenerate it with `python3 module_map.py write`; `seam_check.py` fails when it is stale. For the phase-by-phase build history and the deferred-work log, see `dev-history.md`. For API/contract tables (Jira REST mapping, beads CLI surface, `.flow-bundle.toml` schema, `state.json` schema), see `inventory.md`.
+The live "which script does what" map. One authored row per script: purpose plus the contract notes argparse cannot express (exit codes, artifact paths, who consumes it). The mechanical surface — every script's subcommand names and true importers — is the generated table in §Derived surfaces at the bottom: regenerate it with `python3 module_map.py write`; `seam_check.py` fails when it is stale. For API/contract tables (Jira REST mapping, beads CLI surface, `.flow-bundle.toml` schema, `state.json` schema), see `inventory.md`.
 
 `lib` = imported module, no standalone CLI. Everything else is a thin CLI subprocessed from SKILL.md prose, a reference doc, or another script.
 
