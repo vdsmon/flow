@@ -29,6 +29,7 @@ from functools import cache
 from pathlib import Path
 
 import flowctl
+import module_map
 
 SCRIPTS_DIR = Path(__file__).resolve().parent
 SKILL_ROOT = SCRIPTS_DIR.parent
@@ -993,9 +994,15 @@ def managed_agents_guidance_drift(
 def scripts_missing_from_module_md(
     scripts_dir: Path = SCRIPTS_DIR, module_text: str | None = None
 ) -> set[str]:
-    """Non-test *.py files on disk not named anywhere in MODULE.md."""
+    """Non-test *.py files on disk not named in MODULE.md's AUTHORED region.
+
+    Scoped to the text before the generated §Derived surfaces block: that block
+    names every script mechanically, so counting it would make this gate
+    vacuously green and let an authored Role row be dropped unnoticed.
+    """
     if module_text is None:
         module_text = (scripts_dir / "MODULE.md").read_text(encoding="utf-8")
+    module_text = module_text.split(module_map.MODULE_BEGIN, 1)[0]
     on_disk = {
         p.name
         for p in scripts_dir.glob("*.py")
@@ -1025,9 +1032,6 @@ def scripts_missing_from_registry_descriptions(
 # A MODULE.md table row's first cell: the script the row documents. Backtick
 # optional so a bare-name row is still owned by the check.
 _MODULE_ROW_RE = re.compile(r"^\|\s*`?([a-z0-9_]+\.py)`?")
-# The forward-direction import claim inside a row ("imports x, y"). \b keeps
-# "imported by" rows out (a different word, gated by module_md_importer_drift).
-_FORWARD_IMPORTS_RE = re.compile(r"\bimports\s")
 
 
 def phantom_module_md_rows(
@@ -1040,10 +1044,12 @@ def phantom_module_md_rows(
     live-map row that CI accepts (witnessed twice: validate_postmortem.py,
     queue_reviews.py). Scoped to the row-defining FIRST CELL: a historical
     mention inside a Role cell ("absorbed from queue_reviews.py") is
-    deliberate prose, not a row, and stays legal.
+    deliberate prose, not a row, and stays legal. Scoped to the authored
+    region: the generated block's rows are module_map.check()'s to police.
     """
     if module_text is None:
         module_text = (scripts_dir / "MODULE.md").read_text(encoding="utf-8")
+    module_text = module_text.split(module_map.MODULE_BEGIN, 1)[0]
     phantoms: set[str] = set()
     for line in module_text.splitlines():
         m = _MODULE_ROW_RE.match(line)
@@ -1053,50 +1059,6 @@ def phantom_module_md_rows(
         if not (scripts_dir / name).is_file() and not (scripts_dir / "tests" / name).is_file():
             phantoms.add(name)
     return phantoms
-
-
-def module_md_forward_import_drift(
-    scripts_dir: Path = SCRIPTS_DIR, module_text: str | None = None
-) -> list[tuple[str, str]]:
-    """MODULE.md forward "imports x, y" claims that are not true imports.
-
-    module_md_importer_drift skips these rows by design (its anchor is
-    "imported by"), so a stale forward claim had no gate. Same enumerability
-    rule: every token after the anchor must resolve to a local stem or the
-    claim is treated as prose and skipped. Phantom-only direction: a listed
-    module the row's script does not actually import is the drift; an
-    undocumented import is normal.
-    """
-    if module_text is None:
-        module_text = (scripts_dir / "MODULE.md").read_text(encoding="utf-8")
-    stems = _local_stems(scripts_dir)
-    truth = true_importers(scripts_dir)
-    drifts: list[tuple[str, str]] = []
-    for line in module_text.splitlines():
-        row = _MODULE_ROW_RE.match(line)
-        if row is None:
-            continue
-        module_stem = row.group(1)[: -len(".py")]
-        m = _FORWARD_IMPORTS_RE.search(line)
-        if m is None:
-            continue
-        cell = line[m.end() :].split("|", 1)[0].split(";", 1)[0]
-        tokens: list[str] = []
-        for raw_tok in re.split(r"[,+]", cell):
-            tok = raw_tok.split("(", 1)[0]
-            tok = tok.strip().strip("`").strip()
-            tok = tok.removeprefix("the ")
-            tok = tok.strip().strip(".").strip()
-            tok = tok.removesuffix(".py")
-            tok = tok.strip()
-            if tok:
-                tokens.append(tok)
-        if not tokens or any(tok not in stems for tok in tokens):
-            continue
-        drifts.extend(
-            (module_stem, tok) for tok in tokens if module_stem not in truth.get(tok, set())
-        )
-    return drifts
 
 
 def triage_guard_files(scripts_dir: Path = SCRIPTS_DIR) -> frozenset[str]:
@@ -1173,240 +1135,6 @@ def guard_file_list_drift(
                 f"expected >= {_GUARD_LIST_EXPECTED_DOCS}",
             )
         )
-    return drifts
-
-
-def _local_stems(scripts_dir: Path) -> set[str]:
-    """Stems of every non-test *.py basename in scripts_dir (the resolvable modules)."""
-    return {
-        p.stem
-        for p in scripts_dir.glob("*.py")
-        if not p.name.startswith("test") and p.name != "conftest.py"
-    }
-
-
-def true_importers(scripts_dir: Path = SCRIPTS_DIR) -> dict[str, set[str]]:
-    """AST-walk every non-test scripts/*.py and build {imported_stem: {importer_stem}}.
-
-    Walks the whole module body so lazy/in-function imports are credited (e.g.
-    tracker imports its adapters inside make_tracker). Only resolvable local
-    stems are kept; an import of a module's own stem is dropped.
-    """
-    stems = _local_stems(scripts_dir)
-    out: dict[str, set[str]] = {}
-    for path in scripts_dir.glob("*.py"):
-        if path.name.startswith("test") or path.name == "conftest.py":
-            continue
-        importer = path.stem
-        try:
-            tree = ast.parse(path.read_text(encoding="utf-8"))
-        except (OSError, SyntaxError):
-            continue
-        for node in ast.walk(tree):
-            names: list[str] = []
-            if isinstance(node, ast.Import):
-                names = [alias.name for alias in node.names]
-            elif isinstance(node, ast.ImportFrom) and node.module is not None:
-                names = [node.module]
-            for name in names:
-                stem = name.split(".")[0]
-                if stem in stems and stem != importer:
-                    out.setdefault(stem, set()).add(importer)
-    return out
-
-
-@dataclass(frozen=True)
-class ImporterDrift:
-    module: str
-    missing: frozenset[str]  # in true importers, absent from the row
-    phantom: frozenset[str]  # in the row, not a true importer
-
-
-def module_md_importer_drift(
-    scripts_dir: Path = SCRIPTS_DIR, module_text: str | None = None
-) -> list[ImporterDrift]:
-    """Drift between MODULE.md 'imported by' rows and the AST-computed truth.
-
-    For each line: take the module from the first backticked *.py token, require
-    the literal `imported by` anchor (skips reverse-direction `imports x, y`
-    rows), parse the importer list after it (split on `,`, `+`, and the
-    natural-language word `and`; strip parentheticals/backticks/the/.py). A row
-    is enumerable iff every token resolves to a local stem; unresolvable rows
-    (prose like `the adapters`) are skipped. Enumerable rows whose parsed set !=
-    true set yield one descriptor.
-    """
-    if module_text is None:
-        module_text = (scripts_dir / "MODULE.md").read_text(encoding="utf-8")
-    stems = _local_stems(scripts_dir)
-    truth = true_importers(scripts_dir)
-    drifts: list[ImporterDrift] = []
-    for line in module_text.splitlines():
-        module_stem: str | None = None
-        for span in _INLINE_SPAN_RE.finditer(line):
-            mm = _MODULE_NAME_RE.search(span.group(1))
-            if mm:
-                module_stem = mm.group(0)[: -len(".py")]
-                break
-        if module_stem is None:
-            continue
-        anchor = "imported by"
-        idx = line.find(anchor)
-        if idx == -1:
-            continue
-        cell = line[idx + len(anchor) :]
-        cell = cell.split("|", 1)[0]
-        tokens: list[str] = []
-        for raw_tok in re.split(r"[,+]|\band\b", cell):
-            tok = raw_tok.split("(", 1)[0]
-            tok = tok.strip().strip("`").strip()
-            tok = tok.removeprefix("the ")
-            tok = tok.strip().strip(".").strip()
-            tok = tok.removesuffix(".py")
-            tok = tok.strip()
-            if tok:
-                tokens.append(tok)
-        if not tokens or any(tok not in stems for tok in tokens):
-            continue
-        parsed = set(tokens)
-        true_set = truth.get(module_stem, set())
-        if parsed != true_set:
-            drifts.append(
-                ImporterDrift(
-                    module=module_stem,
-                    missing=frozenset(true_set - parsed),
-                    phantom=frozenset(parsed - true_set),
-                )
-            )
-    return drifts
-
-
-@dataclass(frozen=True)
-class SurfaceCellDrift:
-    module: str
-    missing: frozenset[str]  # real subcommands absent from the surface cell
-    phantom: frozenset[str] = frozenset()  # cited tokens that are not real subcommands
-
-
-# A facade-name annotation ("facade name `agent-route`") documents the CLI's registered public
-# alias, not one of its argparse subcommands. Strip the whole phrase before extracting citations so
-# the alias is never mistaken for a phantom subcommand.
-_FACADE_NAME_ANNOTATION_RE = re.compile(r"(?i)\bfacade name\s+`[^`]*`")
-# A bare command-shaped token: lowercase letters, digits, and hyphens only. Anchored with fullmatch
-# so a flag (`--foo`), a filename or path (`state.json`, `.flow/runtime`), a script-name annotation
-# (`recall.py`), a quoted JSON key (`"role"`), and an uppercase or bracketed placeholder (`<KEY>`,
-# `[args...]`) are never mistaken for a citation.
-_COMMAND_TOKEN_RE = re.compile(r"[a-z][a-z0-9-]*")
-
-
-def _split_table_row(line: str) -> list[str]:
-    """Split a markdown table row on `|`, but never inside a backtick span or a `\\|` escape.
-
-    A surface cell can itself contain a literal pipe (`` `extract (--transcript | --session)` ``,
-    a markdown-escaped `` `--state open\\|merged` ``); splitting on every raw `|` byte fractures
-    those spans and shifts cell boundaries.
-    """
-    cells: list[str] = []
-    current: list[str] = []
-    in_span = False
-    i = 0
-    n = len(line)
-    while i < n:
-        ch = line[i]
-        if ch == "\\" and i + 1 < n:
-            current.append(ch)
-            current.append(line[i + 1])
-            i += 2
-            continue
-        if ch == "`":
-            in_span = not in_span
-            current.append(ch)
-            i += 1
-            continue
-        if ch == "|" and not in_span:
-            cells.append("".join(current))
-            current = []
-            i += 1
-            continue
-        current.append(ch)
-        i += 1
-    cells.append("".join(current))
-    return cells
-
-
-def _cell_citations(cell: str) -> frozenset[str]:
-    """Command-shaped citation tokens inside one MODULE.md surface cell.
-
-    A citation is the first whitespace token of a backtick span (`` `advance --skill-output-from` ``
-    cites `advance`, its subcommand, not the flag that follows). Working from discrete extracted
-    tokens rather than a substring search over the whole cell is what keeps `list` from ever
-    matching inside a cited `list-assigned`.
-    """
-    cell = _FACADE_NAME_ANNOTATION_RE.sub(" ", cell)
-    citations: set[str] = set()
-    for span in _INLINE_SPAN_RE.finditer(cell):
-        content = span.group(1).strip()
-        if not content:
-            continue
-        token = content.split(maxsplit=1)[0]
-        if _COMMAND_TOKEN_RE.fullmatch(token):
-            citations.add(token)
-    return frozenset(citations)
-
-
-def module_md_surface_cell_drift(
-    scripts_dir: Path = SCRIPTS_DIR,
-    module_text: str | None = None,
-    surface_lookup=surface_of,
-) -> list[SurfaceCellDrift]:
-    """Drift between a MODULE.md surface cell and a script's real argparse subcommands.
-
-    Per table row (a line whose first non-whitespace character is `|`; a stray `|` inside prose,
-    e.g. a regex-alternation example, must not be mistaken for a row): the module stem is the first
-    backticked *.py token in the first non-empty `|`-cell. `(lib)` rows are skipped (libs are
-    documented by their importer list, not a CLI surface). The surface cell is the LAST non-empty
-    `|`-cell; `_cell_citations` extracts every command-shaped citation from it. A row with ZERO
-    citations makes no enumerable surface claim (e.g. metric.py's forwarded `(via recall.py
-    --metric)`) and is skipped -- this is a stronger gate than "zero REAL subcommands cited", so a
-    row whose citations are all stale (all-phantom, zero real) is still caught rather than escaping
-    through the same skip. A row whose citations differ from the real set in either direction yields
-    one descriptor carrying both directions.
-    """
-    if module_text is None:
-        module_text = (scripts_dir / "MODULE.md").read_text(encoding="utf-8")
-    drifts: list[SurfaceCellDrift] = []
-    for line in module_text.splitlines():
-        if not line.strip().startswith("|"):
-            continue
-        cells = [c for c in (c.strip() for c in _split_table_row(line)) if c]
-        if not cells:
-            continue
-        first, last = cells[0], cells[-1]
-        if "(lib)" in first:
-            continue
-        module_stem: str | None = None
-        for span in _INLINE_SPAN_RE.finditer(first):
-            mm = _MODULE_NAME_RE.search(span.group(1))
-            if mm:
-                module_stem = mm.group(0)[: -len(".py")]
-                break
-        if module_stem is None:
-            continue
-        surface = surface_lookup(module_stem + ".py")
-        if surface is None or not surface.subcommands:
-            continue
-        citations = _cell_citations(last)
-        if not citations:
-            continue
-        missing = surface.subcommands - citations
-        phantom = citations - surface.subcommands
-        if missing or phantom:
-            drifts.append(
-                SurfaceCellDrift(
-                    module=module_stem,
-                    missing=frozenset(missing),
-                    phantom=frozenset(phantom),
-                )
-            )
     return drifts
 
 
@@ -1644,17 +1372,6 @@ def main(argv: list[str]) -> int:
 
     problems.extend(
         Problem(
-            doc="MODULE.md",
-            line=0,
-            level="ERROR",
-            msg=f"row for {module} claims it imports {imported}, but it does not",
-            raw="",
-        )
-        for module, imported in sorted(module_md_forward_import_drift())
-    )
-
-    problems.extend(
-        Problem(
             doc=doc_name,
             line=lineno,
             level="ERROR",
@@ -1665,31 +1382,8 @@ def main(argv: list[str]) -> int:
     )
 
     problems.extend(
-        Problem(
-            doc="MODULE.md",
-            line=0,
-            level="ERROR",
-            msg=(
-                f"MODULE.md 'imported by' row for {drift.module}: "
-                f"missing {sorted(drift.missing)}, phantom {sorted(drift.phantom)}"
-            ),
-            raw="",
-        )
-        for drift in module_md_importer_drift()
-    )
-
-    problems.extend(
-        Problem(
-            doc="MODULE.md",
-            line=0,
-            level="ERROR",
-            msg=(
-                f"MODULE.md surface cell for {drift.module}: "
-                f"missing {sorted(drift.missing)}, phantom {sorted(drift.phantom)}"
-            ),
-            raw="",
-        )
-        for drift in module_md_surface_cell_drift()
+        Problem(doc="module_map", line=0, level="ERROR", msg=detail, raw="")
+        for detail in module_map.check()
     )
 
     for doc_name, count in sorted(docs_over_stage_doc_citation_limit().items()):
