@@ -144,7 +144,6 @@ def _descriptor_line(
         "head_sha": "abc123",
         "handler_type": "inline",
         "ticket_dir": ticket_dir,
-        "timeout_min": 10,
         **markers,
     }
     if finished_stage is not None:

@@ -493,7 +493,6 @@ Never-destroy invariant: a corrupt artifact is renamed or copied aside, never de
   "reference_doc": "references/stage-plan.md",
   "skill_name": "ship-it",
   "skill_args": "create",
-  "timeout_min": 10,
   "head_sha": "<current git HEAD>",
   "ticket_dir": ".flow/runs/FT-1234",
   "output_path": ".flow/runs/FT-1234/stages/plan.out",
@@ -1054,12 +1053,7 @@ Four files in `references/`:
 6. No retry/backoff on tracker-cli failures → tunable in later phase.
 7. `tracker_cli` exit code 1 lumps network/auth/not-found → split in
    later phase.
-8. `timeout_min` in handler descriptor is informational only. No
-   enforcement; the progress producer (`write_progress` / the `write`
-   CLI / `quarantine_stale`) was deleted as dead (flow-dwd) rather than
-   wired, so there is no producer to enforce against. The read-only
-   hung-detection remnant was deleted too (flow-qp7).
-9. The do-loop bash prose uses `"<KEY>"` / `"$STAGE"` syntax — variable
+8. The do-loop bash prose uses `"<KEY>"` / `"$STAGE"` syntax — variable
    substitution into the actual Bash invocations is on Claude. Reference
    docs document the variable names; the loop in SKILL.md sets them from
    the descriptor JSON.

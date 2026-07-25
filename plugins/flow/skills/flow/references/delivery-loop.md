@@ -134,9 +134,9 @@ descriptor.
   stops for repair.
 - Lost lease stops immediately. Never continue with a rotated nonce or missing lock.
 - Workspace violations and unrecoverable state stop for diagnosis.
-- A descriptor timeout is advisory where the host has no cross-agent deadline. Agents
-  run long commands in bounded foreground calls and never return while owning a
-  background task needed for continuation.
+- No cross-agent deadline exists; a stage's timeout lives only in the run-lease TTL.
+  Agents run long commands in bounded foreground calls and never return while owning
+  a background task needed for continuation.
 
 Log friction before working around drift, lease loss, reconciliation, missing tools,
 blockers, failed stages, retries, and state rollback. Friction logging is best-effort

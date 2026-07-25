@@ -9,7 +9,8 @@
 # Field semantics:
 #   name                          - matches references/stage-<name>.md and pipeline.stages entries
 #   default_handler               - one of: "inline" | "subagent:<type>" | "skill:<name>[:<args>]" | "none"
-#   default_timeout_min           - workspace.toml [pipeline.timeouts] overrides per-stage
+#   default_timeout_min           - basis for the run-lease TTL (dispatch_stage.py
+#                                   _LEASE_TTL_MULTIPLIER x this); NOT an enforced stage deadline
 #   required_predecessors         - upstream stages that MUST appear earlier in pipeline.stages
 #   required_fields               - ticket-frontmatter keys that MUST be present for this stage;
 #                                   parsed by _registry.py, consumed by lint_ticket.py to gate the
@@ -27,7 +28,6 @@
 #
 # Timeouts for plan / code_review / e2e / commit / create_pr / review_loop
 # are inferred defaults (the plan only specified ticket, implement, reflect explicitly).
-# Workspaces are free to override via [pipeline.timeouts].
 
 schema_version = 1
 
