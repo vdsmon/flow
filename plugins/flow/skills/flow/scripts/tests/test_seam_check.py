@@ -27,7 +27,7 @@ def test_logical_lines_join_backslash_continuations() -> None:
 def test_find_invocations_strips_command_substitution() -> None:
     # `--abbrev-ref` lives inside $(...) and must NOT be attributed to this script.
     text = (
-        "python3 ${CLAUDE_SKILL_DIR}/scripts/flow_worktree.py create \\\n"
+        "python3 <skill_root>/scripts/flow_worktree.py create \\\n"
         '  --base "$(git rev-parse --abbrev-ref HEAD)" --branch x'
     )
     invs = seam_check.find_invocations("t.md", text)
@@ -43,7 +43,7 @@ def test_find_invocations_quoted_value_with_sequencing_char() -> None:
     # A `;` inside a quoted --text value must not truncate the span: the inner
     # `--auto` is part of the value, not a flag of this command.
     text = (
-        "${CLAUDE_SKILL_DIR}/scripts/tracker_cli.py comment --key X "
+        "<skill_root>/scripts/tracker_cli.py comment --key X "
         '--text "Judgment --auto settled; this is a safety hold"'
     )
     invs = seam_check.find_invocations("t.md", text)
@@ -58,7 +58,7 @@ def test_find_invocations_quoted_value_with_sequencing_char() -> None:
 def test_find_invocations_matches_digit_bearing_script() -> None:
     # Guards the [a-z_]+ regression: without the digit in _SCRIPT_RE, the `2`
     # in embedder_model2vec.py breaks the match and the invocation goes unlinted.
-    text = "${CLAUDE_SKILL_DIR}/scripts/embedder_model2vec.py --texts-file X"
+    text = "<skill_root>/scripts/embedder_model2vec.py --texts-file X"
     invs = seam_check.find_invocations("t.md", text)
     assert len(invs) == 1
     assert invs[0].script == "embedder_model2vec.py"
@@ -67,8 +67,8 @@ def test_find_invocations_matches_digit_bearing_script() -> None:
 def test_find_invocations_two_commands_on_one_line() -> None:
     # Both commands of a &&-joined recipe must lint, each with its own flags.
     text = (
-        "${CLAUDE_SKILL_DIR}/scripts/state.py read --key X && "
-        "${CLAUDE_SKILL_DIR}/scripts/tracker_cli.py get --key Y"
+        "<skill_root>/scripts/state.py read --key X && "
+        "<skill_root>/scripts/tracker_cli.py get --key Y"
     )
     invs = seam_check.find_invocations("t.md", text)
     assert len(invs) == 2
@@ -79,7 +79,7 @@ def test_find_invocations_two_commands_on_one_line() -> None:
 
 
 def test_find_invocations_handles_bare_form() -> None:
-    text = "   ${CLAUDE_SKILL_DIR}/scripts/tracker_cli.py --workspace-root . get --key X"
+    text = "   <skill_root>/scripts/tracker_cli.py --workspace-root . get --key X"
     invs = seam_check.find_invocations("t.md", text)
     assert len(invs) == 1
     assert invs[0].script == "tracker_cli.py"
@@ -88,7 +88,7 @@ def test_find_invocations_handles_bare_form() -> None:
 
 
 def test_find_invocations_handles_harness_neutral_skill_root_placeholder() -> None:
-    text = 'python3 "<skill-root>/scripts/init.py" --config "$ANSWERS"'
+    text = 'python3 "<skill_root>/scripts/init.py" --config "$ANSWERS"'
     invs = seam_check.find_invocations("t.md", text)
     assert len(invs) == 1
     assert invs[0].script == "init.py"
@@ -416,7 +416,7 @@ def test_facade_parent_flag_after_end_of_options_sentinel_is_not_flagged() -> No
 
 
 def test_direct_launcher_repair_is_parsed_from_flow_skill_variable() -> None:
-    text = 'python3 "${FLOW_SKILL_DIR}/scripts/flow_launcher.py" --workspace-root .'
+    text = 'python3 "<skill_root>/scripts/flow_launcher.py" --workspace-root .'
     invs = seam_check.find_invocations("t.md", text)
     assert len(invs) == 1
     assert invs[0].script == "flow_launcher.py"
@@ -424,12 +424,12 @@ def test_direct_launcher_repair_is_parsed_from_flow_skill_variable() -> None:
 
 def test_stale_direct_invocation_rejected_outside_bootstrap_allowlist() -> None:
     stale = seam_check.find_invocations(
-        "t.md", "${CLAUDE_SKILL_DIR}/scripts/dispatch_stage.py next --ticket X"
+        "t.md", "<skill_root>/scripts/dispatch_stage.py next --ticket X"
     )
     allowed = seam_check.find_invocations(
         "t.md",
-        "${CLAUDE_SKILL_DIR}/scripts/init.py --reconfigure\n"
-        "${FLOW_SKILL_DIR}/scripts/flow_launcher.py --workspace-root .",
+        "<skill_root>/scripts/init.py --reconfigure\n"
+        "<skill_root>/scripts/flow_launcher.py --workspace-root .",
     )
     assert len(seam_check.stale_direct_invocation_problems(stale)) == 1
     assert seam_check.stale_direct_invocation_problems(allowed) == []

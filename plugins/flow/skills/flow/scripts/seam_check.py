@@ -34,16 +34,21 @@ import module_map
 SCRIPTS_DIR = Path(__file__).resolve().parent
 SKILL_ROOT = SCRIPTS_DIR.parent
 REPO_ROOT = SKILL_ROOT.parents[3]
-# A direct script reference inside prose, using a legacy child environment alias or the
-# harness-neutral loaded-root placeholder.
+# A direct script reference inside prose, using the harness-neutral loaded-root
+# placeholder (bare or absolute-prefixed).
 # Char class is [a-z0-9_]+ (NOT [a-z_]+): omitting the digit silently skips a
 # digit-bearing basename (an embedder_foo2vec.py shape), same lesson _MODULE_NAME_RE
 # and _STAGE_DOC_RE carry.
 _SCRIPT_RE = re.compile(
     r"(?P<direct_quote>[\"'])?"
-    r"(?:\$\{(?:CLAUDE_SKILL_DIR|FLOW_SKILL_DIR)\}|<skill-root>)/scripts/"
+    r"(?:<skill_root>|<absolute skill_root>)/scripts/"
     r"(?P<script>[a-z0-9_]+\.py)(?P=direct_quote)?"
 )
+# Live direct-bootstrap recipes the corpus must contain: SKILL.md's launcher +
+# router-preflight calls and command-workspace.md's two init.py recipes. Fewer
+# means the placeholder spelling moved and this gate went silently blind — the
+# exact failure mode it had from #479 until this floor existed.
+_DIRECT_BOOTSTRAP_EXPECTED = 4
 # The canonical post-init command form is the bound ``<facade>`` placeholder or an absolute
 # ``.../.flow/runtime/flow`` path. Relative paths remain parseable so the rooted-context gate can
 # reject them explicitly instead of silently omitting their CLI surface from validation.
@@ -1277,6 +1282,22 @@ def main(argv: list[str]) -> int:
         text = doc.read_text(encoding="utf-8")
         problems.extend(host_specific_invocation_problems(doc.name, text))
         problems.extend(malformed_runtime_token_problems(doc.name, text))
+
+    direct_count = len([inv for inv in all_invs if inv.facade_command is None])
+    if direct_count < _DIRECT_BOOTSTRAP_EXPECTED:
+        problems.append(
+            Problem(
+                doc="direct-bootstrap recipes",
+                line=0,
+                level="ERROR",
+                msg=(
+                    f"found {direct_count} direct invocation(s), expected >= "
+                    f"{_DIRECT_BOOTSTRAP_EXPECTED}: the skill-root placeholder spelling "
+                    f"moved and the direct seam went blind"
+                ),
+                raw="",
+            )
+        )
 
     for inv in all_invs:
         problems.extend(validate(inv))
