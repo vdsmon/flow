@@ -30,6 +30,7 @@ from pathlib import Path
 
 import flowctl
 import module_map
+from _registry import load_registry
 
 SCRIPTS_DIR = Path(__file__).resolve().parent
 SKILL_ROOT = SCRIPTS_DIR.parent
@@ -44,11 +45,12 @@ _SCRIPT_RE = re.compile(
     r"(?:<skill_root>|<absolute skill_root>)/scripts/"
     r"(?P<script>[a-z0-9_]+\.py)(?P=direct_quote)?"
 )
-# Live direct-bootstrap recipes the corpus must contain: SKILL.md's launcher +
-# router-preflight calls and command-workspace.md's two init.py recipes. Fewer
-# means the placeholder spelling moved and this gate went silently blind — the
-# exact failure mode it had from #479 until this floor existed.
-_DIRECT_BOOTSTRAP_EXPECTED = 4
+# Live direct-bootstrap recipes the corpus must contain: SKILL.md's two launcher
+# calls + its router preflight, and command-workspace.md's two init.py recipes.
+# Fewer means the placeholder spelling moved and this gate went silently blind —
+# the exact failure mode it had from #479 until this floor existed. Counted from
+# find_invocations alone so a future bare-script recipe cannot inflate it.
+_DIRECT_BOOTSTRAP_EXPECTED = 5
 # The canonical post-init command form is the bound ``<facade>`` placeholder or an absolute
 # ``.../.flow/runtime/flow`` path. Relative paths remain parseable so the rooted-context gate can
 # reject them explicitly instead of silently omitting their CLI surface from validation.
@@ -998,7 +1000,14 @@ def scripts_missing_from_module_md(
         for p in scripts_dir.glob("*.py")
         if not p.name.startswith("test") and p.name != "conftest.py"
     }
-    named = set(_MODULE_NAME_RE.findall(module_text))
+    # Row-anchored: a script counts as documented only when a table row OWNS it
+    # (first cell), so a passing cross-mention in another row's prose cannot
+    # keep a deleted Role row green. Exact inverse of phantom_module_md_rows.
+    named = {
+        m.group(1)
+        for line in module_text.splitlines()
+        if (m := _MODULE_ROW_RE.match(line)) is not None
+    }
     return on_disk - named
 
 
@@ -1012,10 +1021,9 @@ def scripts_missing_from_registry_descriptions(
     stale compose-commit.py reference for the real compose_commit.py is caught,
     not masked.
     """
-    data = tomllib.loads(registry_path.read_text(encoding="utf-8"))
     named: set[str] = set()
-    for stage in data.get("stage", []):
-        named |= set(_REGISTRY_SCRIPT_RE.findall(stage.get("description", "")))
+    for entry in load_registry(registry_path):
+        named |= set(_REGISTRY_SCRIPT_RE.findall(entry.description))
     return {name for name in named if not (scripts_dir / name).is_file()}
 
 
@@ -1286,7 +1294,9 @@ def main(argv: list[str]) -> int:
         problems.extend(host_specific_invocation_problems(doc.name, text))
         problems.extend(malformed_runtime_token_problems(doc.name, text))
 
-    direct_count = len([inv for inv in all_invs if inv.facade_command is None])
+    direct_count = len(
+        [inv for doc in docs for inv in find_invocations(doc.name, doc.read_text(encoding="utf-8"))]
+    )
     if direct_count < _DIRECT_BOOTSTRAP_EXPECTED:
         problems.append(
             Problem(
