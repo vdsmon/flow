@@ -136,7 +136,7 @@ options = [
 [[command]]
 id = "measure"
 path = ["measure"]
-usage = "FLOW measure <throughput|lead-time|friction|reverts|experiment|trend|memory-health|recall-quality|fix-efficacy> [--since <date>] [--until <date>] [--json]"
+usage = "FLOW measure <throughput|lead-time|friction|reverts|experiment|trend|memory-health|recall-quality|fix-efficacy> [--since <date>] [--until <date>]"
 additional_usages = [
   "FLOW measure throughput --checkpoint <personal|work> [--manifest <path>]",
 ]

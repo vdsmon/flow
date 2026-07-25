@@ -266,7 +266,7 @@ markers are overwritten. `—` = none.
 | `maintainer_preflight.py` | — | — |
 | `memory_append.py` | — | `sweep_knowledge` |
 | `memory_embed.py` | `embed` `reindex` | `recall`, `recall_usage`, `sweep_knowledge` |
-| `metric.py` | `arm-compare` `corpus-health` `fix-efficacy` `friction-per-run` `recall-hit-rate` `revert-rate` `tickets-per-week` `time-to-pr` `trend` | `recall`, `senses_deadman` |
+| `metric.py` | `arm-compare` `corpus-health` `fix-efficacy` `friction-per-run` `recall-hit-rate` `revert-rate` `tickets-per-week` `time-to-pr` `trend` | `senses_deadman` |
 | `model_resolve.py` | — | `validate_workspace` |
 | `module_map.py` | — | `seam_check` |
 | `observe_at_close.py` | — | `worktree_janitor` |

@@ -616,19 +616,6 @@ def test_validate_known_flags_pass() -> None:
     assert [p for p in seam_check.validate(inv) if p.level == "ERROR"] == []
 
 
-def test_forwarder_folds_metric_surface() -> None:
-    # recall.py --metric forwards to metric.cli_main, so metric's flags resolve.
-    inv = seam_check.Invocation(
-        doc="t.md",
-        line=1,
-        script="recall.py",
-        subcommand=None,
-        flags=["--metric", "--namespace", "--workspace-root"],
-        raw="recall.py --metric tickets-per-week --namespace ns --workspace-root .",
-    )
-    assert [p for p in seam_check.validate(inv) if p.level == "ERROR"] == []
-
-
 def test_host_specific_public_recipe_is_rejected_from_reusable_prose() -> None:
     text = "Use `/flow workspace repair FT-1` or:\n```\n$flow:flow resume FT-1\n```\n"
     problems = seam_check.host_specific_invocation_problems("t.md", text)

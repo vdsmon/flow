@@ -20,12 +20,15 @@ calculator:
 Invoke the internal calculator through the facade, for example:
 
 ```bash
-FLOW_HARNESS="<harness>" "<facade>" recall --metric <internal-name> \
+FLOW_HARNESS="<harness>" "<facade>" metric trend \
   --namespace <namespace> --workspace-root . \
-  [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--json]
+  [--since YYYY-MM-DD] [--until YYYY-MM-DD]
 ```
 
-`--since` is inclusive and `--until` is exclusive. Use the calculator's resolved
+Substitute `trend` with the internal name from the table above.
+
+`--since` is inclusive and `--until` is exclusive. `--json` exists on `trend` and
+`fix-efficacy` only; the other measures print their table form. Use the calculator's resolved
 defaults when omitted and always display the resolved window. `fix-efficacy` is a
 lifetime measure; reject window flags instead of accepting and ignoring them.
 

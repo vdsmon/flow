@@ -131,7 +131,7 @@ FLOW ticket split <ticket>
 FLOW memory search [<query>] [--ticket <key>]... [--label <facet:value>] [--digest] [--semantic] [--threshold <float>] [--branch <branch>] [--limit <n>]
 FLOW memory prune
 FLOW memory rebuild [--full]
-FLOW measure <throughput|lead-time|friction|reverts|experiment|trend|memory-health|recall-quality|fix-efficacy> [--since <date>] [--until <date>] [--json]
+FLOW measure <throughput|lead-time|friction|reverts|experiment|trend|memory-health|recall-quality|fix-efficacy> [--since <date>] [--until <date>]
 FLOW measure throughput --checkpoint <personal|work> [--manifest <path>]
 FLOW workspace setup [--guidance]
 FLOW workspace inspect [<target>] [--json]

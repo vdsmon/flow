@@ -98,11 +98,6 @@ _AGENTS_STANZA_NAME = "_AGENTS_STANZA"
 _AGENTS_BEGIN_MARKER = "<!-- flow:begin -->"
 _AGENTS_END_MARKER = "<!-- flow:end -->"
 
-# Sentinel flags that one script detects in raw argv and forwards (minus the
-# sentinel) to another script's CLI. recall.py --metric <...> dispatches to
-# metric.cli_main, so the trailing flags are metric.py's surface, not recall's.
-_FORWARDERS = {("recall.py", "--metric"): "metric.py"}
-
 # A bare script name as it appears in MODULE.md backticks/prose (no path prefix).
 # Char class is [a-z0-9_]+ (NOT [a-z_]+): omitting the digit silently misses a
 # digit-bearing basename like embedder_model2vec.py (the model2vec `2`), same
@@ -851,16 +846,6 @@ def validate(inv: Invocation) -> list[Problem]:
     known_strict = surface.global_flags | {"--help"}
     if sub is not None:
         known_strict |= surface.sub_flags.get(sub, frozenset())
-
-    # Fold in a forwarded script's surface when its sentinel flag is present.
-    for (fscript, sentinel), target in _FORWARDERS.items():
-        if inv.script == fscript and sentinel in inv.flags:
-            tsurface = surface_of(target)
-            extra = {sentinel}
-            if tsurface is not None:
-                extra |= tsurface.global_flags | tsurface.all_sub_flags()
-            known_any |= extra
-            known_strict |= extra
 
     for flag in inv.flags:
         if flag not in known_any:
