@@ -53,13 +53,11 @@ returns.
 
 ## Tracker state at freeze
 
-- **5 open** (kept deliberately): mg79 (Jira User-Agent bug), 4ipf (e2e trusts a
-  failed recipe), 5ogh (fail-closed review packets), be8j (restore resume-branch test
-  coverage), pxcz (a maintainer decision, not a task).
-- **29 deferred**: everything else, including qpgd (185-test cut — run in a dedicated
-  session; manifest embedded in the ticket) and q75n (staged replan with notes).
-  Deferred means invisible to `bd ready` and to drains. Deleting any of them later is
-  also fine; they are records, not obligations.
+Superseded by the 2026-07-25 obsolescence sweep (epic `flow-zeul`): 22 tickets whose
+subject was deleted architecture were closed with per-ticket grep evidence. The live
+set is now mg79, pxcz, q75n, pq34, xv9e, kudx, 2x5y, 0cug, qpgd (deferred, dedicated
+session), plus the rajy/rh76 placeholders. Deferred means invisible to `bd ready` and
+to drains; the closed records keep their evidence comments.
 - Machinery-freeze is in effect: no Flow-on-Flow tickets until the maintainer says so.
 
 ## Known gaps (the honest list)
