@@ -53,7 +53,6 @@ COMMANDS = {
     "review-brief": "review_brief.py",
     "reflect-inputs": "reflect_inputs.py",
     "revise-config": "revise_config.py",
-    "run-report": "run_report.py",
     "scrub-ci-skip": "scrub_ci_skip.py",
     "status": "status.py",
     "sweep-knowledge": "sweep_knowledge.py",

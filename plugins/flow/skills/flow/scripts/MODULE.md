@@ -172,7 +172,6 @@ The maintainer-gated `FLOW maintain evolution drain` and
 | Script | Role | Contract notes |
 |--------|------|----------------|
 | `status.py` | Read-only run/stage/lease table (no network). | `[--ticket] --workspace-root [--json]` |
-| `run_report.py` | Pure run post-mortem join over ordered stage timestamps, neutral between-stage gaps, and friction entries scoped by `run_id`; renders the compact final timing/friction block and may atomically persist its JSON receipt. | `--workspace-root --ticket-dir [--json] [--output]`; writes the explicit output path only |
 | `group_candidates.py` | `FLOW ticket group` core: fetch + normalize grouping candidates (explicit keys, or the `--mine` assigned selector) through the tracker seam, then surface empty-body title-twin duplicate hints. Read-only; the lead+covers clustering judgment lives in `references/command-ticket.md`. | `[<key> ...] --mine --filter --workspace-root`; exit 1 tracker / 2 config / 3 no input. Consumed by `references/command-ticket.md` |
 | `group_persist.py` | `FLOW ticket group` defer-path persistence: record a cover set as a `flow-group covers:` marker comment on the lead (`persist`, idempotent), and read it back (`derive`) so a grouping survives propose→act across sessions. Cross-backend (only `comment`/`get`); `spec` auto-derives `--covers` from it. | `persist --lead --covers --workspace-root` / `derive --lead --workspace-root`; exit 1 tracker / 2 config / 3 args. Consumed by `references/command-ticket.md` + `references/delivery-plan.md` |
 | `triage.py` | `list`: read-only `deferred` + decided-mode `blocked` queue with each one's defer comment (beads only), every row tagged `queue=evolve\|day-job` (evolve label); `--ready` opt-in adds the ready queues. `decided`: probe a bead's recorded triage decision; returns `{decided,answer,is_hot,hitl}` JSON. `lane`: resolve a bead's verification lane (express\|light\|full) from its tier labels (delegates policy to `tier_policy.lane_for`; spec-time twin of `flow_worktree._lane_for_bead`). Houses `_GUARD_FILES` + `is_hot_change`. | — |
@@ -216,14 +215,14 @@ markers are overwritten. `—` = none.
 <!-- flow:module-map:begin -->
 | Script | Subcommands | Imported by |
 |--------|-------------|-------------|
-| `_atomicio.py` | — | `diff_extract`, `dispatch_stage`, `fleet`, `flow_launcher`, `flow_worktree`, `init`, `lease`, `machinery_edit`, `memory_embed`, `pending_mutations`, `recall_pending`, `review_brief`, `run_report`, `runtime_layout`, `snapshot`, `state`, `ticket_frontmatter` |
+| `_atomicio.py` | — | `diff_extract`, `dispatch_stage`, `fleet`, `flow_launcher`, `flow_worktree`, `init`, `lease`, `machinery_edit`, `memory_embed`, `pending_mutations`, `recall_pending`, `review_brief`, `runtime_layout`, `snapshot`, `state`, `ticket_frontmatter` |
 | `_evolve_common.py` | — | `evolve_drain`, `evolve_reap`, `evolve_select`, `evolve_self_merge`, `observe_at_close`, `queue_drain`, `queue_select`, `queue_status`, `sweep_knowledge` |
-| `_jsonl.py` | — | `friction_recurrence`, `memory_append`, `memory_embed`, `metric`, `pending_mutations`, `recall`, `recall_pending`, `recall_usage`, `reflect_inputs`, `run_report`, `senses_deadman`, `sweep_knowledge` |
+| `_jsonl.py` | — | `friction_recurrence`, `memory_append`, `memory_embed`, `metric`, `pending_mutations`, `recall`, `recall_pending`, `recall_usage`, `reflect_inputs`, `senses_deadman`, `sweep_knowledge` |
 | `_locking.py` | — | `dispatch_stage`, `fleet`, `flow_friction`, `flow_worktree`, `lease`, `machinery_edit`, `memory_append`, `memory_embed`, `observe_ship_event`, `pending_mutations`, `recall_pending`, `recall_usage`, `runtime_layout`, `state`, `ticket_frontmatter` |
-| `_memory_paths.py` | — | `fleet`, `flow_friction`, `flow_worktree`, `friction_escalate`, `friction_recurrence`, `memory_append`, `memory_embed`, `metric`, `observe_at_close`, `observe_ship_event`, `recall`, `recall_usage`, `reflect_inputs`, `run_report`, `senses_deadman`, `sweep_knowledge` |
+| `_memory_paths.py` | — | `fleet`, `flow_friction`, `flow_worktree`, `friction_escalate`, `friction_recurrence`, `memory_append`, `memory_embed`, `metric`, `observe_at_close`, `observe_ship_event`, `recall`, `recall_usage`, `reflect_inputs`, `senses_deadman`, `sweep_knowledge` |
 | `_registry.py` | — | `bundle_discover`, `dispatch_stage`, `init`, `lint_ticket`, `resolve_handler`, `validate_workspace` |
 | `_runner.py` | — | `_evolve_common`, `branch_ticket`, `create_pr`, `diff_extract`, `evolve_drain`, `evolve_reap`, `evolve_select`, `flow_beads_create`, `flow_worktree`, `forge_bitbucket`, `forge_github`, `friction_escalate`, `init`, `queue_drain`, `queue_select`, `queue_status`, `recall_pending`, `review_brief`, `senses_deadman`, `tracker_beads`, `version`, `worktree_janitor` |
-| `_timeutil.py` | — | `_evolve_common`, `dispatch_stage`, `evolve_drain`, `evolve_reap`, `fleet`, `flow_friction`, `flow_worktree`, `init`, `lease`, `memory_append`, `memory_embed`, `metric`, `observe_at_close`, `observe_ship_event`, `recall`, `recall_pending`, `recall_usage`, `recover`, `run_report`, `runtime_layout`, `senses_deadman`, `state`, `status`, `sweep_knowledge`, `ticket_frontmatter`, `tracker_cli`, `worktree_janitor` |
+| `_timeutil.py` | — | `_evolve_common`, `dispatch_stage`, `evolve_drain`, `evolve_reap`, `fleet`, `flow_friction`, `flow_worktree`, `init`, `lease`, `memory_append`, `memory_embed`, `metric`, `observe_at_close`, `observe_ship_event`, `recall`, `recall_pending`, `recall_usage`, `recover`, `runtime_layout`, `senses_deadman`, `state`, `status`, `sweep_knowledge`, `ticket_frontmatter`, `tracker_cli`, `worktree_janitor` |
 | `_workspace.py` | — | `_evolve_common`, `branch_ticket`, `create_pr`, `flow_friction`, `flow_worktree`, `forge`, `friction_escalate`, `maintainer`, `metric`, `model_resolve`, `observe_ship_event`, `recover`, `reflect_inputs`, `revise_config`, `snapshot`, `status`, `tracker_cli`, `triage` |
 | `branch_ticket.py` | — | `worktree_janitor` |
 | `bundle_discover.py` | — | `flow_launcher`, `flowctl`, `init`, `resolve_handler` |
@@ -288,14 +287,13 @@ markers are overwritten. `—` = none.
 | `resolve_handler.py` | — | `snapshot` |
 | `review_brief.py` | `freshness` `render` | — |
 | `revise_config.py` | `apply-floor` | — |
-| `run_report.py` | — | — |
 | `runtime_layout.py` | — | `flow_launcher` |
 | `scrub_ci_skip.py` | — | — |
 | `seam_check.py` | — | — |
 | `senses_deadman.py` | — | — |
 | `snapshot.py` | — | `dispatch_stage`, `recover` |
 | `stage_merge.py` | `execute` `probe` | — |
-| `state.py` | — | `diff_extract`, `dispatch_stage`, `flow_worktree`, `recall_usage`, `recover`, `reflect_inputs`, `run_report`, `status` |
+| `state.py` | — | `diff_extract`, `dispatch_stage`, `flow_worktree`, `recall_usage`, `recover`, `reflect_inputs`, `status` |
 | `status.py` | — | — |
 | `sweep_knowledge.py` | `apply` `apply-cluster` `cluster` `propose` | — |
 | `sync.py` | — | — |
