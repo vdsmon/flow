@@ -215,13 +215,6 @@ def test_append_stamps_plugin_version(tmp_path: Path) -> None:
     assert entry["plugin_version"] == live
 
 
-def test_plugin_version_in_jsonl_line(tmp_path: Path) -> None:
-    _seed_workspace(tmp_path)
-    flow_friction.append(tmp_path, "FT-1", "r", "implement", "RETRY", "x")
-    rows = _read_jsonl(_memory_paths.friction_path(tmp_path, "demo"))
-    assert rows[0]["plugin_version"] == _live_plugin_version()
-
-
 def test_append_succeeds_when_plugin_version_guarded_empty(
     tmp_path: Path, monkeypatch: Any
 ) -> None:

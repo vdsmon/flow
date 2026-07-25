@@ -265,14 +265,6 @@ def test_detect_misses_ignores_superseded_candidate(tmp_path: Path) -> None:
 # ─── metric: recall-hit-rate ─────────────────────────────────────────────────
 
 
-def _write_usage_records(tmp_path: Path, records: list[dict]) -> None:
-    path = recall_usage.recall_usage_path(tmp_path, "demo")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as fh:
-        for r in records:
-            fh.write(json.dumps(r, sort_keys=True) + "\n")
-
-
 def test_recall_hit_rate_precision_and_misses(tmp_path: Path) -> None:
     _seed_workspace(tmp_path, semantic=False)
     _write_usage_records(

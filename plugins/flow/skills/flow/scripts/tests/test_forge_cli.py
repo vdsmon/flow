@@ -234,12 +234,3 @@ class _PostReplyNotSupportedForge(_FakeForge):
     @override
     def post_reply(self, pr_id, thread_id, body):
         raise NotSupported("no replies")
-
-
-def test_post_reply_degrades_on_not_supported(ws, capsys):
-    rc = forge_cli.cli_main(
-        ["--workspace-root", str(ws), "post-reply", "--pr", "7", "--thread", "1", "--text", "x"],
-        forge_factory=lambda _cfg: _PostReplyNotSupportedForge(),
-    )
-    assert rc == 0
-    assert json.loads(capsys.readouterr().out) == {"supported": False}
