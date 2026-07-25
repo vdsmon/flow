@@ -1344,3 +1344,10 @@ def test_stage_agent_prompt_fences_are_identical() -> None:
     skill = fence(seam_check.SKILL_ROOT / "SKILL.md")
     loop = fence(seam_check.SKILL_ROOT / "references" / "delivery-loop.md")
     assert skill == loop
+
+
+def test_prose_docs_to_check_includes_scripts_markdown() -> None:
+    names = {p.name for p in seam_check.prose_docs_to_check()}
+    assert "MODULE.md" in names
+    assert "inventory.md" in names
+    assert "SKILL.md" in names

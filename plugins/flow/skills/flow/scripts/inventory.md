@@ -481,7 +481,7 @@ Never-destroy invariant: a corrupt artifact is renamed or copied aside, never de
 | dispatch_stage      | 2    | no ticket dir / not yet initialized             |
 | dispatch_stage      | 3    | revise-open: original run not terminal          |
 | dispatch_stage      | 4    | revise-open: a revision is already live         |
-| dispatch_stage      | 5    | stale foreign lease (needs /flow recover --takeover) |
+| dispatch_stage      | 5    | stale foreign lease (needs `FLOW workspace repair` takeover) |
 | dispatch_stage      | 7    | lost lease (another run took over)               |
 
 ### Handler-descriptor JSON shape (`dispatch next` stdout)
@@ -549,7 +549,7 @@ Resolves ticket key from current git branch.
 CLI surface: MODULE.md §Bootstrap (seam-checked there; this file keeps only the contract).
 
 Backend-aware key regexes: jira `<PROJECT_KEY>-\d+`; beads `<prefix>-[0-9a-z]{3,}(\.\d+)*` (dotted child keys resolve too).
-`--branch` resolves from an explicit branch (no git call) — the PR->ticket enabler for `/flow revise <pr#>`; absent = current branch.
+`--branch` resolves from an explicit branch (no git call) — the PR->ticket enabler for a `FLOW pr:<number>` revision; absent = current branch.
 Exit 0=match, 1=env-error, 3=no-match.
 
 ### `ticket_frontmatter.py`
@@ -797,7 +797,7 @@ convention ships `label_facets = []` and the tagging step is a no-op.
 
 Recall observability (flow-nylh.2). Append-only `.flow/memory/<ns>/recall-usage.jsonl`, two
 record kinds, read by `metric.py recall-hit-rate`. Reflect drives both (stage-reflect
-3d/3e); both are best-effort and deduped per-run so a `/flow recover` rerun never
+3d/3e); both are best-effort and deduped per-run so a repair rerun never
 double-counts.
 
 | Subcommand | Description |
@@ -868,7 +868,7 @@ Script-owned top-level keys (rejected as `--evidence-json` inputs): `observed_at
 `plugins/flow/.claude-plugin/plugin.json`, `""` on any failure).
 
 On non-EEXIST I/O error: write intent log to `<ticket>.json.quarantine-intent.<ts>.json` (best-effort) BEFORE re-raising.
-`/flow recover` in phase 8c replays the intent log.
+Workspace repair replays the intent log.
 
 Exit codes: 0=primary success, 1=evidence JSON invalid, 2=dupe (informational),
 3=I/O error (intent log written).
@@ -916,7 +916,7 @@ Flag surface: MODULE.md §Tracker (seam-checked there); this table keeps the per
 |------------|-------|
 | `get` | `tracker.get(key)` → JSON |
 | `state` | `tracker.state(key)` → JSON |
-| `transition` | Looks up transition id by `to_normalized_state` / `to_state` / `name` (any match). `--field k=v` pairs string-only in mvp. `--enqueue-on-transient`: on a transient failure (exit 1), durably queue the transition to `.flow/pending-mutations.jsonl` for `/flow sync`. |
+| `transition` | Looks up transition id by `to_normalized_state` / `to_state` / `name` (any match). `--field k=v` pairs string-only in mvp. `--enqueue-on-transient`: on a transient failure (exit 1), durably queue the transition to `.flow/pending-mutations.jsonl` for `FLOW workspace sync`. |
 | `comment` | Wraps body as `{"body": text, "fmt": "md"}` (Content TypedDict: fmt in {md, adf, plain}). |
 | `create` | `tracker.create(...)` → `{"key": new_key}` JSON. |
 | `is-shipped` | `tracker.is_shipped(key)` → JSON. |

@@ -1235,6 +1235,17 @@ def facade_entries_without_caller(invocations: list[Invocation]) -> set[str]:
     }
 
 
+def prose_docs_to_check() -> list[Path]:
+    """docs_to_check() plus scripts/*.md, for the doc-level gates only.
+
+    MODULE.md and inventory.md legitimately name scripts and flags that the
+    invocation-parsing gates would over-fire on, but a host-specific public
+    spelling (`/flow ...`) or a corrupted runtime token is drift wherever it
+    appears — removed public forms otherwise survive in ungated prose.
+    """
+    return docs_to_check() + sorted(SCRIPTS_DIR.glob("*.md"))
+
+
 def docs_to_check() -> list[Path]:
     docs = [SKILL_ROOT / "SKILL.md"]
     refs = SKILL_ROOT / "references"
@@ -1259,9 +1270,12 @@ def main(argv: list[str]) -> int:
         facade = find_facade_invocations(doc.name, text)
         all_invs.extend(direct)
         all_invs.extend(facade)
-        problems.extend(host_specific_invocation_problems(doc.name, text))
         problems.extend(stale_direct_invocation_problems(direct))
         problems.extend(facade_context_problems(facade))
+
+    for doc in prose_docs_to_check():
+        text = doc.read_text(encoding="utf-8")
+        problems.extend(host_specific_invocation_problems(doc.name, text))
         problems.extend(malformed_runtime_token_problems(doc.name, text))
 
     for inv in all_invs:
