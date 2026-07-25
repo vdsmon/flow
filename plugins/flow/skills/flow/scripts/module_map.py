@@ -161,7 +161,10 @@ def render_guard_span(scripts_dir: Path = SCRIPTS_DIR) -> str:
 def _targets() -> tuple[tuple[Path, str, str, Callable[[Path], str]], ...]:
     """(path, begin, end, render) per managed block; read at call time so tests
     can point the module-level path constants at temporary copies."""
-    return ((MODULE_MD, MODULE_BEGIN, MODULE_END, render_module_block),)
+    return (
+        (MODULE_MD, MODULE_BEGIN, MODULE_END, render_module_block),
+        (STAGE_REFLECT_MD, GUARD_BEGIN, GUARD_END, render_guard_span),
+    )
 
 
 def check(scripts_dir: Path = SCRIPTS_DIR) -> list[str]:

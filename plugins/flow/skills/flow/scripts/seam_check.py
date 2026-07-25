@@ -1061,83 +1061,6 @@ def phantom_module_md_rows(
     return phantoms
 
 
-def triage_guard_files(scripts_dir: Path = SCRIPTS_DIR) -> frozenset[str]:
-    """triage._GUARD_FILES parsed from source (AST, no import side effects)."""
-    tree = ast.parse((scripts_dir / "triage.py").read_text(encoding="utf-8"))
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Assign):
-            continue
-        for tgt in node.targets:
-            if isinstance(tgt, ast.Name) and tgt.id == "_GUARD_FILES":
-                return frozenset(
-                    c.value
-                    for c in ast.walk(node.value)
-                    if isinstance(c, ast.Constant) and isinstance(c.value, str)
-                )
-    return frozenset()
-
-
-_GUARD_LIST_ANCHOR = "safety-machinery guard file"
-_GUARD_LIST_EXPECTED_DOCS = 1  # stage-reflect.md is the canonical prose enumeration
-
-
-def guard_file_list_drift(
-    docs: list[Path] | None = None, guard_files: frozenset[str] | None = None
-) -> list[tuple[str, int, str]]:
-    """Prose hot-guard enumerations diverging from triage._GUARD_FILES.
-
-    The canonical prose list stays readable while the runtime set remains code. The
-    enumeration is anchored on the literal
-    "safety-machinery guard file" phrase followed by a parenthesized list of backticked *.py names;
-    that set must equal the *.py members of _GUARD_FILES. Finding fewer than the expected anchored
-    enumerations is itself a drift (the phrase moved and the gate would silently check nothing).
-    """
-    if guard_files is None:
-        guard_files = triage_guard_files(SCRIPTS_DIR)
-    expected = {name for name in guard_files if name.endswith(".py")}
-    if not expected:
-        return [("triage.py", 0, "could not parse _GUARD_FILES from triage.py source")]
-    if docs is None:
-        docs = docs_to_check()
-    drifts: list[tuple[str, int, str]] = []
-    anchored = 0
-    for doc in docs:
-        text = doc.read_text(encoding="utf-8")
-        for lineno, logical in _logical_lines(text):
-            idx = logical.find(_GUARD_LIST_ANCHOR)
-            if idx == -1:
-                continue
-            tail = logical[idx + len(_GUARD_LIST_ANCHOR) :]
-            paren = tail.find("(")
-            close = tail.find(")", paren)
-            if paren == -1 or close == -1:
-                continue
-            listed = set(_MODULE_NAME_RE.findall(tail[paren:close]))
-            if not listed:
-                continue
-            anchored += 1
-            missing = expected - listed
-            extra = listed - expected
-            if missing or extra:
-                drifts.append(
-                    (
-                        doc.name,
-                        lineno,
-                        f"missing {sorted(missing)}, extra {sorted(extra)}",
-                    )
-                )
-    if anchored < _GUARD_LIST_EXPECTED_DOCS:
-        drifts.append(
-            (
-                "guard-file lists",
-                0,
-                f"found {anchored} anchored enumeration(s), "
-                f"expected >= {_GUARD_LIST_EXPECTED_DOCS}",
-            )
-        )
-    return drifts
-
-
 def docs_over_stage_doc_citation_limit(
     registry_path: Path = SKILL_ROOT / "stage-registry.toml",
     docs: list[Path] | None = None,
@@ -1368,17 +1291,6 @@ def main(argv: list[str]) -> int:
             raw="",
         )
         for name in sorted(phantom_module_md_rows())
-    )
-
-    problems.extend(
-        Problem(
-            doc=doc_name,
-            line=lineno,
-            level="ERROR",
-            msg=f"guard-file list diverges from triage._GUARD_FILES: {detail}",
-            raw="",
-        )
-        for doc_name, lineno, detail in guard_file_list_drift()
     )
 
     problems.extend(

@@ -1001,59 +1001,6 @@ def test_main_fails_on_phantom_row(monkeypatch) -> None:
     assert seam_check.main([]) == 1
 
 
-# --- guard-file list <-> triage._GUARD_FILES ----------------------------------
-
-
-def test_triage_guard_files_parsed_from_source() -> None:
-    parsed = seam_check.triage_guard_files()
-    assert "flow_worktree.py" in parsed
-    assert "SKILL.md" in parsed
-
-
-def test_guard_lists_match_triage() -> None:
-    """The canonical prose guard-file enumeration must equal triage._GUARD_FILES."""
-    assert seam_check.guard_file_list_drift() == []
-
-
-def test_guard_list_divergence_flagged(tmp_path) -> None:
-    guard = frozenset({"a.py", "b.py", "SKILL.md"})
-    doc1 = tmp_path / "one.md"
-    doc1.write_text("a safety-machinery guard file (`a.py`, `b.py`) is hot\n")
-    doc2 = tmp_path / "two.md"
-    doc2.write_text("a safety-machinery guard file (`a.py`) is hot\n")
-    drifts = seam_check.guard_file_list_drift(docs=[doc1, doc2], guard_files=guard)
-    assert len(drifts) == 1
-    assert drifts[0][0] == "two.md"
-    assert "b.py" in drifts[0][2]
-
-
-def test_guard_list_extra_member_flagged(tmp_path) -> None:
-    guard = frozenset({"a.py", "b.py"})
-    doc1 = tmp_path / "one.md"
-    doc1.write_text("a safety-machinery guard file (`a.py`, `b.py`) is hot\n")
-    doc2 = tmp_path / "two.md"
-    doc2.write_text("a safety-machinery guard file (`a.py`, `b.py`, `c.py`) is hot\n")
-    drifts = seam_check.guard_file_list_drift(docs=[doc1, doc2], guard_files=guard)
-    assert len(drifts) == 1
-    assert "c.py" in drifts[0][2]
-
-
-def test_guard_list_missing_anchors_is_a_drift(tmp_path) -> None:
-    # The phrase moving out of the docs must not silently disarm the gate.
-    doc = tmp_path / "one.md"
-    doc.write_text("no anchor here\n")
-    drifts = seam_check.guard_file_list_drift(docs=[doc], guard_files=frozenset({"a.py"}))
-    assert len(drifts) == 1
-    assert "expected >= 1" in drifts[0][2]
-
-
-def test_main_fails_on_guard_list_drift(monkeypatch) -> None:
-    monkeypatch.setattr(
-        seam_check, "guard_file_list_drift", lambda *a, **k: [("one.md", 3, "missing ['b.py']")]
-    )
-    assert seam_check.main([]) == 1
-
-
 # --- stage->reference_doc map re-enumeration drift ---------------------------
 
 

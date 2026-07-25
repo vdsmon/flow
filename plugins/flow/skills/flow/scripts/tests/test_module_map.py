@@ -90,3 +90,21 @@ def test_check_reports_missing_markers(tmp_path, monkeypatch) -> None:
     problems = module_map.check()
     assert len(problems) == 1
     assert "markers not found" in problems[0]
+
+
+def test_triage_guard_files_parsed_from_source() -> None:
+    members = module_map.triage_guard_files()
+    assert "lease.py" in members
+    assert "dispatch_stage.py" in members
+    assert "SKILL.md" in members
+
+
+def test_render_guard_span_lists_py_members_only() -> None:
+    span = module_map.render_guard_span()
+    assert span.startswith(module_map.GUARD_BEGIN)
+    assert span.endswith(module_map.GUARD_END)
+    assert "`lease.py`" in span
+    # Non-.py members (SKILL.md, AGENTS.md, ...) are enumerated separately by
+    # the surrounding authored sentence, never by the generated span.
+    assert "SKILL.md" not in span
+    assert "\n" not in span
