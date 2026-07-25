@@ -81,7 +81,10 @@ identity as execution evidence.
 Optional `[code_review] reviewer_model` and `[code_review] reviewer_effort` tune the
 bundled Codex reviewer, when that handler is configured. Leaving either unset uses the
 operator's own Codex configuration. Flow checks their type but not their values, because
-that vocabulary belongs to the reviewer CLI and moves independently of Flow. Effort buys
+that vocabulary belongs to the reviewer CLI and moves independently of Flow. A value the
+CLI rejects therefore surfaces at review time, where the reviewer drops that flag, runs
+once more without it, and reports the substitution: a mistyped tuning key degrades the
+review to the CLI default rather than stranding a ticket. Effort buys
 review depth at the cost of wall clock against a fail-closed stage timeout, so the top of
 the range suits a manual review rather than a pipeline default. They are separate keys
 from `[models]` on purpose: that table is keyed by stage and carries host model names, so
