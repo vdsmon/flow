@@ -78,11 +78,16 @@ An optional `[models]` table may provide host-native stage hints. Reconfiguratio
 preserves those hints. Setup does not create provider matrices or require model
 identity as execution evidence.
 
-An optional `[code_review] reviewer_model` names the model the bundled Codex reviewer
-runs, when that handler is configured. Leaving it unset uses the operator's own Codex
-configuration. It is a separate key from `[models]` on purpose: that table is keyed by
-stage and carries host model names, so reusing it would make one value's vocabulary
-depend on which handler is selected. Setup writes `code_review` to the bundled reviewer
+Optional `[code_review] reviewer_model` and `[code_review] reviewer_effort` tune the
+bundled Codex reviewer, when that handler is configured. Leaving either unset uses the
+operator's own Codex configuration. Flow checks their type but not their values, because
+that vocabulary belongs to the reviewer CLI and moves independently of Flow. Effort buys
+review depth at the cost of wall clock against a fail-closed stage timeout, so the top of
+the range suits a manual review rather than a pipeline default. They are separate keys
+from `[models]` on purpose: that table is keyed by stage and carries host model names, so
+reusing it would make one value's vocabulary depend on which handler is selected.
+
+Setup writes `code_review` to the bundled reviewer
 when the `codex` executable resolves and the harness is Claude Code, and to `inline`
 otherwise; verify `codex exec` runs authenticated before relying on it, because an
 unauthenticated CLI exits fast and reads like a broken launch.

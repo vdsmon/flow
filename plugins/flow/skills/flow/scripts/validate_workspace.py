@@ -95,9 +95,14 @@ def _validate_tracker_block(data: dict[str, Any], result: ValidationResult) -> s
 def _validate_code_review_block(data: dict[str, Any], result: ValidationResult) -> None:
     """Validate the OPTIONAL `[code_review]` block, only when present.
 
-    `reviewer_model` names the model the bundled Codex reviewer runs. It is separate
-    from `[models]` because that table is keyed by stage and carries host model names;
-    one key whose vocabulary changed with the selected handler would be worse than two.
+    `reviewer_model` and `reviewer_effort` tune the bundled Codex reviewer. They are
+    separate from `[models]` because that table is keyed by stage and carries host model
+    names; one key whose vocabulary changed with the selected handler would be worse
+    than two.
+
+    Both are checked for type only. Their vocabularies belong to the reviewer CLI, not
+    to Flow, and that vocabulary moves: `max` is a valid effort level that an earlier
+    reading of the CLI missed. A stale allow-list here would reject a working config.
     """
     block = data.get("code_review")
     if block is None:
@@ -105,9 +110,10 @@ def _validate_code_review_block(data: dict[str, Any], result: ValidationResult) 
     if not isinstance(block, dict):
         result.add("code_review", "not a table")
         return
-    model = block.get("reviewer_model")
-    if model is not None and not isinstance(model, str):
-        result.add("code_review.reviewer_model", "must be a string")
+    for key in ("reviewer_model", "reviewer_effort"):
+        value = block.get(key)
+        if value is not None and not isinstance(value, str):
+            result.add(f"code_review.{key}", "must be a string")
 
 
 def _validate_forge_block(data: dict[str, Any], result: ValidationResult) -> None:

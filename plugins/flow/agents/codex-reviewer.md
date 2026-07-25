@@ -38,18 +38,26 @@ change itself, and carries the review questions and severity definitions from th
 reference: `Critical` unsafe or incorrect to ship, `Major` materially worth fixing,
 `Minor` optional improvement. Require every finding to cite a real path and line.
 
-Read `reviewer_model` from the workspace's `[code_review]` table if present, and pass it
-as `-m`. When it is absent, omit `-m` so Codex uses the operator's configured default.
+Read `reviewer_model` and `reviewer_effort` from the workspace's `[code_review]` table.
+Pass a present `reviewer_model` as `-m` and a present `reviewer_effort` as
+`-c model_reasoning_effort=<value>`. Omit either flag when its key is absent, so Codex
+falls back to the operator's own configuration.
 
 Run exactly one foreground call with an explicit 600000 ms timeout:
 
 ```bash
 codex exec -C "<workspace root>" -s read-only \
   --ignore-rules --ephemeral \
+  [-m <reviewer_model>] [-c model_reasoning_effort=<reviewer_effort>] \
   --output-schema "<skill_root>/scripts/assets/codex-review.schema.json" \
   -o "<ticket_dir>/stages/codex-review.json" \
   - < "<prompt file>"
 ```
+
+Effort trades review depth against wall clock, and this stage is fail-closed behind the
+timeout above. A high setting on a large diff fails the stage after implementation has
+already landed, so treat the top of the range as a manual, ungated choice rather than a
+pipeline default.
 
 `-C` roots Codex at the workspace, because your inherited cwd is not authoritative and
 an unrooted call would review whatever repository it happened to start in. `-s read-only`
