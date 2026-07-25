@@ -49,7 +49,7 @@ No reference in jira-workflow — implemented from Atlassian REST API v3 docs + 
 | `link(from,to,kind)`       | `POST /rest/api/3/issueLink` `{type:{name:<mapped>}, inwardIssue:from, outwardIssue:to}` | seam kind→Jira name: `blocks`/`depends_on`→`Blocks`, `relates`→`Relates`; unknown passes raw. Direction: `inwardIssue`=from=the blocked/dependent issue, `outwardIssue`=to=the blocker. |
 | `state(key)`               | `GET /rest/api/3/issue/{key}?fields=status,resolution`                          | derives `TicketState` with normalized + diagnostic |
 | `project_requires_pr()`    | `GET /rest/api/3/workflow/search?projectKey=<P>&expand=transitions.rules` (workflow scheme) | flag iff any transition to Done category has linked-PR validator. **Conservative default = False** if endpoint unauthorized. |
-| `is_shipped(key)`          | PURE READ: frozen `.flow/<ns>/ship-events/<key>.json` → return shipped; else `state()` + ship predicate | adapter MUST NOT write |
+| `is_shipped(key)`          | PURE READ: frozen `.flow/memory/<ns>/ship-events/<key>.json` → return shipped; else `state()` + ship predicate | adapter MUST NOT write |
 | `set_sprint(key, sprint_id)` | `POST /rest/agile/1.0/sprint/{sprintId}/issue` `{issues:[key]}`                | capability: `sprints` |
 | `list_sprints(project)`    | `GET /rest/agile/1.0/board/{boardId}/sprint?state=active,future,closed` (needs board lookup) | capability: `sprints` |
 | `get_attachments(key)`     | `GET /rest/api/3/issue/{key}?fields=attachment`                                 | capability: `attachments` |
@@ -670,7 +670,7 @@ Exit 0=applied or already_applied (idempotent), 1=usage/IO error, 2=refused (out
 
 ## Memory cohort
 
-Four stdlib-only scripts that own `.flow/<namespace>/knowledge.jsonl`, `.flow/<namespace>/ship-events/<ticket>.json`, and the reflect-stage input bundle.
+Four stdlib-only scripts that own `.flow/memory/<namespace>/knowledge.jsonl`, `.flow/memory/<namespace>/ship-events/<ticket>.json`, and the reflect-stage input bundle.
 Same library + thin-CLI shape as 8-mvp.
 Shared `_memory_paths.py` module handles namespace resolution + path conventions.
 
@@ -775,7 +775,7 @@ else the shipped default `uvx --with fastembed python embedder_fastembed.py
 cannot import it). Missing command / `uvx` absent / nonzero exit / unparseable /
 wrong vector count → `_EmbedderUnavailable` (recall catches → BM25 fallback).
 
-**Sidecar index** `.flow/<namespace>/knowledge.embed` (derived; `knowledge.jsonl` stays
+**Sidecar index** `.flow/memory/<namespace>/knowledge.embed` (derived; `knowledge.jsonl` stays
 the source of truth):
 - line 1 header: `{"_header": {"model": "<id>", "dim": <int>, "ts": "<iso>"}}`
 - body: `{"id": "<entry-id>", "v": [<float>, ...]}` per live entry.
@@ -849,7 +849,7 @@ convention ships `label_facets = []` and the tagging step is a no-op.
 
 ### `recall_usage.py`
 
-Recall observability (flow-nylh.2). Append-only `.flow/<ns>/recall-usage.jsonl`, two
+Recall observability (flow-nylh.2). Append-only `.flow/memory/<ns>/recall-usage.jsonl`, two
 record kinds, read by `metric.py recall-hit-rate`. Reflect drives both (stage-reflect
 3d/3e); both are best-effort and deduped per-run so a `/flow recover` rerun never
 double-counts.

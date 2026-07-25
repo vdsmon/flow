@@ -193,7 +193,7 @@ The taxonomy is closed:
      ```
      Use the exact `recalled_entries[i].id` for `--supersedes`. The `--type` respects the closed taxonomy — typically `FACT`/`LEARNED` for the corrected truth, or `DEVIATION` when the point is that the old entry was disproven.
    - **Anything ambiguous, indirect, or inference-based** — the entry merely looks stale, or the contradiction is NOT in `final_diff` — do NOT auto-supersede. Surface a one-line proposal note in the human-facing reflect output instead (`Proposed supersede: <id> — <why it may be stale>`), a binding skeptic correction the maintainer adjudicates. The auto path is reserved for diff-grounded disproof.
-   - **Carry labels forward.** Before appending the superseding entry, check whether the disproved entry carries a `labels` field (the bundle's `recalled_entries` does not surface it — grep the exact id in `knowledge.jsonl`, e.g. `grep '"id": *"<id>"' .flow/<namespace>/knowledge.jsonl`). If it does, thread the SAME values into the superseding append's `--labels` (e.g. `--labels form:iva_2083`). Otherwise a labeled cluster silently loses a member the moment it is superseded: `--label` is a hard filter over the live set, and the new entry starts unlabeled unless told otherwise.
+   - **Carry labels forward.** Before appending the superseding entry, check whether the disproved entry carries a `labels` field (the bundle's `recalled_entries` does not surface it — grep the exact id in `knowledge.jsonl`, e.g. `grep '"id": *"<id>"' .flow/memory/<namespace>/knowledge.jsonl`). If it does, thread the SAME values into the superseding append's `--labels` (e.g. `--labels form:iva_2083`). Otherwise a labeled cluster silently loses a member the moment it is superseded: `--label` is a hard filter over the live set, and the new entry starts unlabeled unless told otherwise.
    - Exit handling is the same table as step 3, plus: exit 5 → unknown supersedes target (the recalled id is no longer in `knowledge.jsonl` — a sibling already retired it). Skip + log; do NOT fail the stage.
 
 3c. **Refresh the semantic index (best-effort, non-blocking).** If any entry was appended (or superseded) this stage and the workspace opts into `[memory.semantic]`, refresh the derived embedding sidecar so plan-phase recall on the NEXT ticket sees this run's knowledge:
@@ -315,10 +315,10 @@ The taxonomy is closed:
 
 ## Outputs
 
-- 0..N new lines in `.flow/<namespace>/knowledge.jsonl`.
-- 0..N usage + miss records in `.flow/<namespace>/recall-usage.jsonl` (precision +
+- 0..N new lines in `.flow/memory/<namespace>/knowledge.jsonl`.
+- 0..N usage + miss records in `.flow/memory/<namespace>/recall-usage.jsonl` (precision +
   false-negative signal for the `recall-hit-rate` metric; steps 3d + 3e).
-- 0..1 ship-event file at `.flow/<namespace>/ship-events/<KEY>.json` (or
+- 0..1 ship-event file at `.flow/memory/<namespace>/ship-events/<KEY>.json` (or
   `.dupe.<n>.json` on EEXIST).
 
 ## Errors
