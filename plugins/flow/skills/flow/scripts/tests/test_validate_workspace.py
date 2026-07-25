@@ -280,7 +280,6 @@ def test_required_when_compounding_skip_when_compounding_false(tmp_path: Path) -
         memory={
             "namespace": "x",
             "compounding": False,
-            "recall_by": ["branch"],
         },
     )
     result, _ = vw.validate(tmp_path)
@@ -311,7 +310,6 @@ def test_legal_handler_strings_accepted(tmp_path: Path, handler: str) -> None:
         memory={
             "namespace": "x",
             "compounding": False,  # disable reflect-required check
-            "recall_by": ["branch"],
         },
     )
     result, snapshot = vw.validate(tmp_path)
@@ -341,7 +339,6 @@ def test_illegal_handler_strings_rejected(tmp_path: Path, handler: str) -> None:
         memory={
             "namespace": "x",
             "compounding": False,
-            "recall_by": ["branch"],
         },
     )
     result, _ = vw.validate(tmp_path)
@@ -356,7 +353,6 @@ def test_missing_memory_namespace_fails(tmp_path: Path) -> None:
         tmp_path,
         memory={
             "compounding": True,
-            "recall_by": ["branch"],
         },
     )
     result, _ = vw.validate(tmp_path)
@@ -579,7 +575,6 @@ def test_label_facets_list_str_valid(tmp_path: Path) -> None:
         memory={
             "namespace": "x",
             "compounding": True,
-            "recall_by": ["branch"],
             "label_facets": ["form"],
         },
     )
@@ -593,7 +588,6 @@ def test_label_facets_non_list_fails(tmp_path: Path) -> None:
         memory={
             "namespace": "x",
             "compounding": True,
-            "recall_by": ["branch"],
         },
         workspace_toml_content=None,
     )
@@ -610,7 +604,6 @@ def test_label_facets_non_str_element_fails(tmp_path: Path) -> None:
         memory={
             "namespace": "x",
             "compounding": True,
-            "recall_by": ["branch"],
         },
         workspace_toml_content=None,
     )

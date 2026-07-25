@@ -57,11 +57,12 @@ def test_find_invocations_quoted_value_with_sequencing_char() -> None:
 
 def test_find_invocations_matches_digit_bearing_script() -> None:
     # Guards the [a-z_]+ regression: without the digit in _SCRIPT_RE, the `2`
-    # in embedder_model2vec.py breaks the match and the invocation goes unlinted.
-    text = "<skill_root>/scripts/embedder_model2vec.py --texts-file X"
+    # in a digit-bearing basename breaks the match and the invocation goes unlinted.
+    # (Synthetic name: keeps the 0-9 class guarded now that no live script has a digit.)
+    text = "<skill_root>/scripts/fake_embedder2vec.py --texts-file X"
     invs = seam_check.find_invocations("t.md", text)
     assert len(invs) == 1
-    assert invs[0].script == "embedder_model2vec.py"
+    assert invs[0].script == "fake_embedder2vec.py"
 
 
 def test_find_invocations_two_commands_on_one_line() -> None:

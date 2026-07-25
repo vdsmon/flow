@@ -62,10 +62,6 @@ from maintainer import resolve_maintainer_repo
 STALE_AFTER_S = 7200
 
 
-class NotMaintainer(Exception):
-    """Raised when the run is not in maintainer mode. Exit 4."""
-
-
 # ─── Paths ───────────────────────────────────────────────────────────────────
 
 
@@ -245,12 +241,6 @@ def resolve_fleet_dir(workspace_root: Path) -> Path:
     return resolve_memory_base(workspace_root) / "fleet"
 
 
-def _resolve(workspace_root: Path) -> Path:
-    if resolve_maintainer_repo(workspace_root) is None:
-        raise NotMaintainer("not a flow maintainer setup; no fleet ledger")
-    return resolve_fleet_dir(workspace_root)
-
-
 def register_run(
     workspace_root: Path,
     key: str,
@@ -368,7 +358,6 @@ def cli_main(argv: list[str]) -> int:
 
 __all__ = [
     "STALE_AFTER_S",
-    "NotMaintainer",
     "deregister",
     "deregister_run",
     "entries",

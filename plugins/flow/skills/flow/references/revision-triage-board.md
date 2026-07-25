@@ -161,5 +161,5 @@ button. **Send to Agent** persists a mid-session batch and keeps the board alive
 - A malformed ended batch is degradation, never guessed approval.
 
 Mark the PR ready through the capability-gated forge command only when the ended
-batch has no fix and `pr-info` still reports a draft. Merge remains human on Forge.
+batch has no fix and `detect-pr --branch <pr-branch>` still reports `draft`. Merge remains human on Forge.
 A user-ended session is terminal: never reopen without an explicit request.
