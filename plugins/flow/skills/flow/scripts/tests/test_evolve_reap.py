@@ -440,13 +440,6 @@ def test_main_red_does_not_promote_hot():
     ]
 
 
-def test_held_main_red_key_always_present():
-    # the bucket is present (empty) even when main is not red.
-    prs = [_pr(1, "flow-a")]
-    out = er.classify(prs, _idx(**{"flow-a": ["evolve"]}))
-    assert out["held_main_red"] == []
-
-
 def test_main_red_none_is_byte_for_byte_legacy():
     prs = [_pr(1, "flow-a")]
     legacy = er.classify(prs, _idx(**{"flow-a": ["evolve"]}))

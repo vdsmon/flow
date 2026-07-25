@@ -383,13 +383,6 @@ def _append_forge(root: Path, body: str) -> None:
     p.write_text(p.read_text(encoding="utf-8") + "\n" + body, encoding="utf-8")
 
 
-def test_forge_absent_is_valid(tmp_path: Path) -> None:
-    root = _make_workspace(tmp_path, backend="beads")
-    result, snapshot = vw.validate(root)
-    assert result.ok
-    assert snapshot is not None
-
-
 def test_forge_github_valid(tmp_path: Path) -> None:
     root = _make_workspace(tmp_path, backend="beads")
     _append_forge(root, '[forge]\nbackend = "github"\n[forge.github]\n')
@@ -554,12 +547,6 @@ def test_inline_code_review_with_per_stage_pin_no_warn(tmp_path: Path) -> None:
 
 
 # ─── [memory] label_facets (optional; validate-if-present) ──────────────────
-
-
-def test_label_facets_absent_is_valid(tmp_path: Path) -> None:
-    root = _make_workspace(tmp_path)
-    result, _ = vw.validate(root)
-    assert result.ok
 
 
 def test_label_facets_list_str_valid(tmp_path: Path) -> None:

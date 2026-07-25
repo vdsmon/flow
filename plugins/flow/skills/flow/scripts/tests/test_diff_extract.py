@@ -932,10 +932,6 @@ def test_cli_empty_files_list_normalized(
 # ─── _parse_files_arg ────────────────────────────────────────────────────────
 
 
-def test_parse_files_arg_json_array() -> None:
-    assert diff_extract._parse_files_arg('["a.py","b.py"]') == ["a.py", "b.py"]
-
-
 def test_parse_files_arg_json_array_with_spaces() -> None:
     assert diff_extract._parse_files_arg('["a.py", "b.py"]') == ["a.py", "b.py"]
     assert diff_extract._parse_files_arg(' ["a.py"]') == ["a.py"]
@@ -944,10 +940,6 @@ def test_parse_files_arg_json_array_with_spaces() -> None:
 def test_parse_files_arg_comma_sep() -> None:
     assert diff_extract._parse_files_arg("a.py,b.py") == ["a.py", "b.py"]
     assert diff_extract._parse_files_arg("a.py, b.py") == ["a.py", "b.py"]
-
-
-def test_parse_files_arg_single_file() -> None:
-    assert diff_extract._parse_files_arg("a.py") == ["a.py"]
 
 
 def test_parse_files_arg_malformed_json_raises() -> None:

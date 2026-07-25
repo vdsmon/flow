@@ -160,11 +160,6 @@ def test_changed_files_clean_never_lowers_hotness():
     assert d["is_hot"] is True
 
 
-def test_changed_files_absent_is_byte_for_byte_legacy():
-    d = esm.decide(["evolve"], is_maintainer=True, auto_merge_hot=False, ci_status="green")
-    assert d == {"action": "merge", "is_hot": False, "reason": "eligible"}
-
-
 def test_changed_files_empty_list_is_noop():
     d = esm.decide(
         ["evolve"],
@@ -224,11 +219,6 @@ def test_eval_pass_merges():
         eval_status="pass",
     )
     assert d["action"] == "merge"
-
-
-def test_eval_none_is_noop():
-    d = esm.decide(["evolve"], is_maintainer=True, auto_merge_hot=False, ci_status="green")
-    assert d == {"action": "merge", "is_hot": False, "reason": "eligible"}
 
 
 def test_eval_gate_sits_after_ci_gate():

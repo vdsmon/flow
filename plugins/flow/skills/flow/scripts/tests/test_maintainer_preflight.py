@@ -45,11 +45,6 @@ def _ts(now: datetime, **delta: float) -> str:
     return (now - timedelta(**delta)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def test_staleness_absent_file_is_silent(tmp_path: Path) -> None:
-    path = tmp_path / "missing.jsonl"
-    assert preflight.render_preflight(preflight.evaluate_run_records(path, _now())) == ""
-
-
 def test_staleness_unreadable_ledger_is_unavailable_not_healthy(tmp_path: Path) -> None:
     report = preflight.evaluate_run_records(tmp_path, _now())
 

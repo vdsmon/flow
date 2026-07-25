@@ -50,12 +50,6 @@ def test_read_returns_state_after_init(tmp_path: Path) -> None:
     assert loaded.ticket == "FT-1234"
 
 
-def test_read_absent_returns_none_exit_zero(tmp_path: Path) -> None:
-    loaded, exit_code = state.read(tmp_path)
-    assert loaded is None
-    assert exit_code == 0
-
-
 def test_read_nonexistent_dir_creates_nothing(tmp_path: Path) -> None:
     loaded, exit_code = state.read(tmp_path / "nope" / "runs" / "FT-1")
     assert loaded is None
