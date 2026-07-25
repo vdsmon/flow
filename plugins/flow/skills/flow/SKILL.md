@@ -284,6 +284,7 @@ Workspace root: <absolute run_root>
 Skill root: <absolute skill_root>
 Facade: <absolute facade>
 Harness: <claude-code|codex|generic>
+Ticket and stage: <ticket> / <stage>
 Ticket dir: <absolute ticket_dir>
 Reference path: <absolute reference, or none>
 Artifact path: <absolute output_path>

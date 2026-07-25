@@ -70,19 +70,8 @@ unattended invocation stops without mutation. The approved plan and base SHA pas
 
 ## Stage and maintenance agents
 
-Every independent stage or maintenance agent receives:
-
-```text
-Workspace root: <absolute run_root>
-Skill root: <absolute skill_root>
-Facade: <absolute facade>
-Harness: <claude-code|codex|generic>
-Ticket and stage: <ticket> / <stage>
-Ticket dir: <absolute ticket_dir>
-Reference path: <absolute reference, or none>
-Artifact path: <absolute output_path>
-```
-
+Every independent stage or maintenance agent receives the exact rooted field block in
+`references/delivery-loop.md` §Independent agent (also inlined in SKILL.md's do-loop).
 The prompt says inherited cwd is non-authoritative and every facade call applies the call-local
 `FLOW_HARNESS` selector to the absolute facade. The agent writes only within the authorized
 worktree and returns its report at the declared artifact path. Durable run, tracker, lease, fleet,

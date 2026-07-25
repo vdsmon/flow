@@ -1327,3 +1327,20 @@ def test_main_fails_on_facade_orphan(monkeypatch) -> None:
         seam_check, "facade_entries_without_caller", lambda *a, **k: {"ghost-entry"}
     )
     assert seam_check.main([]) == 1
+
+
+def test_stage_agent_prompt_fences_are_identical() -> None:
+    # Two authored copies remain by design (SKILL.md's do-loop is the hot path,
+    # delivery-loop.md is the canonical contract). They diverged once at birth
+    # (#479 shipped SKILL.md without 'Ticket and stage'); this pins equality.
+    import re
+
+    def fence(path):
+        text = path.read_text(encoding="utf-8")
+        m = re.search(r"```text\n(Workspace root:.*?)```", text, re.DOTALL)
+        assert m, f"no prompt fence in {path.name}"
+        return m.group(1)
+
+    skill = fence(seam_check.SKILL_ROOT / "SKILL.md")
+    loop = fence(seam_check.SKILL_ROOT / "references" / "delivery-loop.md")
+    assert skill == loop
