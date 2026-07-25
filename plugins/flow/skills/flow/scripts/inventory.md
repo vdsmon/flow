@@ -303,8 +303,7 @@ Pre-flight refusal:
    `memory.compounding = false`).
 4. `[pipeline.handlers]` contains an entry for every stage in
    `[pipeline.stages]`.
-5. `[memory]` block has `namespace`, `compounding`, `auto_recall`, `recall_by`,
-   `recall_top_n`.
+5. `[memory]` block has `namespace` and `compounding`.
 6. For backend=beads: `bd ready --json` returns parseable JSON.
 
 ## Beads CLI surface
@@ -822,17 +821,13 @@ Optional `workspace.toml` block (off by default; absent → semantic off → pur
 | `threshold` | `0.0` | low cosine floor (drop non-positive cosines); candidates are selected by rank (top-K), not τ. |
 | `embedder` | `""` | override the shipped uvx command; blank → default. |
 
-`init.py` writes a commented template of this block. `recall_by` / `recall_top_n` in
-`[memory]` are now UNREAD (the SessionStart recall path was removed; plan-phase recall
-has its own `--top-n`/`--threshold`) — they stay harmless, postcondition #5 still expects
-them so `init` keeps writing them.
+`init.py` writes a commented template of this block.
 
 ### `[memory] label_facets` key
 
 Optional `list[str]`, default `[]`. Names the facet(s) a knowledge entry can be
 tagged with via `memory_append --labels <facet>:<value>` (e.g. `label_facets =
-["form"]` -> `--labels form:iva_2083`). Unlike `recall_by`/`recall_top_n` above,
-this key is forward-wired, not vestigial:
+["form"]` -> `--labels form:iva_2083`). This key is forward-wired:
 - `init.py` seeds `label_facets = []` into the generated `[memory]` block.
 - `validate_workspace.py` type-checks it (`list[str]`) ONLY when present
   (absent is valid — mirrors the `root` optional-key pattern); a present

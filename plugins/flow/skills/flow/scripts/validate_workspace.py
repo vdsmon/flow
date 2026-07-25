@@ -19,8 +19,7 @@ Validates:
 8. `required = true` stages appear.
 9. `required_when_compounding = true` stages appear iff
    `[memory] compounding = true`.
-10. `[memory]`: `namespace` string; `compounding` bool; `auto_recall` bool;
-    `recall_by` list[str]; `recall_top_n` int.
+10. `[memory]`: `namespace` string; `compounding` bool.
 """
 
 from __future__ import annotations
@@ -308,14 +307,8 @@ def _validate_memory_block(data: dict[str, Any], result: ValidationResult) -> bo
         return True  # default compounding=true so caller still gates on it
     if not isinstance(memory.get("namespace"), str) or not memory["namespace"]:
         result.add("memory.namespace", "missing or not a non-empty string")
-    for key in ("auto_recall", "compounding"):
-        if not isinstance(memory.get(key), bool):
-            result.add(f"memory.{key}", "missing or not a bool")
-    recall_by = memory.get("recall_by")
-    if not isinstance(recall_by, list) or not all(isinstance(x, str) for x in recall_by):
-        result.add("memory.recall_by", "missing or not a list[str]")
-    if not isinstance(memory.get("recall_top_n"), int):
-        result.add("memory.recall_top_n", "missing or not an int")
+    if not isinstance(memory.get("compounding"), bool):
+        result.add("memory.compounding", "missing or not a bool")
     root = memory.get("root")
     if root is not None:
         # Optional shared-store path. A relative root would break the cross-worktree

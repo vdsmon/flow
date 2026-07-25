@@ -41,10 +41,7 @@ def _make_workspace(
     if memory is None:
         memory = {
             "namespace": "FT",
-            "auto_recall": True,
             "compounding": True,
-            "recall_by": ["branch", "current-ticket"],
-            "recall_top_n": 5,
         }
 
     lines: list[str] = []
@@ -142,10 +139,7 @@ stages = ["ticket"]
 ticket = "inline"
 [memory]
 namespace = "x"
-auto_recall = true
 compounding = true
-recall_by = ["branch"]
-recall_top_n = 5
 """,
     )
     result, _ = vw.validate(tmp_path)
@@ -163,10 +157,7 @@ stages = ["ticket"]
 ticket = "inline"
 [memory]
 namespace = "x"
-auto_recall = true
 compounding = true
-recall_by = ["branch"]
-recall_top_n = 5
 """,
     )
     result, _ = vw.validate(tmp_path)
@@ -186,10 +177,7 @@ stages = ["ticket"]
 ticket = "inline"
 [memory]
 namespace = "x"
-auto_recall = true
 compounding = true
-recall_by = ["branch"]
-recall_top_n = 5
 """,
     )
     result, _ = vw.validate(tmp_path)
@@ -208,10 +196,7 @@ stages = ["ticket"]
 ticket = "inline"
 [memory]
 namespace = "x"
-auto_recall = true
 compounding = true
-recall_by = ["branch"]
-recall_top_n = 5
 """,
     )
     result, _ = vw.validate(tmp_path)
@@ -294,10 +279,8 @@ def test_required_when_compounding_skip_when_compounding_false(tmp_path: Path) -
         handlers={"ticket": "inline", "plan": "inline"},
         memory={
             "namespace": "x",
-            "auto_recall": True,
             "compounding": False,
             "recall_by": ["branch"],
-            "recall_top_n": 5,
         },
     )
     result, _ = vw.validate(tmp_path)
@@ -327,10 +310,8 @@ def test_legal_handler_strings_accepted(tmp_path: Path, handler: str) -> None:
         handlers={"ticket": handler},
         memory={
             "namespace": "x",
-            "auto_recall": True,
             "compounding": False,  # disable reflect-required check
             "recall_by": ["branch"],
-            "recall_top_n": 5,
         },
     )
     result, snapshot = vw.validate(tmp_path)
@@ -359,10 +340,8 @@ def test_illegal_handler_strings_rejected(tmp_path: Path, handler: str) -> None:
         handlers={"ticket": handler},
         memory={
             "namespace": "x",
-            "auto_recall": True,
             "compounding": False,
             "recall_by": ["branch"],
-            "recall_top_n": 5,
         },
     )
     result, _ = vw.validate(tmp_path)
@@ -376,42 +355,12 @@ def test_missing_memory_namespace_fails(tmp_path: Path) -> None:
     _make_workspace(
         tmp_path,
         memory={
-            "auto_recall": True,
             "compounding": True,
             "recall_by": ["branch"],
-            "recall_top_n": 5,
         },
     )
     result, _ = vw.validate(tmp_path)
     assert any("memory.namespace" in v for v in result.violations)
-
-
-def test_memory_recall_top_n_must_be_int(tmp_path: Path) -> None:
-    _make_workspace(
-        tmp_path,
-        workspace_toml_content="""[tracker]
-backend = "jira"
-[tracker.jira]
-cloud_id = "x"
-project_key = "FT"
-[pipeline]
-stages = ["ticket", "plan", "implement", "commit", "reflect"]
-[pipeline.handlers]
-ticket = "inline"
-plan = "inline"
-implement = "inline"
-commit = "inline"
-reflect = "inline"
-[memory]
-namespace = "x"
-auto_recall = true
-compounding = true
-recall_by = ["branch"]
-recall_top_n = "five"
-""",
-    )
-    result, _ = vw.validate(tmp_path)
-    assert any("memory.recall_top_n" in v for v in result.violations)
 
 
 # ─── CLI ─────────────────────────────────────────────────────────────────────
@@ -604,10 +553,8 @@ def test_label_facets_list_str_valid(tmp_path: Path) -> None:
         tmp_path,
         memory={
             "namespace": "x",
-            "auto_recall": True,
             "compounding": True,
             "recall_by": ["branch"],
-            "recall_top_n": 5,
             "label_facets": ["form"],
         },
     )
@@ -620,10 +567,8 @@ def test_label_facets_non_list_fails(tmp_path: Path) -> None:
         tmp_path,
         memory={
             "namespace": "x",
-            "auto_recall": True,
             "compounding": True,
             "recall_by": ["branch"],
-            "recall_top_n": 5,
         },
         workspace_toml_content=None,
     )
@@ -639,10 +584,8 @@ def test_label_facets_non_str_element_fails(tmp_path: Path) -> None:
         tmp_path,
         memory={
             "namespace": "x",
-            "auto_recall": True,
             "compounding": True,
             "recall_by": ["branch"],
-            "recall_top_n": 5,
         },
         workspace_toml_content=None,
     )
