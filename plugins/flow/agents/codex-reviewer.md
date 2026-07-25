@@ -38,18 +38,40 @@ change itself, and carries the review questions and severity definitions from th
 reference: `Critical` unsafe or incorrect to ship, `Major` materially worth fixing,
 `Minor` optional improvement. Require every finding to cite a real path and line.
 
-Read `reviewer_model` from the workspace's `[code_review]` table if present, and pass it
-as `-m`. When it is absent, omit `-m` so Codex uses the operator's configured default.
+Read `reviewer_model` and `reviewer_effort` from the workspace's `[code_review]` table.
+Pass a present `reviewer_model` as `-m` and a present `reviewer_effort` as
+`-c model_reasoning_effort=<value>`. Omit either flag when its key is absent, so Codex
+falls back to the operator's own configuration.
 
 Run exactly one foreground call with an explicit 600000 ms timeout:
 
 ```bash
 codex exec -C "<workspace root>" -s read-only \
   --ignore-rules --ephemeral \
+  [-m <reviewer_model>] [-c model_reasoning_effort=<reviewer_effort>] \
   --output-schema "<skill_root>/scripts/assets/codex-review.schema.json" \
   -o "<ticket_dir>/stages/codex-review.json" \
   - < "<prompt file>"
 ```
+
+Effort trades review depth against wall clock, and this stage is fail-closed behind the
+timeout above. A high setting on a large diff fails the stage after implementation has
+already landed, so treat the top of the range as a manual, ungated choice rather than a
+pipeline default.
+
+**A rejected launch parameter degrades; it does not fail the stage.** Flow checks that
+`reviewer_model` and `reviewer_effort` are strings and deliberately does not police their
+values, because that vocabulary is the CLI's and it moves. So the CLI is what rejects a
+stale or mistyped value, and it does so before any review happens. When the call fails in
+a way that names one of these parameters rather than the review itself, drop that flag,
+run once more without it, and say so at the top of your report: which key, the value you
+were given, the CLI's own error text, and that the review then ran at the CLI's default.
+
+Retry only for that reason, and only once. A reviewer that actually ran and then failed
+is a missing reviewer, and the stage fails as the reference says. The distinction is
+whether the review happened: a launch parameter the CLI would not accept is a
+configuration problem worth a plain report, not a reason to strand a ticket whose
+implementation has already landed.
 
 `-C` roots Codex at the workspace, because your inherited cwd is not authoritative and
 an unrooted call would review whatever repository it happened to start in. `-s read-only`
@@ -102,6 +124,10 @@ Any of these is a missing reviewer, which the reference makes a visible stage fa
 - the call exceeds its timeout;
 - `<ticket_dir>/stages/codex-review.json` is absent, does not parse as JSON, or does not
   match the schema.
+
+The one exception is the launch-parameter retry above: a first call rejected for
+`reviewer_model` or `reviewer_effort` is not yet a missing reviewer, because no review was
+attempted. Only the retry's outcome counts here.
 
 Report the command and its stderr plainly and fail. Never substitute your own review for
 the Codex one, and never report a review that did not run.

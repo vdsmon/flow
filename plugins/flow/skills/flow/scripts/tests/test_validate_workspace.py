@@ -669,6 +669,32 @@ def test_reviewer_model_string_accepted(tmp_path: Path) -> None:
     assert result.ok, result.violations
 
 
+def test_reviewer_effort_string_accepted(tmp_path: Path) -> None:
+    root = _make_workspace(tmp_path, backend="beads")
+    _append_forge(root, '[code_review]\nreviewer_effort = "high"\n')
+    result, _ = vw.validate(root)
+    assert result.ok, result.violations
+
+
+def test_reviewer_effort_value_is_not_policed(tmp_path: Path) -> None:
+    # The effort vocabulary belongs to the reviewer CLI and moves; a stale allow-list
+    # here would reject a working config.
+    root = _make_workspace(tmp_path, backend="beads")
+    _append_forge(root, '[code_review]\nreviewer_effort = "some-future-tier"\n')
+    result, _ = vw.validate(root)
+    assert result.ok, result.violations
+
+
+def test_reviewer_effort_non_string_is_violation(tmp_path: Path) -> None:
+    root = _make_workspace(tmp_path, backend="beads")
+    _append_forge(root, "[code_review]\nreviewer_effort = 3\n")
+    result, _ = vw.validate(root)
+    assert not result.ok
+    assert any(
+        "code_review.reviewer_effort" in v and "must be a string" in v for v in result.violations
+    )
+
+
 def test_reviewer_model_non_string_is_violation(tmp_path: Path) -> None:
     root = _make_workspace(tmp_path, backend="beads")
     _append_forge(root, "[code_review]\nreviewer_model = 3\n")
