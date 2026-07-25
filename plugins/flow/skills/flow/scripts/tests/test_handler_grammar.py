@@ -11,6 +11,11 @@ acceptance exactly rather than converging them.
 The `_old_*` functions below are the frozen pre-refactor implementations, copied
 verbatim; the tests assert the live symbols still match them across a battery
 that hits every drift class.
+
+One deliberate widening has landed since: a subagent type may carry a single
+plugin-namespace colon (`flow:codex-reviewer`), the form a host uses for an agent
+shipped by a plugin. `_WIDENED` names every battery value that change newly accepts,
+so the lock still catches unintended drift everywhere else.
 """
 
 from __future__ import annotations
@@ -103,7 +108,17 @@ BATTERY = [
     "subagent:foo:bar",
     "subagent:.",
     "subagent:foo.bar",
+    # plugin-namespaced subagent types
+    "subagent:flow:codex-reviewer",
+    "subagent:flow:",
+    "subagent:a:b:c",
 ]
+
+# Values the plugin-namespace widening newly accepts under HANDLER_RE. Everything
+# else in BATTERY must still match the frozen pre-widening acceptance exactly.
+# `subagent:flow:` and `subagent:a:b:c` are deliberately absent: one colon, and an
+# identifier on both sides of it.
+_WIDENED = frozenset({"subagent:foo:bar", "subagent:flow:codex-reviewer"})
 
 
 @pytest.mark.parametrize("value", BATTERY, ids=[repr(v) for v in BATTERY])
@@ -124,4 +139,8 @@ def test_resolve_grammar_unchanged(value: str) -> None:
 
 @pytest.mark.parametrize("value", BATTERY, ids=[repr(v) for v in BATTERY])
 def test_validate_handler_re_unchanged(value: str) -> None:
+    if value in _WIDENED:
+        assert HANDLER_RE.match(value), "plugin-namespaced type must be accepted"
+        assert not _old_validate_accept(value), "value is not actually a widening"
+        return
     assert bool(HANDLER_RE.match(value)) == _old_validate_accept(value)
