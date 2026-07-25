@@ -167,6 +167,13 @@ commit into a non-`feat/` Flow branch.
 
 Do not pass `--recover-spill` automatically; it is an explicit operator recovery action.
 
+For a grouped run whose cover set was persisted earlier (`FLOW ticket group`), derive
+it back and pass it as `--covers`:
+
+```bash
+FLOW_HARNESS="<harness>" "<facade>" group-persist derive --lead "<ticket>" --workspace-root .
+```
+
 Bootstrap preserves the isolated ticket worktree, single-ticket claim, current-base resolution,
 atomic run state, planned-file ownership, and spill protection. It writes the approved text to
 `stages/plan.out` and marks `plan` complete so delivery resumes at implementation. Bind

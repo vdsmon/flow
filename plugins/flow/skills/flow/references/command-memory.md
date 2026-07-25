@@ -66,6 +66,16 @@ knowledge by appending tombstones; it never rewrites the source corpus.
 
 6. Report applied, already-superseded, and failed records separately. Never treat a
    partial apply as an all-or-nothing failure.
+7. Optional second lens: semantic clustering surfaces near-duplicate groups a
+   usage ranking misses. Same confirm gate; a confirmed manifest applies as an
+   append-only canonical-entry supersession:
+
+   ```bash
+   FLOW_HARNESS="<harness>" "<facade>" sweep-knowledge cluster \
+     --type DECISION,FACT --threshold 0.90 --workspace-root . > <absolute-clusters>
+   FLOW_HARNESS="<harness>" "<facade>" sweep-knowledge apply-cluster \
+     --manifest <absolute-confirmed-clusters> --workspace-root .
+   ```
 
 If the harness exposes a separate project-memory store, it may be reviewed in a
 second, explicitly confirmed phase. Back it up outside the store first. Never remove
