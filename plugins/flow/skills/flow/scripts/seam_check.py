@@ -37,7 +37,7 @@ REPO_ROOT = SKILL_ROOT.parents[3]
 # A direct script reference inside prose, using a legacy child environment alias or the
 # harness-neutral loaded-root placeholder.
 # Char class is [a-z0-9_]+ (NOT [a-z_]+): omitting the digit silently skips a
-# digit-bearing basename like embedder_model2vec.py, same lesson _MODULE_NAME_RE
+# digit-bearing basename (an embedder_foo2vec.py shape), same lesson _MODULE_NAME_RE
 # and _STAGE_DOC_RE carry.
 _SCRIPT_RE = re.compile(
     r"(?P<direct_quote>[\"'])?"
@@ -100,7 +100,7 @@ _AGENTS_END_MARKER = "<!-- flow:end -->"
 
 # A bare script name as it appears in MODULE.md backticks/prose (no path prefix).
 # Char class is [a-z0-9_]+ (NOT [a-z_]+): omitting the digit silently misses a
-# digit-bearing basename like embedder_model2vec.py (the model2vec `2`), same
+# digit-bearing basename (an embedder_foo2vec.py shape, the embedded digit), same
 # lesson _STAGE_DOC_RE already carries for stage-e2e.md.
 _MODULE_NAME_RE = re.compile(r"[a-z0-9_]+\.py")
 

@@ -793,22 +793,22 @@ First-enable on an existing workspace starts with an EMPTY index, so plan-phase 
 BM25-only until a one-time bulk backfill: `recall.py --reindex --workspace-root .` (or
 `memory_embed.py reindex`). Document/run this when flipping `enabled = true`.
 
-### `embedder_fastembed.py` (default) / `embedder_model2vec.py` (alt)
+### `embedder_fastembed.py`
 
-Two reference embedders, each run BY `uvx`, standalone subprocess entrypoints (imported
-by nothing). Read newline texts on stdin, print `[[float, ...], ...]` JSON.
-- **`embedder_fastembed.py`** — the shipped DEFAULT. `uvx --with fastembed`,
-  `fastembed.TextEmbedding(<model>).embed(texts)`. ONNX runtime, no torch. Default model
-  `BAAI/bge-small-en-v1.5` (384-dim). Empty stdin → `[]` (skips the model download).
-- **`embedder_model2vec.py`** — lighter static ALTERNATIVE (select via
-  `[memory.semantic].embedder`). `uvx --with model2vec[inference]`,
-  `StaticModel.from_pretrained(<model>).encode(texts)`. Default `minishlab/potion-retrieval-32M`.
+The shipped DEFAULT reference embedder, run BY `uvx`, a standalone subprocess
+entrypoint (imported by nothing). Reads newline texts on stdin, prints
+`[[float, ...], ...]` JSON. `uvx --with fastembed`,
+`fastembed.TextEmbedding(<model>).embed(texts)`. ONNX runtime, no torch. Default model
+`BAAI/bge-small-en-v1.5` (384-dim). Empty stdin → `[]` (skips the model download).
+Exit 0 ok, 1 on load/encode failure.
 
-Both exit 0 ok, 1 on load/encode failure. **CI does not install either embedder**, so the
-real path is NOT CI-exercised (tests guarded by `pytest.importorskip`); "tests green" ≠
-"real embedder validated". The runtime-availability check (does the shipped uvx command
-return vectors from the runtime python3 context) is manual + observable via recall's
-stderr status line.
+`[memory.semantic].embedder` accepts ANY command honoring the same
+stdin-texts/JSON-vectors wire protocol — that config string is the extension point; a
+different embedder needs no file in this repo. **CI does not install the embedder**, so
+the real path is NOT CI-exercised (tests guarded by `pytest.importorskip`); "tests
+green" ≠ "real embedder validated". The runtime-availability check (does the shipped
+uvx command return vectors from the runtime python3 context) is manual + observable via
+recall's stderr status line.
 
 ### `[memory.semantic]` config block
 

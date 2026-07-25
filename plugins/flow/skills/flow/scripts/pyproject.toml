@@ -9,10 +9,10 @@ requires-python = ">=3.12"
 
 [project.optional-dependencies]
 # dev/test only: lets pytest.importorskip exercise the reference embedders locally.
-# NOT the runtime mechanism — at runtime fastembed (default) / model2vec (alt)
-# resolve inside the uvx subprocess (embedder_fastembed.py / embedder_model2vec.py),
+# NOT the runtime mechanism — at runtime fastembed (the default embedder)
+# resolves inside the uvx subprocess (embedder_fastembed.py),
 # never in this env.
-semantic = ["fastembed", "model2vec[inference]"]
+semantic = ["fastembed"]
 
 [tool.ruff]
 line-length = 100
@@ -62,10 +62,10 @@ indent-style = "space"
 
 [tool.ty.analysis]
 # pytest is a dev dep ty's env can't resolve; allow it so the gate surfaces
-# real test-type errors instead of import noise. fastembed/model2vec are the
+# real test-type errors instead of import noise. fastembed is the
 # optional `semantic` extra, imported ONLY inside the uvx-run reference embedders
 # — never installed in this env by design, so ty can't resolve them either.
-allowed-unresolved-imports = ["pytest", "fastembed", "model2vec"]
+allowed-unresolved-imports = ["pytest", "fastembed"]
 
 [tool.ty.src]
 # Type-check the runtime engine and tests (scripts dir root). Default discovery
