@@ -859,23 +859,9 @@ def test_managed_agents_guidance_requires_call_local_harness_selection(tmp_path)
     assert any("harness selector" in detail for detail in drift)
 
 
-def test_main_fails_on_managed_agents_guidance_drift(monkeypatch) -> None:
-    monkeypatch.setattr(
-        seam_check,
-        "managed_agents_guidance_drift",
-        lambda *args, **kwargs: ["missing facade guidance"],
-    )
-    assert seam_check.main([]) == 1
-
-
 def test_module_md_covers_all_live_scripts() -> None:
     """Every non-test script on disk must be named in the real MODULE.md."""
     assert seam_check.scripts_missing_from_module_md() == set()
-
-
-def test_main_fails_on_module_md_gap(monkeypatch) -> None:
-    monkeypatch.setattr(seam_check, "scripts_missing_from_module_md", lambda *a, **k: {"foo.py"})
-    assert seam_check.main([]) == 1
 
 
 def test_flags_script_missing_from_module_md(tmp_path) -> None:
@@ -942,14 +928,6 @@ def test_registry_description_hyphen_basename_matched() -> None:
     ]
 
 
-def test_main_fails_on_registry_description_gap(monkeypatch) -> None:
-    monkeypatch.setattr(seam_check, "scripts_missing_from_module_md", lambda *a, **k: set())
-    monkeypatch.setattr(
-        seam_check, "scripts_missing_from_registry_descriptions", lambda *a, **k: {"foo.py"}
-    )
-    assert seam_check.main([]) == 1
-
-
 # --- MODULE.md phantom rows ---------------------------------------------------
 
 
@@ -976,11 +954,6 @@ def test_phantom_check_resolves_test_files_against_tests_dir(tmp_path) -> None:
 def test_module_md_has_no_phantom_rows() -> None:
     """Every row in the real MODULE.md must document a script that exists."""
     assert seam_check.phantom_module_md_rows() == set()
-
-
-def test_main_fails_on_phantom_row(monkeypatch) -> None:
-    monkeypatch.setattr(seam_check, "phantom_module_md_rows", lambda *a, **k: {"gone.py"})
-    assert seam_check.main([]) == 1
 
 
 # --- stage->reference_doc map re-enumeration drift ---------------------------
@@ -1049,17 +1022,6 @@ def test_non_registry_token_does_not_inflate(tmp_path) -> None:
     )
     over = seam_check.docs_over_stage_doc_citation_limit(registry_path=registry, docs=[doc])
     assert over == {}
-
-
-def test_main_fails_on_stage_doc_citation_offender(monkeypatch) -> None:
-    monkeypatch.setattr(seam_check, "scripts_missing_from_module_md", lambda *a, **k: set())
-    monkeypatch.setattr(
-        seam_check, "scripts_missing_from_registry_descriptions", lambda *a, **k: set()
-    )
-    monkeypatch.setattr(
-        seam_check, "docs_over_stage_doc_citation_limit", lambda *a, **k: {"SKILL.md": 4}
-    )
-    assert seam_check.main([]) == 1
 
 
 def test_live_corpus_no_stage_doc_reenumeration() -> None:
@@ -1138,19 +1100,6 @@ def test_descriptor_key_drift_noop_without_emitted(tmp_path) -> None:
     assert seam_check.descriptor_key_drift(docs=[doc], emitted=set()) == []
 
 
-def test_main_fails_on_descriptor_key_drift(monkeypatch) -> None:
-    monkeypatch.setattr(seam_check, "scripts_missing_from_module_md", lambda *a, **k: set())
-    monkeypatch.setattr(
-        seam_check, "scripts_missing_from_registry_descriptions", lambda *a, **k: set()
-    )
-    monkeypatch.setattr(seam_check, "docs_over_stage_doc_citation_limit", lambda *a, **k: {})
-    monkeypatch.setattr(seam_check, "role_literal_drift", lambda *a, **k: [])
-    monkeypatch.setattr(
-        seam_check, "descriptor_key_drift", lambda *a, **k: [("SKILL.md", 7, "head_commit")]
-    )
-    assert seam_check.main([]) == 1
-
-
 def test_live_descriptor_keys_all_emitted() -> None:
     """Every descriptor key cited in the live docs is emitted by dispatch_stage."""
     assert seam_check.descriptor_key_drift() == []
@@ -1225,19 +1174,6 @@ def test_role_literal_drift_clean(tmp_path) -> None:
     doc = tmp_path / "SKILL.md"
     doc.write_text('if `descriptor.roles` includes `"records_diff_baseline"`:\n', encoding="utf-8")
     assert seam_check.role_literal_drift(docs=[doc], roles={"records_diff_baseline"}) == []
-
-
-def test_main_fails_on_role_literal_drift(monkeypatch) -> None:
-    monkeypatch.setattr(seam_check, "scripts_missing_from_module_md", lambda *a, **k: set())
-    monkeypatch.setattr(
-        seam_check, "scripts_missing_from_registry_descriptions", lambda *a, **k: set()
-    )
-    monkeypatch.setattr(seam_check, "docs_over_stage_doc_citation_limit", lambda *a, **k: {})
-    monkeypatch.setattr(seam_check, "descriptor_key_drift", lambda *a, **k: [])
-    monkeypatch.setattr(
-        seam_check, "role_literal_drift", lambda *a, **k: [("SKILL.md", 116, "records_baseline")]
-    )
-    assert seam_check.main([]) == 1
 
 
 def test_live_role_citations_all_in_registry() -> None:
@@ -1322,13 +1258,6 @@ def test_live_facade_entries_all_have_callers() -> None:
     assert seam_check.facade_entries_without_caller(invs) == set()
 
 
-def test_main_fails_on_facade_orphan(monkeypatch) -> None:
-    monkeypatch.setattr(
-        seam_check, "facade_entries_without_caller", lambda *a, **k: {"ghost-entry"}
-    )
-    assert seam_check.main([]) == 1
-
-
 def test_stage_agent_prompt_fences_are_identical() -> None:
     # Two authored copies remain by design (SKILL.md's do-loop is the hot path,
     # delivery-loop.md is the canonical contract). They diverged once at birth
@@ -1351,3 +1280,31 @@ def test_prose_docs_to_check_includes_scripts_markdown() -> None:
     assert "MODULE.md" in names
     assert "inventory.md" in names
     assert "SKILL.md" in names
+
+
+# --- main() folds every gate into problems (one patch per case, no cross-silencing:
+# --- test_live_docs_are_green proves the live corpus needs no muting) ----------
+
+
+_MAIN_GATE_CASES = [
+    ("scripts_missing_from_module_md", {"x.py"}),
+    ("scripts_missing_from_registry_descriptions", {"x.py"}),
+    ("phantom_module_md_rows", {"x.py"}),
+    ("docs_over_stage_doc_citation_limit", {"SKILL.md": 4}),
+    ("descriptor_key_drift", [("SKILL.md", 1, "gone")]),
+    ("role_literal_drift", [("SKILL.md", 1, "gone")]),
+    ("managed_agents_guidance_drift", ["missing contract"]),
+    ("facade_entries_without_caller", {"ghost-entry"}),
+]
+
+
+@pytest.mark.parametrize(("gate", "drift"), _MAIN_GATE_CASES, ids=[c[0] for c in _MAIN_GATE_CASES])
+def test_main_fails_on_gate_drift(monkeypatch, gate, drift) -> None:
+    monkeypatch.setattr(seam_check, gate, lambda *a, **k: drift)
+    assert seam_check.main([]) == 1
+
+
+def test_main_gate_case_table_covers_module_map_too(monkeypatch) -> None:
+    # module_map.check is wired through the imported module, not a seam_check attr.
+    monkeypatch.setattr(seam_check.module_map, "check", lambda *a, **k: ["stale block"])
+    assert seam_check.main([]) == 1

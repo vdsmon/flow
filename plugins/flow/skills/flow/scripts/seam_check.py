@@ -121,10 +121,9 @@ _REGISTRY_SCRIPT_RE = re.compile(r"[A-Za-z0-9_-]+\.py")
 # registry-side parse and the doc-side citation scan so they cannot diverge.
 _STAGE_DOC_RE = re.compile(r"stage-[a-z0-9_]+\.md")
 
-# Live-corpus max distinct stage-doc citations per doc = 2 (SKILL.md,
-# delivery-plan.md, command-maintain.md); 3 = max+1 tripwire. A doc citing 3+ distinct
-# registry stage-docs is a static re-enumeration of the registry mapping (the
-# flow-0n8 regression class). Fire condition is count >= limit.
+# A doc citing 3+ distinct registry stage-docs (its own basename excluded) is
+# treated as a static re-enumeration of the registry's stage->reference_doc map
+# (the flow-0n8 regression class). Fire condition is count >= limit.
 STAGE_DOC_CITATION_LIMIT = 3
 
 # A dotted descriptor field read in prose, e.g. `descriptor.roles`. The do-loop
@@ -561,6 +560,7 @@ def host_specific_invocation_problems(doc_name: str, text: str) -> list[Problem]
 # --- script introspection ----------------------------------------------------
 
 
+@cache
 def _run_help(script: Path, sub: str | None) -> str | None:
     argv = [sys.executable, str(script)]
     if sub:
@@ -1072,6 +1072,9 @@ def docs_over_stage_doc_citation_limit(
     out: dict[str, int] = {}
     for doc in docs:
         cited = set(_STAGE_DOC_RE.findall(doc.read_text(encoding="utf-8"))) & registry_basenames
+        # A stage doc naming itself is self-mention, not a cross-reference; without
+        # this a stage doc citing two siblings sits one citation from the tripwire.
+        cited -= {doc.name}
         if len(cited) >= limit:
             out[doc.name] = len(cited)
     return out
