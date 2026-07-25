@@ -52,7 +52,7 @@ roles = []
 
 [[stage]]
 name = "implement"
-description = "Code + unit tests, TDD discipline. Subagent writes code, writes/updates unit tests, runs them, reports only when green."
+description = "Code + unit tests in the ticket worktree; the handler reports only when green"
 default_handler = "subagent:general-purpose"
 default_timeout_min = 30
 required_predecessors = ["ticket"]
@@ -64,7 +64,7 @@ roles = ["records_diff_baseline"]
 
 [[stage]]
 name = "code_review"
-description = "A fresh native reviewer inspects the implementation diff and reports actionable findings."
+description = "A fresh native reviewer challenges the implementation diff"
 default_handler = "inline"
 default_timeout_min = 15
 required_predecessors = ["implement"]
@@ -75,7 +75,7 @@ roles = []
 
 [[stage]]
 name = "e2e"
-description = "Default-on: the correctness gate that observes the change behaving end-to-end. A workspace disables it only by explicitly wiring e2e = \"none\". Positioned AFTER code_review so cheap review catches issues before a slow e2e run burns time."
+description = "Observe the change behaving end-to-end; disable only by wiring e2e = \"none\""
 default_handler = "subagent:general-purpose"
 default_timeout_min = 30
 required_predecessors = ["code_review"]
@@ -87,7 +87,7 @@ roles = []
 
 [[stage]]
 name = "commit"
-description = "Compose conventional commit (compose_commit.py skeleton, LLM fills body). Applies recorded implement-stage diff via git apply --cached; content-ownership gate refuses unrelated edits."
+description = "Compose the conventional commit under the content-ownership gate (compose_commit.py)"
 default_handler = "inline"
 default_timeout_min = 5
 required_predecessors = ["implement"]
@@ -99,7 +99,7 @@ roles = []
 
 [[stage]]
 name = "create_pr"
-description = "Bare default skips PR creation. Workspaces wire create_pr = \"inline\" (references/stage-create_pr.md → scripts/create_pr.py): git push + open-or-resolve the PR through the forge seam (gh or bkt, per [forge] backend), idempotent. Requires a [forge] block."
+description = "Push + open-or-resolve the PR through the forge seam (create_pr.py); bare default skips"
 default_handler = "none"
 default_timeout_min = 20
 required_predecessors = ["commit"]
@@ -110,7 +110,7 @@ roles = []
 
 [[stage]]
 name = "review_loop"
-description = "Bare default skips the CI / review-bot wait loop. Workspaces wire review_loop = \"inline\" (references/stage-review_loop.md → scripts/forge_cli.py): wait for CI green, allow at most one fix pass, and resolve Major+ review threads. Integral on the forge seam; terminal on CI green AND zero unresolved Major+."
+description = "Bounded CI wait + at most one fix pass through the forge seam (forge_cli.py); bare default skips"
 default_handler = "none"
 default_timeout_min = 60
 required_predecessors = ["create_pr"]
@@ -121,7 +121,7 @@ roles = []
 
 [[stage]]
 name = "review_brief"
-description = "Local review companion generated after the PR pipeline. The inline handler (references/stage-review_brief.md → scripts/review_brief.py) degrades to a no-op in forge-less workspaces; otherwise it authors a motivation-first brief, freezes evidence at the exact PR SHA, opens a self-contained HTML artifact, and continues immediately to reflect. No human gate; Forge remains the formal review surface."
+description = "Local review companion (review_brief.py); no human gate, Forge stays the formal surface"
 default_handler = "inline"
 default_timeout_min = 10
 required_predecessors = ["create_pr"]
@@ -132,7 +132,7 @@ roles = []
 
 [[stage]]
 name = "reflect"
-description = "Closing-phase compounding extraction. Starts immediately after the review brief is generated; it never waits for human review. Reads state.json + subagent reports + final diff. Writes durable knowledge entries; conditional CLAUDE.md / MEMORY.md updates. If no novel signal, writes zero entries (not a failure)."
+description = "Closing-phase knowledge extraction; zero novel entries is success, not failure"
 default_handler = "inline"
 default_timeout_min = 5
 required_predecessors = []
@@ -143,7 +143,7 @@ roles = []
 
 [[stage]]
 name = "merge"
-description = "Terminal self-merge (evolve self-target only; bare default none = human keystone). Wired merge = \"inline\" (references/stage-merge.md → scripts/evolve_self_merge.py + forge_cli.py): after reflect, a green+clean evolve run self-merges its own PR; a hot bead only after an independent reviewer subagent clears the §6A guard-property check. Worktree teardown stays deferred to the janitor."
+description = "Terminal self-merge for evolve self-target runs (evolve_self_merge.py); bare default none = the human keystone"
 default_handler = "none"
 default_timeout_min = 15
 required_predecessors = ["reflect"]

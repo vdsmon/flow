@@ -3,7 +3,7 @@
 Pure decision + a thin CLI. The `merge` stage (references/stage-merge.md) runs after
 `reflect` in the evolve self-target; it asks this module whether the run's own bead
 is eligible to self-merge, then acts: for a `hot` bead it first spawns an INDEPENDENT
-reviewer subagent for the §6A guard-property check (author != reviewer), and only on
+reviewer subagent for the guard-property review (stage-merge.md §2; author != reviewer), and only on
 a clean review does it merge.
 
 `decide()` is pure (no side effects, no I/O), so the gate logic is unit-tested
@@ -68,7 +68,7 @@ def decide(
 
     `action` is "skip" (leave the PR for the human) or "merge". `is_hot` is the
     `hot` label OR a guard-file hit in `planned_files` OR one in `changed_files`
-    (triage.is_hot_change); it tells the caller whether the §6A independent
+    (triage.is_hot_change); it tells the caller whether the independent
     property review must run before merging. `changed_files` is the merge-time
     OBSERVED PR diff: a guard file that entered the PR after planning (a
     review-loop CI fix pushed past the ownership gate) never reaches plan-time
