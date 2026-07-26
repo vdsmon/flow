@@ -133,19 +133,16 @@ def _default_runner() -> Runner:
 def boot_id(runner: Runner | None = None) -> str:
     """A boot-session identifier, or "" if unavailable.
 
-    macOS: `sysctl -n kern.bootsessionuuid`. Linux:
-    /proc/sys/kernel/random/boot_id. Any failure returns "" so a missing boot id
-    falls through to force/else in acquire rather than silently stealing a lease.
+    macOS is the only platform Flow runs on: `sysctl -n kern.bootsessionuuid`.
+    Any failure (including the sysctl key not existing off macOS) returns "" so a
+    missing boot id falls through to force/else in acquire rather than silently
+    stealing a lease.
     """
     runner = runner or _default_runner()
     try:
-        if sys.platform == "darwin":
-            return runner(["sysctl", "-n", "kern.bootsessionuuid"]).strip()
-        if sys.platform.startswith("linux"):
-            return Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+        return runner(["sysctl", "-n", "kern.bootsessionuuid"]).strip()
     except (OSError, subprocess.SubprocessError):
         return ""
-    return ""
 
 
 def session_pid(

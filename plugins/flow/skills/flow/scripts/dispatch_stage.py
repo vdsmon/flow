@@ -536,7 +536,7 @@ def _guard_lease_ownership(
     run.lock we cannot read, so ownership is unconfirmable and the caller must
     stop before mutating state. current_boot/hostname default to probing when
     None; cmd_next passes its precomputed pair so the hot path pays one
-    boot_id probe (a sysctl subprocess on macOS) instead of two.
+    boot_id probe (a sysctl subprocess) instead of two.
     """
     try:
         if lease.read_lease(td) is not None:

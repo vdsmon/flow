@@ -1039,7 +1039,7 @@ def test_next_refresh_lease_lost_returns_7(tmp_path: Path, monkeypatch: pytest.M
 
 
 def test_next_probes_boot_id_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    # boot_id spawns a sysctl subprocess on macOS; cmd_next passes its probe
+    # boot_id spawns a sysctl subprocess; cmd_next passes its probe
     # into the lease guard instead of probing a second time.
     _write_workspace(tmp_path, stages=["ticket"], compounding=False)
     _stub_git_head(monkeypatch)
