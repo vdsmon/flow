@@ -34,7 +34,6 @@ from _runner import KwRunner as Runner
 from _runner import kw_default_runner as _default_runner
 from tracker import (
     Attachment,
-    Capability,
     Comment,
     Content,
     Link,
@@ -80,26 +79,6 @@ _BD_TRANSITIONS: dict[str, list[str]] = {
 # Seam kind vocabulary -> bd dep type. "blocks" is bd-native (not remapped);
 # unknown kinds pass through raw.
 _LINK_KIND_TYPES: dict[str, str] = {"depends_on": "blocks", "relates": "related"}
-
-# Closed-enum capability advertisement (14 entries), exactly the
-# CAPABILITY_ENUM from tracker.py. Only comments_markdown + resolutions are
-# True; beads is local-only and intentionally narrow.
-_BEADS_CAPABILITIES: list[Capability] = [
-    {"name": "comments_adf", "supported": False},
-    {"name": "comments_markdown", "supported": True},
-    {"name": "attachments", "supported": False},
-    {"name": "watchers", "supported": False},
-    {"name": "sprints", "supported": False},
-    {"name": "fix_versions", "supported": False},
-    {"name": "components", "supported": False},
-    {"name": "epic_link", "supported": False},
-    {"name": "pr_links", "supported": False},
-    {"name": "ci_links", "supported": False},
-    {"name": "boards", "supported": False},
-    {"name": "custom_fields", "supported": False},
-    {"name": "transitions_with_validators", "supported": False},
-    {"name": "resolutions", "supported": True},
-]
 
 # Priority maps: bd takes 0-4 integer. Protocol uses string. Round-trip
 # preserves "P<n>" surface so dashboards stay readable.
@@ -190,8 +169,6 @@ class BeadsAdapter:
         self._actor: str = (
             str(config.get("actor")) if config.get("actor") else os.environ.get("USER", "")
         )
-
-        self.capabilities: list[Capability] = list(_BEADS_CAPABILITIES)
 
         # Preflight: bd --version. Refuses construction if bd missing/too old.
         self._verify_bd_version()

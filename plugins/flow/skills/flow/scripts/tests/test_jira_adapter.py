@@ -121,28 +121,6 @@ def test_construction_rejects_missing_token(monkeypatch: pytest.MonkeyPatch) -> 
         tj.JiraAdapter({"backend": "jira", "cloud_id": "c", "project_key": "FT"})
 
 
-def test_capabilities_cover_closed_enum(monkeypatch: pytest.MonkeyPatch) -> None:
-    adapter = _make_adapter(monkeypatch, _FakeHttp([]))
-    enum_names = {
-        "comments_adf",
-        "comments_markdown",
-        "attachments",
-        "watchers",
-        "sprints",
-        "fix_versions",
-        "components",
-        "epic_link",
-        "pr_links",
-        "ci_links",
-        "boards",
-        "custom_fields",
-        "transitions_with_validators",
-        "resolutions",
-    }
-    advertised = {c["name"] for c in adapter.capabilities}
-    assert advertised == enum_names
-
-
 # ─── Content / ADF helpers ──────────────────────────────────────────────────
 
 

@@ -28,7 +28,6 @@ from _runner import cwd_default_runner as _default_runner
 from forge import (
     PR_STATE,
     THREAD_SEVERITY,
-    Capability,
     CICheck,
     CIStatus,
     ForgeConfigError,
@@ -52,19 +51,6 @@ class BitbucketAdapter:
             )
         root = config.get("workspace_root", ".")
         self._run: Runner = runner or _default_runner(Path(root))
-
-    @property
-    def capabilities(self) -> list[Capability]:
-        return [
-            {"name": "draft_prs", "supported": True},
-            {"name": "ready_toggle", "supported": True},
-            {"name": "review_threads", "supported": True},
-            {"name": "bot_review_status", "supported": True},
-            {"name": "squash_merge", "supported": True},
-            {"name": "delete_branch", "supported": True},
-            {"name": "ci_rollup", "supported": True},
-            {"name": "default_reviewers", "supported": True},
-        ]
 
     # ─── helpers ──────────────────────────────────────────────────────────
 

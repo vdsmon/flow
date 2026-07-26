@@ -25,7 +25,6 @@ from forge import (
     CI_STATUS,
     PR_STATE,
     THREAD_SEVERITY,
-    Capability,
     CICheck,
     CIStatus,
     ForgeError,
@@ -91,19 +90,6 @@ class GitHubAdapter:
         self._run: Runner = runner or _default_runner(Path(root))
         self._sleep = sleep
         self._owner_repo: tuple[str, str] | None = None
-
-    @property
-    def capabilities(self) -> list[Capability]:
-        return [
-            {"name": "draft_prs", "supported": True},
-            {"name": "ready_toggle", "supported": True},
-            {"name": "review_threads", "supported": True},
-            {"name": "bot_review_status", "supported": False},
-            {"name": "squash_merge", "supported": True},
-            {"name": "delete_branch", "supported": True},
-            {"name": "ci_rollup", "supported": True},
-            {"name": "default_reviewers", "supported": False},
-        ]
 
     # ─── helpers ──────────────────────────────────────────────────────────
 

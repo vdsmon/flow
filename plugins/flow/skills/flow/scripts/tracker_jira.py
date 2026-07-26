@@ -32,7 +32,6 @@ from typing import Any, cast
 
 from tracker import (
     Attachment,
-    Capability,
     Comment,
     Content,
     FieldSpec,
@@ -68,23 +67,6 @@ _CANCELLED_RESOLUTIONS = ("won't do", "wont do", "cancelled", "canceled", "dupli
 # Transition-error regexes (see inventory.md HTTP error table).
 _RE_WRONG_SOURCE = re.compile(r"(?i)\btransition\b.*\b(not valid|invalid|cannot be applied)\b")
 _RE_VALIDATOR = re.compile(r"(?i)\bvalidat(or|ion)\b.*\b(fail|error|reject)\b")
-
-_JIRA_CAPABILITIES: list[Capability] = [
-    {"name": "comments_adf", "supported": True},
-    {"name": "comments_markdown", "supported": False},
-    {"name": "attachments", "supported": True},
-    {"name": "watchers", "supported": True},
-    {"name": "sprints", "supported": True},
-    {"name": "fix_versions", "supported": True},
-    {"name": "components", "supported": True},
-    {"name": "epic_link", "supported": True},
-    {"name": "pr_links", "supported": True},
-    {"name": "ci_links", "supported": True},
-    {"name": "boards", "supported": True},
-    {"name": "custom_fields", "supported": True},
-    {"name": "transitions_with_validators", "supported": True},
-    {"name": "resolutions", "supported": True},
-]
 
 
 _GET_FIELDS = [
@@ -273,7 +255,6 @@ class JiraAdapter:
     """Jira Cloud adapter. See module docstring for transport + auth conventions."""
 
     backend = "jira"
-    capabilities = _JIRA_CAPABILITIES
 
     def __init__(self, config: dict[str, Any], http: HttpFn | None = None) -> None:
         cloud_id = config.get("cloud_id")

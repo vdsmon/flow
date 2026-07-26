@@ -4,7 +4,7 @@ import json
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
-from typing import ClassVar, override
+from typing import override
 
 import pytest
 
@@ -396,7 +396,6 @@ class _FakeForge:
     """
 
     backend = "github"
-    capabilities: ClassVar[list] = []
 
     def __init__(self, *, prs=None, threads=None, fail_threads_on=None, fail_detect_on=None):
         self.calls: list[tuple] = []

@@ -8,20 +8,18 @@ ready, squash-merge, delete the remote branch. Adapters (github / bitbucket)
 implement it; they are constructed by `make_forge(config)`, which lazy-imports them
 so this module stays stdlib-only.
 
-This mirrors the tracker seam (`tracker.py`): a closed capability enum, normalized
-result shapes, a typed exception tree, and a lazy-import factory. The `review_loop`
+This mirrors the tracker seam (`tracker.py`): normalized result shapes, a typed
+exception tree, and a lazy-import factory. The `review_loop`
 and `create_pr` stages reach the host ONLY through this seam (via `forge_cli.py`),
 so a GitHub and a Bitbucket workspace run the same prose.
 
 Key invariants:
 
-- `FORGE_CAPABILITY_ENUM` is a CLOSED enum. Adapters advertise capabilities only
-  from this set.
 - Capability-gated methods (`review_threads`, `post_reply`, `resolve_thread`,
   `mark_ready`, `delete_branch`, `set_default_reviewers`) MUST raise `NotSupported`
-  when the matching
-  capability advertises `supported=false`, so callers can tell "this host cannot
-  do X" from "this code path is unfinished".
+  on a host that cannot do them, so callers can tell "this host cannot do X" from
+  "this code path is unfinished". The raise is the only gate; the `# cap-gated`
+  comments on the Protocol methods are the map of which ops it covers.
 - `resolve_thread` returns True ONLY when the thread is VERIFIED resolved. The
   Bitbucket adapter re-reads the comment and tests `.resolution != null`; it never
   trusts a top-level `resolved` flag (a hard-won ship-it gotcha).
@@ -35,17 +33,6 @@ from pathlib import Path
 from typing import Any, Literal, NotRequired, Protocol, TypedDict, runtime_checkable
 
 # ─── Closed enums ────────────────────────────────────────────────────────────
-
-FORGE_CAPABILITY_ENUM = Literal[
-    "draft_prs",  # open_pr honors draft=True
-    "ready_toggle",  # mark_ready() flips draft -> ready
-    "review_threads",  # review_threads()/post_reply()/resolve_thread() implemented
-    "bot_review_status",  # bot_review_present() is the review-bot completion signal
-    "squash_merge",  # merge(squash=True)
-    "delete_branch",  # delete_branch()
-    "ci_rollup",  # ci_rollup() implemented
-    "default_reviewers",  # set_default_reviewers() attaches repo default reviewers on open
-]
 
 CI_STATUS = Literal["green", "pending", "failed"]
 
@@ -102,11 +89,6 @@ class ReviewThread(TypedDict):
     parent_id: str | None
 
 
-class Capability(TypedDict):
-    name: FORGE_CAPABILITY_ENUM
-    supported: bool
-
-
 # ─── Exceptions ──────────────────────────────────────────────────────────────
 
 
@@ -136,11 +118,10 @@ class Forge(Protocol):
     `detect_pr` / `pr_info` / `open_pr` / `ci_rollup` / `merge` are MANDATORY. The review-thread
     trio (`review_threads`, `post_reply`, `resolve_thread`) plus `mark_ready`,
     `delete_branch`, and `set_default_reviewers` are CAPABILITY-GATED: each MUST
-    raise `NotSupported` when its capability advertises `supported=false`.
+    raise `NotSupported` on a host that cannot do it.
     """
 
     backend: str  # "github" | "bitbucket"
-    capabilities: list[Capability]
 
     def detect_pr(self, branch: str, state: PR_STATE = "open") -> PullRequest | None: ...
     def pr_info(self, pr_id: str) -> PullRequest | None: ...  # PR-number reverse lookup, ANY state
@@ -232,13 +213,11 @@ def read_forge_config(workspace_root: Path) -> dict[str, Any] | None:
 
 __all__ = [
     "CI_STATUS",
-    "FORGE_CAPABILITY_ENUM",
     "KNOWN_BACKENDS",
     "PR_STATE",
     "THREAD_SEVERITY",
     "CICheck",
     "CIStatus",
-    "Capability",
     "Forge",
     "ForgeConfigError",
     "ForgeError",

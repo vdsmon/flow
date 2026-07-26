@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import ClassVar, override
+from typing import override
 
 import pytest
 
@@ -13,7 +13,6 @@ class _FakeForge:
     """Records calls; scripts responses. Mirrors the Forge Protocol surface."""
 
     backend = "github"
-    capabilities: ClassVar[list] = []
 
     def __init__(self, *, threads_supported: bool = True, bot_review_supported: bool = True):
         self.calls: list[tuple] = []

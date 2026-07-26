@@ -52,7 +52,7 @@ The fifth run-safety mechanism, the content-ownership commit gate, is `diff_extr
 
 | Script | Role | Contract notes |
 |--------|------|----------------|
-| `tracker.py` (lib) | Tracker Protocol base + `make_tracker()` factory + `CAPABILITY_ENUM`. Adapters load lazily inside `make_tracker`; `flow_worktree` imports lazily in `_refuse_terminal_bead`. | — |
+| `tracker.py` (lib) | Tracker Protocol base + `make_tracker()` factory. Adapters load lazily inside `make_tracker`; `flow_worktree` imports lazily in `_refuse_terminal_bead`. | — |
 | `tracker_cli.py` | CLI wrapper around the Protocol (the only tracker surface the prose calls). | subcommand names in §Derived surfaces |
 | `tracker_jira.py` (lib) | Jira Cloud REST v3 + Agile/1.0 adapter (Basic auth via `ATLASSIAN_EMAIL`/`ATLASSIAN_API_TOKEN`). | — |
 | `tracker_beads.py` (lib) | Beads `bd` CLI adapter (local-only tracker). | — |
@@ -64,9 +64,9 @@ Pluggable PR-host seam, structural twin of the tracker seam. The `create_pr` and
 
 | Script | Role | Contract notes |
 |--------|------|----------------|
-| `forge.py` (lib) | Forge Protocol base + `make_forge()` factory + `read_forge_config()` + `FORGE_CAPABILITY_ENUM` (incl. `default_reviewers`) + normalized `PullRequest`/`CIStatus`/`ReviewThread`. `detect_pr` selects open or merged state; adapters include the optional head SHA and produce commit-pinned source URLs for reviewer evidence. Adapters load lazily inside `make_forge`. | — |
+| `forge.py` (lib) | Forge Protocol base + `make_forge()` factory + `read_forge_config()` + normalized `PullRequest`/`CIStatus`/`ReviewThread`. `detect_pr` selects open or merged state; adapters include the optional head SHA and produce commit-pinned source URLs for reviewer evidence. Adapters load lazily inside `make_forge`. | — |
 | `forge_cli.py` | CLI wrapper around the Protocol (the only forge surface the prose calls); cap-gated subcommands degrade to `{"supported": false}` exit 0. `detect-pr` accepts `--state open\|merged`. | subcommand names in §Derived surfaces |
-| `forge_github.py` (lib) | GitHub `gh` adapter: detect/open PR, CI rollup (`statusCheckRollup`), mark-ready/merge/delete-branch, and commit-pinned `blob/<sha>/<path>#Lx-Ly` source URLs. review_threads/post_reply/resolve_thread supported via gh api graphql. `default_reviewers` capability OFF (`set_default_reviewers` raises `NotSupported`; solo repo, CODEOWNERS covers reviewers) — the first `supported=false` capability in a live adapter. `main_ci_health` reuses its `_classify_rollup`. | — |
+| `forge_github.py` (lib) | GitHub `gh` adapter: detect/open PR, CI rollup (`statusCheckRollup`), mark-ready/merge/delete-branch, and commit-pinned `blob/<sha>/<path>#Lx-Ly` source URLs. review_threads/post_reply/resolve_thread supported via gh api graphql. `set_default_reviewers` raises `NotSupported` (solo repo, CODEOWNERS covers reviewers). `main_ci_health` reuses its `_classify_rollup`. | — |
 | `forge_bitbucket.py` (lib) | Bitbucket `bkt` adapter (absorbs ship-it): detect/open PR, CI rollup from `bkt pr checks`, commit-pinned `src/<sha>/<path>#lines-x:y` source URLs, CodeRabbit review-thread fetch + verified resolve (`.resolution != null`), `set_default_reviewers` (GET `2.0/user` author + GET `default-reviewers`, drop author by `account_id`, PUT `{reviewers:[{uuid}]}`). | — |
 | `review_brief.py` | Deep, stdlib-only review-companion renderer. Strictly validates the motivation-first JSON model, binds local and PR heads to one full SHA, extracts source from that commit, builds responsive/CSP-protected self-contained HTML with exact Forge links, publishes atomically, and records/probes freshness. | writes `<ticket-dir>/stages/review_brief/<sha>/{brief.json,review-brief-*.html,receipt.json}` |
 | `main_ci_health.py` | Per-drain-turn main-CI health probe ("main" = the default BRANCH's CI, not the program's entrypoint): `gh api .../commits/<sha>/check-runs` (sha-keyed, owner/repo auto-resolved), uppercases each REST `status` then reuses `forge_github._classify_rollup` (inheriting the CANCELLED/STALE/NEUTRAL/SKIPPED to pending fold). Asymmetric: only `failed` pauses; green/pending/probe-`error` resume. Pure `classify_main_ci(check_runs)` for unit-testing. | `probe --workspace-root [--sha]`; consumed by `stage_merge.py` + `evolve_reap.py` |
@@ -76,7 +76,7 @@ Pluggable PR-host seam, structural twin of the tracker seam. The `create_pr` and
 The seams are designed for extension but had no recipe; the ordered touch-points (forge shown, the tracker seam mirrors each step in `tracker.py` / a `tracker_<name>.py` adapter / `tracker_cli.py`):
 
 1. `forge.py`: add the name to `KNOWN_BACKENDS` and a lazy-import branch in `make_forge()`. `read_forge_config()` validates against `KNOWN_BACKENDS` a SECOND time — miss it and every workspace read rejects the new backend even though `make_forge` knows it.
-2. Write `forge_<name>.py` implementing the Forge Protocol and declaring capabilities per `FORGE_CAPABILITY_ENUM` (`forge_github.py` is the reference adapter; raise `NotSupported` for what the host lacks — `forge_cli.py` already degrades a cap-gated subcommand to `{"supported": false}`, no CLI change needed).
+2. Write `forge_<name>.py` implementing the Forge Protocol (`forge_github.py` is the reference adapter; raise `NotSupported` for what the host lacks — that raise IS the capability gate, and `forge_cli.py` already degrades a cap-gated subcommand to `{"supported": false}`, no CLI change needed).
 3. Extend the `[forge]` workspace schema (inventory.md §`[forge]` workspace schema) and the `init.py` wizard prompts.
 4. Adapter tests mirroring `tests/test_forge_github.py`; run `seam_check.py` (prose flag references must still resolve).
 

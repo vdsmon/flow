@@ -52,23 +52,15 @@ Required so a jira and a beads workspace answer the same Protocol calls; written
 | `state(key)`               | `GET /rest/api/3/issue/{key}?fields=status,resolution`                          | derives `TicketState` with normalized + diagnostic |
 | `project_requires_pr()`    | `GET /rest/api/3/workflow/search?projectKey=<P>&expand=transitions.rules` (workflow scheme) | flag iff any transition to Done category has linked-PR validator. **Conservative default = False** if endpoint unauthorized. |
 | `is_shipped(key)`          | PURE READ: frozen `.flow/memory/<ns>/ship-events/<key>.json` → return shipped; else `state()` + ship predicate | adapter MUST NOT write |
-| `set_sprint(key, sprint_id)` | `POST /rest/agile/1.0/sprint/{sprintId}/issue` `{issues:[key]}`                | capability: `sprints` |
-| `list_sprints(project)`    | `GET /rest/agile/1.0/board/{boardId}/sprint?state=active,future,closed` (needs board lookup) | capability: `sprints` |
-| `get_attachments(key)`     | `GET /rest/api/3/issue/{key}?fields=attachment`                                 | capability: `attachments` |
+| `set_sprint(key, sprint_id)` | `POST /rest/agile/1.0/sprint/{sprintId}/issue` `{issues:[key]}`                | cap-gated: `NotSupported` on beads |
+| `list_sprints(project)`    | `GET /rest/agile/1.0/board/{boardId}/sprint?state=active,future,closed` (needs board lookup) | cap-gated: `NotSupported` on beads |
+| `get_attachments(key)`     | `GET /rest/api/3/issue/{key}?fields=attachment`                                 | cap-gated: `NotSupported` on beads |
 
-## Capabilities advertised by JiraAdapter
+## Comment format on JiraAdapter
 
-Closed enum (`tracker.py:CAPABILITY_ENUM`).
-All `supported=true` for Jira Cloud:
+The adapter implements every method on the Protocol, cap-gated ones included; nothing is advertised, so an unsupported op is only ever a `NotSupported` raise.
 
-```
-comments_adf=true, comments_markdown=false, attachments=true, watchers=true,
-sprints=true, fix_versions=true, components=true, epic_link=true,
-pr_links=true, ci_links=true, boards=true, custom_fields=true,
-transitions_with_validators=true, resolutions=true
-```
-
-`comments_markdown=false` is intentional.
+Markdown comments are the one thing it refuses.
 Jira Cloud's comment API requires ADF; markdown round-trips lose formatting.
 Callers MUST send either:
 
@@ -161,7 +153,7 @@ Board selection is not configurable: the adapter takes the first active scrum bo
 
 Pluggable PR-host seam (`forge.py` Protocol + `forge_cli.py` + `forge_github.py` + `forge_bitbucket.py`), structural twin of the tracker seam. Selected by `[forge] backend` in `workspace.toml`; the block is OPTIONAL (absent = no forge, `create_pr`/`review_loop` stay `none`).
 
-`create_pr` takes an authored PR body from the stage (`references/stage-create_pr.md`) via `--body-file`: it runs `pr_body.scrub` (em-dash → punctuation, sentence-case `# Heading`, flatten `- **Term:**` bullets) as a de-AI floor, on a bitbucket forge flattens `<details>` wrappers to `###` headings (`pr_body.flatten_details`; Bitbucket renders no raw HTML in markdown) and appends the deterministic `Closes` footer (`pr_body.closes_footer`, extracted from the HEAD commit trailer), then runs `pr_body.enforce_cap` as a deterministic size net (shrink largest fenced blocks → drop `<details>` bodies keeping `<summary>` → hard-truncate; cap ~32000, the stricter forge floor) so an oversized `## Evidence` body can never fail `open_pr`. With no `--body-file` it falls back to the old commit-derived body (`pr_body.build_body`: strip the `ticket:`/`files:` trailer, keep `Closes <KEY>` as a footer, unwrap prose hard-wraps). On first open it calls `set_default_reviewers` (swallowing `NotSupported` + any `ForgeError` so a reviewer hiccup never fails an open PR). The `default_reviewers` capability is `True` on Bitbucket, `False` on GitHub (the first `supported=false` capability in a live adapter).
+`create_pr` takes an authored PR body from the stage (`references/stage-create_pr.md`) via `--body-file`: it runs `pr_body.scrub` (em-dash → punctuation, sentence-case `# Heading`, flatten `- **Term:**` bullets) as a de-AI floor, on a bitbucket forge flattens `<details>` wrappers to `###` headings (`pr_body.flatten_details`; Bitbucket renders no raw HTML in markdown) and appends the deterministic `Closes` footer (`pr_body.closes_footer`, extracted from the HEAD commit trailer), then runs `pr_body.enforce_cap` as a deterministic size net (shrink largest fenced blocks → drop `<details>` bodies keeping `<summary>` → hard-truncate; cap ~32000, the stricter forge floor) so an oversized `## Evidence` body can never fail `open_pr`. With no `--body-file` it falls back to the old commit-derived body (`pr_body.build_body`: strip the `ticket:`/`files:` trailer, keep `Closes <KEY>` as a footer, unwrap prose hard-wraps). On first open it calls `set_default_reviewers` (swallowing `NotSupported` + any `ForgeError` so a reviewer hiccup never fails an open PR). Bitbucket implements it; GitHub raises `NotSupported`.
 
 ### Operation surface (forge_cli subcommand → gh / bkt)
 
@@ -254,7 +246,7 @@ description = "Push branch + open draft PR + CI loop"
 # source). Unknown stages = invalid manifest.
 [skills.create_pr]
 handler_string         = "skill:ship-it:create"   # required; MUST start with "skill:"
-required_capabilities  = []                       # optional, list[str]; CAPABILITY_ENUM names
+required_capabilities  = []                       # optional, list[str]
 args_schema            = {}                       # optional, dict; opaque, validated by skill
 required_outputs       = ["pr_url"]               # optional, list[str]
 side_effects           = ["git push", "gh pr create"]   # optional, list[str]
@@ -381,10 +373,10 @@ Postcondition: re-read `bd show --json` and assert the normalized state moved to
 | `permission denied` / `forbidden`      | permission_denied     |
 | anything else (non-zero exit)          | validator_failed      |
 
-### Capability advertisement
+### Backend reach
 
-14 entries; only `comments_markdown` (bd accepts markdown via `bd comment --stdin`) and `resolutions` (bd records `closure_reason` on `bd close`) flip true.
-Every other capability is false → `set_sprint`, `list_sprints`, `get_attachments`, `download_attachment` raise `NotSupported`.
+bd accepts markdown comments (`bd comment --stdin`) and records `closure_reason` on `bd close`.
+It is otherwise narrow: `set_sprint`, `list_sprints`, `get_attachments`, `download_attachment` raise `NotSupported`.
 
 ### is_shipped contract (PURE READ; never writes under `.flow/`)
 

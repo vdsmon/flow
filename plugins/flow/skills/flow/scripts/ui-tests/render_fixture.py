@@ -4,7 +4,6 @@ import json
 import subprocess
 import sys
 from pathlib import Path
-from typing import ClassVar
 
 UI_ROOT = Path(__file__).resolve().parent
 SCRIPTS_ROOT = UI_ROOT.parent
@@ -33,7 +32,6 @@ index 1111111..2222222 100644
 
 class FixtureForge:
     backend = "github"
-    capabilities: ClassVar[list[dict[str, object]]] = []
 
     def pr_info(self, pr_id: str):
         return {

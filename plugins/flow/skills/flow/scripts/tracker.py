@@ -9,9 +9,8 @@ stays stdlib-only.
 
 Key invariants:
 
-- `CAPABILITY_ENUM` is a CLOSED enum. It documents the backend-rich surface; nothing
-  validates it at config time, and adapters gate behavior by raising `NotSupported`, not by
-  reading their own advertisement.
+- A backend-rich op an adapter cannot do raises `NotSupported`. That raise is the only
+  gate; adapters advertise nothing, so there is no second declaration to drift.
 - `Transition.id` is the OPAQUE backend transition identifier. Callers MUST pass
   the id to `transition()`, NOT the human-readable `name`. Two transitions can
   share a name pointing to different ids (Jira common pattern).
@@ -22,7 +21,7 @@ Key invariants:
   `edit(fields)`. The pipeline never mutates ticket fields after create; the
   write surface is create / transition / comment / link. Backend-rich reads
   and ops (sprints, attachments) go through dedicated typed methods that raise
-  `NotSupported` when the corresponding capability is `supported=false`.
+  `NotSupported` on a backend that lacks them.
 """
 
 from __future__ import annotations
@@ -36,23 +35,6 @@ from typing import (
 )
 
 # ─── Closed enums ────────────────────────────────────────────────────────────
-
-CAPABILITY_ENUM = Literal[
-    "comments_adf",
-    "comments_markdown",
-    "attachments",
-    "watchers",
-    "sprints",
-    "fix_versions",
-    "components",
-    "epic_link",
-    "pr_links",
-    "ci_links",
-    "boards",
-    "custom_fields",
-    "transitions_with_validators",
-    "resolutions",
-]
 
 NORMALIZED_STATES = Literal[
     "open",
@@ -137,16 +119,6 @@ class Sprint(TypedDict):
     state: Literal["active", "closed", "future"]
     start_date: str | None
     end_date: str | None
-
-
-# ─── Capability ──────────────────────────────────────────────────────────────
-
-
-class Capability(TypedDict):
-    """Adapter-advertised capability flag."""
-
-    name: CAPABILITY_ENUM
-    supported: bool
 
 
 # ─── Ticket shape ────────────────────────────────────────────────────────────
@@ -258,13 +230,12 @@ class Tracker(Protocol):
     `project_requires_pr`, `is_shipped`) are MANDATORY for all backends.
 
     Typed backend-rich methods (`set_sprint`, `list_sprints`,
-    `get_attachments`, `download_attachment`) are CAPABILITY-GATED. Each MUST
-    raise `NotSupported` when the corresponding capability advertises
-    `supported=false`.
+    `get_attachments`, `download_attachment`) are CAPABILITY-GATED: each MUST
+    raise `NotSupported` on a backend that cannot do it. The raise is the whole
+    gate; there is no advertisement to consult.
     """
 
     backend: str  # "jira" | "beads"
-    capabilities: list[Capability]
 
     # ─── lifecycle (mandatory) ────────────────────────────────────────────
 
@@ -344,11 +315,9 @@ def make_tracker(config: dict[str, Any]) -> Tracker:
 
 
 __all__ = [
-    "CAPABILITY_ENUM",
     "KNOWN_BACKENDS",
     "NORMALIZED_STATES",
     "Attachment",
-    "Capability",
     "Comment",
     "Content",
     "FieldSpec",
