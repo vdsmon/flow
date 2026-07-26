@@ -7,9 +7,6 @@ import pytest
 
 import version
 
-PLUGIN = version.PLUGIN_JSON
-
-
 # ---- bump_patch (pure) ----
 
 

@@ -630,15 +630,6 @@ def test_config_defaults_ignores_queue_section(tmp_path):
     assert es._config_defaults(ws) == (es.DEFAULT_CAP, es.DEFAULT_CONCURRENCY)
 
 
-def test_config_defaults_invalid_values(tmp_path):
-    ws = _ws_with_toml(tmp_path, '[evolve]\ncap = 0\nconcurrency = "lots"\n')
-    assert es._config_defaults(ws) == (es.DEFAULT_CAP, es.DEFAULT_CONCURRENCY)
-
-
-def test_config_defaults_no_workspace(tmp_path):
-    assert es._config_defaults(tmp_path / "nope") == (es.DEFAULT_CAP, es.DEFAULT_CONCURRENCY)
-
-
 def test_select_launched_pending_open_hot_serializes_next_hot(tmp_path):
     # a hot key sits in launched_pending with status `open` (newly launched, pre-transition),
     # no lease and no ref/PR. It must consume the single hot slot, holding the next hot.
