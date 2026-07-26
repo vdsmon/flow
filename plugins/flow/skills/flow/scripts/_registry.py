@@ -13,14 +13,13 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
-_SKILL_PREFIX = "skill:"
 _SUBAGENT_PREFIX = "subagent:"
 
 # Charset-strict handler grammar, the workspace.toml validation spec:
-#   inline | none | subagent:<type> | subagent:<plugin>:<type> | skill:<name>[:<args>]
-# subagent types and skill names are restricted to safe identifiers; skill args,
-# when present, must be non-empty. parse_handler is the lax structural twin used
-# on the runtime dispatch path; validate_workspace enforces this charset.
+#   inline | none | subagent:<type> | subagent:<plugin>:<type>
+# subagent types are restricted to safe identifiers. parse_handler is the lax
+# structural twin used on the runtime dispatch path; validate_workspace enforces
+# this charset.
 #
 # The single optional colon in a subagent type carries a plugin namespace, the form
 # a host uses for an agent shipped by a plugin (`flow:codex-reviewer`). It stays an
@@ -28,9 +27,7 @@ _SUBAGENT_PREFIX = "subagent:"
 # a command. That matters because .flow/workspace.toml can ride in planned_files, the
 # ownership gate excludes .flow/, and the drift gate reconciles owned drift mid-run, so
 # a command-valued handler would let one stage write what a later stage executes.
-HANDLER_RE = re.compile(
-    r"^(inline|none|subagent:[A-Za-z0-9_-]+(?::[A-Za-z0-9_-]+)?|skill:[A-Za-z0-9_.-]+(?::.+)?)$"
-)
+HANDLER_RE = re.compile(r"^(inline|none|subagent:[A-Za-z0-9_-]+(?::[A-Za-z0-9_-]+)?)$")
 
 
 @dataclass(frozen=True)
@@ -42,11 +39,9 @@ class ParsedHandler:
 
 def parse_handler(value: str) -> ParsedHandler | None:
     """Structural parse of a handler string, or None when the kind is unknown or
-    nothing follows a `subagent:`/`skill:` prefix.
+    nothing follows a `subagent:` prefix.
 
-    Lax on charset (that is HANDLER_RE's concern) and on an empty skill name after
-    a non-empty `skill:` body: `skill::args` parses as name="", args="args".
-    Callers that reject an empty name check `parsed.name` themselves.
+    Lax on charset; that is HANDLER_RE's concern.
     """
     if value in ("inline", "none"):
         return ParsedHandler(kind=value)
@@ -55,12 +50,6 @@ def parse_handler(value: str) -> ParsedHandler | None:
         if not rest:
             return None
         return ParsedHandler(kind="subagent", name=rest)
-    if value.startswith(_SKILL_PREFIX):
-        rest = value[len(_SKILL_PREFIX) :]
-        if not rest:
-            return None
-        name, _, args = rest.partition(":")
-        return ParsedHandler(kind="skill", name=name, args=args)
     return None
 
 

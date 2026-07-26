@@ -1,15 +1,15 @@
 # inventory: API/contract reference
 
 > **Navigation.** The CURRENT script map is `MODULE.md`. This file keeps the
-> API/contract tables (Jira REST mapping, beads CLI surface, `.flow-bundle.toml`
-> schema, `state.json` schema) a reader needs assembled in one place. Build history
+> API/contract tables (Jira REST mapping, beads CLI surface, `state.json` schema)
+> a reader needs assembled in one place. Build history
 > lives in git.
 
 Contract sections (grep the heading):
 
 - §Jira API inventory + §Status normalization mapping + §HTTP error → exception / TransitionResult mapping
 - §Forge (PR host) surface: operation surface, `[forge]`, and optional `[models]` workspace schemas
-- §`.flow-bundle.toml` schema — discovery contract, composition rules, bootstrap markers
+- §Workspace bootstrap — handler composition, transactional markers, postconditions
 - §Beads CLI surface — subcommands, state normalization, transition synthesis, is_shipped contract
 - §Dispatcher state machine — stage lifecycle, `state.json` schema, atomic-write contract, quarantine, exit codes, handler-descriptor shape, revision sub-run, TOCTOU invariant
 - §Memory cohort — `memory_append` / `recall` / `memory_embed` + `[memory.semantic]` config
@@ -228,57 +228,17 @@ Planning produces one human-approved Markdown file and records the inspected bas
 marks the stage complete. The ticket claim, isolated worktree, atomic run state, and
 planned-file ownership remain the bootstrap's durable safety boundaries.
 
-## `.flow-bundle.toml` schema
+## Workspace bootstrap
 
-External plugins declare which flow stages they provide handlers for via a top-level `.flow-bundle.toml`.
-`bundle-discover.py` walks `~/.claude/plugins/*/` and `<repo>/.claude/plugins/*/` (override: `FLOW_BUNDLE_SEARCH_ROOTS`, colon-separated) and parses each manifest.
-Schema:
-
-```toml
-schema_version = 1     # closed enum: { 1 }; mismatch = invalid (warning unless --select)
-
-[bundle]
-name        = "ship-it"   # bundle slug, used by --bundle-name selectors
-description = "Push branch + open draft PR + CI loop"
-
-# One [skills.<stage>] table per stage the bundle provides. `stage` MUST name a
-# stage registered in stage-registry.toml (the closed vocabulary's single
-# source). Unknown stages = invalid manifest.
-[skills.create_pr]
-handler_string         = "skill:ship-it:create"   # required; MUST start with "skill:"
-required_capabilities  = []                       # optional, list[str]
-args_schema            = {}                       # optional, dict; opaque, validated by skill
-required_outputs       = ["pr_url"]               # optional, list[str]
-side_effects           = ["git push", "gh pr create"]   # optional, list[str]
-stage_compatibility    = ["create_pr"]            # optional, list[str]; cross-check vs stage roles
-
-[skills.review_loop]
-handler_string = "skill:ship-it:feedback"
-```
-
-### Discovery contract
-
-| Condition                                       | Result                                         |
-|-------------------------------------------------|------------------------------------------------|
-| Manifest absent                                 | not discovered; not an error                   |
-| Manifest parses + schema valid                  | listed in `valid`                              |
-| Manifest invalid + UNRELATED to selected bundle | listed in `invalid` (warning; `cli_main` exit 0)|
-| Manifest invalid + IS the `--select`ed bundle   | `cli_main` exit 2; init.py exit 1              |
-| Two valid manifests advertise the same stage    | listed in `duplicates`; `recommended` refuses  |
-
-### Composition rules
+### Handler composition
 
 - **bare**: every stage in `pipeline.stages` uses `stage-registry.toml`'s
   `default_handler`. Always available.
-- **recommended**: discovered manifests' `handler_string` values override the
-  defaults for every stage they advertise. Two-provider conflict on ANY stage
-  rejects the whole `recommended` choice (caller must use `--bundle custom` to
-  disambiguate). Day-1 design choice: don't try to auto-rank conflicting
-  providers — surface the conflict.
 - **custom**: caller supplies `--handler <stage>=<handler_string>` flags. Init
   validates handler strings against the closed grammar
-  (`inline | none | subagent:<type> | skill:<name>[:<args>]`) and rejects
-  unknown stages.
+  (`inline | none | subagent:<type>`) and rejects unknown stages.
+- On reconfigure, a prior handler that differs from the current registry default is
+  preserved. Precedence: `--handler` > existing customization > default.
 
 ### Transactional bootstrap markers
 

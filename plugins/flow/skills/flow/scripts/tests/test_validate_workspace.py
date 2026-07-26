@@ -296,8 +296,6 @@ def test_required_when_compounding_skip_when_compounding_false(tmp_path: Path) -
         "none",
         "subagent:Plan",
         "subagent:flow:codex-reviewer",  # plugin-namespaced agent type
-        "skill:ship-it",
-        "skill:ship-it:create",
     ],
 )
 def test_legal_handler_strings_accepted(tmp_path: Path, handler: str) -> None:
@@ -325,7 +323,9 @@ def test_legal_handler_strings_accepted(tmp_path: Path, handler: str) -> None:
         "subagent:flow codex-reviewer",  # whitespace is not an identifier
         "inline-with-suffix",
         "agent:Plan",
-        "skill:",  # empty skill name
+        "skill:ship-it",  # the retired plugin-handler form
+        "skill:ship-it:create",
+        "skill:",
         "  inline  ",  # whitespace
     ],
 )

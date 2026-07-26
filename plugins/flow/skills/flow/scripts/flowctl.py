@@ -7,7 +7,7 @@ import os
 import sys
 from pathlib import Path
 
-from bundle_discover import HarnessError, flow_harness
+from _harness import HarnessError, flow_harness
 
 SKILL_ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS_DIR = SKILL_ROOT / "scripts"
@@ -30,7 +30,6 @@ COMMANDS = {
     "frontmatter": "ticket_frontmatter.py",
     "group-candidates": "group_candidates.py",
     "group-persist": "group_persist.py",
-    "handler": "resolve_handler.py",
     "harness-eval": "harness_eval.py",
     "lint-comments": "lint_comments.py",
     "lint-ticket": "lint_ticket.py",

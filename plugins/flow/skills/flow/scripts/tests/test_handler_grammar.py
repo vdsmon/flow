@@ -1,21 +1,26 @@
 """Byte-identical regression lock for the single-sourced handler grammar.
 
-The grammar (`inline | none | subagent:<type> | skill:<name>[:<args>]`) was
-defined three times: init._legal_handler_string (lax), resolve_handler.resolve's
-prefix dispatch (lax, rejects empty skill name), validate_workspace._HANDLER_RE
-(charset-strict). They were consolidated onto _registry.parse_handler +
-_registry.HANDLER_RE. The three consumers drifted on edge cases (charset, empty
-skill name, trailing colon), so this locks each consumer's PRE-consolidation
-acceptance exactly rather than converging them.
+The grammar (`inline | none | subagent:<type>`) was once defined three times:
+init._legal_handler_string (lax), resolve_handler.resolve's prefix dispatch (lax),
+and validate_workspace._HANDLER_RE (charset-strict). They were consolidated onto
+_registry.parse_handler + _registry.HANDLER_RE. The consumers had drifted on edge
+cases (charset, trailing colon), so this locks each surviving consumer's acceptance
+exactly rather than converging them.
 
-The `_old_*` functions below are the frozen pre-refactor implementations, copied
-verbatim; the tests assert the live symbols still match them across a battery
-that hits every drift class.
+The `_old_*` functions below are the frozen implementations, copied verbatim; the
+tests assert the live symbols still match them across a battery that hits every
+drift class.
 
-One deliberate widening has landed since: a subagent type may carry a single
-plugin-namespace colon (`flow:codex-reviewer`), the form a host uses for an agent
-shipped by a plugin. `_WIDENED` names every battery value that change newly accepts,
-so the lock still catches unintended drift everywhere else.
+Two changes have landed since the consolidation, and the battery pins both:
+
+- a subagent type may carry a single plugin-namespace colon (`flow:codex-reviewer`),
+  the form a host uses for an agent shipped by a plugin. `_WIDENED` names every
+  battery value that widening newly accepts.
+- the `skill:<name>[:<args>]` form is RETIRED: no handler is an installed plugin any
+  more, so resolve_handler is gone and both surviving consumers must now REJECT every
+  `skill:` string. `_RETIRED` names those values, and the assertions below require
+  rejection rather than merely dropping the rows — that is what keeps the form from
+  creeping back in through either consumer.
 """
 
 from __future__ import annotations
@@ -25,10 +30,9 @@ import re
 import pytest
 
 import init
-import resolve_handler
 from _registry import HANDLER_RE
 
-# ── frozen pre-consolidation implementations (the spec being preserved) ──────
+# ── frozen implementations (the spec being preserved) ─────────────────────────
 
 _OLD_HANDLER_RE = re.compile(
     r"^(inline|none|subagent:[A-Za-z0-9_-]+|skill:[A-Za-z0-9_.-]+(?::.+)?)$"
@@ -41,26 +45,6 @@ def _old_init_legal(value: str) -> bool:
     if value.startswith("subagent:") and len(value) > len("subagent:"):
         return True
     return value.startswith("skill:") and len(value) > len("skill:")
-
-
-def _old_resolve_accept(handler_string: str) -> tuple[bool, str | None]:
-    """(accepted, error) mirroring resolve()'s grammar branch pre-consolidation."""
-    if handler_string == "inline":
-        return True, None
-    if handler_string == "none":
-        return True, None
-    if handler_string.startswith("subagent:"):
-        subagent_type = handler_string[len("subagent:") :]
-        if not subagent_type:
-            return False, f"empty subagent type in handler {handler_string!r}"
-        return True, None
-    if handler_string.startswith("skill:"):
-        rest = handler_string[len("skill:") :]
-        name = rest.split(":", 1)[0]
-        if not name:
-            return False, f"empty skill name in handler {handler_string!r}"
-        return True, None
-    return False, f"unrecognized handler string {handler_string!r}"
 
 
 def _old_validate_accept(value: str) -> bool:
@@ -120,27 +104,35 @@ BATTERY = [
 # identifier on both sides of it.
 _WIDENED = frozenset({"subagent:foo:bar", "subagent:flow:codex-reviewer"})
 
+# Every battery value the retired `skill:` form covered. Both consumers must reject
+# all of them, including the ones the frozen spec accepted.
+_RETIRED = frozenset(value for value in BATTERY if value.startswith("skill:"))
+
 
 @pytest.mark.parametrize("value", BATTERY, ids=[repr(v) for v in BATTERY])
 def test_init_legal_handler_string_unchanged(value: str) -> None:
+    if value in _RETIRED:
+        assert not init._legal_handler_string(value), "skill: handlers are retired"
+        return
     assert init._legal_handler_string(value) == _old_init_legal(value)
 
 
 @pytest.mark.parametrize("value", BATTERY, ids=[repr(v) for v in BATTERY])
-def test_resolve_grammar_unchanged(value: str) -> None:
-    old_accept, old_error = _old_resolve_accept(value)
-    resolution = resolve_handler.resolve(value)
-    new_accept = resolution.handler_type != "unknown"
-    assert new_accept == old_accept
-    if not old_accept:
-        assert resolution.handler_type == "unknown"
-        assert resolution.error == old_error
-
-
-@pytest.mark.parametrize("value", BATTERY, ids=[repr(v) for v in BATTERY])
 def test_validate_handler_re_unchanged(value: str) -> None:
+    if value in _RETIRED:
+        assert not HANDLER_RE.match(value), "skill: handlers are retired"
+        return
     if value in _WIDENED:
         assert HANDLER_RE.match(value), "plugin-namespaced type must be accepted"
         assert not _old_validate_accept(value), "value is not actually a widening"
         return
     assert bool(HANDLER_RE.match(value)) == _old_validate_accept(value)
+
+
+def test_retired_skill_form_has_no_accepting_consumer() -> None:
+    # The two frozen specs accepted `skill:foo`; the live grammar must not. This is
+    # the lock on the retirement itself, independent of the battery's parametrize.
+    assert _old_init_legal("skill:foo")
+    assert _old_validate_accept("skill:foo")
+    assert not init._legal_handler_string("skill:foo")
+    assert not HANDLER_RE.match("skill:foo")

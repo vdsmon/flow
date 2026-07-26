@@ -65,7 +65,7 @@ mistake:
    and the loaded copy disagree, the pin wins).
 
 Two facts decide what gets pinned. First, the harness selector: when `FLOW_HARNESS` is unset,
-`bundle_discover.flow_harness` defaults it to `claude-code`; the value is closed-validated
+`_harness.flow_harness` defaults it to `claude-code`; the value is closed-validated
 (`codex`, `claude-code`), and unknown names fail instead of guessing. Second, the
 cache-stabilization fork: at install, `flow_launcher.stabilize_skill_dir` prefers the harness's
 stable marketplace source over a versioned cache path — under `claude-code` it resolves the

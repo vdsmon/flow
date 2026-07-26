@@ -15,11 +15,6 @@ Contract:
 - Pre-flight: `.flow/.initialized` present → refuse unless `--reconfigure`.
   `.flow/.initializing` present and no `--resume`/`--reconfigure` → refuse with
   recover hint.
-- Bundle discovery via `bundle_discover.discover()`; no hardcoded skill names.
-  `recommended` is offered only when discovered manifests cover the stages
-  that bare leaves as `none`/`inline` (typically `code_review`, `create_pr`,
-  `review_loop`). On stage-provider conflicts, `recommended` is refused;
-  caller must use `--bundle custom` with explicit per-stage handler overrides.
 - For backend=beads, runs `bd init --prefix <prefix>` then verifies
   `bd ready --json` returns parseable JSON. Subprocess runner is injectable
   (`bd_runner` constructor arg) so tests can mock without spawning bd.
@@ -43,17 +38,16 @@ from typing import Any, Literal
 
 import flow_launcher
 from _atomicio import atomic_write_bytes, atomic_write_text
+from _harness import HarnessError, flow_harness
 from _registry import StageEntry, load_registry, parse_handler
 from _runner import KwRunner as Runner
 from _runner import kw_default_runner as _default_runner
 from _timeutil import utcnow_iso
-from bundle_discover import DiscoveryResult, HarnessError, flow_harness
-from bundle_discover import discover as bundle_discover_run
 
 # ─── Types ───────────────────────────────────────────────────────────────────
 
 BackendLiteral = Literal["jira", "beads"]
-BundleLiteral = Literal["bare", "recommended", "custom"]
+BundleLiteral = Literal["bare", "custom"]
 
 PhaseLiteral = Literal[
     "validate_inputs",
@@ -129,14 +123,11 @@ class InitConfig:
     workspace_root: Path
     jira: JiraConfig | None = None
     beads: BeadsConfig | None = None
-    # Handler overrides: stage_name → handler_string. For bundle=custom, these
-    # are user-supplied. For bundle=recommended, they are computed by phase
-    # `bundle_compose` from discovered manifests. For bundle=bare, this is empty.
+    # Handler overrides: stage_name → handler_string. Supplied by the caller for
+    # bundle=custom; empty for bundle=bare.
     handler_overrides: dict[str, str] = field(default_factory=dict)
     memory_namespace: str | None = None
     memory_compounding: bool = True
-    # Override default search roots for bundle discovery (tests).
-    bundle_search_roots: list[Path] | None = None
 
 
 @dataclass
@@ -144,7 +135,7 @@ class InitResult:
     workspace_toml_path: Path
     handlers: dict[str, str]
     namespace: str
-    discovery_warnings: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
 
 
 class InitError(Exception):
@@ -153,10 +144,6 @@ class InitError(Exception):
 
 class InitPreflightError(InitError):
     """Exit code 4: pre-existing marker without --resume/--reconfigure."""
-
-
-class BundleConflictError(InitError):
-    """Exit code 3: recommended bundle has a stage-provider conflict."""
 
 
 def _install_launcher(root: Path) -> None:
@@ -510,20 +497,17 @@ def _compose_handlers(
     config: InitConfig,
     registry: list[StageEntry],
     pipeline_stages: list[str],
-    discovery: DiscoveryResult,
     existing_handlers: dict[str, str] | None = None,
 ) -> tuple[dict[str, str], list[str]]:
     """Return (handlers, warnings).
 
     bare: defaults from stage-registry.toml.
     custom: defaults + user overrides; rejects illegal handler strings.
-    recommended: defaults + auto-overrides from discovered manifests; rejects
-                 conflicts (more than one provider for any stage).
 
     On reconfigure, `existing_handlers` carries the prior workspace's handlers.
     Any stage whose prior value differs from the current registry default is
-    preserved. Precedence: --handler > existing customization > manifest >
-    default. `existing_handlers` None or {} (fresh init) is a no-op.
+    preserved. Precedence: --handler > existing customization > default.
+    `existing_handlers` None or {} (fresh init) is a no-op.
     """
     handlers: dict[str, str] = {
         s.name: s.default_handler for s in registry if s.name in pipeline_stages
@@ -553,47 +537,10 @@ def _compose_handlers(
             if not _legal_handler_string(value):
                 raise InitError(
                     f"--handler {stage}={value!r} is not a legal handler string "
-                    f"(expected inline|none|subagent:*|skill:*)"
+                    f"(expected inline|none|subagent:*)"
                 )
             handlers[stage] = value
         return handlers, warnings
-
-    # recommended
-    stage_providers: dict[str, list[tuple[str, str]]] = {}
-    for manifest in discovery.valid:
-        for skill in manifest.skills:
-            if skill.stage in pipeline_stages:
-                stage_providers.setdefault(skill.stage, []).append(
-                    (manifest.bundle_name, skill.handler_string)
-                )
-
-    covered_stages = 0
-    for stage, providers in stage_providers.items():
-        if len(providers) > 1:
-            raise BundleConflictError(
-                f"stage {stage!r} has multiple providers: "
-                f"{[p[0] for p in providers]!r}; use --bundle custom to disambiguate"
-            )
-        bundle_name, handler_string = providers[0]
-        if not _legal_handler_string(handler_string):
-            raise InitError(
-                f"bundle {bundle_name!r} provides an illegal handler for stage {stage!r}: "
-                f"{handler_string!r} (expected inline|none|subagent:*|skill:<name>)"
-            )
-        handlers[stage] = handler_string
-        covered_stages += 1
-
-    if covered_stages == 0:
-        # No-silent-degrade: --bundle recommended that resolves to zero stages
-        # is functionally identical to bare. Refuse so the caller picks bare or
-        # custom explicitly instead of silently getting bare defaults.
-        raise InitError(
-            "--bundle=recommended found no discovered manifests covering any "
-            "pipeline stage; use --bundle bare for defaults or --bundle custom "
-            "with explicit --handler overrides"
-        )
-
-    warnings.extend(f"manifest {err.path}: {err.reason}" for err in discovery.invalid)
 
     handlers.update(preserved)
     warnings.extend(preserved_warnings)
@@ -691,7 +638,7 @@ def _validate_config(config: InitConfig) -> None:
         flow_launcher.runtime_layout.validate_namespace(_derive_default_namespace(config))
     except flow_launcher.runtime_layout.RuntimeLayoutError as exc:
         raise InitError(str(exc)) from exc
-    if config.bundle not in ("bare", "recommended", "custom"):
+    if config.bundle not in ("bare", "custom"):
         raise InitError(f"unknown bundle {config.bundle!r}")
     if config.bundle == "custom" and not config.handler_overrides:
         raise InitError("--bundle=custom requires at least one --handler stage=value")
@@ -911,21 +858,6 @@ def run_init(
         raise
 
 
-def _discover_and_compose(
-    config: InitConfig,
-    registry: list[StageEntry],
-    pipeline_stages: list[str],
-    root: Path,
-    existing_handlers: dict[str, str],
-) -> tuple[DiscoveryResult, dict[str, str], list[str]]:
-    try:
-        d = bundle_discover_run(roots=config.bundle_search_roots, repo_root=root)
-    except HarnessError as exc:
-        raise InitError(str(exc)) from exc
-    h, w = _compose_handlers(config, registry, pipeline_stages, d, existing_handlers)
-    return d, h, w
-
-
 def _run_init_phases(
     *,
     config: InitConfig,
@@ -943,7 +875,6 @@ def _run_init_phases(
     run_phase: Callable[[PhaseLiteral, Callable[[], dict[str, Any] | None]], None],
 ) -> InitResult:
     _run_phase = run_phase
-    discovery = DiscoveryResult()
     handlers: dict[str, str] = {}
     warnings: list[str] = []
 
@@ -956,23 +887,15 @@ def _run_init_phases(
     _run_phase("validate_inputs", _phase_validate_inputs)
 
     def _phase_bundle_compose() -> dict[str, Any] | None:
-        nonlocal discovery, handlers, warnings
-        discovery, handlers, warnings = _discover_and_compose(
-            config, registry, pipeline_stages, root, existing_handlers
-        )
-        return {
-            "bundle": config.bundle,
-            "discovered_count": len(discovery.valid),
-            "invalid_count": len(discovery.invalid),
-        }
+        nonlocal handlers, warnings
+        handlers, warnings = _compose_handlers(config, registry, pipeline_stages, existing_handlers)
+        return {"bundle": config.bundle}
 
     _run_phase("bundle_compose", _phase_bundle_compose)
     # If resume skipped the phase, we still need handlers populated to write
     # the toml later. Recompute deterministically.
     if not handlers:
-        discovery, handlers, warnings = _discover_and_compose(
-            config, registry, pipeline_stages, root, existing_handlers
-        )
+        handlers, warnings = _compose_handlers(config, registry, pipeline_stages, existing_handlers)
 
     def _phase_mkdirs() -> dict[str, Any] | None:
         (flow_dir / "runs").mkdir(parents=True, exist_ok=True)
@@ -1039,7 +962,7 @@ def _run_init_phases(
         workspace_toml_path=_workspace_toml_path(root),
         handlers=handlers,
         namespace=namespace,
-        discovery_warnings=warnings,
+        warnings=warnings,
     )
 
 
@@ -1058,21 +981,6 @@ def _parse_handler_overrides(values: list[str]) -> dict[str, str]:
             raise InitError(f"--handler stage and value must be non-empty: {raw!r}")
         out[stage] = value
     return out
-
-
-def _coerce_search_roots(value: object) -> list[Path] | None:
-    """Normalize --bundle-search-roots from CLI string OR --config JSON list.
-
-    CLI passes a `:`-separated string; a --config file may already hand us a
-    JSON list. Either way return list[Path] (or None when unset).
-    """
-    if value is None:
-        return None
-    if isinstance(value, list):
-        return [Path(str(p)).expanduser() for p in value if str(p)]
-    if isinstance(value, str):
-        return [Path(p).expanduser() for p in value.split(":") if p]
-    raise InitError(f"--bundle-search-roots must be a string or list, got {type(value).__name__}")
 
 
 def _build_config_from_args(args: argparse.Namespace) -> InitConfig:
@@ -1111,7 +1019,6 @@ def _build_config_from_args(args: argparse.Namespace) -> InitConfig:
         handler_overrides=overrides,
         memory_namespace=args.memory_namespace or None,
         memory_compounding=compounding,
-        bundle_search_roots=_coerce_search_roots(args.bundle_search_roots),
     )
 
 
@@ -1120,7 +1027,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         description="Flow workspace setup — transactional workspace bootstrap.",
     )
     parser.add_argument("--backend", choices=("jira", "beads"), required=False)
-    parser.add_argument("--bundle", choices=("bare", "recommended", "custom"), required=False)
+    parser.add_argument("--bundle", choices=("bare", "custom"), required=False)
     parser.add_argument("--workspace-root", default=None)
     parser.add_argument("--jira-cloud-id", default=None)
     parser.add_argument("--jira-project-key", default=None)
@@ -1131,19 +1038,13 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument(
         "--handler",
         action="append",
-        help="stage=value (e.g. create_pr=skill:ship-it:create); repeatable",
+        help="stage=value (e.g. code_review=subagent:flow:codex-reviewer); repeatable",
     )
 
     parser.add_argument("--memory-namespace", default=None)
     parser.add_argument("--memory-compounding", default=None)
 
     parser.add_argument("--config", default=None, help="path to JSON file with all answers")
-    parser.add_argument(
-        "--bundle-search-roots",
-        default=None,
-        help="colon-separated dirs (overrides defaults; tests)",
-    )
-
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--reconfigure", action="store_true")
     return parser.parse_args(argv)
@@ -1176,7 +1077,7 @@ def cli_main(argv: list[str]) -> int:
             sys.stderr.write("--backend is required (jira | beads)\n")
             return 2
         if not args.bundle:
-            sys.stderr.write("--bundle is required (bare | recommended | custom)\n")
+            sys.stderr.write("--bundle is required (bare | custom)\n")
             return 2
 
         config = _build_config_from_args(args)
@@ -1188,9 +1089,6 @@ def cli_main(argv: list[str]) -> int:
     except InitPreflightError as exc:
         sys.stderr.write(f"init pre-flight: {exc}\n")
         return 4
-    except BundleConflictError as exc:
-        sys.stderr.write(f"bundle conflict: {exc}\n")
-        return 3
     except InitError as exc:
         sys.stderr.write(f"init failed: {exc}\n")
         return 1
@@ -1202,7 +1100,7 @@ def cli_main(argv: list[str]) -> int:
         "workspace_toml": str(result.workspace_toml_path),
         "handlers": result.handlers,
         "namespace": result.namespace,
-        "warnings": result.discovery_warnings,
+        "warnings": result.warnings,
     }
     sys.stdout.write(json.dumps(payload, indent=2, sort_keys=True))
     sys.stdout.write("\n")
@@ -1215,7 +1113,6 @@ if __name__ == "__main__":
 
 __all__ = [
     "BeadsConfig",
-    "BundleConflictError",
     "InitConfig",
     "InitError",
     "InitPreflightError",

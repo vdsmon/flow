@@ -45,33 +45,6 @@ def _codex_absent(monkeypatch: pytest.MonkeyPatch) -> None:
 # ─── Helpers ─────────────────────────────────────────────────────────────────
 
 
-def _write_manifest(plugin_dir: Path, content: str) -> None:
-    plugin_dir.mkdir(parents=True, exist_ok=True)
-    (plugin_dir / ".flow-bundle.toml").write_text(content, encoding="utf-8")
-
-
-def _ship_it_manifest() -> str:
-    return """schema_version = 1
-[bundle]
-name = "ship-it"
-description = ""
-[skills.create_pr]
-handler_string = "skill:ship-it:create"
-[skills.review_loop]
-handler_string = "skill:ship-it:feedback"
-"""
-
-
-def _code_review_manifest() -> str:
-    return """schema_version = 1
-[bundle]
-name = "code-review"
-description = ""
-[skills.code_review]
-handler_string = "skill:code-review"
-"""
-
-
 def _bd_ok_runner() -> initmod.Runner:
     def runner(
         args: list[str],
@@ -114,7 +87,6 @@ def _jira_config(tmp_path: Path) -> initmod.InitConfig:
             project_key="FT",
             assignee_account_id="acct-1",
         ),
-        bundle_search_roots=[tmp_path / "_empty"],
     )
 
 
@@ -124,7 +96,6 @@ def _beads_config(tmp_path: Path) -> initmod.InitConfig:
         bundle="bare",
         workspace_root=tmp_path,
         beads=initmod.BeadsConfig(prefix="testpkg"),
-        bundle_search_roots=[tmp_path / "_empty"],
     )
 
 
@@ -329,47 +300,6 @@ def test_beads_bd_ready_invalid_json_blocks_finalization(tmp_path: Path) -> None
 # ─── Recommended + custom bundles ────────────────────────────────────────────
 
 
-def test_recommended_bundle_composes_from_discovered_manifests(tmp_path: Path) -> None:
-    search_root = tmp_path / "plugins"
-    _write_manifest(search_root / "ship-it", _ship_it_manifest())
-    _write_manifest(search_root / "code-review", _code_review_manifest())
-    config = initmod.InitConfig(
-        backend="jira",
-        bundle="recommended",
-        workspace_root=tmp_path,
-        jira=initmod.JiraConfig(cloud_id="x", project_key="FT", assignee_account_id=None),
-        bundle_search_roots=[search_root],
-    )
-    result = initmod.run_init(config)
-    assert result.handlers["create_pr"] == "skill:ship-it:create"
-    assert result.handlers["review_loop"] == "skill:ship-it:feedback"
-    assert result.handlers["code_review"] == "skill:code-review"
-
-
-def test_recommended_bundle_conflict_raises(tmp_path: Path) -> None:
-    search_root = tmp_path / "plugins"
-    _write_manifest(search_root / "ship-it", _ship_it_manifest())
-    _write_manifest(
-        search_root / "rival-pr",
-        """schema_version = 1
-[bundle]
-name = "rival-pr"
-description = ""
-[skills.create_pr]
-handler_string = "skill:rival-pr:create"
-""",
-    )
-    config = initmod.InitConfig(
-        backend="jira",
-        bundle="recommended",
-        workspace_root=tmp_path,
-        jira=initmod.JiraConfig(cloud_id="x", project_key="FT", assignee_account_id=None),
-        bundle_search_roots=[search_root],
-    )
-    with pytest.raises(initmod.BundleConflictError, match="create_pr"):
-        initmod.run_init(config)
-
-
 def test_custom_bundle_uses_supplied_handlers(tmp_path: Path) -> None:
     config = initmod.InitConfig(
         backend="jira",
@@ -377,13 +307,12 @@ def test_custom_bundle_uses_supplied_handlers(tmp_path: Path) -> None:
         workspace_root=tmp_path,
         jira=initmod.JiraConfig(cloud_id="x", project_key="FT", assignee_account_id=None),
         handler_overrides={
-            "create_pr": "skill:ship-it:create",
+            "create_pr": "inline",
             "e2e": "subagent:general-purpose",
         },
-        bundle_search_roots=[tmp_path / "_empty"],
     )
     result = initmod.run_init(config)
-    assert result.handlers["create_pr"] == "skill:ship-it:create"
+    assert result.handlers["create_pr"] == "inline"
     assert result.handlers["e2e"] == "subagent:general-purpose"
     # Stages not overridden keep stage-registry defaults.
     assert result.handlers["plan"] == "inline"
@@ -396,7 +325,6 @@ def test_custom_bundle_rejects_illegal_handler_string(tmp_path: Path) -> None:
         workspace_root=tmp_path,
         jira=initmod.JiraConfig(cloud_id="x", project_key="FT", assignee_account_id=None),
         handler_overrides={"create_pr": "bogus-handler-string"},
-        bundle_search_roots=[tmp_path / "_empty"],
     )
     with pytest.raises(initmod.InitError, match="legal handler"):
         initmod.run_init(config)
@@ -409,7 +337,6 @@ def test_custom_bundle_rejects_unknown_stage(tmp_path: Path) -> None:
         workspace_root=tmp_path,
         jira=initmod.JiraConfig(cloud_id="x", project_key="FT", assignee_account_id=None),
         handler_overrides={"deploy": "skill:foo:bar"},
-        bundle_search_roots=[tmp_path / "_empty"],
     )
     with pytest.raises(initmod.InitError, match=r"pipeline\.stages"):
         initmod.run_init(config)
@@ -480,7 +407,6 @@ def test_compounding_false_drops_reflect_stage(tmp_path: Path) -> None:
         workspace_root=tmp_path,
         jira=initmod.JiraConfig(cloud_id="x", project_key="FT", assignee_account_id=None),
         memory_compounding=False,
-        bundle_search_roots=[tmp_path / "_empty"],
     )
     result = initmod.run_init(config)
     data = tomllib.loads(result.workspace_toml_path.read_text(encoding="utf-8"))
@@ -504,8 +430,6 @@ def test_cli_bare_jira(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> No
             "x",
             "--jira-project-key",
             "FT",
-            "--bundle-search-roots",
-            str(tmp_path / "_empty"),
         ]
     )
     assert rc == 0
@@ -535,46 +459,9 @@ def test_cli_preflight_exit_code(tmp_path: Path) -> None:
             "x",
             "--jira-project-key",
             "FT",
-            "--bundle-search-roots",
-            str(tmp_path / "_empty"),
         ]
     )
     assert rc == 4
-
-
-def test_cli_bundle_conflict_exit_code(tmp_path: Path) -> None:
-    search_root = tmp_path / "plugins"
-    _write_manifest(search_root / "ship-it", _ship_it_manifest())
-    _write_manifest(
-        search_root / "rival",
-        """schema_version = 1
-[bundle]
-name = "rival"
-description = ""
-[skills.create_pr]
-handler_string = "skill:rival:create"
-""",
-    )
-    rc = initmod.cli_main(
-        [
-            "--backend",
-            "jira",
-            "--bundle",
-            "recommended",
-            "--workspace-root",
-            str(tmp_path),
-            "--jira-cloud-id",
-            "x",
-            "--jira-project-key",
-            "FT",
-            "--bundle-search-roots",
-            str(search_root),
-        ]
-    )
-    assert rc == 3
-
-
-# ─── Slug derivation ─────────────────────────────────────────────────────────
 
 
 def test_derive_slug_normalizes() -> None:
@@ -587,38 +474,6 @@ def test_derive_slug_normalizes() -> None:
 # ─── [U] --config JSON list normalization ─────────────────────────────────────
 
 
-def test_config_bundle_search_roots_as_json_list(tmp_path: Path) -> None:
-    # A --config file may hand bundle_search_roots as a JSON list. It must not
-    # crash on .split(":") and the listed root must be honored for discovery.
-    search_root = tmp_path / "plugins"
-    _write_manifest(search_root / "code-review", _code_review_manifest())
-    answers = tmp_path / "answers.json"
-    answers.write_text(
-        json.dumps(
-            {
-                "backend": "jira",
-                "bundle": "recommended",
-                "workspace_root": str(tmp_path),
-                "jira_cloud_id": "x",
-                "jira_project_key": "FT",
-                "bundle_search_roots": [str(search_root)],
-            }
-        ),
-        encoding="utf-8",
-    )
-    rc = initmod.cli_main(["--config", str(answers)])
-    assert rc == 0
-    data = tomllib.loads((tmp_path / ".flow" / "workspace.toml").read_text(encoding="utf-8"))
-    assert data["pipeline"]["handlers"]["code_review"] == "skill:code-review"
-
-
-def test_coerce_search_roots_handles_string_and_list(tmp_path: Path) -> None:
-    a, b = tmp_path / "a", tmp_path / "b"
-    assert initmod._coerce_search_roots(None) is None
-    assert initmod._coerce_search_roots(f"{a}:{b}") == [a, b]
-    assert initmod._coerce_search_roots([str(a), str(b)]) == [a, b]
-
-
 def test_invalid_input_leaves_no_initializing_marker(tmp_path: Path) -> None:
     # custom bundle with no handler overrides fails validation. The failure must
     # NOT leave a .initializing marker behind.
@@ -627,7 +482,6 @@ def test_invalid_input_leaves_no_initializing_marker(tmp_path: Path) -> None:
         bundle="custom",
         workspace_root=tmp_path,
         jira=initmod.JiraConfig(cloud_id="x", project_key="FT", assignee_account_id=None),
-        bundle_search_roots=[tmp_path / "_empty"],
     )
     with pytest.raises(initmod.InitError, match="custom requires"):
         initmod.run_init(bad)
@@ -681,7 +535,6 @@ def test_failed_reconfigure_restores_prior_workspace(tmp_path: Path) -> None:
         workspace_root=tmp_path,
         beads=initmod.BeadsConfig(prefix="testpkg"),
         memory_namespace="orig",
-        bundle_search_roots=[tmp_path / "_empty"],
     )
     initmod.run_init(first, runner=_bd_ok_runner())
     toml_path = tmp_path / ".flow" / "workspace.toml"
@@ -696,7 +549,6 @@ def test_failed_reconfigure_restores_prior_workspace(tmp_path: Path) -> None:
         workspace_root=tmp_path,
         beads=initmod.BeadsConfig(prefix="testpkg"),
         memory_namespace="changed",
-        bundle_search_roots=[tmp_path / "_empty"],
     )
     with pytest.raises(initmod.InitError, match="bd ready"):
         initmod.run_init(second, runner=_bd_init_ok_ready_bad_runner(), reconfigure=True)
@@ -866,7 +718,6 @@ def test_successful_reconfigure_swaps_workspace(tmp_path: Path) -> None:
         workspace_root=tmp_path,
         beads=initmod.BeadsConfig(prefix="testpkg"),
         memory_namespace="orig",
-        bundle_search_roots=[tmp_path / "_empty"],
     )
     initmod.run_init(first, runner=_bd_ok_runner())
     toml_path = tmp_path / ".flow" / "workspace.toml"
@@ -878,7 +729,6 @@ def test_successful_reconfigure_swaps_workspace(tmp_path: Path) -> None:
         workspace_root=tmp_path,
         beads=initmod.BeadsConfig(prefix="testpkg"),
         memory_namespace="changed",
-        bundle_search_roots=[tmp_path / "_empty"],
     )
     initmod.run_init(second, runner=_bd_ok_runner(), reconfigure=True)
     assert tomllib.loads(toml_path.read_text(encoding="utf-8"))["memory"]["namespace"] == "changed"
@@ -1028,51 +878,6 @@ def test_generated_launcher_files_are_gitignored(tmp_path: Path) -> None:
 # ─── [Y-init] recommended no-coverage + handler validation ────────────────────
 
 
-def test_recommended_with_no_coverage_refuses(tmp_path: Path) -> None:
-    # An empty search root yields zero discovered manifests. recommended would
-    # silently degrade to bare; refuse instead per no-silent-degrade.
-    config = initmod.InitConfig(
-        backend="jira",
-        bundle="recommended",
-        workspace_root=tmp_path,
-        jira=initmod.JiraConfig(cloud_id="x", project_key="FT", assignee_account_id=None),
-        bundle_search_roots=[tmp_path / "_empty"],
-    )
-    with pytest.raises(initmod.InitError, match="no discovered manifests"):
-        initmod.run_init(config)
-    assert not (tmp_path / ".flow" / ".initialized").exists()
-
-
-def test_compose_rejects_empty_skill_handler(tmp_path: Path) -> None:
-    # Defense in depth: even if a manifest with handler_string "skill:" (empty
-    # name) reaches composition, init must reject it before it lands a nameless
-    # handler in workspace.toml. Built directly to bypass bundle_discover's own
-    # validation and exercise the init-level guard.
-    from bundle_discover import DiscoveryResult, Manifest, ManifestSkill
-
-    config = initmod.InitConfig(
-        backend="jira",
-        bundle="recommended",
-        workspace_root=tmp_path,
-        jira=initmod.JiraConfig(cloud_id="x", project_key="FT", assignee_account_id=None),
-        bundle_search_roots=[tmp_path / "_empty"],
-    )
-    registry = initmod._load_stage_registry()
-    stages = initmod._default_pipeline_stages(registry, config.memory_compounding)
-    discovery = DiscoveryResult(
-        valid=[
-            Manifest(
-                path="x",
-                bundle_name="nameless",
-                bundle_description="",
-                skills=[ManifestSkill(stage="create_pr", handler_string="skill:")],
-            )
-        ]
-    )
-    with pytest.raises(initmod.InitError, match="illegal handler"):
-        initmod._compose_handlers(config, registry, stages, discovery)
-
-
 def test_write_phase_rejects_illegal_handler(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1101,13 +906,13 @@ def test_reconfigure_preserves_customized_handler(tmp_path: Path) -> None:
     first = dataclasses.replace(
         _jira_config(tmp_path),
         bundle="custom",
-        handler_overrides={"code_review": "skill:code-review"},
+        handler_overrides={"code_review": "subagent:code-reviewer"},
     )
     initmod.run_init(first)
     result = initmod.run_init(
         dataclasses.replace(_jira_config(tmp_path), bundle="bare"), reconfigure=True
     )
-    assert result.handlers["code_review"] == "skill:code-review"
+    assert result.handlers["code_review"] == "subagent:code-reviewer"
 
 
 def test_reconfigure_handler_flag_overrides_preservation(tmp_path: Path) -> None:
@@ -1115,7 +920,7 @@ def test_reconfigure_handler_flag_overrides_preservation(tmp_path: Path) -> None
     first = dataclasses.replace(
         _jira_config(tmp_path),
         bundle="custom",
-        handler_overrides={"code_review": "skill:code-review"},
+        handler_overrides={"code_review": "subagent:code-reviewer"},
     )
     initmod.run_init(first)
     second = dataclasses.replace(
@@ -1127,33 +932,12 @@ def test_reconfigure_handler_flag_overrides_preservation(tmp_path: Path) -> None
     assert result.handlers["code_review"] == "inline"
 
 
-def test_reconfigure_preservation_beats_manifest(tmp_path: Path) -> None:
-    # Prior customization outranks a discovered manifest. Three distinct values:
-    # prior subagent:general-purpose != manifest skill:code-review != default inline.
-    search_root = tmp_path / "plugins"
-    _write_manifest(search_root / "code-review", _code_review_manifest())
-    first = dataclasses.replace(
-        _jira_config(tmp_path),
-        bundle="custom",
-        handler_overrides={"code_review": "subagent:general-purpose"},
-        bundle_search_roots=[search_root],
-    )
-    initmod.run_init(first)
-    second = dataclasses.replace(
-        _jira_config(tmp_path),
-        bundle="recommended",
-        bundle_search_roots=[search_root],
-    )
-    result = initmod.run_init(second, reconfigure=True)
-    assert result.handlers["code_review"] == "subagent:general-purpose"
-
-
 def test_fresh_init_preserves_nothing(tmp_path: Path) -> None:
     # No reconfigure -> existing_handlers is {} -> handlers equal registry defaults.
     result = initmod.run_init(dataclasses.replace(_jira_config(tmp_path), bundle="bare"))
     assert result.handlers["code_review"] == "inline"
     assert result.handlers["e2e"] == "subagent:general-purpose"
-    assert result.discovery_warnings == []
+    assert result.warnings == []
 
 
 def test_reconfigure_freezes_value_differing_from_current_default(tmp_path: Path) -> None:
@@ -1182,7 +966,7 @@ def test_reconfigure_preserved_warning_names_value_and_default(tmp_path: Path) -
     result = initmod.run_init(
         dataclasses.replace(_jira_config(tmp_path), bundle="bare"), reconfigure=True
     )
-    line = next(w for w in result.discovery_warnings if "e2e" in w)
+    line = next(w for w in result.warnings if "e2e" in w)
     assert "none" in line
     assert "subagent:general-purpose" in line
 
@@ -1234,7 +1018,7 @@ def test_probe_owned_handler_is_not_preserved_when_codex_disappears(
     monkeypatch.setattr(initmod.shutil, "which", lambda name: "/usr/bin/codex")
     first = initmod.run_init(_jira_config(tmp_path))
     assert _handlers_of(first.workspace_toml_path)["code_review"] == (
-        "subagent:flow:codex-reviewer"
+        initmod._BUNDLED_CODEX_REVIEWER
     )
 
     monkeypatch.setattr(initmod.shutil, "which", lambda name: None)

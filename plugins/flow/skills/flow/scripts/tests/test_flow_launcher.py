@@ -32,8 +32,8 @@ def _fixture_skill(tmp_path: Path, script_body: str) -> Path:
         Path(flow_launcher.__file__).with_name("flowctl.py").read_text(encoding="utf-8"),
         encoding="utf-8",
     )
-    (scripts / "bundle_discover.py").write_text(
-        Path(flow_launcher.__file__).with_name("bundle_discover.py").read_text(encoding="utf-8"),
+    (scripts / "_harness.py").write_text(
+        Path(flow_launcher.__file__).with_name("_harness.py").read_text(encoding="utf-8"),
         encoding="utf-8",
     )
     (scripts / "status.py").write_text(script_body, encoding="utf-8")

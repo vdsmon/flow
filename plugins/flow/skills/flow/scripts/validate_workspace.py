@@ -14,7 +14,7 @@ Validates:
 5. `[pipeline]`: `stages` non-empty list[str]; every stage registered in
    stage-registry.toml; `pipeline.handlers` covers every stage.
 6. Per stage: handler-string parses as `inline | none | subagent:<type> |
-   subagent:<plugin>:<type> | skill:<name>[:<args>]`.
+   subagent:<plugin>:<type>`.
 7. Required predecessors precede the stage.
 8. `required_when_compounding = true` stages appear iff
    `[memory] compounding = true`.
@@ -199,8 +199,7 @@ def _parse_handlers(
         if not HANDLER_RE.match(value):
             result.add(
                 f"pipeline.handlers.{stage}",
-                f"handler {value!r} does not match "
-                f"inline|none|subagent:<type>|skill:<name>[:<args>]",
+                f"handler {value!r} does not match inline|none|subagent:<type>",
             )
             continue
         handlers[stage] = value
@@ -286,9 +285,9 @@ def _validate_model_hints(
     string or an inline `{ model, effort }` table. Values are type-checked only —
     their vocabulary belongs to whatever launches the agent.
 
-    Liveness is judged against THIS workspace: a `subagent:`/`skill:`-wired stage
-    launches by construction (string hints allowed even off the map), while an
-    inline/none stage launches only when its prose does (_LAUNCH_SITES)."""
+    Liveness is judged against THIS workspace: a `subagent:`-wired stage launches by
+    construction (string hints allowed even off the map), while an inline/none stage
+    launches only when its prose does (_LAUNCH_SITES)."""
     if "agents" in data:
         result.add(
             "agents",

@@ -133,12 +133,6 @@ def _parse_handler(value: str) -> dict[str, Any]:
         return {"handler_type": "none"}
     if value.startswith("subagent:"):
         return {"handler_type": "subagent", "subagent_type": value[len("subagent:") :]}
-    if value.startswith("skill:"):
-        rest = value[len("skill:") :]
-        if ":" in rest:
-            name, _, args = rest.partition(":")
-            return {"handler_type": "skill", "skill_name": name, "skill_args": args}
-        return {"handler_type": "skill", "skill_name": rest, "skill_args": None}
     return {"handler_type": "unknown", "raw": value}
 
 

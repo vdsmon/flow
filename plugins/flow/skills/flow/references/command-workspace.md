@@ -37,7 +37,7 @@ unnecessary: entry migration is automatic.
 2. For an uninitialized workspace, collect:
 
    - tracker backend: Jira or beads;
-   - stage bundle: bare, recommended, or explicit custom handlers;
+   - stage handlers: bare defaults, or explicit custom overrides;
    - Jira cloud/project and optional default assignee, or a beads prefix.
 
    The flat answer object must include `workspace_root` with the absolute

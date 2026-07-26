@@ -410,40 +410,6 @@ def test_next_routes_subagent_handler(tmp_path: Path, monkeypatch: pytest.Monkey
     assert payload["reference_doc"] == "references/stage-plan.md"
 
 
-def test_next_routes_skill_handler(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    _write_workspace(
-        tmp_path,
-        handlers={"ticket": "skill:ship-it:create"},
-        stages=["ticket"],
-        compounding=False,
-    )
-    _stub_git_head(monkeypatch)
-    ds.cmd_init(tmp_path, "FT-1")
-    rc, payload = ds.cmd_next(tmp_path, "FT-1")
-    assert rc == 0
-    assert payload["handler_type"] == "skill"
-    assert payload["skill_name"] == "ship-it"
-    assert payload["skill_args"] == "create"
-
-
-def test_next_routes_skill_handler_without_args(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    _write_workspace(
-        tmp_path,
-        handlers={"ticket": "skill:my-skill"},
-        stages=["ticket"],
-        compounding=False,
-    )
-    _stub_git_head(monkeypatch)
-    ds.cmd_init(tmp_path, "FT-1")
-    rc, payload = ds.cmd_next(tmp_path, "FT-1")
-    assert rc == 0
-    assert payload["handler_type"] == "skill"
-    assert payload["skill_name"] == "my-skill"
-    assert payload["skill_args"] is None
-
-
 def test_next_routes_none_handler(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _write_workspace(
         tmp_path,
@@ -781,9 +747,11 @@ def test_cli_advance_persists_skill_output(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # `skill_output` is the run-state field for a handler's captured report; it
+    # outlived the retired `skill:` handler form and any handler kind can fill it.
     _write_workspace(
         tmp_path,
-        handlers={"ticket": "skill:ship-it:create"},
+        handlers={"ticket": "subagent:general-purpose"},
         stages=["ticket"],
         compounding=False,
     )

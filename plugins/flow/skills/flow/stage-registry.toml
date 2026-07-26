@@ -2,13 +2,12 @@
 # Single source of truth. Dispatcher reads opaquely; adding a stage = append entry + drop
 # a reference doc under references/stage-<name>.md. Zero dispatcher code change.
 #
-# Closed vocabulary: external plugins map THEIR subcommands to these stage names via
-# .flow-bundle.toml manifests. They cannot introduce new stage NAMES without a flow
-# registry change.
+# Closed vocabulary: stage names are fixed here. A pipeline selects from them; it
+# cannot introduce a new stage NAME without a registry change.
 #
 # Field semantics:
 #   name                          - matches references/stage-<name>.md and pipeline.stages entries
-#   default_handler               - one of: "inline" | "subagent:<type>" | "skill:<name>[:<args>]" | "none"
+#   default_handler               - one of: "inline" | "subagent:<type>" | "none"
 #   default_timeout_min           - basis for the run-lease TTL (dispatch_stage.py
 #                                   _LEASE_TTL_MULTIPLIER x this); NOT an enforced stage deadline
 #   required_predecessors         - upstream stages that MUST appear earlier in pipeline.stages
