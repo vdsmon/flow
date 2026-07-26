@@ -6,6 +6,8 @@ Flow uses one attended planning conversation, one human-approved Markdown plan, 
 
 The repo is a marketplace-of-one. The `plugins/flow/` nesting is load-bearing, not taste: both `marketplace.json` files point at `./plugins/flow`, `flow_launcher` resolves the installed engine through that source path, and the reflect self-edit path (`plugins/flow/.claude-plugin/plugin.json`) is written against it. `plugins/flow/skills/flow/scripts/MODULE.md` is the live map of the engine — read it to find a script, and its §Reference docs index to find a prose doc.
 
+`docs/specs/` holds dated design records and `docs/research/` the experiment write-ups. Both are history, not contract: nothing under `docs/` is authoritative unless SKILL.md, a `references/` doc, or MODULE.md cites it.
+
 ## Dev commands
 
 Run from `plugins/flow/skills/flow/scripts/` (mise finds `mise.toml` there). Use `rtk proxy` in front of pytest if output looks compressed/mangled.
