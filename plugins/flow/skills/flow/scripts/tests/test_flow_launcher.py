@@ -489,3 +489,37 @@ def test_launcher_cli_repairs_legacy_workspace_from_executing_install(
         str(executing.resolve()) + "\n"
     )
     assert os.access(root / ".flow" / "runtime" / "flow", os.X_OK)
+
+
+def _marketplace_scaffold(tmp_path: Path) -> Path:
+    mp_dir = tmp_path / "plugins" / "marketplaces" / "vdsmon-flow"
+    (mp_dir / ".claude-plugin").mkdir(parents=True)
+    (mp_dir / ".claude-plugin" / "marketplace.json").write_text(
+        json.dumps({"plugins": [{"name": "flow", "source": "./plugins/flow"}]}),
+        encoding="utf-8",
+    )
+    return mp_dir
+
+
+def test_stabilize_cache_path_without_suffix_passes_through(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A cache-shaped path ending at the version segment carries no skill suffix
+    # to re-root: the length guard must pass it through even when the
+    # marketplace source exists and would satisfy is_dir.
+    monkeypatch.setenv("FLOW_HARNESS", "claude-code")
+    mp_dir = _marketplace_scaffold(tmp_path)
+    (mp_dir / "plugins" / "flow").mkdir(parents=True)
+    bare = tmp_path / "plugins" / "cache" / "vdsmon-flow" / "flow" / "1.2.3"
+    assert flow_launcher.stabilize_skill_dir(str(bare)) == str(bare)
+
+
+def test_stabilize_missing_marketplace_source_dir_passes_through(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The manifest names a source that does not exist on disk: fail safe to the
+    # original cache path instead of returning a nonexistent directory.
+    monkeypatch.setenv("FLOW_HARNESS", "claude-code")
+    _marketplace_scaffold(tmp_path)
+    cache = tmp_path / "plugins" / "cache" / "vdsmon-flow" / "flow" / "1.2.3" / "skills" / "flow"
+    assert flow_launcher.stabilize_skill_dir(str(cache)) == str(cache)
