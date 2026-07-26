@@ -597,12 +597,6 @@ def test_label_facets_non_str_element_fails(tmp_path: Path) -> None:
 # ─── [code_review] reviewer_model ────────────────────────────────────────────
 
 
-def test_code_review_block_absent_is_valid(tmp_path: Path) -> None:
-    root = _make_workspace(tmp_path, backend="beads")
-    result, _ = vw.validate(root)
-    assert result.ok, result.violations
-
-
 def test_code_review_block_hard_fails_naming_replacement(tmp_path: Path) -> None:
     # Breaking change, no alias: the message must name the [models.code_review] shape.
     root = _make_workspace(tmp_path, backend="beads")
