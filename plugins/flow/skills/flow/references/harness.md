@@ -38,9 +38,8 @@ ambient `claude-code` name at the boundary where configuration uses `claude_code
 
 ## Discovery and runtime
 
-Both plugin manifests expose the same `skills/` tree. Codex and Claude Code use native plugin
-discovery. Managed `AGENTS.md` guidance is optional and is the generic fallback, not another
-installation locator.
+Both plugin manifests expose the same `skills/` tree. Claude Code and Codex both discover Flow
+natively; there is no managed repository-guidance fallback.
 
 The launcher bootstrap (SKILL.md §Entry contract) installs or migrates
 `.flow/runtime/{flow,skill-root,memory-root,layout-version}`. It never searches arbitrary plugin
@@ -48,8 +47,7 @@ caches. The generated facade reads its sibling `skill-root`, enters its own work
 executes only an allowlisted internal command. It supplies compatibility environment variables to
 child processes; those variables are engine details, not driver state.
 
-Fresh setup calls the loaded setup script directly because no facade exists. Existing workspace
-guidance uses that script's guidance-only mode; configuration is not rerun.
+Fresh setup calls the loaded setup script directly because no facade exists.
 
 ### Engine resolution: which code is actually running
 

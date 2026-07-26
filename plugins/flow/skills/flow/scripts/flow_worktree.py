@@ -1480,8 +1480,9 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         action="store_true",
         help="recover edits a soft-gate harness (no plan-mode write-block) spilled onto "
         "the main checkout before bootstrap: a planned file left uncommitted on main is "
-        "carried into the seeded worktree. The cross-harness AGENTS.md entry point passes "
-        "this; Claude Code omits it (plan mode keeps main clean), so the CC path is unchanged",
+        "carried into the seeded worktree. Never passed automatically (see "
+        "references/delivery-plan.md); Claude Code's plan mode keeps main clean, so its "
+        "path never needs it",
     )
     p.add_argument(
         "--auto",

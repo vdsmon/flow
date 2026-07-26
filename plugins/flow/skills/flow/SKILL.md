@@ -133,7 +133,7 @@ FLOW memory search [<query>] [--ticket <key>]... [--label <facet:value>] [--dige
 FLOW memory prune
 FLOW memory rebuild [--full]
 FLOW measure <throughput|lead-time|friction|reverts|trend|memory-health|recall-quality|fix-efficacy> [--since <date>] [--until <date>]
-FLOW workspace setup [--guidance]
+FLOW workspace setup
 FLOW workspace inspect [<target>] [--json]
 FLOW workspace repair [<target>]
 FLOW workspace sync

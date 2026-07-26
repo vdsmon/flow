@@ -104,80 +104,6 @@ def _ensure_gitignore(root: Path) -> dict[str, Any] | None:
     return None
 
 
-# AGENTS.md is durable generic-harness guidance. Claude Code and Codex can load Flow natively;
-# other harnesses may use this managed block as their entry point. Opt-in via
-# `--agents-md`: a tracked root file, so default-off keeps native-only init byte-identical.
-# Once present, the marker pair records durable opt-in and later reconfigures upgrade it.
-_AGENTS_MARKER = "<!-- flow:begin -->"
-_AGENTS_END_MARKER = "<!-- flow:end -->"
-_AGENTS_STANZA = """<!-- flow:begin -->
-## Flow state-aware ticket→PR delivery
-
-This repository is initialized for Flow. Codex should prefer the installed
-`$flow:flow` skill; Claude Code should use the Flow plugin. A generic harness must be
-given the absolute Flow skill root (`FLOW_SKILL_DIR`) by its adapter, then read `SKILL.md` and
-`references/harness.md` there. Do not search the machine for an installation.
-
-1. Pass the request after the host trigger unchanged to Flow's `public-commands.toml`
-   router. Static namespaces win over target parsing; unknown or removed forms stop.
-   Keep the starting checkout as an absolute task root.
-2. Bind the harness identity (`codex`, `claude-code`, or `generic`). Prefix every
-   direct setup, runtime repair, and facade command with `FLOW_HARNESS=<identity>` in that same
-   call; a shell export is never persistent state.
-3. Before a workspace command, install or migrate runtime layout v2 from the loaded
-   skill. Join tracker, run, lease, snapshot, revision, and forge evidence and obey the
-   deterministic lifecycle result.
-4. **Approval is not coding.** For a fresh target, perform read-only planning, present
-   the plan and confidence evidence, then stop until the user explicitly approves.
-   Use native Plan mode when available; otherwise this turn boundary is the gate.
-5. After approval, create or adopt the Flow worktree. Set the returned absolute path as
-   the run root and its `.flow/runtime/flow` executable as the absolute facade path.
-6. Harness calls do not share shell state. Give every command an explicit workdir of
-   the run root, or self-root that individual call when no workdir field exists. Invoke
-   the facade absolutely, and root every read, edit, artifact, and subagent prompt
-   there. A prior standalone `cd` or shell export is never persistent state.
-7. Never relocate dirty main-checkout files automatically. Spill recovery requires
-   confirmed agent-created provenance and an explicit recovery action.
-<!-- flow:end -->"""
-
-
-def _ensure_agents_md(root: Path, *, requested: bool) -> dict[str, Any] | None:
-    """Add or upgrade the managed Flow block without touching surrounding text."""
-    agents = root / "AGENTS.md"
-    existing = agents.read_text(encoding="utf-8") if agents.exists() else ""
-    begin_count = existing.count(_AGENTS_MARKER)
-    end_count = existing.count(_AGENTS_END_MARKER)
-    if begin_count != end_count or begin_count > 1:
-        raise InitError(
-            "AGENTS.md must contain either no Flow markers or exactly one ordered "
-            f"{_AGENTS_MARKER} / {_AGENTS_END_MARKER} pair"
-        )
-
-    if begin_count == 0:
-        if not requested:
-            return {"skipped": True, "reason": "agents_md not requested"}
-        prefix = existing
-        if prefix and not prefix.endswith("\n"):
-            prefix += "\n"
-        if prefix:
-            prefix += "\n"
-        updated = prefix + _AGENTS_STANZA + "\n"
-    else:
-        begin = existing.index(_AGENTS_MARKER)
-        end = existing.index(_AGENTS_END_MARKER)
-        if end < begin:
-            raise InitError(
-                f"AGENTS.md has {_AGENTS_END_MARKER} before {_AGENTS_MARKER}; fix the markers"
-            )
-        end += len(_AGENTS_END_MARKER)
-        updated = existing[:begin] + _AGENTS_STANZA + existing[end:]
-
-    if updated == existing:
-        return {"skipped": True, "reason": "AGENTS.md Flow stanza is current"}
-    atomic_write_text(agents, updated)
-    return None
-
-
 # Phases run in order. Phases skipped by backend (e.g. bd_init for jira) are
 # still recorded as "completed" so --resume bookkeeping stays simple.
 
@@ -211,9 +137,6 @@ class InitConfig:
     memory_compounding: bool = True
     # Override default search roots for bundle discovery (tests).
     bundle_search_roots: list[Path] | None = None
-    # Opt-in: add the managed AGENTS.md fallback. Once present, reconfigure keeps
-    # it current without requiring the flag again. See _ensure_agents_md.
-    agents_md: bool = False
 
 
 @dataclass
@@ -816,12 +739,16 @@ class _ReconfigureBackup:
 
     `.initialized` is intentionally NOT unlinked up front; finalize swaps it
     atomically. On failure the prior config, launcher metadata, executable modes,
-    managed guidance, and any pre-existing transient markers are restored.
+    a pre-existing root AGENTS.md, and any pre-existing transient markers are restored.
     """
 
     workspace_toml: str | None
     launcher: _FileBackup
     skill_root: _FileBackup
+    # Flow itself no longer writes AGENTS.md, but `bd init` runs inside this
+    # transaction and is held off the file only by `--skip-agents`; this leg keeps a
+    # hand-maintained AGENTS.md recoverable if that ever regresses. It is the only
+    # non-`.flow/` file in the snapshot.
     agents_md: _FileBackup
     initializing: _FileBackup
     progress: _FileBackup
@@ -890,8 +817,8 @@ def run_init(
 
     On failure, raises InitError (or subclass). For a plain or `--resume` run,
     `.flow/.initializing` and `.flow/.init-progress` remain on disk for a later
-    `--resume`. For a failed `--reconfigure`, the prior config, launcher files,
-    managed guidance, and any pre-existing transient markers are restored.
+    `--resume`. For a failed `--reconfigure`, the prior config, launcher files, a
+    pre-existing root AGENTS.md, and any pre-existing transient markers are restored.
     """
     root = config.workspace_root.resolve()
     flow_dir = _flow_dir(root)
@@ -1051,7 +978,6 @@ def _run_init_phases(
         (flow_dir / "runs").mkdir(parents=True, exist_ok=True)
         (flow_dir / "memory" / namespace).mkdir(parents=True, exist_ok=True)
         (flow_dir / "memory" / namespace / "ship-events").mkdir(parents=True, exist_ok=True)
-        _ensure_agents_md(root, requested=config.agents_md)
         return None
 
     _run_phase("mkdirs", _phase_mkdirs)
@@ -1186,7 +1112,6 @@ def _build_config_from_args(args: argparse.Namespace) -> InitConfig:
         memory_namespace=args.memory_namespace or None,
         memory_compounding=compounding,
         bundle_search_roots=_coerce_search_roots(args.bundle_search_roots),
-        agents_md=args.agents_md,
     )
 
 
@@ -1221,17 +1146,6 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
 
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--reconfigure", action="store_true")
-    parser.add_argument(
-        "--agents-md",
-        action="store_true",
-        help="write the cross-harness AGENTS.md entry point (off by default; "
-        "for repos run through Cursor/Windsurf/opencode/etc. — Claude Code does not need it)",
-    )
-    parser.add_argument(
-        "--guidance-only",
-        action="store_true",
-        help="install or refresh managed AGENTS.md guidance in an initialized workspace",
-    )
     return parser.parse_args(argv)
 
 
@@ -1257,30 +1171,6 @@ def cli_main(argv: list[str]) -> int:
 
         if args.config:
             _merge_config_file(args, _load_config_file(Path(args.config).expanduser()))
-
-        if args.guidance_only:
-            if not args.workspace_root:
-                sys.stderr.write("--workspace-root is required with --guidance-only\n")
-                return 2
-            root = Path(args.workspace_root).expanduser().resolve()
-            if (
-                not (root / ".flow" / ".initialized").is_file()
-                or not (root / ".flow" / "workspace.toml").is_file()
-            ):
-                sys.stderr.write("guidance requires an initialized workspace\n")
-                return 1
-            outcome = _ensure_agents_md(root, requested=True)
-            sys.stdout.write(
-                json.dumps(
-                    {
-                        "changed": outcome is None,
-                        "guidance": str(root / "AGENTS.md"),
-                    },
-                    sort_keys=True,
-                )
-                + "\n"
-            )
-            return 0
 
         if not args.backend:
             sys.stderr.write("--backend is required (jira | beads)\n")

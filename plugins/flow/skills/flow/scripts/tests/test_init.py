@@ -276,98 +276,14 @@ def test_reconfigure_preserves_role_keyed_model_hints(tmp_path: Path) -> None:
     }
 
 
-# ─── L1: AGENTS.md cross-harness entry point (opt-in, CC-neutral by default) ──
+# ─── AGENTS.md is never written ──────────────────────────────────────────────
 
 
-def test_init_does_not_write_agents_md_by_default(tmp_path: Path) -> None:
-    # Native Claude Code and Codex discovery need no tracked AGENTS.md by default.
+def test_init_never_writes_agents_md(tmp_path: Path) -> None:
+    # Claude Code and Codex both discover Flow natively; nothing generates a
+    # managed guidance block, so init leaves the repo root alone.
     initmod.run_init(_jira_config(tmp_path))
     assert not (tmp_path / "AGENTS.md").exists()
-
-
-def test_agents_md_flag_writes_entry_point(tmp_path: Path) -> None:
-    cfg = dataclasses.replace(_jira_config(tmp_path), agents_md=True)
-    initmod.run_init(cfg)
-    agents = tmp_path / "AGENTS.md"
-    body = agents.read_text(encoding="utf-8")
-    assert initmod._AGENTS_MARKER in body
-    assert ".flow/runtime/flow" in body
-    assert "FLOW_SKILL_DIR" in body
-    assert "Approval is not coding" in body
-
-
-def test_agents_md_appends_to_existing_without_clobber(tmp_path: Path) -> None:
-    (tmp_path / "AGENTS.md").write_text("# House rules\nUse tabs.\n", encoding="utf-8")
-    cfg = dataclasses.replace(_jira_config(tmp_path), agents_md=True)
-    initmod.run_init(cfg)
-    body = (tmp_path / "AGENTS.md").read_text(encoding="utf-8")
-    assert "# House rules" in body  # original preserved
-    assert body.count(initmod._AGENTS_MARKER) == 1  # stanza added once
-
-
-def test_ensure_agents_md_is_idempotent(tmp_path: Path) -> None:
-    assert initmod._ensure_agents_md(tmp_path, requested=True) is None  # first write
-    skipped = initmod._ensure_agents_md(tmp_path, requested=True)  # second is a no-op
-    assert skipped is not None
-    assert skipped.get("skipped") is True
-    assert (tmp_path / "AGENTS.md").read_text(encoding="utf-8").count(initmod._AGENTS_MARKER) == 1
-
-
-def test_existing_agents_block_is_upgraded_without_repeating_opt_in(tmp_path: Path) -> None:
-    agents = tmp_path / "AGENTS.md"
-    prefix = "# House rules\n\n"
-    suffix = "\n\n## Local notes\nKeep this byte-for-byte.\n"
-    agents.write_text(
-        prefix + "<!-- flow:begin -->\nold flow instructions\n<!-- flow:end -->" + suffix,
-        encoding="utf-8",
-    )
-
-    assert initmod._ensure_agents_md(tmp_path, requested=False) is None
-
-    body = agents.read_text(encoding="utf-8")
-    assert body.startswith(prefix)
-    assert body.endswith(suffix)
-    assert "old flow instructions" not in body
-    assert "$flow:flow" in body
-    assert "explicit workdir" in body
-    assert "--recover-spill" not in body
-
-
-def test_reconfigure_upgrades_persisted_agents_opt_in(tmp_path: Path) -> None:
-    initmod.run_init(dataclasses.replace(_jira_config(tmp_path), agents_md=True))
-    agents = tmp_path / "AGENTS.md"
-    agents.write_text(
-        "before\n<!-- flow:begin -->\nold flow instructions\n<!-- flow:end -->\nafter\n",
-        encoding="utf-8",
-    )
-
-    initmod.run_init(_jira_config(tmp_path), reconfigure=True)
-
-    body = agents.read_text(encoding="utf-8")
-    assert body.startswith("before\n")
-    assert body.endswith("\nafter\n")
-    assert "old flow instructions" not in body
-    assert "$flow:flow" in body
-
-
-@pytest.mark.parametrize(
-    "body",
-    [
-        "before\n<!-- flow:begin -->\nunclosed\n",
-        "before\n<!-- flow:end -->\n",
-        "<!-- flow:begin -->\na\n<!-- flow:begin -->\nb\n<!-- flow:end -->\n",
-        "<!-- flow:begin -->\na\n<!-- flow:end -->\n<!-- flow:end -->\n",
-        "<!-- flow:end -->\nbackwards\n<!-- flow:begin -->\n",
-    ],
-)
-def test_malformed_agents_markers_fail_without_rewriting(tmp_path: Path, body: str) -> None:
-    agents = tmp_path / "AGENTS.md"
-    agents.write_text(body, encoding="utf-8")
-
-    with pytest.raises(initmod.InitError, match=r"flow:begin|flow:end"):
-        initmod._ensure_agents_md(tmp_path, requested=False)
-
-    assert agents.read_text(encoding="utf-8") == body
 
 
 def test_bare_beads_init_runs_bd_and_writes_workspace_toml(tmp_path: Path) -> None:
@@ -603,29 +519,6 @@ def test_cli_missing_backend(capsys: pytest.CaptureFixture[str]) -> None:
     assert "backend" in capsys.readouterr().err
 
 
-def test_cli_guidance_only_updates_initialized_workspace(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    initmod.run_init(_jira_config(tmp_path))
-
-    rc = initmod.cli_main(["--guidance-only", "--workspace-root", str(tmp_path)])
-
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
-    assert payload == {"changed": True, "guidance": str(tmp_path / "AGENTS.md")}
-    assert "$flow:flow" in (tmp_path / "AGENTS.md").read_text(encoding="utf-8")
-
-
-def test_cli_guidance_only_refuses_uninitialized_workspace(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    rc = initmod.cli_main(["--guidance-only", "--workspace-root", str(tmp_path)])
-
-    assert rc == 1
-    assert "initialized workspace" in capsys.readouterr().err
-    assert not (tmp_path / "AGENTS.md").exists()
-
-
 def test_cli_preflight_exit_code(tmp_path: Path) -> None:
     (tmp_path / ".flow").mkdir()
     (tmp_path / ".flow" / ".initialized").touch()
@@ -817,17 +710,14 @@ def test_failed_reconfigure_restores_prior_workspace(tmp_path: Path) -> None:
 def test_failed_reconfigure_restores_launcher_metadata_and_agents(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    first = dataclasses.replace(_jira_config(tmp_path), agents_md=True)
-    initmod.run_init(first)
+    initmod.run_init(_jira_config(tmp_path))
 
     flow_path = tmp_path / ".flow" / "runtime" / "flow"
     skill_path = tmp_path / ".flow" / "runtime" / "skill-root"
     agents_path = tmp_path / "AGENTS.md"
-    old_agents = (
-        "# User-owned preface\n"
-        "<!-- flow:begin -->\nold managed guidance\n<!-- flow:end -->\n"
-        "User-owned suffix\n"
-    )
+    # Flow never writes AGENTS.md; this leg proves a hand-maintained one survives a
+    # failed reconfigure, since it is the only non-`.flow/` file in the snapshot.
+    old_agents = "# House rules\nUse tabs.\n"
     flow_path.write_bytes(b"prior launcher\n")
     skill_path.write_bytes(b"/prior/skill path\n")
     agents_path.write_text(old_agents, encoding="utf-8")
@@ -885,7 +775,6 @@ def test_failed_reconfigure_removes_files_absent_before_attempt(
     generated = (
         tmp_path / ".flow" / "runtime" / "flow",
         tmp_path / ".flow" / "runtime" / "skill-root",
-        tmp_path / "AGENTS.md",
     )
     generated[0].unlink()
     generated[1].unlink()
@@ -903,9 +792,7 @@ def test_failed_reconfigure_removes_files_absent_before_attempt(
     monkeypatch.setattr(initmod.flow_launcher, "install", partially_install_then_fail)
 
     with pytest.raises(initmod.InitError, match="launcher failure"):
-        initmod.run_init(
-            dataclasses.replace(_jira_config(tmp_path), agents_md=True), reconfigure=True
-        )
+        initmod.run_init(_jira_config(tmp_path), reconfigure=True)
 
     assert all(not path.exists() for path in generated)
 

@@ -168,13 +168,12 @@ options = [
 [[command]]
 id = "workspace.setup"
 path = ["workspace", "setup"]
-usage = "FLOW workspace setup [--guidance]"
+usage = "FLOW workspace setup"
 summary = "Initialize, resume, repair, or validate the current workspace."
 effect = "confirm"
 workspace = "optional"
 reference = "references/command-workspace.md"
 options = [
-  { name = "--guidance", value_type = "boolean", cardinality = "zero_or_one" },
 ]
 
 [[command]]

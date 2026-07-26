@@ -37,7 +37,7 @@ The fifth run-safety mechanism, the content-ownership commit gate, is `diff_extr
 
 | Script | Role | Contract notes |
 |--------|------|----------------|
-| `init.py` | Transactional workspace bootstrap. Collects backend/bundle answers, writes `workspace.toml`, preserves optional `[models]` hints on reconfigure, checks postconditions, and atomically writes `.flow/.initialized`; guidance-only mode updates managed `AGENTS.md` without rerunning configuration. | `--config <json>` (`--reconfigure` / `--resume`) / `--guidance-only --workspace-root` |
+| `init.py` | Transactional workspace bootstrap. Collects backend/bundle answers, writes `workspace.toml`, preserves optional `[models]` hints on reconfigure, checks postconditions, and atomically writes `.flow/.initialized`. | `--config <json>` (`--reconfigure` / `--resume`) |
 | `runtime_layout.py` (lib) | Layout-v2 resolver and journaled v1 migration: relocatable local and absolute external memory roots, linked-worktree lease refusal, closed journal/path validation, namespace collision refusal, conflict preservation, backup plus size/SHA-256 verification, and forward resume. | — |
 | `flow_launcher.py` | Install or repair `.flow/runtime/{skill-root,flow}` after converging layout v2; stabilize both Claude Code and Codex versioned plugin-cache paths to a local marketplace source when available (`CODEX_HOME` respected). Imported at setup/worktree creation so both stamp the executing installation. | `--workspace-root`; exit 1 on missing workspace config, unsafe migration, invalid metadata, or install error |
 | `flowctl.py` | Allowlisted post-init facade: require an absolute workspace root, validate `FLOW_HARNESS` on every invocation, change cwd, export `FLOW_SKILL_DIR` plus the legacy `CLAUDE_SKILL_DIR`, and exec the mapped implementation with unchanged args/signals/stdio/exit status. No raw-script escape hatch. | `--workspace-root <absolute-path> <command> [args...]`; unknown command or harness exits 2 |
@@ -204,7 +204,7 @@ The highest-fan-in modules in the flat dir: a signature change here ripples thro
 |--------|------|----------------|
 | `public_commands_check.py` | Check-only registry generator gate: verifies SKILL trigger/router, logical help bytes, and every command reference without writing. | no args; exit 1 on drift |
 | `module_map.py` | Render + check the generated derived surfaces: MODULE.md's §Derived surfaces table (subcommand names from AST `add_parser` constants, importers from the AST import graph) and stage-reflect.md's guard-file enumeration (from `triage._GUARD_FILES`). `check` is folded into `seam_check.py`, so CI and the prek hook catch staleness; `write` regenerates in place and is only ever run by a human or agent (hooks stay check-only). | `check` (default; exit 1 stale) / `write` |
-| `seam_check.py` | Structurally validate documented absolute, call-local-harness facade commands against flowctl's allowlist and argparse surfaces. Reject cwd-dependent facades, host-specific public recipes, and stale direct scripts. Enforce managed guidance, descriptor, role, registry, and module-map contracts. | `[--verbose]`. Exit 1 on drift |
+| `seam_check.py` | Structurally validate documented absolute, call-local-harness facade commands against flowctl's allowlist and argparse surfaces. Reject cwd-dependent facades, host-specific public recipes, and stale direct scripts. Enforce descriptor, role, registry, and module-map contracts. | `[--verbose]`. Exit 1 on drift |
 
 ## Reference docs (generated)
 
