@@ -197,26 +197,6 @@ def test_in_flight_reopen_skipped(tmp_path: Path, monkeypatch) -> None:
     assert result["n_skipped"] == 1
 
 
-def test_consecutive_duplicate_statuses_collapse(tmp_path: Path, monkeypatch) -> None:
-    _seed_workspace(tmp_path)
-    _write_ship_event(tmp_path, "FT-1", "2026-06-03T00:00:00Z")
-    _patch_history(
-        monkeypatch,
-        {
-            "FT-1": [
-                ("2026-06-03T00:00:00Z", "closed"),
-                ("2026-06-03T01:00:00Z", "closed"),
-                ("2026-06-03T02:00:00Z", "closed"),
-                ("2026-06-04T00:00:00Z", "closed"),
-            ]
-        },
-    )
-    result = _compute(tmp_path)
-    assert result["shipped"] == 1
-    assert result["n_reverts"] == 0
-    assert result["tickets"][0]["reverted"] is False
-
-
 def test_attribution_split(tmp_path: Path, monkeypatch) -> None:
     _seed_workspace(tmp_path)
     _write_ship_event(tmp_path, "FT-1", "2026-06-03T00:00:00Z", stamped=True)

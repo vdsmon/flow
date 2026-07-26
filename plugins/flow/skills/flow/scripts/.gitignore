@@ -1,0 +1,5 @@
+# flow: ignore transient run state; keep config trackable
+.flow/*
+!.flow/workspace.toml
+!.flow/.initialized
+.claude/worktrees/

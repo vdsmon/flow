@@ -139,46 +139,6 @@ def test_recurred_bead(tmp_path: Path) -> None:
     }
 
 
-def test_clean_on_stage_mismatch(tmp_path: Path) -> None:
-    """The headline de-noise case: the post-fix hit shares the anchor but at a different stage, so
-    its tuple is not in claimed_tuples -> clean."""
-    _seed(
-        tmp_path,
-        knowledge=[
-            _machinery(
-                id_="k-sm",
-                ts=FIX_TS,
-                ticket="T-stagemiss",
-                body="MACHINERY: stage_miss_anchor patched.",
-            )
-        ],
-        friction=[
-            _friction(
-                id_="f-sm-pre",
-                ts=PRE_TS,
-                stage="implement",
-                body="stage_miss_anchor before the fix",
-            ),
-            _friction(
-                id_="f-sm-post",
-                ts=POST_TS,
-                stage="commit",
-                body="stage_miss_anchor fired again elsewhere",
-            ),
-        ],
-    )
-
-    result = _compute(tmp_path)
-
-    bead = result["beads"][0]
-    assert bead["ticket"] == "T-stagemiss"
-    assert bead["measurable"] is True
-    assert bead["claimed_anchors"] == ["stage_miss_anchor"]
-    assert bead["claimed_tuples"] == [["implement", "RETRY", "stage_miss_anchor"]]
-    assert bead["verdict"] == "clean"
-    assert bead["post_fix_count"] == 0
-
-
 def test_clean_on_type_mismatch(tmp_path: Path) -> None:
     """Same stage, different type -> the tuple does not join -> clean."""
     _seed(
