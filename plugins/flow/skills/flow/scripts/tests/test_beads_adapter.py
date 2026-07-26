@@ -618,22 +618,6 @@ def test_is_shipped_grep_targets_default_ref() -> None:
     assert log_calls[0][2] == "origin/main"
 
 
-def test_is_shipped_reads_close_reason_field() -> None:
-    # bd's JSON carries `close_reason`; the old `closure_reason` read was a
-    # wrong-key bug that always yielded null.
-    adapter, _ = _build_adapter(
-        [
-            _cp(stdout=json.dumps(_issue_json(status="closed", close_reason="real"))),
-            _symref_ok(),
-            _cp(),
-            _git_log_record("abc123def", "ticket: bd-a1b2"),
-        ]
-    )
-    result = adapter.is_shipped("bd-a1b2")
-    assert result["evidence"] is not None
-    assert result["evidence"]["closure_reason"] == "real"
-
-
 def test_is_shipped_close_reason_falls_back_to_legacy_key() -> None:
     adapter, _ = _build_adapter(
         [

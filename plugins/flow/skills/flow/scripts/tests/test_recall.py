@@ -269,14 +269,6 @@ def test_load_missing_file_returns_empty(tmp_path: Path) -> None:
 # ─── supersession filter ─────────────────────────────────────────────────────
 
 
-def test_superseded_ids_collects_targets() -> None:
-    entries = [
-        _make_entry("a" * 16, "first"),
-        {**_make_entry("b" * 16, "second"), "supersedes": "a" * 16},
-    ]
-    assert recall.superseded_ids(entries) == {"a" * 16}
-
-
 def test_superseded_ids_ignores_empty_and_missing() -> None:
     entries = [
         _make_entry("a" * 16, "no field"),

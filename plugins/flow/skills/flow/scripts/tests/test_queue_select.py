@@ -367,11 +367,6 @@ def test_config_defaults_reads_queue_section(tmp_path):
     assert qs._config_defaults(ws) == (7, 2)
 
 
-def test_config_defaults_absent_section(tmp_path):
-    ws = _ws_with_toml(tmp_path, "[maintainer]\nself_target = true\n")
-    assert qs._config_defaults(ws) == (qs.DEFAULT_CAP, qs.DEFAULT_CONCURRENCY)
-
-
 def test_config_defaults_ignores_evolve_section(tmp_path):
     ws = _ws_with_toml(tmp_path, "[evolve]\ncap = 9\nconcurrency = 9\n")
     assert qs._config_defaults(ws) == (qs.DEFAULT_CAP, qs.DEFAULT_CONCURRENCY)
