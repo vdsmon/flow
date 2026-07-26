@@ -1,11 +1,7 @@
 import os
 import stat
 
-import pytest
-
 from _atomicio import atomic_write_bytes, atomic_write_text
-
-posix_only = pytest.mark.skipif(os.name != "posix", reason="POSIX file modes only")
 
 
 def test_atomic_write_text_creates_and_overwrites(tmp_path):
@@ -29,7 +25,6 @@ def test_atomic_write_leaves_no_tmp_files(tmp_path):
     assert leftovers == []
 
 
-@posix_only
 def test_atomic_write_preserves_existing_mode(tmp_path):
     p = tmp_path / "f.txt"
     atomic_write_text(p, "hello")
@@ -38,14 +33,12 @@ def test_atomic_write_preserves_existing_mode(tmp_path):
     assert stat.S_IMODE(p.stat().st_mode) == 0o664
 
 
-@posix_only
 def test_atomic_write_new_file_is_0o644(tmp_path):
     p = tmp_path / "f.txt"
     atomic_write_text(p, "hello")
     assert stat.S_IMODE(p.stat().st_mode) == 0o644
 
 
-@posix_only
 def test_atomic_write_explicit_mode_replaces_existing_mode(tmp_path):
     p = tmp_path / "tool"
     atomic_write_text(p, "old", mode=0o600)

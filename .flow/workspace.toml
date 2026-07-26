@@ -6,7 +6,6 @@ backend = "beads"
 
 [tracker.beads]
 prefix = "flow"
-shared_server = true
 
 # Stabilization freeze: this repo must not target itself for automatic
 # self-evolution while the orchestration machinery is being simplified.
@@ -62,9 +61,6 @@ machinery = false
 
 [memory]
 namespace = "flow"
-auto_recall = true
-recall_by = ["branch", "current-ticket", "ready-tickets"]
-recall_top_n = 5
 compounding = false
 
 [memory.semantic]

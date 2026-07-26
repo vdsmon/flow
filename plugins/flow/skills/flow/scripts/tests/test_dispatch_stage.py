@@ -58,10 +58,7 @@ def _write_workspace(
         lines.append(f'{stage} = "{handler}"')
     lines.append("[memory]")
     lines.append('namespace = "FT"')
-    lines.append("auto_recall = true")
     lines.append(f"compounding = {str(compounding).lower()}")
-    lines.append('recall_by = ["branch"]')
-    lines.append("recall_top_n = 5")
     (flow / "workspace.toml").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 

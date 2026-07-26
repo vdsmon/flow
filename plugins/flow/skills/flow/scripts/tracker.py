@@ -2,15 +2,16 @@
 
 Library module (no shebang, no PEP 723 inline deps). Imported by other scripts.
 
-The Tracker Protocol declares the cross-backend contract. Adapters (jira / beads /
-future markdown / linear) implement it. Day 1 adapters live in `tracker_jira.py`
-and `tracker_beads.py`. They are constructed by `make_tracker(config)`, which
-lazy-imports them so this module stays stdlib-only.
+The Tracker Protocol declares the cross-backend contract. Adapters (jira / beads)
+implement it. Day 1 adapters live in `tracker_jira.py` and `tracker_beads.py`. They
+are constructed by `make_tracker(config)`, which lazy-imports them so this module
+stays stdlib-only.
 
 Key invariants:
 
-- `CAPABILITY_ENUM` is a CLOSED enum. Unknown capability names = config error at
-  validate-workspace.py time. Adapters MUST advertise capabilities only from this set.
+- `CAPABILITY_ENUM` is a CLOSED enum. It documents the backend-rich surface; nothing
+  validates it at config time, and adapters gate behavior by raising `NotSupported`, not by
+  reading their own advertisement.
 - `Transition.id` is the OPAQUE backend transition identifier. Callers MUST pass
   the id to `transition()`, NOT the human-readable `name`. Two transitions can
   share a name pointing to different ids (Jira common pattern).
@@ -315,8 +316,7 @@ def make_tracker(config: dict[str, Any]) -> Tracker:
 
     Raises:
         TrackerConfigError: if `backend` is missing or not in `KNOWN_BACKENDS`.
-        ImportError: if the chosen backend's adapter module is not yet installed
-            (phase 1-2 expected state for both jira and beads).
+        ImportError: if the chosen backend's adapter module is not yet installed.
     """
     backend = config.get("backend")
     if backend is None:

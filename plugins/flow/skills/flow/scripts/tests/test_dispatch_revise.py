@@ -43,10 +43,7 @@ def _write_workspace(
         *[f'{s} = "inline"' for s in stages],
         "[memory]",
         'namespace = "FT"',
-        "auto_recall = true",
         "compounding = false",
-        'recall_by = ["branch"]',
-        "recall_top_n = 5",
     ]
     (flow / "workspace.toml").write_text("\n".join(lines) + "\n", encoding="utf-8")
 

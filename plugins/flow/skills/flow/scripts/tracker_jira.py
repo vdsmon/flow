@@ -370,11 +370,10 @@ class JiraAdapter:
         *,
         agile: bool = False,
         query: dict[str, Any] | None = None,
-        raw_response: bool = False,
         extra_headers: dict[str, str] | None = None,
         body_bytes: bytes | None = None,
     ) -> Any:
-        """Make a Jira REST call. Returns parsed JSON dict, or raw response if raw_response.
+        """Make a Jira REST call. Returns parsed JSON dict.
 
         Body precedence: `body_bytes` (used for multipart) > `body` (JSON dict). 5xx + 429
         retry policy applied. Auth always present. Errors classified per inventory.md.
@@ -393,8 +392,6 @@ class JiraAdapter:
         for attempt in range(4):
             try:
                 resp = self._http(req)
-                if raw_response:
-                    return resp
                 raw = resp.read()
                 if not raw:
                     return {}

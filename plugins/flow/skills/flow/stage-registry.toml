@@ -26,8 +26,6 @@
 # Timeouts for plan / code_review / e2e / commit / create_pr / review_loop
 # are inferred defaults (the plan only specified ticket, implement, reflect explicitly).
 
-schema_version = 1
-
 [[stage]]
 name = "ticket"
 description = "Resolve ticket key, fetch ticket context via tracker"
