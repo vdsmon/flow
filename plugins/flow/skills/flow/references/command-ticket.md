@@ -135,3 +135,46 @@ explicit approval.
 If interrupted between child creation and the parent marker, search the tracker by
 the approved rung summaries, write the marker with the existing keys, and continue
 forward. Never mint a duplicate ladder from scratch.
+
+## `FLOW ticket finalize <ticket> [--dry-run]`
+
+Close out one delivered ticket after its PR merged. A user-workspace delivery parks
+a green PR for the human, and the human merges it on the forge; nothing on that path
+transitions the ticket, freezes the ship event, deletes the remote branch, or reaps
+the worktree (the janitor sweep requires an already-terminal tracker state, so a
+merged-but-open ticket preserves its worktree forever). Finalize sequences those
+existing primitives once, gated on merged-PR proof.
+
+Run it from the primary checkout, never from inside the ticket's own worktree — the
+reap removes that directory. A driver standing in the doomed worktree changes to the
+primary checkout first and invokes the primary checkout's facade; the command refuses
+(exit 4) when invoked from the worktree it would remove.
+
+```bash
+FLOW_HARNESS="<harness>" "<facade>" finalize --workspace-root . --key <KEY> [--dry-run]
+```
+
+The probe writes nothing: it locates the ticket's managed worktree (or its unique
+local branch when the worktree is already gone) and requires a merged PR for that
+branch through the forge seam. An open PR, or no PR, exits 3 with zero writes. A live
+or corrupt run lease, or a worktree tip that does not match the merged PR head,
+refuses with exit 4 and preserves everything.
+
+On merged proof, the sequence mirrors the evolve-drain reap, every step idempotent
+and best-effort once the probe passes:
+
+1. transition the ticket to its done state through the tracker seam (skipped when
+   already terminal);
+2. freeze the ship event (`observe-at-close`) before the run state it reads is
+   destroyed;
+3. delete the remote branch through the forge seam (a forge that auto-deleted it at
+   merge reports failed_or_absent, which is fine);
+4. reap the local worktree and branch (lease-gated; dirty work is checkpointed to a
+   `flow-rescue/*` ref before removal, and a failed checkpoint preserves the
+   worktree).
+
+A step whose outcome already holds is skipped, so re-running converges: a fully
+finalized ticket exits 0 as a no-op. Exit 3 makes the merge watch host-owned and
+daemon-free — the human (or a host scheduler the human configures) re-invokes
+finalize until it exits 0. Flow itself never schedules, backgrounds, or polls; the
+single-shot command is the whole contract.

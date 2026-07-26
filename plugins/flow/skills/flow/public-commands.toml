@@ -92,6 +92,21 @@ arguments = [
 ]
 
 [[command]]
+id = "ticket.finalize"
+path = ["ticket", "finalize"]
+usage = "FLOW ticket finalize <ticket> [--dry-run]"
+summary = "Close out a merged delivery: ticket done, ship event frozen, branch and worktree reaped."
+effect = "write"
+workspace = "required"
+reference = "references/command-ticket.md"
+arguments = [
+  { name = "ticket", value_type = "ticket", cardinality = "one" },
+]
+options = [
+  { name = "--dry-run", value_type = "boolean", cardinality = "zero_or_one" },
+]
+
+[[command]]
 id = "memory.search"
 path = ["memory", "search"]
 usage = "FLOW memory search [<query>] [--ticket <key>]... [--label <facet:value>] [--digest] [--semantic] [--threshold <float>] [--branch <branch>] [--limit <n>]"

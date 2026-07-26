@@ -144,6 +144,11 @@ Render either the ready open PR or the terminal delivery receipt. This action is
 read-only. Include the ticket, run, branch, PR URL/state, verification result, and
 terminal timestamps available from durable evidence. Do not start another run.
 
+When the receipt shows a merged PR whose close-out is incomplete — the ticket is not
+terminal, the worktree still exists, or no frozen ship event is recorded — end the
+render with the one useful next invocation: `FLOW ticket finalize <key>`. The pointer
+is prose only; show itself still writes nothing.
+
 ### `conflict`
 
 Name the contradictory sources and their paths or external identifiers. Preserve
