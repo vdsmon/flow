@@ -51,6 +51,32 @@ child processes; those variables are engine details, not driver state.
 Fresh setup calls the loaded setup script directly because no facade exists. Existing workspace
 guidance uses that script's guidance-only mode; configuration is not rerun.
 
+### Engine resolution: which code is actually running
+
+Three distinct locations can hold flow's engine, and confusing them is the classic fresh-session
+mistake:
+
+1. **The source checkout** — a git clone of the flow repository. Editing it changes nothing about
+   any workspace until the change is installed.
+2. **The host's versioned plugin cache** — where the harness materializes an installed plugin
+   (e.g. `plugins/cache/<marketplace>/<plugin>/<version>/skills/flow`). This is the directory a
+   loaded skill executes from, and it can lag what the marketplace now serves.
+3. **The workspace pin** — `.flow/runtime/skill-root`, written at install time. This is the sealed
+   contract for the workspace: every facade call resolves the engine through it, so a run keeps
+   its engine even while caches and checkouts move (see SKILL.md's re-bind rule — when the pin
+   and the loaded copy disagree, the pin wins).
+
+Two facts decide what gets pinned. First, the harness selector: when `FLOW_HARNESS` is unset,
+`bundle_discover.flow_harness` defaults it to `claude-code`; the value is closed-validated
+(`codex`, `claude-code`, `generic`), and unknown names fail instead of guessing. Second, the
+cache-stabilization fork: at install, `flow_launcher.stabilize_skill_dir` prefers the harness's
+stable marketplace source over a versioned cache path — under `claude-code` it resolves the
+marketplace manifest under `plugins/marketplaces/`, under `codex` it reads the `.agents`
+marketplace roots (`CODEX_HOME` respected), and under `generic` it never rewrites, because
+guessing another host's cache namespace could bind an uninstalled handler. The resolved directory
+is what `install` writes into the pin — so the ambient harness at install time determines which
+engine every later run resolves.
+
 ## Planning gate and assessor
 
 Fresh targets remain read-only through planning. The driver reads the ticket and repository, asks
