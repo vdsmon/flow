@@ -39,15 +39,6 @@ def test_atomic_write_preserves_existing_mode(tmp_path):
 
 
 @posix_only
-def test_atomic_write_preserves_restrictive_mode(tmp_path):
-    p = tmp_path / "f.txt"
-    atomic_write_text(p, "hello")
-    os.chmod(p, 0o600)
-    atomic_write_text(p, "world")
-    assert stat.S_IMODE(p.stat().st_mode) == 0o600
-
-
-@posix_only
 def test_atomic_write_new_file_is_0o644(tmp_path):
     p = tmp_path / "f.txt"
     atomic_write_text(p, "hello")

@@ -10,16 +10,11 @@ import pytest
 
 import _memory_paths
 import memory_append
+from tests.wsfactory import make_workspace, memory, tracker
 
 
 def _seed_workspace(root: Path, namespace: str = "demo") -> None:
-    flow = root / ".flow"
-    flow.mkdir(parents=True, exist_ok=True)
-    (flow / "workspace.toml").write_text(
-        '[tracker]\nbackend = "jira"\n[tracker.jira]\ncloud_id = "x"\nproject_key = "FT"\n\n'
-        f'[memory]\nnamespace = "{namespace}"\n',
-        encoding="utf-8",
-    )
+    make_workspace(root, tracker("jira"), memory(namespace))
 
 
 def _read_jsonl(path: Path) -> list[dict]:

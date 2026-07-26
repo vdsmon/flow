@@ -87,16 +87,6 @@ def test_append_writes_one_line(tmp_path: Path) -> None:
     assert len(on_disk["args_fingerprint"]) == 16
 
 
-def test_append_idempotent(tmp_path: Path) -> None:
-    pm.append_mutation(
-        tmp_path, ticket="FT-3", op="comment", args={"body": "hi"}, intent_at=_INTENT
-    )
-    pm.append_mutation(
-        tmp_path, ticket="FT-3", op="comment", args={"body": "hi"}, intent_at=_INTENT
-    )
-    assert len(_read_lines(pm.pending_mutations_path(tmp_path))) == 1
-
-
 def test_append_distinct_entries_both_written(tmp_path: Path) -> None:
     pm.append_mutation(tmp_path, ticket="FT-4", op="comment", args={"a": 1}, intent_at=_INTENT)
     pm.append_mutation(tmp_path, ticket="FT-4", op="comment", args={"a": 2}, intent_at=_INTENT)

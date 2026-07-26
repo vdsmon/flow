@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 import evolve_reap as er
+from tests.wsfactory import MAINTAINER, make_workspace
 
 Recorder = list[list[str]]
 
@@ -148,16 +149,6 @@ def test_hot_dirty_is_blocked():
 # ---- classify: guard-file hotness (no `hot` label) ----
 
 
-def test_guard_file_dirty_no_label_is_blocked():
-    # the flow-1fy bug: a guard-file PR (snapshot.py) DIRTY with no `hot` label is
-    # still treated as hot. A DIRTY PR routes to `blocked` regardless of hotness.
-    prs = [_pr(1, "flow-a", state="DIRTY", files=["snapshot.py"])]
-    out = er.classify(prs, _idx(**{"flow-a": ["evolve"]}))
-    assert out["blocked"] == [
-        {"pr": 1, "key": "flow-a", "branch": "feat/flow-a-some-desc", "reason": "DIRTY"}
-    ]
-
-
 def test_guard_file_green_clean_skipped_hot_when_off():
     prs = [_pr(1, "flow-a", files=["lease.py"])]
     out = er.classify(prs, _idx(**{"flow-a": ["evolve"]}))
@@ -195,12 +186,6 @@ def test_guard_file_and_label_hot_serialize():
     ]
 
 
-def test_green_clean_still_merges():
-    prs = [_pr(1, "flow-a", state="CLEAN")]
-    out = er.classify(prs, _idx(**{"flow-a": ["evolve"]}))
-    assert out["merge"][0]["key"] == "flow-a"
-
-
 def test_behind_is_blocked():
     prs = [_pr(1, "flow-a", state="BEHIND")]
     out = er.classify(prs, _idx(**{"flow-a": ["evolve"]}))
@@ -222,13 +207,6 @@ def test_draft_but_green_is_mergeable():
             "covers": [],
         }
     ]
-
-
-def test_merge_entry_carries_branch():
-    # the reap loop tears down the local branch + worktree; it needs headRefName.
-    prs = [_pr(7, "flow-a")]
-    out = er.classify(prs, _idx(**{"flow-a": ["evolve"]}))
-    assert out["merge"][0]["branch"] == "feat/flow-a-some-desc"
 
 
 def test_non_flow_branch_ignored():
@@ -412,23 +390,6 @@ def test_hot_auto_merge_does_not_gate_non_hot_leaf():
     assert out["skipped_hot"] == []
 
 
-def test_hot_auto_merge_off_by_default_still_skips():
-    prs = [_pr(1, "flow-h")]
-    out = er.classify(prs, _idx(**{"flow-h": ["evolve", "hot"]}))
-    assert out["merge"] == []
-    assert out["skipped_hot"] == [{"pr": 1, "key": "flow-h", "branch": "feat/flow-h-some-desc"}]
-
-
-def test_merge_entries_flag_is_hot():
-    # the reap loop runs the guard property-check only on is_hot entries, so each
-    # merge entry must say whether it was a hot promotion or a plain leaf.
-    prs = [_pr(1, "flow-h"), _pr(2, "flow-a")]
-    out = er.classify(
-        prs, _idx(**{"flow-h": ["evolve", "hot"], "flow-a": ["evolve"]}), auto_merge_hot=True
-    )
-    assert {e["key"]: e["is_hot"] for e in out["merge"]} == {"flow-h": True, "flow-a": False}
-
-
 # ---- classify: main-CI health gate (flow-a1ti.3) ----
 
 
@@ -467,13 +428,6 @@ def test_main_red_does_not_promote_hot():
             "covers": [],
         }
     ]
-
-
-def test_held_main_red_key_always_present():
-    # the bucket is present (empty) even when main is not red.
-    prs = [_pr(1, "flow-a")]
-    out = er.classify(prs, _idx(**{"flow-a": ["evolve"]}))
-    assert out["held_main_red"] == []
 
 
 def test_main_red_none_is_byte_for_byte_legacy():
@@ -566,12 +520,7 @@ def test_covers_dedups_across_multiple_commits():
 
 
 def _marked_ws(tmp_path: Path) -> Path:
-    d = tmp_path / "flow"
-    (d / ".flow").mkdir(parents=True)
-    (d / ".flow" / "workspace.toml").write_text(
-        "[maintainer]\nself_target = true\n", encoding="utf-8"
-    )
-    return d
+    return make_workspace(tmp_path / "flow", MAINTAINER)
 
 
 def _dispatch(

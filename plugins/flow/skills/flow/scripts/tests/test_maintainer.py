@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 import maintainer
 
 MARKER = "[maintainer]\nself_target = true\n"
@@ -26,24 +28,19 @@ def test_self_target_marker_is_maintainer(tmp_path, monkeypatch):
     assert maintainer.is_maintainer(repo) is True
 
 
-def test_no_marker_no_global_is_user(tmp_path, monkeypatch):
+@pytest.mark.parametrize(
+    ("name", "workspace_toml"),
+    [
+        pytest.param("proj", NOMARKER, id="no_marker"),
+        pytest.param("nope", None, id="missing_workspace_toml"),
+        pytest.param("broken", "not = = toml", id="malformed_workspace_toml"),
+    ],
+)
+def test_no_global_is_user(tmp_path, monkeypatch, name: str, workspace_toml: str | None):
     _no_global(monkeypatch, tmp_path)
-    repo = _ws(tmp_path, "proj", NOMARKER)
+    repo = _ws(tmp_path, name, workspace_toml) if workspace_toml is not None else tmp_path / name
     assert maintainer.resolve_maintainer_repo(repo) is None
     assert maintainer.is_maintainer(repo) is False
-
-
-def test_missing_workspace_toml_is_user(tmp_path, monkeypatch):
-    _no_global(monkeypatch, tmp_path)
-    assert maintainer.resolve_maintainer_repo(tmp_path / "nope") is None
-
-
-def test_malformed_workspace_toml_does_not_crash(tmp_path, monkeypatch):
-    _no_global(monkeypatch, tmp_path)
-    d = tmp_path / "broken"
-    (d / ".flow").mkdir(parents=True)
-    (d / ".flow" / "workspace.toml").write_text("not = = toml", encoding="utf-8")
-    assert maintainer.resolve_maintainer_repo(d) is None
 
 
 def test_global_pointer_to_marked_repo(tmp_path, monkeypatch):
@@ -62,14 +59,6 @@ def test_global_pointer_to_unmarked_repo_rejected(tmp_path, monkeypatch):
     gconf.write_text(f'[maintainer]\nrepo_root = "{target}"\n', encoding="utf-8")
     monkeypatch.setattr(maintainer, "_global_config_path", lambda: gconf)
     assert maintainer.resolve_maintainer_repo(other) is None
-
-
-def test_cli_maintainer_exit_0(tmp_path, monkeypatch, capsys):
-    _no_global(monkeypatch, tmp_path)
-    repo = _ws(tmp_path, "flow", MARKER)
-    rc = maintainer.cli_main(["--workspace-root", str(repo)])
-    assert rc == 0
-    assert capsys.readouterr().out.strip() == str(repo.resolve())
 
 
 def test_cli_user_exit_1(tmp_path, monkeypatch, capsys):

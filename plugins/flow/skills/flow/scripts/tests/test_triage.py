@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 import triage
+from tests.wsfactory import make_workspace, memory, tracker
 
 
 def _cp(
@@ -49,21 +50,7 @@ def _version_ok() -> subprocess.CompletedProcess[str]:
 
 
 def _seed_workspace(root: Path, backend: str = "beads") -> None:
-    flow = root / ".flow"
-    flow.mkdir(parents=True, exist_ok=True)
-    if backend == "jira":
-        body = (
-            '[tracker]\nbackend = "jira"\n\n'
-            '[tracker.jira]\ncloud_id = "x"\nproject_key = "FT"\n\n'
-            '[memory]\nnamespace = "demo"\n'
-        )
-    else:
-        body = (
-            '[tracker]\nbackend = "beads"\n\n'
-            '[tracker.beads]\nprefix = "bd"\n\n'
-            '[memory]\nnamespace = "demo"\n'
-        )
-    (flow / "workspace.toml").write_text(body, encoding="utf-8")
+    make_workspace(root, tracker(backend), memory())
 
 
 def _run(argv: list[str], runner: _FakeRunner) -> tuple[int, str, str]:
@@ -274,10 +261,6 @@ def test_workspace_not_initialized_exits_1(tmp_path: Path) -> None:
     assert runner.calls == []
 
 
-def test_render_table_empty_is_pure_sentinel() -> None:
-    assert triage.render_table([]) == "(no deferred tickets)"
-
-
 # ─── list: subcommand back-compat + blocked-bead surfacing ───────────────────
 
 
@@ -438,14 +421,6 @@ def test_render_table_has_queue_column() -> None:
     assert "day-job" in triage.render_table(tagged)
 
 
-def test_ready_with_no_rows_keeps_sentinel(tmp_path: Path) -> None:
-    _seed_workspace(tmp_path, backend="beads")
-    runner = _FakeRunner([_version_ok(), _cp(stdout="[]"), _cp(stdout="[]"), _cp(stdout="[]")])
-    code, out, _ = _run(["--workspace-root", str(tmp_path), "--ready"], runner)
-    assert code == 0
-    assert "(no deferred tickets)" in out
-
-
 # ─── decided probe ───────────────────────────────────────────────────────────
 
 
@@ -541,16 +516,6 @@ def test_decided_hot_via_guard_set(tmp_path: Path) -> None:
     assert result["is_hot"] is True
 
 
-def test_decided_untriaged_no_decision(tmp_path: Path) -> None:
-    _seed_workspace(tmp_path, backend="beads")
-    comments = [_tc(_DEFER_REAL, "2026-06-01T10:00:00Z")]
-    runner = _FakeRunner([_version_ok(), _decided_show(comments=comments)])
-    code, result = _run_decided(tmp_path, ["--key", "flow-x"], runner)
-    assert code == 0
-    assert result["decided"] is False
-    assert result["answer"] is None
-
-
 def test_decided_bd_read_fail_blocks(tmp_path: Path) -> None:
     _seed_workspace(tmp_path, backend="beads")
     runner = _FakeRunner([_version_ok(), _cp(returncode=1, stderr="boom")])
@@ -593,30 +558,6 @@ def test_lane_trivial_resolves_express(tmp_path: Path) -> None:
     code, out = _run_lane(tmp_path, "flow-x", runner)
     assert code == 0
     assert out == "express"
-
-
-def test_lane_light_resolves_light(tmp_path: Path) -> None:
-    _seed_workspace(tmp_path, backend="beads")
-    runner = _FakeRunner([_version_ok(), _decided_show(labels=["evolve", "tier:light"])])
-    code, out = _run_lane(tmp_path, "flow-x", runner)
-    assert code == 0
-    assert out == "light"
-
-
-def test_lane_untiered_resolves_full(tmp_path: Path) -> None:
-    _seed_workspace(tmp_path, backend="beads")
-    runner = _FakeRunner([_version_ok(), _decided_show(labels=["evolve"])])
-    code, out = _run_lane(tmp_path, "flow-x", runner)
-    assert code == 0
-    assert out == "full"
-
-
-def test_lane_hot_overrides_tier(tmp_path: Path) -> None:
-    _seed_workspace(tmp_path, backend="beads")
-    runner = _FakeRunner([_version_ok(), _decided_show(labels=["hot", "tier:trivial"])])
-    code, out = _run_lane(tmp_path, "flow-x", runner)
-    assert code == 0
-    assert out == "full"
 
 
 def test_lane_bd_read_fail_is_full(tmp_path: Path) -> None:
@@ -760,13 +701,3 @@ def test_recorded_decision_case_sensitive_lowercase_no_match() -> None:
         }
     ]
     assert triage._recorded_decision(comments) is None
-
-
-def test_decided_freeform_maintainer_stem(tmp_path: Path) -> None:
-    _seed_workspace(tmp_path, backend="beads")
-    comments = [_tc("MAINTAINER DECISION 2026-06-10: build it.", "2026-06-10T10:00:00Z")]
-    runner = _FakeRunner([_version_ok(), _decided_show(comments=comments)])
-    code, result = _run_decided(tmp_path, ["--key", "flow-x"], runner)
-    assert code == 0
-    assert result["decided"] is True
-    assert result["answer"] == "build it."

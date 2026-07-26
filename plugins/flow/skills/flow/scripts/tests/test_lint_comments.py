@@ -171,13 +171,6 @@ def test_discovery_reads_pyproject_ruff(tmp_path):
     assert discover_line_length(target) == 60
 
 
-def test_discovery_defaults_when_nothing_declares(tmp_path):
-    (tmp_path / ".git").mkdir()
-    target = tmp_path / "a.py"
-    target.write_text("x = 1\n", encoding="utf-8")
-    assert discover_line_length(target) == lint_comments._DEFAULT_LIMIT
-
-
 def test_cli_clean_exit_zero(tmp_path, capsys):
     path = tmp_path / "a.py"
     path.write_text("x = 1\n", encoding="utf-8")

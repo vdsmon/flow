@@ -12,15 +12,16 @@ import json
 from pathlib import Path
 
 import metric
+from tests.wsfactory import make_workspace, memory, tracker
 
 
 def _seed_workspace(root: Path, namespace: str = "demo") -> None:
-    flow = root / ".flow"
-    (flow / namespace).mkdir(parents=True, exist_ok=True)
-    (flow / ".initialized").write_text("", encoding="utf-8")
-    (flow / "workspace.toml").write_text(
-        f'[tracker]\nbackend = "jira"\n\n[memory]\nnamespace = "{namespace}"\n',
-        encoding="utf-8",
+    make_workspace(
+        root,
+        tracker("jira", subtable=False),
+        memory(namespace),
+        initialized=True,
+        namespace_dir=namespace,
     )
 
 
@@ -117,15 +118,6 @@ def test_missing_file_zero(tmp_path: Path) -> None:
     assert result["events_per_run"] == 0
     assert result["by_type"] == {}
     assert result["by_severity"] == {}
-
-
-def test_empty_file_zero(tmp_path: Path) -> None:
-    _seed_workspace(tmp_path)
-    (tmp_path / ".flow" / "demo" / "friction.jsonl").write_text("", encoding="utf-8")
-    result = _compute(tmp_path)
-    assert result["total_events"] == 0
-    assert result["runs"] == 0
-    assert result["events_per_run"] == 0
 
 
 def test_malformed_line_quarantined(tmp_path: Path) -> None:

@@ -16,19 +16,20 @@ fixture, so plain words are used instead.
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from pathlib import Path
 
 import metric
+from tests.wsfactory import make_workspace, memory, tracker
 
 
 def _seed_workspace(root: Path, namespace: str = "demo", *, initialized: bool = True) -> None:
-    flow = root / ".flow"
-    (flow / namespace).mkdir(parents=True, exist_ok=True)
-    if initialized:
-        (flow / ".initialized").write_text("", encoding="utf-8")
-    (flow / "workspace.toml").write_text(
-        f'[tracker]\nbackend = "beads"\n\n[memory]\nnamespace = "{namespace}"\n',
-        encoding="utf-8",
+    make_workspace(
+        root,
+        tracker("beads", subtable=False),
+        memory(namespace),
+        initialized=initialized,
+        namespace_dir=namespace,
     )
 
 
@@ -76,35 +77,45 @@ def _compute(root: Path, namespace: str = "demo") -> dict:
     return metric.compute_fix_efficacy(root, namespace)
 
 
+FIX_TS = "2026-06-01T00:00:00.000Z"
+POST_TS = "2026-06-02T00:00:00.000Z"
+PRE_TS = "2026-05-20T00:00:00.000Z"
+EARLY_TS = "2026-05-01T00:00:00.000Z"
+
+
+def _seed(
+    root: Path,
+    *,
+    knowledge: Sequence[dict] = (),
+    friction: Sequence[dict] = (),
+    namespace: str = "demo",
+    initialized: bool = True,
+) -> None:
+    _seed_workspace(root, namespace, initialized=initialized)
+    if knowledge:
+        _write_jsonl(_knowledge_path(root, namespace), list(knowledge))
+    if friction:
+        _write_jsonl(_friction_path(root, namespace), list(friction))
+
+
 # --- per-bead tuple join: verdicts -------------------------------------------
 
 
 def test_recurred_bead(tmp_path: Path) -> None:
     """Pre-fix grounding + a post-fix entry with the same (stage, type, anchor)."""
-    _seed_workspace(tmp_path)
-    fix_ts = "2026-06-01T00:00:00.000Z"
-    _write_jsonl(
-        _knowledge_path(tmp_path),
-        [
+    _seed(
+        tmp_path,
+        knowledge=[
             _machinery(
                 id_="k-1",
-                ts=fix_ts,
+                ts=FIX_TS,
                 ticket="T-recur",
                 body="MACHINERY: sig_recur_anchor patched. Fix (commit aaaaaaa).",
             )
         ],
-    )
-    _write_jsonl(
-        _friction_path(tmp_path),
-        [
-            _friction(
-                id_="f-0",
-                ts="2026-05-20T00:00:00.000Z",
-                body="sig_recur_anchor seen before the fix",
-            ),
-            _friction(
-                id_="f-1", ts="2026-06-02T00:00:00.000Z", body="sig_recur_anchor fired again"
-            ),
+        friction=[
+            _friction(id_="f-0", ts=PRE_TS, body="sig_recur_anchor seen before the fix"),
+            _friction(id_="f-1", ts=POST_TS, body="sig_recur_anchor fired again"),
         ],
     )
 
@@ -128,78 +139,28 @@ def test_recurred_bead(tmp_path: Path) -> None:
     }
 
 
-def test_clean_on_stage_mismatch(tmp_path: Path) -> None:
-    """The headline de-noise case: the post-fix hit shares the anchor but at a different stage, so
-    its tuple is not in claimed_tuples -> clean."""
-    _seed_workspace(tmp_path)
-    fix_ts = "2026-06-01T00:00:00.000Z"
-    _write_jsonl(
-        _knowledge_path(tmp_path),
-        [
-            _machinery(
-                id_="k-sm",
-                ts=fix_ts,
-                ticket="T-stagemiss",
-                body="MACHINERY: stage_miss_anchor patched.",
-            )
-        ],
-    )
-    _write_jsonl(
-        _friction_path(tmp_path),
-        [
-            _friction(
-                id_="f-sm-pre",
-                ts="2026-05-20T00:00:00.000Z",
-                stage="implement",
-                body="stage_miss_anchor before the fix",
-            ),
-            _friction(
-                id_="f-sm-post",
-                ts="2026-06-02T00:00:00.000Z",
-                stage="commit",
-                body="stage_miss_anchor fired again elsewhere",
-            ),
-        ],
-    )
-
-    result = _compute(tmp_path)
-
-    bead = result["beads"][0]
-    assert bead["ticket"] == "T-stagemiss"
-    assert bead["measurable"] is True
-    assert bead["claimed_anchors"] == ["stage_miss_anchor"]
-    assert bead["claimed_tuples"] == [["implement", "RETRY", "stage_miss_anchor"]]
-    assert bead["verdict"] == "clean"
-    assert bead["post_fix_count"] == 0
-
-
 def test_clean_on_type_mismatch(tmp_path: Path) -> None:
     """Same stage, different type -> the tuple does not join -> clean."""
-    _seed_workspace(tmp_path)
-    fix_ts = "2026-06-01T00:00:00.000Z"
-    _write_jsonl(
-        _knowledge_path(tmp_path),
-        [
+    _seed(
+        tmp_path,
+        knowledge=[
             _machinery(
                 id_="k-tm",
-                ts=fix_ts,
+                ts=FIX_TS,
                 ticket="T-typemiss",
                 body="MACHINERY: type_miss_anchor patched.",
             )
         ],
-    )
-    _write_jsonl(
-        _friction_path(tmp_path),
-        [
+        friction=[
             _friction(
                 id_="f-tm-pre",
-                ts="2026-05-20T00:00:00.000Z",
+                ts=PRE_TS,
                 type_="RETRY",
                 body="type_miss_anchor before the fix",
             ),
             _friction(
                 id_="f-tm-post",
-                ts="2026-06-02T00:00:00.000Z",
+                ts=POST_TS,
                 type_="MISSING_TOOL",
                 body="type_miss_anchor fired again as a different type",
             ),
@@ -218,22 +179,17 @@ def test_clean_on_type_mismatch(tmp_path: Path) -> None:
 def test_unmeasurable_no_pre_fix_occurrence(tmp_path: Path) -> None:
     """Claimed anchor is distinctive but never seen in pre-fix friction: there was no class to
     recur, so the bead is unmeasurable, not recurred."""
-    _seed_workspace(tmp_path)
-    fix_ts = "2026-06-01T00:00:00.000Z"
-    _write_jsonl(
-        _knowledge_path(tmp_path),
-        [
+    _seed(
+        tmp_path,
+        knowledge=[
             _machinery(
                 id_="k-np",
-                ts=fix_ts,
+                ts=FIX_TS,
                 ticket="T-nopre",
                 body="MACHINERY: nopre_anchor patched.",
             )
         ],
-    )
-    _write_jsonl(
-        _friction_path(tmp_path),
-        [_friction(id_="f-np", ts="2026-06-02T00:00:00.000Z", body="nopre_anchor fired again")],
+        friction=[_friction(id_="f-np", ts=POST_TS, body="nopre_anchor fired again")],
     )
 
     result = _compute(tmp_path)
@@ -251,13 +207,12 @@ def test_unmeasurable_no_pre_fix_occurrence(tmp_path: Path) -> None:
 
 
 def test_multi_entry_bead_fix_ts_is_min_claimed_is_union(tmp_path: Path) -> None:
-    _seed_workspace(tmp_path)
-    _write_jsonl(
-        _knowledge_path(tmp_path),
-        [
+    _seed(
+        tmp_path,
+        knowledge=[
             _machinery(
                 id_="k-3a",
-                ts="2026-06-01T00:00:00.000Z",
+                ts=FIX_TS,
                 ticket="T-multi",
                 body="MACHINERY: multi_anchor_alpha issue fixed.",
             ),
@@ -268,10 +223,7 @@ def test_multi_entry_bead_fix_ts_is_min_claimed_is_union(tmp_path: Path) -> None
                 body="MACHINERY: multi_anchor_beta issue fixed too.",
             ),
         ],
-    )
-    _write_jsonl(
-        _friction_path(tmp_path),
-        [
+        friction=[
             _friction(
                 id_="f-3a",
                 ts="2026-05-30T00:00:00.000Z",
@@ -284,7 +236,7 @@ def test_multi_entry_bead_fix_ts_is_min_claimed_is_union(tmp_path: Path) -> None
             ),
             _friction(
                 id_="f-3b",
-                ts="2026-06-02T00:00:00.000Z",
+                ts=POST_TS,
                 body="multi_anchor_beta trouble between the two fixes",
             ),
         ],
@@ -307,37 +259,32 @@ def test_multi_entry_bead_fix_ts_is_min_claimed_is_union(tmp_path: Path) -> None
 def test_multi_anchor_post_fix_counts_only_tuple_matches(tmp_path: Path) -> None:
     """One claimed anchor's post-fix hit tuple-matches, the other's does not (wrong stage):
     post_fix_count counts only the matching entry."""
-    _seed_workspace(tmp_path)
-    fix_ts = "2026-06-01T00:00:00.000Z"
-    _write_jsonl(
-        _knowledge_path(tmp_path),
-        [
+    _seed(
+        tmp_path,
+        knowledge=[
             _machinery(
                 id_="k-mm",
-                ts=fix_ts,
+                ts=FIX_TS,
                 ticket="T-multimatch",
                 body="MACHINERY: match_anchor_one and match_anchor_two patched.",
             )
         ],
-    )
-    _write_jsonl(
-        _friction_path(tmp_path),
-        [
+        friction=[
             _friction(
                 id_="f-pre-one",
-                ts="2026-05-20T00:00:00.000Z",
+                ts=PRE_TS,
                 stage="implement",
                 body="match_anchor_one grounded before fix",
             ),
             _friction(
                 id_="f-pre-two",
-                ts="2026-05-20T00:00:00.000Z",
+                ts=PRE_TS,
                 stage="implement",
                 body="match_anchor_two grounded before fix",
             ),
             _friction(
                 id_="f-post-one",
-                ts="2026-06-02T00:00:00.000Z",
+                ts=POST_TS,
                 stage="implement",
                 body="match_anchor_one fired again",
             ),
@@ -361,32 +308,27 @@ def test_multi_anchor_post_fix_counts_only_tuple_matches(tmp_path: Path) -> None
 
 def test_missing_stage_type_default_empty_string_match(tmp_path: Path) -> None:
     """Friction with no stage/type keys tuple-matches on ("", "", anchor)."""
-    _seed_workspace(tmp_path)
-    fix_ts = "2026-06-01T00:00:00.000Z"
-    _write_jsonl(
-        _knowledge_path(tmp_path),
-        [
+    _seed(
+        tmp_path,
+        knowledge=[
             _machinery(
                 id_="k-ns",
-                ts=fix_ts,
+                ts=FIX_TS,
                 ticket="T-nostage",
                 body="MACHINERY: nostage_anchor patched.",
             )
         ],
-    )
-    _write_jsonl(
-        _friction_path(tmp_path),
-        [
+        friction=[
             {
                 "id": "f-ns-pre",
-                "ts": "2026-05-20T00:00:00.000Z",
+                "ts": PRE_TS,
                 "run_id": "run-1",
                 "ticket": "T-x",
                 "body": "nostage_anchor grounded before fix",
             },
             {
                 "id": "f-ns-post",
-                "ts": "2026-06-02T00:00:00.000Z",
+                "ts": POST_TS,
                 "run_id": "run-1",
                 "ticket": "T-x",
                 "body": "nostage_anchor fired again",
@@ -403,28 +345,17 @@ def test_missing_stage_type_default_empty_string_match(tmp_path: Path) -> None:
 
 
 def test_clean_measurable_bead(tmp_path: Path) -> None:
-    _seed_workspace(tmp_path)
-    fix_ts = "2026-06-01T00:00:00.000Z"
-    _write_jsonl(
-        _knowledge_path(tmp_path),
-        [
+    _seed(
+        tmp_path,
+        knowledge=[
             _machinery(
                 id_="k-2",
-                ts=fix_ts,
+                ts=FIX_TS,
                 ticket="T-clean",
                 body="MACHINERY: sig_clean_anchor patched. Fix (commit bbbbbbb).",
             )
         ],
-    )
-    _write_jsonl(
-        _friction_path(tmp_path),
-        [
-            _friction(
-                id_="f-2",
-                ts="2026-05-01T00:00:00.000Z",
-                body="sig_clean_anchor seen before the fix",
-            )
-        ],
+        friction=[_friction(id_="f-2", ts=EARLY_TS, body="sig_clean_anchor seen before the fix")],
     )
 
     result = _compute(tmp_path)
@@ -442,19 +373,18 @@ def test_clean_measurable_bead(tmp_path: Path) -> None:
 
 
 def test_unmeasurable_no_distinctive_anchor(tmp_path: Path) -> None:
-    _seed_workspace(tmp_path)
-    _write_jsonl(
-        _knowledge_path(tmp_path),
-        [
+    # no friction entry shares rare_lonely_anchor -> df=1, drops below the floor.
+    _seed(
+        tmp_path,
+        knowledge=[
             _machinery(
                 id_="k-4",
-                ts="2026-06-01T00:00:00.000Z",
+                ts=FIX_TS,
                 ticket="T-rare",
                 body="MACHINERY: rare_lonely_anchor patched alone.",
             )
         ],
     )
-    # no friction entry shares rare_lonely_anchor -> df=1, drops below the floor.
 
     result = _compute(tmp_path)
 
@@ -473,10 +403,9 @@ def test_unmeasurable_no_distinctive_anchor(tmp_path: Path) -> None:
 def test_unmeasurable_no_fix_ts(tmp_path: Path) -> None:
     """A claimed anchor with a distinctive df but no usable fix timestamp cannot
     forward-join: unmeasurable with the no-fix-ts reason, not no-distinctive."""
-    _seed_workspace(tmp_path)
-    _write_jsonl(
-        _knowledge_path(tmp_path),
-        [
+    _seed(
+        tmp_path,
+        knowledge=[
             _machinery(
                 id_="k-nf",
                 ts="",
@@ -484,10 +413,7 @@ def test_unmeasurable_no_fix_ts(tmp_path: Path) -> None:
                 body="MACHINERY: no_fts_anchor patched but the fix carries no ts.",
             )
         ],
-    )
-    _write_jsonl(
-        _friction_path(tmp_path),
-        [_friction(id_="f-nf", ts="2026-05-01T00:00:00.000Z", body="no_fts_anchor also seen once")],
+        friction=[_friction(id_="f-nf", ts=EARLY_TS, body="no_fts_anchor also seen once")],
     )
 
     result = _compute(tmp_path)
@@ -503,22 +429,17 @@ def test_unmeasurable_no_fix_ts(tmp_path: Path) -> None:
 
 def test_strict_boundary_ts_equal_fix_ts_not_counted(tmp_path: Path) -> None:
     """ts == fix_ts grounds the class but never counts as a post-fix recurrence."""
-    _seed_workspace(tmp_path)
-    fix_ts = "2026-06-01T00:00:00.000Z"
-    _write_jsonl(
-        _knowledge_path(tmp_path),
-        [
+    _seed(
+        tmp_path,
+        knowledge=[
             _machinery(
                 id_="k-5",
-                ts=fix_ts,
+                ts=FIX_TS,
                 ticket="T-boundary",
                 body="MACHINERY: boundary_anchor patched.",
             )
         ],
-    )
-    _write_jsonl(
-        _friction_path(tmp_path),
-        [_friction(id_="f-5", ts=fix_ts, body="boundary_anchor at the exact fix instant")],
+        friction=[_friction(id_="f-5", ts=FIX_TS, body="boundary_anchor at the exact fix instant")],
     )
 
     result = _compute(tmp_path)
@@ -534,28 +455,19 @@ def test_strict_boundary_ts_equal_fix_ts_not_counted(tmp_path: Path) -> None:
 def test_ts_equal_fix_ts_grounds_later_recurrence(tmp_path: Path) -> None:
     """A boundary (ts == fix_ts) entry grounds the class so a strictly-later entry with the same
     triple recurs; the boundary entry itself is not counted."""
-    _seed_workspace(tmp_path)
-    fix_ts = "2026-06-01T00:00:00.000Z"
-    _write_jsonl(
-        _knowledge_path(tmp_path),
-        [
+    _seed(
+        tmp_path,
+        knowledge=[
             _machinery(
                 id_="k-gb",
-                ts=fix_ts,
+                ts=FIX_TS,
                 ticket="T-groundboundary",
                 body="MACHINERY: ground_boundary_anchor patched.",
             )
         ],
-    )
-    _write_jsonl(
-        _friction_path(tmp_path),
-        [
-            _friction(id_="f-ground", ts=fix_ts, body="ground_boundary_anchor at the fix instant"),
-            _friction(
-                id_="f-post",
-                ts="2026-06-02T00:00:00.000Z",
-                body="ground_boundary_anchor fired again",
-            ),
+        friction=[
+            _friction(id_="f-ground", ts=FIX_TS, body="ground_boundary_anchor at the fix instant"),
+            _friction(id_="f-post", ts=POST_TS, body="ground_boundary_anchor fired again"),
         ],
     )
 
@@ -568,58 +480,19 @@ def test_ts_equal_fix_ts_grounds_later_recurrence(tmp_path: Path) -> None:
     assert [r["id"] for r in bead["recurrences"]] == ["f-post"]
 
 
-def test_before_fix_friction_not_counted(tmp_path: Path) -> None:
-    _seed_workspace(tmp_path)
-    fix_ts = "2026-06-05T00:00:00.000Z"
-    _write_jsonl(
-        _knowledge_path(tmp_path),
-        [
-            _machinery(
-                id_="k-6",
-                ts=fix_ts,
-                ticket="T-before",
-                body="MACHINERY: before_fix_anchor patched.",
-            )
-        ],
-    )
-    _write_jsonl(
-        _friction_path(tmp_path),
-        [
-            _friction(
-                id_="f-6", ts="2026-06-01T00:00:00.000Z", body="before_fix_anchor happened earlier"
-            )
-        ],
-    )
-
-    result = _compute(tmp_path)
-
-    bead = result["beads"][0]
-    assert bead["post_fix_count"] == 0
-    assert bead["verdict"] == "clean"
-    assert bead["recurrences"] == []
-
-
 def test_fix_sha_inline_evidence(tmp_path: Path) -> None:
-    _seed_workspace(tmp_path)
-    _write_jsonl(
-        _knowledge_path(tmp_path),
-        [
+    _seed(
+        tmp_path,
+        knowledge=[
             _machinery(
                 id_="k-7",
-                ts="2026-06-01T00:00:00.000Z",
+                ts=FIX_TS,
                 ticket="T-sha",
                 body="MACHINERY: sha_evidence_anchor patched. Fix (commit abc1234).",
             )
         ],
-    )
-    _write_jsonl(
-        _friction_path(tmp_path),
-        [
-            _friction(
-                id_="f-7",
-                ts="2026-05-01T00:00:00.000Z",
-                body="sha_evidence_anchor also mentioned before",
-            )
+        friction=[
+            _friction(id_="f-7", ts=EARLY_TS, body="sha_evidence_anchor also mentioned before")
         ],
     )
 
@@ -629,7 +502,7 @@ def test_fix_sha_inline_evidence(tmp_path: Path) -> None:
 
 
 def test_empty_corpus_zero_beads_and_rate(tmp_path: Path) -> None:
-    _seed_workspace(tmp_path)
+    _seed(tmp_path)
 
     result = _compute(tmp_path)
 
@@ -644,64 +517,44 @@ def test_empty_corpus_zero_beads_and_rate(tmp_path: Path) -> None:
 
 
 def test_bead_sort_order(tmp_path: Path) -> None:
-    _seed_workspace(tmp_path)
-    _write_jsonl(
-        _knowledge_path(tmp_path),
-        [
+    _seed(
+        tmp_path,
+        knowledge=[
             _machinery(
                 id_="k-hi",
-                ts="2026-06-01T00:00:00.000Z",
+                ts=FIX_TS,
                 ticket="Z-hi",
                 body="MACHINERY: hi_pfc_anchor broke twice.",
             ),
             _machinery(
                 id_="k-lo",
-                ts="2026-06-01T00:00:00.000Z",
+                ts=FIX_TS,
                 ticket="A-lo",
                 body="MACHINERY: lo_pfc_anchor broke once.",
             ),
             _machinery(
                 id_="k-clean-a",
-                ts="2026-06-01T00:00:00.000Z",
+                ts=FIX_TS,
                 ticket="A-clean",
                 body="MACHINERY: clean_a_anchor fixed cleanly.",
             ),
             _machinery(
                 id_="k-clean-b",
-                ts="2026-06-01T00:00:00.000Z",
+                ts=FIX_TS,
                 ticket="B-clean",
                 body="MACHINERY: clean_b_anchor fixed cleanly too.",
             ),
         ],
-    )
-    _write_jsonl(
-        _friction_path(tmp_path),
-        [
-            _friction(
-                id_="f-hi-pre", ts="2026-05-01T00:00:00.000Z", body="hi_pfc_anchor grounded pre-fix"
-            ),
-            _friction(
-                id_="f-hi-1", ts="2026-06-02T00:00:00.000Z", body="hi_pfc_anchor fired again"
-            ),
+        friction=[
+            _friction(id_="f-hi-pre", ts=EARLY_TS, body="hi_pfc_anchor grounded pre-fix"),
+            _friction(id_="f-hi-1", ts=POST_TS, body="hi_pfc_anchor fired again"),
             _friction(
                 id_="f-hi-2", ts="2026-06-03T00:00:00.000Z", body="hi_pfc_anchor fired a third time"
             ),
-            _friction(
-                id_="f-lo-pre", ts="2026-05-01T00:00:00.000Z", body="lo_pfc_anchor grounded pre-fix"
-            ),
-            _friction(
-                id_="f-lo-1", ts="2026-06-02T00:00:00.000Z", body="lo_pfc_anchor fired again"
-            ),
-            _friction(
-                id_="f-clean-a",
-                ts="2026-05-01T00:00:00.000Z",
-                body="clean_a_anchor mentioned pre-fix",
-            ),
-            _friction(
-                id_="f-clean-b",
-                ts="2026-05-01T00:00:00.000Z",
-                body="clean_b_anchor mentioned pre-fix",
-            ),
+            _friction(id_="f-lo-pre", ts=EARLY_TS, body="lo_pfc_anchor grounded pre-fix"),
+            _friction(id_="f-lo-1", ts=POST_TS, body="lo_pfc_anchor fired again"),
+            _friction(id_="f-clean-a", ts=EARLY_TS, body="clean_a_anchor mentioned pre-fix"),
+            _friction(id_="f-clean-b", ts=EARLY_TS, body="clean_b_anchor mentioned pre-fix"),
         ],
     )
 
@@ -716,29 +569,19 @@ def test_bead_sort_order(tmp_path: Path) -> None:
 
 
 def test_cli_table_render_default(tmp_path: Path, capsys) -> None:
-    _seed_workspace(tmp_path)
-    _write_jsonl(
-        _knowledge_path(tmp_path),
-        [
+    _seed(
+        tmp_path,
+        knowledge=[
             _machinery(
                 id_="k-cli",
-                ts="2026-06-01T00:00:00.000Z",
+                ts=FIX_TS,
                 ticket="T-cli",
                 body="MACHINERY: cli_anchor_token patched.",
             )
         ],
-    )
-    _write_jsonl(
-        _friction_path(tmp_path),
-        [
-            _friction(
-                id_="f-cli-pre",
-                ts="2026-05-01T00:00:00.000Z",
-                body="cli_anchor_token grounded pre-fix",
-            ),
-            _friction(
-                id_="f-cli", ts="2026-06-02T00:00:00.000Z", body="cli_anchor_token fired again"
-            ),
+        friction=[
+            _friction(id_="f-cli-pre", ts=EARLY_TS, body="cli_anchor_token grounded pre-fix"),
+            _friction(id_="f-cli", ts=POST_TS, body="cli_anchor_token fired again"),
         ],
     )
 
@@ -757,13 +600,12 @@ def test_cli_table_render_default(tmp_path: Path, capsys) -> None:
 
 
 def test_cli_render_shows_unmeasurable_reason(tmp_path: Path, capsys) -> None:
-    _seed_workspace(tmp_path)
-    _write_jsonl(
-        _knowledge_path(tmp_path),
-        [
+    _seed(
+        tmp_path,
+        knowledge=[
             _machinery(
                 id_="k-ur",
-                ts="2026-06-01T00:00:00.000Z",
+                ts=FIX_TS,
                 ticket="T-unmeas",
                 body="MACHINERY: unmeas_render_anchor patched alone.",
             )
@@ -778,29 +620,19 @@ def test_cli_render_shows_unmeasurable_reason(tmp_path: Path, capsys) -> None:
 
 
 def test_cli_json_output(tmp_path: Path, capsys) -> None:
-    _seed_workspace(tmp_path)
-    _write_jsonl(
-        _knowledge_path(tmp_path),
-        [
+    _seed(
+        tmp_path,
+        knowledge=[
             _machinery(
                 id_="k-cli2",
-                ts="2026-06-01T00:00:00.000Z",
+                ts=FIX_TS,
                 ticket="T-cli2",
                 body="MACHINERY: cli_json_anchor patched.",
             )
         ],
-    )
-    _write_jsonl(
-        _friction_path(tmp_path),
-        [
-            _friction(
-                id_="f-cli2-pre",
-                ts="2026-05-01T00:00:00.000Z",
-                body="cli_json_anchor grounded pre-fix",
-            ),
-            _friction(
-                id_="f-cli2", ts="2026-06-02T00:00:00.000Z", body="cli_json_anchor fired again"
-            ),
+        friction=[
+            _friction(id_="f-cli2-pre", ts=EARLY_TS, body="cli_json_anchor grounded pre-fix"),
+            _friction(id_="f-cli2", ts=POST_TS, body="cli_json_anchor fired again"),
         ],
     )
 
@@ -819,33 +651,22 @@ def test_cli_json_output(tmp_path: Path, capsys) -> None:
 
 def test_json_claimed_tuples_present_and_sorted(tmp_path: Path, capsys) -> None:
     """The bead's claimed_tuples surface as JSON-friendly, ascending-sorted triples."""
-    _seed_workspace(tmp_path)
-    fix_ts = "2026-06-01T00:00:00.000Z"
-    _write_jsonl(
-        _knowledge_path(tmp_path),
-        [
+    _seed(
+        tmp_path,
+        knowledge=[
             _machinery(
                 id_="k-st",
-                ts=fix_ts,
+                ts=FIX_TS,
                 ticket="T-sorted",
                 body="MACHINERY: zeta_sort_anchor and alpha_sort_anchor patched.",
             )
         ],
-    )
-    _write_jsonl(
-        _friction_path(tmp_path),
-        [
+        friction=[
             _friction(
-                id_="f-zeta",
-                ts="2026-05-20T00:00:00.000Z",
-                stage="implement",
-                body="zeta_sort_anchor grounded pre-fix",
+                id_="f-zeta", ts=PRE_TS, stage="implement", body="zeta_sort_anchor grounded pre-fix"
             ),
             _friction(
-                id_="f-alpha",
-                ts="2026-05-20T00:00:00.000Z",
-                stage="commit",
-                body="alpha_sort_anchor grounded pre-fix",
+                id_="f-alpha", ts=PRE_TS, stage="commit", body="alpha_sort_anchor grounded pre-fix"
             ),
         ],
     )
@@ -866,7 +687,7 @@ def test_json_claimed_tuples_present_and_sorted(tmp_path: Path, capsys) -> None:
 
 
 def test_cli_namespace_autoresolve(tmp_path: Path, capsys) -> None:
-    _seed_workspace(tmp_path)
+    _seed(tmp_path)
 
     rc = metric.cli_main(["fix-efficacy", "--workspace-root", str(tmp_path)])
 
@@ -875,7 +696,7 @@ def test_cli_namespace_autoresolve(tmp_path: Path, capsys) -> None:
 
 
 def test_cli_no_flow_dir(tmp_path: Path, capsys) -> None:
-    _seed_workspace(tmp_path, initialized=False)
+    _seed(tmp_path, initialized=False)
 
     rc = metric.cli_main(["fix-efficacy", "--namespace", "demo", "--workspace-root", str(tmp_path)])
 

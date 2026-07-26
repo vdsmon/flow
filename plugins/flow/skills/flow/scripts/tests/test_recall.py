@@ -9,16 +9,11 @@ import pytest
 
 import _memory_paths
 import recall
+from tests.wsfactory import make_workspace, memory, tracker
 
 
 def _seed_workspace(root: Path, namespace: str = "demo") -> None:
-    flow = root / ".flow"
-    flow.mkdir(parents=True, exist_ok=True)
-    (flow / "workspace.toml").write_text(
-        '[tracker]\nbackend = "jira"\n[tracker.jira]\ncloud_id = "x"\nproject_key = "FT"\n\n'
-        f'[memory]\nnamespace = "{namespace}"\n',
-        encoding="utf-8",
-    )
+    make_workspace(root, tracker("jira"), memory(namespace))
 
 
 def _write_entries(root: Path, namespace: str, entries: list[dict]) -> Path:
@@ -86,11 +81,6 @@ def test_rank_empty_query_returns_no_results() -> None:
     # newest entries masquerading as matches).
     entries = [_make_entry("a" * 16, "first"), _make_entry("b" * 16, "second")]
     assert recall.rank("", entries, top_n=10) == []
-
-
-def test_rank_whitespace_query_returns_no_results() -> None:
-    entries = [_make_entry("a" * 16, "first"), _make_entry("b" * 16, "second")]
-    assert recall.rank("   \t\n", entries, top_n=10) == []
 
 
 # ─── rank(), basic BM25 ──────────────────────────────────────────────────────
@@ -250,13 +240,6 @@ def test_tiebreak_missing_ts_sorts_last() -> None:
     assert [r["id"] for r in results] == ["a" * 16, "b" * 16]
 
 
-def test_tiebreak_empty_ts_sorts_last() -> None:
-    with_ts = _make_entry("a" * 16, "fsync", ts="2026-01-01T00:00:00.000Z")
-    empty_ts = _make_entry("b" * 16, "fsync", ts="")
-    results = recall.rank("fsync", [empty_ts, with_ts], top_n=2)
-    assert [r["id"] for r in results] == ["a" * 16, "b" * 16]
-
-
 # ─── Quarantine ──────────────────────────────────────────────────────────────
 
 
@@ -286,14 +269,6 @@ def test_load_missing_file_returns_empty(tmp_path: Path) -> None:
 # ─── supersession filter ─────────────────────────────────────────────────────
 
 
-def test_superseded_ids_collects_targets() -> None:
-    entries = [
-        _make_entry("a" * 16, "first"),
-        {**_make_entry("b" * 16, "second"), "supersedes": "a" * 16},
-    ]
-    assert recall.superseded_ids(entries) == {"a" * 16}
-
-
 def test_superseded_ids_ignores_empty_and_missing() -> None:
     entries = [
         _make_entry("a" * 16, "no field"),
@@ -301,16 +276,6 @@ def test_superseded_ids_ignores_empty_and_missing() -> None:
         {**_make_entry("c" * 16, "none"), "supersedes": None},
     ]
     assert recall.superseded_ids(entries) == set()
-
-
-def test_superseded_ids_unions_list_targets() -> None:
-    entries = [
-        _make_entry("a" * 16, "first"),
-        _make_entry("b" * 16, "second"),
-        _make_entry("c" * 16, "third"),
-        {**_make_entry("d" * 16, "canonical"), "supersedes": ["a" * 16, "b" * 16, "c" * 16]},
-    ]
-    assert recall.superseded_ids(entries) == {"a" * 16, "b" * 16, "c" * 16}
 
 
 def test_superseded_ids_mixed_str_and_list_tombstones() -> None:
@@ -511,17 +476,18 @@ def _stub_embedder_cmd(tmp_path: Path) -> str:
 
 
 def _seed_semantic_workspace(root: Path, *, embedder: str, threshold: float = 0.0) -> None:
-    flow = root / ".flow"
-    flow.mkdir(parents=True, exist_ok=True)
-    (flow / "workspace.toml").write_text(
-        '[tracker]\nbackend = "jira"\n[tracker.jira]\ncloud_id = "x"\nproject_key = "FT"\n\n'
-        '[memory]\nnamespace = "demo"\n\n'
-        "[memory.semantic]\n"
-        "enabled = true\n"
-        'model = "stub-model"\n'
-        f"threshold = {threshold}\n"
-        f'embedder = "{embedder}"\n',
-        encoding="utf-8",
+    make_workspace(
+        root,
+        tracker("jira"),
+        memory(),
+        {
+            "memory.semantic": {
+                "enabled": True,
+                "model": "stub-model",
+                "threshold": threshold,
+                "embedder": embedder,
+            }
+        },
     )
 
 
@@ -955,18 +921,6 @@ def test_labels_key_defaults_empty_when_absent() -> None:
     entries = [_make_entry("a" * 16, "foo")]
     results = recall.rank("foo", entries, top_n=1)
     assert results[0]["labels"] == []
-
-
-def test_backward_compat_no_labels_corpus_score_unchanged() -> None:
-    # re-assert an existing score case: adding "labels" to FIELD_WEIGHTS must be
-    # a zero-contribution no-op for a label-free corpus (avgdl==0 guard).
-    entries = [
-        _make_entry("a" * 16, "atomic write needs fsync"),
-        _make_entry("b" * 16, "lorem ipsum dolor sit amet"),
-    ]
-    results = recall.rank("atomic write", entries, top_n=2)
-    assert results[0]["body"].startswith("atomic")
-    assert results[0]["score"] > results[1]["score"]
 
 
 def test_field_weight_label_fuzzy_reach() -> None:

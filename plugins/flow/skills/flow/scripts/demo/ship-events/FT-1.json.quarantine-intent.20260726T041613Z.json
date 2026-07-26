@@ -1,0 +1,19 @@
+{
+  "error": "13: permission denied",
+  "primary_path": "demo/ship-events/FT-1.json",
+  "record": {
+    "acceptance_invariant": "",
+    "arm": "flow",
+    "evidence": {
+      "foo": "bar"
+    },
+    "lane": "",
+    "observed_at": "2026-07-26T04:16:13Z",
+    "observed_by_run_id": "abcdef0123456789",
+    "plugin_version": "",
+    "shipped_at": "2026-05-28T14:32:00Z",
+    "ticket": "FT-1",
+    "tier": ""
+  },
+  "ts": "2026-07-26T04:16:13Z"
+}

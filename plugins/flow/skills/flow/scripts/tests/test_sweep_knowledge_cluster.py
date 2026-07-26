@@ -19,18 +19,13 @@ import memory_embed
 import recall
 import sweep_knowledge
 from _jsonl import iter_jsonl
+from tests.wsfactory import make_workspace, memory, tracker
 
 TAU = 0.9
 
 
 def _seed_workspace(root: Path, namespace: str = "demo") -> None:
-    flow = root / ".flow"
-    flow.mkdir(parents=True, exist_ok=True)
-    (flow / "workspace.toml").write_text(
-        '[tracker]\nbackend = "jira"\n[tracker.jira]\ncloud_id = "x"\nproject_key = "FT"\n\n'
-        f'[memory]\nnamespace = "{namespace}"\n',
-        encoding="utf-8",
-    )
+    make_workspace(root, tracker("jira"), memory(namespace))
 
 
 def _write_entries(root: Path, entries: list[dict], namespace: str = "demo") -> None:

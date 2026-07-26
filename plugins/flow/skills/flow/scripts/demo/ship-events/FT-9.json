@@ -1,0 +1,14 @@
+{
+  "acceptance_invariant": "",
+  "arm": "flow",
+  "evidence": {
+    "pr": "https://example.test/pr/1"
+  },
+  "lane": "",
+  "observed_at": "2026-07-26T04:16:05Z",
+  "observed_by_run_id": "aaaaaaaaaaaaaaaa",
+  "plugin_version": "",
+  "shipped_at": "2026-06-09T00:00:00Z",
+  "ticket": "FT-9",
+  "tier": ""
+}

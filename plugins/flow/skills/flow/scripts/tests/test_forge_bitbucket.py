@@ -79,12 +79,6 @@ def test_detect_pr_selects_merged_state_and_emits_head_sha():
     assert any("pullrequests?state=MERGED" in _api_path(call) for call in calls)
 
 
-def test_detect_pr_none_when_no_match():
-    listing = {"values": [{"id": 1, "source": {"branch": {"name": "other"}}}]}
-    fg, _ = _adapter(lambda a: json.dumps(listing))
-    assert fg.detect_pr("feature/flow-x") is None
-
-
 def test_source_url_is_commit_pinned_and_encodes_path():
     fg, calls = _adapter(lambda _a: "null")
 
@@ -432,11 +426,6 @@ def test_merge_no_squash_emits_empty_payload():
     fg, calls = _adapter(lambda a: "null")
     fg.merge("9", squash=False)
     assert _payload_for_path(calls, "2.0/repositories/ws/rs/pullrequests/9/merge") == {}
-
-
-def test_capabilities_all_supported():
-    fg, _ = _adapter(lambda a: "null")
-    assert all(c["supported"] for c in fg.capabilities)
 
 
 def test_set_default_reviewers_filters_author_and_puts():

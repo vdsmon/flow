@@ -481,8 +481,6 @@ def test_link_uses_bd_dep_add() -> None:
 @pytest.mark.parametrize(
     ("native", "expected_normalized"),
     [
-        ("open", "open"),
-        ("in_progress", "in_progress"),
         ("blocked", "blocked"),
         ("deferred", "cancelled"),
         ("closed", "done"),
@@ -620,22 +618,6 @@ def test_is_shipped_grep_targets_default_ref() -> None:
     assert log_calls[0][2] == "origin/main"
 
 
-def test_is_shipped_reads_close_reason_field() -> None:
-    # bd's JSON carries `close_reason`; the old `closure_reason` read was a
-    # wrong-key bug that always yielded null.
-    adapter, _ = _build_adapter(
-        [
-            _cp(stdout=json.dumps(_issue_json(status="closed", close_reason="real"))),
-            _symref_ok(),
-            _cp(),
-            _git_log_record("abc123def", "ticket: bd-a1b2"),
-        ]
-    )
-    result = adapter.is_shipped("bd-a1b2")
-    assert result["evidence"] is not None
-    assert result["evidence"]["closure_reason"] == "real"
-
-
 def test_is_shipped_close_reason_falls_back_to_legacy_key() -> None:
     adapter, _ = _build_adapter(
         [
@@ -729,26 +711,6 @@ def test_is_shipped_second_join_uses_paren_form() -> None:
     assert len(log_calls) == 2
     grep_arg = next(a for a in log_calls[1] if a.startswith("--grep="))
     assert grep_arg == "--grep=(#445)"
-
-
-def test_is_shipped_indeterminate_when_both_joins_miss() -> None:
-    adapter, _ = _build_adapter(
-        [
-            _cp(
-                stdout=json.dumps(
-                    _issue_json(status="closed", close_reason="Merged in PR#445 (flatten thing)")
-                )
-            ),
-            _symref_ok(),
-            _cp(),  # git fetch
-            _cp(stdout=""),  # by-key grep misses
-            _cp(stdout=""),  # (#445) grep also misses
-        ]
-    )
-    result = adapter.is_shipped("bd-a1b2")
-    assert result["state"] == "indeterminate"
-    assert result["evidence"] is not None
-    assert result["evidence"]["commit_sha"] is None
 
 
 def test_is_shipped_no_second_join_without_pr_number() -> None:

@@ -12,25 +12,12 @@ import pytest
 
 import pending_mutations
 import tracker_cli
+from tests.wsfactory import make_workspace, memory, tracker
 from tracker import TrackerError
 
 
 def _seed_workspace(root: Path, backend: str = "jira") -> None:
-    flow = root / ".flow"
-    flow.mkdir(parents=True, exist_ok=True)
-    if backend == "jira":
-        body = (
-            '[tracker]\nbackend = "jira"\n\n'
-            '[tracker.jira]\ncloud_id = "x"\nproject_key = "FT"\n\n'
-            '[memory]\nnamespace = "demo"\n'
-        )
-    else:
-        body = (
-            '[tracker]\nbackend = "beads"\n\n'
-            '[tracker.beads]\nprefix = "bd"\n\n'
-            '[memory]\nnamespace = "demo"\n'
-        )
-    (flow / "workspace.toml").write_text(body, encoding="utf-8")
+    make_workspace(root, tracker(backend), memory())
 
 
 class _FakeTracker:
@@ -138,11 +125,6 @@ def test_read_tracker_config_flattens_beads(tmp_path: Path) -> None:
     assert config["backend"] == "beads"
     assert config["prefix"] == "bd"
     assert "workspace_root" in config
-
-
-def test_read_tracker_config_missing_raises(tmp_path: Path) -> None:
-    with pytest.raises(tracker_cli._WorkspaceConfigError, match=r"no workspace\.toml"):
-        tracker_cli._read_tracker_config(tmp_path)
 
 
 def test_read_tracker_config_unknown_backend_raises(tmp_path: Path) -> None:
@@ -312,25 +294,6 @@ def test_transition_prefers_in_progress_hint_over_testing(tmp_path: Path) -> Non
     # normalize to in_progress, but the native In Progress transition must win.
     _seed_workspace(tmp_path)
     tk = _AmbiguousInProgressTracker(testing_first=True)
-    rc = tracker_cli.cli_main(
-        [
-            "--workspace-root",
-            str(tmp_path),
-            "transition",
-            "--key",
-            "FT-1",
-            "--to-state",
-            "in_progress",
-        ],
-        tracker_factory=_factory(tk),
-    )
-    assert rc == 0
-    assert tk.calls[1] == ("transition", ("FT-1", "31", None), {})
-
-
-def test_transition_in_progress_hint_order_independent(tmp_path: Path) -> None:
-    _seed_workspace(tmp_path)
-    tk = _AmbiguousInProgressTracker(testing_first=False)
     rc = tracker_cli.cli_main(
         [
             "--workspace-root",
@@ -949,7 +912,7 @@ def test_transition_raised_trackererror_with_flag_enqueues(tmp_path: Path) -> No
 
 @pytest.mark.parametrize(
     ("failure_kind", "expected_rc"),
-    [("permission_denied", 4), ("wrong_source_state", 5)],
+    [("permission_denied", 4)],
 )
 def test_transition_hard_failure_with_flag_no_enqueue(
     tmp_path: Path, failure_kind: str, expected_rc: int

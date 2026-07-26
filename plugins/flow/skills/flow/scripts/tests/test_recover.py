@@ -8,6 +8,7 @@ from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -402,18 +403,11 @@ def test_retry_exit2_no_state(tmp_path: Path) -> None:
     assert rc == 2
 
 
-def test_retry_exit1_unknown_stage(tmp_path: Path) -> None:
+@pytest.mark.parametrize("subcommand", ["retry", "skip"])
+def test_exit1_unknown_stage(tmp_path: Path, subcommand: str) -> None:
     _ws(tmp_path)
     rc = recover.cli_main(
-        ["retry", "--ticket", "T-1", "--workspace-root", str(tmp_path), "--stage", "nope"]
-    )
-    assert rc == 1
-
-
-def test_skip_exit1_unknown_stage(tmp_path: Path) -> None:
-    _ws(tmp_path)
-    rc = recover.cli_main(
-        ["skip", "--ticket", "T-1", "--workspace-root", str(tmp_path), "--stage", "nope"]
+        [subcommand, "--ticket", "T-1", "--workspace-root", str(tmp_path), "--stage", "nope"]
     )
     assert rc == 1
 
@@ -444,39 +438,55 @@ def _fake_run(returncode: int):
     return run
 
 
-def test_holder_liveness_none_when_no_holder() -> None:
-    assert recover._holder_liveness(None) is None
+def _raising_run(*args: object, **kwargs: object) -> object:
+    raise OSError("ps gone")
 
 
-def test_holder_liveness_cross_host_is_skipped() -> None:
-    holder = {"hostname": "a-different-host-9e3f", "session_pid": 4242}
-    assert recover._holder_liveness(holder) == {"probe": "skipped_cross_host", "alive": None}
-
-
-def test_holder_liveness_unrecorded_when_session_pid_zero() -> None:
-    holder = {"hostname": socket.gethostname(), "session_pid": 0}
-    assert recover._holder_liveness(holder) == {"probe": "unrecorded", "alive": None}
-
-
-def test_holder_liveness_alive_true(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(recover.subprocess, "run", _fake_run(0))
-    holder = {"hostname": socket.gethostname(), "session_pid": 4242}
-    assert recover._holder_liveness(holder) == {"probe": "ps", "alive": True, "session_pid": 4242}
-
-
-def test_holder_liveness_alive_false(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(recover.subprocess, "run", _fake_run(1))
-    holder = {"hostname": socket.gethostname(), "session_pid": 4242}
-    assert recover._holder_liveness(holder) == {"probe": "ps", "alive": False, "session_pid": 4242}
-
-
-def test_holder_liveness_probe_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    def _boom(*args: object, **kwargs: object) -> object:
-        raise OSError("ps gone")
-
-    monkeypatch.setattr(recover.subprocess, "run", _boom)
-    holder = {"hostname": socket.gethostname(), "session_pid": 4242}
-    assert recover._holder_liveness(holder) == {"probe": "error", "alive": None}
+@pytest.mark.parametrize(
+    ("holder", "run_stub", "expected"),
+    [
+        pytest.param(None, None, None, id="none_when_no_holder"),
+        pytest.param(
+            {"hostname": "a-different-host-9e3f", "session_pid": 4242},
+            None,
+            {"probe": "skipped_cross_host", "alive": None},
+            id="cross_host_is_skipped",
+        ),
+        pytest.param(
+            {"hostname": socket.gethostname(), "session_pid": 0},
+            None,
+            {"probe": "unrecorded", "alive": None},
+            id="unrecorded_when_session_pid_zero",
+        ),
+        pytest.param(
+            {"hostname": socket.gethostname(), "session_pid": 4242},
+            _fake_run(0),
+            {"probe": "ps", "alive": True, "session_pid": 4242},
+            id="alive_true",
+        ),
+        pytest.param(
+            {"hostname": socket.gethostname(), "session_pid": 4242},
+            _fake_run(1),
+            {"probe": "ps", "alive": False, "session_pid": 4242},
+            id="alive_false",
+        ),
+        pytest.param(
+            {"hostname": socket.gethostname(), "session_pid": 4242},
+            _raising_run,
+            {"probe": "error", "alive": None},
+            id="probe_error",
+        ),
+    ],
+)
+def test_holder_liveness(
+    monkeypatch: pytest.MonkeyPatch,
+    holder: Any,
+    run_stub: Any,
+    expected: dict[str, Any] | None,
+) -> None:
+    if run_stub is not None:
+        monkeypatch.setattr(recover.subprocess, "run", run_stub)
+    assert recover._holder_liveness(holder) == expected
 
 
 def test_detect_holder_liveness_alive_end_to_end(

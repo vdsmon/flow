@@ -17,6 +17,7 @@ import tracker as t
 import tracker_beads as tb
 import tracker_cli
 import tracker_jira as tj
+from tests.wsfactory import make_workspace, memory, tracker
 from tracker import NotSupported, TrackerError
 
 
@@ -79,17 +80,23 @@ def test_jira_download_returns_bytes_with_auth(monkeypatch: pytest.MonkeyPatch) 
     assert not ua.startswith("Python-urllib")
 
 
-def test_jira_download_no_url_raises(monkeypatch: pytest.MonkeyPatch) -> None:
-    adapter = _jira(monkeypatch, _FakeHttp([]))
+@pytest.mark.parametrize(
+    ("att_override", "responses"),
+    [
+        pytest.param({"url": None}, [], id="no_url"),
+        pytest.param(
+            {"url": "https://x/y"},
+            [urllib.error.HTTPError("u", 404, "nf", Message(), io.BytesIO(b""))],
+            id="http_error_wrapped",
+        ),
+    ],
+)
+def test_jira_download_raises(
+    monkeypatch: pytest.MonkeyPatch, att_override: dict[str, Any], responses: list[Any]
+) -> None:
+    adapter = _jira(monkeypatch, _FakeHttp(responses))
     with pytest.raises(TrackerError):
-        adapter.download_attachment(_att(url=None))
-
-
-def test_jira_download_http_error_wrapped(monkeypatch: pytest.MonkeyPatch) -> None:
-    err = urllib.error.HTTPError("u", 404, "nf", Message(), io.BytesIO(b""))
-    adapter = _jira(monkeypatch, _FakeHttp([err]))
-    with pytest.raises(TrackerError):
-        adapter.download_attachment(_att(url="https://x/y"))
+        adapter.download_attachment(_att(**att_override))
 
 
 # ─── beads adapter ──────────────────────────────────────────────────────────
@@ -122,21 +129,7 @@ class _FakeTracker:
 
 
 def _seed_ws(root: Path, backend: str = "jira") -> None:
-    flow = root / ".flow"
-    flow.mkdir(parents=True, exist_ok=True)
-    if backend == "jira":
-        body = (
-            '[tracker]\nbackend = "jira"\n\n'
-            '[tracker.jira]\ncloud_id = "x"\nproject_key = "FT"\n\n'
-            '[memory]\nnamespace = "d"\n'
-        )
-    else:
-        body = (
-            '[tracker]\nbackend = "beads"\n\n'
-            '[tracker.beads]\nprefix = "bd"\n\n'
-            '[memory]\nnamespace = "d"\n'
-        )
-    (flow / "workspace.toml").write_text(body, encoding="utf-8")
+    make_workspace(root, tracker(backend), memory("d"))
 
 
 def test_cli_download_writes_and_sanitizes(

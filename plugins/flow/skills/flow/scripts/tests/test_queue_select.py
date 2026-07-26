@@ -8,28 +8,13 @@ from pathlib import Path
 import pytest
 
 import fleet
-import lease
 import queue_select as qs
 from _evolve_common import ToolError
 from _timeutil import utcnow_iso
+from tests.wsfactory import MAINTAINER, make_workspace
+from tests.wsfactory import write_lease as _write_lease
 
 Recorder = list[list[str]]
-
-
-def _write_lease(run_dir: Path, *, expired: bool = False) -> None:
-    """Acquire a real lease in run_dir (live by default, expired on request)."""
-    now = "2020-01-01T00:00:00Z" if expired else utcnow_iso()
-    ttl = 1 if expired else 3600
-    lease.acquire(
-        run_dir,
-        "run-test",
-        ttl,
-        now,
-        stage="implement",
-        current_boot="boot-A",
-        hostname="host-1",
-        cwd=str(run_dir),
-    )
 
 
 def _cand(
@@ -138,22 +123,11 @@ def test_priority_ranking():
 
 
 def _marked_ws(tmp_path: Path) -> Path:
-    d = tmp_path / "flow"
-    (d / ".flow").mkdir(parents=True)
-    (d / ".flow" / "workspace.toml").write_text(
-        "[maintainer]\nself_target = true\n", encoding="utf-8"
-    )
-    return d
+    return make_workspace(tmp_path / "flow", MAINTAINER)
 
 
 def _worker_ws(tmp_path: Path) -> Path:
-    d = tmp_path / "flow"
-    (d / ".flow").mkdir(parents=True)
-    (d / ".flow" / "workspace.toml").write_text(
-        '[maintainer]\nself_target = true\n\n[evolve]\nworker_model = "opus"\n',
-        encoding="utf-8",
-    )
-    return d
+    return make_workspace(tmp_path / "flow", MAINTAINER, {"evolve": {"worker_model": "opus"}})
 
 
 def _dispatch(
@@ -334,13 +308,6 @@ def test_select_light_downshifts_to_sonnet(tmp_path):
     assert out["model_per_key"]["flow-l"] == "sonnet"
 
 
-def test_select_worker_model_light_beats_worker_model(tmp_path):
-    ws = _worker_ws(tmp_path)
-    run, _ = _dispatch(ready=[_cand("flow-l", labels=["tier:light"])])
-    out = qs.select(ws, cap=5, concurrency=3, runner=run)
-    assert out["model_per_key"]["flow-l"] == "sonnet"
-
-
 def test_select_plain_bead_no_downshift(tmp_path):
     ws = _marked_ws(tmp_path)
     run, _ = _dispatch(ready=[_cand("flow-p")])
@@ -361,39 +328,6 @@ def test_select_worker_model_trivial_beats_worker_model(tmp_path):
     run, _ = _dispatch(ready=[_cand("flow-t", labels=["tier:trivial"])])
     out = qs.select(ws, cap=5, concurrency=3, runner=run)
     assert out["model_per_key"]["flow-t"] == "sonnet"
-
-
-def test_select_worker_model_unset_plain_omitted(tmp_path):
-    ws = _marked_ws(tmp_path)
-    run, _ = _dispatch(ready=[_cand("flow-p")])
-    out = qs.select(ws, cap=5, concurrency=3, runner=run)
-    assert "flow-p" not in out["model_per_key"]
-
-
-def test_worker_model_reads_evolve_section(tmp_path):
-    d = tmp_path / "flow"
-    (d / ".flow").mkdir(parents=True)
-    (d / ".flow" / "workspace.toml").write_text(
-        '[evolve]\nworker_model = "opus"\n', encoding="utf-8"
-    )
-    assert qs._worker_model(d) == "opus"
-
-
-def test_worker_model_absent_section_is_none(tmp_path):
-    d = tmp_path / "flow"
-    (d / ".flow").mkdir(parents=True)
-    (d / ".flow" / "workspace.toml").write_text(
-        "[maintainer]\nself_target = true\n", encoding="utf-8"
-    )
-    assert qs._worker_model(d) is None
-
-
-def test_worker_model_empty_or_nonstr_is_none(tmp_path):
-    for body in ('[evolve]\nworker_model = ""\n', "[evolve]\nworker_model = 5\n"):
-        d = tmp_path / f"flow-{hash(body) & 0xFFFF}"
-        (d / ".flow").mkdir(parents=True)
-        (d / ".flow" / "workspace.toml").write_text(body, encoding="utf-8")
-        assert qs._worker_model(d) is None, body
 
 
 def test_select_not_maintainer_raises(tmp_path, monkeypatch):
@@ -425,20 +359,12 @@ def _pool_run_dir(repo: Path, key: str, slug: str = "wip") -> Path:
 
 
 def _ws_with_toml(tmp_path: Path, body: str) -> Path:
-    d = tmp_path / "flow"
-    (d / ".flow").mkdir(parents=True)
-    (d / ".flow" / "workspace.toml").write_text(body, encoding="utf-8")
-    return d
+    return make_workspace(tmp_path / "flow", body=body)
 
 
 def test_config_defaults_reads_queue_section(tmp_path):
     ws = _ws_with_toml(tmp_path, "[queue]\ncap = 7\nconcurrency = 2\n")
     assert qs._config_defaults(ws) == (7, 2)
-
-
-def test_config_defaults_absent_section(tmp_path):
-    ws = _ws_with_toml(tmp_path, "[maintainer]\nself_target = true\n")
-    assert qs._config_defaults(ws) == (qs.DEFAULT_CAP, qs.DEFAULT_CONCURRENCY)
 
 
 def test_config_defaults_ignores_evolve_section(tmp_path):

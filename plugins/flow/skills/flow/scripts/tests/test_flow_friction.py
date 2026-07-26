@@ -9,18 +9,15 @@ import os
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 import _memory_paths
 import flow_friction
+from tests.wsfactory import make_workspace, memory, tracker
 
 
 def _seed_workspace(root: Path, namespace: str = "demo") -> None:
-    flow = root / ".flow"
-    flow.mkdir(parents=True, exist_ok=True)
-    (flow / "workspace.toml").write_text(
-        '[tracker]\nbackend = "jira"\n[tracker.jira]\ncloud_id = "x"\nproject_key = "FT"\n'
-        f'\n[memory]\nnamespace = "{namespace}"\n',
-        encoding="utf-8",
-    )
+    make_workspace(root, tracker("jira"), memory(namespace))
 
 
 def _read_jsonl(path: Path) -> list[dict]:
@@ -65,24 +62,17 @@ def test_append_accumulates_no_dedup(tmp_path: Path) -> None:
     assert rows[0]["id"] != rows[1]["id"]
 
 
-def test_invalid_type_raises(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        pytest.param({"type_": "BOGUS"}, id="invalid_type"),
+        pytest.param({"type_": "RETRY", "severity": "loud"}, id="invalid_severity"),
+    ],
+)
+def test_invalid_enum_raises(tmp_path: Path, kwargs: dict[str, str]) -> None:
     _seed_workspace(tmp_path)
-    try:
-        flow_friction.append(tmp_path, "FT-1", "r", "implement", "BOGUS", "x")
-    except flow_friction._InvalidType:
-        pass
-    else:
-        raise AssertionError("expected _InvalidType")
-
-
-def test_invalid_severity_raises(tmp_path: Path) -> None:
-    _seed_workspace(tmp_path)
-    try:
-        flow_friction.append(tmp_path, "FT-1", "r", "implement", "RETRY", "x", severity="loud")
-    except flow_friction._InvalidType:
-        pass
-    else:
-        raise AssertionError("expected _InvalidType")
+    with pytest.raises(flow_friction._InvalidType):
+        flow_friction.append(tmp_path, "FT-1", "r", "implement", body="x", **kwargs)
 
 
 def test_cli_happy_path(tmp_path: Path) -> None:
@@ -218,13 +208,6 @@ def test_append_stamps_plugin_version(tmp_path: Path) -> None:
     assert isinstance(entry["plugin_version"], str)
     assert entry["plugin_version"]
     assert entry["plugin_version"] == live
-
-
-def test_plugin_version_in_jsonl_line(tmp_path: Path) -> None:
-    _seed_workspace(tmp_path)
-    flow_friction.append(tmp_path, "FT-1", "r", "implement", "RETRY", "x")
-    rows = _read_jsonl(_memory_paths.friction_path(tmp_path, "demo"))
-    assert rows[0]["plugin_version"] == _live_plugin_version()
 
 
 def test_append_succeeds_when_plugin_version_guarded_empty(

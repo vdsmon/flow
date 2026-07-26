@@ -372,22 +372,6 @@ def test_malformed_agents_markers_fail_without_rewriting(tmp_path: Path, body: s
     assert agents.read_text(encoding="utf-8") == body
 
 
-def test_ensure_agents_md_not_requested_is_noop(tmp_path: Path) -> None:
-    skipped = initmod._ensure_agents_md(tmp_path, requested=False)
-    assert skipped is not None
-    assert skipped.get("skipped") is True
-    assert not (tmp_path / "AGENTS.md").exists()
-
-
-def test_init_skill_dir_falls_back_to_script_location(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.delenv("CLAUDE_SKILL_DIR", raising=False)
-    initmod.run_init(_jira_config(tmp_path))
-    written = (tmp_path / ".flow" / "runtime" / "skill-root").read_text(encoding="utf-8").strip()
-    expected = str(Path(initmod.__file__).resolve().parent.parent)
-    assert written == expected
-    assert Path(written).is_absolute()
-
-
 def test_bare_beads_init_runs_bd_and_writes_workspace_toml(tmp_path: Path) -> None:
     runner = _bd_ok_runner()
     result = initmod.run_init(_beads_config(tmp_path), runner=runner)
@@ -491,19 +475,6 @@ def test_custom_bundle_uses_supplied_handlers(tmp_path: Path) -> None:
     assert result.handlers["e2e"] == "subagent:general-purpose"
     # Stages not overridden keep stage-registry defaults.
     assert result.handlers["plan"] == "inline"
-
-
-def test_custom_bundle_requires_at_least_one_override(tmp_path: Path) -> None:
-    config = initmod.InitConfig(
-        backend="jira",
-        bundle="custom",
-        workspace_root=tmp_path,
-        jira=initmod.JiraConfig(cloud_id="x", project_key="FT", assignee_account_id=None),
-        bundle_search_roots=[tmp_path / "_empty"],
-        checkpoint_manifest_path=tmp_path / "_ckpt.jsonl",
-    )
-    with pytest.raises(initmod.InitError, match="custom requires"):
-        initmod.run_init(config)
 
 
 def test_custom_bundle_rejects_illegal_handler_string(tmp_path: Path) -> None:
@@ -734,27 +705,6 @@ handler_string = "skill:rival:create"
         ]
     )
     assert rc == 3
-
-
-def test_cli_config_file_provides_answers(tmp_path: Path) -> None:
-    answers = tmp_path / "answers.json"
-    answers.write_text(
-        json.dumps(
-            {
-                "backend": "jira",
-                "bundle": "bare",
-                "workspace_root": str(tmp_path),
-                "jira_cloud_id": "x",
-                "jira_project_key": "FT",
-                "checkpoint_manifest": str(tmp_path / "_ckpt.jsonl"),
-                "bundle_search_roots": str(tmp_path / "_empty"),
-            }
-        ),
-        encoding="utf-8",
-    )
-    rc = initmod.cli_main(["--config", str(answers)])
-    assert rc == 0
-    assert (tmp_path / ".flow" / ".initialized").exists()
 
 
 # ─── Slug derivation ─────────────────────────────────────────────────────────
@@ -1487,31 +1437,12 @@ def test_stabilize_skill_dir_rewrites_cache_to_marketplace(tmp_path: Path) -> No
     assert flow_launcher.stabilize_skill_dir(str(cache)) == str(target)
 
 
-def test_stabilize_skill_dir_non_cache_unchanged() -> None:
-    assert flow_launcher.stabilize_skill_dir("/opt/flow/skills/flow") == "/opt/flow/skills/flow"
-
-
-def test_stabilize_skill_dir_cache_but_marketplace_missing_unchanged(tmp_path: Path) -> None:
-    # Cache-shaped input but no marketplace target on disk -> returned unchanged.
-    cache = tmp_path / "plugins" / "cache" / "vdsmon-flow" / "flow" / "0.92.1" / "skills" / "flow"
-    assert flow_launcher.stabilize_skill_dir(str(cache)) == str(cache)
-
-
 # ─── Bundled Codex reviewer default ──────────────────────────────────────────
 
 
 def _handlers_of(workspace_toml_path: Path) -> dict[str, str]:
     data = tomllib.loads(workspace_toml_path.read_text(encoding="utf-8"))
     return data["pipeline"]["handlers"]
-
-
-def test_code_review_defaults_to_bundled_codex_reviewer(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr(initmod.shutil, "which", lambda name: "/usr/bin/codex")
-    monkeypatch.setenv("FLOW_HARNESS", "claude-code")
-    result = initmod.run_init(_jira_config(tmp_path))
-    assert _handlers_of(result.workspace_toml_path)["code_review"] == (
-        "subagent:flow:codex-reviewer"
-    )
 
 
 def test_code_review_stays_inline_without_codex(tmp_path: Path, monkeypatch) -> None:

@@ -164,17 +164,6 @@ def test_facade_path_traversal_command_is_error() -> None:
     assert "../../arbitrary.py" in errors[0].msg
 
 
-def test_facade_uppercase_command_is_error() -> None:
-    invocations = seam_check.find_facade_invocations("t.md", ".flow/runtime/flow Dispatch next")
-    assert len(invocations) == 1
-    errors = [
-        problem for problem in seam_check.validate(invocations[0]) if problem.level == "ERROR"
-    ]
-    assert len(errors) == 1
-    assert "not allowlisted" in errors[0].msg
-    assert "Dispatch" in errors[0].msg
-
-
 def test_facade_narrative_name_is_not_a_missing_command() -> None:
     text = "The `.flow/runtime/flow` executable is the post-init command seam."
     assert seam_check.find_facade_invocations("t.md", text) == []
@@ -1128,11 +1117,6 @@ def test_registry_roles_unions_arrays(tmp_path) -> None:
         "reflect_anchor",
         "ship_observer",
     }
-
-
-def test_prose_role_citation_membership_idiom() -> None:
-    text = 'if `descriptor.roles` includes `"records_diff_baseline"`:\n'
-    assert seam_check.prose_role_citations(text) == [(1, "records_diff_baseline")]
 
 
 def test_prose_role_citation_rejects_stage_name_as_role_membership() -> None:

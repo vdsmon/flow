@@ -1,0 +1,15 @@
+{
+  "acceptance_invariant": "",
+  "arm": "flow",
+  "evidence": {
+    "foo": "bar"
+  },
+  "lane": "express",
+  "observed_at": "2026-07-26T04:16:13Z",
+  "observed_by_run_id": "abcdef0123456789",
+  "plugin_version": "",
+  "shipped_at": "2026-05-28T14:32:00Z",
+  "superseded_by_dupe": false,
+  "ticket": "FT-1",
+  "tier": ""
+}

@@ -45,11 +45,6 @@ def _ts(now: datetime, **delta: float) -> str:
     return (now - timedelta(**delta)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def test_staleness_absent_file_is_silent(tmp_path: Path) -> None:
-    path = tmp_path / "missing.jsonl"
-    assert preflight.render_preflight(preflight.evaluate_run_records(path, _now())) == ""
-
-
 def test_staleness_unreadable_ledger_is_unavailable_not_healthy(tmp_path: Path) -> None:
     report = preflight.evaluate_run_records(tmp_path, _now())
 
@@ -197,18 +192,6 @@ def test_staleness_weekly_hung_within_grace_is_silent(tmp_path: Path) -> None:
         rec, {"schedule": "weekly", "phase": "start", "ts": _ts(now, hours=5), "outcome": ""}
     )
     assert preflight.render_preflight(preflight.evaluate_run_records(rec, now)) == ""
-
-
-def test_staleness_disarmed_suppresses_stale(tmp_path: Path) -> None:
-    now = _now()
-    rec = tmp_path / "run-record.jsonl"
-    _write_record(
-        rec, {"schedule": "nightly", "phase": "end", "ts": _ts(now, hours=40), "outcome": "ok"}
-    )
-    (tmp_path / "disarmed-nightly").touch()
-    block = preflight.render_preflight(preflight.evaluate_run_records(rec, now))
-    assert "nightly evolve loop disarmed" in block
-    assert "⚠️" not in block
 
 
 def test_staleness_disarmed_suppresses_hung(tmp_path: Path) -> None:

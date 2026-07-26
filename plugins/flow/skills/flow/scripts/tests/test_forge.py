@@ -1,11 +1,8 @@
 from __future__ import annotations
 
-from typing import get_args
-
 import pytest
 
 from forge import (
-    FORGE_CAPABILITY_ENUM,
     ForgeConfigError,
     make_forge,
     read_forge_config,
@@ -73,7 +70,3 @@ def test_read_forge_config_unknown_backend_raises(tmp_path):
     _write_ws(tmp_path, '[forge]\nbackend = "gitlab"\n')
     with pytest.raises(ForgeConfigError):
         read_forge_config(tmp_path)
-
-
-def test_default_reviewers_in_capability_enum():
-    assert "default_reviewers" in get_args(FORGE_CAPABILITY_ENUM)

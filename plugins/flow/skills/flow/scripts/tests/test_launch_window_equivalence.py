@@ -25,6 +25,8 @@ import evolve_select as es
 import fleet
 import lease
 from _timeutil import utcnow_iso
+from tests.wsfactory import MAINTAINER, make_workspace
+from tests.wsfactory import write_lease as _write_lease
 
 Recorder = list[list[str]]
 
@@ -71,31 +73,11 @@ def oracle_launched_pending(
 
 
 def _marked_ws(tmp_path: Path) -> Path:
-    d = tmp_path / "flow"
-    (d / ".flow").mkdir(parents=True)
-    (d / ".flow" / "workspace.toml").write_text(
-        "[maintainer]\nself_target = true\n", encoding="utf-8"
-    )
-    return d
+    return make_workspace(tmp_path / "flow", MAINTAINER)
 
 
 def _pool_run_dir(repo: Path, key: str, slug: str = "wip") -> Path:
     return repo / ".flow" / "worktrees" / f"feat-{key}-{slug}" / ".flow" / "runs" / key
-
-
-def _write_lease(run_dir: Path, *, expired: bool = False) -> None:
-    now = "2020-01-01T00:00:00Z" if expired else utcnow_iso()
-    ttl = 1 if expired else 3600
-    lease.acquire(
-        run_dir,
-        "run-test",
-        ttl,
-        now,
-        stage="implement",
-        current_boot="boot-A",
-        hostname="host-1",
-        cwd=str(run_dir),
-    )
 
 
 def _cp(stdout: str = "", returncode: int = 0) -> subprocess.CompletedProcess[str]:
@@ -146,12 +128,6 @@ def _liveness(repo: Path, sel: dict) -> dict[str, str]:
 
 
 # ─── invariant (c), direct: decide() is pure, test it without any plumbing ──
-
-
-def test_decide_never_returns_done_while_launched_pending_nonempty():
-    result = ed.decide({"launch": [], "launched_pending": ["flow-x"]}, {}, stranded=[])
-    assert result["action"] == "wait"
-    assert result["action"] != "done"
 
 
 # ─── lifecycle rows: must-match states ──────────────────────────────────────

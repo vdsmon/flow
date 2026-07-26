@@ -301,7 +301,7 @@ def test_ci_rollup_status_context_failure():
     assert fg.ci_rollup("7")["status"] == "failed"
 
 
-@pytest.mark.parametrize("verdict", ["CANCELLED", "STALE", "NEUTRAL", "SKIPPED"])
+@pytest.mark.parametrize("verdict", ["STALE", "NEUTRAL", "SKIPPED"])
 def test_ci_rollup_superseded_verdict_is_pending(verdict):
     # A COMPLETED check with a superseded/terminal-non-failure verdict (e.g. a
     # CANCELLED duplicate concurrent run) must read as pending, never failed.

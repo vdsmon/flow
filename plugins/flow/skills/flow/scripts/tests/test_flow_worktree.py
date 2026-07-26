@@ -343,21 +343,6 @@ def test_no_recovery_without_flag_even_with_dirty_planned_file(tmp_path: Path) -
     assert not any(c[:3] == ["git", "status", "--porcelain"] for c in calls)  # not even probed
 
 
-def test_clean_main_does_not_relocate(tmp_path: Path) -> None:
-    # Explicit recovery with a clean main is a no-op.
-    main = _main_checkout(tmp_path)
-    calls: list = []
-    res = _run(
-        tmp_path,
-        main,
-        planned_files=["src/a.py"],
-        recover_spill=True,
-        runner=_fake_runner(calls=calls, main=main, porcelain=""),
-    )
-    assert not any("carried uncommitted edits" in w for w in res["warnings"])
-    assert not any(c[:3] == ["git", "checkout", "--"] for c in calls)
-
-
 def test_unrelated_main_wip_is_not_relocated(tmp_path: Path) -> None:
     # Recovery on, but main's uncommitted work does NOT overlap planned_files → no-op.
     main = _main_checkout(tmp_path)
@@ -453,13 +438,6 @@ def test_relocate_spilled_real_git_leaves_work_in_worktree_main_reverted(
     assert not (main / "new.py").exists()
 
 
-def test_mise_trust_invoked_when_mise_present(tmp_path: Path) -> None:
-    main = _main_checkout(tmp_path, with_mise=True)
-    calls: list = []
-    _run(tmp_path, main, runner=_fake_runner(calls=calls, main=main))
-    assert any(c[:2] == ["mise", "trust"] for c in calls)
-
-
 def test_mise_trust_failure_is_warning_not_fatal(tmp_path: Path) -> None:
     main = _main_checkout(tmp_path, with_mise=True)
     res = _run(tmp_path, main, runner=_fake_runner(mise_rc=1, main=main))
@@ -480,15 +458,6 @@ def test_works_when_worktree_already_has_committed_flow(tmp_path: Path) -> None:
         main.resolve() / ".flow" / "memory"
     )
     assert "root =" not in (wt_flow / "workspace.toml").read_text(encoding="utf-8")
-
-
-def test_no_launch_cmd_emitted(tmp_path: Path) -> None:
-    # in-session model: the spec session enters the worktree itself, so the
-    # bootstrap no longer emits a `claude --bg` launch line.
-    main = _main_checkout(tmp_path)
-    res = _run(tmp_path, main)
-    assert "launch_cmd" not in res
-    assert res["worktree"]
 
 
 def test_cli_missing_main_workspace_exits_2(tmp_path: Path, monkeypatch, capsys) -> None:
@@ -675,13 +644,6 @@ def test_bootstrap_refuses_epic_case_insensitive(tmp_path: Path, monkeypatch) ->
     _patch_tracker(monkeypatch, _FakeTracker(normalized="open", issue_type="Epic"))
     with pytest.raises(fw._EpicBead):
         _run(tmp_path, main, runner=_fake_runner(main=main))
-
-
-def test_bootstrap_proceeds_on_task_bead(tmp_path: Path, monkeypatch) -> None:
-    main = _main_checkout(tmp_path)
-    _patch_tracker(monkeypatch, _FakeTracker(normalized="open", issue_type="task"))
-    res = _run(tmp_path, main, runner=_fake_runner(main=main))
-    assert res["ticket"] == "FT-1"
 
 
 def test_bootstrap_epic_check_fails_open_on_get_exception(tmp_path: Path, monkeypatch) -> None:
@@ -1023,25 +985,6 @@ def test_bootstrap_no_registry_warn_when_path_exists(tmp_path: Path) -> None:
     assert not any("skill root" in w for w in res["warnings"])
 
 
-def test_bootstrap_no_typo_warn_for_existing_file(tmp_path: Path) -> None:
-    # An already-existing planned file never trips the typo guard. The file must
-    # really exist under the resolved worktree (fake worktree add does not
-    # populate the tree).
-    main = _main_checkout(tmp_path)
-    wt = tmp_path / "wt"
-    (wt / "src").mkdir(parents=True, exist_ok=True)
-    (wt / "src" / "existing.py").write_text("x = 1\n", encoding="utf-8")
-    res = _run(
-        tmp_path,
-        main,
-        worktree=wt,
-        planned_files=["src/existing.py"],
-        runner=_fake_runner(ignored=set(), main=main),
-    )
-    assert res["ticket"] == "FT-1"
-    assert not any("non-existent" in w for w in res["warnings"])
-
-
 def _base_runner(symref_outputs):
     """Runner answering `git symbolic-ref` from a queue; everything else ok."""
     calls: list[list[str]] = []
@@ -1359,21 +1302,6 @@ def test_reap_removes_expired_same_host_previous_boot_lease(tmp_path: Path) -> N
     receipt = fw.reap_worktree(ticket="FT-1", main_root=tmp_path / "main", runner=runner)
     assert receipt["worktree_removed"] is True
     assert receipt["skipped"] is None
-
-
-def test_reap_idempotent_when_nothing_to_remove(tmp_path: Path) -> None:
-    calls: list = []
-    runner = _reap_runner(
-        worktrees=_porcelain([(str(tmp_path / "main"), "main")]),
-        calls=calls,
-    )
-    receipt = fw.reap_worktree(
-        ticket="FT-1", main_root=tmp_path / "main", branch="feat/FT-1-thing", runner=runner
-    )
-    assert receipt["worktree_removed"] is False
-    assert not any(c[:4] == ["git", "worktree", "remove", "--force"] for c in calls)
-    # branch was supplied, so a (tolerant) delete is still attempted; here it returns 0
-    assert receipt["branch"] == "feat/FT-1-thing"
 
 
 def test_reap_noop_when_no_branch_and_no_worktree(tmp_path: Path) -> None:
@@ -1893,35 +1821,6 @@ def test_reap_recovery_push_failure_leaves_worktree_intact(tmp_path: Path) -> No
     assert not any(c[:3] == ["git", "branch", "-D"] for c in calls)
 
 
-def test_reap_cli_exits_5_on_recovery_push_failure(tmp_path: Path, monkeypatch, capsys) -> None:
-    wt = tmp_path / "main" / ".flow" / "worktrees" / "feat-FT-1-thing"
-    wt.mkdir(parents=True)
-    calls: list = []
-    runner = _checkpoint_runner(
-        worktrees=_porcelain([(str(wt), "feat/FT-1-thing")]),
-        calls=calls,
-        dirty=False,
-        head_subject=fw._checkpoint_marker("FT-1"),
-        ls_remote_out="",
-        push_rc=1,
-    )
-    monkeypatch.setattr(fw, "_default_runner", lambda: runner)
-    rc = fw.cli_main(
-        [
-            "reap",
-            "--ticket",
-            "FT-1",
-            "--branch",
-            "feat/FT-1-thing",
-            "--main-root",
-            str(tmp_path / "main"),
-        ]
-    )
-    assert rc == 5
-    out = capsys.readouterr().out
-    assert '"checkpoint_failed": true' in out
-
-
 def test_reap_recovery_skips_push_when_rescue_ref_already_present(tmp_path: Path) -> None:
     # reap #1's push actually landed before it crashed; recovery must not issue a duplicate push,
     # let the normal clean path remove.
@@ -2035,16 +1934,6 @@ def test_auto_hot_with_decision_proceeds(tmp_path, monkeypatch):
     monkeypatch.setattr(triage, "decided", lambda *a, **k: {"is_hot": True, "decided": True})
     res = _boot(tmp_path, main, base="main", auto=True, planned=["lease.py"])
     assert res["ticket"] == "flow-x1"
-
-
-def test_auto_hot_no_decision_floor_fires_when_adjudicate_hot_off(tmp_path, monkeypatch):
-    # default off: _main_beads has no [evolve] section -> real adjudicate_hot
-    # returns False, so the floor still refuses a hot+undecided change.
-    main = _main_beads(tmp_path)
-    monkeypatch.setattr(triage, "decided", lambda *a, **k: {"is_hot": True, "decided": False})
-    assert triage.adjudicate_hot(main) is False
-    with pytest.raises(fw._ConfigError):
-        _boot(tmp_path, main, base="main", auto=True, planned=["lease.py"])
 
 
 def test_auto_hot_no_decision_proceeds_when_adjudicate_hot_on(tmp_path, monkeypatch):

@@ -1,0 +1,9 @@
+{
+  "kind": "revert",
+  "observed_at": "2026-07-26T04:16:13Z",
+  "reverted_commit_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "reverting_commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "reverting_subject": "Revert \"feat: thing\"",
+  "source": "git",
+  "ticket": "FT-1"
+}
