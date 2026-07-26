@@ -1,5 +1,5 @@
-"""Render and check the generated derived surfaces: MODULE.md's script map appendix
-and stage-reflect.md's guard-file enumeration.
+"""Render and check the generated derived surfaces: MODULE.md's script map appendix,
+MODULE.md's reference-docs index, and stage-reflect.md's guard-file enumeration.
 
 The import graph, argparse subcommand names, and ``triage._GUARD_FILES`` are facts
 the code already states; hand-writing them in prose made every import or subcommand
@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import re
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -32,11 +33,14 @@ SKILL_ROOT = SCRIPTS_DIR.parent
 
 MODULE_MD = SCRIPTS_DIR / "MODULE.md"
 STAGE_REFLECT_MD = SKILL_ROOT / "references" / "stage-reflect.md"
+REFERENCES_DIR = SKILL_ROOT / "references"
 
 MODULE_BEGIN = "<!-- flow:module-map:begin -->"
 MODULE_END = "<!-- flow:module-map:end -->"
 GUARD_BEGIN = "<!-- flow:guard-files:begin -->"
 GUARD_END = "<!-- flow:guard-files:end -->"
+DOCS_INDEX_BEGIN = "<!-- flow:docs-index:begin -->"
+DOCS_INDEX_END = "<!-- flow:docs-index:end -->"
 
 
 def local_stems(scripts_dir: Path = SCRIPTS_DIR) -> set[str]:
@@ -158,11 +162,72 @@ def render_guard_span(scripts_dir: Path = SCRIPTS_DIR) -> str:
     return f"{GUARD_BEGIN}({listed}),{GUARD_END}"
 
 
+_SENTENCE_RE = re.compile(r"(.+?[.!?])(?:\s|$)", re.DOTALL)
+
+
+def doc_one_liner(path: Path) -> str:
+    """First purpose sentence of a reference doc, normalized for a table cell.
+
+    Skips the H1 (and a `## Purpose` heading when the doc uses the stage shape),
+    joins the first paragraph's wrapped lines, and takes its first sentence.
+    Backticks are stripped so the cell never forms an inline recipe span; a
+    trailing colon (an intro to a list) is dropped; long sentences truncate at a
+    word boundary.
+    """
+    lines = path.read_text(encoding="utf-8").splitlines()
+    i = 0
+    while i < len(lines) and not lines[i].startswith("# "):
+        i += 1
+    i += 1
+    while i < len(lines) and not lines[i].strip():
+        i += 1
+    if i < len(lines) and lines[i].strip() == "## Purpose":
+        i += 1
+        while i < len(lines) and not lines[i].strip():
+            i += 1
+    para: list[str] = []
+    while i < len(lines):
+        text = lines[i].strip()
+        if not text or text.startswith("#"):
+            break
+        para.append(text)
+        i += 1
+    joined = " ".join(para)
+    match = _SENTENCE_RE.match(joined)
+    sentence = (match.group(1) if match else joined).replace("`", "").strip().rstrip(":")
+    if len(sentence) > 140:
+        sentence = sentence[:140].rsplit(" ", 1)[0].rstrip(",;:") + "…"
+    return sentence
+
+
+def render_docs_index(scripts_dir: Path = SCRIPTS_DIR, refs_dir: Path | None = None) -> str:
+    """The MODULE.md reference-docs index table, markers included.
+
+    ``scripts_dir`` is unused but kept so every ``_targets()`` render callable
+    shares one call shape; the docs live under ``REFERENCES_DIR`` (module-level
+    so tests can monkeypatch it, same pattern as ``MODULE_MD``).
+    """
+    del scripts_dir
+    refs = refs_dir if refs_dir is not None else REFERENCES_DIR
+    lines = [
+        DOCS_INDEX_BEGIN,
+        "| Doc | Covers |",
+        "|-----|--------|",
+    ]
+    lines.extend(
+        f"| `references/{path.name}` | {doc_one_liner(path)} |"
+        for path in sorted(refs.glob("*.md"))
+    )
+    lines.append(DOCS_INDEX_END)
+    return "\n".join(lines) + "\n"
+
+
 def _targets() -> tuple[tuple[Path, str, str, Callable[[Path], str]], ...]:
     """(path, begin, end, render) per managed block; read at call time so tests
     can point the module-level path constants at temporary copies."""
     return (
         (MODULE_MD, MODULE_BEGIN, MODULE_END, render_module_block),
+        (MODULE_MD, DOCS_INDEX_BEGIN, DOCS_INDEX_END, render_docs_index),
         (STAGE_REFLECT_MD, GUARD_BEGIN, GUARD_END, render_guard_span),
     )
 

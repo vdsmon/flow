@@ -69,9 +69,11 @@ def test_render_module_block_lists_every_script() -> None:
 
 
 def test_check_flags_stale_block_and_write_repairs_it(tmp_path, monkeypatch) -> None:
+    # The docs-index block is embedded green so exactly one block (module-map) is stale.
     doc = tmp_path / "MODULE.md"
     doc.write_text(
-        f"# map\n\n{module_map.MODULE_BEGIN}\n| stale |\n{module_map.MODULE_END}\n",
+        f"# map\n\n{module_map.MODULE_BEGIN}\n| stale |\n{module_map.MODULE_END}\n\n"
+        f"{module_map.render_docs_index()}",
         encoding="utf-8",
     )
     monkeypatch.setattr(module_map, "MODULE_MD", doc)
@@ -88,8 +90,71 @@ def test_check_reports_missing_markers(tmp_path, monkeypatch) -> None:
     doc.write_text("# map with no markers\n", encoding="utf-8")
     monkeypatch.setattr(module_map, "MODULE_MD", doc)
     problems = module_map.check()
+    # Both MODULE.md-hosted blocks (module-map and docs-index) report their pair.
+    assert len(problems) == 2
+    assert all("markers not found" in p for p in problems)
+
+
+def test_docs_index_round_trip(tmp_path, monkeypatch) -> None:
+    refs = tmp_path / "references"
+    refs.mkdir()
+    (refs / "alpha.md").write_text("# Alpha\n\nOwns the alpha protocol.\n", encoding="utf-8")
+    doc = tmp_path / "MODULE.md"
+    doc.write_text(
+        f"# map\n\n{module_map.render_module_block()}\n"
+        f"{module_map.DOCS_INDEX_BEGIN}\n| stale |\n{module_map.DOCS_INDEX_END}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(module_map, "MODULE_MD", doc)
+    monkeypatch.setattr(module_map, "REFERENCES_DIR", refs)
+    problems = module_map.check()
     assert len(problems) == 1
-    assert "markers not found" in problems[0]
+    assert "module_map.py write" in problems[0]
+    assert module_map.write() == [doc]
+    assert "| `references/alpha.md` | Owns the alpha protocol. |" in doc.read_text(encoding="utf-8")
+    assert module_map.check() == []
+    assert module_map.write() == []
+
+
+def test_render_docs_index_lists_every_reference_doc() -> None:
+    block = module_map.render_docs_index()
+    for path in module_map.REFERENCES_DIR.glob("*.md"):
+        assert f"| `references/{path.name}` |" in block
+
+
+def test_doc_one_liner_purpose_branch(tmp_path) -> None:
+    doc = tmp_path / "stage-x.md"
+    doc.write_text(
+        "# Stage: x\n\n## Purpose\n\nDo the x thing. Ignore this second sentence.\n",
+        encoding="utf-8",
+    )
+    assert module_map.doc_one_liner(doc) == "Do the x thing."
+
+
+def test_doc_one_liner_joins_wrapped_lines(tmp_path) -> None:
+    doc = tmp_path / "d.md"
+    doc.write_text(
+        "# D\n\nThe first sentence wraps across\ntwo hard-wrapped lines. Second sentence.\n",
+        encoding="utf-8",
+    )
+    assert (
+        module_map.doc_one_liner(doc) == "The first sentence wraps across two hard-wrapped lines."
+    )
+
+
+def test_doc_one_liner_strips_backticks_and_trailing_colon(tmp_path) -> None:
+    doc = tmp_path / "d.md"
+    doc.write_text("# D\n\nFlow has three `nested` loops:\n\n- one\n", encoding="utf-8")
+    assert module_map.doc_one_liner(doc) == "Flow has three nested loops"
+
+
+def test_doc_one_liner_truncates_at_word_boundary(tmp_path) -> None:
+    doc = tmp_path / "d.md"
+    doc.write_text("# D\n\n" + "word " * 60 + "end.\n", encoding="utf-8")
+    cell = module_map.doc_one_liner(doc)
+    assert len(cell) <= 141
+    assert cell.endswith("…")
+    assert not cell.removesuffix("…").endswith(" ")
 
 
 def test_triage_guard_files_parsed_from_source() -> None:

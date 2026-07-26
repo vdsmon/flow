@@ -4,7 +4,7 @@ Guide for Claude Code or Codex working in the `flow` repo — the standalone hom
 
 Flow uses one attended planning conversation, one human-approved Markdown plan, and one authoritative ticket worktree. Fresh host-native agents provide logical role separation for implementation and review. Keep the driver as the single human cockpit; do not add provider proof, execution capsules, or patch-import transactions around those roles.
 
-The repo is a marketplace-of-one. Keeping the `plugins/flow/` nesting (option a) means the marketplace can later hold companion bundles, and the reflect self-edit path (`plugins/flow/.claude-plugin/plugin.json`) stays valid. `plugins/flow/skills/flow/scripts/MODULE.md` is the live map of the engine — read it to find a script.
+The repo is a marketplace-of-one. Keeping the `plugins/flow/` nesting (option a) means the marketplace can later hold companion bundles, and the reflect self-edit path (`plugins/flow/.claude-plugin/plugin.json`) stays valid. `plugins/flow/skills/flow/scripts/MODULE.md` is the live map of the engine — read it to find a script, and its §Reference docs index to find a prose doc.
 
 ## Dev commands
 
@@ -29,6 +29,7 @@ CI runs all four on every push. Runtime is stdlib-only (`python3`); the venv/mis
 - **Never run `uv run` inside a worktree.** `uv run pytest` creates `plugins/flow/skills/flow/scripts/uv.lock`; the content-ownership commit gate treats it as unowned drift and exits 3. Use the repository's configured `mise` tasks instead. If a stray `uv.lock` already landed, remove it before committing.
 - **`gh pr merge` needs a real branch** — a detached HEAD fails with "could not determine current branch"; merge from a throwaway branch off `origin/main`.
 - **`stage-registry.toml` lives at the skill root** (`plugins/flow/skills/flow/`), never under `scripts/`. A `scripts/stage-registry.toml` entry in `planned_files` reads as unowned drift and aborts the run.
+- **Deleting tests?** Read `plugins/flow/skills/flow/scripts/tests/AUDIT.md` first — 285 tests are protected witnesses cited in landed deletion evidence, and every previously refuted deletion is recorded there with its distinguishing mutation.
 - **Env/CLI quirks** (gh keyring 401, GraphQL `{owner}`/`{repo}`, mise shim heal, zsh word-split, ty ignore syntax): `plugins/flow/skills/flow/references/troubleshooting.md`.
 
 ## Invariants

@@ -206,6 +206,49 @@ The highest-fan-in modules in the flat dir: a signature change here ripples thro
 | `module_map.py` | Render + check the generated derived surfaces: MODULE.md's §Derived surfaces table (subcommand names from AST `add_parser` constants, importers from the AST import graph) and stage-reflect.md's guard-file enumeration (from `triage._GUARD_FILES`). `check` is folded into `seam_check.py`, so CI and the prek hook catch staleness; `write` regenerates in place and is only ever run by a human or agent (hooks stay check-only). | `check` (default; exit 1 stale) / `write` |
 | `seam_check.py` | Structurally validate documented absolute, call-local-harness facade commands against flowctl's allowlist and argparse surfaces. Reject cwd-dependent facades, host-specific public recipes, and stale direct scripts. Enforce managed guidance, descriptor, role, registry, and module-map contracts. | `[--verbose]`. Exit 1 on drift |
 
+## Reference docs (generated)
+
+One line per prose doc under `references/`, rendered from each doc's opening purpose
+sentence by `module_map.py`. Regenerate with `python3 module_map.py write`; hand edits
+inside the markers are overwritten. The machine indexes remain canonical for their maps:
+`public-commands.toml` (command → reference doc) and `stage-registry.toml` (stage →
+reference doc); this table is for finding a doc, not for wiring.
+
+<!-- flow:docs-index:begin -->
+| Doc | Covers |
+|-----|--------|
+| `references/background-pipeline.md` | Backgrounding is a host operation applied to the driver conversation. |
+| `references/command-maintain.md` | Except for workspace-local worktree cleanup, maintenance is restricted to workspaces whose configuration identifies the current repository… |
+| `references/command-measure.md` | FLOW measure reads immutable delivery evidence, tracker history where required, and memory telemetry. |
+| `references/command-memory.md` | Flow memory is append-only source data plus derived indexes. |
+| `references/command-target.md` | This reference owns bare FLOW, FLOW <target>..., and FLOW help. |
+| `references/command-ticket.md` | This reference owns ticket authoring, grouping, and splitting. |
+| `references/command-workspace.md` | Workspace commands manage Flow's local installation, health, repairs, queued tracker writes, and runtime layout. |
+| `references/delivery-loop.md` | The dispatcher owns state, lease refresh, snapshot validation, stage transitions, and the canonical descriptor. |
+| `references/delivery-plan.md` | Planning is an attended conversation owned by the driver. |
+| `references/delivery-repair.md` | Repairs are evidence-specific, target-specific, and confirmation-gated. |
+| `references/delivery-revision.md` | A lifecycle revise action updates a delivered run's open PR. |
+| `references/e2e-recipes.md` | Read this at plan time — delivery-plan.md's recipe-settling step — the moment you settle a ticket's e2e_recipe. |
+| `references/harness.md` | Claude Code and Codex are first-class hosts for the same Flow engine and public grammar. |
+| `references/loop-engineering.md` | Flow has three nested feedback loops |
+| `references/plan-surface.md` | The plan surface renders the human gate of references/delivery-plan.md section 5 as an interactive Lavish session: the exact complete plan… |
+| `references/revision-triage-board.md` | The revision board is the one review-adjacent use of Lavish; the planning-gate use lives in references/plan-surface.md. |
+| `references/robustness.md` | The threat → file → witnessed-failure index that AGENTS.md's "Robustness (do not erode)" paragraph points at. |
+| `references/self-evolution.md` | Flow improves itself through the same ticket-to-PR lifecycle it applies to user work. |
+| `references/stage-code_review.md` | Have one fresh native reviewer challenge the implementation before commit. |
+| `references/stage-commit.md` | Compose a conventional commit, apply the recorded implement-stage diff, and transition the tracker ticket. |
+| `references/stage-create_pr.md` | Opens a PR for the run's feature branch — a draft by default, or ready for review when [create_pr] draft = false in workspace.toml… |
+| `references/stage-e2e.md` | Execute the **e2e recipe the plan declared** and surface any failure. |
+| `references/stage-implement.md` | Implement the ticket against its approved plan using strict TDD, and report only when the tests are green. |
+| `references/stage-merge.md` | The terminal self-merge stage. |
+| `references/stage-plan.md` | The inline plan stage records the one human-approved Markdown plan authored by the driver. |
+| `references/stage-reflect.md` | Extract durable knowledge from this ticket's run, append entries to the compounding memory layer, and (if the ticket shipped) record an… |
+| `references/stage-review_brief.md` | Generate a beautiful, read-only HTML companion for the human reviewing the PR. |
+| `references/stage-review_loop.md` | Wait for the existing pull request's CI result, address actionable review findings, and stop. |
+| `references/stage-ticket.md` | Resolve the ticket key, fetch ticket context from the tracker, write a local cache, and stamp the ticket's frontmatter status to… |
+| `references/troubleshooting.md` | Machine/tool sharp edges that repeatedly burn fresh sessions. |
+<!-- flow:docs-index:end -->
+
 ## Derived surfaces (generated)
 
 Every script's argparse subcommand names and true importers, rendered from the AST by
