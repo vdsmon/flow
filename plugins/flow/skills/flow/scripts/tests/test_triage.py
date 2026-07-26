@@ -701,3 +701,36 @@ def test_recorded_decision_case_sensitive_lowercase_no_match() -> None:
         }
     ]
     assert triage._recorded_decision(comments) is None
+
+
+def test_open_question_fallback_takes_newest_comment() -> None:
+    # No defer-stem comment anywhere: the fallback surfaces the newest comment
+    # by created_at, not list order and not the placeholder.
+    comments = [
+        {"text": "newest question", "created_at": "2026-07-03T00:00:00Z"},
+        {"text": "oldest note", "created_at": "2026-07-01T00:00:00Z"},
+        {"text": "middle note", "created_at": "2026-07-02T00:00:00Z"},
+    ]
+    assert triage._open_question(comments) == "newest question"
+
+
+def test_truncate_collapses_whitespace_and_keeps_exact_width() -> None:
+    assert triage._truncate("a\n  b\tc") == "a b c"
+    exact = "x" * 80
+    assert triage._truncate(exact) == exact
+    over = triage._truncate("y" * 81)
+    assert len(over) == 80
+    assert over.endswith("\u2026")
+
+
+def test_render_table_does_not_tag_other_parenthesized_markers() -> None:
+    rows = [
+        {
+            "key": "flow-c",
+            "status": "blocked",
+            "title": "T",
+            "open_question": "ruled by the reviewer (advocate) pending",
+        }
+    ]
+    table = triage.render_table(rows)
+    assert "(advisor)" not in table

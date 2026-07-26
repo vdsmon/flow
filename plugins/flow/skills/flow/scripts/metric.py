@@ -195,8 +195,6 @@ def classify_attribution(workspace_root: Path, ship_event: dict[str, Any]) -> st
     if _read_stamp(ship_event) is not None:
         return ATTR_VIA_FLOW
     state_path = _state_path(workspace_root, ticket)
-    if not state_path.is_file():
-        return ATTR_NOT_ATTRIBUTED
     try:
         state = json.loads(state_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):

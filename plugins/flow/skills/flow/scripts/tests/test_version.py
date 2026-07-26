@@ -320,3 +320,9 @@ def test_cli_commit_type_defaults_empty(monkeypatch, capsys):
     rc = version.cli_main(["stamp", "--cwd", "."])
     assert rc == 0
     assert seen["commit_type"] == ""
+
+
+def test_bump_for_type_feat_prefixed_type_is_patch() -> None:
+    # The type token is an exact match: "feature" (or any feat-prefixed type)
+    # is not `feat` and takes the patch arm.
+    assert version.bump_for_type("0.27.56", "feature") == "0.27.57"

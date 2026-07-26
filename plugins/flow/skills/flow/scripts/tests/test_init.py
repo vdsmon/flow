@@ -1491,3 +1491,27 @@ def test_explicit_handler_choice_survives_the_probe(tmp_path: Path, monkeypatch)
     monkeypatch.setattr(initmod.shutil, "which", lambda name: "/usr/bin/codex")
     initmod.run_init(_jira_config(tmp_path), reconfigure=True)
     assert _handlers_of(workspace)["code_review"] == "subagent:general-purpose"
+
+
+def test_reconfigure_hard_kill_leaves_no_stale_ledger(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The exception path restores the backup and finalize unlinks on success;
+    # the reconfigure-time `.init-progress` unlink exists for the third path, a
+    # hard kill mid-run. Simulate it with a BaseException (skips the
+    # `except Exception` restore): the stale pre-reconfigure ledger must
+    # already be gone, so a later `--resume` cannot read merged stale+new rows.
+    initmod.run_init(_jira_config(tmp_path))
+    progress = tmp_path / ".flow" / ".init-progress"
+    progress.write_bytes(b'{"phase": "write_workspace", "stale": true}\n')
+
+    monkeypatch.setattr(
+        initmod,
+        "_load_stage_registry",
+        lambda: (_ for _ in ()).throw(KeyboardInterrupt()),
+    )
+
+    with pytest.raises(KeyboardInterrupt):
+        initmod.run_init(_jira_config(tmp_path), reconfigure=True)
+
+    assert not progress.exists()

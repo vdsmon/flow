@@ -521,3 +521,45 @@ def test_git_revert_counts_on_non_beads_backend(tmp_path: Path, monkeypatch) -> 
     assert result["reverts_by_source"]["tracker"] == 0
     assert [r["ticket"] for r in result["git_reverts"]] == ["FT-1"]
     assert _memory_paths.revert_event_path(tmp_path, "demo", revert_sha).exists()
+
+
+def test_reopen_run_straddling_ship_not_a_revert(tmp_path: Path, monkeypatch) -> None:
+    # bd history is global-commit-granular: a still-in_progress-from-before-ship
+    # state re-appears as duplicate rows after shipped_at. Collapse (before the
+    # post-ship filter, keeping the FIRST timestamp of a run) is what stops that
+    # duplicate from reading as a fresh post-ship reopen.
+    _seed_workspace(tmp_path)
+    _write_ship_event(tmp_path, "FT-1", "2026-06-03T00:00:00Z")
+    _patch_history(
+        monkeypatch,
+        {
+            "FT-1": [
+                ("2026-06-02T00:00:00Z", "in_progress"),
+                ("2026-06-03T12:00:00Z", "in_progress"),
+                ("2026-06-04T00:00:00Z", "closed"),
+            ]
+        },
+    )
+    result = _compute(tmp_path)
+    assert result["shipped"] == 1
+    assert result["n_reverts"] == 0
+    assert result["tickets"][0]["reverted"] is False
+
+
+def test_status_row_at_ship_instant_is_not_post_ship(tmp_path: Path, monkeypatch) -> None:
+    # A row stamped exactly at shipped_at is the state AT ship, not after it:
+    # the post-ship slice is strictly `when > shipped_at`.
+    _seed_workspace(tmp_path)
+    _write_ship_event(tmp_path, "FT-1", "2026-06-03T00:00:00Z")
+    _patch_history(
+        monkeypatch,
+        {
+            "FT-1": [
+                ("2026-06-03T00:00:00Z", "in_progress"),
+                ("2026-06-04T00:00:00Z", "closed"),
+            ]
+        },
+    )
+    result = _compute(tmp_path)
+    assert result["n_reverts"] == 0
+    assert result["tickets"][0]["reverted"] is False
