@@ -970,9 +970,9 @@ def _enforce_autonomy_floors(
             "clear the label, then re-run."
         )
 
-    # adjudicate_hot lifts the HOT floor for this (maintainer self-target) workspace: the advisor's
-    # proceed ruling stands for hot changes too, gated by the merge-time guard-property review + CI
-    # instead of this pre-bootstrap refusal. It does not lift the hitl floor above.
+    # adjudicate_hot lifts the HOT floor for this (maintainer self-target) workspace: a hot change
+    # ships like a non-hot one, gated by the merge-time guard-property review + CI instead of this
+    # pre-bootstrap refusal. It does not lift the hitl floor above.
     if triage.adjudicate_hot(main_root):
         return
     if probe.get("is_hot") and not probe.get("decided"):
