@@ -16,10 +16,9 @@ Validates:
 6. Per stage: handler-string parses as `inline | none | subagent:<type> |
    subagent:<plugin>:<type> | skill:<name>[:<args>]`.
 7. Required predecessors precede the stage.
-8. `required = true` stages appear.
-9. `required_when_compounding = true` stages appear iff
+8. `required_when_compounding = true` stages appear iff
    `[memory] compounding = true`.
-10. `[memory]`: `namespace` string; `compounding` bool.
+9. `[memory]`: `namespace` string; `compounding` bool.
 """
 
 from __future__ import annotations
@@ -157,11 +156,6 @@ def _check_stage_registration(
             )
 
     for entry in registry:
-        if entry.required and entry.name not in stages:
-            result.add(
-                "pipeline.stages",
-                f"stage {entry.name!r} is required but missing",
-            )
         if entry.required_when_compounding and compounding and entry.name not in stages:
             result.add(
                 "pipeline.stages",
