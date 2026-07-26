@@ -1,6 +1,6 @@
 # Script map (current)
 
-The live "which script does what" map. One authored row per script: purpose plus the contract notes argparse cannot express (exit codes, artifact paths, who consumes it). The mechanical surface — every script's subcommand names and true importers — is the generated table in §Derived surfaces at the bottom: regenerate it with `python3 module_map.py write`; `seam_check.py` fails when it is stale. For API/contract tables (Jira REST mapping, beads CLI surface, `.flow-bundle.toml` schema, `state.json` schema), see `inventory.md`.
+The live "which script does what" map. One authored row per script: purpose plus the contract notes argparse cannot express (exit codes, artifact paths, who consumes it). The mechanical surface — every script's subcommand names and true importers — is the generated table in §Derived surfaces at the bottom: regenerate it with `python3 module_map.py write`; `seam_check.py` fails when it is stale. For API/contract tables (Jira REST mapping, beads CLI surface, `state.json` schema), see `inventory.md`.
 
 `lib` = imported module, no standalone CLI. Everything else is a thin CLI subprocessed from SKILL.md prose, a reference doc, or another script.
 
@@ -46,7 +46,7 @@ The fifth run-safety mechanism, the content-ownership commit gate, is `diff_extr
 | `cockpit_cli.py` | Construct the cockpit evidence model from an absolute JSON file and render the deterministic attention-first snapshot without probing or mutation. | `render --evidence <absolute-json-file> [--json]`; logical text or compact snapshot JSON, structured JSON errors |
 | `flow_worktree.py` | Post-approval worktree seeding plus the exported `is_ticket_branch` ownership predicate shared by preview and reap. Resolves the approved base, seeds the approved Markdown plan and `state.json`, stamps frontmatter, and binds the worktree's v2 memory pointer to main. Reap guards base/revision state, verifies an optional expected tip, and checkpoints dirty work before removal. | flags per `--help`; `create --auto` gates the unattended path |
 | `branch_ticket.py` | Resolve ticket key from current git branch (backend-aware regex); `--branch <name>` resolves from an explicit branch instead (the PR->ticket enabler for revise). | `--workspace-root [--branch]`; exit 0 match / 1 env / 3 no-match |
-| `bundle_discover.py` (lib) | Harness-aware `.flow-bundle.toml` discovery. Unset/`claude-code` searches `${CLAUDE_CONFIG_DIR:-~/.claude}/plugins` + `<repo>/.claude/plugins`; `codex` searches installed plugins under `${CODEX_HOME:-~/.codex}/plugins`. Unknown adapters fail instead of mixing host installations. | — |
+| `_harness.py` (lib) | The closed host-adapter vocabulary: `flow_harness()` reads `FLOW_HARNESS`, defaults an unset selector to `claude-code`, and raises `HarnessError` on anything but `codex`/`claude-code`. Deliberately import-light — the workspace shims read it on every facade call. | — |
 
 ## Tracker
 
@@ -259,15 +259,15 @@ markers are overwritten. `—` = none.
 |--------|-------------|-------------|
 | `_atomicio.py` | — | `diff_extract`, `dispatch_stage`, `fleet`, `flow_launcher`, `flow_worktree`, `init`, `lease`, `machinery_edit`, `memory_embed`, `pending_mutations`, `recall_pending`, `review_brief`, `runtime_layout`, `snapshot`, `state`, `ticket_frontmatter` |
 | `_evolve_common.py` | — | `evolve_drain`, `evolve_reap`, `evolve_select`, `evolve_self_merge`, `observe_at_close`, `queue_drain`, `queue_select`, `queue_status`, `sweep_knowledge` |
+| `_harness.py` | — | `flow_launcher`, `flowctl`, `init` |
 | `_jsonl.py` | — | `friction_recurrence`, `memory_append`, `memory_embed`, `metric`, `pending_mutations`, `recall`, `recall_pending`, `recall_usage`, `reflect_inputs`, `senses_deadman`, `sweep_knowledge` |
 | `_locking.py` | — | `dispatch_stage`, `fleet`, `flow_friction`, `flow_worktree`, `lease`, `machinery_edit`, `memory_append`, `memory_embed`, `observe_ship_event`, `pending_mutations`, `recall_pending`, `recall_usage`, `runtime_layout`, `state`, `ticket_frontmatter` |
 | `_memory_paths.py` | — | `fleet`, `flow_friction`, `flow_worktree`, `friction_escalate`, `friction_recurrence`, `memory_append`, `memory_embed`, `metric`, `observe_at_close`, `observe_ship_event`, `recall`, `recall_usage`, `reflect_inputs`, `senses_deadman`, `sweep_knowledge` |
-| `_registry.py` | — | `bundle_discover`, `dispatch_stage`, `init`, `lint_ticket`, `seam_check`, `validate_workspace` |
+| `_registry.py` | — | `dispatch_stage`, `init`, `lint_ticket`, `seam_check`, `validate_workspace` |
 | `_runner.py` | — | `_evolve_common`, `branch_ticket`, `create_pr`, `diff_extract`, `evolve_drain`, `evolve_reap`, `evolve_select`, `finalize`, `flow_beads_create`, `flow_worktree`, `forge_bitbucket`, `forge_github`, `friction_escalate`, `init`, `queue_drain`, `queue_select`, `queue_status`, `recall_pending`, `review_brief`, `senses_deadman`, `tracker_beads`, `version`, `worktree_janitor` |
 | `_timeutil.py` | — | `_evolve_common`, `dispatch_stage`, `evolve_drain`, `evolve_reap`, `fleet`, `flow_friction`, `flow_worktree`, `init`, `lease`, `memory_append`, `memory_embed`, `metric`, `observe_at_close`, `observe_ship_event`, `recall`, `recall_pending`, `recall_usage`, `recover`, `runtime_layout`, `senses_deadman`, `state`, `status`, `sweep_knowledge`, `ticket_frontmatter`, `tracker_cli`, `worktree_janitor` |
 | `_workspace.py` | — | `_evolve_common`, `branch_ticket`, `create_pr`, `flow_friction`, `flow_worktree`, `forge`, `friction_escalate`, `maintainer`, `metric`, `model_resolve`, `observe_ship_event`, `recover`, `reflect_inputs`, `revise_config`, `snapshot`, `status`, `tracker_cli`, `triage` |
 | `branch_ticket.py` | — | `finalize`, `worktree_janitor` |
-| `bundle_discover.py` | — | `flow_launcher`, `flowctl`, `init` |
 | `cockpit.py` | — | `cockpit_cli` |
 | `cockpit_cli.py` | `render` | — |
 | `compose_commit.py` | — | — |

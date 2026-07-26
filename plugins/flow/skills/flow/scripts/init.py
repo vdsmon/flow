@@ -38,11 +38,11 @@ from typing import Any, Literal
 
 import flow_launcher
 from _atomicio import atomic_write_bytes, atomic_write_text
+from _harness import HarnessError, flow_harness
 from _registry import StageEntry, load_registry, parse_handler
 from _runner import KwRunner as Runner
 from _runner import kw_default_runner as _default_runner
 from _timeutil import utcnow_iso
-from bundle_discover import HarnessError, flow_harness
 
 # ─── Types ───────────────────────────────────────────────────────────────────
 

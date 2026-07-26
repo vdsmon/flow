@@ -12,7 +12,7 @@ from pathlib import Path
 
 import runtime_layout
 from _atomicio import atomic_write_text
-from bundle_discover import HarnessError, flow_harness
+from _harness import HarnessError, flow_harness
 
 SKILL_ROOT = Path(__file__).resolve().parent.parent
 _MIN_PYTHON = (3, 12)

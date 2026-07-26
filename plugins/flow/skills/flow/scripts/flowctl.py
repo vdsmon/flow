@@ -7,7 +7,7 @@ import os
 import sys
 from pathlib import Path
 
-from bundle_discover import HarnessError, flow_harness
+from _harness import HarnessError, flow_harness
 
 SKILL_ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS_DIR = SKILL_ROOT / "scripts"

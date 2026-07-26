@@ -45,33 +45,6 @@ def _codex_absent(monkeypatch: pytest.MonkeyPatch) -> None:
 # ─── Helpers ─────────────────────────────────────────────────────────────────
 
 
-def _write_manifest(plugin_dir: Path, content: str) -> None:
-    plugin_dir.mkdir(parents=True, exist_ok=True)
-    (plugin_dir / ".flow-bundle.toml").write_text(content, encoding="utf-8")
-
-
-def _ship_it_manifest() -> str:
-    return """schema_version = 1
-[bundle]
-name = "ship-it"
-description = ""
-[skills.create_pr]
-handler_string = "skill:ship-it:create"
-[skills.review_loop]
-handler_string = "skill:ship-it:feedback"
-"""
-
-
-def _code_review_manifest() -> str:
-    return """schema_version = 1
-[bundle]
-name = "code-review"
-description = ""
-[skills.code_review]
-handler_string = "subagent:code-reviewer"
-"""
-
-
 def _bd_ok_runner() -> initmod.Runner:
     def runner(
         args: list[str],
