@@ -56,7 +56,6 @@ The fifth run-safety mechanism, the content-ownership commit gate, is `diff_extr
 | `tracker_cli.py` | CLI wrapper around the Protocol (the only tracker surface the prose calls). | subcommand names in §Derived surfaces |
 | `tracker_jira.py` (lib) | Jira Cloud REST v3 + Agile/1.0 adapter (Basic auth via `ATLASSIAN_EMAIL`/`ATLASSIAN_API_TOKEN`). | — |
 | `tracker_beads.py` (lib) | Beads `bd` CLI adapter (local-only tracker). | — |
-| `resolve_handler.py` | Resolve a `skill:<name>` handler through the selected harness's installed-plugin roots (including the owning workspace's Claude repo-local root): confirm the bundle is installed and valid, then return concrete `skill_name`/`skill_args`. Unknown harnesses fail clearly. | `--handler <string> --search-roots`; exit 1 not-installed / 2 invalid / 3 discovery or harness error |
 
 ## Forge (PR host)
 
@@ -263,12 +262,12 @@ markers are overwritten. `—` = none.
 | `_jsonl.py` | — | `friction_recurrence`, `memory_append`, `memory_embed`, `metric`, `pending_mutations`, `recall`, `recall_pending`, `recall_usage`, `reflect_inputs`, `senses_deadman`, `sweep_knowledge` |
 | `_locking.py` | — | `dispatch_stage`, `fleet`, `flow_friction`, `flow_worktree`, `lease`, `machinery_edit`, `memory_append`, `memory_embed`, `observe_ship_event`, `pending_mutations`, `recall_pending`, `recall_usage`, `runtime_layout`, `state`, `ticket_frontmatter` |
 | `_memory_paths.py` | — | `fleet`, `flow_friction`, `flow_worktree`, `friction_escalate`, `friction_recurrence`, `memory_append`, `memory_embed`, `metric`, `observe_at_close`, `observe_ship_event`, `recall`, `recall_usage`, `reflect_inputs`, `senses_deadman`, `sweep_knowledge` |
-| `_registry.py` | — | `bundle_discover`, `dispatch_stage`, `init`, `lint_ticket`, `resolve_handler`, `seam_check`, `validate_workspace` |
+| `_registry.py` | — | `bundle_discover`, `dispatch_stage`, `init`, `lint_ticket`, `seam_check`, `validate_workspace` |
 | `_runner.py` | — | `_evolve_common`, `branch_ticket`, `create_pr`, `diff_extract`, `evolve_drain`, `evolve_reap`, `evolve_select`, `finalize`, `flow_beads_create`, `flow_worktree`, `forge_bitbucket`, `forge_github`, `friction_escalate`, `init`, `queue_drain`, `queue_select`, `queue_status`, `recall_pending`, `review_brief`, `senses_deadman`, `tracker_beads`, `version`, `worktree_janitor` |
 | `_timeutil.py` | — | `_evolve_common`, `dispatch_stage`, `evolve_drain`, `evolve_reap`, `fleet`, `flow_friction`, `flow_worktree`, `init`, `lease`, `memory_append`, `memory_embed`, `metric`, `observe_at_close`, `observe_ship_event`, `recall`, `recall_pending`, `recall_usage`, `recover`, `runtime_layout`, `senses_deadman`, `state`, `status`, `sweep_knowledge`, `ticket_frontmatter`, `tracker_cli`, `worktree_janitor` |
 | `_workspace.py` | — | `_evolve_common`, `branch_ticket`, `create_pr`, `flow_friction`, `flow_worktree`, `forge`, `friction_escalate`, `maintainer`, `metric`, `model_resolve`, `observe_ship_event`, `recover`, `reflect_inputs`, `revise_config`, `snapshot`, `status`, `tracker_cli`, `triage` |
 | `branch_ticket.py` | — | `finalize`, `worktree_janitor` |
-| `bundle_discover.py` | — | `flow_launcher`, `flowctl`, `init`, `resolve_handler` |
+| `bundle_discover.py` | — | `flow_launcher`, `flowctl`, `init` |
 | `cockpit.py` | — | `cockpit_cli` |
 | `cockpit_cli.py` | `render` | — |
 | `compose_commit.py` | — | — |
@@ -327,7 +326,6 @@ markers are overwritten. `—` = none.
 | `recall_usage.py` | `detect-misses` `record-usage` | `metric`, `sweep_knowledge` |
 | `recover.py` | `abort` `detect` `reload-snapshot` `retry` `skip` `takeover` | — |
 | `reflect_inputs.py` | — | — |
-| `resolve_handler.py` | — | `snapshot` |
 | `review_brief.py` | `freshness` `render` | — |
 | `revise_config.py` | `apply-floor` | — |
 | `runtime_layout.py` | — | `flow_launcher` |

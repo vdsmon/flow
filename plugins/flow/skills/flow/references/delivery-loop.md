@@ -108,21 +108,6 @@ provenance, so a driver-executed stage is legitimate. Log one best-effort fricti
 event for the downgrade so the pattern stays visible. The downgrade never skips the
 descriptor, the artifact, or the advance.
 
-### Installed skill
-
-Resolve the configured handler through the facade, then invoke it with the host's
-native skill loader and exact declared arguments:
-
-```bash
-FLOW_HARNESS="<harness>" "<facade>" handler --handler "<handler-string>"
-```
-
-Exit 1 (bundle not installed) or 2 (manifest invalid) fails the stage before any
-skill call; the JSON result carries the concrete `skill_name`/`skill_args` to load.
-Capture the full skill response before advancing. An inline skill response
-is not a legitimate turn boundary: continue through artifact capture and advance in
-the same turn.
-
 ### None or unknown
 
 `none` completes without work. An unknown handler is a validation failure and stops;

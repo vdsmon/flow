@@ -30,7 +30,6 @@ COMMANDS = {
     "frontmatter": "ticket_frontmatter.py",
     "group-candidates": "group_candidates.py",
     "group-persist": "group_persist.py",
-    "handler": "resolve_handler.py",
     "harness-eval": "harness_eval.py",
     "lint-comments": "lint_comments.py",
     "lint-ticket": "lint_ticket.py",

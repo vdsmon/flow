@@ -2,7 +2,7 @@
 
 Covers: emit then verify match; workspace.toml edit -> drift names workspace_toml;
 stage-registry edit -> drift names stage_registry; no snapshot -> (True, absent);
-skill-handler plugin file change -> drift via plugin tree hash.
+a tracked file vanishing mid-verify -> fail-closed abort.
 """
 
 from __future__ import annotations
@@ -39,31 +39,6 @@ create_pr = "inline"
 """
 
 
-def _skill_workspace_text() -> str:
-    return """[pipeline]
-stages = ["create_pr"]
-
-[pipeline.handlers]
-create_pr = "skill:ship-it:create"
-"""
-
-
-def _manifest_text(bundle_name: str = "ship-it") -> str:
-    return f"""schema_version = 1
-
-[bundle]
-name = "{bundle_name}"
-description = "Push branch + open PR + wait on CI"
-
-[skills.create_pr]
-handler_string = "skill:{bundle_name}:create"
-required_capabilities = []
-required_outputs = ["pr_url"]
-side_effects = ["git push"]
-stage_compatibility = ["create_pr"]
-"""
-
-
 def _make_skill_root(tmp_path: Path) -> Path:
     skill_root = tmp_path / "skill_root"
     _write(snapshot.stage_registry_path(skill_root), _stage_registry_text())
@@ -74,20 +49,6 @@ def _make_workspace(tmp_path: Path, workspace_text: str) -> Path:
     workspace_root = tmp_path / "workspace"
     _write(workspace_root / ".flow" / "workspace.toml", workspace_text)
     return workspace_root
-
-
-def _make_plugin(tmp_path: Path, bundle_name: str = "ship-it") -> tuple[Path, Path]:
-    """Build a fake plugin dir holding a manifest + one tracked .py file.
-
-    Returns (plugin_parent, plugin_dir). plugin_parent is the search_root that
-    bundle_discover walks; plugin_dir is the manifest's parent (the plugin_root
-    the tree hash covers).
-    """
-    plugin_parent = tmp_path / "plugins"
-    plugin_dir = plugin_parent / bundle_name
-    _write(plugin_dir / ".flow-bundle.toml", _manifest_text(bundle_name))
-    _write(plugin_dir / "handler.py", "def run():\n    return 0\n")
-    return plugin_parent, plugin_dir
 
 
 # ─── Tests ────────────────────────────────────────────────────────────────────
@@ -107,14 +68,14 @@ def test_emit_then_verify_match_bare(tmp_path: Path) -> None:
     assert detail == "match"
 
 
-def test_bare_workspace_has_empty_handlers(tmp_path: Path) -> None:
+def test_payload_components_are_workspace_registry_engine(tmp_path: Path) -> None:
+    # Payload shape is the hashed contract: exactly these three components feed
+    # master_hash. `handlers` was retired with the `skill:` handler form, so its
+    # absence is pinned here rather than left to drift back in unnoticed.
     skill_root = _make_skill_root(tmp_path)
     workspace_root = _make_workspace(tmp_path, _bare_workspace_text())
     snap = snapshot.compute_snapshot(workspace_root, skill_root=skill_root)
-    assert snap["handlers"] == {}
-    assert "workspace_toml" in snap
-    assert "stage_registry" in snap
-    assert "master_hash" in snap
+    assert set(snap) == {"workspace_toml", "stage_registry", "engine", "master_hash"}
 
 
 def test_workspace_edit_drift_names_workspace_toml(tmp_path: Path) -> None:
@@ -155,94 +116,33 @@ def test_verify_with_no_snapshot_is_absent(tmp_path: Path) -> None:
     assert "no snapshot" in detail
 
 
-def test_skill_handler_match(tmp_path: Path) -> None:
-    skill_root = _make_skill_root(tmp_path)
-    workspace_root = _make_workspace(tmp_path, _skill_workspace_text())
-    plugin_parent, _ = _make_plugin(tmp_path)
-
-    snap = snapshot.compute_snapshot(
-        workspace_root, skill_root=skill_root, search_roots=[plugin_parent]
-    )
-    assert "create_pr" in snap["handlers"]
-    assert snap["handlers"]["create_pr"]["manifest"]
-    assert snap["handlers"]["create_pr"]["tree_hash"]
-
-    snapshot.write_snapshot(
-        workspace_root, "FT-1", skill_root=skill_root, search_roots=[plugin_parent]
-    )
-    ok, detail = snapshot.verify_snapshot(
-        workspace_root, "FT-1", skill_root=skill_root, search_roots=[plugin_parent]
-    )
-    assert ok is True
-    assert detail == "match"
-
-
-def test_skill_handler_plugin_file_change_drift(tmp_path: Path) -> None:
-    skill_root = _make_skill_root(tmp_path)
-    workspace_root = _make_workspace(tmp_path, _skill_workspace_text())
-    plugin_parent, plugin_dir = _make_plugin(tmp_path)
-
-    snapshot.write_snapshot(
-        workspace_root, "FT-1", skill_root=skill_root, search_roots=[plugin_parent]
-    )
-
-    _write(plugin_dir / "handler.py", "def run():\n    return 1\n")
-
-    ok, detail = snapshot.verify_snapshot(
-        workspace_root, "FT-1", skill_root=skill_root, search_roots=[plugin_parent]
-    )
-    assert ok is False
-    assert "handler create_pr" in detail
-
-
-# ─── drifted_components / classify_drift ───────────────────────────────────────
-
-
 def test_drifted_components_workspace_toml_only() -> None:
-    stored = {"workspace_toml": "a", "stage_registry": "r", "handlers": {}}
-    current = {"workspace_toml": "b", "stage_registry": "r", "handlers": {}}
+    stored = {"workspace_toml": "a", "stage_registry": "r"}
+    current = {"workspace_toml": "b", "stage_registry": "r"}
     assert snapshot.drifted_components(stored, current) == ["workspace_toml"]
 
 
 def test_drifted_components_workspace_and_stage_registry() -> None:
-    stored = {"workspace_toml": "a", "stage_registry": "r", "handlers": {}}
-    current = {"workspace_toml": "b", "stage_registry": "s", "handlers": {}}
+    stored = {"workspace_toml": "a", "stage_registry": "r"}
+    current = {"workspace_toml": "b", "stage_registry": "s"}
     assert snapshot.drifted_components(stored, current) == ["workspace_toml", "stage_registry"]
 
 
-def test_drifted_components_handler_co_drift() -> None:
-    stored = {
-        "workspace_toml": "a",
-        "stage_registry": "r",
-        "handlers": {"plan": {"tree_hash": "1"}},
-    }
-    current = {
-        "workspace_toml": "b",
-        "stage_registry": "r",
-        "handlers": {"plan": {"tree_hash": "2"}},
-    }
-    assert snapshot.drifted_components(stored, current) == ["workspace_toml", "handler plan"]
-
-
 def test_drifted_components_identical_is_empty() -> None:
-    snap = {"workspace_toml": "a", "stage_registry": "r", "handlers": {"plan": {"tree_hash": "1"}}}
+    snap = {"workspace_toml": "a", "stage_registry": "r", "engine": {}}
     assert snapshot.drifted_components(snap, dict(snap)) == []
 
 
 def test_name_drift_output_unchanged() -> None:
     # regression guard on the formatter refactor: byte-identical to the old body.
-    ws = {"workspace_toml": "a", "stage_registry": "r", "handlers": {}}
-    ws2 = {"workspace_toml": "b", "stage_registry": "r", "handlers": {}}
+    ws = {"workspace_toml": "a", "stage_registry": "r"}
+    ws2 = {"workspace_toml": "b", "stage_registry": "r"}
     assert snapshot._name_drift(ws, ws2) == "drift: workspace_toml"
 
-    both = {"workspace_toml": "b", "stage_registry": "s", "handlers": {}}
+    both = {"workspace_toml": "b", "stage_registry": "s"}
     assert snapshot._name_drift(ws, both) == "drift: workspace_toml, stage_registry"
 
-    h1 = {"workspace_toml": "a", "stage_registry": "r", "handlers": {"plan": {"t": "1"}}}
-    h2 = {"workspace_toml": "a", "stage_registry": "r", "handlers": {"plan": {"t": "2"}}}
-    assert snapshot._name_drift(h1, h2) == "drift: handler plan"
-
-    same = {"workspace_toml": "a", "stage_registry": "r", "handlers": {}}
+    same = {"workspace_toml": "a", "stage_registry": "r"}
     assert snapshot._name_drift(same, dict(same)) == (
         "drift: master_hash mismatch (component diff inconclusive)"
     )
@@ -402,24 +302,26 @@ def test_classify_drift_vanished_stage_registry_fails_closed(tmp_path: Path) -> 
 def test_classify_drift_plugin_reinstall_race_fails_closed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The primary threat: a tracked file vanishes between rglob-enumerate and read_bytes during a
-    plugin reinstall. Physical deletion can't reproduce the enumerate-then-vanish race (rglob never
-    enumerates a gone file), so patch read_bytes to raise on the real _tree_hash read path and prove
-    classify_drift catches it into a fail-closed abort."""
+    """The primary threat: a tracked file vanishes between the existence check and the read while
+    the snapshot is being recomputed. Physical deletion can't reproduce the enumerate-then-vanish
+    race, so patch the real read path to raise and prove classify_drift catches it into a
+    fail-closed abort. Aimed at workspace.toml, a permanently-hashed component (it was aimed at a
+    plugin tree until the `skill:` handler form was retired)."""
     skill_root = _make_skill_root(tmp_path)
-    workspace_root = _make_workspace(tmp_path, _skill_workspace_text())
-    plugin_parent, _ = _make_plugin(tmp_path)
-    snapshot.write_snapshot(
-        workspace_root, "FT-1", skill_root=skill_root, search_roots=[plugin_parent]
-    )
+    workspace_root = _make_workspace(tmp_path, _bare_workspace_text())
+    snapshot.write_snapshot(workspace_root, "FT-1", skill_root=skill_root)
 
-    def boom(self: Path) -> bytes:
-        raise FileNotFoundError("tracked plugin file removed during reinstall")
+    real_read_text = snapshot._read_text
 
-    monkeypatch.setattr(Path, "read_bytes", boom)
+    def boom(path: Path) -> str:
+        if path.name == "workspace.toml":
+            raise FileNotFoundError("tracked file removed mid-verify")
+        return real_read_text(path)
+
+    monkeypatch.setattr(snapshot, "_read_text", boom)
 
     ok, detail, comps, current = snapshot.classify_drift(
-        workspace_root, "FT-1", skill_root=skill_root, search_roots=[plugin_parent]
+        workspace_root, "FT-1", skill_root=skill_root
     )
     assert ok is False
     assert comps == []

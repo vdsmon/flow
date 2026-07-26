@@ -4,23 +4,19 @@ Library module (no CLI). Stdlib-only.
 
 The dispatcher validates workspace.toml at run start, then makes several short
 dispatch subprocess calls (init / next / finish / release) over the life of a
-run. Between those calls a user could edit workspace.toml, a plugin reinstall
-could swap a handler's code, or a manifest could be rewritten. A snapshot taken
-at run start lets each later call recompute the same hash from current on-disk
-content and refuse on mismatch.
+run. Between those calls a user could edit workspace.toml or the stage registry,
+or the engine's own tree could advance underneath the run. A snapshot taken at run
+start lets each later call recompute the same hash from current on-disk content and
+refuse on mismatch.
 
 Snapshot content (hashed via canonical JSON -> sha256):
   - workspace_toml: full text of <workspace_root>/.flow/workspace.toml
   - stage_registry: full text of <skill_root>/stage-registry.toml
-  - handlers: for each pipeline.handlers entry resolving to "skill:<name>...",
-    a {stage: {manifest, tree_hash}} record. manifest is the matching
-    .flow-bundle.toml text; tree_hash is a content hash over every *.py/*.sh/
-    *.md/*.toml under the plugin_root. Bare workspaces have an empty dict here.
   - engine: {branch, tree_hash} over the MAIN checkout's own skill tree (resolved via `git worktree
     list`, stage-registry.toml excluded), active only when that checkout sits on a protected branch
     (the marketplace-tracks-main window where a mid-run checkout advance swaps engine code). {} when
     inactive (feature branch, detached, or not a git repo).
-  - master_hash: sha256 of the canonical-JSON of the four keys above.
+  - master_hash: sha256 of the canonical-JSON of the three keys above.
 
 verify recomputes via compute_snapshot (the single source of hashing), compares
 master_hash to the stored snapshot.sha, and only consults snapshot.json to NAME
@@ -32,17 +28,14 @@ from __future__ import annotations
 import hashlib
 import json
 import subprocess
-import tomllib
 from pathlib import Path
 from typing import Any
 
-import resolve_handler
 from _atomicio import atomic_write_text
 from _workspace import workspace_toml_path
 
 _TREE_GLOBS = ("*.py", "*.sh", "*.md", "*.toml")
 _TREE_SUFFIXES = tuple(glob.lstrip("*") for glob in _TREE_GLOBS)
-_SKILL_PREFIX = "skill:"
 _STAGE_REGISTRY_NAME = "stage-registry.toml"
 
 
@@ -193,8 +186,7 @@ def _engine_component(skill_root: Path) -> dict[str, str]:
 
     Threat (flow-2pp): in the marketplace-tracks-main setup, a mid-run
     `git pull` + `claude plugin marketplace update` swaps dispatch_stage.py /
-    state.py / reference docs under a running pipeline with no drift detection
-    (the handlers component covers only external skill: bundles).
+    state.py / reference docs under a running pipeline with no drift detection.
 
     Anchoring: `_skill_root_from_script()` is BISTABLE mid-run. The do-loop invokes engine scripts
     via the absolute installed path (main checkout) or a repo-relative path (the run's worktree
@@ -242,62 +234,14 @@ def _engine_component(skill_root: Path) -> dict[str, str]:
         return {}
 
 
-def _handler_strings_by_stage(workspace_toml_text: str) -> dict[str, str]:
-    """Pull pipeline.handlers from raw workspace.toml text.
-
-    Reads the table directly rather than via validate_workspace so a snapshot
-    can be computed without the full schema gate (compute must not crash on a
-    minimal workspace). Non-string values are skipped.
-    """
-    try:
-        data = tomllib.loads(workspace_toml_text)
-    except tomllib.TOMLDecodeError:
-        return {}
-    pipeline = data.get("pipeline")
-    if not isinstance(pipeline, dict):
-        return {}
-    handlers = pipeline.get("handlers")
-    if not isinstance(handlers, dict):
-        return {}
-    return {stage: value for stage, value in handlers.items() if isinstance(value, str)}
-
-
-def _handlers_component(
-    workspace_toml_text: str,
-    search_roots: list[Path] | None,
-) -> dict[str, dict[str, str]]:
-    """Build {stage: {manifest, tree_hash}} for every skill: handler.
-
-    An unresolved handler (not installed, or no plugin_root) is recorded with
-    empty manifest + tree_hash rather than crashing; the validate gate normally
-    prevents this, so the marker is minimal.
-    """
-    out: dict[str, dict[str, str]] = {}
-    for stage, handler_string in _handler_strings_by_stage(workspace_toml_text).items():
-        if not handler_string.startswith(_SKILL_PREFIX):
-            continue
-        resolution = resolve_handler.resolve(handler_string, search_roots=search_roots)
-        plugin_root = resolution.plugin_root
-        if not resolution.installed or plugin_root is None:
-            out[stage] = {"manifest": "", "tree_hash": ""}
-            continue
-        root = Path(plugin_root)
-        manifest_path = root / ".flow-bundle.toml"
-        manifest_text = _read_text(manifest_path) if manifest_path.exists() else ""
-        out[stage] = {"manifest": manifest_text, "tree_hash": _tree_hash(root)}
-    return out
-
-
 def _payload(
     workspace_toml_text: str,
     stage_registry_text: str,
-    handlers: dict[str, dict[str, str]],
     engine: dict[str, str],
 ) -> dict[str, Any]:
     return {
         "workspace_toml": workspace_toml_text,
         "stage_registry": stage_registry_text,
-        "handlers": handlers,
         "engine": engine,
     }
 
@@ -306,19 +250,17 @@ def compute_snapshot(
     workspace_root: Path,
     *,
     skill_root: Path,
-    search_roots: list[Path] | None = None,
 ) -> dict[str, Any]:
     """Compute the full snapshot dict from current on-disk content.
 
-    Returns {workspace_toml, stage_registry, handlers, engine, master_hash}.
-    The single source of all serialization + hashing; verify_snapshot re-runs
-    this rather than re-deriving any hash itself.
+    Returns {workspace_toml, stage_registry, engine, master_hash}. The single
+    source of all serialization + hashing; verify_snapshot re-runs this rather
+    than re-deriving any hash itself.
     """
     workspace_toml_text = _read_text(workspace_toml_path(workspace_root))
     stage_registry_text = _read_text(stage_registry_path(skill_root))
-    handlers = _handlers_component(workspace_toml_text, search_roots)
     engine = _engine_component(skill_root)
-    payload = _payload(workspace_toml_text, stage_registry_text, handlers, engine)
+    payload = _payload(workspace_toml_text, stage_registry_text, engine)
     snapshot = dict(payload)
     snapshot["master_hash"] = _sha256_text(_canonical_json(payload))
     return snapshot
@@ -329,7 +271,6 @@ def write_snapshot(
     ticket: str,
     *,
     skill_root: Path,
-    search_roots: list[Path] | None = None,
     snapshot: dict[str, Any] | None = None,
     revision: str | None = None,
 ) -> Path:
@@ -341,9 +282,7 @@ def write_snapshot(
     sub-run's own baseline (default None = the ticket-level path).
     """
     if snapshot is None:
-        snapshot = compute_snapshot(
-            workspace_root, skill_root=skill_root, search_roots=search_roots
-        )
+        snapshot = compute_snapshot(workspace_root, skill_root=skill_root)
     json_path = snapshot_json_path(workspace_root, ticket, revision)
     # sha before json: a partial-write survivor is then sha-present/json-absent, which
     # classify_drift fails CLOSED on, instead of the json-present/sha-absent state it
@@ -358,8 +297,8 @@ def write_snapshot(
 def drifted_components(stored: dict[str, Any], current: dict[str, Any]) -> list[str]:
     """Ordered component labels that differ between stored and current snapshots.
 
-    Labels: "workspace_toml", "stage_registry", "engine", and "handler <stage>"
-    entries. Returns [] for the no-diff (inconclusive) case.
+    Labels: "workspace_toml", "stage_registry", "engine". Returns [] for the
+    no-diff (inconclusive) case.
     """
     changed: list[str] = []
     if stored.get("workspace_toml") != current.get("workspace_toml"):
@@ -371,16 +310,6 @@ def drifted_components(stored: dict[str, Any], current: dict[str, Any]) -> list[
     # a missing key is a real mid-upgrade drift and SHOULD abort (fail closed).
     if (stored.get("engine") or {}) != (current.get("engine") or {}):
         changed.append("engine")
-
-    stored_raw = stored.get("handlers")
-    current_raw = current.get("handlers")
-    stored_handlers: dict[str, Any] = stored_raw if isinstance(stored_raw, dict) else {}
-    current_handlers: dict[str, Any] = current_raw if isinstance(current_raw, dict) else {}
-    changed.extend(
-        f"handler {stage}"
-        for stage in sorted(set(stored_handlers) | set(current_handlers))
-        if stored_handlers.get(stage) != current_handlers.get(stage)
-    )
     return changed
 
 
@@ -400,8 +329,8 @@ def component_files(
 
     workspace_toml and stage_registry map to their path relative to workspace_root (or None when the
     file lives outside it, a separate skill checkout, so the edit cannot be a planned file of this
-    run). A handler or engine tree component maps to None: a tree_hash names no single file, so
-    those drifts are never owned (deliberate scope limit).
+    run). The engine tree component maps to None: a tree_hash names no single file, so that drift is
+    never owned (deliberate scope limit).
     """
     out: dict[str, str | None] = {}
     for component in components:
@@ -427,7 +356,6 @@ def classify_drift(
     ticket: str,
     *,
     skill_root: Path,
-    search_roots: list[Path] | None = None,
     revision: str | None = None,
 ) -> tuple[bool, str, list[str], dict[str, Any] | None]:
     """Recompute and compare against the stored snapshot, naming drifted components.
@@ -447,7 +375,7 @@ def classify_drift(
 
     stored_hash = _read_text(sha_path).strip()
     try:
-        current = compute_snapshot(workspace_root, skill_root=skill_root, search_roots=search_roots)
+        current = compute_snapshot(workspace_root, skill_root=skill_root)
     except OSError as exc:
         return False, f"drift: tracked file vanished or unreadable mid-verify ({exc})", [], None
     if current["master_hash"] == stored_hash:
@@ -470,7 +398,6 @@ def verify_snapshot(
     ticket: str,
     *,
     skill_root: Path,
-    search_roots: list[Path] | None = None,
     revision: str | None = None,
 ) -> tuple[bool, str]:
     """Recompute and compare against the stored snapshot.
@@ -482,7 +409,7 @@ def verify_snapshot(
     sub-run's own baseline (default None = ticket-level).
     """
     ok, detail, _, _ = classify_drift(
-        workspace_root, ticket, skill_root=skill_root, search_roots=search_roots, revision=revision
+        workspace_root, ticket, skill_root=skill_root, revision=revision
     )
     return ok, detail
 
