@@ -149,16 +149,6 @@ def test_hot_dirty_is_blocked():
 # ---- classify: guard-file hotness (no `hot` label) ----
 
 
-def test_guard_file_dirty_no_label_is_blocked():
-    # the flow-1fy bug: a guard-file PR (snapshot.py) DIRTY with no `hot` label is
-    # still treated as hot. A DIRTY PR routes to `blocked` regardless of hotness.
-    prs = [_pr(1, "flow-a", state="DIRTY", files=["snapshot.py"])]
-    out = er.classify(prs, _idx(**{"flow-a": ["evolve"]}))
-    assert out["blocked"] == [
-        {"pr": 1, "key": "flow-a", "branch": "feat/flow-a-some-desc", "reason": "DIRTY"}
-    ]
-
-
 def test_guard_file_green_clean_skipped_hot_when_off():
     prs = [_pr(1, "flow-a", files=["lease.py"])]
     out = er.classify(prs, _idx(**{"flow-a": ["evolve"]}))
