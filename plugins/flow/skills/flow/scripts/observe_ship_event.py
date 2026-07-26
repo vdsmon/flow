@@ -12,7 +12,7 @@ Atomicity: O_EXCL on create. No temp+rename (that would allow overwrite).
 CLI:
   observe_ship_event.py --ticket <key> --evidence-json '<json>'
                         --run-id <16-hex> [--workspace-root <dir>]
-                        [--arm {flow,control}] [--tier <str>]
+                        [--tier <str>]
                         [--acceptance-invariant <str>] [--lane <str>]
                         [--state-json <path>]
 
@@ -22,12 +22,7 @@ Evidence JSON validation rejects with exit 1 if:
 - `shipped_at` missing / fails UTC ISO8601 Z regex
 - `evidence` missing / not dict
 - any extra top-level key present (script owns observed_at / observed_by_run_id /
-  flow_attribution / arm / tier / acceptance_invariant / lane / plugin_version)
-
-The script-owned `arm` key (enum {flow, control}, default 'flow', set via --arm or the
-`arm` param on observe()) tags which experiment lane a ship-event belongs to. It rides
-into both the primary and dupe writes. An `arm` key inside --evidence-json is still
-rejected as an extra top-level input key.
+  flow_attribution / tier / acceptance_invariant / lane / plugin_version)
 
 When a coherent live run state.json is found at ship time (matching run_id, with
 both plan.started_at_iso and create_pr.finished_at_iso present), an owned
@@ -66,7 +61,6 @@ _SHIPPED_AT_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 _RUN_ID_RE = re.compile(r"^[0-9a-f]{16}$")
 
 _ALLOWED_TOP_KEYS: frozenset[str] = frozenset({"ticket", "shipped_at", "evidence"})
-_ALLOWED_ARMS: frozenset[str] = frozenset({"flow", "control"})
 
 
 # ─── Errors ──────────────────────────────────────────────────────────────────
@@ -218,7 +212,6 @@ def observe(
     ticket: str,
     evidence_payload: dict[str, Any],
     run_id: str,
-    arm: str = "flow",
     tier: str = "",
     acceptance_invariant: str = "",
     lane: str = "",
@@ -236,14 +229,11 @@ def observe(
     validated = validate_evidence(evidence_payload, ticket)
     if not _RUN_ID_RE.match(run_id):
         raise _EvidenceInvalid(f"run_id {run_id!r} not 16 hex chars")
-    if arm not in _ALLOWED_ARMS:
-        raise _EvidenceInvalid(f"arm {arm!r} not in {sorted(_ALLOWED_ARMS)}")
     namespace = _memory_paths.resolve_namespace(workspace_root)
     primary = _memory_paths.ship_event_path(workspace_root, namespace, ticket)
     record: dict[str, Any] = dict(validated)
     record["observed_at"] = utcnow_iso()
     record["observed_by_run_id"] = run_id
-    record["arm"] = arm
     record["tier"] = tier
     record["acceptance_invariant"] = acceptance_invariant
     record["lane"] = lane
@@ -316,7 +306,6 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--evidence-json", required=True, help="JSON string.")
     parser.add_argument("--run-id", required=True, help="16-hex run_id from dispatcher.")
     parser.add_argument("--workspace-root", default=".")
-    parser.add_argument("--arm", choices=["flow", "control"], default="flow")
     parser.add_argument("--tier", default="")
     parser.add_argument("--acceptance-invariant", default="")
     parser.add_argument(
@@ -344,7 +333,6 @@ def cli_main(argv: list[str]) -> int:
             args.ticket,
             payload,
             args.run_id,
-            args.arm,
             args.tier,
             args.acceptance_invariant,
             args.lane,

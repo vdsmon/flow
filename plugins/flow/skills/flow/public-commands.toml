@@ -151,23 +151,18 @@ options = [
 [[command]]
 id = "measure"
 path = ["measure"]
-usage = "FLOW measure <throughput|lead-time|friction|reverts|experiment|trend|memory-health|recall-quality|fix-efficacy> [--since <date>] [--until <date>]"
-additional_usages = [
-  "FLOW measure throughput --checkpoint <personal|work> [--manifest <path>]",
-]
-summary = "Measure delivery, quality, experiment, or memory outcomes."
+usage = "FLOW measure <throughput|lead-time|friction|reverts|trend|memory-health|recall-quality|fix-efficacy> [--since <date>] [--until <date>]"
+summary = "Measure delivery, quality, or memory outcomes."
 effect = "read"
 workspace = "required"
 reference = "references/command-measure.md"
 arguments = [
-  { name = "metric", value_type = "choice", cardinality = "one", choices = ["throughput", "lead-time", "friction", "reverts", "experiment", "trend", "memory-health", "recall-quality", "fix-efficacy"] },
+  { name = "metric", value_type = "choice", cardinality = "one", choices = ["throughput", "lead-time", "friction", "reverts", "trend", "memory-health", "recall-quality", "fix-efficacy"] },
 ]
 options = [
   { name = "--since", value_type = "date", cardinality = "zero_or_one", forbidden_argument_values = ["fix-efficacy"] },
   { name = "--until", value_type = "date", cardinality = "zero_or_one", forbidden_argument_values = ["fix-efficacy"] },
   { name = "--json", value_type = "boolean", cardinality = "zero_or_one" },
-  { name = "--checkpoint", value_type = "choice", cardinality = "zero_or_one", choices = ["personal", "work"], allowed_argument_values = ["throughput"] },
-  { name = "--manifest", value_type = "path", cardinality = "zero_or_one", allowed_argument_values = ["throughput"], requires = ["--checkpoint"] },
 ]
 
 [[command]]

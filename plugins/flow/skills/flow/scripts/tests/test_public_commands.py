@@ -269,7 +269,6 @@ def test_renderers_are_deterministic_and_expose_logical_flow_not_host_syntax() -
     grammar = render_grammar_block(registry)
     assert "--verify express|light|full" in grammar
     assert "--threshold <float>" in grammar
-    assert "throughput --checkpoint <personal|work>" in grammar
 
     router = render_router_block(registry)
     assert router == render_router_block(registry)

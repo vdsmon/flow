@@ -11,7 +11,6 @@ calculator:
 | `lead-time` | `time-to-pr` | median and p90 plan-to-PR hours |
 | `friction` | `friction-per-run` | events per run, type, and severity |
 | `reverts` | `revert-rate` | revert rate and tracker/git attribution |
-| `experiment` | `arm-compare` | per-arm flow-vs-control comparison |
 | `trend` | `trend` | combined delivery and memory window |
 | `memory-health` | `corpus-health` | live, superseded, and aging knowledge |
 | `recall-quality` | `recall-hit-rate` | surfaced, used, and miss proxy |
@@ -40,16 +39,6 @@ Count immutable ship events in the window. Split deliveries whose ticket, run, a
 reflection evidence bind correctly from backend deliveries that cannot be attributed
 to Flow. Do not infer shipment from a closed tracker ticket alone.
 
-For a checkpoint:
-
-```text
-FLOW measure throughput --checkpoint personal|work [--manifest <path>]
-```
-
-aggregate only participants in the selected manifest mode. The internal seam receives
-the resolved manifest and mode; surface missing participants rather than silently
-dropping them.
-
 ### Lead time
 
 For Flow-attributed ship events, measure plan start through PR creation. Report sample
@@ -65,14 +54,6 @@ and breakdowns by stage/type/severity.
 Join ship events with tracker reopen/reclose history where supported and scan git
 revert commits keyed to shipped tickets. Report both sources. A failed git scan fails
 loud rather than returning a misleading zero.
-
-### Experiment
-
-`arm-compare` partitions ship events by their recorded `arm` (flow vs control) and
-compares the arms on throughput, time-to-PR, and revert rate, with a >=2-of-3
-verdict; a revert regression overrides toward GUARD. An empty window exits 1 loudly
-rather than reporting an all-zeros verdict. Output is JSON-only (the `--json` note
-above does not apply to it).
 
 ### Trend
 

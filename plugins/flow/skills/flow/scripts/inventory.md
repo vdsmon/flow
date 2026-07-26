@@ -287,7 +287,6 @@ handler_string = "skill:ship-it:feedback"
 | `.flow/.initializing`         | created BEFORE any mutation; left in place on failure      |
 | `.flow/.init-progress`        | append-only JSONL of completed phases; consumed by --resume |
 | `.flow/.initialized`          | atomic rename from `.initializing` ONLY after postconditions pass |
-| `~/.config/flow/checkpoint-manifest.jsonl` | append-only ledger of participating workspaces (one line per init / reconfigure) |
 
 Pre-flight refusal:
 
@@ -845,7 +844,7 @@ Sole writer of `<namespace>/ship-events/<ticket>.json`.
 Atomic + crash-safe.
 
 Flag surface: MODULE.md §Memory / recall.
-Input contract: `--evidence-json` allows top-level keys `ticket`, `shipped_at`, `evidence` only (extras rejected; `--ticket` must match the `ticket` field). `--run-id` is the caller's 16-hex run_id, injected as `observed_by_run_id`. `--arm` is the experiment lane `{flow, control}` (default `flow`); `--tier` / `--acceptance-invariant` / `--lane` are captured at ship time (default `""`).
+Input contract: `--evidence-json` allows top-level keys `ticket`, `shipped_at`, `evidence` only (extras rejected; `--ticket` must match the `ticket` field). `--run-id` is the caller's 16-hex run_id, injected as `observed_by_run_id`. `--tier` / `--acceptance-invariant` / `--lane` are captured at ship time (default `""`).
 
 Two-phase write:
 1. **Primary** via `os.open(O_CREAT | O_EXCL | O_WRONLY)`. Success → write +

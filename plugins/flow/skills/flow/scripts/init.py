@@ -23,8 +23,6 @@ Contract:
 - For backend=beads, runs `bd init --prefix <prefix>` then verifies
   `bd ready --json` returns parseable JSON. Subprocess runner is injectable
   (`bd_runner` constructor arg) so tests can mock without spawning bd.
-- Appends one line to `~/.config/flow/checkpoint-manifest.jsonl` so the
-  14-day-checkpoint metric in `recall.py` has an auditable participant ledger.
 """
 
 from __future__ import annotations
@@ -65,7 +63,6 @@ PhaseLiteral = Literal[
     "bd_init",
     "write_workspace_toml",
     "verify_postconditions",
-    "append_checkpoint",
     "finalize",
 ]
 
@@ -212,11 +209,6 @@ class InitConfig:
     handler_overrides: dict[str, str] = field(default_factory=dict)
     memory_namespace: str | None = None
     memory_compounding: bool = True
-    # Override the default checkpoint-manifest location (tests).
-    checkpoint_manifest_path: Path | None = None
-    # personal | work | scratch. None -> derived from backend. The backend
-    # alignment matrix is enforced (jira != personal, beads != work).
-    checkpoint_mode: str | None = None
     # Override default search roots for bundle discovery (tests).
     bundle_search_roots: list[Path] | None = None
     # Opt-in: add the managed AGENTS.md fallback. Once present, reconfigure keeps
@@ -303,8 +295,8 @@ def _progress_path(root: Path) -> Path:
 def _ensure_init_run_id(initializing: Path) -> str:
     """Create the `.initializing` marker with a run id, or read an existing one.
 
-    The id is stable across `--resume` so checkpoint-append can detect a
-    duplicate from a prior interrupted run.
+    The id is stable across `--resume`, so a resumed init keeps the identity its
+    interrupted predecessor started with.
     """
     initializing.parent.mkdir(parents=True, exist_ok=True)
     if initializing.exists():
@@ -318,10 +310,6 @@ def _ensure_init_run_id(initializing: Path) -> str:
 
 def _workspace_toml_path(root: Path) -> Path:
     return _flow_dir(root) / "workspace.toml"
-
-
-def _default_checkpoint_manifest_path() -> Path:
-    return Path.home() / ".config" / "flow" / "checkpoint-manifest.jsonl"
 
 
 # ─── Slug derivation ────────────────────────────────────────────────────────
@@ -726,39 +714,6 @@ def _verify_bd_ready(config: InitConfig, runner: Runner) -> None:
         raise InitError(f"bd ready --json output is not valid JSON: {exc}") from exc
 
 
-# ─── Checkpoint manifest append ─────────────────────────────────────────────
-
-
-def _append_checkpoint_manifest(
-    config: InitConfig,
-    namespace: str,
-    init_run_id: str,
-) -> None:
-    path = config.checkpoint_manifest_path or _default_checkpoint_manifest_path()
-    workspace_root = str(config.workspace_root.resolve())
-    # Idempotent on --resume: a crash between this append and recording the
-    # progress phase must not double-count this init in the ledger.
-    if _checkpoint_already_recorded(path, workspace_root, init_run_id):
-        return
-    path.parent.mkdir(parents=True, exist_ok=True)
-    ts = utcnow_iso()
-    entry = {
-        "ts": ts,
-        "initialized_at": ts,
-        "workspace_root": workspace_root,
-        "init_run_id": init_run_id,
-        "backend": config.backend,
-        "namespace": namespace,
-        "compounding": config.memory_compounding,
-        "checkpoint_mode": _resolve_checkpoint_mode(config.backend, config.checkpoint_mode),
-    }
-    line = json.dumps(entry, sort_keys=True) + "\n"
-    with path.open("a", encoding="utf-8") as fh:
-        fh.write(line)
-        fh.flush()
-        os.fsync(fh.fileno())
-
-
 # ─── Postconditions ─────────────────────────────────────────────────────────
 
 
@@ -797,25 +752,6 @@ def _verify_workspace_toml(
 # Backend alignment matrix: a jira workspace cannot be "personal" (that would
 # dodge the work time-to-PR gate); a beads workspace cannot be "work". "scratch"
 # opts out of both gates and is allowed for either backend.
-_CHECKPOINT_MODES: dict[str, tuple[str, ...]] = {
-    "jira": ("work", "scratch"),
-    "beads": ("personal", "scratch"),
-}
-_CHECKPOINT_MODE_DEFAULT: dict[str, str] = {"jira": "work", "beads": "personal"}
-
-
-def _resolve_checkpoint_mode(backend: str, mode: str | None) -> str:
-    allowed = _CHECKPOINT_MODES.get(backend, ())
-    if mode is None:
-        return _CHECKPOINT_MODE_DEFAULT.get(backend, "scratch")
-    if mode not in allowed:
-        raise InitError(
-            f"checkpoint_mode={mode!r} not allowed for backend={backend!r}; "
-            f"allowed: {list(allowed)}"
-        )
-    return mode
-
-
 def _validate_config(config: InitConfig) -> None:
     """Validate the resolved answer set. No side effects, safe to re-run."""
     try:
@@ -824,7 +760,6 @@ def _validate_config(config: InitConfig) -> None:
         raise InitError(str(exc)) from exc
     if config.backend not in ("jira", "beads"):
         raise InitError(f"unknown backend {config.backend!r}")
-    _resolve_checkpoint_mode(config.backend, config.checkpoint_mode)
     if config.backend == "jira" and config.jira is None:
         raise InitError("--backend=jira requires --jira-cloud-id + --jira-project-key")
     if config.backend == "beads" and config.beads is None:
@@ -919,30 +854,6 @@ def _restore_reconfigure_backup(root: Path, backup: _ReconfigureBackup) -> None:
 
 
 # ─── Idempotency helpers (resume) ────────────────────────────────────────────
-
-
-def _checkpoint_already_recorded(path: Path, workspace_root: str, init_run_id: str) -> bool:
-    """True if the checkpoint manifest already has an entry for this run.
-
-    Guards `--resume` from appending a duplicate line when a crash landed
-    between writing the checkpoint and recording the progress phase.
-    """
-    if not path.exists():
-        return False
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line:
-            continue
-        try:
-            entry = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if (
-            entry.get("workspace_root") == workspace_root
-            and entry.get("init_run_id") == init_run_id
-        ):
-            return True
-    return False
 
 
 def _bd_already_initialized(config: InitConfig, runner: Runner) -> bool:
@@ -1187,16 +1098,9 @@ def _run_init_phases(
     _run_phase("verify_postconditions", _phase_verify_postconditions)
 
     # This intentionally sits outside the resumable phase ledger. A resumed init must repair
-    # launcher files even when its recorded mkdirs phase is skipped. Install before the durable
-    # checkpoint: a broken facade is not a completed initialization and must not create an auditable
-    # success record.
+    # launcher files even when its recorded mkdirs phase is skipped. Install before the finalize
+    # rename: a broken facade is not a completed initialization and must not be marked one.
     _install_launcher(root)
-
-    def _phase_append_checkpoint() -> dict[str, Any] | None:
-        _append_checkpoint_manifest(config, namespace, init_run_id)
-        return None
-
-    _run_phase("append_checkpoint", _phase_append_checkpoint)
 
     # Phase: finalize, atomic rename .initializing → .initialized
     def _phase_finalize() -> dict[str, Any] | None:
@@ -1245,19 +1149,6 @@ def _coerce_search_roots(value: object) -> list[Path] | None:
     raise InitError(f"--bundle-search-roots must be a string or list, got {type(value).__name__}")
 
 
-def _coerce_checkpoint_path(value: object) -> Path | None:
-    """Normalize --checkpoint-manifest from a string or a single-element list."""
-    if value is None:
-        return None
-    if isinstance(value, list):
-        if len(value) != 1:
-            raise InitError("--checkpoint-manifest list must hold exactly one path")
-        value = value[0]
-    if isinstance(value, str):
-        return Path(value).resolve()
-    raise InitError(f"--checkpoint-manifest must be a string, got {type(value).__name__}")
-
-
 def _build_config_from_args(args: argparse.Namespace) -> InitConfig:
     workspace_root = Path(args.workspace_root or os.getcwd()).resolve()
 
@@ -1294,8 +1185,6 @@ def _build_config_from_args(args: argparse.Namespace) -> InitConfig:
         handler_overrides=overrides,
         memory_namespace=args.memory_namespace or None,
         memory_compounding=compounding,
-        checkpoint_mode=args.checkpoint_mode or None,
-        checkpoint_manifest_path=_coerce_checkpoint_path(args.checkpoint_manifest),
         bundle_search_roots=_coerce_search_roots(args.bundle_search_roots),
         agents_md=args.agents_md,
     )
@@ -1308,13 +1197,6 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--backend", choices=("jira", "beads"), required=False)
     parser.add_argument("--bundle", choices=("bare", "recommended", "custom"), required=False)
     parser.add_argument("--workspace-root", default=None)
-    parser.add_argument(
-        "--checkpoint-mode",
-        choices=("personal", "work", "scratch"),
-        default=None,
-        help="14-day-gate participation mode; derived from backend if omitted.",
-    )
-
     parser.add_argument("--jira-cloud-id", default=None)
     parser.add_argument("--jira-project-key", default=None)
     parser.add_argument("--jira-assignee-account-id", default=None)
@@ -1331,11 +1213,6 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--memory-compounding", default=None)
 
     parser.add_argument("--config", default=None, help="path to JSON file with all answers")
-    parser.add_argument(
-        "--checkpoint-manifest",
-        default=None,
-        help="override default checkpoint-manifest path (tests)",
-    )
     parser.add_argument(
         "--bundle-search-roots",
         default=None,

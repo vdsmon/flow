@@ -115,7 +115,6 @@ def _jira_config(tmp_path: Path) -> initmod.InitConfig:
             assignee_account_id="acct-1",
         ),
         bundle_search_roots=[tmp_path / "_empty"],
-        checkpoint_manifest_path=tmp_path / "_ckpt.jsonl",
     )
 
 
@@ -126,7 +125,6 @@ def _beads_config(tmp_path: Path) -> initmod.InitConfig:
         workspace_root=tmp_path,
         beads=initmod.BeadsConfig(prefix="testpkg"),
         bundle_search_roots=[tmp_path / "_empty"],
-        checkpoint_manifest_path=tmp_path / "_ckpt.jsonl",
     )
 
 
@@ -424,7 +422,6 @@ def test_recommended_bundle_composes_from_discovered_manifests(tmp_path: Path) -
         workspace_root=tmp_path,
         jira=initmod.JiraConfig(cloud_id="x", project_key="FT", assignee_account_id=None),
         bundle_search_roots=[search_root],
-        checkpoint_manifest_path=tmp_path / "_ckpt.jsonl",
     )
     result = initmod.run_init(config)
     assert result.handlers["create_pr"] == "skill:ship-it:create"
@@ -451,7 +448,6 @@ handler_string = "skill:rival-pr:create"
         workspace_root=tmp_path,
         jira=initmod.JiraConfig(cloud_id="x", project_key="FT", assignee_account_id=None),
         bundle_search_roots=[search_root],
-        checkpoint_manifest_path=tmp_path / "_ckpt.jsonl",
     )
     with pytest.raises(initmod.BundleConflictError, match="create_pr"):
         initmod.run_init(config)
@@ -468,7 +464,6 @@ def test_custom_bundle_uses_supplied_handlers(tmp_path: Path) -> None:
             "e2e": "subagent:general-purpose",
         },
         bundle_search_roots=[tmp_path / "_empty"],
-        checkpoint_manifest_path=tmp_path / "_ckpt.jsonl",
     )
     result = initmod.run_init(config)
     assert result.handlers["create_pr"] == "skill:ship-it:create"
@@ -485,7 +480,6 @@ def test_custom_bundle_rejects_illegal_handler_string(tmp_path: Path) -> None:
         jira=initmod.JiraConfig(cloud_id="x", project_key="FT", assignee_account_id=None),
         handler_overrides={"create_pr": "bogus-handler-string"},
         bundle_search_roots=[tmp_path / "_empty"],
-        checkpoint_manifest_path=tmp_path / "_ckpt.jsonl",
     )
     with pytest.raises(initmod.InitError, match="legal handler"):
         initmod.run_init(config)
@@ -499,7 +493,6 @@ def test_custom_bundle_rejects_unknown_stage(tmp_path: Path) -> None:
         jira=initmod.JiraConfig(cloud_id="x", project_key="FT", assignee_account_id=None),
         handler_overrides={"deploy": "skill:foo:bar"},
         bundle_search_roots=[tmp_path / "_empty"],
-        checkpoint_manifest_path=tmp_path / "_ckpt.jsonl",
     )
     with pytest.raises(initmod.InitError, match=r"pipeline\.stages"):
         initmod.run_init(config)
@@ -554,18 +547,6 @@ def test_creates_flow_subdirs(tmp_path: Path) -> None:
     assert not (tmp_path / ".flow" / "FT").exists()
 
 
-def test_checkpoint_manifest_appended(tmp_path: Path) -> None:
-    ckpt = tmp_path / "_ckpt.jsonl"
-    initmod.run_init(_jira_config(tmp_path))
-    lines = ckpt.read_text(encoding="utf-8").splitlines()
-    assert len(lines) == 1
-    entry = json.loads(lines[0])
-    assert entry["backend"] == "jira"
-    assert entry["namespace"] == "FT"
-    assert entry["compounding"] is True
-    assert "workspace_root" in entry
-
-
 def test_pipeline_handlers_covers_every_stage(tmp_path: Path) -> None:
     result = initmod.run_init(_jira_config(tmp_path))
     data = tomllib.loads(result.workspace_toml_path.read_text(encoding="utf-8"))
@@ -583,7 +564,6 @@ def test_compounding_false_drops_reflect_stage(tmp_path: Path) -> None:
         jira=initmod.JiraConfig(cloud_id="x", project_key="FT", assignee_account_id=None),
         memory_compounding=False,
         bundle_search_roots=[tmp_path / "_empty"],
-        checkpoint_manifest_path=tmp_path / "_ckpt.jsonl",
     )
     result = initmod.run_init(config)
     data = tomllib.loads(result.workspace_toml_path.read_text(encoding="utf-8"))
@@ -595,7 +575,6 @@ def test_compounding_false_drops_reflect_stage(tmp_path: Path) -> None:
 
 
 def test_cli_bare_jira(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    ckpt = tmp_path / "_ckpt.jsonl"
     rc = initmod.cli_main(
         [
             "--backend",
@@ -608,8 +587,6 @@ def test_cli_bare_jira(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> No
             "x",
             "--jira-project-key",
             "FT",
-            "--checkpoint-manifest",
-            str(ckpt),
             "--bundle-search-roots",
             str(tmp_path / "_empty"),
         ]
@@ -664,8 +641,6 @@ def test_cli_preflight_exit_code(tmp_path: Path) -> None:
             "x",
             "--jira-project-key",
             "FT",
-            "--checkpoint-manifest",
-            str(tmp_path / "_ckpt.jsonl"),
             "--bundle-search-roots",
             str(tmp_path / "_empty"),
         ]
@@ -698,8 +673,6 @@ handler_string = "skill:rival:create"
             "x",
             "--jira-project-key",
             "FT",
-            "--checkpoint-manifest",
-            str(tmp_path / "_ckpt.jsonl"),
             "--bundle-search-roots",
             str(search_root),
         ]
@@ -734,7 +707,6 @@ def test_config_bundle_search_roots_as_json_list(tmp_path: Path) -> None:
                 "workspace_root": str(tmp_path),
                 "jira_cloud_id": "x",
                 "jira_project_key": "FT",
-                "checkpoint_manifest": str(tmp_path / "_ckpt.jsonl"),
                 "bundle_search_roots": [str(search_root)],
             }
         ),
@@ -753,16 +725,6 @@ def test_coerce_search_roots_handles_string_and_list(tmp_path: Path) -> None:
     assert initmod._coerce_search_roots([str(a), str(b)]) == [a, b]
 
 
-def test_coerce_checkpoint_path_handles_string_and_list(tmp_path: Path) -> None:
-    p = tmp_path / "ckpt.jsonl"
-    assert initmod._coerce_checkpoint_path(None) is None
-    assert initmod._coerce_checkpoint_path(str(p)) == p.resolve()
-    assert initmod._coerce_checkpoint_path([str(p)]) == p.resolve()
-
-
-# ─── [V] validate before marker ──────────────────────────────────────────────
-
-
 def test_invalid_input_leaves_no_initializing_marker(tmp_path: Path) -> None:
     # custom bundle with no handler overrides fails validation. The failure must
     # NOT leave a .initializing marker behind.
@@ -772,7 +734,6 @@ def test_invalid_input_leaves_no_initializing_marker(tmp_path: Path) -> None:
         workspace_root=tmp_path,
         jira=initmod.JiraConfig(cloud_id="x", project_key="FT", assignee_account_id=None),
         bundle_search_roots=[tmp_path / "_empty"],
-        checkpoint_manifest_path=tmp_path / "_ckpt.jsonl",
     )
     with pytest.raises(initmod.InitError, match="custom requires"):
         initmod.run_init(bad)
@@ -827,7 +788,6 @@ def test_failed_reconfigure_restores_prior_workspace(tmp_path: Path) -> None:
         beads=initmod.BeadsConfig(prefix="testpkg"),
         memory_namespace="orig",
         bundle_search_roots=[tmp_path / "_empty"],
-        checkpoint_manifest_path=tmp_path / "_ckpt.jsonl",
     )
     initmod.run_init(first, runner=_bd_ok_runner())
     toml_path = tmp_path / ".flow" / "workspace.toml"
@@ -843,7 +803,6 @@ def test_failed_reconfigure_restores_prior_workspace(tmp_path: Path) -> None:
         beads=initmod.BeadsConfig(prefix="testpkg"),
         memory_namespace="changed",
         bundle_search_roots=[tmp_path / "_empty"],
-        checkpoint_manifest_path=tmp_path / "_ckpt.jsonl",
     )
     with pytest.raises(initmod.InitError, match="bd ready"):
         initmod.run_init(second, runner=_bd_init_ok_ready_bad_runner(), reconfigure=True)
@@ -902,11 +861,11 @@ def test_failed_reconfigure_restores_launcher_metadata_and_agents(
         assert path.stat().st_mode & 0o777 == mode
 
 
-def test_launcher_failure_does_not_append_checkpoint(
+def test_launcher_failure_does_not_mark_initialized(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    checkpoint = tmp_path / "_ckpt.jsonl"
-
+    # The launcher installs before the finalize rename: a broken facade is not a
+    # completed initialization and must not be marked one.
     def fail_install(workspace_root: Path, *, skill_dir: Path | None = None) -> tuple[Path, Path]:
         del workspace_root, skill_dir
         raise OSError("injected launcher failure")
@@ -916,7 +875,7 @@ def test_launcher_failure_does_not_append_checkpoint(
     with pytest.raises(initmod.InitError, match="launcher failure"):
         initmod.run_init(_jira_config(tmp_path))
 
-    assert not checkpoint.exists()
+    assert not (tmp_path / ".flow" / ".initialized").exists()
 
 
 def test_failed_reconfigure_removes_files_absent_before_attempt(
@@ -1020,7 +979,6 @@ def test_successful_reconfigure_swaps_workspace(tmp_path: Path) -> None:
         beads=initmod.BeadsConfig(prefix="testpkg"),
         memory_namespace="orig",
         bundle_search_roots=[tmp_path / "_empty"],
-        checkpoint_manifest_path=tmp_path / "_ckpt.jsonl",
     )
     initmod.run_init(first, runner=_bd_ok_runner())
     toml_path = tmp_path / ".flow" / "workspace.toml"
@@ -1033,7 +991,6 @@ def test_successful_reconfigure_swaps_workspace(tmp_path: Path) -> None:
         beads=initmod.BeadsConfig(prefix="testpkg"),
         memory_namespace="changed",
         bundle_search_roots=[tmp_path / "_empty"],
-        checkpoint_manifest_path=tmp_path / "_ckpt.jsonl",
     )
     initmod.run_init(second, runner=_bd_ok_runner(), reconfigure=True)
     assert tomllib.loads(toml_path.read_text(encoding="utf-8"))["memory"]["namespace"] == "changed"
@@ -1051,57 +1008,13 @@ def test_successful_reconfigure_starts_with_a_fresh_run_id(tmp_path: Path) -> No
 
     initmod.run_init(config, reconfigure=True)
 
-    checkpoint = config.checkpoint_manifest_path
-    assert checkpoint is not None
-    entries = [json.loads(line) for line in checkpoint.read_text(encoding="utf-8").splitlines()]
-    assert entries[-1]["init_run_id"] != stale_run_id
+    # finalize renames .initializing -> .initialized, so the marker holds the run id.
+    assert (flow_dir / ".initialized").read_text(encoding="utf-8").strip() != stale_run_id
     assert not (flow_dir / ".initializing").exists()
     assert not (flow_dir / ".init-progress").exists()
 
 
 # ─── [X] resume idempotency ───────────────────────────────────────────────────
-
-
-def test_resume_does_not_duplicate_checkpoint_line(tmp_path: Path) -> None:
-    # Simulate a crash after the checkpoint was appended but before its progress
-    # phase was recorded. The run id lives in the .initializing marker.
-    flow_dir = tmp_path / ".flow"
-    flow_dir.mkdir()
-    run_id = "fixedrunid"
-    (flow_dir / ".initializing").write_text(run_id + "\n", encoding="utf-8")
-    (flow_dir / "workspace.toml").write_text('[memory]\nnamespace = "FT"\n', encoding="utf-8")
-    ckpt = tmp_path / "_ckpt.jsonl"
-    ckpt.write_text(
-        json.dumps(
-            {
-                "ts": "2026-05-28T00:00:00Z",
-                "workspace_root": str(tmp_path.resolve()),
-                "init_run_id": run_id,
-                "backend": "jira",
-                "namespace": "FT",
-                "compounding": True,
-            }
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-    # Progress recorded through verify_postconditions; append_checkpoint NOT yet.
-    done = [
-        "validate_inputs",
-        "bundle_compose",
-        "mkdirs",
-        "bd_init",
-        "write_workspace_toml",
-        "verify_postconditions",
-    ]
-    (flow_dir / ".init-progress").write_text(
-        "".join(json.dumps({"phase": p, "ts": "2026-05-28T00:00:00Z"}) + "\n" for p in done),
-        encoding="utf-8",
-    )
-
-    initmod.run_init(_jira_config(tmp_path), resume=True)
-    lines = ckpt.read_text(encoding="utf-8").splitlines()
-    assert len(lines) == 1
 
 
 class _StatefulBdRunner:
@@ -1236,7 +1149,6 @@ def test_recommended_with_no_coverage_refuses(tmp_path: Path) -> None:
         workspace_root=tmp_path,
         jira=initmod.JiraConfig(cloud_id="x", project_key="FT", assignee_account_id=None),
         bundle_search_roots=[tmp_path / "_empty"],
-        checkpoint_manifest_path=tmp_path / "_ckpt.jsonl",
     )
     with pytest.raises(initmod.InitError, match="no discovered manifests"):
         initmod.run_init(config)
@@ -1256,7 +1168,6 @@ def test_compose_rejects_empty_skill_handler(tmp_path: Path) -> None:
         workspace_root=tmp_path,
         jira=initmod.JiraConfig(cloud_id="x", project_key="FT", assignee_account_id=None),
         bundle_search_roots=[tmp_path / "_empty"],
-        checkpoint_manifest_path=tmp_path / "_ckpt.jsonl",
     )
     registry = initmod._load_stage_registry()
     stages = initmod._default_pipeline_stages(registry, config.memory_compounding)
@@ -1294,39 +1205,6 @@ def test_write_phase_rejects_illegal_handler(
     with pytest.raises(initmod.InitError, match="illegal handler"):
         initmod.run_init(_jira_config(tmp_path))
     assert not (tmp_path / ".flow" / ".initialized").exists()
-
-
-# ─── checkpoint mode (phase 8d) ──────────────────────────────────────────────
-
-
-def test_resolve_checkpoint_mode_defaults_and_matrix() -> None:
-    assert initmod._resolve_checkpoint_mode("jira", None) == "work"
-    assert initmod._resolve_checkpoint_mode("beads", None) == "personal"
-    assert initmod._resolve_checkpoint_mode("beads", "scratch") == "scratch"
-    assert initmod._resolve_checkpoint_mode("jira", "scratch") == "scratch"
-
-
-def test_jira_personal_checkpoint_mode_rejected() -> None:
-    with pytest.raises(initmod.InitError, match="not allowed"):
-        initmod._resolve_checkpoint_mode("jira", "personal")
-
-
-def test_beads_work_checkpoint_mode_rejected() -> None:
-    with pytest.raises(initmod.InitError, match="not allowed"):
-        initmod._resolve_checkpoint_mode("beads", "work")
-
-
-def test_checkpoint_entry_records_mode_and_initialized_at(tmp_path: Path) -> None:
-    initmod.run_init(_jira_config(tmp_path))
-    ckpt = tmp_path / "_ckpt.jsonl"
-    entries = [
-        json.loads(line) for line in ckpt.read_text(encoding="utf-8").splitlines() if line.strip()
-    ]
-    assert entries[-1]["checkpoint_mode"] == "work"
-    assert entries[-1]["initialized_at"] == entries[-1]["ts"]
-
-
-# ─── flow-nnft: reconfigure preserves customized handlers ──────────────────
 
 
 def test_reconfigure_preserves_customized_handler(tmp_path: Path) -> None:
