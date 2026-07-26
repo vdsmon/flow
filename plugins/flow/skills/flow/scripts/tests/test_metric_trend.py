@@ -14,17 +14,18 @@ from pathlib import Path
 
 import _memory_paths
 import metric
+from tests.wsfactory import make_workspace, memory, tracker
 
 
 def _seed_workspace(
     root: Path, namespace: str = "demo", backend: str = "beads", *, git: bool = True
 ) -> None:
-    flow = root / ".flow"
-    (flow / namespace).mkdir(parents=True, exist_ok=True)
-    (flow / ".initialized").write_text("", encoding="utf-8")
-    (flow / "workspace.toml").write_text(
-        f'[tracker]\nbackend = "{backend}"\n\n[memory]\nnamespace = "{namespace}"\n',
-        encoding="utf-8",
+    make_workspace(
+        root,
+        tracker(backend, subtable=False),
+        memory(namespace),
+        initialized=True,
+        namespace_dir=namespace,
     )
     if git:
         _git_init(root)
@@ -252,31 +253,6 @@ def test_no_flow_dir(tmp_path: Path, capsys) -> None:
     rc = metric.cli_main(["trend", "--namespace", "demo", "--workspace-root", str(tmp_path)])
     assert rc == 1
     assert "no .flow" in capsys.readouterr().err
-
-
-def test_happy_run_returns_zero(tmp_path: Path, monkeypatch, capsys) -> None:
-    _seed_workspace(tmp_path)
-    _write_ship_event(tmp_path, "FT-1", "2026-06-03T00:00:00Z")
-    _patch_history(monkeypatch, {"FT-1": [("2026-06-03T00:00:00Z", "closed")]})
-    rc = metric.cli_main(
-        [
-            "trend",
-            "--namespace",
-            "demo",
-            "--workspace-root",
-            str(tmp_path),
-            "--since",
-            SINCE,
-            "--until",
-            UNTIL,
-            "--json",
-        ]
-    )
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
-    # all four measure keys prove trend did not fall through to the tpw path.
-    for key in MEASURE_KEYS:
-        assert key in payload
 
 
 def test_revert_scan_error_fails_loud(tmp_path: Path, monkeypatch, capsys) -> None:

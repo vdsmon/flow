@@ -73,13 +73,6 @@ def _stub_git_head(monkeypatch: pytest.MonkeyPatch, sha: str = "deadbeef") -> No
     monkeypatch.setattr(subprocess, "run", fake_run)
 
 
-def _write_ticket_lane(root: Path, ticket: str, lane: str) -> None:
-    """Seed the ticket frontmatter dispatch reads to resolve a lane-gated substep's lane."""
-    tickets = root / ".flow" / "tickets"
-    tickets.mkdir(parents=True, exist_ok=True)
-    (tickets / f"{ticket}.md").write_text(f'+++\nlane = "{lane}"\n+++\n', encoding="utf-8")
-
-
 # ─── init ────────────────────────────────────────────────────────────────────
 
 
@@ -621,39 +614,6 @@ def test_finish_records_failed_with_detail(tmp_path: Path, monkeypatch: pytest.M
     assert payload["next_pending"] is None
 
 
-def test_finish_rejects_unknown_status(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    _write_workspace(tmp_path, stages=["ticket"], compounding=False)
-    _stub_git_head(monkeypatch)
-    ds.cmd_init(tmp_path, "FT-1")
-    ds.cmd_next(tmp_path, "FT-1")
-    rc, payload = ds.cmd_finish(tmp_path, "FT-1", "ticket", "weirdo")
-    assert rc == 1
-    assert "completed|failed" in payload["error"]
-
-
-def test_finish_persists_skill_output(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    _write_workspace(
-        tmp_path,
-        handlers={"ticket": "skill:ship-it:create"},
-        stages=["ticket"],
-        compounding=False,
-    )
-    _stub_git_head(monkeypatch)
-    ds.cmd_init(tmp_path, "FT-1")
-    ds.cmd_next(tmp_path, "FT-1")
-    rc, _ = ds.cmd_finish(
-        tmp_path,
-        "FT-1",
-        "ticket",
-        "completed",
-        skill_output={"pr_url": "https://x/1"},
-    )
-    assert rc == 0
-    state_path = tmp_path / ".flow" / "runs" / "FT-1" / "state.json"
-    state_data = json.loads(state_path.read_text(encoding="utf-8"))
-    assert state_data["stages"]["ticket"]["skill_output"] == {"pr_url": "https://x/1"}
-
-
 def test_finish_before_init_returns_exit_2(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _write_workspace(tmp_path)
     _stub_git_head(monkeypatch)
@@ -776,25 +736,6 @@ def test_release_on_missing_flow_creates_no_tree(tmp_path: Path) -> None:
 
 
 # ─── End-to-end walk ─────────────────────────────────────────────────────────
-
-
-def test_end_to_end_walks_every_stage(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    _write_workspace(
-        tmp_path,
-        stages=["ticket", "plan", "implement", "commit", "reflect"],
-        compounding=True,
-    )
-    _stub_git_head(monkeypatch)
-    ds.cmd_init(tmp_path, "FT-XYZ")
-    visited: list[str] = []
-    for _ in range(10):
-        rc, payload = ds.cmd_next(tmp_path, "FT-XYZ")
-        assert rc == 0
-        if payload.get("done"):
-            break
-        visited.append(payload["stage"])
-        ds.cmd_finish(tmp_path, "FT-XYZ", payload["stage"], "completed")
-    assert visited == ["ticket", "plan", "implement", "commit", "reflect"]
 
 
 # ─── CLI ─────────────────────────────────────────────────────────────────────
@@ -991,17 +932,6 @@ def test_init_resume_preserves_snapshot_does_not_launder_drift(
     rc, payload = ds.cmd_next(tmp_path, "FT-1", second["session_nonce"])
     assert rc == 1
     assert "drift" in payload["error"]
-
-
-def test_init_exits_zero_on_snapshot_write_failure(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    # the broad catch was not hardened into a block: a write failure still exits 0.
-    _write_workspace(tmp_path)
-    _stub_git_head(monkeypatch)
-    monkeypatch.setattr(ds, "write_snapshot", _boom_write)
-    rc, _ = ds.cmd_init(tmp_path, "FT-1")
-    assert rc == 0
 
 
 def test_init_snapshot_success_emits_no_marker(

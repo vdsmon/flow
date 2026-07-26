@@ -91,15 +91,6 @@ def test_apply_floor_major_bumps_only_unresolved_minor():
 # ─── CLI ─────────────────────────────────────────────────────────────────────
 
 
-def _run_cli(argv: list[str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        [sys.executable, str(Path(__file__).resolve().parents[1] / "revise_config.py"), *argv],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-
-
 def test_non_table_revise_block_falls_back(tmp_path):
     # a non-table `revise = "x"` must not crash; falls back to the default
     root = _workspace(tmp_path, "revise = 'oops'\n")

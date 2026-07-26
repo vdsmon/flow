@@ -18,32 +18,29 @@ from _locking import LockContention, flock_retry
 # ─── _split_frontmatter ──────────────────────────────────────────────────────
 
 
-def test_split_simple() -> None:
-    text = '+++\nticket = "FT-1"\n+++\n\nbody here\n'
+@pytest.mark.parametrize(
+    ("text", "expected_fm", "expected_body"),
+    [
+        pytest.param(
+            '+++\nticket = "FT-1"\n+++\n\nbody here\n',
+            'ticket = "FT-1"\n',
+            "body here\n",
+            id="simple",
+        ),
+        pytest.param("no delimiter\n", None, "no delimiter\n", id="no_frontmatter"),
+        pytest.param(
+            '+++\nticket = "FT-1"\nbody but no close delim\n',
+            None,
+            '+++\nticket = "FT-1"\nbody but no close delim\n',
+            id="unterminated",
+        ),
+        pytest.param('+++\nticket = "FT-1"\n+++\n', 'ticket = "FT-1"\n', "", id="empty_body"),
+    ],
+)
+def test_split_frontmatter(text: str, expected_fm: str | None, expected_body: str) -> None:
     fm, body = ticket_frontmatter._split_frontmatter(text)
-    assert fm == 'ticket = "FT-1"\n'
-    assert body == "body here\n"
-
-
-def test_split_no_frontmatter() -> None:
-    text = "no delimiter\n"
-    fm, body = ticket_frontmatter._split_frontmatter(text)
-    assert fm is None
-    assert body == text
-
-
-def test_split_unterminated() -> None:
-    text = '+++\nticket = "FT-1"\nbody but no close delim\n'
-    fm, body = ticket_frontmatter._split_frontmatter(text)
-    assert fm is None
-    assert body == text
-
-
-def test_split_empty_body() -> None:
-    text = '+++\nticket = "FT-1"\n+++\n'
-    fm, body = ticket_frontmatter._split_frontmatter(text)
-    assert fm == 'ticket = "FT-1"\n'
-    assert body == ""
+    assert fm == expected_fm
+    assert body == expected_body
 
 
 # ─── read() ──────────────────────────────────────────────────────────────────
@@ -122,11 +119,33 @@ def test_update_overwrites_existing_key(tmp_path: Path) -> None:
     assert data["status"] == "in_progress"
 
 
-def test_update_null_substitution(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("sets", "expected"),
+    [
+        pytest.param({"agent_id": "null"}, {"agent_id": ""}, id="null"),
+        pytest.param(
+            {"draft": "true", "merged": "false"}, {"draft": True, "merged": False}, id="bool"
+        ),
+        pytest.param({"version": "42", "neg": "-7"}, {"version": 42, "neg": -7}, id="int"),
+        pytest.param({"labels": "[a, b, c]"}, {"labels": ["a", "b", "c"]}, id="list"),
+        pytest.param({"labels": "[]"}, {"labels": []}, id="empty_list"),
+        # naive comma-split would tear "a,b" apart and keep the quote chars; the
+        # tomllib-backed parse yields exactly two elements with the comma intact.
+        pytest.param({"labels": '["a,b", "c"]'}, {"labels": ["a,b", "c"]}, id="quoted_commas"),
+        pytest.param(
+            {"summary": 'has "quotes" inside'},
+            {"summary": 'has "quotes" inside'},
+            id="quotes_in_string",
+        ),
+    ],
+)
+def test_update_value_substitution(
+    tmp_path: Path, sets: dict[str, str], expected: dict[str, object]
+) -> None:
     p = tmp_path / "FT-6.md"
-    ticket_frontmatter.update(p, {"agent_id": "null"})
+    ticket_frontmatter.update(p, sets)
     data = ticket_frontmatter.read(p)
-    assert data == {"agent_id": ""}
+    assert data == expected
 
 
 def test_update_now_substitution(tmp_path: Path) -> None:
@@ -134,43 +153,6 @@ def test_update_now_substitution(tmp_path: Path) -> None:
     ticket_frontmatter.update(p, {"started_at": "NOW"})
     data = ticket_frontmatter.read(p)
     assert re.match(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$", data["started_at"])
-
-
-def test_update_bool_substitution(tmp_path: Path) -> None:
-    p = tmp_path / "FT-8.md"
-    ticket_frontmatter.update(p, {"draft": "true", "merged": "false"})
-    data = ticket_frontmatter.read(p)
-    assert data == {"draft": True, "merged": False}
-
-
-def test_update_int_substitution(tmp_path: Path) -> None:
-    p = tmp_path / "FT-9.md"
-    ticket_frontmatter.update(p, {"version": "42", "neg": "-7"})
-    data = ticket_frontmatter.read(p)
-    assert data == {"version": 42, "neg": -7}
-
-
-def test_update_list_substitution(tmp_path: Path) -> None:
-    p = tmp_path / "FT-10.md"
-    ticket_frontmatter.update(p, {"labels": "[a, b, c]"})
-    data = ticket_frontmatter.read(p)
-    assert data == {"labels": ["a", "b", "c"]}
-
-
-def test_update_empty_list(tmp_path: Path) -> None:
-    p = tmp_path / "FT-11.md"
-    ticket_frontmatter.update(p, {"labels": "[]"})
-    data = ticket_frontmatter.read(p)
-    assert data == {"labels": []}
-
-
-def test_update_list_with_quoted_commas(tmp_path: Path) -> None:
-    p = tmp_path / "FT-23.md"
-    ticket_frontmatter.update(p, {"labels": '["a,b", "c"]'})
-    data = ticket_frontmatter.read(p)
-    # naive comma-split would tear "a,b" apart and keep the quote chars; the
-    # tomllib-backed parse yields exactly two elements with the comma intact.
-    assert data == {"labels": ["a,b", "c"]}
 
 
 def test_update_bare_comma_list_warns_but_stores_string(
@@ -191,13 +173,6 @@ def test_update_bracketed_list_does_not_warn(
     p = tmp_path / "FT-30.md"
     ticket_frontmatter.update(p, {"planned_files": "[a.py, b.py]"})
     assert capsys.readouterr().err == ""
-
-
-def test_update_quotes_strings_with_special_chars(tmp_path: Path) -> None:
-    p = tmp_path / "FT-12.md"
-    ticket_frontmatter.update(p, {"summary": 'has "quotes" inside'})
-    data = ticket_frontmatter.read(p)
-    assert data == {"summary": 'has "quotes" inside'}
 
 
 # ─── [O] key quoting on emit ─────────────────────────────────────────────────
@@ -224,42 +199,33 @@ def test_update_dotted_key_stays_flat(tmp_path: Path) -> None:
 # ─── [P] native datetime preserved across unrelated update ───────────────────
 
 
-def test_update_preserves_native_datetime(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("line", "key", "expected"),
+    [
+        pytest.param(
+            "started_at = 2026-05-28T14:32:00Z",
+            "started_at",
+            datetime.datetime(2026, 5, 28, 14, 32, tzinfo=datetime.UTC),
+            id="datetime",
+        ),
+        pytest.param("priority = 1.5", "priority", 1.5, id="float"),
+        pytest.param("budget = inf", "budget", float("inf"), id="float_inf"),
+        pytest.param("at = 07:32:00", "at", datetime.time(7, 32), id="local_time"),
+    ],
+)
+def test_update_preserves_native_scalar(
+    tmp_path: Path, line: str, key: str, expected: object
+) -> None:
     p = tmp_path / "FT-22.md"
-    p.write_text("+++\nstarted_at = 2026-05-28T14:32:00Z\n+++\n", encoding="utf-8")
+    p.write_text(f"+++\n{line}\n+++\n", encoding="utf-8")
     first = ticket_frontmatter.read(p)
-    assert isinstance(first["started_at"], datetime.datetime)
-    ticket_frontmatter.update(p, {"status": "done"})
-    again = ticket_frontmatter.read(p)
-    # an unrelated --set must not rewrite the datetime as a quoted string.
-    assert isinstance(again["started_at"], datetime.datetime)
-    assert again["started_at"] == first["started_at"]
-
-
-def test_update_preserves_float(tmp_path: Path) -> None:
-    p = tmp_path / "FT-24.md"
-    p.write_text("+++\npriority = 1.5\n+++\n", encoding="utf-8")
+    assert first[key] == expected
+    assert type(first[key]) is type(expected)
     ticket_frontmatter.update(p, {"status": "done"})
     data = ticket_frontmatter.read(p)
-    # an unrelated --set must not re-emit the float as the string "1.5".
-    assert isinstance(data["priority"], float)
-    assert data["priority"] == 1.5
-
-
-def test_update_preserves_float_inf(tmp_path: Path) -> None:
-    p = tmp_path / "FT-25.md"
-    p.write_text("+++\nbudget = inf\n+++\n", encoding="utf-8")
-    ticket_frontmatter.update(p, {"status": "done"})
-    data = ticket_frontmatter.read(p)
-    assert data["budget"] == float("inf")
-
-
-def test_update_preserves_local_time(tmp_path: Path) -> None:
-    p = tmp_path / "FT-26.md"
-    p.write_text("+++\nat = 07:32:00\n+++\n", encoding="utf-8")
-    ticket_frontmatter.update(p, {"status": "done"})
-    data = ticket_frontmatter.read(p)
-    assert data["at"] == datetime.time(7, 32)
+    # an unrelated --set must not re-emit the scalar as a quoted string.
+    assert data[key] == expected
+    assert type(data[key]) is type(expected)
 
 
 def test_update_table_value_refuses_untouched(tmp_path: Path) -> None:
@@ -272,16 +238,6 @@ def test_update_table_value_refuses_untouched(tmp_path: Path) -> None:
     with pytest.raises(ticket_frontmatter._SchemaInvalid, match="cannot emit"):
         ticket_frontmatter.update(p, {"status": "done"})
     assert p.read_text(encoding="utf-8") == original
-
-
-def test_cli_update_table_value_returns_2(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    p = tmp_path / "FT-28.md"
-    p.write_text("+++\nmeta = {x = 1}\n+++\n", encoding="utf-8")
-    rc = ticket_frontmatter.cli_main(["update", str(p), "--set", "status=done"])
-    assert rc == 2
-    assert "cannot emit" in capsys.readouterr().err
 
 
 def test_update_malformed_existing_raises(tmp_path: Path) -> None:
@@ -360,18 +316,26 @@ def test_cli_update_persists(tmp_path: Path, capsys: pytest.CaptureFixture[str])
     assert data == {"ticket": "FT-17", "status": "in_progress"}
 
 
-def test_cli_update_malformed_returns_2(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    p = tmp_path / "FT-18.md"
-    p.write_text("+++\nbad = = toml\n+++\n", encoding="utf-8")
-    rc = ticket_frontmatter.cli_main(["update", str(p), "--set", "status=in_progress"])
-    assert rc == 2
-    assert "does not parse" in capsys.readouterr().err
-
-
-def test_cli_update_set_without_eq_returns_2(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+@pytest.mark.parametrize(
+    ("seed_text", "set_arg", "stderr_fragment"),
+    [
+        pytest.param("+++\nmeta = {x = 1}\n+++\n", "status=done", "cannot emit", id="table_value"),
+        pytest.param(
+            "+++\nbad = = toml\n+++\n", "status=in_progress", "does not parse", id="malformed"
+        ),
+        pytest.param(None, "noeq", "missing '='", id="set_without_eq"),
+    ],
+)
+def test_cli_update_returns_2(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    seed_text: str | None,
+    set_arg: str,
+    stderr_fragment: str,
 ) -> None:
-    p = tmp_path / "FT-19.md"
-    rc = ticket_frontmatter.cli_main(["update", str(p), "--set", "noeq"])
+    p = tmp_path / "FT-18.md"
+    if seed_text is not None:
+        p.write_text(seed_text, encoding="utf-8")
+    rc = ticket_frontmatter.cli_main(["update", str(p), "--set", set_arg])
     assert rc == 2
-    assert "missing '='" in capsys.readouterr().err
+    assert stderr_fragment in capsys.readouterr().err

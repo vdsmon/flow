@@ -74,6 +74,11 @@ allowed-unresolved-imports = ["pytest", "fastembed"]
 # deliberately type-loose sample inputs.
 exclude = ["tests/_fixtures"]
 
+[tool.ty.environment]
+# The scripts dir is the import root at runtime (conftest sys.path-inserts it),
+# so tests.* package imports (tests/wsfactory.py) resolve from here.
+extra-paths = ["."]
+
 [[tool.ty.overrides]]
 # Test fakes and fixture builders pass literal JSON-ish blobs; spelling
 # dict[str, Any] on every helper is ceremony that catches nothing. The

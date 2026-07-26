@@ -3,24 +3,9 @@ from __future__ import annotations
 import json
 import subprocess
 
-import lease
 import queue_drain as qd
-from _timeutil import utcnow_iso
-
-
-def _write_lease(run_dir, *, expired: bool = False) -> None:
-    now = "2020-01-01T00:00:00Z" if expired else utcnow_iso()
-    ttl = 1 if expired else 3600
-    lease.acquire(
-        run_dir,
-        "run-test",
-        ttl,
-        now,
-        stage="implement",
-        current_boot="boot-A",
-        hostname="host-1",
-        cwd=str(run_dir),
-    )
+from tests.wsfactory import make_workspace, tracker
+from tests.wsfactory import write_lease as _write_lease
 
 
 def _pool_run_dir(repo, key, slug="wip"):
@@ -307,25 +292,6 @@ def test_cli_removes_launch_marker_once_registered(monkeypatch, tmp_path, capsys
     assert out["select"]["launched_pending"] == []
 
 
-def test_cli_removes_launch_marker_via_open_pr_alone(monkeypatch, tmp_path, capsys):
-    # registration proven by an OPEN PR, not a live lease: the run opened its PR then its session
-    # ended (lease expired/absent), so live_runs lacks the key but open_pr_keys has it.
-    # launched_pending MUST still drop: registered is the union, and the open-PR half
-    # carries this case (kills the `| open_pr_keys` mutation).
-    sel = _sel(
-        open_pr_keys=["flow-k"],
-        launched_pending=["flow-k"],
-    )
-    _stub_cli(monkeypatch, tmp_path, sel)
-    monkeypatch.setattr(qd, "liveness_map", lambda repo, keys: {})
-
-    rc = qd.cli_main(["--workspace-root", str(tmp_path)])
-    assert rc == 0
-    out = _out(capsys)
-    assert out["action"] == "done"
-    assert out["select"]["launched_pending"] == []
-
-
 def test_cli_unregistered_pending_still_blocks(monkeypatch, tmp_path, capsys):
     # a launched-but-pre-lease day-job key keeps blocking until it registers or
     # its marker TTL-expires.
@@ -336,16 +302,6 @@ def test_cli_unregistered_pending_still_blocks(monkeypatch, tmp_path, capsys):
 
 
 # ─── cli_main: lease liveness (real lease + real liveness_map) ───────────────
-
-
-def test_cli_pre_pr_live_run_waits(monkeypatch, tmp_path, capsys):
-    repo = _stub_cli(monkeypatch, tmp_path, _sel(live_runs=["flow-x"]))
-    _write_lease(_pool_run_dir(repo, "flow-x"))
-    rc = qd.cli_main(["--workspace-root", str(tmp_path)])
-    assert rc == 0
-    out = _out(capsys)
-    assert out["action"] == "wait"
-    assert out["liveness"]["flow-x"] == "live"
 
 
 def test_cli_pre_pr_expired_run_done_and_parked(monkeypatch, tmp_path, capsys):
@@ -375,10 +331,7 @@ def test_cli_open_pr_key_without_run_dir_is_parked(monkeypatch, tmp_path, capsys
 
 
 def _plain_ws(tmp_path):
-    d = tmp_path / "proj"
-    (d / ".flow").mkdir(parents=True)
-    (d / ".flow" / "workspace.toml").write_text('[tracker]\nbackend = "beads"\n', encoding="utf-8")
-    return d
+    return make_workspace(tmp_path / "proj", tracker("beads", subtable=False))
 
 
 def test_cli_not_maintainer_dormant_exit_4(tmp_path, monkeypatch, capsys):

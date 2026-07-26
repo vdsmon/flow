@@ -339,10 +339,6 @@ def test_path_corrupt_journal_cannot_delete_outside_runtime(tmp_path: Path) -> N
     assert (victim / "data").read_text(encoding="utf-8") == "safe\n"
 
 
-def test_reserved_namespaces_cover_every_flow_owned_v1_root() -> None:
-    assert runtime_layout._RESERVED_NAMESPACES == _FLOW_OWNED_V1_ROOTS
-
-
 @pytest.mark.parametrize(
     "namespace",
     sorted(

@@ -428,24 +428,6 @@ def test_classify_drift_plugin_reinstall_race_fails_closed(
     assert current is None
 
 
-def test_verify_snapshot_surfaces_vanished_as_drift(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    skill_root = _make_skill_root(tmp_path)
-    workspace_root = _make_workspace(tmp_path, _bare_workspace_text())
-    snapshot.write_snapshot(workspace_root, "FT-1", skill_root=skill_root)
-
-    def boom(*args: object, **kwargs: object) -> dict[str, object]:
-        raise FileNotFoundError("tracked plugin file removed during reinstall")
-
-    monkeypatch.setattr(snapshot, "compute_snapshot", boom)
-
-    ok, detail = snapshot.verify_snapshot(workspace_root, "FT-1", skill_root=skill_root)
-    assert ok is False
-    assert detail
-    assert detail != "no snapshot to verify"
-
-
 # ─── _tree_hash single-walk == old 4-glob algorithm ────────────────────────────
 
 

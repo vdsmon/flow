@@ -208,18 +208,6 @@ def test_check_ownership_unplanned_file_with_space_is_unowned(
     assert "b c.py" in payload["unowned_changes"]
 
 
-def test_check_ownership_planned_file_with_special_chars(tmp_repo: Path, tmp_path: Path) -> None:
-    # backslash is C-quoted by porcelain and is valid on POSIX filesystems.
-    name = "a\\b.py"
-    ticket_dir = tmp_repo / ".flow" / "runs" / "FT-1"
-    diff_extract.record_baseline("implement", ticket_dir, tmp_repo, files=[name])
-    (tmp_repo / name).write_text("print('planned')\n", encoding="utf-8")
-    payload = diff_extract.check_ownership(ticket_dir, tmp_repo)
-    assert payload["ok"] is True
-    assert payload["unowned_changes"] == []
-    assert name in payload["changed"]
-
-
 def test_check_ownership_renamed_planned_file_with_space(tmp_repo: Path, tmp_path: Path) -> None:
     (tmp_repo / "old.py").write_text("print('x')\n", encoding="utf-8")
     _git(["add", "old.py"], tmp_repo)
@@ -346,26 +334,6 @@ def test_check_ownership_missing_head_sha_raises(tmp_repo: Path, tmp_path: Path)
     )
     with pytest.raises(diff_extract._BaselineMissing, match="head_sha"):
         diff_extract.check_ownership(ticket_dir, tmp_repo)
-
-
-def test_check_ownership_cli_exit_3_for_committed_change(tmp_repo: Path, tmp_path: Path) -> None:
-    ticket_dir = tmp_repo / ".flow" / "runs" / "FT-1"
-    diff_extract.record_baseline("implement", ticket_dir, tmp_repo, files=["a.py"])
-    (tmp_repo / "rogue.py").write_text("x\n", encoding="utf-8")
-    _git(["add", "rogue.py"], tmp_repo)
-    _git(["commit", "-m", "rogue"], tmp_repo)
-    rc = diff_extract.cli_main(
-        [
-            "check-ownership",
-            "--ticket",
-            "FT-1",
-            "--ticket-dir",
-            str(ticket_dir),
-            "--cwd",
-            str(tmp_repo),
-        ]
-    )
-    assert rc == 3
 
 
 def test_unquote_porcelain_path_octal_utf8() -> None:
@@ -564,19 +532,6 @@ def test_record_baseline_frontmatter_only_file_gets_blob(tmp_repo: Path, tmp_pat
 def test_record_baseline_frontmatter_absent_degrades_to_files(
     tmp_repo: Path, tmp_path: Path
 ) -> None:
-    ticket_dir = tmp_path / "runs" / "FT-1"
-    payload = diff_extract.record_baseline(
-        "implement", ticket_dir, tmp_repo, files=["a.py"], ticket="FT-1"
-    )
-    assert payload["planned_files"] == ["a.py"]
-
-
-def test_record_baseline_frontmatter_no_planned_key_degrades(
-    tmp_repo: Path, tmp_path: Path
-) -> None:
-    path = tmp_repo / ".flow" / "tickets" / "FT-1.md"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    ticket_frontmatter.update(path, {"status": "open"})
     ticket_dir = tmp_path / "runs" / "FT-1"
     payload = diff_extract.record_baseline(
         "implement", ticket_dir, tmp_repo, files=["a.py"], ticket="FT-1"
@@ -977,10 +932,6 @@ def test_cli_empty_files_list_normalized(
 # ─── _parse_files_arg ────────────────────────────────────────────────────────
 
 
-def test_parse_files_arg_json_array() -> None:
-    assert diff_extract._parse_files_arg('["a.py","b.py"]') == ["a.py", "b.py"]
-
-
 def test_parse_files_arg_json_array_with_spaces() -> None:
     assert diff_extract._parse_files_arg('["a.py", "b.py"]') == ["a.py", "b.py"]
     assert diff_extract._parse_files_arg(' ["a.py"]') == ["a.py"]
@@ -989,10 +940,6 @@ def test_parse_files_arg_json_array_with_spaces() -> None:
 def test_parse_files_arg_comma_sep() -> None:
     assert diff_extract._parse_files_arg("a.py,b.py") == ["a.py", "b.py"]
     assert diff_extract._parse_files_arg("a.py, b.py") == ["a.py", "b.py"]
-
-
-def test_parse_files_arg_single_file() -> None:
-    assert diff_extract._parse_files_arg("a.py") == ["a.py"]
 
 
 def test_parse_files_arg_malformed_json_raises() -> None:

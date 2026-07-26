@@ -69,11 +69,6 @@ def test_base_uses_root_when_set(tmp_path: Path) -> None:
     )
 
 
-def test_base_expands_user_in_root(tmp_path: Path) -> None:
-    _write_workspace(tmp_path, memory_root="~/some/.flow")
-    assert _memory_paths.resolve_memory_base(tmp_path) == Path("~/some/.flow").expanduser()
-
-
 def _write_sibling(root: Path, text: str) -> None:
     flow = root / ".flow"
     flow.mkdir(parents=True, exist_ok=True)
@@ -159,25 +154,34 @@ def test_base_uses_sibling_when_present(tmp_path: Path) -> None:
     assert _memory_paths.resolve_memory_base(tmp_path) == sibling_root
 
 
-def test_base_falls_back_to_workspace_root_when_no_sibling(tmp_path: Path) -> None:
-    # no sibling, [memory].root set -> resolves from workspace.toml (back-compat).
+@pytest.mark.parametrize(
+    "sibling_text",
+    [pytest.param(None, id="no_sibling"), pytest.param("   \n", id="whitespace_sibling")],
+)
+def test_base_falls_back_to_workspace_root(tmp_path: Path, sibling_text: str | None) -> None:
+    # no sibling at all, or an empty/whitespace one, falls through to the next
+    # source: [memory].root in workspace.toml (back-compat).
     toml_root = tmp_path / "toml-store" / ".flow"
     _write_workspace(tmp_path, memory_root=str(toml_root))
+    if sibling_text is not None:
+        _write_sibling(tmp_path, sibling_text)
     assert _memory_paths.resolve_memory_base(tmp_path) == toml_root
 
 
-def test_base_expands_user_in_sibling(tmp_path: Path) -> None:
-    _write_workspace(tmp_path)
-    _write_sibling(tmp_path, "~/some/.flow\n")
+@pytest.mark.parametrize(
+    ("memory_root", "sibling_text"),
+    [
+        pytest.param("~/some/.flow", None, id="in_root"),
+        pytest.param(None, "~/some/.flow\n", id="in_sibling"),
+    ],
+)
+def test_base_expands_user(
+    tmp_path: Path, memory_root: str | None, sibling_text: str | None
+) -> None:
+    _write_workspace(tmp_path, memory_root=memory_root)
+    if sibling_text is not None:
+        _write_sibling(tmp_path, sibling_text)
     assert _memory_paths.resolve_memory_base(tmp_path) == Path("~/some/.flow").expanduser()
-
-
-def test_base_tolerates_empty_or_whitespace_sibling(tmp_path: Path) -> None:
-    # an empty/whitespace sibling falls through to the next source ([memory].root).
-    toml_root = tmp_path / "toml-store" / ".flow"
-    _write_workspace(tmp_path, memory_root=str(toml_root))
-    _write_sibling(tmp_path, "   \n")
-    assert _memory_paths.resolve_memory_base(tmp_path) == toml_root
 
 
 def test_base_tolerates_unparseable_workspace(tmp_path: Path) -> None:
@@ -197,28 +201,27 @@ def _memory_data(root: object) -> dict:
     return {"memory": mem}
 
 
-def test_validate_accepts_absolute_root() -> None:
+@pytest.mark.parametrize(
+    "root_value",
+    [pytest.param("/abs/shared/.flow", id="absolute"), pytest.param(None, id="unset")],
+)
+def test_validate_accepts_root(root_value: object) -> None:
     result = vw.ValidationResult()
-    vw._validate_memory_block(_memory_data("/abs/shared/.flow"), result)
+    vw._validate_memory_block(_memory_data(root_value), result)
     assert all("memory.root" not in v for v in result.violations), result.violations
 
 
-def test_validate_root_unset_is_fine() -> None:
+@pytest.mark.parametrize(
+    ("root_value", "fragments"),
+    [
+        pytest.param("relative/.flow", ("memory.root", "absolute"), id="relative"),
+        pytest.param(123, ("memory.root",), id="non_string"),
+    ],
+)
+def test_validate_rejects_root(root_value: object, fragments: tuple[str, ...]) -> None:
     result = vw.ValidationResult()
-    vw._validate_memory_block(_memory_data(None), result)
-    assert all("memory.root" not in v for v in result.violations), result.violations
-
-
-def test_validate_rejects_relative_root() -> None:
-    result = vw.ValidationResult()
-    vw._validate_memory_block(_memory_data("relative/.flow"), result)
-    assert any("memory.root" in v and "absolute" in v for v in result.violations)
-
-
-def test_validate_rejects_non_string_root() -> None:
-    result = vw.ValidationResult()
-    vw._validate_memory_block(_memory_data(123), result)
-    assert any("memory.root" in v for v in result.violations)
+    vw._validate_memory_block(_memory_data(root_value), result)
+    assert any(all(f in v for f in fragments) for v in result.violations), result.violations
 
 
 def _init_config(tmp_path: Path):

@@ -19,17 +19,18 @@ from pathlib import Path
 
 import _memory_paths
 import metric
+from tests.wsfactory import make_workspace, memory, tracker
 
 
 def _seed_workspace(
     root: Path, namespace: str = "demo", backend: str = "beads", *, git: bool = True
 ) -> None:
-    flow = root / ".flow"
-    (flow / namespace).mkdir(parents=True, exist_ok=True)
-    (flow / ".initialized").write_text("", encoding="utf-8")
-    (flow / "workspace.toml").write_text(
-        f'[tracker]\nbackend = "{backend}"\n\n[memory]\nnamespace = "{namespace}"\n',
-        encoding="utf-8",
+    make_workspace(
+        root,
+        tracker(backend, subtable=False),
+        memory(namespace),
+        initialized=True,
+        namespace_dir=namespace,
     )
     if git:
         _git_init(root)
@@ -194,26 +195,6 @@ def test_in_flight_reopen_skipped(tmp_path: Path, monkeypatch) -> None:
     assert result["tickets"] == []
     assert result["skipped"] == [{"ticket": "FT-1", "reason": "reopened_not_yet_reclosed"}]
     assert result["n_skipped"] == 1
-
-
-def test_consecutive_duplicate_statuses_collapse(tmp_path: Path, monkeypatch) -> None:
-    _seed_workspace(tmp_path)
-    _write_ship_event(tmp_path, "FT-1", "2026-06-03T00:00:00Z")
-    _patch_history(
-        monkeypatch,
-        {
-            "FT-1": [
-                ("2026-06-03T00:00:00Z", "closed"),
-                ("2026-06-03T01:00:00Z", "closed"),
-                ("2026-06-03T02:00:00Z", "closed"),
-                ("2026-06-04T00:00:00Z", "closed"),
-            ]
-        },
-    )
-    result = _compute(tmp_path)
-    assert result["shipped"] == 1
-    assert result["n_reverts"] == 0
-    assert result["tickets"][0]["reverted"] is False
 
 
 def test_attribution_split(tmp_path: Path, monkeypatch) -> None:

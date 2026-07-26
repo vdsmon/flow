@@ -1,0 +1,13 @@
+{
+  "kind": "revert",
+  "observed_at": "2026-07-26T04:16:10Z",
+  "reverted_commit_sha": "23365290b09fc7b34633670b25968626111c8287",
+  "reverting_commit_sha": "52df4fc26e144dada2e5d774e11816c5a9721b31",
+  "reverting_committed_at": "2026-07-26T04:16:10Z",
+  "reverting_subject": "Revert \"feat: child (#2)\"",
+  "source": "git",
+  "ticket": "flow-a1ti.2",
+  "tickets": [
+    "flow-a1ti.2"
+  ]
+}

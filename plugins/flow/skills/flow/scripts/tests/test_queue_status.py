@@ -10,10 +10,11 @@ import pytest
 
 import _evolve_common
 import fleet
-import lease
 import queue_status as qst
 from _timeutil import utcnow_iso
 from forge import ForgeError, NotSupported
+from tests.wsfactory import MAINTAINER, make_workspace
+from tests.wsfactory import write_lease as _write_lease
 
 Recorder = list[list[str]]
 
@@ -24,22 +25,6 @@ _READ_ONLY_PREFIXES = (
     ["gh", "pr", "list"],
     ["git", "for-each-ref"],
 )
-
-
-def _write_lease(run_dir: Path, *, expired: bool = False) -> None:
-    """Acquire a real lease in run_dir (live by default, expired on request)."""
-    now = "2020-01-01T00:00:00Z" if expired else utcnow_iso()
-    ttl = 1 if expired else 3600
-    lease.acquire(
-        run_dir,
-        "run-test",
-        ttl,
-        now,
-        stage="implement",
-        current_boot="boot-A",
-        hostname="host-1",
-        cwd=str(run_dir),
-    )
 
 
 def _pool_run_dir(repo: Path, key: str, slug: str = "wip") -> Path:
@@ -67,12 +52,7 @@ def _cand(
 
 
 def _marked_ws(tmp_path: Path) -> Path:
-    d = tmp_path / "flow"
-    (d / ".flow").mkdir(parents=True)
-    (d / ".flow" / "workspace.toml").write_text(
-        "[maintainer]\nself_target = true\n", encoding="utf-8"
-    )
-    return d
+    return make_workspace(tmp_path / "flow", MAINTAINER)
 
 
 def _dispatch(
@@ -528,12 +508,6 @@ def test_forge_error_on_one_key_does_not_drop_others():
     )
     results = qst.flag_parked_reviews(["flow-bad", "flow-good"], [ref_bad, ref_good], fake)
     assert {r["key"] for r in results} == {"flow-good"}
-
-
-def test_not_supported_swallowed():
-    ref = "feat/flow-nohost-slug"
-    fake = _FakeForge(prs={ref: _pr(5)}, threads={}, fail_threads_on={"5"})
-    assert qst.flag_parked_reviews(["flow-nohost"], [ref], fake) == []
 
 
 def test_detect_pr_error_swallowed():

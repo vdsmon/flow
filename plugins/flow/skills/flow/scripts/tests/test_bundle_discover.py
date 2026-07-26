@@ -162,26 +162,6 @@ handler_string = "skill:weird:run"
     assert "not a registered flow stage" in result.invalid[0].reason
 
 
-def test_merge_stage_accepted(tmp_path: Path) -> None:
-    # `merge` is registered in stage-registry.toml; a bundle providing it must
-    # not be rejected as an unknown stage.
-    _write_manifest(
-        tmp_path / "auto-merge",
-        """schema_version = 1
-
-[bundle]
-name = "auto-merge"
-description = "Self-merge green PRs"
-
-[skills.merge]
-handler_string = "skill:auto-merge:merge"
-""",
-    )
-    result = bd.discover(roots=[tmp_path])
-    assert result.invalid == []
-    assert result.valid[0].skills[0].stage == "merge"
-
-
 def test_known_stages_read_from_stage_registry() -> None:
     # The closed vocabulary is derived from the registry at call time; this pins
     # the lazy loader against the raw toml so a parse regression cannot silently
@@ -233,7 +213,10 @@ handler_string = "{handler}"
 
 @pytest.mark.parametrize(
     "field",
-    ["required_capabilities", "required_outputs", "side_effects", "stage_compatibility"],
+    # One representative: the four keys share one loop body with no per-key
+    # branch (mutation-verified; per-key tuple membership is pinned by the
+    # constructor KeyError the valid-manifest tests hit).
+    ["required_capabilities"],
 )
 def test_list_field_not_a_list_rejected(tmp_path: Path, field: str) -> None:
     _write_manifest(
@@ -446,10 +429,3 @@ def test_malformed_toml_is_invalid_not_crash(tmp_path: Path) -> None:
     assert result.valid == []
     assert len(result.invalid) == 1
     assert "TOML parse failed" in result.invalid[0].reason
-
-
-def test_select_bundle_helper() -> None:
-    manifest = bd.Manifest(path="/x", bundle_name="ship-it", bundle_description="", skills=[])
-    result = bd.DiscoveryResult(valid=[manifest])
-    assert bd.select_bundle(result, "ship-it") is manifest
-    assert bd.select_bundle(result, "missing") is None

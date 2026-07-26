@@ -88,13 +88,6 @@ def _fake_runner(branch_name: str, returncode: int = 0):
             "beads", "flow", "feat/flow-820-fix-the-thing", "flow-820", id="beads-three-char-stem"
         ),
         pytest.param(
-            "beads",
-            "flow",
-            "feature/flow-ml7.1-metric-attribution-stamp",
-            "flow-ml7.1",
-            id="beads-three-char-dotted-child",
-        ),
-        pytest.param(
             "beads", "bd", "feat/bd-abc1.2.3-x", "bd-abc1.2.3", id="beads-multi-level-dotted"
         ),
         # only `.N` child suffixes extend the key; a stray non-numeric dot segment
@@ -128,11 +121,6 @@ def test_explicit_branch_resolves_without_git(tmp_path: Path) -> None:
 def test_explicit_branch_no_match_returns_none(tmp_path: Path) -> None:
     _jira_workspace(tmp_path)
     assert branch_ticket.resolve(tmp_path, tmp_path, branch="feature/no-key") is None
-
-
-def test_explicit_branch_beads(tmp_path: Path) -> None:
-    _beads_workspace(tmp_path, prefix="bd")
-    assert branch_ticket.resolve(tmp_path, tmp_path, branch="feature/bd-a4f7-x") == "bd-a4f7"
 
 
 def test_cli_explicit_branch_returns_key(

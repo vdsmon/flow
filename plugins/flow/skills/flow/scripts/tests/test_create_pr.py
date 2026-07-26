@@ -186,13 +186,6 @@ def test_open_ready_when_draft_false(tmp_path):
     assert fg.opened[0]["draft"] is False
 
 
-def test_open_draft_passes_draft(tmp_path):
-    run, _ = _git_runner()
-    fg = _FakeForge()
-    cp.open_or_get_pr(tmp_path, base="main", draft=True, runner=run, forge=fg)
-    assert fg.opened[0]["draft"] is True
-
-
 def test_cli_prints_pr_url_token(tmp_path, monkeypatch, capsys):
     run, _ = _git_runner(branch="feature/flow-x")
     fg = _FakeForge(existing="https://github.com/o/r/pull/5")

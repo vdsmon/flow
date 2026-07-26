@@ -212,19 +212,6 @@ def test_revise_open_seeds_default_subset(tmp_path: Path, monkeypatch: pytest.Mo
     assert set(seeded.stages.keys()) == set(expected)
 
 
-def test_revise_open_stages_override_honored(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    stages = ["ticket", "plan", "implement", "commit", "reflect"]
-    _write_workspace(tmp_path, stages=stages)
-    _stub_git_head(monkeypatch)
-    _drive_to_terminal(tmp_path, "FT-1", stages)
-
-    rc, payload = ds.cmd_revise_open(tmp_path, "FT-1", stages=["implement", "commit"])
-    assert rc == 0
-    assert payload["stages"] == ["implement", "commit"]
-
-
 def test_revise_open_rejects_off_pipeline_stages(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -17,6 +17,7 @@ import subprocess
 from pathlib import Path
 
 import senses_deadman as sd
+from tests.wsfactory import MAINTAINER, make_workspace, memory, tracker
 
 # ─── Fakes ───────────────────────────────────────────────────────────────────
 
@@ -267,13 +268,8 @@ def test_run_record_latest_end_fail_surfaced():
 
 
 def _seed_workspace(root: Path, *, maintainer: bool = True, namespace: str = "demo") -> None:
-    flow = root / ".flow"
-    flow.mkdir(parents=True, exist_ok=True)
-    marker = "\n[maintainer]\nself_target = true\n" if maintainer else ""
-    (flow / "workspace.toml").write_text(
-        f'[tracker]\nbackend = "beads"\n\n[memory]\nnamespace = "{namespace}"\n{marker}',
-        encoding="utf-8",
-    )
+    marker = (MAINTAINER,) if maintainer else ()
+    make_workspace(root, tracker("beads", subtable=False), memory(namespace), *marker)
 
 
 def _seed_ship_event(root: Path, namespace: str, key: str, shipped_at: str) -> None:

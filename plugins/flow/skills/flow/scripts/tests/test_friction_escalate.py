@@ -14,6 +14,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import friction_escalate as fe
+from tests.wsfactory import MAINTAINER, make_workspace, memory, tracker
 
 Recorder = list[tuple[list[str], Path]]
 
@@ -22,12 +23,13 @@ Recorder = list[tuple[list[str], Path]]
 
 
 def _seed_workspace(root: Path, *, maintainer: bool = False, namespace: str = "demo") -> None:
-    flow = root / ".flow"
-    (flow / namespace).mkdir(parents=True, exist_ok=True)
-    marker = "[maintainer]\nself_target = true\n\n" if maintainer else ""
-    (flow / "workspace.toml").write_text(
-        f'{marker}[tracker]\nbackend = "beads"\n\n[memory]\nnamespace = "{namespace}"\n',
-        encoding="utf-8",
+    marker = (MAINTAINER,) if maintainer else ()
+    make_workspace(
+        root,
+        *marker,
+        tracker("beads", subtable=False),
+        memory(namespace),
+        namespace_dir=namespace,
     )
 
 

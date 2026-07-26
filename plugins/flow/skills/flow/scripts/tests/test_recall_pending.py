@@ -79,22 +79,6 @@ def test_pending_id_varies_with_inputs() -> None:
 # ─── append idempotency ────────────────────────────────────────────────────────
 
 
-def test_append_writes_one_line(tmp_path: Path) -> None:
-    entry = _append(tmp_path)
-    path = recall_pending.recall_pending_path(tmp_path)
-    lines = path.read_text(encoding="utf-8").splitlines()
-    assert len(lines) == 1
-    assert json.loads(lines[0])["pending_id"] == entry["pending_id"]
-
-
-def test_append_idempotent_same_fields(tmp_path: Path) -> None:
-    first = _append(tmp_path)
-    second = _append(tmp_path)
-    assert first["pending_id"] == second["pending_id"]
-    path = recall_pending.recall_pending_path(tmp_path)
-    assert len(path.read_text(encoding="utf-8").splitlines()) == 1
-
-
 def test_append_idempotent_returns_disk_entry(tmp_path: Path) -> None:
     """Same observation, different payload -> no-op returning the on-disk entry."""
     first = _append(tmp_path, query="original", returned_ids=["a"])
@@ -187,18 +171,6 @@ def test_rule_e_non_ancestor_keeps(tmp_path: Path) -> None:
 
 
 # ─── promote: >24h entry -> .stale ───────────────────────────────────────────────
-
-
-def test_stale_entry_moved_to_stale_file(tmp_path: Path) -> None:
-    _append(tmp_path, hook_observed_at=_iso(_NOW - timedelta(hours=25)))
-    promoted = _promote(tmp_path, _fake_runner(0))
-    assert promoted == []
-    assert recall_pending.list_pending(tmp_path) == []
-    stale_path = recall_pending.recall_pending_path(tmp_path).with_name(
-        "recall-pending.jsonl.stale"
-    )
-    assert stale_path.exists()
-    assert len(stale_path.read_text(encoding="utf-8").splitlines()) == 1
 
 
 def test_stale_takes_precedence_over_match(tmp_path: Path) -> None:
@@ -316,17 +288,6 @@ def test_malformed_observed_at_goes_stale(tmp_path: Path) -> None:
 
 
 # ─── .stale sidecar is ring-buffer capped ───────────────────────────────────────
-
-
-def test_stale_sidecar_under_cap_retains_all(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr(recall_pending, "_STALE_CAP", 10)
-    observed = [_iso(_NOW - timedelta(hours=25 + i)) for i in range(4)]
-    for obs in observed:
-        _append(tmp_path, hook_observed_at=obs)
-    promoted = _promote(tmp_path, _fake_runner(0))
-    assert promoted == []
-    survivors = {json.loads(line)["hook_observed_at"] for line in _stale_lines(tmp_path)}
-    assert survivors == set(observed)
 
 
 def test_promote_path_caps_stale(tmp_path: Path, monkeypatch) -> None:

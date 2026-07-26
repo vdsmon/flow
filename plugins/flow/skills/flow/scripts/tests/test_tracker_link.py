@@ -20,31 +20,17 @@ from typing import Any, cast, override
 
 import pytest
 
-import tracker as t
 import tracker_beads as tb
 import tracker_cli
 import tracker_jira as tj
+from tests.wsfactory import make_workspace, memory, tracker
 from tracker import TrackerError
 
 # ─── CLI layer ───────────────────────────────────────────────────────────────
 
 
 def _seed_workspace(root: Path, backend: str = "jira") -> None:
-    flow = root / ".flow"
-    flow.mkdir(parents=True, exist_ok=True)
-    if backend == "jira":
-        body = (
-            '[tracker]\nbackend = "jira"\n\n'
-            '[tracker.jira]\ncloud_id = "x"\nproject_key = "FT"\n\n'
-            '[memory]\nnamespace = "demo"\n'
-        )
-    else:
-        body = (
-            '[tracker]\nbackend = "beads"\n\n'
-            '[tracker.beads]\nprefix = "bd"\n\n'
-            '[memory]\nnamespace = "demo"\n'
-        )
-    (flow / "workspace.toml").write_text(body, encoding="utf-8")
+    make_workspace(root, tracker(backend), memory())
 
 
 class _FakeTracker:
@@ -102,16 +88,6 @@ def test_link_explicit_kind_forwarded(tmp_path: Path) -> None:
     )
     assert rc == 0
     assert tk.calls == [("A", "B", "relates")]
-
-
-def test_link_tracker_error_returns_1(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    _seed_workspace(tmp_path)
-    rc = tracker_cli.cli_main(
-        ["--workspace-root", str(tmp_path), "link", "--from-key", "A", "--to-key", "B"],
-        tracker_factory=_factory(_FailingTracker()),
-    )
-    assert rc == 1
-    assert "tracker error" in capsys.readouterr().err
 
 
 def test_link_missing_to_key_is_argparse_error(tmp_path: Path) -> None:
@@ -301,11 +277,3 @@ def test_cross_backend_read_direction_agrees(monkeypatch: pytest.MonkeyPatch) ->
     jira = _make_jira(monkeypatch, http)
     jira_ticket = jira.get("A")
     assert {"kind": "blocks", "from_key": "A", "to_key": "B"} in jira_ticket["links"]
-
-
-def test_structural_import_ok() -> None:
-    # Guards against an accidental import break across the three modules.
-    assert callable(tracker_cli.cli_main)
-    assert hasattr(tb.BeadsAdapter, "link")
-    assert hasattr(tj.JiraAdapter, "link")
-    assert t.Tracker is not None

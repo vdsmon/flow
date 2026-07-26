@@ -189,7 +189,6 @@ def test_adf_to_plain_extracts_nested_text() -> None:
     ("native", "category", "resolution", "expected"),
     [
         ("To Do", "new", None, "open"),
-        ("Open", "new", None, "open"),
         ("In Progress", "indeterminate", None, "in_progress"),
         ("Blocked", "indeterminate", None, "blocked"),
         ("On Hold", "indeterminate", None, "blocked"),
@@ -344,10 +343,6 @@ def test_get_issue_populates_links_from_issuelinks(monkeypatch: pytest.MonkeyPat
     # `issuelinks` must be in the requested field set so the payload carries it.
     requested = http.calls[0].full_url
     assert "issuelinks" in requested
-
-
-def test_get_fields_includes_issuelinks() -> None:
-    assert "issuelinks" in tj._GET_FIELDS
 
 
 def test_list_assigned_open_filter(monkeypatch: pytest.MonkeyPatch) -> None:

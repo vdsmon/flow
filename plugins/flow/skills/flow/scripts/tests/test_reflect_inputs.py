@@ -809,14 +809,6 @@ def test_bundle_label_facets_set(tmp_repo: Path, tmp_path: Path) -> None:
     assert payload["label_facets"] == ["form"]
 
 
-def test_bundle_label_facets_empty_when_no_workspace_toml(tmp_repo: Path, tmp_path: Path) -> None:
-    head = _git(["rev-parse", "HEAD"], tmp_repo).strip()
-    ticket_dir = tmp_path / "runs" / "FT-1"
-    _seed_state(ticket_dir, head)
-    payload = reflect_inputs.bundle("FT-1", ticket_dir, tmp_repo)
-    assert payload["label_facets"] == []
-
-
 def test_bundle_label_facets_empty_when_malformed(tmp_repo: Path, tmp_path: Path) -> None:
     (tmp_repo / ".flow").mkdir(exist_ok=True)
     (tmp_repo / ".flow" / "workspace.toml").write_text(

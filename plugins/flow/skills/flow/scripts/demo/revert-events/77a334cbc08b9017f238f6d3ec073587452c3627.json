@@ -1,0 +1,13 @@
+{
+  "kind": "revert",
+  "observed_at": "2026-07-26T04:16:09Z",
+  "reverted_commit_sha": "b4d753ff62515116f5e6a76bed206a094e0fb3ce",
+  "reverting_commit_sha": "77a334cbc08b9017f238f6d3ec073587452c3627",
+  "reverting_committed_at": "2026-07-26T04:16:09Z",
+  "reverting_subject": "Revert \"feat: thing (#1)\"",
+  "source": "git",
+  "ticket": "FT-1",
+  "tickets": [
+    "FT-1"
+  ]
+}

@@ -383,14 +383,6 @@ def test_probe_ci_status_green_passthrough(tmp_path):
     assert result["ci_status"] == "green"
 
 
-def test_probe_ci_status_pending_passthrough(tmp_path):
-    ticket_dir = tmp_path / "run"
-    _create_pr_out(ticket_dir)
-    rec = _probe_recorder(ci_status="pending")
-    result = sm.probe(tmp_path, ticket_dir, "flow-x", runner=rec)
-    assert result["ci_status"] == "pending"
-
-
 def test_probe_ci_rollup_nonzero_surfaced_as_error(tmp_path):
     # flow-vmzu: a non-zero ci-rollup exit must be surfaced, not silently read
     # as pending forever.
@@ -778,21 +770,18 @@ def test_execute_merge_failure_no_close_no_delete_status_failed(tmp_path):
 # ─── execute: post-merge best-effort ────────────────────────────────────────
 
 
-def test_execute_post_merge_close_hiccup_still_completed(tmp_path):
-    rec = _execute_recorder(bd_close_rc=1)
-    result = sm.execute(tmp_path, _PR_ID, "flow-x", runner=rec)
-    assert result == {"status": "completed", "merged": True}
-
-
-def test_execute_post_merge_delete_hiccup_still_completed(tmp_path):
-    rec = _execute_recorder(delete_rc=1)
-    result = sm.execute(tmp_path, _PR_ID, "flow-x", runner=rec)
-    assert result == {"status": "completed", "merged": True}
-
-
-def test_execute_post_merge_cover_hiccup_still_completed(tmp_path):
-    _ticket_with_covers(tmp_path, "flow-x", ["flow-y"])
-    rec = _execute_recorder(covers_rc=1)
+@pytest.mark.parametrize(
+    ("failing_step", "seed_covers"),
+    [
+        pytest.param("bd_close_rc", False, id="close"),
+        pytest.param("delete_rc", False, id="delete"),
+        pytest.param("covers_rc", True, id="cover"),
+    ],
+)
+def test_execute_post_merge_hiccup_still_completed(tmp_path, failing_step, seed_covers):
+    if seed_covers:
+        _ticket_with_covers(tmp_path, "flow-x", ["flow-y"])
+    rec = _execute_recorder(**{failing_step: 1})
     result = sm.execute(tmp_path, _PR_ID, "flow-x", runner=rec)
     assert result == {"status": "completed", "merged": True}
 

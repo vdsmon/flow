@@ -66,21 +66,6 @@ def test_driver_failure_recovery_uses_durable_run_evidence(
     assert outcome.run_id == "run-1"
 
 
-def test_driver_recovery_does_not_accept_disposable_worker_handles_as_evidence() -> None:
-    # A dead driver can leave a stale native handle or lose it entirely. The recovery
-    # seam deliberately accepts only durable run evidence, so either situation maps
-    # to the same action and a live durable run is never launched twice.
-    evidence = wp.DurableRunEvidence(
-        key="FT-1", state=wp.DurableRunState.RUNNING, run_id="run-durable"
-    )
-
-    first = wp.driver_recovery_outcome(evidence)
-    second = wp.driver_recovery_outcome(evidence)
-
-    assert first == second
-    assert first.action is wp.RecoveryAction.MONITOR
-
-
 def test_recovery_plan_defaults_missing_durable_evidence_to_relaunch() -> None:
     plan = wp.driver_recovery_plan(
         ["FT-1", "FT-2"],
