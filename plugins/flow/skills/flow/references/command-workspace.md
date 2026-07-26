@@ -30,8 +30,8 @@ stores are non-empty, preserve both and stop. Never choose one by timestamp or s
 
 Setup is convergent. It initializes a new workspace, continues an interrupted setup,
 migrates an older layout, repairs runtime files from the loaded skill, or validates an
-already healthy workspace. Users do not need to rerun it after a normal plugin
-upgrade because entry migration is automatic.
+already healthy workspace. Rerunning it after a normal plugin upgrade is
+unnecessary: entry migration is automatic.
 
 1. Bind `task_root` absolutely and inspect initialization and migration markers.
 2. For an uninitialized workspace, collect:

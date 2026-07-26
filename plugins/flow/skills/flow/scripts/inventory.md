@@ -17,33 +17,32 @@ Contract sections (grep the heading):
 
 ## Jira API inventory
 
-Source: `~/.claude/skills/jira-workflow/{SKILL.md,references/*.md}` — the proven 8-stage pipeline that JiraAdapter must replicate as REST calls.
+Source: the MCP Atlassian call set the Jira adapter replaced. The originating `jira-workflow` skill is gone; this table is now the only record of the mapping.
 
 Distinct MCP Atlassian functions exercised: **7**.
 Direct REST replacements listed below.
-Anything in the Tracker Protocol not exercised by jira-workflow is marked **NEW** — implemented for cross-backend completeness and validated via mocks (no live jira-workflow precedent).
+A Protocol method with no MCP predecessor is marked **NEW** — implemented for tracker-seam parity (a jira and a beads workspace answer the same Protocol) and covered by mocked tests only.
 
 ## Calls used by jira-workflow
 
-| # | jira-workflow MCP function                 | call sites (refs/*.md)             | REST endpoint                                                              | Tracker Protocol method                       |
-|---|--------------------------------------------|------------------------------------|----------------------------------------------------------------------------|-----------------------------------------------|
-| 1 | `getAccessibleAtlassianResources`          | preflight.md:55 (init bootstrap)   | `GET https://api.atlassian.com/oauth/token/accessible-resources`           | constructor-time helper (not a Protocol method) |
-| 2 | `atlassianUserInfo`                        | preflight.md:16 (init bootstrap)   | `GET /rest/api/3/myself`                                                   | constructor-time helper (not a Protocol method) |
-| 3 | `getJiraIssue`                             | ticket.md:52, ticket.md:61         | `GET /rest/api/3/issue/{issueIdOrKey}?fields=...`                          | `get(key) -> Ticket`                          |
-| 4 | `searchJiraIssuesUsingJql`                 | ticket.md:35, ticket.md:53, ticket.md:55 | `POST /rest/api/3/search/jql` (v3 paginated)                         | `list_assigned(filter)`, subtasks (folded into `get` ticket build) |
-| 5 | `getJiraIssueRemoteIssueLinks`             | ticket.md:54                       | `GET /rest/api/3/issue/{issueIdOrKey}/remotelink`                          | folded into `get(key).links` field            |
-| 6 | `getTransitionsForJiraIssue`               | planning.md:11                     | `GET /rest/api/3/issue/{issueIdOrKey}/transitions?expand=transitions.fields` | `list_transitions(key) -> list[Transition]`  |
-| 7 | `transitionJiraIssue`                      | planning.md:11                     | `POST /rest/api/3/issue/{issueIdOrKey}/transitions`                        | `transition(key, transition_id, fields) -> TransitionResult` |
+| # | jira-workflow MCP function                 | REST endpoint                                                              | Tracker Protocol method                       |
+|---|--------------------------------------------|----------------------------------------------------------------------------|-----------------------------------------------|
+| 1 | `getAccessibleAtlassianResources`          | `GET https://api.atlassian.com/oauth/token/accessible-resources`           | constructor-time helper (not a Protocol method) |
+| 2 | `atlassianUserInfo`                        | `GET /rest/api/3/myself`                                                   | constructor-time helper (not a Protocol method) |
+| 3 | `getJiraIssue`                             | `GET /rest/api/3/issue/{issueIdOrKey}?fields=...`                          | `get(key) -> Ticket`                          |
+| 4 | `searchJiraIssuesUsingJql`                 | `POST /rest/api/3/search/jql` (v3 paginated)                               | `list_assigned(filter)`, subtasks (folded into `get` ticket build) |
+| 5 | `getJiraIssueRemoteIssueLinks`             | `GET /rest/api/3/issue/{issueIdOrKey}/remotelink`                          | folded into `get(key).links` field            |
+| 6 | `getTransitionsForJiraIssue`               | `GET /rest/api/3/issue/{issueIdOrKey}/transitions?expand=transitions.fields` | `list_transitions(key) -> list[Transition]`  |
+| 7 | `transitionJiraIssue`                      | `POST /rest/api/3/issue/{issueIdOrKey}/transitions`                        | `transition(key, transition_id, fields) -> TransitionResult` |
 
 JQL used:
 - assigned filter: `assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC`
 - subtasks: `parent = <KEY>`
 - linked: `issue in linkedIssues(<KEY>)`
 
-## Tracker Protocol surface NOT exercised by jira-workflow
+## Tracker Protocol surface with no MCP predecessor
 
-These are required by the Tracker Protocol for cross-backend parity.
-No reference in jira-workflow — implemented from Atlassian REST API v3 docs + Agile REST API.
+Required so a jira and a beads workspace answer the same Protocol calls; written from the Atlassian REST API v3 + Agile REST API docs.
 
 | Protocol method            | REST endpoint                                                                  | Notes |
 |----------------------------|--------------------------------------------------------------------------------|-------|
@@ -92,9 +91,7 @@ No heuristic md→ADF conversion; markdown syntax (headings, lists, code fences)
 | `done`                  | resolution == "Won't Do" / "Cancelled" / "Duplicate" / "Won't Fix" | `cancelled` |
 | `done`                  | *                                     | `done`             |
 
-`adapter_mapping_diagnostic` records which rule fired (e.g.
-`"category=indeterminate + native='In Review' matched in_review heuristic"`)
-so dashboards can audit unexpected categorizations.
+`adapter_mapping_diagnostic` records which rule fired (e.g. `"category=indeterminate + native='In Review' matched in_review heuristic"`), so a wrong mapping is diagnosable from the record itself.
 
 ## Authentication
 
@@ -158,7 +155,7 @@ Adapter resolves:
 
 If step 1 returns zero boards → raise `NotSupported("no scrum board configured for project={project}")`.
 If multiple boards exist → adapter picks first, logs a diagnostic.
-Callers needing deterministic board selection should set `tracker.jira.board_id` in `workspace.toml` (future enhancement; not phase 3).
+Board selection is not configurable: the adapter takes the first active scrum board and logs a diagnostic when several exist (`tracker_jira._resolve_scrum_board`). Add a config key the day a project actually has two boards.
 
 ## Forge (PR host) surface
 
@@ -352,7 +349,7 @@ Adapter wraps a subprocess runner; tests inject a fake.
 | deferred       | cancelled         |
 | closed         | done              |
 
-Unknown natives default to `open` with an `adapter_mapping_diagnostic` flagging the fallback so dashboards can surface the unfamiliar status.
+Unknown natives default to `open` with an `adapter_mapping_diagnostic` flagging the fallback, so an unfamiliar status is visible in the record instead of silently reading as open.
 
 ### Transition synthesis
 
@@ -542,9 +539,9 @@ The canonical-snapshot pattern is live: a content hash is captured once at `init
 
 ## Bookkeeping helpers
 
-Five bookkeeping scripts.
+Six bookkeeping scripts.
 All stdlib-only, library + thin CLI shape, atomic writes where they touch files, `fcntl.flock` where they touch shared mutable state.
-Built to be subprocess'd by `dispatch_stage.py` (phase 5 wiring) but shippable as standalone CLIs first.
+Subprocessed by `dispatch_stage.py`; each also runs standalone.
 
 ### `branch_ticket.py`
 
@@ -579,7 +576,7 @@ HARD GATE pre-stage: validate required ticket frontmatter fields per stage.
 | `--workspace-root <dir>` | Override stage-registry source (default: plugin root). |
 
 Exit 0=continue, 1=block (violations to stderr as `<key>: <reason>`).
-Required fields per stage (8-mvp set, baked into stage-registry.toml):
+Required fields per stage, from `stage-registry.toml`:
 
 - **universal** (every stage): `ticket`, `status`.
 - `implement.required_fields = ["planned_files"]`
@@ -620,8 +617,8 @@ Exit 0=applied or already_applied (idempotent), 1=usage/IO error, 2=refused (out
 
 ## Memory cohort
 
-Four stdlib-only scripts that own `.flow/memory/<namespace>/knowledge.jsonl`, `.flow/memory/<namespace>/ship-events/<ticket>.json`, and the reflect-stage input bundle.
-Same library + thin-CLI shape as 8-mvp.
+The scripts that own `.flow/memory/<namespace>/knowledge.jsonl`, `.flow/memory/<namespace>/ship-events/<ticket>.json`, and the reflect-stage input bundle.
+Same library + thin-CLI shape as the rest of the engine.
 Shared `_memory_paths.py` module handles namespace resolution + path conventions.
 
 ### `_memory_paths.py` (shared helper)

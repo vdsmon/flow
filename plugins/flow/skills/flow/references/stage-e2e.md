@@ -11,7 +11,7 @@ e2e sits AFTER `code_review` so cheap inline review catches obvious issues befor
 By the time you run, the implement diff has already passed review.
 
 The recipe is the project's contract for what e2e means on this ticket.
-Project specifics (auth/login, container setup, memory tuning, which fixture) live IN the recipe — authored at plan time by someone who knows the repo.
+Project specifics (auth/login, container setup, memory tuning, which fixture) live IN the recipe — settled at plan time, with the repo open.
 Your job is to run it exactly, not to reinterpret it.
 
 ## Inputs

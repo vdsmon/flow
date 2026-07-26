@@ -21,7 +21,7 @@
   "interface": {
     "displayName": "Flow",
     "shortDescription": "Start or resume ticket-to-PR work",
-    "longDescription": "Inspect current Flow work, then start, answer, resume, repair, revise, or report a ticket or pull request from durable tracker, run, lease, and forge evidence. Includes isolated worktrees, configured stage handlers, memory, and native collaboration-worker maintenance.",
+    "longDescription": "Inspect current Flow work, then start, answer, resume, repair, revise, or report a ticket or pull request from durable tracker, run, lease, and forge evidence.",
     "developerName": "Victor De Simone",
     "category": "Productivity",
     "capabilities": [
