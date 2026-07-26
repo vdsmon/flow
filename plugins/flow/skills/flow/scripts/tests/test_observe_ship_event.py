@@ -448,13 +448,12 @@ def test_cli_missing_workspace_returns_3(
     assert rc == 3
 
 
-# ─── the four caller-supplied evidence fields, as one matrix ─────────────────
+# ─── the three caller-supplied evidence fields, as one matrix ────────────────
 # (field, cli_flag, sample value, default). Six behaviors each: default,
 # stamps-the-record, present-in-dupe-write, rejected-as-extra-input-key, CLI
-# round-trip, CLI default. arm's choices= domain keeps one standalone test.
+# round-trip, CLI default.
 
 FIELDS = [
-    pytest.param("arm", "--arm", "control", "flow", id="arm"),
     pytest.param("tier", "--tier", "tier:trivial", "", id="tier"),
     pytest.param(
         "acceptance_invariant",
@@ -547,13 +546,6 @@ def test_cli_field_default(
     assert rc == 0
     out = json.loads(capsys.readouterr().out)
     assert json.loads(Path(out["path"]).read_text(encoding="utf-8"))[field] == default
-
-
-def test_arm_invalid_raises(tmp_path: Path) -> None:
-    # arm is the one field with an argparse choices= domain.
-    _seed_workspace(tmp_path)
-    with pytest.raises(observe_ship_event._EvidenceInvalid, match="arm"):
-        observe_ship_event.observe(tmp_path, "FT-1", _payload(), "abcdef0123456789", arm="bogus")
 
 
 # ─── plugin_version (self-read, fully guarded) ───────────────────────────────

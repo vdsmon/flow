@@ -18,7 +18,6 @@ class FakeForge:
 
     def __init__(self, sha: str = SHA_A):
         self.sha = sha
-        self.capabilities = []
         self.source_calls: list[tuple[str, str, str, int, int]] = []
 
     def pr_info(self, pr_id: str):

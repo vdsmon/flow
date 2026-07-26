@@ -133,7 +133,6 @@ def test_observed_writes_to_main_store_from_worktree_state(tmp_path, monkeypatch
     assert data["tier"] == "tier:light"
     assert data["acceptance_invariant"] == "sign stays positive"
     assert data["lane"] == "light"
-    assert data["arm"] == "flow"
     assert data["evidence"] == _ship()["evidence"]
     assert data["shipped_at"] == "2026-05-28T12:00:00Z"
 

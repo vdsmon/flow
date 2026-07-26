@@ -26,12 +26,12 @@ metadata, verifies relative paths/sizes/SHA-256, and only then removes legacy
 metadata. Interrupted work resumes forward from its journal. If both legacy and v2
 stores are non-empty, preserve both and stop. Never choose one by timestamp or size.
 
-## `FLOW workspace setup [--guidance]`
+## `FLOW workspace setup`
 
 Setup is convergent. It initializes a new workspace, continues an interrupted setup,
 migrates an older layout, repairs runtime files from the loaded skill, or validates an
-already healthy workspace. Users do not need to rerun it after a normal plugin
-upgrade because entry migration is automatic.
+already healthy workspace. Rerunning it after a normal plugin upgrade is
+unnecessary: entry migration is automatic.
 
 1. Bind `task_root` absolutely and inspect initialization and migration markers.
 2. For an uninitialized workspace, collect:
@@ -41,14 +41,14 @@ upgrade because entry migration is automatic.
    - Jira cloud/project and optional default assignee, or a beads prefix.
 
    The flat answer object must include `workspace_root` with the absolute
-   `task_root`. When `--guidance` is present, include `agents_md: true`.
+   `task_root` (`<absolute task_root>`, never a relative path or `$(pwd)`).
 
 3. Write the flat answer object to a secure temporary JSON file using the host's
    exact-write primitive and retain its absolute path as `answers_path` across host
    calls. Call the loaded script directly because no facade exists:
 
    ```bash
-   FLOW_HARNESS="<codex|claude-code|generic>" \
+   FLOW_HARNESS="<codex|claude-code>" \
      python3 "<skill_root>/scripts/init.py" --config "<absolute-answers-file>"
    ```
 
@@ -56,19 +56,8 @@ upgrade because entry migration is automatic.
    transaction. Do not discard partial state or start a second initialization.
 5. In an initialized workspace, invoke the loaded launcher installer/migrator from
    `skill_root`, then validate through the resulting absolute runtime facade. Do not
-   rerun the configuration transaction. When `--guidance` is present, update only
-   the managed guidance block:
-
-   ```bash
-   FLOW_HARNESS="<codex|claude-code|generic>" \
-     python3 "<skill_root>/scripts/init.py" \
-     --guidance-only --workspace-root "<absolute task_root>"
-   ```
-
-6. `--guidance` installs or updates the managed repository guidance block. Native
-   Claude Code and Codex plugin discovery do not require it; it is useful for a
-   generic harness or repository-local operational guidance.
-7. Remove the temporary answer file on every exit where its path is known.
+   rerun the configuration transaction.
+6. Remove the temporary answer file on every exit where its path is known.
 
 Success reports tracker backend, namespace, runtime layout version, facade path, and
 the host-rendered invocation for bare `FLOW`. A healthy second setup is a successful

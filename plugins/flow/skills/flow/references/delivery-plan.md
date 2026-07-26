@@ -7,8 +7,8 @@ assessment receipts, approval receipts, or a second planning state machine.
 Vocabulary is precise throughout this contract:
 
 - **driver**: the main agent/session that talks to the human and continues the workflow;
-- **human**: the user or maintainer who approves the plan;
-- **host**: the Claude Code, Codex, or generic adapter that supplies agent and input tools.
+- **human**: the maintainer, who approves the plan;
+- **host**: the Claude Code or Codex adapter that supplies agent and input tools.
 
 Keep `owner` for real resource ownership such as leases, repositories, branches, or content.
 
@@ -25,8 +25,9 @@ FLOW_HARNESS="<harness>" "<facade>" tracker \
 
 The claim is best-effort and never blocks planning: exit 3 (already `in_progress`, or the
 tracker has no such state) continues silently; any other failure logs one warning and
-continues. The point is that the team sees the ticket claimed the moment work starts, not
-after approval. This is the one sanctioned ticket mutation before the human gate.
+continues. The point is that the tracker shows the ticket claimed the moment work starts,
+not after approval, so nothing else picks it up as available. This is the one sanctioned
+ticket mutation before the human gate.
 
 The driver reads the ticket, relevant repository files, and directly applicable project
 instructions. Fetch the default branch and record its SHA. Resolve factual questions read-only.

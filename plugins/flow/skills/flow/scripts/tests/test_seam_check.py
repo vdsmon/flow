@@ -630,8 +630,9 @@ def test_live_router_carries_rooted_cross_harness_context() -> None:
 
     for field in ("arguments", "skill_root", "task_root", "run_root", "facade", "capabilities"):
         assert field in skill
-    for adapter in ("Claude Code", "Codex", "Generic fallback"):
+    for adapter in ("Claude Code", "Codex"):
         assert adapter in harness
+    assert "Generic fallback" not in harness
     for prompt_field in (
         "Workspace root:",
         "Skill root:",
@@ -756,8 +757,10 @@ def test_live_harness_selector_is_call_local_and_explicit() -> None:
     ]
     text = "\n".join(path.read_text(encoding="utf-8") for path in paths)
     assert "FLOW_HARNESS" in text
-    for value in ("codex", "claude-code", "generic"):
+    for value in ("codex", "claude-code"):
         assert value in text
+    # The vocabulary is closed to the two hosts; a third identity must not reappear.
+    assert "generic" not in text
     assert "export FLOW_HARNESS" not in text
     assert "same command" in text or "call-local" in text
 
@@ -775,78 +778,6 @@ def test_live_portable_path_never_depends_on_persistent_cd_or_automatic_spill_re
     assert "cd into the worktree dir in the persistent shell" not in text
     assert "Only the off-CC AGENTS.md entry point passes `--recover-spill`" not in text
     assert "Do not pass `--recover-spill` automatically" in text
-
-
-# --- generated managed AGENTS guidance --------------------------------------
-
-
-_VALID_AGENTS_STANZA = '''
-_AGENTS_STANZA = """<!-- flow:begin -->
-A generic adapter supplies the absolute `FLOW_SKILL_DIR`; do not search for it.
-Read `$FLOW_SKILL_DIR/SKILL.md` and `$FLOW_SKILL_DIR/references/harness.md`.
-Route with `public-commands.toml`. Static namespaces win; unknown or removed forms stop.
-Select `codex`, `claude-code`, or `generic`; set `FLOW_HARNESS=<identity>` in the same
-call as each Flow command, never as an export.
-Perform read-only planning, then stop until the user approves.
-After approval, adopt the absolute worktree as the run root and its `.flow/runtime/flow` facade.
-Harness calls need an explicit workdir because a prior `cd` is never persistent state.
-Never relocate dirty main-checkout files; recovery requires proven agent provenance.
-<!-- flow:end -->
-"""
-'''
-
-
-def test_managed_agents_guidance_accepts_semantic_contract(tmp_path) -> None:
-    init_path = tmp_path / "init.py"
-    init_path.write_text(_VALID_AGENTS_STANZA, encoding="utf-8")
-    assert seam_check.managed_agents_guidance_drift(init_path) == []
-
-
-def test_managed_agents_guidance_is_not_satisfied_by_any_agents_mention(tmp_path) -> None:
-    init_path = tmp_path / "init.py"
-    init_path.write_text(
-        "# AGENTS.md should mention FLOW_SKILL_DIR, SKILL.md, "
-        "references/harness.md, and .flow/runtime/flow\n",
-        encoding="utf-8",
-    )
-    drift = seam_check.managed_agents_guidance_drift(init_path)
-    assert any("_AGENTS_STANZA" in detail for detail in drift)
-
-
-def test_managed_agents_guidance_requires_stable_markers(tmp_path) -> None:
-    init_path = tmp_path / "init.py"
-    init_path.write_text(
-        _VALID_AGENTS_STANZA.replace("<!-- flow:end -->", "<!-- flow:done -->"),
-        encoding="utf-8",
-    )
-    drift = seam_check.managed_agents_guidance_drift(init_path)
-    assert any("managed markers" in detail for detail in drift)
-
-
-def test_managed_agents_guidance_reports_missing_contract(tmp_path) -> None:
-    init_path = tmp_path / "init.py"
-    init_path.write_text(
-        _VALID_AGENTS_STANZA.replace(
-            "Read `$FLOW_SKILL_DIR/SKILL.md` and `$FLOW_SKILL_DIR/references/harness.md`.\n", ""
-        ),
-        encoding="utf-8",
-    )
-    drift = seam_check.managed_agents_guidance_drift(init_path)
-    assert any("router and harness guidance" in detail for detail in drift)
-
-
-def test_managed_agents_guidance_requires_call_local_harness_selection(tmp_path) -> None:
-    init_path = tmp_path / "init.py"
-    init_path.write_text(
-        _VALID_AGENTS_STANZA.replace(
-            "Select `codex`, `claude-code`, or `generic`; set `FLOW_HARNESS=<identity>` "
-            "in the same\ncall as each Flow command, never as an export.\n",
-            "",
-        ),
-        encoding="utf-8",
-    )
-    drift = seam_check.managed_agents_guidance_drift(init_path)
-    assert any("harness selector" in detail for detail in drift)
 
 
 def test_module_md_covers_all_live_scripts() -> None:
@@ -1278,7 +1209,6 @@ _MAIN_GATE_CASES = [
     ("docs_over_stage_doc_citation_limit", {"SKILL.md": 4}),
     ("descriptor_key_drift", [("SKILL.md", 1, "gone")]),
     ("role_literal_drift", [("SKILL.md", 1, "gone")]),
-    ("managed_agents_guidance_drift", ["missing contract"]),
     ("facade_entries_without_caller", {"ghost-entry"}),
 ]
 

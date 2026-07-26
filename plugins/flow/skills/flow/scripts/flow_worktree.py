@@ -970,9 +970,9 @@ def _enforce_autonomy_floors(
             "clear the label, then re-run."
         )
 
-    # adjudicate_hot lifts the HOT floor for this (maintainer self-target) workspace: the advisor's
-    # proceed ruling stands for hot changes too, gated by the merge-time guard-property review + CI
-    # instead of this pre-bootstrap refusal. It does not lift the hitl floor above.
+    # adjudicate_hot lifts the HOT floor for this (maintainer self-target) workspace: a hot change
+    # ships like a non-hot one, gated by the merge-time guard-property review + CI instead of this
+    # pre-bootstrap refusal. It does not lift the hitl floor above.
     if triage.adjudicate_hot(main_root):
         return
     if probe.get("is_hot") and not probe.get("decided"):
@@ -1480,8 +1480,9 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         action="store_true",
         help="recover edits a soft-gate harness (no plan-mode write-block) spilled onto "
         "the main checkout before bootstrap: a planned file left uncommitted on main is "
-        "carried into the seeded worktree. The cross-harness AGENTS.md entry point passes "
-        "this; Claude Code omits it (plan mode keeps main clean), so the CC path is unchanged",
+        "carried into the seeded worktree. Never passed automatically (see "
+        "references/delivery-plan.md); Claude Code's plan mode keeps main clean, so its "
+        "path never needs it",
     )
     p.add_argument(
         "--auto",

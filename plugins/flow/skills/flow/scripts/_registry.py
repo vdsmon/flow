@@ -71,7 +71,6 @@ class StageEntry:
     default_handler: str = "none"
     default_timeout_min: int = 10
     required_predecessors: list[str] = field(default_factory=list)
-    required: bool = False
     required_when_compounding: bool = False
     reference_doc: str | None = None
     roles: list[str] = field(default_factory=list)
@@ -107,7 +106,6 @@ def load_registry(path: Path) -> list[StageEntry]:
                 default_handler=str(entry.get("default_handler", "none")),
                 default_timeout_min=int(entry.get("default_timeout_min", 10)),
                 required_predecessors=_str_list(entry.get("required_predecessors")),
-                required=bool(entry.get("required", False)),
                 required_when_compounding=bool(entry.get("required_when_compounding", False)),
                 reference_doc=entry.get("reference_doc"),
                 roles=_str_list(entry.get("roles")),

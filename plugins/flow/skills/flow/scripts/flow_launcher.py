@@ -280,11 +280,6 @@ def stabilize_skill_dir(skill_dir: str) -> str:
     )
     if cache_index is None or len(parts) < cache_index + 6:
         return skill_dir
-    if harness == "generic":
-        # Generic adapters have no native marketplace contract. Guessing from
-        # another host's cache namespace can bind an uninstalled handler.
-        return skill_dir
-
     base = Path(*parts[:cache_index])
     marketplace = parts[cache_index + 2]
     plugin = parts[cache_index + 3]

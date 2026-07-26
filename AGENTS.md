@@ -4,7 +4,9 @@ Guide for Claude Code or Codex working in the `flow` repo — the standalone hom
 
 Flow uses one attended planning conversation, one human-approved Markdown plan, and one authoritative ticket worktree. Fresh host-native agents provide logical role separation for implementation and review. Keep the driver as the single human cockpit; do not add provider proof, execution capsules, or patch-import transactions around those roles.
 
-The repo is a marketplace-of-one. Keeping the `plugins/flow/` nesting (option a) means the marketplace can later hold companion bundles, and the reflect self-edit path (`plugins/flow/.claude-plugin/plugin.json`) stays valid. `plugins/flow/skills/flow/scripts/MODULE.md` is the live map of the engine — read it to find a script, and its §Reference docs index to find a prose doc.
+The repo is a marketplace-of-one. The `plugins/flow/` nesting is load-bearing, not taste: both `marketplace.json` files point at `./plugins/flow`, `flow_launcher` resolves the installed engine through that source path, and the reflect self-edit path (`plugins/flow/.claude-plugin/plugin.json`) is written against it. `plugins/flow/skills/flow/scripts/MODULE.md` is the live map of the engine — read it to find a script, and its §Reference docs index to find a prose doc.
+
+`docs/specs/` holds dated design records and `docs/research/` the experiment write-ups. Both are history, not contract: nothing under `docs/` is authoritative unless SKILL.md, a `references/` doc, or MODULE.md cites it.
 
 ## Dev commands
 
@@ -19,7 +21,7 @@ python3 seam_check.py     # prose↔CLI seam checker
 
 CI runs all four on every push. Runtime is stdlib-only (`python3`); the venv/mise is dev tooling only.
 
-**Fail-fast hooks (prek, opt-in).** `.pre-commit-config.yaml` at the repo root wires the CI checks as [prek](https://github.com/j178/prek) hooks so commits fail before CI. prek is pinned in the repo-root `mise.toml`; install once per clone (from repo root): `mise install && prek install`. Stage split and the check-only rule: see the invariant below.
+**Fail-fast hooks (prek).** `.pre-commit-config.yaml` at the repo root wires the CI checks as [prek](https://github.com/j178/prek) hooks so commits fail before CI. prek is pinned in the repo-root `mise.toml`; the hooks stay inert until `mise install && prek install` has run once in the checkout (from repo root). Stage split and the check-only rule: see the invariant below.
 
 ## Working here (gotchas)
 

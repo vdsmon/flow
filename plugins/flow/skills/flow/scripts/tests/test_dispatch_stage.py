@@ -58,10 +58,7 @@ def _write_workspace(
         lines.append(f'{stage} = "{handler}"')
     lines.append("[memory]")
     lines.append('namespace = "FT"')
-    lines.append("auto_recall = true")
     lines.append(f"compounding = {str(compounding).lower()}")
-    lines.append('recall_by = ["branch"]')
-    lines.append("recall_top_n = 5")
     (flow / "workspace.toml").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -1042,7 +1039,7 @@ def test_next_refresh_lease_lost_returns_7(tmp_path: Path, monkeypatch: pytest.M
 
 
 def test_next_probes_boot_id_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    # boot_id spawns a sysctl subprocess on macOS; cmd_next passes its probe
+    # boot_id spawns a sysctl subprocess; cmd_next passes its probe
     # into the lease guard instead of probing a second time.
     _write_workspace(tmp_path, stages=["ticket"], compounding=False)
     _stub_git_head(monkeypatch)

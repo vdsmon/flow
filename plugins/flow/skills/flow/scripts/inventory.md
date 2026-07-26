@@ -17,33 +17,32 @@ Contract sections (grep the heading):
 
 ## Jira API inventory
 
-Source: `~/.claude/skills/jira-workflow/{SKILL.md,references/*.md}` — the proven 8-stage pipeline that JiraAdapter must replicate as REST calls.
+Source: the MCP Atlassian call set the Jira adapter replaced. The originating `jira-workflow` skill is gone; this table is now the only record of the mapping.
 
 Distinct MCP Atlassian functions exercised: **7**.
 Direct REST replacements listed below.
-Anything in the Tracker Protocol not exercised by jira-workflow is marked **NEW** — implemented for cross-backend completeness and validated via mocks (no live jira-workflow precedent).
+A Protocol method with no MCP predecessor is marked **NEW** — implemented for tracker-seam parity (a jira and a beads workspace answer the same Protocol) and covered by mocked tests only.
 
 ## Calls used by jira-workflow
 
-| # | jira-workflow MCP function                 | call sites (refs/*.md)             | REST endpoint                                                              | Tracker Protocol method                       |
-|---|--------------------------------------------|------------------------------------|----------------------------------------------------------------------------|-----------------------------------------------|
-| 1 | `getAccessibleAtlassianResources`          | preflight.md:55 (init bootstrap)   | `GET https://api.atlassian.com/oauth/token/accessible-resources`           | constructor-time helper (not a Protocol method) |
-| 2 | `atlassianUserInfo`                        | preflight.md:16 (init bootstrap)   | `GET /rest/api/3/myself`                                                   | constructor-time helper (not a Protocol method) |
-| 3 | `getJiraIssue`                             | ticket.md:52, ticket.md:61         | `GET /rest/api/3/issue/{issueIdOrKey}?fields=...`                          | `get(key) -> Ticket`                          |
-| 4 | `searchJiraIssuesUsingJql`                 | ticket.md:35, ticket.md:53, ticket.md:55 | `POST /rest/api/3/search/jql` (v3 paginated)                         | `list_assigned(filter)`, subtasks (folded into `get` ticket build) |
-| 5 | `getJiraIssueRemoteIssueLinks`             | ticket.md:54                       | `GET /rest/api/3/issue/{issueIdOrKey}/remotelink`                          | folded into `get(key).links` field            |
-| 6 | `getTransitionsForJiraIssue`               | planning.md:11                     | `GET /rest/api/3/issue/{issueIdOrKey}/transitions?expand=transitions.fields` | `list_transitions(key) -> list[Transition]`  |
-| 7 | `transitionJiraIssue`                      | planning.md:11                     | `POST /rest/api/3/issue/{issueIdOrKey}/transitions`                        | `transition(key, transition_id, fields) -> TransitionResult` |
+| # | jira-workflow MCP function                 | REST endpoint                                                              | Tracker Protocol method                       |
+|---|--------------------------------------------|----------------------------------------------------------------------------|-----------------------------------------------|
+| 1 | `getAccessibleAtlassianResources`          | `GET https://api.atlassian.com/oauth/token/accessible-resources`           | constructor-time helper (not a Protocol method) |
+| 2 | `atlassianUserInfo`                        | `GET /rest/api/3/myself`                                                   | constructor-time helper (not a Protocol method) |
+| 3 | `getJiraIssue`                             | `GET /rest/api/3/issue/{issueIdOrKey}?fields=...`                          | `get(key) -> Ticket`                          |
+| 4 | `searchJiraIssuesUsingJql`                 | `POST /rest/api/3/search/jql` (v3 paginated)                               | `list_assigned(filter)`, subtasks (folded into `get` ticket build) |
+| 5 | `getJiraIssueRemoteIssueLinks`             | `GET /rest/api/3/issue/{issueIdOrKey}/remotelink`                          | folded into `get(key).links` field            |
+| 6 | `getTransitionsForJiraIssue`               | `GET /rest/api/3/issue/{issueIdOrKey}/transitions?expand=transitions.fields` | `list_transitions(key) -> list[Transition]`  |
+| 7 | `transitionJiraIssue`                      | `POST /rest/api/3/issue/{issueIdOrKey}/transitions`                        | `transition(key, transition_id, fields) -> TransitionResult` |
 
 JQL used:
 - assigned filter: `assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC`
 - subtasks: `parent = <KEY>`
 - linked: `issue in linkedIssues(<KEY>)`
 
-## Tracker Protocol surface NOT exercised by jira-workflow
+## Tracker Protocol surface with no MCP predecessor
 
-These are required by the Tracker Protocol for cross-backend parity.
-No reference in jira-workflow — implemented from Atlassian REST API v3 docs + Agile REST API.
+Required so a jira and a beads workspace answer the same Protocol calls; written from the Atlassian REST API v3 + Agile REST API docs.
 
 | Protocol method            | REST endpoint                                                                  | Notes |
 |----------------------------|--------------------------------------------------------------------------------|-------|
@@ -53,23 +52,15 @@ No reference in jira-workflow — implemented from Atlassian REST API v3 docs + 
 | `state(key)`               | `GET /rest/api/3/issue/{key}?fields=status,resolution`                          | derives `TicketState` with normalized + diagnostic |
 | `project_requires_pr()`    | `GET /rest/api/3/workflow/search?projectKey=<P>&expand=transitions.rules` (workflow scheme) | flag iff any transition to Done category has linked-PR validator. **Conservative default = False** if endpoint unauthorized. |
 | `is_shipped(key)`          | PURE READ: frozen `.flow/memory/<ns>/ship-events/<key>.json` → return shipped; else `state()` + ship predicate | adapter MUST NOT write |
-| `set_sprint(key, sprint_id)` | `POST /rest/agile/1.0/sprint/{sprintId}/issue` `{issues:[key]}`                | capability: `sprints` |
-| `list_sprints(project)`    | `GET /rest/agile/1.0/board/{boardId}/sprint?state=active,future,closed` (needs board lookup) | capability: `sprints` |
-| `get_attachments(key)`     | `GET /rest/api/3/issue/{key}?fields=attachment`                                 | capability: `attachments` |
+| `set_sprint(key, sprint_id)` | `POST /rest/agile/1.0/sprint/{sprintId}/issue` `{issues:[key]}`                | cap-gated: `NotSupported` on beads |
+| `list_sprints(project)`    | `GET /rest/agile/1.0/board/{boardId}/sprint?state=active,future,closed` (needs board lookup) | cap-gated: `NotSupported` on beads |
+| `get_attachments(key)`     | `GET /rest/api/3/issue/{key}?fields=attachment`                                 | cap-gated: `NotSupported` on beads |
 
-## Capabilities advertised by JiraAdapter
+## Comment format on JiraAdapter
 
-Closed enum (`tracker.py:CAPABILITY_ENUM`).
-All `supported=true` for Jira Cloud:
+The adapter implements every method on the Protocol, cap-gated ones included; nothing is advertised, so an unsupported op is only ever a `NotSupported` raise.
 
-```
-comments_adf=true, comments_markdown=false, attachments=true, watchers=true,
-sprints=true, fix_versions=true, components=true, epic_link=true,
-pr_links=true, ci_links=true, boards=true, custom_fields=true,
-transitions_with_validators=true, resolutions=true
-```
-
-`comments_markdown=false` is intentional.
+Markdown comments are the one thing it refuses.
 Jira Cloud's comment API requires ADF; markdown round-trips lose formatting.
 Callers MUST send either:
 
@@ -92,9 +83,7 @@ No heuristic md→ADF conversion; markdown syntax (headings, lists, code fences)
 | `done`                  | resolution == "Won't Do" / "Cancelled" / "Duplicate" / "Won't Fix" | `cancelled` |
 | `done`                  | *                                     | `done`             |
 
-`adapter_mapping_diagnostic` records which rule fired (e.g.
-`"category=indeterminate + native='In Review' matched in_review heuristic"`)
-so dashboards can audit unexpected categorizations.
+`adapter_mapping_diagnostic` records which rule fired (e.g. `"category=indeterminate + native='In Review' matched in_review heuristic"`), so a wrong mapping is diagnosable from the record itself.
 
 ## Authentication
 
@@ -158,13 +147,13 @@ Adapter resolves:
 
 If step 1 returns zero boards → raise `NotSupported("no scrum board configured for project={project}")`.
 If multiple boards exist → adapter picks first, logs a diagnostic.
-Callers needing deterministic board selection should set `tracker.jira.board_id` in `workspace.toml` (future enhancement; not phase 3).
+Board selection is not configurable: the adapter takes the first active scrum board and logs a diagnostic when several exist (`tracker_jira._resolve_scrum_board`). Add a config key the day a project actually has two boards.
 
 ## Forge (PR host) surface
 
 Pluggable PR-host seam (`forge.py` Protocol + `forge_cli.py` + `forge_github.py` + `forge_bitbucket.py`), structural twin of the tracker seam. Selected by `[forge] backend` in `workspace.toml`; the block is OPTIONAL (absent = no forge, `create_pr`/`review_loop` stay `none`).
 
-`create_pr` takes an authored PR body from the stage (`references/stage-create_pr.md`) via `--body-file`: it runs `pr_body.scrub` (em-dash → punctuation, sentence-case `# Heading`, flatten `- **Term:**` bullets) as a de-AI floor, on a bitbucket forge flattens `<details>` wrappers to `###` headings (`pr_body.flatten_details`; Bitbucket renders no raw HTML in markdown) and appends the deterministic `Closes` footer (`pr_body.closes_footer`, extracted from the HEAD commit trailer), then runs `pr_body.enforce_cap` as a deterministic size net (shrink largest fenced blocks → drop `<details>` bodies keeping `<summary>` → hard-truncate; cap ~32000, the stricter forge floor) so an oversized `## Evidence` body can never fail `open_pr`. With no `--body-file` it falls back to the old commit-derived body (`pr_body.build_body`: strip the `ticket:`/`files:` trailer, keep `Closes <KEY>` as a footer, unwrap prose hard-wraps). On first open it calls `set_default_reviewers` (swallowing `NotSupported` + any `ForgeError` so a reviewer hiccup never fails an open PR). The `default_reviewers` capability is `True` on Bitbucket, `False` on GitHub (the first `supported=false` capability in a live adapter).
+`create_pr` takes an authored PR body from the stage (`references/stage-create_pr.md`) via `--body-file`: it runs `pr_body.scrub` (em-dash → punctuation, sentence-case `# Heading`, flatten `- **Term:**` bullets) as a de-AI floor, on a bitbucket forge flattens `<details>` wrappers to `###` headings (`pr_body.flatten_details`; Bitbucket renders no raw HTML in markdown) and appends the deterministic `Closes` footer (`pr_body.closes_footer`, extracted from the HEAD commit trailer), then runs `pr_body.enforce_cap` as a deterministic size net (shrink largest fenced blocks → drop `<details>` bodies keeping `<summary>` → hard-truncate; cap ~32000, the stricter forge floor) so an oversized `## Evidence` body can never fail `open_pr`. With no `--body-file` it falls back to the old commit-derived body (`pr_body.build_body`: strip the `ticket:`/`files:` trailer, keep `Closes <KEY>` as a footer, unwrap prose hard-wraps). On first open it calls `set_default_reviewers` (swallowing `NotSupported` + any `ForgeError` so a reviewer hiccup never fails an open PR). Bitbucket implements it; GitHub raises `NotSupported`.
 
 ### Operation surface (forge_cli subcommand → gh / bkt)
 
@@ -257,7 +246,7 @@ description = "Push branch + open draft PR + CI loop"
 # source). Unknown stages = invalid manifest.
 [skills.create_pr]
 handler_string         = "skill:ship-it:create"   # required; MUST start with "skill:"
-required_capabilities  = []                       # optional, list[str]; CAPABILITY_ENUM names
+required_capabilities  = []                       # optional, list[str]
 args_schema            = {}                       # optional, dict; opaque, validated by skill
 required_outputs       = ["pr_url"]               # optional, list[str]
 side_effects           = ["git push", "gh pr create"]   # optional, list[str]
@@ -298,7 +287,6 @@ handler_string = "skill:ship-it:feedback"
 | `.flow/.initializing`         | created BEFORE any mutation; left in place on failure      |
 | `.flow/.init-progress`        | append-only JSONL of completed phases; consumed by --resume |
 | `.flow/.initialized`          | atomic rename from `.initializing` ONLY after postconditions pass |
-| `~/.config/flow/checkpoint-manifest.jsonl` | append-only ledger of participating workspaces (one line per init / reconfigure) |
 
 Pre-flight refusal:
 
@@ -352,7 +340,7 @@ Adapter wraps a subprocess runner; tests inject a fake.
 | deferred       | cancelled         |
 | closed         | done              |
 
-Unknown natives default to `open` with an `adapter_mapping_diagnostic` flagging the fallback so dashboards can surface the unfamiliar status.
+Unknown natives default to `open` with an `adapter_mapping_diagnostic` flagging the fallback, so an unfamiliar status is visible in the record instead of silently reading as open.
 
 ### Transition synthesis
 
@@ -384,10 +372,10 @@ Postcondition: re-read `bd show --json` and assert the normalized state moved to
 | `permission denied` / `forbidden`      | permission_denied     |
 | anything else (non-zero exit)          | validator_failed      |
 
-### Capability advertisement
+### Backend reach
 
-14 entries; only `comments_markdown` (bd accepts markdown via `bd comment --stdin`) and `resolutions` (bd records `closure_reason` on `bd close`) flip true.
-Every other capability is false → `set_sprint`, `list_sprints`, `get_attachments`, `download_attachment` raise `NotSupported`.
+bd accepts markdown comments (`bd comment --stdin`) and records `closure_reason` on `bd close`.
+It is otherwise narrow: `set_sprint`, `list_sprints`, `get_attachments`, `download_attachment` raise `NotSupported`.
 
 ### is_shipped contract (PURE READ; never writes under `.flow/`)
 
@@ -542,9 +530,9 @@ The canonical-snapshot pattern is live: a content hash is captured once at `init
 
 ## Bookkeeping helpers
 
-Five bookkeeping scripts.
+Six bookkeeping scripts.
 All stdlib-only, library + thin CLI shape, atomic writes where they touch files, `fcntl.flock` where they touch shared mutable state.
-Built to be subprocess'd by `dispatch_stage.py` (phase 5 wiring) but shippable as standalone CLIs first.
+Subprocessed by `dispatch_stage.py`; each also runs standalone.
 
 ### `branch_ticket.py`
 
@@ -579,7 +567,7 @@ HARD GATE pre-stage: validate required ticket frontmatter fields per stage.
 | `--workspace-root <dir>` | Override stage-registry source (default: plugin root). |
 
 Exit 0=continue, 1=block (violations to stderr as `<key>: <reason>`).
-Required fields per stage (8-mvp set, baked into stage-registry.toml):
+Required fields per stage, from `stage-registry.toml`:
 
 - **universal** (every stage): `ticket`, `status`.
 - `implement.required_fields = ["planned_files"]`
@@ -620,8 +608,8 @@ Exit 0=applied or already_applied (idempotent), 1=usage/IO error, 2=refused (out
 
 ## Memory cohort
 
-Four stdlib-only scripts that own `.flow/memory/<namespace>/knowledge.jsonl`, `.flow/memory/<namespace>/ship-events/<ticket>.json`, and the reflect-stage input bundle.
-Same library + thin-CLI shape as 8-mvp.
+The scripts that own `.flow/memory/<namespace>/knowledge.jsonl`, `.flow/memory/<namespace>/ship-events/<ticket>.json`, and the reflect-stage input bundle.
+Same library + thin-CLI shape as the rest of the engine.
 Shared `_memory_paths.py` module handles namespace resolution + path conventions.
 
 ### `_memory_paths.py` (shared helper)
@@ -856,7 +844,7 @@ Sole writer of `<namespace>/ship-events/<ticket>.json`.
 Atomic + crash-safe.
 
 Flag surface: MODULE.md §Memory / recall.
-Input contract: `--evidence-json` allows top-level keys `ticket`, `shipped_at`, `evidence` only (extras rejected; `--ticket` must match the `ticket` field). `--run-id` is the caller's 16-hex run_id, injected as `observed_by_run_id`. `--arm` is the experiment lane `{flow, control}` (default `flow`); `--tier` / `--acceptance-invariant` / `--lane` are captured at ship time (default `""`).
+Input contract: `--evidence-json` allows top-level keys `ticket`, `shipped_at`, `evidence` only (extras rejected; `--ticket` must match the `ticket` field). `--run-id` is the caller's 16-hex run_id, injected as `observed_by_run_id`. `--tier` / `--acceptance-invariant` / `--lane` are captured at ship time (default `""`).
 
 Two-phase write:
 1. **Primary** via `os.open(O_CREAT | O_EXCL | O_WRONLY)`. Success → write +

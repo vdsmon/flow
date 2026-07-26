@@ -71,7 +71,7 @@ Read the stage reference first. Give the host-native agent:
 Workspace root: <absolute run_root>
 Skill root: <absolute skill_root>
 Facade: <absolute facade>
-Harness: <claude-code|codex|generic>
+Harness: <claude-code|codex>
 Ticket and stage: <ticket> / <stage>
 Ticket dir: <absolute ticket_dir>
 Reference path: <absolute reference, or none>

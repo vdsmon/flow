@@ -5,8 +5,6 @@ All tests mock-driven via a `_FakeRunner(responses)` that returns sequenced
 
 Coverage:
 - Construction preflight (bd --version): success, missing, too-old, malformed.
-- Capability advertisement: 14 closed-enum entries, only comments_markdown +
-  resolutions True.
 - get/list_assigned/list_transitions surface shapes.
 - create with postcondition re-read verification.
 - transition routing: close / reopen / update-status; failure classification.
@@ -80,7 +78,6 @@ def test_construct_ok_with_recent_bd_version() -> None:
     runner = _FakeRunner([_version_ok()])
     adapter = tb.BeadsAdapter({"prefix": "x"}, runner=runner)
     assert adapter.backend == "beads"
-    assert isinstance(adapter.capabilities, list)
 
 
 def test_construct_refuses_when_bd_missing() -> None:
@@ -108,42 +105,6 @@ def test_construct_refuses_when_version_nonzero_exit() -> None:
     runner = _FakeRunner([_cp(returncode=1, stderr="bd: db corrupt\n")])
     with pytest.raises(t.TrackerConfigError, match="version check failed"):
         tb.BeadsAdapter({"prefix": "x"}, runner=runner)
-
-
-# ─── Capabilities ────────────────────────────────────────────────────────────
-
-
-def test_capabilities_advertise_14_closed_enum_entries() -> None:
-    adapter, _ = _build_adapter([])
-    names = [c["name"] for c in adapter.capabilities]
-    assert len(names) == 14
-    assert set(names) == {
-        "comments_adf",
-        "comments_markdown",
-        "attachments",
-        "watchers",
-        "sprints",
-        "fix_versions",
-        "components",
-        "epic_link",
-        "pr_links",
-        "ci_links",
-        "boards",
-        "custom_fields",
-        "transitions_with_validators",
-        "resolutions",
-    }
-
-
-def test_only_comments_markdown_and_resolutions_supported() -> None:
-    adapter, _ = _build_adapter([])
-    by_name = {c["name"]: c["supported"] for c in adapter.capabilities}
-    assert by_name["comments_markdown"] is True
-    assert by_name["resolutions"] is True
-    assert by_name["comments_adf"] is False
-    assert by_name["attachments"] is False
-    assert by_name["sprints"] is False
-    assert by_name["pr_links"] is False
 
 
 # ─── Marshalling ─────────────────────────────────────────────────────────────

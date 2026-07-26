@@ -15,8 +15,8 @@ their stage calls for independence. They work in the one authoritative ticket
 worktree. Flow may offer a simple model hint that the active host can accept or
 ignore; provider and model identity are not delivery gates.
 
-Use **human** for the user or maintainer at an approval gate and **host** for the
-Claude Code, Codex, or generic adapter. Reserve **owner** for actual resource
+Use **human** for the maintainer at an approval gate and **host** for the Claude
+Code or Codex adapter. Reserve **owner** for actual resource
 ownership such as a lease, repository, branch, or content boundary.
 
 Flow is one state-aware path from a tracker ticket to a reviewable pull request.
@@ -26,8 +26,7 @@ and the implementation, review, verification, commit, and PR stages between them
 `FLOW` is the logical invocation used throughout this skill. Render it as:
 
 - `/flow` in Claude Code;
-- `$flow:flow` in Codex;
-- the installed skill's equivalent invocation in another harness.
+- `$flow:flow` in Codex.
 
 Never expose a host's rendering in reusable state, tracker comments, memory, or
 generated help. Store and display logical `FLOW` there, substituting only at the
@@ -44,7 +43,7 @@ skill_root     directory containing this SKILL.md
 task_root      checkout in which the request began
 run_root       checkout that currently owns the run
 facade         <run_root>/.flow/runtime/flow
-harness        claude-code | codex | generic
+harness        claude-code | codex
 capabilities   the host operations available to this invocation
 ```
 
@@ -60,7 +59,7 @@ wrong; stop and correct `skill_root` instead of guessing another scripts path.
 
 Every facade call is absolute and uses `run_root` as its explicit workdir. On Codex,
 prefix that same call with `FLOW_HARNESS=codex`; on Claude Code use
-`FLOW_HARNESS=claude-code`; generic adapters use `FLOW_HARNESS=generic`. Do not rely
+`FLOW_HARNESS=claude-code`. Any other value fails loudly. Do not rely
 on a prior `export` or `cd`. After creating or adopting a worktree, immediately
 replace both `run_root` and `facade` with the returned absolute paths. Never fall
 back to `task_root` after that binding.
@@ -69,7 +68,7 @@ Before the first workspace-dependent operation, install or migrate the runtime f
 the loaded skill with one call rooted at `task_root`:
 
 ```bash
-FLOW_HARNESS="<codex|claude-code|generic>" \
+FLOW_HARNESS="<codex|claude-code>" \
   python3 "<skill_root>/scripts/flow_launcher.py" \
   --workspace-root "<absolute task_root>"
 ```
@@ -132,9 +131,8 @@ FLOW ticket finalize <ticket> [--dry-run]
 FLOW memory search [<query>] [--ticket <key>]... [--label <facet:value>] [--digest] [--semantic] [--threshold <float>] [--branch <branch>] [--limit <n>]
 FLOW memory prune
 FLOW memory rebuild [--full]
-FLOW measure <throughput|lead-time|friction|reverts|experiment|trend|memory-health|recall-quality|fix-efficacy> [--since <date>] [--until <date>]
-FLOW measure throughput --checkpoint <personal|work> [--manifest <path>]
-FLOW workspace setup [--guidance]
+FLOW measure <throughput|lead-time|friction|reverts|trend|memory-health|recall-quality|fix-efficacy> [--since <date>] [--until <date>]
+FLOW workspace setup
 FLOW workspace inspect [<target>] [--json]
 FLOW workspace repair [<target>]
 FLOW workspace sync
@@ -226,7 +224,6 @@ not reset the pass count. Read `references/delivery-plan.md` for the full contra
 - Claude Code uses native plan mode and its exit boundary.
 - Codex uses native Plan mode when active; otherwise present the complete plan, end
   the turn, and wait for explicit approval.
-- A generic adapter uses the same soft turn boundary.
 
 Before approval, re-fetch the default branch and restart bounded assessment when
 relevant paths moved. Present the exact plan, base SHA, confidence and category
@@ -275,7 +272,7 @@ applies the call-local `FLOW_HARNESS` selector to the bound absolute `facade`:
 Workspace root: <absolute run_root>
 Skill root: <absolute skill_root>
 Facade: <absolute facade>
-Harness: <claude-code|codex|generic>
+Harness: <claude-code|codex>
 Ticket and stage: <ticket> / <stage>
 Ticket dir: <absolute ticket_dir>
 Reference path: <absolute reference, or none>

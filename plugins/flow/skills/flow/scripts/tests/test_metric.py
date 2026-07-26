@@ -1,4 +1,4 @@
-"""Tests for metric.py, tickets-per-week behind the 14-day checkpoint.
+"""Tests for metric.py, tickets-per-week over a UTC window.
 
 Builds real ship-events + state.json on temp dirs (matching the on-disk shapes
 observe_ship_event.py and state.py write), with an explicit `now` so window math
@@ -251,115 +251,10 @@ def test_compute_bad_since_raises(tmp_path: Path) -> None:
         metric.compute(tmp_path, "demo", since_iso="nope", until_iso=_UNTIL, now_iso=_NOW)
 
 
-# ─── checkpoint aggregation ──────────────────────────────────────────────────
-
-
-def _write_manifest(path: Path, entries: list[dict]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        "".join(json.dumps(e, sort_keys=True) + "\n" for e in entries), encoding="utf-8"
-    )
-
-
-def test_checkpoint_aggregates_two_participants(tmp_path: Path) -> None:
-    ws_a = tmp_path / "ws_a"
-    ws_b = tmp_path / "ws_b"
-    _seed_workspace(ws_a, namespace="ns_a")
-    _seed_workspace(ws_b, namespace="ns_b")
-
-    # ws_a: one via-flow ticket
-    _write_ship_event(
-        ws_a, "A-1", shipped_at="2026-05-20T10:00:00Z", observed_by_run_id="ra", namespace="ns_a"
-    )
-    _write_state(ws_a, "A-1", run_id="ra", reflect_status="completed")
-    # ws_b: one via-flow ticket + one not-attributed
-    _write_ship_event(
-        ws_b, "B-1", shipped_at="2026-05-21T10:00:00Z", observed_by_run_id="rb", namespace="ns_b"
-    )
-    _write_state(ws_b, "B-1", run_id="rb", reflect_status="completed")
-    _write_ship_event(ws_b, "B-2", shipped_at="2026-05-22T10:00:00Z", namespace="ns_b")
-
-    manifest = tmp_path / "manifest.jsonl"
-    _write_manifest(
-        manifest,
-        [
-            {
-                "ts": "2026-05-01T00:00:00Z",
-                "workspace_root": str(ws_a),
-                "namespace": "ns_a",
-                "checkpoint_mode": "personal",
-            },
-            {
-                "ts": "2026-05-02T00:00:00Z",
-                "workspace_root": str(ws_b),
-                "namespace": "ns_b",
-                "checkpoint_mode": "personal",
-            },
-            # a work-mode participant must be excluded from personal aggregation
-            {
-                "ts": "2026-05-02T00:00:00Z",
-                "workspace_root": str(ws_a),
-                "namespace": "ns_a",
-                "checkpoint_mode": "work",
-            },
-        ],
-    )
-
-    result = metric.compute_checkpoint(
-        "personal",
-        since_iso=_SINCE,
-        until_iso=_UNTIL,
-        now_iso=_NOW,
-        manifest_path=manifest,
-    )
-    assert result["participant_count"] == 2
-    assert result["shipped"] == 3
-    assert result[metric.ATTR_VIA_FLOW] == 2
-    assert result[metric.ATTR_NOT_ATTRIBUTED] == 1
-
-
-def test_checkpoint_excludes_initialized_after_until(tmp_path: Path) -> None:
-    ws = tmp_path / "ws"
-    _seed_workspace(ws, namespace="ns")
-    _write_ship_event(
-        ws, "X-1", shipped_at="2026-05-20T10:00:00Z", observed_by_run_id="rx", namespace="ns"
-    )
-    _write_state(ws, "X-1", run_id="rx", reflect_status="completed")
-    manifest = tmp_path / "manifest.jsonl"
-    _write_manifest(
-        manifest,
-        [
-            {
-                "initialized_at": "2026-06-01T00:00:00Z",  # after until
-                "workspace_path": str(ws),
-                "namespace": "ns",
-                "checkpoint_mode": "personal",
-            }
-        ],
-    )
-    result = metric.compute_checkpoint(
-        "personal", since_iso=_SINCE, until_iso=_UNTIL, now_iso=_NOW, manifest_path=manifest
-    )
-    assert result["participant_count"] == 0
-    assert result["shipped"] == 0
-
-
-def test_checkpoint_missing_manifest_is_empty(tmp_path: Path) -> None:
-    result = metric.compute_checkpoint(
-        "work",
-        since_iso=_SINCE,
-        until_iso=_UNTIL,
-        now_iso=_NOW,
-        manifest_path=tmp_path / "nope.jsonl",
-    )
-    assert result["participant_count"] == 0
-    assert result["shipped"] == 0
-
-
 # ─── CLI ─────────────────────────────────────────────────────────────────────
 
 
-def test_cli_namespace_required_without_checkpoint(tmp_path: Path, capsys) -> None:
+def test_cli_namespace_required(tmp_path: Path, capsys) -> None:
     rc = metric.cli_main(["tickets-per-week", "--workspace-root", str(tmp_path)])
     assert rc == 1
     assert "namespace is required" in capsys.readouterr().err
@@ -386,52 +281,6 @@ def test_cli_happy_prints_json(tmp_path: Path, capsys) -> None:
     assert payload["shipped"] == 1
     assert payload["since"] == "2026-05-14T00:00:00Z"
     assert payload["until"] == "2026-05-28T00:00:00Z"
-
-
-def test_cli_checkpoint_requires_mode(tmp_path: Path, capsys) -> None:
-    rc = metric.cli_main(["tickets-per-week", "--checkpoint"])
-    assert rc == 1
-    assert "--mode" in capsys.readouterr().err
-
-
-def test_cli_checkpoint_aggregates(tmp_path: Path, capsys) -> None:
-    ws = tmp_path / "ws"
-    _seed_workspace(ws, namespace="ns")
-    _write_ship_event(
-        ws, "X-1", shipped_at="2026-05-20T10:00:00Z", observed_by_run_id="rx", namespace="ns"
-    )
-    _write_state(ws, "X-1", run_id="rx", reflect_status="completed")
-    manifest = tmp_path / "manifest.jsonl"
-    _write_manifest(
-        manifest,
-        [
-            {
-                "ts": "2026-05-01T00:00:00Z",
-                "workspace_root": str(ws),
-                "namespace": "ns",
-                "checkpoint_mode": "work",
-            }
-        ],
-    )
-    rc = metric.cli_main(
-        [
-            "tickets-per-week",
-            "--checkpoint",
-            "--mode",
-            "work",
-            "--manifest-path",
-            str(manifest),
-            "--since",
-            "2026-05-14",
-            "--until",
-            "2026-05-28",
-        ]
-    )
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["mode"] == "work"
-    assert payload["participant_count"] == 1
-    assert payload[metric.ATTR_VIA_FLOW] == 1
 
 
 def test_cli_bad_date_returns_1(tmp_path: Path, capsys) -> None:

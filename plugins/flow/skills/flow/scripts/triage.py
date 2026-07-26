@@ -73,28 +73,6 @@ def is_hot_change(files: list[str]) -> bool:
     return any(Path(f).name in _GUARD_FILES for f in files)
 
 
-def advisor_adjudicates(workspace_root: Path) -> bool:
-    """`[evolve] advisor_adjudicates` from workspace.toml (bool); default True.
-
-    Default ON: when the `--auto` path hits a judgment fork it escalates to the
-    advisor for a ship/block/defer ruling instead of deferring. Opt OUT with an
-    explicit `advisor_adjudicates = false` (restores the old defer-on-fork
-    behavior). Only an explicit `false` disables it; an absent key/section/file
-    reads as on. The safety nets still hold either way: `is_hot_change` is a hard
-    floor (hot never auto-proceeds), a broad-blast verdict blocks for human merge,
-    and the PR review/merge keystone is unchanged.
-    """
-    try:
-        config = load_workspace_toml(workspace_root)
-    except WorkspaceConfigError:
-        return True
-    section = config.get("evolve")
-    if not isinstance(section, dict):
-        return True
-    value = section.get("advisor_adjudicates")
-    return value if isinstance(value, bool) else True
-
-
 def adjudicate_hot(workspace_root: Path) -> bool:
     """`[evolve] adjudicate_hot` from workspace.toml (bool); default False.
 
@@ -103,12 +81,13 @@ def adjudicate_hot(workspace_root: Path) -> bool:
     `adjudicate_hot = true` (a maintainer self-target preference) to lift the
     floor: a hot change then ships on an advisor `proceed` like a non-hot one.
     Only an explicit `True` enables it; an absent key/section/file (and any read
-    error) reads as off, the conservative side. Sibling of `advisor_adjudicates`.
+    error) reads as off, the conservative side.
 
     Lifting the floor removes BOTH the delivery-plan `proceed`->`block`
     downgrade and the flow_worktree bootstrap refusal. The remaining gates still
-    hold: advisor adjudication rules on the fork, and the merge-time
-    guard-property review plus CI back-stop every hot landing.
+    hold: the merge-time guard-property review plus CI back-stop every hot
+    landing. No `[evolve]` key is validated by validate_workspace.py, so a
+    misspelled one reads as absent, i.e. as the conservative default.
     """
     try:
         config = load_workspace_toml(workspace_root)
@@ -472,7 +451,6 @@ if __name__ == "__main__":
 
 __all__ = [
     "adjudicate_hot",
-    "advisor_adjudicates",
     "cli_main",
     "collect",
     "decided",

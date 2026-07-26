@@ -1,15 +1,15 @@
 # Harness adapters
 
-Claude Code and Codex are first-class hosts for the same Flow engine and public grammar. A generic
-adapter states capability loss instead of presenting weaker behavior as equivalent. Native agents
-are bounded collaborators, not a second execution system: there are no provider routes, isolated
+Claude Code and Codex are the two hosts for the same Flow engine and public grammar. There is no
+third adapter: an unrecognized `FLOW_HARNESS` fails instead of degrading. Native agents are
+bounded collaborators, not a second execution system: there are no provider routes, isolated
 exact-SHA clones, typed agent envelopes, route receipts, or model-identity gates.
 
 ## Vocabulary and rooted execution
 
 The **driver** is the main agent/session that talks to the human and continues the workflow. The
-**human** approves plans and supplies decisions. The **host** is the Claude Code, Codex, or generic
-adapter. Keep `owner` for actual resource ownership such as leases, repositories, or content.
+**human** approves plans and supplies decisions. The **host** is the Claude Code or Codex adapter.
+Keep `owner` for actual resource ownership such as leases, repositories, or content.
 
 The entry binding (the seven logical values), the two-file `skill_root` precondition, the
 launcher bootstrap recipe, and the rooted-call rules are SKILL.md §Entry contract — one
@@ -21,26 +21,25 @@ the human for authorization instead of escaping the sandbox.
 
 ## Capability matrix
 
-| Capability | Claude Code | Codex | Generic fallback |
-|---|---|---|---|
-| Trigger | `/flow` | `$flow:flow` | installed skill equivalent |
-| Plan gate | native plan mode | native Plan mode when active, else turn boundary | turn boundary |
-| Workspace | native switch plus absolute binding | explicit absolute binding | real native switch or explicit binding |
-| Agent | native collaboration agent | native collaboration agent | independent call or disclosed inline fallback |
-| Write | native file writer | rooted safe edit/write | exact writer or collision-safe fallback |
-| Wait | native driver-session wait | native driver-session wait | bounded foreground poll |
-| Input | native question surface | plain question and wait | plain question and wait |
-| Notification | native notification plus durable run evidence | in-thread plus durable run evidence | in-thread plus durable run evidence |
-| Background | human backgrounds driver conversation | human backgrounds driver task | host-owned or foreground |
+| Capability | Claude Code | Codex |
+|---|---|---|
+| Trigger | `/flow` | `$flow:flow` |
+| Plan gate | native plan mode | native Plan mode when active, else turn boundary |
+| Workspace | native switch plus absolute binding | explicit absolute binding |
+| Agent | native collaboration agent | native collaboration agent |
+| Write | native file writer | rooted safe edit/write |
+| Wait | native driver-session wait | native driver-session wait |
+| Input | native question surface | plain question and wait |
+| Notification | native notification plus durable run evidence | in-thread plus durable run evidence |
+| Background | human backgrounds driver conversation | human backgrounds driver task |
 
 Do not infer the harness from ambient environment. The adapter supplies it. Flow normalizes the
 ambient `claude-code` name at the boundary where configuration uses `claude_code`.
 
 ## Discovery and runtime
 
-Both plugin manifests expose the same `skills/` tree. Codex and Claude Code use native plugin
-discovery. Managed `AGENTS.md` guidance is optional and is the generic fallback, not another
-installation locator.
+Both plugin manifests expose the same `skills/` tree. Claude Code and Codex both discover Flow
+natively; there is no managed repository-guidance fallback.
 
 The launcher bootstrap (SKILL.md §Entry contract) installs or migrates
 `.flow/runtime/{flow,skill-root,memory-root,layout-version}`. It never searches arbitrary plugin
@@ -48,8 +47,7 @@ caches. The generated facade reads its sibling `skill-root`, enters its own work
 executes only an allowlisted internal command. It supplies compatibility environment variables to
 child processes; those variables are engine details, not driver state.
 
-Fresh setup calls the loaded setup script directly because no facade exists. Existing workspace
-guidance uses that script's guidance-only mode; configuration is not rerun.
+Fresh setup calls the loaded setup script directly because no facade exists.
 
 ### Engine resolution: which code is actually running
 
@@ -68,13 +66,12 @@ mistake:
 
 Two facts decide what gets pinned. First, the harness selector: when `FLOW_HARNESS` is unset,
 `bundle_discover.flow_harness` defaults it to `claude-code`; the value is closed-validated
-(`codex`, `claude-code`, `generic`), and unknown names fail instead of guessing. Second, the
+(`codex`, `claude-code`), and unknown names fail instead of guessing. Second, the
 cache-stabilization fork: at install, `flow_launcher.stabilize_skill_dir` prefers the harness's
 stable marketplace source over a versioned cache path — under `claude-code` it resolves the
-marketplace manifest under `plugins/marketplaces/`, under `codex` it reads the `.agents`
-marketplace roots (`CODEX_HOME` respected), and under `generic` it never rewrites, because
-guessing another host's cache namespace could bind an uninstalled handler. The resolved directory
-is what `install` writes into the pin — so the ambient harness at install time determines which
+marketplace manifest under `plugins/marketplaces/`, and under `codex` it reads the `.agents`
+marketplace roots (`CODEX_HOME` respected). The resolved directory is what `install` writes into
+the pin — so the ambient harness at install time determines which
 engine every later run resolves.
 
 ## Planning gate and assessor

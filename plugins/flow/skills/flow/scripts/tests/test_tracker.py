@@ -1,4 +1,4 @@
-"""Contract tests for tracker.py (factory dispatch + capability advertisement).
+"""Contract tests for tracker.py (factory dispatch + Protocol conformance).
 
 Phase 2 deliverable. Adapter modules are stubs; this test asserts the factory
 correctly hands construction off to them and surfaces stub failures as
@@ -39,8 +39,6 @@ def test_make_tracker_jira_constructs_with_env_vars(monkeypatch: pytest.MonkeyPa
     monkeypatch.setenv("ATLASSIAN_API_TOKEN", "fake-token")
     adapter = t.make_tracker({"backend": "jira", "cloud_id": "x", "project_key": "FT"})
     assert adapter.backend == "jira"
-    assert isinstance(adapter.capabilities, list)
-    assert any(c["name"] == "comments_adf" and c["supported"] for c in adapter.capabilities)
 
 
 def test_make_tracker_jira_without_creds_raises_config_error(
@@ -69,7 +67,6 @@ def test_make_tracker_beads_constructs_with_runner(monkeypatch: pytest.MonkeyPat
     monkeypatch.setattr(tb, "_default_runner", lambda: fake_runner)
     adapter = t.make_tracker({"backend": "beads", "prefix": "safemic"})
     assert adapter.backend == "beads"
-    assert any(c["name"] == "comments_markdown" and c["supported"] for c in adapter.capabilities)
 
 
 def test_make_tracker_beads_refuses_when_bd_missing(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -124,9 +121,6 @@ def test_tracker_error_is_exception() -> None:
     assert issubclass(t.TrackerError, Exception)
 
 
-# ─── Capability advertisement shape ──────────────────────────────────────────
-
-
 # ─── Protocol structural conformance ─────────────────────────────────────────
 
 
@@ -134,7 +128,6 @@ class _FakeAdapter:
     """Minimal Tracker conformant for structural Protocol matching."""
 
     backend = "fake"
-    capabilities: list[t.Capability] = []  # noqa: RUF012 - test fixture, not shared state
 
     def get(self, key: str) -> t.Ticket:  # pragma: no cover - structural
         raise NotImplementedError
@@ -247,7 +240,6 @@ def test_fake_adapter_is_structurally_a_tracker() -> None:
 def test_object_missing_methods_is_not_a_tracker() -> None:
     class Partial:
         backend = "partial"
-        capabilities: list[t.Capability] = []  # noqa: RUF012 - test fixture
 
         def get(self, key: str) -> t.Ticket:
             raise NotImplementedError
@@ -263,11 +255,9 @@ def test_object_missing_methods_is_not_a_tracker() -> None:
 
 def test_public_surface_in_dunder_all() -> None:
     expected = {
-        "CAPABILITY_ENUM",
         "NORMALIZED_STATES",
         "Tracker",
         "make_tracker",
-        "Capability",
         "Ticket",
         "TicketRef",
         "TicketState",

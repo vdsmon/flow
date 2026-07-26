@@ -1,4 +1,4 @@
-"""Tickets-per-week calculator behind the 14-day checkpoint.
+"""Tickets-per-week calculator.
 
 Library + thin CLI. Stdlib-only.
 
@@ -25,14 +25,9 @@ matches, its `run_id` matches the ship event's observing run id (`observed_by_ru
 
 Window defaults: until = now; since = 14 days before now, floored to 00:00 UTC.
 
-Checkpoint mode aggregates compute() across every checkpoint-manifest participant whose
-`checkpoint_mode` matches `--mode`. Effective-interval accounting for a participant that changed
-mode mid-window is deferred; this phase includes a participant iff its mode matches and it was
-initialized at or before `until`.
-
 Exit codes:
   0 = ok
-  1 = bad args (namespace required when not --checkpoint, bad date, bad mode)
+  1 = bad args (namespace required, bad date)
 """
 
 from __future__ import annotations
@@ -55,7 +50,7 @@ import friction_recurrence
 import observe_ship_event
 import recall
 import recall_usage
-from _jsonl import append_quarantine, iter_jsonl, read_jsonl_lenient
+from _jsonl import append_quarantine, iter_jsonl
 from _timeutil import iso_z, parse_iso, ts_token, utcnow_iso
 
 
@@ -378,99 +373,6 @@ def compute_time_to_pr(
     }
 
 
-# ─── Checkpoint manifest aggregation ─────────────────────────────────────────
-
-
-def _default_checkpoint_manifest_path() -> Path:
-    return Path.home() / ".config" / "flow" / "checkpoint-manifest.jsonl"
-
-
-def _participant_initialized_at(entry: dict[str, Any]) -> str | None:
-    # init.py writes `ts`; the spec's checkpoint field is `initialized_at`. Read
-    # the spec field first, fall back to the on-disk `ts`.
-    for key in ("initialized_at", "ts"):
-        value = entry.get(key)
-        if isinstance(value, str) and value:
-            return value
-    return None
-
-
-def _participant_workspace_root(entry: dict[str, Any]) -> str | None:
-    for key in ("workspace_path", "workspace_root"):
-        value = entry.get(key)
-        if isinstance(value, str) and value:
-            return value
-    return None
-
-
-def compute_checkpoint(
-    mode: str,
-    *,
-    until_iso: str,
-    since_iso: str,
-    now_iso: str,
-    manifest_path: Path,
-) -> dict[str, Any]:
-    """Aggregate compute() across manifest participants whose mode matches.
-
-    Effective-interval accounting for a participant that changed mode mid-window
-    is deferred. This phase includes a participant iff its `checkpoint_mode`
-    equals `mode` and its initialized_at parses and is <= until. The per-mode
-    `shipped_via_flow` is summed across the included participants.
-    """
-    until = parse_iso(until_iso)
-    if until is None:
-        raise ValueError(f"until is not a UTC ISO8601 timestamp: {until_iso!r}")
-
-    participants: list[dict[str, Any]] = []
-    total_shipped = 0
-    total_via_flow = 0
-    total_not_attributed = 0
-
-    for entry in read_jsonl_lenient(manifest_path):
-        if entry.get("checkpoint_mode") != mode:
-            continue
-        initialized_at = _participant_initialized_at(entry)
-        init_dt = parse_iso(initialized_at) if initialized_at else None
-        if init_dt is None or init_dt > until:
-            continue
-        ws_root = _participant_workspace_root(entry)
-        namespace = entry.get("namespace")
-        if not ws_root or not isinstance(namespace, str) or not namespace:
-            continue
-        result = compute(
-            Path(ws_root),
-            namespace,
-            since_iso=since_iso,
-            until_iso=until_iso,
-            now_iso=now_iso,
-        )
-        total_shipped += result["shipped"]
-        total_via_flow += result[ATTR_VIA_FLOW]
-        total_not_attributed += result[ATTR_NOT_ATTRIBUTED]
-        participants.append(
-            {
-                "workspace_root": ws_root,
-                "namespace": namespace,
-                "initialized_at": initialized_at,
-                "shipped": result["shipped"],
-                ATTR_VIA_FLOW: result[ATTR_VIA_FLOW],
-                ATTR_NOT_ATTRIBUTED: result[ATTR_NOT_ATTRIBUTED],
-            }
-        )
-
-    return {
-        "mode": mode,
-        "since": since_iso,
-        "until": until_iso,
-        "participant_count": len(participants),
-        "shipped": total_shipped,
-        ATTR_VIA_FLOW: total_via_flow,
-        ATTR_NOT_ATTRIBUTED: total_not_attributed,
-        "participants": participants,
-    }
-
-
 # ─── Friction per run ────────────────────────────────────────────────────────
 
 
@@ -642,7 +544,7 @@ def compute_recall_hit_rate(
     without being recalled) are counted separately as the false-negative proxy.
     runs is the distinct run_id count across both kinds. Neither half is
     ground-truth recall, but both are valid for RELATIVE config comparison (e.g.
-    bge vs potion via `arm-compare`).
+    one embedding model against another).
     """
     since = parse_iso(since_iso)
     until = parse_iso(until_iso)
@@ -935,8 +837,8 @@ def _classify_revert(
 class RevertScanError(Exception):
     """Signals workspace_root is not a git repo so the git revert scan cannot run.
 
-    Loud-fail (h8s7 cwd-silent guard) for the new git-source path. cli_main maps it
-    to a non-zero exit naming the resolved root, mirroring ArmCompareEmpty.
+    Loud-fail (h8s7 cwd-silent guard) for the git-source path. cli_main maps it to a
+    non-zero exit naming the resolved root.
     """
 
 
@@ -1207,203 +1109,6 @@ def _tracker_backend(workspace_root: Path) -> str | None:
     return backend if isinstance(backend, str) else None
 
 
-# ─── Arm compare ─────────────────────────────────────────────────────────────
-
-
-class ArmCompareEmpty(Exception):
-    """Signals an empty in-window corpus so cli_main can fail loud (h8s7 guard)."""
-
-
-def _arm_time_to_pr_hours(event: dict[str, Any]) -> tuple[float | None, str | None]:
-    """Resolve one event's time-to-PR hours. Returns (hours, skip_reason).
-
-    Stamp first (flow_attribution plan_started -> create_pr_finished); else
-    evidence.start_ts -> evidence.pr_ts. Missing/unparseable/negative -> (None, reason).
-    """
-    stamp = _read_stamp(event)
-    if stamp is not None:
-        start, finish = stamp
-    else:
-        evidence = event.get("evidence")
-        evidence = evidence if isinstance(evidence, dict) else {}
-        start = parse_iso(evidence.get("start_ts"))
-        finish = parse_iso(evidence.get("pr_ts"))
-        if start is None or finish is None:
-            return None, "missing_start_or_pr_ts"
-    duration = (finish - start).total_seconds() / 3600.0
-    if duration < 0:
-        return None, "negative_duration"
-    return duration, None
-
-
-def _arm_revert(
-    workspace_root: Path,
-    namespace: str,
-    backend: str | None,
-    ticket: Any,
-    shipped_at: datetime,
-) -> tuple[bool, str | None]:
-    """Per-arm revert decision. Returns (is_revert, skip_reason).
-
-    skip_reason mirrors compute_revert_rate's undecidable buckets
-    (tracker_unsupported / history_unavailable / reopened_not_yet_reclosed); when
-    it is None the event is decidable and is_revert is authoritative.
-    """
-    if backend != "beads":
-        return False, "tracker_unsupported"
-    timeline = _status_history(workspace_root, namespace, str(ticket))
-    if timeline is None:
-        return False, "history_unavailable"
-    reverted, _, _, in_flight = _classify_revert(timeline, shipped_at)
-    if in_flight:
-        return False, "reopened_not_yet_reclosed"
-    return reverted, None
-
-
-def _arm_axis(flow_val: Any, control_val: Any, *, flow_better_lt: bool) -> str | None:
-    """Score one axis: "flow" / "control", or None when undecidable for either arm."""
-    if flow_val is None or control_val is None:
-        return None
-    if flow_better_lt:
-        return "flow" if flow_val < control_val else "control"
-    return "flow" if flow_val > control_val else "control"
-
-
-def _arm_verdict(flow_block: dict[str, Any], control_block: dict[str, Any]) -> dict[str, Any]:
-    """Render the pre-registered verdict from the two per-arm blocks.
-
-    flow wins iff it takes >= 2 of the three axes; a flow-arm revert with zero
-    control-arm reverts forces flow_wins false (GUARD).
-    """
-    axis_ttp = _arm_axis(
-        flow_block["median_time_to_pr_hours"],
-        control_block["median_time_to_pr_hours"],
-        flow_better_lt=True,
-    )
-    axis_iv = _arm_axis(
-        flow_block["interventions_per_pr"],
-        control_block["interventions_per_pr"],
-        flow_better_lt=True,
-    )
-    axis_cr = _arm_axis(
-        flow_block["completion_rate"],
-        control_block["completion_rate"],
-        flow_better_lt=False,
-    )
-    favored_flow_count = sum(1 for a in (axis_ttp, axis_iv, axis_cr) if a == "flow")
-    flow_wins = favored_flow_count >= 2
-    guard_triggered = flow_block["reverts"] > 0 and control_block["reverts"] == 0
-    if guard_triggered:
-        flow_wins = False
-    return {
-        "time_to_pr": axis_ttp,
-        "interventions_per_pr": axis_iv,
-        "completion_rate": axis_cr,
-        "favored_flow_count": favored_flow_count,
-        "flow_wins": flow_wins,
-        "guard_triggered": guard_triggered,
-    }
-
-
-def compute_arm_compare(
-    workspace_root: Path,
-    namespace: str,
-    *,
-    since_iso: str,
-    until_iso: str,
-) -> dict[str, Any]:
-    """Compare flow-arm vs control-arm ship-events over [since, until).
-
-    Partitions in-window events on `event["arm"]` (absent -> "flow"; legacy events
-    read as flow). Per arm computes median_time_to_pr_hours, interventions_per_pr,
-    completion_rate, and reverts, then a pre-registered verdict (flow wins iff it
-    takes >=2 of the three axes), with a GUARD override: any flow-arm revert with
-    zero control-arm reverts forces flow_wins=false.
-
-    Raises ArmCompareEmpty when the in-window corpus is empty (h8s7 guard); the CLI
-    maps it to a loud non-zero exit rather than an all-zeros verdict at exit 0.
-    """
-    since = parse_iso(since_iso)
-    until = parse_iso(until_iso)
-    if since is None:
-        raise ValueError(f"since is not a UTC ISO8601 timestamp: {since_iso!r}")
-    if until is None:
-        raise ValueError(f"until is not a UTC ISO8601 timestamp: {until_iso!r}")
-
-    backend = _tracker_backend(workspace_root)
-
-    arms = ("flow", "control")
-    hours: dict[str, list[float]] = {a: [] for a in arms}
-    ttp_skipped: dict[str, list[dict[str, Any]]] = {a: [] for a in arms}
-    interventions: dict[str, list[int]] = {a: [] for a in arms}
-    outcomes: dict[str, list[str]] = {a: [] for a in arms}
-    reverts: dict[str, int] = dict.fromkeys(arms, 0)
-    reverts_skipped: dict[str, list[dict[str, Any]]] = {a: [] for a in arms}
-    n_events: dict[str, int] = dict.fromkeys(arms, 0)
-
-    total = 0
-    for event in load_ship_events(workspace_root, namespace):
-        shipped_at = parse_iso(str(event.get("shipped_at")))
-        if shipped_at is None or not (since <= shipped_at < until):
-            continue
-        arm = event.get("arm", "flow")
-        if arm not in arms:
-            arm = "flow"
-        total += 1
-        n_events[arm] += 1
-        ticket = event.get("ticket")
-
-        dur, reason = _arm_time_to_pr_hours(event)
-        if dur is None:
-            ttp_skipped[arm].append({"ticket": ticket, "reason": reason})
-        else:
-            hours[arm].append(dur)
-
-        evidence = event.get("evidence")
-        evidence = evidence if isinstance(evidence, dict) else {}
-        iv = evidence.get("interventions")
-        if isinstance(iv, int) and not isinstance(iv, bool):
-            interventions[arm].append(iv)
-        outcome = evidence.get("outcome")
-        if outcome in ("merged", "abandoned"):
-            outcomes[arm].append(outcome)
-
-        is_revert, skip_reason = _arm_revert(workspace_root, namespace, backend, ticket, shipped_at)
-        if skip_reason is not None:
-            reverts_skipped[arm].append({"ticket": ticket, "reason": skip_reason})
-        elif is_revert:
-            reverts[arm] += 1
-
-    if total == 0:
-        raise ArmCompareEmpty(str(_memory_paths.ship_events_dir(workspace_root, namespace)))
-
-    def _arm_block(arm: str) -> dict[str, Any]:
-        ivs = interventions[arm]
-        outs = outcomes[arm]
-        merged = sum(1 for o in outs if o == "merged")
-        return {
-            "n_events": n_events[arm],
-            "median_time_to_pr_hours": (percentile(hours[arm], 50.0) if hours[arm] else None),
-            "interventions_per_pr": (sum(ivs) / len(ivs) if ivs else None),
-            "completion_rate": (merged / len(outs) if outs else None),
-            "reverts": reverts[arm],
-            "time_to_pr_skipped": ttp_skipped[arm],
-            "reverts_skipped": reverts_skipped[arm],
-        }
-
-    flow_block = _arm_block("flow")
-    control_block = _arm_block("control")
-    return {
-        "since": since_iso,
-        "until": until_iso,
-        "resolved_workspace_root": str(workspace_root),
-        "total_ship_events": total,
-        "flow": flow_block,
-        "control": control_block,
-        "verdict": _arm_verdict(flow_block, control_block),
-    }
-
-
 # ─── CLI ─────────────────────────────────────────────────────────────────────
 
 
@@ -1439,9 +1144,6 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
 
     p_tpw = sub.add_parser("tickets-per-week", help="Compute shipped tickets in a window.")
     _add_common_args(p_tpw)
-    p_tpw.add_argument("--checkpoint", action="store_true")
-    p_tpw.add_argument("--mode", choices=("personal", "work"), default=None)
-    p_tpw.add_argument("--manifest-path", default=None)
 
     p_ttp = sub.add_parser("time-to-pr", help="Compute observed time-to-PR in a window.")
     _add_common_args(p_ttp)
@@ -1455,11 +1157,6 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         "revert-rate", help="Compute the revert rate of shipped tickets in a window."
     )
     _add_common_args(p_rev)
-
-    p_arm = sub.add_parser(
-        "arm-compare", help="Compare flow-arm vs control-arm ship-events in a window."
-    )
-    _add_common_args(p_arm)
 
     p_trend = sub.add_parser("trend", help="Roll up all five window measures.")
     _add_common_args(p_trend)
@@ -1480,32 +1177,6 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     _add_common_args(p_fe)
     p_fe.add_argument("--json", action="store_true")
     return parser.parse_args(argv)
-
-
-def _run_arm_compare(args: argparse.Namespace, since_iso: str, until_iso: str) -> int:
-    if not args.namespace:
-        sys.stderr.write("metric: --namespace is required\n")
-        return 1
-    workspace_root = Path(args.workspace_root).resolve()
-    err = _check_flow_dir(workspace_root)
-    if err:
-        sys.stderr.write(err)
-        return 1
-    try:
-        result = compute_arm_compare(
-            workspace_root,
-            args.namespace,
-            since_iso=since_iso,
-            until_iso=until_iso,
-        )
-    except ArmCompareEmpty as exc:
-        sys.stderr.write(f"metric: arm-compare found no in-window ship-events under {exc}\n")
-        return 1
-    except ValueError as exc:
-        sys.stderr.write(f"metric: {exc}\n")
-        return 1
-    sys.stdout.write(json.dumps(result, indent=2, sort_keys=True) + "\n")
-    return 0
 
 
 def _run_time_to_pr(args: argparse.Namespace, since_iso: str, until_iso: str, now_iso: str) -> int:
@@ -1803,7 +1474,6 @@ def cli_main(argv: list[str]) -> int:
         "time-to-pr": lambda: _run_time_to_pr(args, since_iso, until_iso, now_iso),
         "friction-per-run": lambda: _run_friction_per_run(args, since_iso, until_iso),
         "revert-rate": lambda: _run_revert_rate(args, since_iso, until_iso),
-        "arm-compare": lambda: _run_arm_compare(args, since_iso, until_iso),
         "trend": lambda: _run_trend(args, since_iso, until_iso, now_iso),
         "corpus-health": lambda: _run_corpus_health(args, since_iso, until_iso, now_iso),
         "recall-hit-rate": lambda: _run_recall_hit_rate(args, since_iso, until_iso),
@@ -1812,31 +1482,8 @@ def cli_main(argv: list[str]) -> int:
     if args.command in dispatchers:
         return dispatchers[args.command]()
 
-    if getattr(args, "checkpoint", False):
-        if args.mode is None:
-            sys.stderr.write("metric: --checkpoint requires --mode personal|work\n")
-            return 1
-        manifest_path = (
-            Path(args.manifest_path).expanduser()
-            if args.manifest_path
-            else _default_checkpoint_manifest_path()
-        )
-        try:
-            result = compute_checkpoint(
-                args.mode,
-                since_iso=since_iso,
-                until_iso=until_iso,
-                now_iso=now_iso,
-                manifest_path=manifest_path,
-            )
-        except ValueError as exc:
-            sys.stderr.write(f"metric: {exc}\n")
-            return 1
-        sys.stdout.write(json.dumps(result, indent=2, sort_keys=True) + "\n")
-        return 0
-
     if not args.namespace:
-        sys.stderr.write("metric: --namespace is required when not --checkpoint\n")
+        sys.stderr.write("metric: --namespace is required\n")
         return 1
 
     workspace_root = Path(args.workspace_root).resolve()
@@ -1868,13 +1515,10 @@ if __name__ == "__main__":
 __all__ = [
     "ATTR_NOT_ATTRIBUTED",
     "ATTR_VIA_FLOW",
-    "ArmCompareEmpty",
     "RevertScanError",
     "classify_attribution",
     "cli_main",
     "compute",
-    "compute_arm_compare",
-    "compute_checkpoint",
     "compute_corpus_health",
     "compute_fix_efficacy",
     "compute_friction_per_run",

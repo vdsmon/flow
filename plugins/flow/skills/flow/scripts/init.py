@@ -23,8 +23,6 @@ Contract:
 - For backend=beads, runs `bd init --prefix <prefix>` then verifies
   `bd ready --json` returns parseable JSON. Subprocess runner is injectable
   (`bd_runner` constructor arg) so tests can mock without spawning bd.
-- Appends one line to `~/.config/flow/checkpoint-manifest.jsonl` so the
-  14-day-checkpoint metric in `recall.py` has an auditable participant ledger.
 """
 
 from __future__ import annotations
@@ -65,7 +63,6 @@ PhaseLiteral = Literal[
     "bd_init",
     "write_workspace_toml",
     "verify_postconditions",
-    "append_checkpoint",
     "finalize",
 ]
 
@@ -107,80 +104,6 @@ def _ensure_gitignore(root: Path) -> dict[str, Any] | None:
     return None
 
 
-# AGENTS.md is durable generic-harness guidance. Claude Code and Codex can load Flow natively;
-# other harnesses may use this managed block as their entry point. Opt-in via
-# `--agents-md`: a tracked root file, so default-off keeps native-only init byte-identical.
-# Once present, the marker pair records durable opt-in and later reconfigures upgrade it.
-_AGENTS_MARKER = "<!-- flow:begin -->"
-_AGENTS_END_MARKER = "<!-- flow:end -->"
-_AGENTS_STANZA = """<!-- flow:begin -->
-## Flow state-aware ticket→PR delivery
-
-This repository is initialized for Flow. Codex should prefer the installed
-`$flow:flow` skill; Claude Code should use the Flow plugin. A generic harness must be
-given the absolute Flow skill root (`FLOW_SKILL_DIR`) by its adapter, then read `SKILL.md` and
-`references/harness.md` there. Do not search the machine for an installation.
-
-1. Pass the request after the host trigger unchanged to Flow's `public-commands.toml`
-   router. Static namespaces win over target parsing; unknown or removed forms stop.
-   Keep the starting checkout as an absolute task root.
-2. Bind the harness identity (`codex`, `claude-code`, or `generic`). Prefix every
-   direct setup, runtime repair, and facade command with `FLOW_HARNESS=<identity>` in that same
-   call; a shell export is never persistent state.
-3. Before a workspace command, install or migrate runtime layout v2 from the loaded
-   skill. Join tracker, run, lease, snapshot, revision, and forge evidence and obey the
-   deterministic lifecycle result.
-4. **Approval is not coding.** For a fresh target, perform read-only planning, present
-   the plan and confidence evidence, then stop until the user explicitly approves.
-   Use native Plan mode when available; otherwise this turn boundary is the gate.
-5. After approval, create or adopt the Flow worktree. Set the returned absolute path as
-   the run root and its `.flow/runtime/flow` executable as the absolute facade path.
-6. Harness calls do not share shell state. Give every command an explicit workdir of
-   the run root, or self-root that individual call when no workdir field exists. Invoke
-   the facade absolutely, and root every read, edit, artifact, and subagent prompt
-   there. A prior standalone `cd` or shell export is never persistent state.
-7. Never relocate dirty main-checkout files automatically. Spill recovery requires
-   confirmed agent-created provenance and an explicit recovery action.
-<!-- flow:end -->"""
-
-
-def _ensure_agents_md(root: Path, *, requested: bool) -> dict[str, Any] | None:
-    """Add or upgrade the managed Flow block without touching surrounding text."""
-    agents = root / "AGENTS.md"
-    existing = agents.read_text(encoding="utf-8") if agents.exists() else ""
-    begin_count = existing.count(_AGENTS_MARKER)
-    end_count = existing.count(_AGENTS_END_MARKER)
-    if begin_count != end_count or begin_count > 1:
-        raise InitError(
-            "AGENTS.md must contain either no Flow markers or exactly one ordered "
-            f"{_AGENTS_MARKER} / {_AGENTS_END_MARKER} pair"
-        )
-
-    if begin_count == 0:
-        if not requested:
-            return {"skipped": True, "reason": "agents_md not requested"}
-        prefix = existing
-        if prefix and not prefix.endswith("\n"):
-            prefix += "\n"
-        if prefix:
-            prefix += "\n"
-        updated = prefix + _AGENTS_STANZA + "\n"
-    else:
-        begin = existing.index(_AGENTS_MARKER)
-        end = existing.index(_AGENTS_END_MARKER)
-        if end < begin:
-            raise InitError(
-                f"AGENTS.md has {_AGENTS_END_MARKER} before {_AGENTS_MARKER}; fix the markers"
-            )
-        end += len(_AGENTS_END_MARKER)
-        updated = existing[:begin] + _AGENTS_STANZA + existing[end:]
-
-    if updated == existing:
-        return {"skipped": True, "reason": "AGENTS.md Flow stanza is current"}
-    atomic_write_text(agents, updated)
-    return None
-
-
 # Phases run in order. Phases skipped by backend (e.g. bd_init for jira) are
 # still recorded as "completed" so --resume bookkeeping stays simple.
 
@@ -212,16 +135,8 @@ class InitConfig:
     handler_overrides: dict[str, str] = field(default_factory=dict)
     memory_namespace: str | None = None
     memory_compounding: bool = True
-    # Override the default checkpoint-manifest location (tests).
-    checkpoint_manifest_path: Path | None = None
-    # personal | work | scratch. None -> derived from backend. The backend
-    # alignment matrix is enforced (jira != personal, beads != work).
-    checkpoint_mode: str | None = None
     # Override default search roots for bundle discovery (tests).
     bundle_search_roots: list[Path] | None = None
-    # Opt-in: add the managed AGENTS.md fallback. Once present, reconfigure keeps
-    # it current without requiring the flag again. See _ensure_agents_md.
-    agents_md: bool = False
 
 
 @dataclass
@@ -303,8 +218,8 @@ def _progress_path(root: Path) -> Path:
 def _ensure_init_run_id(initializing: Path) -> str:
     """Create the `.initializing` marker with a run id, or read an existing one.
 
-    The id is stable across `--resume` so checkpoint-append can detect a
-    duplicate from a prior interrupted run.
+    The id is stable across `--resume`, so a resumed init keeps the identity its
+    interrupted predecessor started with.
     """
     initializing.parent.mkdir(parents=True, exist_ok=True)
     if initializing.exists():
@@ -318,10 +233,6 @@ def _ensure_init_run_id(initializing: Path) -> str:
 
 def _workspace_toml_path(root: Path) -> Path:
     return _flow_dir(root) / "workspace.toml"
-
-
-def _default_checkpoint_manifest_path() -> Path:
-    return Path.home() / ".config" / "flow" / "checkpoint-manifest.jsonl"
 
 
 # ─── Slug derivation ────────────────────────────────────────────────────────
@@ -726,39 +637,6 @@ def _verify_bd_ready(config: InitConfig, runner: Runner) -> None:
         raise InitError(f"bd ready --json output is not valid JSON: {exc}") from exc
 
 
-# ─── Checkpoint manifest append ─────────────────────────────────────────────
-
-
-def _append_checkpoint_manifest(
-    config: InitConfig,
-    namespace: str,
-    init_run_id: str,
-) -> None:
-    path = config.checkpoint_manifest_path or _default_checkpoint_manifest_path()
-    workspace_root = str(config.workspace_root.resolve())
-    # Idempotent on --resume: a crash between this append and recording the
-    # progress phase must not double-count this init in the ledger.
-    if _checkpoint_already_recorded(path, workspace_root, init_run_id):
-        return
-    path.parent.mkdir(parents=True, exist_ok=True)
-    ts = utcnow_iso()
-    entry = {
-        "ts": ts,
-        "initialized_at": ts,
-        "workspace_root": workspace_root,
-        "init_run_id": init_run_id,
-        "backend": config.backend,
-        "namespace": namespace,
-        "compounding": config.memory_compounding,
-        "checkpoint_mode": _resolve_checkpoint_mode(config.backend, config.checkpoint_mode),
-    }
-    line = json.dumps(entry, sort_keys=True) + "\n"
-    with path.open("a", encoding="utf-8") as fh:
-        fh.write(line)
-        fh.flush()
-        os.fsync(fh.fileno())
-
-
 # ─── Postconditions ─────────────────────────────────────────────────────────
 
 
@@ -797,25 +675,6 @@ def _verify_workspace_toml(
 # Backend alignment matrix: a jira workspace cannot be "personal" (that would
 # dodge the work time-to-PR gate); a beads workspace cannot be "work". "scratch"
 # opts out of both gates and is allowed for either backend.
-_CHECKPOINT_MODES: dict[str, tuple[str, ...]] = {
-    "jira": ("work", "scratch"),
-    "beads": ("personal", "scratch"),
-}
-_CHECKPOINT_MODE_DEFAULT: dict[str, str] = {"jira": "work", "beads": "personal"}
-
-
-def _resolve_checkpoint_mode(backend: str, mode: str | None) -> str:
-    allowed = _CHECKPOINT_MODES.get(backend, ())
-    if mode is None:
-        return _CHECKPOINT_MODE_DEFAULT.get(backend, "scratch")
-    if mode not in allowed:
-        raise InitError(
-            f"checkpoint_mode={mode!r} not allowed for backend={backend!r}; "
-            f"allowed: {list(allowed)}"
-        )
-    return mode
-
-
 def _validate_config(config: InitConfig) -> None:
     """Validate the resolved answer set. No side effects, safe to re-run."""
     try:
@@ -824,7 +683,6 @@ def _validate_config(config: InitConfig) -> None:
         raise InitError(str(exc)) from exc
     if config.backend not in ("jira", "beads"):
         raise InitError(f"unknown backend {config.backend!r}")
-    _resolve_checkpoint_mode(config.backend, config.checkpoint_mode)
     if config.backend == "jira" and config.jira is None:
         raise InitError("--backend=jira requires --jira-cloud-id + --jira-project-key")
     if config.backend == "beads" and config.beads is None:
@@ -881,12 +739,16 @@ class _ReconfigureBackup:
 
     `.initialized` is intentionally NOT unlinked up front; finalize swaps it
     atomically. On failure the prior config, launcher metadata, executable modes,
-    managed guidance, and any pre-existing transient markers are restored.
+    a pre-existing root AGENTS.md, and any pre-existing transient markers are restored.
     """
 
     workspace_toml: str | None
     launcher: _FileBackup
     skill_root: _FileBackup
+    # Flow itself no longer writes AGENTS.md, but `bd init` runs inside this
+    # transaction and is held off the file only by `--skip-agents`; this leg keeps a
+    # hand-maintained AGENTS.md recoverable if that ever regresses. It is the only
+    # non-`.flow/` file in the snapshot.
     agents_md: _FileBackup
     initializing: _FileBackup
     progress: _FileBackup
@@ -919,30 +781,6 @@ def _restore_reconfigure_backup(root: Path, backup: _ReconfigureBackup) -> None:
 
 
 # ─── Idempotency helpers (resume) ────────────────────────────────────────────
-
-
-def _checkpoint_already_recorded(path: Path, workspace_root: str, init_run_id: str) -> bool:
-    """True if the checkpoint manifest already has an entry for this run.
-
-    Guards `--resume` from appending a duplicate line when a crash landed
-    between writing the checkpoint and recording the progress phase.
-    """
-    if not path.exists():
-        return False
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line:
-            continue
-        try:
-            entry = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if (
-            entry.get("workspace_root") == workspace_root
-            and entry.get("init_run_id") == init_run_id
-        ):
-            return True
-    return False
 
 
 def _bd_already_initialized(config: InitConfig, runner: Runner) -> bool:
@@ -979,8 +817,8 @@ def run_init(
 
     On failure, raises InitError (or subclass). For a plain or `--resume` run,
     `.flow/.initializing` and `.flow/.init-progress` remain on disk for a later
-    `--resume`. For a failed `--reconfigure`, the prior config, launcher files,
-    managed guidance, and any pre-existing transient markers are restored.
+    `--resume`. For a failed `--reconfigure`, the prior config, launcher files, a
+    pre-existing root AGENTS.md, and any pre-existing transient markers are restored.
     """
     root = config.workspace_root.resolve()
     flow_dir = _flow_dir(root)
@@ -1140,7 +978,6 @@ def _run_init_phases(
         (flow_dir / "runs").mkdir(parents=True, exist_ok=True)
         (flow_dir / "memory" / namespace).mkdir(parents=True, exist_ok=True)
         (flow_dir / "memory" / namespace / "ship-events").mkdir(parents=True, exist_ok=True)
-        _ensure_agents_md(root, requested=config.agents_md)
         return None
 
     _run_phase("mkdirs", _phase_mkdirs)
@@ -1187,16 +1024,9 @@ def _run_init_phases(
     _run_phase("verify_postconditions", _phase_verify_postconditions)
 
     # This intentionally sits outside the resumable phase ledger. A resumed init must repair
-    # launcher files even when its recorded mkdirs phase is skipped. Install before the durable
-    # checkpoint: a broken facade is not a completed initialization and must not create an auditable
-    # success record.
+    # launcher files even when its recorded mkdirs phase is skipped. Install before the finalize
+    # rename: a broken facade is not a completed initialization and must not be marked one.
     _install_launcher(root)
-
-    def _phase_append_checkpoint() -> dict[str, Any] | None:
-        _append_checkpoint_manifest(config, namespace, init_run_id)
-        return None
-
-    _run_phase("append_checkpoint", _phase_append_checkpoint)
 
     # Phase: finalize, atomic rename .initializing → .initialized
     def _phase_finalize() -> dict[str, Any] | None:
@@ -1245,19 +1075,6 @@ def _coerce_search_roots(value: object) -> list[Path] | None:
     raise InitError(f"--bundle-search-roots must be a string or list, got {type(value).__name__}")
 
 
-def _coerce_checkpoint_path(value: object) -> Path | None:
-    """Normalize --checkpoint-manifest from a string or a single-element list."""
-    if value is None:
-        return None
-    if isinstance(value, list):
-        if len(value) != 1:
-            raise InitError("--checkpoint-manifest list must hold exactly one path")
-        value = value[0]
-    if isinstance(value, str):
-        return Path(value).resolve()
-    raise InitError(f"--checkpoint-manifest must be a string, got {type(value).__name__}")
-
-
 def _build_config_from_args(args: argparse.Namespace) -> InitConfig:
     workspace_root = Path(args.workspace_root or os.getcwd()).resolve()
 
@@ -1294,10 +1111,7 @@ def _build_config_from_args(args: argparse.Namespace) -> InitConfig:
         handler_overrides=overrides,
         memory_namespace=args.memory_namespace or None,
         memory_compounding=compounding,
-        checkpoint_mode=args.checkpoint_mode or None,
-        checkpoint_manifest_path=_coerce_checkpoint_path(args.checkpoint_manifest),
         bundle_search_roots=_coerce_search_roots(args.bundle_search_roots),
-        agents_md=args.agents_md,
     )
 
 
@@ -1308,13 +1122,6 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--backend", choices=("jira", "beads"), required=False)
     parser.add_argument("--bundle", choices=("bare", "recommended", "custom"), required=False)
     parser.add_argument("--workspace-root", default=None)
-    parser.add_argument(
-        "--checkpoint-mode",
-        choices=("personal", "work", "scratch"),
-        default=None,
-        help="14-day-gate participation mode; derived from backend if omitted.",
-    )
-
     parser.add_argument("--jira-cloud-id", default=None)
     parser.add_argument("--jira-project-key", default=None)
     parser.add_argument("--jira-assignee-account-id", default=None)
@@ -1332,11 +1139,6 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
 
     parser.add_argument("--config", default=None, help="path to JSON file with all answers")
     parser.add_argument(
-        "--checkpoint-manifest",
-        default=None,
-        help="override default checkpoint-manifest path (tests)",
-    )
-    parser.add_argument(
         "--bundle-search-roots",
         default=None,
         help="colon-separated dirs (overrides defaults; tests)",
@@ -1344,17 +1146,6 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
 
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--reconfigure", action="store_true")
-    parser.add_argument(
-        "--agents-md",
-        action="store_true",
-        help="write the cross-harness AGENTS.md entry point (off by default; "
-        "for repos run through Cursor/Windsurf/opencode/etc. — Claude Code does not need it)",
-    )
-    parser.add_argument(
-        "--guidance-only",
-        action="store_true",
-        help="install or refresh managed AGENTS.md guidance in an initialized workspace",
-    )
     return parser.parse_args(argv)
 
 
@@ -1380,30 +1171,6 @@ def cli_main(argv: list[str]) -> int:
 
         if args.config:
             _merge_config_file(args, _load_config_file(Path(args.config).expanduser()))
-
-        if args.guidance_only:
-            if not args.workspace_root:
-                sys.stderr.write("--workspace-root is required with --guidance-only\n")
-                return 2
-            root = Path(args.workspace_root).expanduser().resolve()
-            if (
-                not (root / ".flow" / ".initialized").is_file()
-                or not (root / ".flow" / "workspace.toml").is_file()
-            ):
-                sys.stderr.write("guidance requires an initialized workspace\n")
-                return 1
-            outcome = _ensure_agents_md(root, requested=True)
-            sys.stdout.write(
-                json.dumps(
-                    {
-                        "changed": outcome is None,
-                        "guidance": str(root / "AGENTS.md"),
-                    },
-                    sort_keys=True,
-                )
-                + "\n"
-            )
-            return 0
 
         if not args.backend:
             sys.stderr.write("--backend is required (jira | beads)\n")

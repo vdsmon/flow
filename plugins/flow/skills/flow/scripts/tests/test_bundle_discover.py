@@ -381,25 +381,20 @@ def test_claude_harness_respects_config_dir(
     ]
 
 
-def test_generic_harness_has_no_native_roots(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    home = tmp_path / "home"
-    repo = tmp_path / "repo"
-    _write_manifest(home / ".claude" / "plugins" / "claude", _full_manifest_text("claude"))
-    _write_manifest(home / ".codex" / "plugins" / "codex", _full_manifest_text("codex"))
-    monkeypatch.setenv("HOME", str(home))
+def test_retired_generic_harness_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    # `generic` was a third harness identity that supplied no host behavior. The
+    # vocabulary is closed to the two hosts Flow runs on, so the retired name now
+    # fails like any other unknown selector instead of silently discovering nothing.
     monkeypatch.setenv("FLOW_HARNESS", "generic")
     monkeypatch.delenv("FLOW_BUNDLE_SEARCH_ROOTS", raising=False)
-
-    assert bd.default_search_roots(repo_root=repo) == []
-    assert bd.discover(repo_root=repo).valid == []
+    with pytest.raises(bd.HarnessError, match=r"FLOW_HARNESS.*codex.*claude-code"):
+        bd.default_search_roots()
 
 
 def test_unknown_flow_harness_fails_clearly(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("FLOW_HARNESS", "mystery-host")
     monkeypatch.delenv("FLOW_BUNDLE_SEARCH_ROOTS", raising=False)
-    with pytest.raises(ValueError, match=r"FLOW_HARNESS.*codex.*claude-code.*generic"):
+    with pytest.raises(ValueError, match=r"FLOW_HARNESS.*codex.*claude-code"):
         bd.default_search_roots()
 
 
@@ -407,7 +402,7 @@ def test_unknown_flow_harness_fails_with_explicit_roots(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("FLOW_HARNESS", "mystery-host")
-    with pytest.raises(ValueError, match=r"FLOW_HARNESS.*codex.*claude-code.*generic"):
+    with pytest.raises(ValueError, match=r"FLOW_HARNESS.*codex.*claude-code"):
         bd.discover(roots=[tmp_path])
 
 

@@ -23,8 +23,6 @@ Imported by `triage.lane` (spec-time, via raw bd read) and `flow_worktree._lane_
 
 from __future__ import annotations
 
-LANES = ("full", "light", "express")
-
 
 def lane_for(labels: object) -> str:
     """Map a bead's labels to its verification lane.

@@ -2,9 +2,8 @@
 
 Parses workspace-facade recipes and the narrow direct-bootstrap calls from SKILL.md plus
 references/*.md. It validates them against flowctl's allowlist and each script's real argparse
-surface, checks the generated managed AGENTS block, and retains the existing
-module/registry/descriptor drift gates. Facade command shape is strict: missing or misspelled
-subcommands and misplaced flags fail.
+surface, and retains the existing module/registry/descriptor drift gates. Facade command shape
+is strict: missing or misspelled subcommands and misplaced flags fail.
 
 Run from anywhere:
     python3 seam_check.py            # check the live SKILL.md + references/
@@ -67,7 +66,7 @@ _FACADE_RE = re.compile(
     re.VERBOSE,
 )
 _CALL_LOCAL_HARNESS_RE = re.compile(
-    r"FLOW_HARNESS\s*=\s*(?:[\"']?(?:<harness>|codex|claude-code|generic)[\"']?)\s*$"
+    r"FLOW_HARNESS\s*=\s*(?:[\"']?(?:<harness>|codex|claude-code)[\"']?)\s*$"
 )
 # A command-like bare script citation becomes an invocation only when the next token is a real
 # subcommand of that script or a leading long option. This avoids treating narrative ``foo.py owns
@@ -100,10 +99,6 @@ _VALUE_OPTION_RE = re.compile(
     r"(?:[ =]+(\{[^}]+\}|[A-Z][A-Z0-9_=-]*))?"
 )
 _MASKED_VALUE = "__FLOW_ARGUMENT_VALUE__"
-
-_AGENTS_STANZA_NAME = "_AGENTS_STANZA"
-_AGENTS_BEGIN_MARKER = "<!-- flow:begin -->"
-_AGENTS_END_MARKER = "<!-- flow:end -->"
 
 # A bare script name as it appears in MODULE.md backticks/prose (no path prefix).
 # Char class is [a-z0-9_]+ (NOT [a-z_]+): omitting the digit silently misses a
@@ -878,108 +873,6 @@ def validate(inv: Invocation) -> list[Problem]:
     return problems
 
 
-def _literal_assignment(source: str, name: str) -> str | None:
-    """Read one top-level literal string assignment without importing its module."""
-    try:
-        tree = ast.parse(source)
-    except SyntaxError:
-        return None
-    for node in tree.body:
-        if not isinstance(node, ast.Assign) or len(node.targets) != 1:
-            continue
-        target = node.targets[0]
-        if not isinstance(target, ast.Name) or target.id != name:
-            continue
-        if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
-            return node.value.value
-    return None
-
-
-def managed_agents_guidance_drift(
-    init_path: Path = SCRIPTS_DIR / "init.py",
-) -> list[str]:
-    """Validate the generated managed AGENTS block by stable semantic contracts.
-
-    Incidental comments or prose that merely mention AGENTS.md do not count. The source of truth is
-    the literal ``_AGENTS_STANZA`` assignment bracketed by the stable managed markers. Wording may
-    evolve while these load/facade/gate/isolation contracts remain true.
-    """
-    try:
-        source = init_path.read_text(encoding="utf-8")
-    except OSError as exc:
-        return [f"cannot read generated guidance source: {exc}"]
-    stanza = _literal_assignment(source, _AGENTS_STANZA_NAME)
-    if stanza is None:
-        return [f"missing literal {_AGENTS_STANZA_NAME} assignment"]
-
-    if stanza.count(_AGENTS_BEGIN_MARKER) != 1 or stanza.count(_AGENTS_END_MARKER) != 1:
-        return ["generated guidance must contain exactly one pair of managed markers"]
-    begin = stanza.index(_AGENTS_BEGIN_MARKER) + len(_AGENTS_BEGIN_MARKER)
-    end = stanza.index(_AGENTS_END_MARKER)
-    if begin > end:
-        return ["generated guidance managed markers are out of order"]
-    guidance = stanza[begin:end]
-
-    contracts: tuple[tuple[str, bool], ...] = (
-        (
-            "adapter-supplied absolute installation guidance",
-            "FLOW_SKILL_DIR" in guidance
-            and "absolute" in guidance.lower()
-            and re.search(r"do not search", guidance, re.IGNORECASE) is not None,
-        ),
-        (
-            "router and harness guidance",
-            "SKILL.md" in guidance and "references/harness.md" in guidance,
-        ),
-        (
-            "public registry routing",
-            "public-commands.toml" in guidance
-            and "Static namespaces" in guidance
-            and "removed forms stop" in guidance,
-        ),
-        (
-            "call-local harness selector guidance",
-            "FLOW_HARNESS" in guidance
-            and all(value in guidance for value in ("codex", "claude-code", "generic"))
-            and "same" in guidance.lower()
-            and "export" in guidance.lower(),
-        ),
-        (
-            "approval-before-coding guidance",
-            re.search(r"approv", guidance, re.IGNORECASE) is not None
-            and "read-only" in guidance.lower()
-            and re.search(r"\bstop\b", guidance, re.IGNORECASE) is not None,
-        ),
-        (
-            "absolute rooted facade guidance",
-            ".flow/runtime/flow" in guidance
-            and "absolute" in guidance.lower()
-            and "run root" in guidance.lower(),
-        ),
-        (
-            "non-persistent call rooting guidance",
-            "explicit workdir" in guidance.lower()
-            and re.search(r"prior(?: standalone)? `cd`", guidance, re.IGNORECASE) is not None
-            and "never persistent" in guidance.lower(),
-        ),
-        (
-            "dirty main-checkout protection",
-            "never relocate dirty" in guidance.lower()
-            and "provenance" in guidance.lower()
-            and "recovery" in guidance.lower(),
-        ),
-    )
-    drift: list[str] = [f"missing {label}" for label, satisfied in contracts if not satisfied]
-
-    direct = find_invocations("generated AGENTS guidance", guidance) + find_bare_script_invocations(
-        "generated AGENTS guidance", guidance
-    )
-    drift.extend(problem.msg for problem in stale_direct_invocation_problems(direct))
-    for invocation in find_facade_invocations("generated AGENTS guidance", guidance):
-        drift.extend(problem.msg for problem in validate(invocation) if problem.level == "ERROR")
-    return drift
-
-
 # --- driver ------------------------------------------------------------------
 
 
@@ -1402,17 +1295,6 @@ def main(argv: list[str]) -> int:
                 raw="",
             )
         )
-
-    problems.extend(
-        Problem(
-            doc="init.py",
-            line=0,
-            level="ERROR",
-            msg=f"generated managed AGENTS guidance: {detail}",
-            raw="",
-        )
-        for detail in managed_agents_guidance_drift()
-    )
 
     if args.verbose:
         for inv in all_invs:

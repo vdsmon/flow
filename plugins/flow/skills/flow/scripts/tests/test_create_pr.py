@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import subprocess
-from typing import ClassVar
 
 import pytest
 
@@ -59,7 +58,6 @@ def _git_runner(*, branch: str = "feature/flow-aut.7-x", push_rc: int = 0):
 
 class _FakeForge:
     backend = "github"
-    capabilities: ClassVar[list] = []
 
     def __init__(self, *, existing: str | None = None, created="https://github.com/o/r/pull/42"):
         self._existing = existing

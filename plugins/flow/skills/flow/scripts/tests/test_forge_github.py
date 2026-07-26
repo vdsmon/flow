@@ -337,15 +337,6 @@ def test_mark_ready_merge_delete_argv():
     assert _ran(calls, ["git", "push", "origin", "--delete", "feature/flow-x"])
 
 
-def test_capabilities_review_threads_on():
-    fg, _ = _adapter()
-    caps = {c["name"]: c["supported"] for c in fg.capabilities}
-    assert caps["review_threads"] is True
-    assert caps["ci_rollup"] is True
-    assert caps["squash_merge"] is True
-    assert caps["default_reviewers"] is False
-
-
 def test_set_default_reviewers_raises_not_supported():
     fg, calls = _adapter()
     with pytest.raises(NotSupported):
@@ -354,11 +345,9 @@ def test_set_default_reviewers_raises_not_supported():
 
 
 def test_bot_review_present_unsupported():
-    # no review bot on the github self-target -> capability off + raises NotSupported
+    # no review bot on the github self-target -> raises NotSupported
     # (forge_cli degrades to {"supported": false}, review_loop skips the wait).
     fg, calls = _adapter()
-    caps = {c["name"]: c["supported"] for c in fg.capabilities}
-    assert caps["bot_review_status"] is False
     with pytest.raises(NotSupported):
         fg.bot_review_present("7")
     assert calls == []

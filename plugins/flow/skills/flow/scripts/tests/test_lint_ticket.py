@@ -36,7 +36,6 @@ def _stage(
         lines.append(f"required_fields = {required_fields}")
     lines.extend(
         [
-            "required = false",
             "required_when_compounding = false",
             f'reference_doc = "references/stage-{name}.md"',
             "roles = []",

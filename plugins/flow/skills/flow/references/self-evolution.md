@@ -34,7 +34,7 @@ Workers are host-native collaboration agents. The driver uses the executable
 `worker-pool` reducers to reserve one host slot, guard discovery reads, and classify
 driver recovery. Handles are disposable; durable evidence is authoritative
 after a driver disappears. Flow never launches a detached host CLI, scans a host job
-directory, stops host sessions, or schedules self-teardown. A user may background
+directory, stops host sessions, or schedules self-teardown. The human may background
 the driver conversation through the host without changing these rules.
 
 Ordinary evolution fixes may self-merge only inside the configured maintainer

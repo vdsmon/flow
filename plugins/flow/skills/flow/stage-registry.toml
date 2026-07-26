@@ -15,7 +15,6 @@
 #   required_fields               - ticket-frontmatter keys that MUST be present for this stage;
 #                                   parsed by _registry.py, consumed by lint_ticket.py to gate the
 #                                   stage on frontmatter (the HARD GATE the gated stages run)
-#   required                      - if true, MUST appear in pipeline.stages
 #   required_when_compounding     - if true AND [memory] compounding=true, MUST appear
 #   reference_doc                 - path relative to this skill dir; loaded by inline handler
 #   roles                         - open-ended list round-tripped into the dispatch descriptor
@@ -26,15 +25,12 @@
 # Timeouts for plan / code_review / e2e / commit / create_pr / review_loop
 # are inferred defaults (the plan only specified ticket, implement, reflect explicitly).
 
-schema_version = 1
-
 [[stage]]
 name = "ticket"
 description = "Resolve ticket key, fetch ticket context via tracker"
 default_handler = "inline"
 default_timeout_min = 5
 required_predecessors = []
-required = false
 required_when_compounding = false
 reference_doc = "references/stage-ticket.md"
 roles = []
@@ -45,7 +41,6 @@ description = "Architect plan, return for approval"
 default_handler = "inline"
 default_timeout_min = 10
 required_predecessors = ["ticket"]
-required = false
 required_when_compounding = false
 reference_doc = "references/stage-plan.md"
 roles = []
@@ -57,7 +52,6 @@ default_handler = "subagent:general-purpose"
 default_timeout_min = 30
 required_predecessors = ["ticket"]
 required_fields = ["planned_files"]
-required = false
 required_when_compounding = false
 reference_doc = "references/stage-implement.md"
 roles = ["records_diff_baseline"]
@@ -68,7 +62,6 @@ description = "A fresh native reviewer challenges the implementation diff"
 default_handler = "inline"
 default_timeout_min = 15
 required_predecessors = ["implement"]
-required = false
 required_when_compounding = false
 reference_doc = "references/stage-code_review.md"
 roles = []
@@ -80,7 +73,6 @@ default_handler = "subagent:general-purpose"
 default_timeout_min = 30
 required_predecessors = ["code_review"]
 required_fields = ["e2e_recipe"]
-required = false
 required_when_compounding = false
 reference_doc = "references/stage-e2e.md"
 roles = []
@@ -92,7 +84,6 @@ default_handler = "inline"
 default_timeout_min = 5
 required_predecessors = ["implement"]
 required_fields = ["commit_type", "commit_summary"]
-required = false
 required_when_compounding = false
 reference_doc = "references/stage-commit.md"
 roles = []
@@ -103,7 +94,6 @@ description = "Push + open-or-resolve the PR through the forge seam (create_pr.p
 default_handler = "none"
 default_timeout_min = 20
 required_predecessors = ["commit"]
-required = false
 required_when_compounding = false
 reference_doc = "references/stage-create_pr.md"
 roles = []
@@ -114,7 +104,6 @@ description = "Bounded CI wait + at most one fix pass through the forge seam (fo
 default_handler = "none"
 default_timeout_min = 60
 required_predecessors = ["create_pr"]
-required = false
 required_when_compounding = false
 reference_doc = "references/stage-review_loop.md"
 roles = []
@@ -125,7 +114,6 @@ description = "Local review companion (review_brief.py); no human gate, Forge st
 default_handler = "inline"
 default_timeout_min = 10
 required_predecessors = ["create_pr"]
-required = false
 required_when_compounding = false
 reference_doc = "references/stage-review_brief.md"
 roles = []
@@ -136,7 +124,6 @@ description = "Closing-phase knowledge extraction; zero novel entries is success
 default_handler = "inline"
 default_timeout_min = 5
 required_predecessors = []
-required = false
 required_when_compounding = true
 reference_doc = "references/stage-reflect.md"
 roles = []
@@ -147,7 +134,6 @@ description = "Terminal self-merge for evolve self-target runs (evolve_self_merg
 default_handler = "none"
 default_timeout_min = 15
 required_predecessors = ["reflect"]
-required = false
 required_when_compounding = false
 reference_doc = "references/stage-merge.md"
 roles = []
