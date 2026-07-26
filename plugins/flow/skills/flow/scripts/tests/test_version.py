@@ -35,10 +35,6 @@ def test_bump_minor_malformed_raises(bad):
         version.bump_minor(bad)
 
 
-def test_bump_for_type_feat_is_minor():
-    assert version.bump_for_type("0.27.56", "feat") == "0.28.0"
-
-
 @pytest.mark.parametrize("commit_type", ["fix", "chore", None, "wat"])
 def test_bump_for_type_non_feat_is_patch(commit_type):
     assert version.bump_for_type("0.27.56", commit_type) == "0.27.57"

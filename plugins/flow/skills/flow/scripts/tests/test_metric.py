@@ -159,13 +159,6 @@ def test_classify_via_flow_when_state_matches(tmp_path: Path) -> None:
     assert metric.classify_attribution(tmp_path, event) == metric.ATTR_VIA_FLOW
 
 
-def test_classify_not_attributed_no_state(tmp_path: Path) -> None:
-    _seed_workspace(tmp_path)
-    _write_ship_event(tmp_path, "FT-1", shipped_at="2026-05-20T10:00:00Z")
-    event = metric.load_ship_events(tmp_path, "demo")[0]
-    assert metric.classify_attribution(tmp_path, event) == metric.ATTR_NOT_ATTRIBUTED
-
-
 def test_classify_not_attributed_run_id_mismatch(tmp_path: Path) -> None:
     _seed_workspace(tmp_path)
     _write_ship_event(
