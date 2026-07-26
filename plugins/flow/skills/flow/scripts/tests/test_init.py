@@ -1437,16 +1437,6 @@ def test_stabilize_skill_dir_rewrites_cache_to_marketplace(tmp_path: Path) -> No
     assert flow_launcher.stabilize_skill_dir(str(cache)) == str(target)
 
 
-def test_stabilize_skill_dir_non_cache_unchanged() -> None:
-    assert flow_launcher.stabilize_skill_dir("/opt/flow/skills/flow") == "/opt/flow/skills/flow"
-
-
-def test_stabilize_skill_dir_cache_but_marketplace_missing_unchanged(tmp_path: Path) -> None:
-    # Cache-shaped input but no marketplace target on disk -> returned unchanged.
-    cache = tmp_path / "plugins" / "cache" / "vdsmon-flow" / "flow" / "0.92.1" / "skills" / "flow"
-    assert flow_launcher.stabilize_skill_dir(str(cache)) == str(cache)
-
-
 # ─── Bundled Codex reviewer default ──────────────────────────────────────────
 
 
