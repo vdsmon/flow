@@ -20,7 +20,7 @@ Your prompt carries the stage contract. Bind it before anything else:
 Workspace root: <absolute run_root>
 Skill root: <absolute skill_root>
 Facade: <absolute facade>
-Harness: <claude-code|codex|generic>
+Harness: <claude-code|codex>
 Ticket and stage: <ticket> / code_review
 Ticket dir: <absolute ticket_dir>
 Reference path: <absolute reference doc>

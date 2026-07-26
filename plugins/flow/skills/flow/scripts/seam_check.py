@@ -66,7 +66,7 @@ _FACADE_RE = re.compile(
     re.VERBOSE,
 )
 _CALL_LOCAL_HARNESS_RE = re.compile(
-    r"FLOW_HARNESS\s*=\s*(?:[\"']?(?:<harness>|codex|claude-code|generic)[\"']?)\s*$"
+    r"FLOW_HARNESS\s*=\s*(?:[\"']?(?:<harness>|codex|claude-code)[\"']?)\s*$"
 )
 # A command-like bare script citation becomes an invocation only when the next token is a real
 # subcommand of that script or a leading long option. This avoids treating narrative ``foo.py owns

@@ -232,8 +232,9 @@ def test_setup_emits_no_provider_routes_or_default_model_hints(tmp_path: Path) -
     assert "models" not in data
 
 
-def test_generic_setup_has_the_same_simple_config(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setenv("FLOW_HARNESS", "generic")
+def test_codex_setup_has_the_same_simple_config(tmp_path: Path, monkeypatch) -> None:
+    # Cross-harness parity: the non-default host writes the same workspace.toml.
+    monkeypatch.setenv("FLOW_HARNESS", "codex")
     result = initmod.run_init(_jira_config(tmp_path))
     data = tomllib.loads(result.workspace_toml_path.read_text(encoding="utf-8"))
     assert "agents" not in data

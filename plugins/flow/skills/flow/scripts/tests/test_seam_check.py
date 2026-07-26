@@ -630,8 +630,9 @@ def test_live_router_carries_rooted_cross_harness_context() -> None:
 
     for field in ("arguments", "skill_root", "task_root", "run_root", "facade", "capabilities"):
         assert field in skill
-    for adapter in ("Claude Code", "Codex", "Generic fallback"):
+    for adapter in ("Claude Code", "Codex"):
         assert adapter in harness
+    assert "Generic fallback" not in harness
     for prompt_field in (
         "Workspace root:",
         "Skill root:",
@@ -756,8 +757,10 @@ def test_live_harness_selector_is_call_local_and_explicit() -> None:
     ]
     text = "\n".join(path.read_text(encoding="utf-8") for path in paths)
     assert "FLOW_HARNESS" in text
-    for value in ("codex", "claude-code", "generic"):
+    for value in ("codex", "claude-code"):
         assert value in text
+    # The vocabulary is closed to the two hosts; a third identity must not reappear.
+    assert "generic" not in text
     assert "export FLOW_HARNESS" not in text
     assert "same command" in text or "call-local" in text
 

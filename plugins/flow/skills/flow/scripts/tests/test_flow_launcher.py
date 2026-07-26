@@ -58,7 +58,7 @@ def test_python311_launcher_installs_facade_that_can_run_lifecycle(tmp_path: Pat
     root = _workspace(tmp_path)
     python311 = shutil.which("python3.11")
     assert python311 is not None
-    env = {**os.environ, "FLOW_HARNESS": "generic"}
+    env = {**os.environ, "FLOW_HARNESS": "claude-code"}
 
     setup = subprocess.run(
         [python311, str(Path(flow_launcher.__file__)), "--workspace-root", str(root)],
@@ -267,16 +267,6 @@ def test_codex_harness_ignores_claude_marketplace_collision(
 
     assert flow_launcher.stabilize_skill_dir(str(cache)) == str(codex_target)
     assert codex_target != claude_target
-
-
-def test_generic_harness_does_not_guess_native_marketplace_source(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setenv("FLOW_HARNESS", "generic")
-    codex_home, cache, _ = _codex_marketplace_skill(tmp_path)
-    _add_claude_collision(codex_home)
-
-    assert flow_launcher.stabilize_skill_dir(str(cache)) == str(cache)
 
 
 def test_codex_cache_upgrade_does_not_break_installed_workspace_launcher(

@@ -45,7 +45,7 @@ from pathlib import Path
 from typing import Any
 
 SCHEMA_VERSION = 1
-_FLOW_HARNESSES = ("codex", "claude-code", "generic")
+_FLOW_HARNESSES = ("codex", "claude-code")
 
 
 class HarnessError(ValueError):
@@ -56,9 +56,8 @@ def flow_harness() -> str:
     """Return the selected adapter, preserving the legacy unset behavior.
 
     Before Flow exposed adapters, bundle discovery searched Claude Code's install locations. An
-    unset (or empty) selector therefore continues to mean ``claude-code``. ``generic`` is
-    deliberately different: it has no native install layout and discovers only explicitly supplied
-    roots.
+    unset (or empty) selector therefore continues to mean ``claude-code``. Any other name fails
+    loudly: the two hosts Flow runs on are the whole vocabulary.
     """
     harness = os.environ.get("FLOW_HARNESS") or "claude-code"
     if harness not in _FLOW_HARNESSES:
@@ -129,8 +128,7 @@ def default_search_roots(repo_root: Path | None = None) -> list[Path]:
     """Default plugin search locations.
 
     An explicit roots override wins after validating the adapter name. Codex searches only its
-    installed-plugin tree, Claude Code searches its native user/repo layouts, and generic has no
-    implicit roots.
+    installed-plugin tree; Claude Code searches its native user/repo layouts.
 
     `FLOW_BUNDLE_SEARCH_ROOTS` is a `:`-separated list of dirs. When set, it
     REPLACES the defaults entirely so tests + power-users can sandbox discovery.
@@ -143,15 +141,13 @@ def default_search_roots(repo_root: Path | None = None) -> list[Path]:
     if harness == "codex":
         codex_home = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex").expanduser()
         roots = [codex_home / "plugins"]
-    elif harness == "claude-code":
+    else:
         claude_config = Path(
             os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude"
         ).expanduser()
         roots = [claude_config / "plugins"]
         if repo_root is not None:
             roots.append(repo_root / ".claude" / "plugins")
-    else:
-        roots = []
 
     # A repo-local Claude root can equal the configured user root. Preserve order while preventing
     # duplicate walks and duplicate manifest records.

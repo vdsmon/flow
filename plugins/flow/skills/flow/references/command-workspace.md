@@ -48,7 +48,7 @@ unnecessary: entry migration is automatic.
    calls. Call the loaded script directly because no facade exists:
 
    ```bash
-   FLOW_HARNESS="<codex|claude-code|generic>" \
+   FLOW_HARNESS="<codex|claude-code>" \
      python3 "<skill_root>/scripts/init.py" --config "<absolute-answers-file>"
    ```
 

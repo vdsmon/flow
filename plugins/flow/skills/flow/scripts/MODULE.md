@@ -46,7 +46,7 @@ The fifth run-safety mechanism, the content-ownership commit gate, is `diff_extr
 | `cockpit_cli.py` | Construct the cockpit evidence model from an absolute JSON file and render the deterministic attention-first snapshot without probing or mutation. | `render --evidence <absolute-json-file> [--json]`; logical text or compact snapshot JSON, structured JSON errors |
 | `flow_worktree.py` | Post-approval worktree seeding plus the exported `is_ticket_branch` ownership predicate shared by preview and reap. Resolves the approved base, seeds the approved Markdown plan and `state.json`, stamps frontmatter, and binds the worktree's v2 memory pointer to main. Reap guards base/revision state, verifies an optional expected tip, and checkpoints dirty work before removal. | flags per `--help`; `create --auto` gates the unattended path |
 | `branch_ticket.py` | Resolve ticket key from current git branch (backend-aware regex); `--branch <name>` resolves from an explicit branch instead (the PR->ticket enabler for revise). | `--workspace-root [--branch]`; exit 0 match / 1 env / 3 no-match |
-| `bundle_discover.py` (lib) | Harness-aware `.flow-bundle.toml` discovery. Unset/`claude-code` searches `${CLAUDE_CONFIG_DIR:-~/.claude}/plugins` + `<repo>/.claude/plugins`; `codex` searches installed plugins under `${CODEX_HOME:-~/.codex}/plugins`; `generic` requires explicit roots. Unknown adapters fail instead of mixing host installations. | — |
+| `bundle_discover.py` (lib) | Harness-aware `.flow-bundle.toml` discovery. Unset/`claude-code` searches `${CLAUDE_CONFIG_DIR:-~/.claude}/plugins` + `<repo>/.claude/plugins`; `codex` searches installed plugins under `${CODEX_HOME:-~/.codex}/plugins`. Unknown adapters fail instead of mixing host installations. | — |
 
 ## Tracker
 
@@ -229,7 +229,7 @@ reference doc); this table is for finding a doc, not for wiring.
 | `references/delivery-repair.md` | Repairs are evidence-specific, target-specific, and confirmation-gated. |
 | `references/delivery-revision.md` | A lifecycle revise action updates a delivered run's open PR. |
 | `references/e2e-recipes.md` | Read this at plan time — delivery-plan.md's recipe-settling step — the moment you settle a ticket's e2e_recipe. |
-| `references/harness.md` | Claude Code and Codex are first-class hosts for the same Flow engine and public grammar. |
+| `references/harness.md` | Claude Code and Codex are the two hosts for the same Flow engine and public grammar. |
 | `references/loop-engineering.md` | Flow has three nested feedback loops |
 | `references/plan-surface.md` | The plan surface renders the human gate of references/delivery-plan.md section 5 as an interactive Lavish session: the exact complete plan… |
 | `references/revision-triage-board.md` | The revision board is the one review-adjacent use of Lavish; the planning-gate use lives in references/plan-surface.md. |
