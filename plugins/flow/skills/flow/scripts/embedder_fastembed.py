@@ -4,8 +4,8 @@ The shipped default embedder. Imports fastembed (ONNX runtime, no torch). It is 
 standalone subprocess entrypoint: `memory_embed.embed` shells the default command
 `uvx --with fastembed python embedder_fastembed.py --model <id>`, so fastembed
 resolves in uvx's own cached env, independent of the runtime python3 (which cannot
-import it). No stdlib-path script imports this module. `embedder_model2vec.py` is
-the lighter static alternative, selectable via `[memory.semantic].embedder`.
+import it). No stdlib-path script imports this module. Any command honoring the
+stdin-texts/JSON-vectors wire protocol is selectable via `[memory.semantic].embedder`.
 
 Contract:
   stdin:  newline-delimited texts (one per line; trailing newline ignored).

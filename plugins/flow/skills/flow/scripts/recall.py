@@ -16,7 +16,6 @@ BM25 pinned params:
     ticket match -> + TICKET_EXACT_BONUS  (stronger than branch)
   Tiebreak: ts DESC (ms precision); missing ts sorts last (oldest).
 
-`--metric <name>` dispatches to metric.py; everything else is BM25 query mode.
 
 Quarantine: malformed JSONL lines appended to sidecar
 `<file>.quarantine.<ts>` (per-invocation); main file untouched; scan
@@ -571,17 +570,11 @@ def _emit_results(args: argparse.Namespace, results: list[dict[str, Any]]) -> No
 
 
 def cli_main(argv: list[str]) -> int:
-    # `recall.py --metric <...>` is a passthrough to the metric calculator so the
-    # 14-day checkpoint has one entry point. Everything else is BM25 query mode.
-    if "--metric" in argv:
-        import metric
-
-        return metric.cli_main([a for a in argv if a != "--metric"])
     args = _parse_args(argv)
     workspace_root = Path(args.workspace_root).resolve()
 
-    # `--reindex` dispatches to memory_embed (mirrors the --metric → metric pattern,
-    # but as a real argparse flag so the prose seam validates without a forwarder).
+    # `--reindex` dispatches to memory_embed; a real argparse flag, so the prose
+    # seam validates it without a forwarder special case.
     if args.reindex:
         import memory_embed
 

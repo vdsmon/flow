@@ -14,13 +14,12 @@ Validates:
 5. `[pipeline]`: `stages` non-empty list[str]; every stage registered in
    stage-registry.toml; `pipeline.handlers` covers every stage.
 6. Per stage: handler-string parses as `inline | none | subagent:<type> |
-   skill:<name>[:<args>]`.
+   subagent:<plugin>:<type> | skill:<name>[:<args>]`.
 7. Required predecessors precede the stage.
 8. `required = true` stages appear.
 9. `required_when_compounding = true` stages appear iff
    `[memory] compounding = true`.
-10. `[memory]`: `namespace` string; `compounding` bool; `auto_recall` bool;
-    `recall_by` list[str]; `recall_top_n` int.
+10. `[memory]`: `namespace` string; `compounding` bool.
 """
 
 from __future__ import annotations
@@ -90,6 +89,16 @@ def _validate_tracker_block(data: dict[str, Any], result: ValidationResult) -> s
         elif not isinstance(beads.get("prefix"), str) or not beads["prefix"]:
             result.add("tracker.beads.prefix", "missing or not a non-empty string")
     return backend
+
+
+def _validate_code_review_block(data: dict[str, Any], result: ValidationResult) -> None:
+    """Hard-fail a `[code_review]` table: reviewer tuning moved into `[models]`."""
+    if data.get("code_review") is not None:
+        result.add(
+            "code_review",
+            "removed; reviewer tuning lives in [models.code_review] now — "
+            'reviewer = { model = "<model>", effort = "<effort>" }',
+        )
 
 
 def _validate_forge_block(data: dict[str, Any], result: ValidationResult) -> None:
@@ -241,10 +250,12 @@ def _warn_inline_stage_model(
     for stage in ("implement", "e2e"):
         per_stage = models.get(stage)
         if isinstance(per_stage, str):
-            field, value = f"models.{stage}", per_stage
+            field = f"models.{stage}"
+            if per_stage.strip().lower() in OFF_VALUES:
+                continue
+        elif isinstance(per_stage, dict) and per_stage:
+            field = f"models.{stage}"
         else:
-            continue
-        if value.strip().lower() in OFF_VALUES:
             continue
         if handlers.get(stage) == "inline":
             result.warn(
@@ -254,27 +265,96 @@ def _warn_inline_stage_model(
             )
 
 
+# The stages that actually launch an agent, and the roles they launch. This is the
+# liveness truth for [models] keys: a hint for a stage outside this map (or a role a
+# stage never launches) would silently do nothing, so it is a violation, not a no-op.
+# Sources: delivery-plan.md (plan assessor), stage-registry.toml subagent handlers
+# (implement, e2e), stage-code_review.md (reviewer + fixer), stage-review_loop.md §3
+# (fixer), stage-review_brief.md (author), stage-merge.md §2 (reviewer).
+_LAUNCH_SITES: dict[str, frozenset[str]] = {
+    "plan": frozenset({"assessor"}),
+    "implement": frozenset({"implementer"}),
+    "code_review": frozenset({"reviewer", "fixer"}),
+    "e2e": frozenset({"runner"}),
+    "review_loop": frozenset({"fixer"}),
+    "review_brief": frozenset({"author"}),
+    "merge": frozenset({"reviewer"}),
+}
+
+_HINT_FIELDS = frozenset({"model", "effort"})
+
+
 def _validate_model_hints(
-    data: dict[str, Any], registry: list[StageEntry], result: ValidationResult
+    data: dict[str, Any], handlers: dict[str, str], result: ValidationResult
 ) -> None:
+    """Validate `[models]`: stage keys must name a launch site; a stage entry is a
+    bare model string (stage-wide) or a role-keyed table whose values are a model
+    string or an inline `{ model, effort }` table. Values are type-checked only —
+    their vocabulary belongs to whatever launches the agent.
+
+    Liveness is judged against THIS workspace: a `subagent:`/`skill:`-wired stage
+    launches by construction (string hints allowed even off the map), while an
+    inline/none stage launches only when its prose does (_LAUNCH_SITES)."""
     if "agents" in data:
         result.add(
             "agents",
             "provider route tables are no longer supported; delete [agents] and use optional "
-            "[models].<stage> hints",
+            "[models] hints",
         )
     models = data.get("models")
     if models is None:
         return
     if not isinstance(models, dict):
-        result.add("models", "must be a table of stage = model hints")
+        result.add("models", "must be a table keyed by stage")
         return
-    stages = {entry.name for entry in registry}
-    for stage, model in models.items():
-        if stage not in stages:
-            result.add(f"models.{stage}", "unknown stage")
-        if not isinstance(model, str):
-            result.add(f"models.{stage}", "must be a string")
+    for stage, entry in models.items():
+        if stage not in handlers:
+            result.add(f"models.{stage}", "stage is not in [pipeline].stages here")
+            continue
+        _validate_stage_hint(stage, entry, handlers[stage], result)
+
+
+def _validate_stage_hint(stage: str, entry: Any, handler: str, result: ValidationResult) -> None:
+    roles = _LAUNCH_SITES.get(stage)
+    handler_launches = handler.startswith("subagent:")
+    if roles is None and handler_launches and isinstance(entry, str):
+        return
+    if roles is None:
+        detail = (
+            "role tables need a stage with named roles; use a string hint"
+            if handler_launches
+            else f"stage launches no agent here; valid stages: {sorted(_LAUNCH_SITES)}"
+        )
+        result.add(f"models.{stage}", detail)
+        return
+    if isinstance(entry, str):
+        return
+    if not isinstance(entry, dict):
+        result.add(f"models.{stage}", "must be a model string or a role-keyed table")
+        return
+    for role, value in entry.items():
+        if role not in roles:
+            result.add(
+                f"models.{stage}.{role}",
+                f"stage launches no such role; valid roles: {sorted(roles)}",
+            )
+            continue
+        if isinstance(value, str):
+            continue
+        if not isinstance(value, dict):
+            result.add(
+                f"models.{stage}.{role}",
+                'must be a model string or { model = "...", effort = "..." }',
+            )
+            continue
+        for field_name, field_value in value.items():
+            if field_name not in _HINT_FIELDS:
+                result.add(
+                    f"models.{stage}.{role}.{field_name}",
+                    f"unknown field; valid fields: {sorted(_HINT_FIELDS)}",
+                )
+            elif not isinstance(field_value, str):
+                result.add(f"models.{stage}.{role}.{field_name}", "must be a string")
 
 
 def _validate_memory_block(data: dict[str, Any], result: ValidationResult) -> bool:
@@ -284,14 +364,8 @@ def _validate_memory_block(data: dict[str, Any], result: ValidationResult) -> bo
         return True  # default compounding=true so caller still gates on it
     if not isinstance(memory.get("namespace"), str) or not memory["namespace"]:
         result.add("memory.namespace", "missing or not a non-empty string")
-    for key in ("auto_recall", "compounding"):
-        if not isinstance(memory.get(key), bool):
-            result.add(f"memory.{key}", "missing or not a bool")
-    recall_by = memory.get("recall_by")
-    if not isinstance(recall_by, list) or not all(isinstance(x, str) for x in recall_by):
-        result.add("memory.recall_by", "missing or not a list[str]")
-    if not isinstance(memory.get("recall_top_n"), int):
-        result.add("memory.recall_top_n", "missing or not an int")
+    if not isinstance(memory.get("compounding"), bool):
+        result.add("memory.compounding", "missing or not a bool")
     root = memory.get("root")
     if root is not None:
         # Optional shared-store path. A relative root would break the cross-worktree
@@ -353,11 +427,12 @@ def validate(
 
     backend = _validate_tracker_block(data, result)
     _validate_forge_block(data, result)
+    _validate_code_review_block(data, result)
     compounding = _validate_memory_block(data, result)
 
     registry = stage_registry or load_registry(_stage_registry_path())
-    _validate_model_hints(data, registry, result)
     stages, handlers = _validate_pipeline_block(data, registry, compounding, result)
+    _validate_model_hints(data, handlers, result)
 
     _warn_inline_stage_model(data, handlers, result)
 

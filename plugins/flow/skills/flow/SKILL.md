@@ -132,7 +132,7 @@ FLOW ticket finalize <ticket> [--dry-run]
 FLOW memory search [<query>] [--ticket <key>]... [--label <facet:value>] [--digest] [--semantic] [--threshold <float>] [--branch <branch>] [--limit <n>]
 FLOW memory prune
 FLOW memory rebuild [--full]
-FLOW measure <throughput|lead-time|friction|reverts|experiment|trend|memory-health|recall-quality|fix-efficacy> [--since <date>] [--until <date>] [--json]
+FLOW measure <throughput|lead-time|friction|reverts|experiment|trend|memory-health|recall-quality|fix-efficacy> [--since <date>] [--until <date>]
 FLOW measure throughput --checkpoint <personal|work> [--manifest <path>]
 FLOW workspace setup [--guidance]
 FLOW workspace inspect [<target>] [--json]
@@ -163,16 +163,7 @@ Use the command's registry effect before acting:
 - `write`: perform the explicitly requested, bounded write without adding another
   approval gate.
 
-Load only the routed public reference:
-
-| Route | Reference |
-|---|---|
-| bare invocation or target | `references/command-target.md` |
-| `ticket` | `references/command-ticket.md` |
-| `memory` | `references/command-memory.md` |
-| `measure` | `references/command-measure.md` |
-| `workspace` | `references/command-workspace.md` |
-| `maintain` | `references/command-maintain.md` |
+Load the reference the router returned in `reference`; load no other.
 
 ## Bare cockpit
 
@@ -285,6 +276,7 @@ Workspace root: <absolute run_root>
 Skill root: <absolute skill_root>
 Facade: <absolute facade>
 Harness: <claude-code|codex|generic>
+Ticket and stage: <ticket> / <stage>
 Ticket dir: <absolute ticket_dir>
 Reference path: <absolute reference, or none>
 Artifact path: <absolute output_path>

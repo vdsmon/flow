@@ -182,14 +182,15 @@ handler_string = "skill:auto-merge:merge"
     assert result.valid[0].skills[0].stage == "merge"
 
 
-def test_known_stages_match_stage_registry() -> None:
-    # _KNOWN_STAGES hand-copies the registry's closed vocabulary; a stage
-    # registered there but missing here gets its manifests falsely rejected.
+def test_known_stages_read_from_stage_registry() -> None:
+    # The closed vocabulary is derived from the registry at call time; this pins
+    # the lazy loader against the raw toml so a parse regression cannot silently
+    # reject every manifest.
     import tomllib
 
     registry = Path(bd.__file__).resolve().parent.parent / "stage-registry.toml"
     data = tomllib.loads(registry.read_text(encoding="utf-8"))
-    assert {s["name"] for s in data["stage"]} == bd._KNOWN_STAGES
+    assert {s["name"] for s in data["stage"]} == bd._known_stages()
 
 
 def test_handler_string_must_start_with_skill_prefix(tmp_path: Path) -> None:

@@ -1,7 +1,7 @@
 """Embedder seam + derived sidecar index for semantic recall.
 
 Pure stdlib. Never imports the embedding model. It lives ONLY inside the uvx
-subprocess (`embedder_fastembed.py`, the default; `embedder_model2vec.py`, the
+subprocess (`embedder_fastembed.py`, the default; any command honoring the
 lighter static alternative). The runtime python3 cannot import them, so the
 embedder is a CONFIGURED COMMAND that is shelled: newline texts on stdin, a JSON
 array of vectors on stdout. recall.py catches `_EmbedderUnavailable` and falls

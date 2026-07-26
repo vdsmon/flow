@@ -260,8 +260,12 @@ machinery. Rejected.
    interface remains useful.
 5. **Reconcile tests, docs, and configuration.** Rewrite the opening of `CLAUDE.md`,
    delete dead configuration and historical operational instructions, and test only
-   through surviving interfaces. Do not execute `flow-qpgd`; most of its proposed
-   test deletion will happen naturally with the removed modules.
+   through surviving interfaces. Do not execute `flow-qpgd` in this slice.
+   (Correction, 2026-07-25: the original sentence predicted most of its proposed
+   test deletion would happen naturally with the removed modules; re-measured at
+   a6bcdf2, 145 of the 185 manifest node ids still exist, so the cut remains a
+   deliberate dedicated-session decision — see the re-measurement comment on
+   `flow-qpgd`.)
 6. **Reconcile backlog and Git debris.** Mark tickets tied exclusively to deleted
    machinery obsolete, then clean merged branches and stale worktrees with explicit
    preservation checks. Tracker mutation waits until the corresponding code is gone.

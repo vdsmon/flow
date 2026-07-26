@@ -25,7 +25,7 @@ Identity / convergence (two-layer seam). `--dedup-key <s>` feeds two dedup nets:
    phrased differently, where the whole-key exact hash would mint a fresh slug. This fuzzy
    pass is auto-skipped when the file component is not a real file path (a machine-formulaic
    key with no path separator that does not resolve to a tracked top-level file, e.g.
-   trace_mine's `<anchor>::<kind>-<stage>` cluster keys or an `epic:<track>` slug); for those
+   a producer's `<anchor>::<kind>-<stage>` cluster key or an `epic:<track>` slug); for those
    only the exact `evid:` net fires, so distinct formulaic findings are not over-collapsed.
 
 Anchor the key on the finding's primary file path (prose convention) so the same defect maps
@@ -167,7 +167,7 @@ def _is_machine_formulaic_key(file_part: str, repo: Path, run: Runner) -> bool:
 
     An audit caller anchors on a real relfile path, which carries a directory
     separator (`references/stage-commit.md`), and keeps the fuzzy pass. A machine
-    producer (trace_mine's `<anchor>::<kind>-<stage>` cluster key, an `epic:<track>`
+    producer (a `<anchor>::<kind>-<stage>` cluster key, an `epic:<track>`
     slug) anchors on a bare token that does not resolve to a tracked top-level file,
     and skips the pass so distinct formulaic findings are not over-collapsed.
     """

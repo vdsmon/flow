@@ -867,3 +867,27 @@ def test_list_epics_escapes_apostrophe_in_type_name(monkeypatch: pytest.MonkeyPa
 def test_jira_adapter_is_structural_tracker(monkeypatch: pytest.MonkeyPatch) -> None:
     adapter = _make_adapter(monkeypatch, _FakeHttp([]))
     assert isinstance(adapter, t.Tracker)
+
+
+# ─── User-Agent (Atlassian WAF workaround) ──────────────────────────────────
+
+
+def test_requests_carry_user_agent(monkeypatch: pytest.MonkeyPatch) -> None:
+    http = _FakeHttp(
+        [
+            _Response({"key": "FT-1", "fields": {"status": {}, "resolution": None}}),  # state()
+            _Response({"key": "FT-2"}),  # create()
+        ]
+    )
+    adapter = _make_adapter(monkeypatch, http)
+    adapter.state("FT-1")
+    adapter.create({"body": "s", "fmt": "plain"}, {"body": "d", "fmt": "plain"}, "Task")
+    get_req, post_req = http.calls
+    assert get_req.method == "GET"
+    assert post_req.method == "POST"
+    for req in (get_req, post_req):
+        ua = req.get_header("User-agent")
+        assert ua == tj._USER_AGENT
+        # Independent of the constant: catches a future bad edit that the constant couldn't certify
+        # against itself.
+        assert not ua.startswith("Python-urllib")

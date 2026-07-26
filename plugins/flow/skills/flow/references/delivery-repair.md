@@ -21,9 +21,13 @@ clears the lock, rotates ownership, resets in-progress stages to pending, and re
 the snapshot. Confirm before applying. If the lease still classifies live, ordinary
 takeover refuses.
 
-A live-lease force is operator-explicit and available only here. Show holder identity,
-age, and liveness evidence, ask the operator to assert the holder is dead, then confirm
-the exact target. Never infer deadness automatically.
+```bash
+FLOW_HARNESS="<harness>" "<facade>" recover takeover --ticket "<ticket>" --workspace-root .
+```
+
+A live-lease force (`recover takeover --force`) is operator-explicit and available only
+here. Show holder identity, age, and liveness evidence, ask the operator to assert the
+holder is dead, then confirm the exact target. Never infer deadness automatically.
 
 ### Failed stage
 
@@ -33,15 +37,25 @@ Offer only:
 - skip it with an explicit receipt;
 - abort the target run.
 
+```bash
+FLOW_HARNESS="<harness>" "<facade>" recover retry --ticket "<ticket>" --stage "<stage>" --workspace-root .
+FLOW_HARNESS="<harness>" "<facade>" recover skip --ticket "<ticket>" --stage "<stage>" --workspace-root .
+FLOW_HARNESS="<harness>" "<facade>" recover abort --ticket "<ticket>" --workspace-root .
+```
+
 Confirm each. Skip is not a generic success and must remain visible in the run
 receipt. Abort refuses a foreign live lease unless the operator performs the same
-explicit dead-holder assertion.
+explicit dead-holder assertion (`recover abort --force`).
 
 ### Snapshot or engine drift
 
 Show changed components and whether they are committed, owned by planned files, or
 foreign. Offer snapshot reload to accept current workspace machinery, or abort. Never
 reload automatically over dirty or ambiguous engine changes.
+
+```bash
+FLOW_HARNESS="<harness>" "<facade>" recover reload-snapshot --ticket "<ticket>" --workspace-root .
+```
 
 ### Corrupt state or lock
 
@@ -60,7 +74,14 @@ action until an operator establishes the authoritative receipt.
 ### Worktree loss or drift
 
 A terminal run with an open PR may reseed its worktree from the PR branch for a
-revision. A stranded pre-PR worktree is checkpointed to a rescue ref before any reap;
+revision:
+
+```bash
+FLOW_HARNESS="<harness>" "<facade>" worktree locate-or-reseed \
+  --ticket "<ticket>" --branch "<pr-branch>" --main-root "<workspace-root>"
+```
+
+A stranded pre-PR worktree is checkpointed to a rescue ref before any reap;
 capture failure leaves it intact. Content-ownership drift never uses force.
 
 ## Continue after repair

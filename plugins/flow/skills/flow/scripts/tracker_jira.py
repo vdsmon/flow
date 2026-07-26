@@ -54,6 +54,13 @@ from tracker import (
 
 ATLASSIAN_OAUTH_HOST = "https://api.atlassian.com"
 
+# Atlassian's edge WAF black-holes Python's default urllib User-Agent (RemoteDisconnected /
+# IncompleteRead, witnessed 2026-07-10, flow-mg79); curl/8.7.1 passed, the only replacement token
+# tested. This token's own acceptance is unverified, so try curl/8.7.1 first if the black-holing
+# returns. Deliberately NOT tied to the plugin version: a stable token avoids churn against the
+# post-merge version-stamp sync.
+_USER_AGENT = "flow-tracker-jira/1 (+https://github.com/vdsmon/flow)"
+
 _BLOCKED_HINTS = ("block", "hold", "wait")
 _REVIEW_HINTS = ("review", "qa", "merge", "approval")
 _CANCELLED_RESOLUTIONS = ("won't do", "wont do", "cancelled", "canceled", "duplicate", "won't fix")
@@ -314,6 +321,7 @@ class JiraAdapter:
         headers = {
             "Authorization": self._auth_header,
             "Accept": "application/json",
+            "User-Agent": _USER_AGENT,
         }
         if body_bytes is not None:
             data = body_bytes
@@ -842,7 +850,11 @@ class JiraAdapter:
         req = urllib.request.Request(
             url=url,
             method="GET",
-            headers={"Authorization": self._auth_header, "Accept": "*/*"},
+            headers={
+                "Authorization": self._auth_header,
+                "Accept": "*/*",
+                "User-Agent": _USER_AGENT,
+            },
         )
         try:
             resp = self._http(req)

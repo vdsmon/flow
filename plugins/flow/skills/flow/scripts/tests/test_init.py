@@ -29,6 +29,19 @@ import pytest
 import flow_launcher
 import init as initmod
 
+
+@pytest.fixture(autouse=True)
+def _codex_absent(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pin the Codex reviewer probe off for every init test.
+
+    `_compose_handlers` defaults code_review to the bundled reviewer when `codex`
+    resolves on PATH, so without this every handler assertion here would depend on
+    whether the machine running the suite happens to have Codex installed. The probe's
+    own tests re-patch `which` in their bodies, which wins over this fixture.
+    """
+    monkeypatch.setattr(initmod.shutil, "which", lambda name: None)
+
+
 # ─── Helpers ─────────────────────────────────────────────────────────────────
 
 
@@ -242,6 +255,29 @@ def test_reconfigure_preserves_optional_model_hints(tmp_path: Path) -> None:
     assert "agents" not in data
 
 
+def test_reconfigure_preserves_role_keyed_model_hints(tmp_path: Path) -> None:
+    # The nested half of the table (reviewer tuning) must survive reconfigure too;
+    # a str-only round-trip would silently drop it.
+    first = initmod.run_init(_jira_config(tmp_path))
+    workspace = first.workspace_toml_path
+    workspace.write_text(
+        workspace.read_text(encoding="utf-8")
+        + '[models]\nimplement = "opus"\n'
+        + "[models.code_review]\n"
+        + 'reviewer = { model = "gpt-5.6-sol", effort = "high" }\n'
+        + 'fixer = "sonnet"\n',
+        encoding="utf-8",
+    )
+
+    initmod.run_init(_jira_config(tmp_path), reconfigure=True)
+    data = tomllib.loads(workspace.read_text(encoding="utf-8"))
+    assert data["models"]["implement"] == "opus"
+    assert data["models"]["code_review"] == {
+        "reviewer": {"model": "gpt-5.6-sol", "effort": "high"},
+        "fixer": "sonnet",
+    }
+
+
 # ─── L1: AGENTS.md cross-harness entry point (opt-in, CC-neutral by default) ──
 
 
@@ -358,7 +394,6 @@ def test_bare_beads_init_runs_bd_and_writes_workspace_toml(tmp_path: Path) -> No
     data = tomllib.loads(result.workspace_toml_path.read_text(encoding="utf-8"))
     assert data["tracker"]["backend"] == "beads"
     assert data["tracker"]["beads"]["prefix"] == "testpkg"
-    assert data["tracker"]["beads"]["shared_server"] is True
     # Beads workspaces still get FT/code_review/etc handlers from defaults.
     assert data["pipeline"]["handlers"]["plan"] == "inline"
 
@@ -1460,3 +1495,68 @@ def test_stabilize_skill_dir_cache_but_marketplace_missing_unchanged(tmp_path: P
     # Cache-shaped input but no marketplace target on disk -> returned unchanged.
     cache = tmp_path / "plugins" / "cache" / "vdsmon-flow" / "flow" / "0.92.1" / "skills" / "flow"
     assert flow_launcher.stabilize_skill_dir(str(cache)) == str(cache)
+
+
+# ─── Bundled Codex reviewer default ──────────────────────────────────────────
+
+
+def _handlers_of(workspace_toml_path: Path) -> dict[str, str]:
+    data = tomllib.loads(workspace_toml_path.read_text(encoding="utf-8"))
+    return data["pipeline"]["handlers"]
+
+
+def test_code_review_defaults_to_bundled_codex_reviewer(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(initmod.shutil, "which", lambda name: "/usr/bin/codex")
+    monkeypatch.setenv("FLOW_HARNESS", "claude-code")
+    result = initmod.run_init(_jira_config(tmp_path))
+    assert _handlers_of(result.workspace_toml_path)["code_review"] == (
+        "subagent:flow:codex-reviewer"
+    )
+
+
+def test_code_review_stays_inline_without_codex(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(initmod.shutil, "which", lambda name: None)
+    monkeypatch.setenv("FLOW_HARNESS", "claude-code")
+    result = initmod.run_init(_jira_config(tmp_path))
+    assert _handlers_of(result.workspace_toml_path)["code_review"] == "inline"
+
+
+def test_code_review_stays_inline_under_codex_harness(tmp_path: Path, monkeypatch) -> None:
+    # `subagent:` names a Claude Code agent type; a Codex-hosted run cannot launch it,
+    # and there the fresh native reviewer is already Codex.
+    monkeypatch.setattr(initmod.shutil, "which", lambda name: "/usr/bin/codex")
+    monkeypatch.setenv("FLOW_HARNESS", "codex")
+    result = initmod.run_init(_jira_config(tmp_path))
+    assert _handlers_of(result.workspace_toml_path)["code_review"] == "inline"
+
+
+def test_probe_owned_handler_is_not_preserved_when_codex_disappears(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("FLOW_HARNESS", "claude-code")
+    monkeypatch.setattr(initmod.shutil, "which", lambda name: "/usr/bin/codex")
+    first = initmod.run_init(_jira_config(tmp_path))
+    assert _handlers_of(first.workspace_toml_path)["code_review"] == (
+        "subagent:flow:codex-reviewer"
+    )
+
+    monkeypatch.setattr(initmod.shutil, "which", lambda name: None)
+    initmod.run_init(_jira_config(tmp_path), reconfigure=True)
+    assert _handlers_of(first.workspace_toml_path)["code_review"] == "inline"
+
+
+def test_explicit_handler_choice_survives_the_probe(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("FLOW_HARNESS", "claude-code")
+    monkeypatch.setattr(initmod.shutil, "which", lambda name: None)
+    first = initmod.run_init(_jira_config(tmp_path))
+    workspace = first.workspace_toml_path
+    workspace.write_text(
+        workspace.read_text(encoding="utf-8").replace(
+            'code_review = "inline"', 'code_review = "subagent:general-purpose"'
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(initmod.shutil, "which", lambda name: "/usr/bin/codex")
+    initmod.run_init(_jira_config(tmp_path), reconfigure=True)
+    assert _handlers_of(workspace)["code_review"] == "subagent:general-purpose"

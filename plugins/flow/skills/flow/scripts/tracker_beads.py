@@ -10,7 +10,6 @@ from `BEADS_DIR` env or cwd.
 Workspace config (`[tracker.beads]` block in `.flow/workspace.toml`):
 
 - `prefix`: repo-derived slug used by `bd init`. Already created by init.py.
-- `shared_server`: bool, default True. Adapter doesn't read this; bd does.
 - `actor`: optional. Defaults to `$USER`. Used by `list_assigned`.
 
 See `inventory.md` "Beads CLI surface" section for the full subcommand table,
@@ -104,24 +103,6 @@ _BEADS_CAPABILITIES: list[Capability] = [
 
 # Priority maps: bd takes 0-4 integer. Protocol uses string. Round-trip
 # preserves "P<n>" surface so dashboards stay readable.
-_PRIORITY_STR_TO_INT: dict[str, int] = {
-    "p0": 0,
-    "highest": 0,
-    "0": 0,
-    "p1": 1,
-    "high": 1,
-    "1": 1,
-    "p2": 2,
-    "medium": 2,
-    "2": 2,
-    "p3": 3,
-    "low": 3,
-    "3": 3,
-    "p4": 4,
-    "lowest": 4,
-    "4": 4,
-}
-
 # Stderr regexes for failure-kind classification (see inventory.md).
 _RE_NO_DB = re.compile(r"(?i)no beads database found")
 _RE_NOT_FOUND = re.compile(r"(?i)(issue not found|no such issue|unknown id)")
@@ -154,16 +135,6 @@ def _content_to_markdown(body: Content) -> str:
     if fmt == "adf":
         raise NotSupported("BeadsAdapter does not support ADF content. Use fmt='md' or 'plain'.")
     return body["body"]
-
-
-def _priority_str_to_bd_int(priority: str) -> int:
-    key = priority.strip().lower()
-    if key in _PRIORITY_STR_TO_INT:
-        return _PRIORITY_STR_TO_INT[key]
-    raise TrackerError(
-        f"BeadsAdapter cannot map priority={priority!r} to bd 0-4 scale; "
-        f"accepted: P0|P1|P2|P3|P4 (or highest|high|medium|low|lowest)."
-    )
 
 
 def _priority_bd_int_to_str(value: Any) -> str:

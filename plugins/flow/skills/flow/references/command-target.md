@@ -202,5 +202,14 @@ temporary file after parsing. The returned closed disposition is `direct`,
 
 `FLOW help` renders registry-generated help. `FLOW help ticket|memory|measure|workspace|maintain`
 filters to that namespace. Bare or incomplete namespaces are unknown commands; help
-has no implicit aliases. Help and the complete grammar block are generated from
-`public-commands.toml`; do not maintain a second handwritten command list here.
+has no implicit aliases. Render it with the loaded registry CLI (a direct-bootstrap
+call, since help must work before any workspace facade exists) and display its
+logical `FLOW` output as-is, substituting the host spelling only at the conversation
+boundary:
+
+```bash
+python3 "<skill_root>/scripts/public_commands_cli.py" help [<topic>]
+```
+
+Help and the complete grammar block are generated from `public-commands.toml`; do
+not maintain a second handwritten command list here.

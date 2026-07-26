@@ -69,6 +69,25 @@ that state review-clean.
 Only unresolved Critical or Major threads are actionable. Minor and nit findings stay
 open and are listed in the report.
 
+For a revision run with no `dispositions.json` (the interactive board never opened —
+`references/revision-triage-board.md`), apply the configured plain-comment severity
+floor before selecting actionable threads. Capture-then-check: piping
+`review-threads` straight into the floor would swallow a probe error and read a
+forge flake as zero maintainer threads.
+
+```bash
+RAW=$(FLOW_HARNESS="<harness>" "<facade>" forge --workspace-root . review-threads --pr "$PR_ID"); rc=$?
+[ "$rc" -eq 0 ] && THREADS=$(printf '%s' "$RAW" | \
+  FLOW_HARNESS="<harness>" "<facade>" revise-config apply-floor --workspace-root .)
+```
+
+On `rc != 0` retry within the bounded budget, then fail visibly — never proceed as
+review-clean. `apply-floor` returns the array with every unresolved `minor` (a plain
+human comment) bumped to `[revise] plain_comment_severity`; the default `minor`
+leaves the set unchanged. Use `$THREADS` for the actionable selection. When
+`dispositions.json` exists, the human's explicit dispositions supersede the floor
+and `apply-floor` is not consulted.
+
 ## 3. Optional single fix pass
 
 If CI failed or actionable threads exist, and no fix pass has run yet, launch one

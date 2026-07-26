@@ -40,6 +40,7 @@ import os
 import sys
 import tomllib
 from dataclasses import asdict, dataclass, field
+from functools import cache
 from pathlib import Path
 from typing import Any
 
@@ -66,24 +67,18 @@ def flow_harness() -> str:
     return harness
 
 
-# Stage names that the flow stage-registry advertises. A manifest that declares
-# a skill for a stage NOT in this set is rejected. This is the closed-vocabulary
-# contract per build-sequence section "Adding a new stage".
-_KNOWN_STAGES: frozenset[str] = frozenset(
-    {
-        "ticket",
-        "plan",
-        "implement",
-        "code_review",
-        "e2e",
-        "commit",
-        "create_pr",
-        "review_loop",
-        "review_brief",
-        "reflect",
-        "merge",
-    }
-)
+# Stage names come from stage-registry.toml itself (the declared single source of
+# truth for the closed vocabulary), parsed lazily and cached: a manifest that
+# declares a skill for an unregistered stage is rejected. Adding a stage to the
+# registry therefore extends the bundle seam with zero code change here.
+@cache
+def _known_stages() -> frozenset[str]:
+    # Lazy import: flowctl/flow_launcher shims import this module for
+    # flow_harness alone and must stay import-light.
+    from _registry import load_registry
+
+    registry = Path(__file__).resolve().parent.parent / "stage-registry.toml"
+    return frozenset(entry.name for entry in load_registry(registry))
 
 
 # ─── Result types ────────────────────────────────────────────────────────────
@@ -181,7 +176,7 @@ def _str_list_field(entry: dict[str, Any], key: str) -> list[str] | None:
 def _validate_skill_entry(path: Path, stage_name: str, entry: Any) -> ManifestSkill | ManifestError:
     if not isinstance(entry, dict):
         return ManifestError(path=str(path), reason=f"skills.{stage_name} is not a table")
-    if stage_name not in _KNOWN_STAGES:
+    if stage_name not in _known_stages():
         return ManifestError(
             path=str(path),
             reason=f"skills.{stage_name} is not a registered flow stage",

@@ -11,7 +11,7 @@ calculator:
 | `lead-time` | `time-to-pr` | median and p90 plan-to-PR hours |
 | `friction` | `friction-per-run` | events per run, type, and severity |
 | `reverts` | `revert-rate` | revert rate and tracker/git attribution |
-| `experiment` | configured experiment report | cohort outcome against its manifest |
+| `experiment` | `arm-compare` | per-arm flow-vs-control comparison |
 | `trend` | `trend` | combined delivery and memory window |
 | `memory-health` | `corpus-health` | live, superseded, and aging knowledge |
 | `recall-quality` | `recall-hit-rate` | surfaced, used, and miss proxy |
@@ -20,12 +20,15 @@ calculator:
 Invoke the internal calculator through the facade, for example:
 
 ```bash
-FLOW_HARNESS="<harness>" "<facade>" recall --metric <internal-name> \
+FLOW_HARNESS="<harness>" "<facade>" metric trend \
   --namespace <namespace> --workspace-root . \
-  [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--json]
+  [--since YYYY-MM-DD] [--until YYYY-MM-DD]
 ```
 
-`--since` is inclusive and `--until` is exclusive. Use the calculator's resolved
+Substitute `trend` with the internal name from the table above.
+
+`--since` is inclusive and `--until` is exclusive. `--json` exists on `trend` and
+`fix-efficacy` only; the other measures print their table form. Use the calculator's resolved
 defaults when omitted and always display the resolved window. `fix-efficacy` is a
 lifetime measure; reject window flags instead of accepting and ignoring them.
 
@@ -65,9 +68,11 @@ loud rather than returning a misleading zero.
 
 ### Experiment
 
-Read the configured experiment manifest and its immutable cohort evidence. State the
-hypothesis, cohort boundaries, metric, sample size, and outcome. Missing cohort data
-is `insufficient`, not success or failure.
+`arm-compare` partitions ship events by their recorded `arm` (flow vs control) and
+compares the arms on throughput, time-to-PR, and revert rate, with a >=2-of-3
+verdict; a revert regression overrides toward GUARD. An empty window exits 1 loudly
+rather than reporting an all-zeros verdict. Output is JSON-only (the `--json` note
+above does not apply to it).
 
 ### Trend
 

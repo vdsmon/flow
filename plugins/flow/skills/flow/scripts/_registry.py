@@ -17,11 +17,20 @@ _SKILL_PREFIX = "skill:"
 _SUBAGENT_PREFIX = "subagent:"
 
 # Charset-strict handler grammar, the workspace.toml validation spec:
-#   inline | none | subagent:<type> | skill:<name>[:<args>]
+#   inline | none | subagent:<type> | subagent:<plugin>:<type> | skill:<name>[:<args>]
 # subagent types and skill names are restricted to safe identifiers; skill args,
 # when present, must be non-empty. parse_handler is the lax structural twin used
 # on the runtime dispatch path; validate_workspace enforces this charset.
-HANDLER_RE = re.compile(r"^(inline|none|subagent:[A-Za-z0-9_-]+|skill:[A-Za-z0-9_.-]+(?::.+)?)$")
+#
+# The single optional colon in a subagent type carries a plugin namespace, the form
+# a host uses for an agent shipped by a plugin (`flow:codex-reviewer`). It stays an
+# identifier charset with no shell metacharacters: workspace.toml names an agent, never
+# a command. That matters because .flow/workspace.toml can ride in planned_files, the
+# ownership gate excludes .flow/, and the drift gate reconciles owned drift mid-run, so
+# a command-valued handler would let one stage write what a later stage executes.
+HANDLER_RE = re.compile(
+    r"^(inline|none|subagent:[A-Za-z0-9_-]+(?::[A-Za-z0-9_-]+)?|skill:[A-Za-z0-9_.-]+(?::.+)?)$"
+)
 
 
 @dataclass(frozen=True)

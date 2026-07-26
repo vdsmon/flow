@@ -2,7 +2,6 @@
 
 A STUB embedder command (a tiny inline python script emitting deterministic fake
 vectors) exercises the real subprocess socket so the suite is dependency-free.
-One test is guarded by `pytest.importorskip("model2vec")` for the reference embedder.
 """
 
 from __future__ import annotations
@@ -18,7 +17,7 @@ import memory_embed
 
 # A stub embedder: reads newline texts on stdin, emits a deterministic 4-dim vector
 # per line (a hash-bucketed one-hot-ish vector), as JSON. Same contract as the real
-# embedder, no model2vec dependency.
+# embedder dependency.
 _STUB = (
     "import sys, json\n"
     "texts=[l.rstrip(chr(10)) for l in sys.stdin.read().splitlines()]\n"
@@ -253,24 +252,3 @@ def test_cli_embed_stdin(
     assert rc == 0
     vectors = json.loads(capsys.readouterr().out)
     assert len(vectors) == 2
-
-
-# ─── reference embedder (real model2vec, skipped when absent) ──────────────────
-
-
-def test_reference_embedder_real_model() -> None:
-    pytest.importorskip("model2vec")
-    import subprocess
-
-    script = Path(__file__).resolve().parent.parent / "embedder_model2vec.py"
-    proc = subprocess.run(
-        [sys.executable, str(script)],
-        input="local lake table writes\niceberg duckdb\n",
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert proc.returncode == 0, proc.stderr
-    vectors = json.loads(proc.stdout)
-    assert len(vectors) == 2
-    assert len(vectors[0]) == len(vectors[1]) > 0

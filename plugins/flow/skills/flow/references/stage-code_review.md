@@ -27,10 +27,19 @@ model, effort level, clone, or execution receipt.
    `since-stage` can report an empty committed range because implementation is still
    uncommitted. `git diff <started_at_sha>` is the review payload in that case.
 
-2. Launch exactly one fresh host-native reviewer. Give it the ticket, approved plan,
-   implementation report, diff, repository root, and this document. It may inspect
-   surrounding code and run focused read-only checks. It must not edit files, stage
-   changes, commit, or advance Flow state.
+2. Exactly one fresh reviewer challenges the implementation. Which reviewer depends on
+   the configured handler, and nothing else about this step changes:
+
+   - `inline`: launch one fresh host-native reviewer through the independent-agent
+     contract in `references/delivery-loop.md`.
+   - `subagent:flow:codex-reviewer`: the bundled agent owns this stage and its reviewer
+     is the Codex CLI, run as one bounded foreground call under a read-only sandbox.
+     The agent still performs the triage and fix passes below natively.
+
+   The reviewer's hint role is `reviewer` (`model --stage code_review --role reviewer`).
+   Give the reviewer the ticket, approved plan, implementation report, diff, repository
+   root, and this document. It may inspect surrounding code and run focused read-only
+   checks. It must not edit files, stage changes, commit, or advance Flow state.
 
    Ask it to look for correctness defects, missing behavior, regressions, unsafe
    boundaries, tests that do not prove their claims, needless complexity, and code
@@ -46,7 +55,8 @@ model, effort level, clone, or execution receipt.
    - `Minor`: optional improvement.
 
    A missing or failed reviewer is a visible stage failure. Do not replace it with
-   same-context self-review.
+   same-context self-review. An external reviewer that exits non-zero, exceeds its
+   timeout, or leaves no parseable report is a missing reviewer.
 
 3. Triage the returned findings. Dismiss only demonstrably incorrect or duplicate
    observations and record why. Findings whose fix would leave `planned_files` are
@@ -54,7 +64,7 @@ model, effort level, clone, or execution receipt.
 
 4. Perform at most one fix pass. If there are confident, in-scope Critical or Major
    fixes, launch one fresh native fixer with only the accepted findings and the
-   ownership boundary. The fixer edits directly in the authoritative ticket
+   ownership boundary. The fixer's hint role is `fixer` (`model --stage code_review --role fixer`). The fixer edits directly in the authoritative ticket
    worktree, runs the checks affected by its edits once, and returns. Do not create a
    private clone, import a patch, retry with another model, or start a second fix
    pass. Minor findings remain for the human unless they are inseparable from an
@@ -78,6 +88,11 @@ model, effort level, clone, or execution receipt.
 
    Undecided Minor nits that need no decision stay recorded in `no-op` with why; they
    do not create another loop.
+
+   When an agent handler owns this stage, that agent has no human in its context, so it
+   returns its report with `## ask-user` still populated and the driver resolves the
+   section on the rules above before it advances. The stage is not finished while the
+   section has entries.
 
 7. Write `<ticket-dir>/stages/code_review.out` and complete the stage.
 
@@ -108,7 +123,9 @@ and any residual risk.
 
 - Missing implementation baseline or unreadable diff: run `FLOW workspace repair
   <KEY>`, then `retry --stage implement`.
-- Reviewer failure: fail visibly; do not silently self-review.
+- Reviewer failure: fail visibly; do not silently self-review. An external reviewer
+  reports through a file, so name the command and its stderr rather than the empty
+  artifact.
 - Unresolved Critical finding: fail and return the finding to the user.
 - An `ask-user` finding with no human to answer (unattended run): fail and return the
   findings to the user.

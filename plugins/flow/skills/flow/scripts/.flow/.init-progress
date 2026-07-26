@@ -1,0 +1,7 @@
+{"phase": "validate_inputs", "ts": "2026-07-26T03:30:10Z"}
+{"bundle": "bare", "discovered_count": 0, "invalid_count": 0, "phase": "bundle_compose", "ts": "2026-07-26T03:30:10Z"}
+{"phase": "mkdirs", "ts": "2026-07-26T03:30:10Z"}
+{"phase": "ensure_gitignore", "ts": "2026-07-26T03:30:10Z"}
+{"phase": "bd_init", "reason": "backend is not beads", "skipped": true, "ts": "2026-07-26T03:30:10Z"}
+{"phase": "write_workspace_toml", "ts": "2026-07-26T03:30:10Z"}
+{"phase": "verify_postconditions", "ts": "2026-07-26T03:30:10Z"}
