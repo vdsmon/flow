@@ -25,8 +25,9 @@ FLOW_HARNESS="<harness>" "<facade>" tracker \
 
 The claim is best-effort and never blocks planning: exit 3 (already `in_progress`, or the
 tracker has no such state) continues silently; any other failure logs one warning and
-continues. The point is that the team sees the ticket claimed the moment work starts, not
-after approval. This is the one sanctioned ticket mutation before the human gate.
+continues. The point is that the tracker shows the ticket claimed the moment work starts,
+not after approval, so nothing else picks it up as available. This is the one sanctioned
+ticket mutation before the human gate.
 
 The driver reads the ticket, relevant repository files, and directly applicable project
 instructions. Fetch the default branch and record its SHA. Resolve factual questions read-only.
