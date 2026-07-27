@@ -7,21 +7,19 @@ backend = "beads"
 [tracker.beads]
 prefix = "flow"
 
-# Stabilization freeze: this repo must not target itself for automatic
-# self-evolution while the orchestration machinery is being simplified.
+# Freeze lifted 2026-07-27: the simplification and reframing passes landed
+# (PR #554/#555/#560/#561), so this repo targets itself for self-evolution again.
 [maintainer]
-self_target = false
+self_target = true
 
-# Stabilization freeze: retain the inactive evolve tuning for rollback context,
-# but prohibit automatic merge of Flow-on-Flow work.
 [evolve]
 cap = 10
 concurrency = 8
-auto_merge_hot = false
+# Maintainer decision 2026-07-27: a HOT leaf PR auto-merges in this self-target
+# repo when the full gate holds (isolation + CI-green + agent diff review).
+auto_merge_hot = true
 # model tiering for spawned worker runs: fable for the interactive orchestrator, opus for spawned worker runs, sonnet for trivial.
 worker_model = "opus"
-# Inactive during stabilization; retained with the other evolve tuning for
-# rollback context.
 adjudicate_hot = true
 
 # Optional native-agent model hints. Unsupported hints inherit the owner session model.
@@ -44,7 +42,7 @@ backend = "github"
 [forge.github]
 
 [pipeline]
-stages = ["ticket", "plan", "implement", "code_review", "commit", "create_pr", "review_loop"]
+stages = ["ticket", "plan", "implement", "code_review", "commit", "create_pr", "review_loop", "reflect"]
 
 [pipeline.handlers]
 ticket = "inline"
@@ -54,10 +52,12 @@ code_review = "inline"
 commit = "inline"
 create_pr = "inline"
 review_loop = "inline"
+reflect = "inline"
 
 [reflect]
-# Explicit dormant guard during stabilization; reflect is not in the pipeline.
-machinery = false
+# Re-armed 2026-07-27: reflect is back in the pipeline and may repair the
+# harness from inside a run (machinery_edit; flock-serialized, snapshot-aware).
+machinery = true
 
 [memory]
 namespace = "flow"
