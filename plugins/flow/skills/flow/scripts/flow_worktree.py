@@ -942,7 +942,7 @@ def _enforce_autonomy_floors(
     single shared bootstrap every self-approve path funnels through, so it holds for the clean
     >=90% path too. delivery-plan.md step 5 only carried the floor in the adjudication/decided
     sub-branches, so a clean re-plan could slip a hot change past it. The `[evolve] adjudicate_hot`
-    flag (default off) lifts this floor for a maintainer self-target workspace. The floor runs even
+    flag (default off) lifts this floor for the self-target workspace. The floor runs even
     with an EMPTY planned set: the `hot` label is independent evidence of hotness (`triage.decided`
     reads it), so omitting `--planned-files` must not disable the label half of the floor.
     """
@@ -970,7 +970,7 @@ def _enforce_autonomy_floors(
             "clear the label, then re-run."
         )
 
-    # adjudicate_hot lifts the HOT floor for this (maintainer self-target) workspace: a hot change
+    # adjudicate_hot lifts the HOT floor for this (self-target) workspace: a hot change
     # ships like a non-hot one, gated by the merge-time guard-property review + CI instead of this
     # pre-bootstrap refusal. It does not lift the hitl floor above.
     if triage.adjudicate_hot(main_root):

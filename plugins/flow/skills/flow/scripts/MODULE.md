@@ -26,7 +26,7 @@ The ordered file chain (prose → contract → code) for the questions a fresh r
 | `dispatch_stage.py` | State-machine driver for the delivery loop. Does NOT run handlers; emits a handler-descriptor JSON for the prose layer. `revise-open` opens a revision sub-run under a terminal run (own lease/state/snapshot at `runs/<ticket>/revisions/<id>/`, original untouched); `--revision <id>` redirects `next`/`advance`/`release` to drive that sub-run. | `advance --skill-output-from` reads optional structured stage output from a file; reads+writes `state.json` |
 | `state.py` (lib) | Atomic `state.json` read/write under flock, backup rotation, quarantine recovery. | — |
 | `lifecycle.py` (lib) | Pure reducer over normalized tracker, run, lease, snapshot, revision, and forge evidence. Returns the closed `start\|answer\|resume\|running\|repair\|revise\|show\|conflict` action vocabulary; its multi-target coordinator returns direct, needs-choice, sequential, or together and permits together only when every action is `start`. | no I/O; consumed by the public target router |
-| `cockpit.py` (lib) | Pure attention-first cockpit join and logical-FLOW renderer over normalized run, deferred, pending-write, PR-feedback, and self-target health evidence. | — |
+| `cockpit.py` (lib) | Pure attention-first cockpit join and logical-FLOW renderer over normalized run, deferred, pending-write, PR-feedback, and maintainer-health evidence. | — |
 | `snapshot.py` (lib) | Canonical workspace snapshot at init; verify on each `next` (TOCTOU drift guard). The WORKSPACE drift snapshot — not state.json's `.bak` backups, which are state.py's. | — |
 | `lease.py` (lib) | Per-ticket run lease: acquire / refresh / release / expiry + takeover detection. | — |
 | `validate_workspace.py` | HARD GATE: schema-validate `workspace.toml` + `stage-registry.toml` on every run. | exit 1 = violations to stderr |
@@ -132,7 +132,7 @@ The reflect stage's self-repair path — see `../references/self-evolution.md` f
 | Script | Role | Contract notes |
 |--------|------|----------------|
 | `machinery_edit.py` | Flock-serialized applier for reflect lens-B self-edits to flow's OWN source. Refuses out-of-tree + snapshot-pinned paths + skill-root on a protected branch (main/master/dev/develop → propose+record instead). See `../references/self-evolution.md`. | `apply --skill-root --payload` |
-| `flow_beads_create.py` | File a self-work (machinery) bead into flow's OWN beads, gated on maintainer mode; always targets flow's beads, never the run's tracker. | `--workspace-root --summary --description [--type --labels --parent --dedup-key --acceptance-invariant]`; exit 4 = not maintainer |
+| `flow_beads_create.py` | File a self-work (machinery) bead into flow's OWN beads, gated on a route back to flow's repo; always targets flow's beads, never the run's tracker. | `--workspace-root --summary --description [--type --labels --parent --dedup-key --acceptance-invariant]`; exit 4 = not maintainer |
 
 ## Maintenance drain engine
 
@@ -179,7 +179,7 @@ The self-target-gated `FLOW maintain evolution drain` and
 | `recover.py` | Inspect + remediate a broken run. | recipes in `references/delivery-repair.md` |
 | `flow_friction.py` | Append-only `friction.jsonl` log (the reflect/self-evolution feedstock). | `--ticket --run-id --stage --type --body [--detail --severity]` |
 | `friction_recurrence.py` | Read-only forward-join of `friction.jsonl` to MACHINERY-prefixed `knowledge.jsonl` entries: surfaces friction classes that recurred after a claimed fix, clustered two ways (`signature_classes`, a single distinctive anchor token, cross-cutting stage/type; `structural_classes`, `(stage, type, anchor)`), carrying evidence (entry ids, run ids, fix sha) for a downstream judge. Reads friction/knowledge/ship-events, never writes. | `--workspace-root` |
-| `friction_escalate.py` | Propose-only recurrence escalation: consumes `friction_recurrence.analyze` and files ONE deduped `recurrent`-labelled bead per signature class that recurred `>=K` times since its LATEST claimed MACHINERY fix (not the detector's earliest-anchored `post_fix_count`, which over-counts a multi-fix class). `K` + an exempt-anchor set are `[evolve]` workspace.toml knobs (`recurrence_escalation_k` default 3, `recurrence_exempt_anchors` default `[planned_files]`). Dedup key is the bare anchor (no `::`), so at most one bead per anchor ever and only the exact `evid:` dedup net fires. Labels are `recurrent` only, never `evolve`, so the drain loop never picks these up. Auto-dormant outside the self-target route via `flow_beads_create.resolve_maintainer_repo`. | `escalate --workspace-root` |
+| `friction_escalate.py` | Propose-only recurrence escalation: consumes `friction_recurrence.analyze` and files ONE deduped `recurrent`-labelled bead per signature class that recurred `>=K` times since its LATEST claimed MACHINERY fix (not the detector's earliest-anchored `post_fix_count`, which over-counts a multi-fix class). `K` + an exempt-anchor set are `[evolve]` workspace.toml knobs (`recurrence_escalation_k` default 3, `recurrence_exempt_anchors` default `[planned_files]`). Dedup key is the bare anchor (no `::`), so at most one bead per anchor ever and only the exact `evid:` dedup net fires. Labels are `recurrent` only, never `evolve`, so the drain loop never picks these up. Auto-dormant without a route back to flow's repo (`flow_beads_create.resolve_maintainer_repo`). | `escalate --workspace-root` |
 
 ## Shared helpers (lib)
 
@@ -217,7 +217,7 @@ reference doc); this table is for finding a doc, not for wiring.
 | Doc | Covers |
 |-----|--------|
 | `references/background-pipeline.md` | Backgrounding is a host operation applied to the driver conversation. |
-| `references/command-maintain.md` | Except for workspace-local worktree cleanup, maintenance is restricted to workspaces whose configuration puts the current repository on… |
+| `references/command-maintain.md` | Except for workspace-local worktree cleanup, maintenance is restricted to flow's own self-target workspace: the gate below refuses a… |
 | `references/command-measure.md` | FLOW measure reads immutable delivery evidence, tracker history where required, and memory telemetry. |
 | `references/command-memory.md` | Flow memory is append-only source data plus derived indexes. |
 | `references/command-target.md` | This reference owns bare FLOW, FLOW <target>..., and FLOW help. |

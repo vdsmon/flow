@@ -33,7 +33,7 @@ Rules:
   internally through `--query-file`; never interpolate arbitrary human-authored text into a
   shell command.
 
-Search excludes superseded records. It never records usage merely because a user
+Search excludes superseded records. It never records usage merely because the human
 searched interactively; delivery planning records pending usage only after approval
 and only in the bound worktree.
 

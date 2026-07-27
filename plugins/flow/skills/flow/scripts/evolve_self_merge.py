@@ -8,7 +8,7 @@ a clean review does it merge.
 
 `decide()` is pure (no side effects, no I/O), so the gate logic is unit-tested
 directly. The CLI wires the I/O: read the bead's labels (`bd show`), the
-`[evolve] auto_merge_hot` flag, and maintainer mode, then call `decide()`.
+`[evolve] auto_merge_hot` flag, and the self-target marker, then call `decide()`.
 
 Gates (mirrors the drain reap's classify, but evaluated in-run):
 - off the self-target route / not an `evolve` bead / CI not green -> skip (leave the

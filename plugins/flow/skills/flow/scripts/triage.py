@@ -78,7 +78,7 @@ def adjudicate_hot(workspace_root: Path) -> bool:
 
     Default OFF: the hot hard-floor holds for delivery workspaces, so a hot change
     never self-proceeds unattended. Opt IN with an explicit
-    `adjudicate_hot = true` (a maintainer self-target preference) to lift the
+    `adjudicate_hot = true` (a self-target workspace preference) to lift the
     floor: a hot change then ships on an advisor `proceed` like a non-hot one.
     Only an explicit `True` enables it; an absent key/section/file (and any read
     error) reads as off, the conservative side.

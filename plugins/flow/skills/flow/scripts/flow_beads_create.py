@@ -2,10 +2,10 @@
 
 Used by the reflect sling-bead path and `FLOW maintain evolution`. Two guarantees:
 
-- Gated on maintainer mode. Outside it the bead is NOT filed (exit 4), so a normal
-  user run never requires a flow checkout and machinery friction stays dormant.
+- Gated on a route back to flow's repo. Without one the bead is NOT filed (exit 4),
+  so a delivery run never requires a flow checkout and machinery friction stays dormant.
 - Always targets flow's beads (the resolved maintainer repo root), never the run's tracker,
-  which may be Jira. A machinery finding is about the harness, not the user's project, so it
+  which may be Jira. A machinery finding is about the harness, not the delivery workspace, so it
   must land in flow's backlog regardless of the run.
 
 Stdlib-only. `bd` is invoked with cwd = the flow repo so it resolves that repo's
@@ -222,7 +222,7 @@ def create_bead(
 ) -> str:
     """File a bead into flow's beads and return the new key.
 
-    Raises NotMaintainer outside maintainer mode. Caller decides whether that is fine (for the
+    Raises NotMaintainer when there is no route back. Caller decides whether that is fine (for the
     reflect dormant path it is). Raises DuplicateBead when dedup_key matches an existing bead.
     Raises BeadCreateError on bd failure.
 

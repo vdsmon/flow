@@ -1,8 +1,8 @@
 # Maintain commands
 
 Except for workspace-local worktree cleanup, maintenance is restricted
-to workspaces whose configuration puts the current repository on Flow's
-self-target route:
+to flow's own self-target workspace: the gate below refuses a configured
+route that points outside the invoking repository:
 
 ```bash
 FLOW_HARNESS="<harness>" "<facade>" maintainer --workspace-root . --require-current

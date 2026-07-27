@@ -250,7 +250,9 @@ def register_run(
     hostname: str | None = None,
     boot_id: str | None = None,
 ) -> bool:
-    """Producer entry point (dispatch heartbeat + CLI register): maintainer-gated.
+    """Producer entry point (dispatch heartbeat + CLI register): route-gated.
+
+    Requires a route back to flow's repo (see maintainer.resolve_maintainer_repo).
 
     Returns True if an entry was written, False when there is no self-target route (a
     delivery workspace has no fleet). Raises only on a real IO error; the dispatch
@@ -271,9 +273,9 @@ def register_run(
 
 
 def deregister_run(workspace_root: Path, key: str, *, run_id: str | None = None) -> bool:
-    """Clean-exit positive dereg (dispatch_stage cmd_finish + CLI): maintainer-gated.
+    """Clean-exit positive dereg (dispatch_stage cmd_finish + CLI): route-gated.
 
-    Returns True if a removal was attempted, False when not in maintainer mode.
+    Returns True if a removal was attempted, False when there is no route back.
     `run_id`-gated like the low-level deregister: a stale run never drops a
     successor's entry. The dispatch caller wraps this in a fail-open guard.
     """
@@ -350,7 +352,7 @@ def cli_main(argv: list[str]) -> int:
 
     args = parser.parse_args(argv)
 
-    # is-live is the drain re-check: it works regardless of maintainer mode (the lease
+    # is-live is the drain re-check: it works with or without a route back (the lease
     # side always applies) and returns 0=live / 1=not-live. The register/deregister/
     # live-keys writers are library API only (dispatch_stage, _evolve_common).
     return 0 if is_live(Path(args.workspace_root), args.key) else 1
