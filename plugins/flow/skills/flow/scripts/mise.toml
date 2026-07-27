@@ -34,7 +34,7 @@ description = "ruff check + ruff format --check + ty check (Flow scripts)"
 depends = ["lint:ruff", "lint:format", "lint:ty"]
 
 [tasks."check:commands"]
-description = "check generated public command router, help, trigger, and references"
+description = "check generated public command description, router, grammar, and references"
 run = "python3 public_commands_check.py"
 
 [tasks.test]

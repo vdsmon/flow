@@ -81,10 +81,10 @@ The seams are designed for extension but had no recipe; the ordered touch-points
 
 ### Adding a public command
 
-Edit `public-commands.toml`, regenerate its managed router/help/trigger surfaces, and
-run `public_commands_check.py`. Public paths describe intent; internal facade script
-names remain implementation details. A command change touches the skill router and is
-therefore hot.
+Edit `public-commands.toml`, run `python3 public_commands_check.py write` to regenerate
+SKILL.md's derived surfaces, then `python3 public_commands_check.py` to confirm it is clean.
+Public paths describe intent; internal facade script names remain implementation
+details. A command change touches the skill router and is therefore hot.
 
 ## Frontmatter / diff / commit
 
@@ -201,7 +201,7 @@ The highest-fan-in modules in the flat dir: a signature change here ripples thro
 
 | Script | Role | Contract notes |
 |--------|------|----------------|
-| `public_commands_check.py` | Check-only registry generator gate: verifies SKILL trigger/router, logical help bytes, and every command reference without writing. | no args; exit 1 on drift |
+| `public_commands_check.py` | Render + check SKILL.md's generated public-command surfaces (frontmatter description, public router block, public grammar block) and every command reference. `check` (default) reports drift without writing; `write` regenerates the three surfaces in place and is only ever run by a human or agent (hooks stay check-only). | `check` (default; exit 1 stale) / `write` |
 | `module_map.py` | Render + check the generated derived surfaces: MODULE.md's §Derived surfaces table (subcommand names from AST `add_parser` constants, importers from the AST import graph) and stage-reflect.md's guard-file enumeration (from `triage._GUARD_FILES`). `check` is folded into `seam_check.py`, so CI and the prek hook catch staleness; `write` regenerates in place and is only ever run by a human or agent (hooks stay check-only). | `check` (default; exit 1 stale) / `write` |
 | `seam_check.py` | Structurally validate documented absolute, call-local-harness facade commands against flowctl's allowlist and argparse surfaces. Reject cwd-dependent facades, host-specific public recipes, and stale direct scripts. Enforce descriptor, role, registry, and module-map contracts. | `[--verbose]`. Exit 1 on drift |
 
