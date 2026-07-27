@@ -59,7 +59,7 @@ from maintainer import resolve_maintainer_repo
 
 
 class NotMaintainer(Exception):
-    """Raised when the run is not in maintainer mode. Exit 4."""
+    """Raised when the run has no self-target route. Exit 4."""
 
 
 class BeadCreateError(Exception):

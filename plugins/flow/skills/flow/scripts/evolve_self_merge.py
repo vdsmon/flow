@@ -11,7 +11,7 @@ directly. The CLI wires the I/O: read the bead's labels (`bd show`), the
 `[evolve] auto_merge_hot` flag, and maintainer mode, then call `decide()`.
 
 Gates (mirrors the drain reap's classify, but evaluated in-run):
-- not maintainer self-target / not an `evolve` bead / CI not green -> skip (leave the
+- off the self-target route / not an `evolve` bead / CI not green -> skip (leave the
   PR for the human; never an error).
 - the label read itself failing (a transient `bd show` error that outlived the retry)
   -> skip: "labels unreadable" stays distinct from a genuinely unlabeled bead, so a

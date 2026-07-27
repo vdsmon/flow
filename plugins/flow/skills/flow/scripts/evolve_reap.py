@@ -4,7 +4,7 @@ User opted in: green LEAF evolve PRs auto-merge to the default branch unattended
 green. Hot PRs auto-merge too, but only under the `auto_merge_hot` config AND isolation (exactly one
 hot-eligible PR this pass: serialize hot merges, at most one per pass); otherwise they land in
 skipped_hot for the human. Non-green and conflicted PRs always wait. With the flag off (the default,
-every user project), hot PRs stay in skipped_hot. The human gate survives where risk lives.
+every delivery workspace), hot PRs stay in skipped_hot. The human gate survives where risk lives.
 
 Repo reality (this build): GitHub-native auto-merge is off and there is no branch protection, so the
 drain reap step owns the merge in code and enforces "green" by reading the actual check rollup

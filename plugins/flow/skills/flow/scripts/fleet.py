@@ -14,8 +14,8 @@ heartbeat from inside a worktree run and a register from the drain's driver sess
 MAIN checkout's `.flow/fleet/`, durable across worktree teardown. This is the reason we do NOT
 resolve via `maintainer.resolve_maintainer_repo`: in self-target mode that returns the WORKTREE (its
 workspace.toml is a byte copy carrying self_target), so a heartbeat would write into the doomed
-worktree inode. `resolve_maintainer_repo` is still used, but only as the maintainer GATE (off in
-user projects).
+worktree inode. `resolve_maintainer_repo` is still used, but only as the self-target GATE (off in
+delivery workspaces).
 
 Per-key flock on `<key>.lock` spans read->decide->atomic write, the `lease.py`
 idiom; reads are lock-free over `atomic_write_text` (os.replace => old-or-new,
@@ -252,8 +252,8 @@ def register_run(
 ) -> bool:
     """Producer entry point (dispatch heartbeat + CLI register): maintainer-gated.
 
-    Returns True if an entry was written, False when not in maintainer mode (a
-    user project has no fleet). Raises only on a real IO error; the dispatch
+    Returns True if an entry was written, False when there is no self-target route (a
+    delivery workspace has no fleet). Raises only on a real IO error; the dispatch
     caller wraps this in a fail-open guard so a shadow-ledger fault can never
     break a run.
     """

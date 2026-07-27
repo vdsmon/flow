@@ -2,7 +2,7 @@
 
 Library + thin CLI behind the `finalize` facade command (`FLOW ticket finalize <ticket>`).
 
-A user-workspace delivery ends with a green PR parked for the human; the human merges it on the
+A delivery workspace parks a green PR for the human; the human merges it on the
 forge. Nothing on that path closes the ticket, freezes the ship event, deletes the remote branch,
 or reaps the worktree: the merge stage handler is `none` outside the self-target workspace, and the
 `worktree_janitor` sweep requires the tracker to ALREADY read done/cancelled, so a merged-but-open

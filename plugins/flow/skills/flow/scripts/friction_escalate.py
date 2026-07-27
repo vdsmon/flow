@@ -140,7 +140,7 @@ def _describe(candidate: dict[str, Any]) -> str:
         f"Recurrence run_ids: {', '.join(run_ids) or 'n/a'}.",
         f"Recurrence tickets: {', '.join(tickets) or 'n/a'}.",
         "",
-        "Propose-only: informational evidence for the maintainer, never auto-gated"
+        "Propose-only: informational evidence for the human, never auto-gated"
         " (this bead carries no `evolve` label, so the drain loop never picks it up).",
     ]
     return "\n".join(lines)

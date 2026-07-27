@@ -1266,7 +1266,7 @@ def bootstrap(
 
     # Spill recovery is an explicit operator action after the caller confirms that these paths were
     # created by this Flow attempt and did not predate it. Dirty state alone cannot distinguish an
-    # agent spill from user-owned WIP. Relocation happens only after the run is fully seeded, so a
+    # agent spill from human-owned WIP. Relocation happens only after the run is fully seeded, so a
     # refusal or crash never removes work from main first. See references/harness.md.
     spilled = (
         _spilled_planned(planned_files, main_root, run) if recover_spill and planned_files else []
