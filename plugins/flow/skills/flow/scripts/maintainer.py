@@ -1,8 +1,11 @@
-"""Maintainer-mode detection for the self-evolution loop.
+"""Self-target routing for the self-evolution loop.
 
-Maintainer mode means this run may file machinery-friction beads into flow's OWN
-beads DB and run `FLOW maintain evolution`. Outside it (a normal user of the flow plugin),
-machinery friction stays dormant and `FLOW maintain evolution` is disabled.
+This answers a workspace question, not an identity one — there is exactly one
+human, wearing two hats. Maintainer mode means this run has a path back to
+flow's OWN repo: machinery-friction beads file into flow's beads DB and
+`FLOW maintain evolution` may run. A workspace with no path back (neither
+signal below) leaves machinery friction dormant and evolution disabled — that
+should not occur on a machine with the global pointer set.
 
 Two signals, by context:
 
@@ -15,7 +18,7 @@ Two signals, by context:
    to a local flow checkout. The pointed-at repo must itself carry the committed
    marker, so a stray path can never be mistaken for the flow repo.
 
-Neither present -> user mode (returns None).
+Neither present -> no route back to the flow repo (returns None).
 """
 
 from __future__ import annotations
@@ -74,7 +77,7 @@ def is_maintainer(workspace_root: Path) -> bool:
 
 
 def cli_main(argv: list[str]) -> int:
-    """Print the maintainer repo root (exit 0) or nothing (exit 1, user mode).
+    """Print the maintainer repo root (exit 0) or nothing (exit 1, no route).
 
     The gate `FLOW maintain evolution` checks before running a cold audit.
     """
