@@ -61,7 +61,9 @@ machinery = true
 
 [memory]
 namespace = "flow"
-compounding = false
+# Completed 2026-07-27: reflect writes the knowledge layer and plan-time recall
+# now reads it back — the loop the re-arm left half-open.
+compounding = true
 
 [memory.semantic]
 enabled = true

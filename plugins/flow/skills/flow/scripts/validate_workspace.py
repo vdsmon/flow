@@ -16,8 +16,9 @@ Validates:
 6. Per stage: handler-string parses as `inline | none | subagent:<type> |
    subagent:<plugin>:<type>`.
 7. Required predecessors precede the stage.
-8. `required_when_compounding = true` stages appear iff
-   `[memory] compounding = true`.
+8. `required_when_compounding = true` stages must appear when
+   `[memory] compounding = true` (one direction; presence without
+   compounding is legal).
 9. `[memory]`: `namespace` string; `compounding` bool.
 """
 
