@@ -230,6 +230,7 @@ reference doc); this table is for finding a doc, not for wiring.
 | `references/e2e-recipes.md` | Read this at plan time — delivery-plan.md's recipe-settling step — the moment you settle a ticket's e2e_recipe. |
 | `references/harness.md` | Claude Code and Codex are the two hosts for the same Flow engine and public grammar. |
 | `references/loop-engineering.md` | Flow has three nested feedback loops |
+| `references/oversee.md` | Run a flow ticket through a driver agent spawned from a long-lived main session (the overseer), which observes friction from outside while… |
 | `references/plan-surface.md` | The plan surface renders the human gate of references/delivery-plan.md section 5 as an interactive Lavish session: the exact complete plan… |
 | `references/revision-triage-board.md` | The revision board is the one review-adjacent use of Lavish; the planning-gate use lives in references/plan-surface.md. |
 | `references/robustness.md` | The threat → file → witnessed-failure index that AGENTS.md's "Robustness (do not erode)" paragraph points at. |
