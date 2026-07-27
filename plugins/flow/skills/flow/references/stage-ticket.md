@@ -23,7 +23,7 @@ Subsequent stages depend on `<ticket-dir>/ticket.json` being present.
    FLOW_HARNESS="<harness>" "<facade>" branch-ticket --workspace-root .
    ```
    Exit 3 (no match) → abort stage with status=failed;
-   the user must rerun with an explicit `--ticket` arg.
+   the human must rerun with an explicit `--ticket` arg.
 
 2. Fetch ticket details into `<ticket-dir>/ticket.json` — the canonical Ticket payload downstream stages read (key, summary, status, description, type, assignee, comments, parent, attachments, links). This cache must contain the complete tracker payload returned by the selected adapter, never a summary.
 

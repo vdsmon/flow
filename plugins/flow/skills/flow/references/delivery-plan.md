@@ -7,7 +7,7 @@ assessment receipts, approval receipts, or a second planning state machine.
 Vocabulary is precise throughout this contract:
 
 - **driver**: the main agent/session that talks to the human and continues the workflow;
-- **human**: the maintainer, who approves the plan;
+- **human**: the one person, who approves the plan (the same person maintains flow itself; the role, not the identity, varies by workspace);
 - **host**: the Claude Code or Codex adapter that supplies agent and input tools.
 
 Keep `owner` for real resource ownership such as leases, repositories, branches, or content.

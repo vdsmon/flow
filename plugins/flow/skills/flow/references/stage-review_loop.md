@@ -73,7 +73,7 @@ For a revision run with no `dispositions.json` (the interactive board never open
 `references/revision-triage-board.md`), apply the configured plain-comment severity
 floor before selecting actionable threads. Capture-then-check: piping
 `review-threads` straight into the floor would swallow a probe error and read a
-forge flake as zero maintainer threads.
+forge flake as zero human review threads.
 
 ```bash
 RAW=$(FLOW_HARNESS="<harness>" "<facade>" forge --workspace-root . review-threads --pr "$PR_ID"); rc=$?
@@ -98,7 +98,7 @@ create a clone, export/import a patch, or retry under another model.
 
 Re-run the bounded CI wait once and re-read threads once. There is no second fixer.
 If CI is still red or a Critical/Major thread remains, fail the stage and return the
-evidence to the user.
+evidence to the human.
 
 For each addressed thread, reply and resolve only after the fix commit is pushed:
 

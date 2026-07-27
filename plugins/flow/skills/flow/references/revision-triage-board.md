@@ -162,4 +162,4 @@ button. **Send to Agent** persists a mid-session batch and keeps the board alive
 
 Mark the PR ready through the capability-gated forge command only when the ended
 batch has no fix and `detect-pr --branch <pr-branch>` still reports `draft`. Merge remains human on Forge.
-A user-ended session is terminal: never reopen without an explicit request.
+A human-ended session is terminal: never reopen without an explicit request.

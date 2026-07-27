@@ -30,7 +30,7 @@ The applied patch comes from the recorded `implement.diff` — NOT from `git add
    ```
    - Exit 0 → continue.
    - Exit 1 → frontmatter missing a required field.
-     Surface stderr; ask user to populate `commit_type` + `commit_summary` in `.flow/tickets/<KEY>.md` then rerun.
+     Surface stderr; ask the human to populate `commit_type` + `commit_summary` in `.flow/tickets/<KEY>.md` then rerun.
      Abort with status=failed.
 
 2. Capture the implement-stage diff (idempotent if already captured):
@@ -59,7 +59,7 @@ The applied patch comes from the recorded `implement.diff` — NOT from `git add
    - Exit 2 → git error. Abort.
 
 3. Compose the commit skeleton.
-   Read `commit_type` + `commit_summary` from the ticket frontmatter (or ask the user if missing).
+   Read `commit_type` + `commit_summary` from the ticket frontmatter (or ask the human if missing).
    Grouped runs: also read `covers` from the same frontmatter (the step-8 read); when non-empty, pass it as `--covers <c1>,<c2>` so the commit trailer carries one `Closes <KEY>` per cover — `create_pr` builds the PR's Closes footer solely from these trailers (the agent must not write the footer itself), and the orphan reap closes covers from them too. Omitting the flag on a grouped run breaks the SKILL.md per-cover Closes promise.
    ```bash
    FLOW_HARNESS="<harness>" "<facade>" compose-commit \
@@ -153,7 +153,7 @@ The applied patch comes from the recorded `implement.diff` — NOT from `git add
 
 ## Errors
 
-- `lint_ticket.py` exit 1 → user must populate `commit_type` +
+- `lint_ticket.py` exit 1 → the human must populate `commit_type` +
   `commit_summary` frontmatter.
 - `diff_extract.py check-ownership` exit 3 → changes outside `planned_files`
   (committed since the baseline or dirty in the tree); do NOT commit. Reconcile

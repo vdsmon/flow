@@ -102,7 +102,7 @@ FLOW_HARNESS="<harness>" "<facade>" status --workspace-root . [--json]
 With a target, resolve it as in `command-target.md` and restrict output to the
 associated ticket/base run/revision/PR. Include source paths or external ids for
 conflicting evidence. Exit success with an empty result when the initialized
-workspace simply has no runs. A missing workspace directs the user to
+workspace simply has no runs. A missing workspace directs the human to
 `FLOW workspace setup`.
 
 ## `FLOW workspace repair [<target>]`

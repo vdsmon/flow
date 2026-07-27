@@ -25,9 +25,9 @@ Two recipe values are not commands — they are conscious decisions the plan is 
 
 ## The cookbook convention
 
-`<main-root>/.flow/e2e-recipes.md` is a per-repo decision table: "ticket touches X" -> runner/template, known-good fixtures, shared env-prep quirks (auth, containers). It is seeded by the first spec that settles a real recipe in a repo (post-gate, normal mode, per `delivery-plan.md` step 6) and grows every time a new kind of change needs a new row. It is machine-local in user repos — `.flow/` is gitignored — and self-regenerating: a fresh machine with no cookbook just re-derives one via the same explore-propose path, it never blocks on the absence.
+`<main-root>/.flow/e2e-recipes.md` is a per-repo decision table: "ticket touches X" -> runner/template, known-good fixtures, shared env-prep quirks (auth, containers). It is seeded by the first spec that settles a real recipe in a repo (post-gate, normal mode, per `delivery-plan.md` step 6) and grows every time a new kind of change needs a new row. It is machine-local in delivery workspaces — `.flow/` is gitignored — and self-regenerating: a fresh machine with no cookbook just re-derives one via the same explore-propose path, it never blocks on the absence.
 
-When the cookbook exists, author a ticket's recipe FROM it: match the row to what the ticket touches, fill in the fixture, confirm with the user. When it does not exist, explore the repo read-only (CI config, `mise`/`make`/`npm` tasks, `docker-compose`, test layout), propose 1-3 concrete candidate recipes, settle one, then seed the cookbook so the next ticket starts from a table instead of a blank repo.
+When the cookbook exists, author a ticket's recipe FROM it: match the row to what the ticket touches, fill in the fixture, confirm with the human. When it does not exist, explore the repo read-only (CI config, `mise`/`make`/`npm` tasks, `docker-compose`, test layout), propose 1-3 concrete candidate recipes, settle one, then seed the cookbook so the next ticket starts from a table instead of a blank repo.
 
 Skeleton example:
 

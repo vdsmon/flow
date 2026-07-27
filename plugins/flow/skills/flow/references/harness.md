@@ -115,7 +115,7 @@ They use the `worker-pool` facade for enforceable capacity and durable recovery,
 slot for the driver. Handles belong to the driver session and are disposable; durable evidence
 survives it. Flow never scans host job state, stops unrelated sessions, or schedules self-teardown.
 
-Flow's maintainer-only `evolve` and `queue` verbs require Claude Code where their command reference
+Flow's self-target-only `evolve` and `queue` verbs require Claude Code where their command reference
 says so. This host restriction does not change the ordinary ticket pipeline, where Claude Code and
 Codex remain peers.
 

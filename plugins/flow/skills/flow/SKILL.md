@@ -15,12 +15,13 @@ their stage calls for independence. They work in the one authoritative ticket
 worktree. Flow may offer a simple model hint that the active host can accept or
 ignore; provider and model identity are not delivery gates.
 
-Use **human** for the maintainer at an approval gate and **host** for the Claude
-Code or Codex adapter. Reserve **owner** for actual resource
+Use **human** for the one person — there is exactly one, in two roles — at an
+approval gate, and **host** for the Claude Code or Codex adapter. Reserve
+**owner** for actual resource
 ownership such as a lease, repository, branch, or content boundary.
 
 Flow is one state-aware path from a tracker ticket to a reviewable pull request.
-The user owns intent, plan approval, and PR review. Flow owns the isolated worktree
+The human owns intent, plan approval, and PR review. Flow owns the isolated worktree
 and the implementation, review, verification, commit, and PR stages between them.
 
 `FLOW` is the logical invocation used throughout this skill. Render it as:

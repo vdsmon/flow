@@ -152,7 +152,7 @@ implementation diff, and verify it applies cleanly with binary support. Do not w
 for incidental files. Planned binary deliverables that an agent could not create are
 copied into the worktree before diff capture and remain inside the declared set.
 
-Never stage unrelated user changes. If the ownership patch cannot apply to the clean
+Never stage unrelated changes the human made. If the ownership patch cannot apply to the clean
 index, stop for repair rather than forcing or overwriting drift.
 
 ## PR and notification

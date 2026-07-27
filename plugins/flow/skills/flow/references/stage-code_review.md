@@ -83,7 +83,7 @@ model, effort level, clone, or execution receipt.
      autonomous pass). A decision to accept as-is moves the finding to `no-op` with
      the human's rationale.
    - Unattended run (nobody to answer): fail the stage visibly and return the
-     findings to the user, exactly like an unresolved Critical. Never complete the
+     findings to the human, exactly like an unresolved Critical. Never complete the
      stage with an open decision.
 
    Undecided Minor nits that need no decision stay recorded in `no-op` with why; they
@@ -126,9 +126,9 @@ and any residual risk.
 - Reviewer failure: fail visibly; do not silently self-review. An external reviewer
   reports through a file, so name the command and its stderr rather than the empty
   artifact.
-- Unresolved Critical finding: fail and return the finding to the user.
+- Unresolved Critical finding: fail and return the finding to the human.
 - An `ask-user` finding with no human to answer (unattended run): fail and return the
-  findings to the user.
+  findings to the human.
 - A requested fix needs files outside `planned_files`: leave it unresolved and report
   the required scope decision.
 

@@ -1,8 +1,8 @@
 # Self-evolution
 
-Flow improves itself through the same ticket-to-PR lifecycle it applies to user
-work. The maintainer workspace enables the machinery-edit guard, immutable ship
-events, and evolution policy; user workspaces never inherit maintainer merge
+Flow improves itself through the same ticket-to-PR lifecycle it applies to delivery
+work. The self-target workspace enables the machinery-edit guard, immutable ship
+events, and evolution policy; delivery workspaces never inherit self-target merge
 authority.
 
 ## Producers
@@ -37,9 +37,9 @@ after a driver disappears. Flow never launches a detached host CLI, scans a host
 directory, stops host sessions, or schedules self-teardown. The human may background
 the driver conversation through the host without changing these rules.
 
-Ordinary evolution fixes may self-merge only inside the configured maintainer
+Ordinary evolution fixes may self-merge only inside the configured self-target
 envelope after green CI and all guard checks. Hot changes serialize and require the
-high-scrutiny lane; user projects and held changes remain human-merge.
+high-scrutiny lane; delivery workspaces and held changes remain human-merge.
 
 ## Guardrails
 
@@ -48,7 +48,7 @@ high-scrutiny lane; user projects and held changes remain human-merge.
 - Never edit `stage-registry.toml` or a wired handler while the run snapshots it.
   File the change, or use the evidence-specific `FLOW workspace repair <target>`
   path and confirm a snapshot reload.
-- Never advance or update the maintainer checkout while any base or revision lease
+- Never advance or update the flow main checkout while any base or revision lease
   is live.
 - Read-only discovery workers are accepted only when HEAD, index, tracked worktree,
   and untracked-worktree snapshots are unchanged.
