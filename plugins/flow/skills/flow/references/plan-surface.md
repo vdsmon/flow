@@ -4,7 +4,7 @@ The plan surface renders the human gate of `references/delivery-plan.md` section
 interactive Lavish session: the exact complete plan plus the frozen assessment evidence,
 iterated between the human and the driver, converged by Lavish's built-in end-session signal
 before explicit approval. When the gate below passes, this surface is the DEFAULT presentation;
-plain prose is the fallback for a failed gate, never a coequal choice. "The user probably
+plain prose is the fallback for a failed gate, never a coequal choice. "The human probably
 prefers prose" is not part of the gate, and skipping on a passing gate is a defect. Under an
 earlier optional phrasing, attended planning runs rendered plain prose every time with nothing
 in the transcript showing the gate was evaluated; the mandatory wording exists to close exactly
@@ -101,7 +101,7 @@ reopen with `--no-gate` as a degradation-recovery path, not the default.
 Lavish's built-in end-session signal is the verdict; there is no custom approve control. WAIT
 for the poll to return `status: ended` carrying the final feedback batch before the approval
 gate; even when the session is backgrounded, the armed poll's return is the wake signal. Never
-pre-empt the gate. A user-ended session is never reopened without an explicit request.
+pre-empt the gate. A human-ended session is never reopened without an explicit request.
 Agent-side `npx -y lavish-axi@latest end <html>` is only for agent-initiated termination on a
 mid-loop degradation, never the normal convergence path.
 

@@ -1,7 +1,7 @@
 # review_brief stage (inline, local reviewer companion)
 
 Generate a beautiful, read-only HTML companion for the human reviewing the PR.
-The brief answers the questions a maintainer arriving cold to a large codebase has
+The brief answers the questions a reader arriving cold to a large codebase has
 before a raw diff becomes legible: **why did this need to change, what happened
 before, what happens now, which system slice matters, what must remain true, and
 which exact lines prove the claims?**
@@ -255,5 +255,5 @@ Any later commit makes the brief stale, including machinery edits produced by
 freshness`; if local `HEAD`, PR head, receipt SHA, and artifact do not all agree, the
 merge is blocked until this stage is retried/regenerated at the new pushed SHA.
 
-The user may keep reading an older file, but it is visibly labeled with its exact SHA
+The human may keep reading an older file, but it is visibly labeled with its exact SHA
 and never qualifies as the merge-time companion for a newer branch.

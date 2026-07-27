@@ -87,7 +87,7 @@ No heuristic md→ADF conversion; markdown syntax (headings, lists, code fences)
 
 ## Authentication
 
-**Basic auth with API token**, per user decision.
+**Basic auth with API token**, per the human's decision.
 Adapter reads:
 
 - `ATLASSIAN_EMAIL` — Atlassian account email (the username for basic auth)
@@ -847,7 +847,7 @@ count), `escalate(workspace_root, runner=None) -> dict`.
 Dedup key = `recurrence-escalation-<anchor>` (no `::` separator), so only `flow_beads_create`'s
 exact `evid:` net fires, never its fuzzy same-file pass. Labels = `recurrent` only (never `evolve`),
 so `bd ready -l evolve` never surfaces these — propose-only holds unconditionally. Dormant outside
-maintainer mode (`flow_beads_create.resolve_maintainer_repo` returns `None`, checked before any
+the self-target route (`flow_beads_create.resolve_maintainer_repo` returns `None`, checked before any
 friction/knowledge read) — returns/prints `{"maintainer": false, ...}` with nothing filed.
 
 Exit codes: 0=ok (including the dormant no-op), 3=OSError, 4=`_memory_paths._MemoryConfigError`.

@@ -1,8 +1,8 @@
 # Maintain commands
 
 Except for workspace-local worktree cleanup, maintenance is restricted
-to workspaces whose configuration identifies the current repository as Flow's
-maintainer target:
+to flow's own self-target workspace: the gate below refuses a configured
+route that points outside the invoking repository:
 
 ```bash
 FLOW_HARNESS="<harness>" "<facade>" maintainer --workspace-root . --require-current
@@ -186,7 +186,7 @@ Read-only workers inspect repository vision, architecture maps, friction/measure
 history, current epics, and—when the host permits current research—relevant external
 primary sources. Every candidate needs externalized grounding: a cited field advance,
 a witnessed internal signal, an unfinished track, or a bounded scratch-worktree
-spike. A spike never touches the maintainer checkout and its only durable output is
+spike. A spike never touches the flow main checkout and its only durable output is
 evidence in the proposal.
 
 An independent skeptic rejects groundless, frivolous, or non-decomposable candidates.
@@ -355,7 +355,7 @@ one hot slot.
 `--include-proposals` deliberately widens the planning-candidate set to proposal
 tickets. It never authorizes unattended delivery of judgment work.
 
-Do not update an installed plugin or advance the maintainer checkout while any base
+Do not update an installed plugin or advance the flow main checkout while any base
 or revision run is live. The scheduler proves this with
 `FLOW_HARNESS="<harness>" "<facade>" maintainer-preflight --workspace-root
 "<run_root>" --require-clean-boundary` before either mutation. At

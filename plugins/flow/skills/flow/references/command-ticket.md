@@ -138,7 +138,7 @@ forward. Never mint a duplicate ladder from scratch.
 
 ## `FLOW ticket finalize <ticket> [--dry-run]`
 
-Close out one delivered ticket after its PR merged. A user-workspace delivery parks
+Close out one delivered ticket after its PR merged. A delivery workspace parks
 a green PR for the human, and the human merges it on the forge; nothing on that path
 transitions the ticket, freezes the ship event, deletes the remote branch, or reaps
 the worktree (the janitor sweep requires an already-terminal tracker state, so a

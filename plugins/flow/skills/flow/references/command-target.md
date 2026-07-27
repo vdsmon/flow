@@ -23,7 +23,7 @@ durable state. The cockpit performs no repairs, tracker writes, launches, or cle
 If workspace discovery fails, show `FLOW workspace setup`; if the workspace is
 healthy and every section is empty, say so plainly.
 
-In a maintainer workspace, add schedule and senses diagnostics without writing:
+In the self-target workspace, add schedule and senses diagnostics without writing:
 
 ```bash
 FLOW_HARNESS="<harness>" "<facade>" maintainer-preflight --json
@@ -181,7 +181,8 @@ For together delivery, write a second absolute JSON evidence file. It has
 `coupling_verified` and a `targets` array whose entries contain the exact `key`,
 tracker-derived `live` boolean, and tracker-derived `epic` boolean. Preserve request
 order. Coupling is verified only when the tickets describe one inseparable diff and
-one coherent review; proximity, shared labels, or user listing order is insufficient.
+one coherent review; proximity, shared labels, or the order the human listed them in
+is insufficient.
 
 ```bash
 FLOW_HARNESS="<harness>" "<facade>" lifecycle coordinate \

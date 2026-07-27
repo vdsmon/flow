@@ -40,7 +40,7 @@ _BLAST_RE = re.compile(r"^\s*BLAST[ _]RADIUS:\s*(.+?)\s*$", re.IGNORECASE | re.M
 
 
 class NotMaintainer(Exception):
-    """Raised when the run is not in maintainer mode. Exit 4."""
+    """Raised when the run has no self-target route. Exit 4."""
 
 
 class ToolError(Exception):

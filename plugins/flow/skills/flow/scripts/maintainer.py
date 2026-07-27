@@ -40,7 +40,7 @@ def _self_target(config: dict[str, Any]) -> bool:
 
 
 def resolve_maintainer_repo(workspace_root: Path) -> Path | None:
-    """Return the flow repo root if this run is in maintainer mode, else None.
+    """Return the flow repo root if this run has a route back to flow's repo, else None.
 
     Pure file reads; no side effects. Safe to call on any workspace.
     """
@@ -83,7 +83,9 @@ def cli_main(argv: list[str]) -> int:
     """
     import argparse
 
-    parser = argparse.ArgumentParser(description="Resolve maintainer mode for a workspace.")
+    parser = argparse.ArgumentParser(
+        description="Resolve the route back to the flow repo for a workspace."
+    )
     parser.add_argument("--workspace-root", required=True)
     parser.add_argument(
         "--require-current",

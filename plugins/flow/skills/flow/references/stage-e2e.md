@@ -153,7 +153,7 @@ Your job is to run it exactly, not to reinterpret it.
   report missing verification evidence and leave the stage unfinished.
 - `e2e_recipe` missing/empty → workspace misconfiguration (e2e is running without a
   recipe; the bootstrap gate normally prevents this). Report it as failed so the
-  user supplies a recipe or explicitly disables e2e (`e2e = "none"`).
+  human supplies a recipe or explicitly disables e2e (`e2e = "none"`).
 - Env-prep needs a genuinely interactive step that cannot run unattended → stop
   and report the blocker (it surfaces as needs-input in `claude agents` when the
   session is backgrounded); recipes should specify a non-interactive refresh path

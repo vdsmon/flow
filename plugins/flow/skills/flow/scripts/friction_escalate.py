@@ -19,7 +19,7 @@ Dedup key is the bare anchor (`recurrence-escalation-<anchor>`, no `::`
 separator), so only `flow_beads_create`'s exact `evid:` dedup net fires, never
 its fuzzy same-file pass: one bead per anchor, ever, across open/closed.
 
-Auto-dormant outside maintainer mode (`flow_beads_create.resolve_maintainer_repo`
+Auto-dormant without a route back to flow's repo (`flow_beads_create.resolve_maintainer_repo`
 returns None): `escalate()` returns immediately with `maintainer: False` and
 nothing filed, before any friction/knowledge read.
 
@@ -140,7 +140,7 @@ def _describe(candidate: dict[str, Any]) -> str:
         f"Recurrence run_ids: {', '.join(run_ids) or 'n/a'}.",
         f"Recurrence tickets: {', '.join(tickets) or 'n/a'}.",
         "",
-        "Propose-only: informational evidence for the maintainer, never auto-gated"
+        "Propose-only: informational evidence for the human, never auto-gated"
         " (this bead carries no `evolve` label, so the drain loop never picks it up).",
     ]
     return "\n".join(lines)
@@ -149,8 +149,8 @@ def _describe(candidate: dict[str, Any]) -> str:
 def escalate(workspace_root: Path, runner: Runner | None = None) -> dict[str, Any]:
     """File one `recurrent`-labelled bead per over-threshold friction class.
 
-    Dormant outside maintainer mode (checked BEFORE any friction/knowledge read,
-    so a normal user run never touches `.flow/<namespace>/*.jsonl` for this).
+    Dormant without a route back to flow's repo (checked BEFORE any friction/knowledge
+    read, so a delivery run never touches `.flow/<namespace>/*.jsonl` for this).
     """
     result: dict[str, Any] = {
         "maintainer": False,
