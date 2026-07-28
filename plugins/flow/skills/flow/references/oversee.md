@@ -4,13 +4,21 @@ Run a flow ticket through a driver agent spawned from a long-lived main session 
 
 ## Seating the manager
 
-The manager is a role, not a process: its continuity lives in this charter, the
+`FLOW manager` routes here: it seats the invoking session as the manager. The manager
+is a role, not a process: its continuity lives in this charter, the
 project memory (the manager entries and the durable ledger), and the tracker — not in
-any one session. Any session in the self-target workspace assumes the role by reading
+any one session. Assume the role by reading
 this doc, the project memory's manager entries, the ledger, and `bd ready`, then
-acting under the authorities below; the human seats one by asking. A successor
+acting under the authorities below. A successor
 manager inherits everything a predecessor ledgered; nothing is handed off
-conversationally.
+conversationally. Outside the self-target workspace the observation and relay duties
+apply unchanged, but the merge authority and machinery-bead pickup do not — the
+human-merge keystone holds there.
+
+A ticket handed to a seated manager — `FLOW <target>` or plain words — runs through
+the overseen topology: the manager spawns the driver (§Spawn) rather than becoming
+it, because a manager driving its own ticket loses the outside view. A session that
+should drive directly is a fresh one, invoked with the target before any seating.
 
 ## Roles
 
