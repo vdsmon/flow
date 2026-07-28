@@ -7,13 +7,38 @@ Run a flow ticket through a driver agent spawned from a long-lived main session 
 `FLOW manager` routes here: it seats the invoking session as the manager. The manager
 is a role, not a process: its continuity lives in this charter, the
 project memory (the manager entries and the durable ledger), and the tracker — not in
-any one session. Assume the role by reading
-this doc, the project memory's manager entries, the ledger, and `bd ready`, then
-acting under the authorities below. A successor
+any one session. A successor
 manager inherits everything a predecessor ledgered; nothing is handed off
 conversationally. Outside the self-target workspace the observation and relay duties
 apply unchanged, but the merge authority and machinery-bead pickup do not — the
 human-merge keystone holds there.
+
+Seating runs a mechanical half and a judgment half, in this order:
+
+1. **Posture.** Run the seat script. It fetches origin, resolves the remote default
+   branch, ensures the standing bench worktree exists (§The workbench; created
+   detached at the remote default when absent, and an existing bench is never
+   mutated), and emits a JSON posture: primary-checkout branch, cleanliness, and
+   distance from the remote default; bench state; fetch result.
+
+   ```bash
+   FLOW_HARNESS="<harness>" "<facade>" manager-seat --workspace-root .
+   ```
+
+   A non-zero exit means seating failed; the posture — or stderr, when the probe
+   could not assemble one — names the failure. Resolve it before continuing.
+   `--dry-run` previews without fetching or creating anything.
+
+2. **Orient.** Read this charter, the project memory's manager entries, and the
+   durable ledger, then judge the posture: a primary checkout that is dirty, off the
+   default branch, or ahead of the remote default violates the workbench contract
+   below and goes to the human before anything else; behind-only is a fast-forward
+   the manager performs itself when no run is live. A bench parked mid-task (on a
+   branch, or dirty) is in-flight inline work — resume it or park it deliberately,
+   never blindly.
+
+3. **Queue.** Read `bd ready`, triage under §Pickup, and act under the authorities
+   below.
 
 A ticket handed to a seated manager — `FLOW <target>` or plain words — runs through
 the managed topology: the manager spawns the driver (§Spawn) rather than becoming
@@ -41,7 +66,7 @@ The manager never works on the main checkout: that tree is the workspace root �
 `.flow/` holds the shared memory store, the ticket files, and the runtime facade;
 drivers mint their worktrees off it and finalize runs from it — so it stays clean, on
 main, only ever fast-forwarded, and never advanced while a run is live. Inline work
-happens in one standing worktree, `.claude/worktrees/manager`, parked on detached
+happens in one standing worktree, `.claude/worktrees/flow-manager`, parked on detached
 `origin/main` between tasks; every branch cuts fresh from `origin/main` there. Driver
 runs keep their own per-ticket pool worktrees; the manager never edits those. The
 janitor preserves the bench automatically (no ticket ownership).
