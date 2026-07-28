@@ -11,6 +11,38 @@ Run a flow ticket through a driver agent spawned from a long-lived main session 
 
 Spawn the driver as a named teammate with the ticket key and an absolute workspace root, and state the harness selector explicitly in its prompt. The team roster is flat: a teammate cannot spawn named teammates, so the driver's own workers (implement, review, assessment) must be unnamed subagents — the skill's native-agent roles work unchanged that way. The driver should spawn stage agents SYNCHRONOUSLY (not in the background): a synchronous spawn returns the result directly, which removes the child-completion routing problem for that call entirely; only a resumed or backgrounded child needs the relay below, and the driver may poll such a child's transcript rather than waiting blind.
 
+## The overseer's own hygiene
+
+Three obligations on the overseer's side, each from a witnessed failure or near-failure:
+
+- **Push a notification the moment a gate arrives.** Both pilot runs' keystone waits included minutes-to-hours of discovery latency — the human was not looking when the plan or ask-user relay landed. The overseer sends a host push notification (with the gate type and one-line summary) at every gate, in addition to the in-conversation relay.
+- **Run a stall watch, never rely on luck.** The 62-minute pilot stall was caught because the human happened to ask for status. Keep a background watcher on the driver's transcript mtime (a shell loop suffices: alert when the file is older than ~10 minutes while no gate is pending) so a silent driver is caught by machinery.
+- **Spawn from the template below**, substituting only the bracketed values — two hand-written spawn prompts already drifted from each other between the pilot runs.
+
+```text
+You are a flow driver session running under references/oversee.md (read it).
+Task: run the flow ticket [KEY] through the complete flow pipeline in the
+workspace [ABSOLUTE_ROOT] (an initialized flow workspace). FLOW_HARNESS is
+[HARNESS]. Invoke the flow skill now and follow it exactly as written,
+including the entry contract and the skill-root re-pin rule.
+Environment facts, all witnessed in prior overseen runs:
+- Plan gate: turn-boundary form — render the plan surface AND send the
+  complete plain-text plan (exact text, base SHA, confidence + category
+  scores, pass facts, resolved findings, residual risks) to "main", then stop
+  and wait. Approval arrives as a message containing APPROVED, or revision
+  feedback. Nothing mutates before it except the planning-start ticket claim.
+- ask-user findings: relay to "main" the same way and wait.
+- Spawn your stage agents SYNCHRONOUSLY (unnamed subagents; the roster is
+  flat). Only a backgrounded or resumed child needs the overseer relay; you
+  may poll such a child's transcript rather than waiting blind.
+- Machinery APPLY-NOW is unavailable here (protected-branch skill root):
+  lens-B findings route to propose-and-record; the refusal is the known
+  limit, not a failure.
+Work autonomously otherwise; report at natural stops. After done or a
+durable stop, send "main" the final status, PR URL, per-stage outcomes, and
+anything that differed from what oversee.md led you to expect.
+```
+
 ## Relays — the overseer's standing obligations
 
 - **Plan gate.** The driver uses the turn-boundary gate form — the one SKILL.md gives Codex when native Plan mode is inactive; an agent-hosted driver has no plan mode of its own, and SKILL.md's Claude Code row assumes the top-level session: present the complete plan (exact text, base SHA, confidence and category scores, pass facts, resolved findings, residual risks) to the overseer and wait. The plan surface is still owed under this topology when its gate passes (`plan-surface.md` makes skipping a defect): the driver renders it AND sends the complete plain-text plan, so the gate never depends on the surface being opened, and the overseer relays the surface URL prominently to the human — without that push the surface degrades unused, since the human talks to the overseer, not the driver. The overseer relays verbatim and returns the approval or revision feedback. Approval never originates from an agent.
