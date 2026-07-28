@@ -50,7 +50,7 @@ Implementation and review consume the persisted instruction/dispositions or forg
 threads as their fix set. One fresh native fixer applies the revision directly in the
 authoritative ticket worktree under the ordinary planned-file ownership boundary. The
 same baseline, artifact, friction, snapshot, lost-lease, and rooted-execution rules
-apply. Resolve addressed threads through the forge seam only after their fixes are
+apply. Resolve fixed threads through the forge seam only after their fixes are
 verified.
 
 Release the revision lease on every post-open exit. Surface the updated existing PR
