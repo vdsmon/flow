@@ -325,6 +325,73 @@ def test_apply_cluster_empty_member_ids_errors_no_append(tmp_path: Path) -> None
     assert len(_load_all(tmp_path)) == before
 
 
+def test_apply_cluster_empty_canonical_body_errors_no_append(tmp_path: Path) -> None:
+    """A record with no canonical_body must be refused, not applied.
+
+    `canonical_body` carries the whole payload, so appending anyway would supersede every member
+    behind an empty canonical and report success, leaving the members dead with nothing replacing
+    them. Absent, null and blank are the same operator mistake: a null reaches `str()` as the
+    literal "None", which is truthy, and a blank body is empty in every sense that matters here.
+    """
+    _seed_workspace(tmp_path)
+    _write_entries(tmp_path, [_entry(A, "DECISION", "claim A"), _entry(B, "DECISION", "claim B")])
+    before = len(_load_all(tmp_path))
+    manifest = tmp_path / "manifest.json"
+    for record in (
+        {"canonical_ticket": "flow-nobody", "member_ids": [A, B]},
+        {"canonical_ticket": "flow-nobody", "member_ids": [A, B], "canonical_body": None},
+        {"canonical_ticket": "flow-nobody", "member_ids": [A, B], "canonical_body": "  \n\t "},
+    ):
+        manifest.write_text(json.dumps([record]), encoding="utf-8")
+        rc, summary = _apply_cluster(tmp_path, manifest)
+        assert rc > 0, record
+        assert summary["any_error"] is True, record
+        assert summary["results"][0]["result"] == "error", record
+        assert len(_load_all(tmp_path)) == before, record
+
+
+def test_apply_cluster_malformed_record_errors_even_when_members_are_all_dead(
+    tmp_path: Path,
+) -> None:
+    """The body guard runs BEFORE the all-dead skip, so a malformed record never hides.
+
+    Ordering is a real choice, not an accident. Putting the skip first would let an empty-bodied
+    record exit 0 whenever its members happened to be dead already, which is the state an operator
+    retrying a half-applied manifest is in. A record with no body is malformed whatever its members
+    look like, so it is refused; a WELL-FORMED re-run still reaches the skip and stays exit 0, which
+    is what idempotency actually needs.
+    """
+    _seed_workspace(tmp_path)
+    _write_entries(
+        tmp_path,
+        [
+            _entry(A, "DECISION", "claim A"),
+            _entry(B, "DECISION", "claim B"),
+            _entry(T, "DECISION", "already merged", supersedes=[A, B]),
+        ],
+    )
+    before = len(_load_all(tmp_path))
+    manifest = tmp_path / "manifest.json"
+
+    manifest.write_text(
+        json.dumps([{"canonical_ticket": "flow-x", "member_ids": [A, B]}]), encoding="utf-8"
+    )
+    rc, summary = _apply_cluster(tmp_path, manifest)
+    assert rc > 0
+    assert summary["results"][0]["result"] == "error"
+
+    manifest.write_text(
+        json.dumps(
+            [{"canonical_body": "well formed", "canonical_ticket": "flow-x", "member_ids": [A, B]}]
+        ),
+        encoding="utf-8",
+    )
+    rc, summary = _apply_cluster(tmp_path, manifest)
+    assert rc == 0
+    assert summary["results"][0]["result"] == "skipped"
+    assert len(_load_all(tmp_path)) == before
+
+
 def test_apply_cluster_canonical_carries_union_of_member_labels(tmp_path: Path) -> None:
     _seed_workspace(tmp_path)
     ea = _entry(A, "DECISION", "claim A")

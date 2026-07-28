@@ -82,6 +82,19 @@ State that inherited cwd is non-authoritative, every repository operation stays
 beneath the workspace, and every facade call applies the call-local `FLOW_HARNESS`
 selector to the absolute bound `facade`.
 
+State the write-confinement rule in the same prompt. The host binds a session's
+file-write tool to its PINNED worktree rather than to its working directory, the pin
+can name another live run's worktree on any call, and a subagent's pin is fixed at
+spawn. An agent whose write is refused as isolated in a worktree that is not its run
+root cannot fix that for itself: `cd` moves the working directory and not the pin, and
+a subagent cannot re-pin at all. Warn it that the host's worktree switch can report
+SUCCESS to a subagent and still leave the write refused, which is worse than refusing,
+so that return value is no evidence about its writer; only attempting the write is.
+Tell it to return BLOCKED at once, naming the worktree the refusal named, rather than
+routing around the guard or diagnosing it; the driver's takeover below is cheaper than
+either. Briefed agents recognize the refusal and stop, where unbriefed ones each spend
+turns rediscovering it and tend to reinvent a worse workaround than the recorded one.
+
 `Artifact path` always carries the descriptor's real `output_path`, never a
 placeholder. A stage reference may assign the WRITE of that file to the driver rather
 than to the agent, which changes who writes it, not what the field says: this section's
@@ -113,6 +126,19 @@ the declared absolute path, and advance normally. Flow does not attest execution
 provenance, so a driver-executed stage is legitimate. Log one best-effort friction
 event for the downgrade so the pattern stays visible. The downgrade never skips the
 descriptor, the artifact, or the advance.
+
+The same downgrade answers an agent that returns BLOCKED on write confinement, and it
+is the preferred answer. First re-pin this session on the run root through the host's
+native worktree switch (on Claude Code, `EnterWorktree` with an explicit path), then
+run the stage inline: same reference, same artifact path, same advance. That route
+keeps atomic replacement and the read-before-edit guard, and a driver session re-pins
+reliably where a subagent cannot. Only if no such switch exists, or the re-pin does not
+take, write through Bash: an exact-match replacement asserting one hit per substitution
+when editing an existing file, and the collision-safe quoted heredoc above when creating
+a new one, which is the shape a stage artifact needs. Say so in the report: that route
+works and agents have completed correctly on it, but it gives up read-before-edit and
+atomic replacement, so it trades a refused write for a wrong-write risk. Log the takeover
+as friction either way.
 
 ### None or unknown
 

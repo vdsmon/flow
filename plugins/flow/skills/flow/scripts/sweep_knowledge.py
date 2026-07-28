@@ -167,7 +167,7 @@ def apply(workspace_root: Path, records: list[dict[str, Any]]) -> dict[str, Any]
     for rec in records:
         superseded_id = str(rec.get("superseded_id", ""))
         ticket = str(rec.get("superseding_ticket", ""))
-        rationale = str(rec.get("rationale", ""))
+        rationale = str(rec.get("rationale") or "")
         branch = str(rec.get("branch") or f"{_BRANCH_PREFIX}{ticket}")
         # memory_append treats a falsy supersedes as "no supersede" and appends
         # normally, so an empty target must be rejected here or the record
@@ -179,6 +179,19 @@ def apply(workspace_root: Path, records: list[dict[str, Any]]) -> dict[str, Any]
                     "superseded_id": superseded_id,
                     "result": "error",
                     "detail": "empty superseded_id",
+                }
+            )
+            continue
+        # The same fail-open one field over: the rationale IS the tombstone's body, and
+        # memory_append validates only the type, so an empty one retires the target behind an empty
+        # replacement and still reports applied.
+        if not rationale.strip():
+            any_error = True
+            results.append(
+                {
+                    "superseded_id": superseded_id,
+                    "result": "error",
+                    "detail": "empty rationale",
                 }
             )
             continue
@@ -298,7 +311,7 @@ def apply_cluster(workspace_root: Path, records: list[dict[str, Any]]) -> dict[s
     for rec in records:
         member_ids = [str(m) for m in rec.get("member_ids", [])]
         ticket = str(rec.get("canonical_ticket", ""))
-        body = str(rec.get("canonical_body", ""))
+        body = str(rec.get("canonical_body") or "")
         type_ = str(rec.get("type") or "DECISION")
         branch = str(rec.get("branch") or f"{_BRANCH_PREFIX}{ticket}")
         # Same guard as apply(): supersedes=[] appends a normal entry, so a
@@ -307,6 +320,15 @@ def apply_cluster(workspace_root: Path, records: list[dict[str, Any]]) -> dict[s
             any_error = True
             results.append(
                 {"member_ids": member_ids, "result": "error", "detail": "empty member_ids"}
+            )
+            continue
+        # Same shape as the empty member list: canonical_body IS the survivor's payload, so an empty
+        # one collapses every member behind an empty entry and still reports applied, leaving the
+        # members dead with nothing replacing them.
+        if not body.strip():
+            any_error = True
+            results.append(
+                {"member_ids": member_ids, "result": "error", "detail": "empty canonical_body"}
             )
             continue
         if all(m in dead for m in member_ids):
