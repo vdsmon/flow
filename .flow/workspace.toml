@@ -12,14 +12,9 @@ prefix = "flow"
 [maintainer]
 self_target = true
 
-[evolve]
-cap = 10
-concurrency = 8
-# Maintainer decision 2026-07-27: a HOT leaf PR auto-merges in this self-target
-# repo when the full gate holds (isolation + CI-green + agent diff review).
-auto_merge_hot = true
-# model tiering for spawned worker runs: fable for the interactive orchestrator, opus for spawned worker runs, sonnet for trivial.
-worker_model = "opus"
+[triage]
+# Self-target preference: a hot change ships on an advisor `proceed` like a
+# non-hot one; the manager's merge-time guard-property review still backstops it.
 adjudicate_hot = true
 
 # Optional native-agent model hints. Unsupported hints inherit the owner session model.

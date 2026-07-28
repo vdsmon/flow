@@ -19,15 +19,56 @@ A foreground driver and a backgrounded driver are the same lifecycle state.
 
 ## Worker contract
 
-Maintenance driver sessions create workers through host-native collaboration tools and
+Driver sessions create workers through host-native collaboration tools and
 call the `worker-pool` facade for capacity, git-guard, and recovery decisions. Worker
 handles are scoped to that driver and may disappear with it.
-Durable run, fleet, lease, worktree, tracker, and PR evidence decides whether a later
+Durable run, lease, worktree, tracker, and PR evidence decides whether a later
 driver monitors, relaunches, repairs, or reports settled work.
 
 Read-only workers receive absolute roots and are guarded by pre/post git snapshots.
 Any mutation invalidates their result and stops the batch before filing or applying
 work.
+
+Native worker creation, waiting, and cancellation exist only in the harness tool
+API, so a Python subprocess cannot call them on the driver's behalf. The host
+adapter drives those native operations and uses the executable `worker-pool` facade
+for the deterministic decisions around them. Effective worker concurrency is
+`min(configured_concurrency, capacity - 1)`. Calculate it before launch rather than
+reimplementing the reservation in prose:
+
+```bash
+FLOW_HARNESS="<harness>" "<facade>" worker-pool limit \
+  --configured <configured-concurrency> --capacity <host-capacity>
+```
+
+Always reserve one slot for the driver. Never launch a detached host CLI or emulate
+backgrounding with shell processes.
+
+If the driver disappears, normalize durable evidence to an absolute JSON array of
+`{key,state,run_id}` rows and reduce it before any relaunch:
+
+```bash
+FLOW_HARNESS="<harness>" "<facade>" worker-pool recover \
+  --evidence "<absolute-recovery-evidence-file>"
+```
+
+The closed result maps absent -> relaunch, bootstrapping/running -> monitor, succeeded
+-> settled, and failed/corrupt -> repair. It never accepts a worker handle as evidence.
+
+Discovery workers are `read_only=true`. Write a pre-launch receipt to an absolute
+temporary file, then run the guard after the native wait returns:
+
+```bash
+FLOW_HARNESS="<harness>" "<facade>" worker-pool snapshot \
+  --workspace-root "<run_root>" > "<absolute-before-file>"
+# launch and wait through the host's native collaboration API
+FLOW_HARNESS="<harness>" "<facade>" worker-pool guard \
+  --workspace-root "<run_root>" --before "<absolute-before-file>"
+```
+
+Guard exit 3 names the changed HEAD, index, tracked-worktree, or untracked-worktree
+fields. Discard that worker's findings and stop before filing tickets or applying a
+proposal. Pre-existing dirt is allowed only when the receipts are exactly equal.
 
 ## Worktree-local and shared state
 
@@ -40,7 +81,7 @@ Runtime layout v2 separates executable metadata and memory:
 
 Each worktree has local run state under `.flow/runs/<ticket>/` and points its
 `runtime/memory-root` at the main workspace's shared `.flow/memory` base. Knowledge,
-friction, usage, fleet, and ship-event evidence therefore survives worktree teardown.
+friction, usage, and ship-event evidence therefore survives worktree teardown.
 The workspace configuration remains byte-identical; machine-local absolute pointers
 live only in gitignored runtime metadata.
 

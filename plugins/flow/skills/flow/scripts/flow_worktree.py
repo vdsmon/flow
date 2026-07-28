@@ -351,7 +351,7 @@ def _worktree_path(main_root: Path, branch: str, override: str | None) -> Path:
     is not permission-mediated (no allow rule or headless bypass exists), so an
     unattended run seeded anywhere else blocks forever at the spec->do
     transition. Read sites glob both this base and the legacy
-    `.flow/worktrees/` (`_evolve_common.WORKTREE_BASES`) so pre-relocation
+    `.flow/worktrees/` so pre-relocation
     worktrees stay discoverable until reaped.
     """
     if override:
@@ -505,8 +505,8 @@ def _checkpoint_dirty_worktree(ticket: str, worktree: Path, run: Runner) -> dict
     merged-orphan worktree would misfire as dirty (`.flow/tickets/<key>.md` always differs slightly
     from main's copy), and a dirty one could push a bootstrap-copied `.env` secret to a PUBLIC
     `flow-rescue/*` ref. `flow-rescue/*` is deliberately outside the `feat/`/`feature/`
-    ticket-branch namespace (`is_ticket_branch`, `_evolve_common.FLOW_KEY_RE`, `is_inflight` all
-    miss it), so it can never mark the ticket in-flight or block a fresh relaunch.
+    ticket-branch namespace (`is_ticket_branch` and every in-flight matcher miss it),
+    so it can never mark the ticket in-flight or block a fresh relaunch.
 
     DEVIATION from the literal maintainer decision text: the decision said push to
     `refs/heads/<run-branch>` verbatim. That target is unsafe here: `create_pr.py` pushes the run
@@ -1041,11 +1041,10 @@ def _refuse_epic_bead(*, ticket: str, main_root: Path) -> None:
     """Refuse (exit 7) to bootstrap an epic (a container, not a single-PR unit).
 
     Witnessed (flow-jvxj, parent flow-8by2): an unattended epic target reached this
-    chokepoint on an epic bead. `evolve_select.py` filters `issue_type != "epic"`
-    unconditionally so drain never launches one, but a manual or misrouted
+    chokepoint on an epic bead. A manual or misrouted
     unattended epic delivery had no structural floor, and bootstrapping an epic
-    cram-ships fragments of an unaccepted empire as a single PR (the ouroboros
-    command-maintain.md §epic names). This mirrors the select-side filter at the
+    cram-ships fragments of an unaccepted empire as a single PR. This is the
+    structural floor at the
     bootstrap chokepoint. Tracker-agnostic ("epic"/"Epic") and unconditional
     (attended and unattended): an epic is decomposed before delivery, not
     implemented directly, either way.
@@ -1078,8 +1077,8 @@ def _refuse_epic_bead(*, ticket: str, main_root: Path) -> None:
 def _lane_for_bead(*, ticket: str, main_root: Path) -> str:
     """Resolve the verification lane (express|light|full) from the bead's tier labels.
 
-    Same labels evolve_select reads for model selection (tier:trivial -> sonnet) now
-    also pick how much verification the run does (tier_policy.lane_for). Fail-open to
+    The bead's tier labels
+    pick how much verification the run does (tier_policy.lane_for). Fail-open to
     "full" matches the terminal/epic reads: a flaky tracker never silently downshifts a
     run's gating. A non-beads tracker (no tier labels) resolves to "full" too.
     """
@@ -1190,9 +1189,9 @@ def _stamp_run_frontmatter(
 def _refuse_offcontract_branch(*, ticket: str, branch: str) -> None:
     """Keep every downstream matcher on the shared `feat/<key>-<slug>` branch contract.
 
-    The matchers include `is_ticket_branch`, the pool prefixes in `_evolve_common`, in-flight refs,
+    The matchers include `is_ticket_branch`, the worktree-pool prefixes, in-flight refs,
     reap eligibility, janitor PR joins, and `branch_ticket` parsing. A run that minted
-    `fix/<key>-...` produced a worktree invisible to reap and drain (witnessed 2026-07-09). Refuse
+    `fix/<key>-...` produced a worktree invisible to reap (witnessed 2026-07-09). Refuse
     the deviation at the one mint site instead of widening every parser.
     """
     if not branch.startswith(f"feat/{ticket}"):

@@ -775,7 +775,7 @@ Bundles the reflect-stage's inputs into a single JSON payload for the reflect LL
 | `--ticket-frontmatter` | Optional path to ticket .md frontmatter file. |
 | `--cwd` | Git repo working dir (for `diff_since_stage` call). Default `.`. |
 
-Payload shape: `{ticket, run_id, state, ticket_frontmatter, final_diff, subagent_reports[], friction[], recalled_entries[], reflect_config, harness_eval}`.
+Payload shape: `{ticket, run_id, state, ticket_frontmatter, final_diff, subagent_reports[], friction[], recalled_entries[], reflect_config}`.
 `final_diff` is null when ticket stage never started.
 Missing report files → `body: null` + warning to stderr (not fatal).
 
@@ -836,7 +836,7 @@ Public API: `escalation_k(workspace_root) -> int`, `exempt_anchors(workspace_roo
 `select_escalations(analyze_payload, k, exempt) -> list[dict]` (pure core, sorted by descending
 count), `escalate(workspace_root, runner=None) -> dict`.
 
-`[evolve]` workspace.toml knobs: `recurrence_escalation_k` (int, default 3), `recurrence_exempt_anchors`
+`[reflect]` workspace.toml knobs: `recurrence_escalation_k` (int, default 3), `recurrence_exempt_anchors`
 (list[str], default `["planned_files"]`; an explicit `[]` means no exemptions, used verbatim).
 
 | Flag | Description |
@@ -846,7 +846,7 @@ count), `escalate(workspace_root, runner=None) -> dict`.
 
 Dedup key = `recurrence-escalation-<anchor>` (no `::` separator), so only `flow_beads_create`'s
 exact `evid:` net fires, never its fuzzy same-file pass. Labels = `recurrent` only (never `evolve`),
-so `bd ready -l evolve` never surfaces these — propose-only holds unconditionally. Dormant outside
+so nothing auto-gates these — propose-only holds unconditionally. Dormant outside
 the self-target route (`flow_beads_create.resolve_maintainer_repo` returns `None`, checked before any
 friction/knowledge read) — returns/prints `{"maintainer": false, ...}` with nothing filed.
 

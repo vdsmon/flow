@@ -96,7 +96,7 @@ Every independent stage or maintenance agent receives the exact rooted field blo
 `references/delivery-loop.md` §Independent agent (also inlined in SKILL.md's do-loop).
 The prompt says inherited cwd is non-authoritative and every facade call applies the call-local
 `FLOW_HARNESS` selector to the absolute facade. The agent writes only within the authorized
-worktree and returns its report at the declared artifact path. Durable run, tracker, lease, fleet,
+worktree and returns its report at the declared artifact path. Durable run, tracker, lease,
 forge, and ship-event evidence—not a claim about provider identity—proves workflow state.
 
 Discovery agents are read-only. Write-capable agents operate only after the plan gate and within
@@ -110,14 +110,12 @@ it returned. That leaves no job directory, transcript, or session for Flow to in
 continuation for Flow to own. The handler, not the CLI, produces the stage artifact, and no route
 receipt, capsule, or model attestation is created or required.
 
-Maintenance adapters create, wait for, and cancel native agents through host collaboration tools.
+Driver sessions create, wait for, and cancel native agents through host collaboration tools.
 They use the `worker-pool` facade for enforceable capacity and durable recovery, reserving one host
 slot for the driver. Handles belong to the driver session and are disposable; durable evidence
 survives it. Flow never scans host job state, stops unrelated sessions, or schedules self-teardown.
 
-Flow's self-target-only `evolve` and `queue` verbs require Claude Code where their command reference
-says so. This host restriction does not change the ordinary ticket pipeline, where Claude Code and
-Codex remain peers.
+The ordinary ticket pipeline treats Claude Code and Codex as peers.
 
 ## Waits, questions, and backgrounding
 

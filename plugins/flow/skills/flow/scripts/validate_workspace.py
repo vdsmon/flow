@@ -264,7 +264,7 @@ def _warn_inline_stage_model(
 # stage never launches) would silently do nothing, so it is a violation, not a no-op.
 # Sources: delivery-plan.md (plan assessor), stage-registry.toml subagent handlers
 # (implement, e2e), stage-code_review.md (reviewer + fixer), stage-review_loop.md §3
-# (fixer), stage-review_brief.md (author), stage-merge.md §2 (reviewer).
+# (fixer), stage-review_brief.md (author).
 _LAUNCH_SITES: dict[str, frozenset[str]] = {
     "plan": frozenset({"assessor"}),
     "implement": frozenset({"implementer"}),
@@ -272,7 +272,6 @@ _LAUNCH_SITES: dict[str, frozenset[str]] = {
     "e2e": frozenset({"runner"}),
     "review_loop": frozenset({"fixer"}),
     "review_brief": frozenset({"author"}),
-    "merge": frozenset({"reviewer"}),
 }
 
 _HINT_FIELDS = frozenset({"model", "effort"})

@@ -2,9 +2,9 @@
 
 This answers a workspace question, not an identity one — there is exactly one
 human, wearing two hats. Maintainer mode means this run has a path back to
-flow's OWN repo: machinery-friction beads file into flow's beads DB and
-`FLOW maintain evolution` may run. A workspace with no path back (neither
-signal below) leaves machinery friction dormant and evolution disabled — that
+flow's OWN repo: machinery-friction beads file into flow's beads DB, where the
+manager consumes them. A workspace with no path back (neither
+signal below) leaves machinery friction dormant — that
 should not occur on a machine with the global pointer set.
 
 Two signals, by context:
@@ -79,7 +79,7 @@ def is_maintainer(workspace_root: Path) -> bool:
 def cli_main(argv: list[str]) -> int:
     """Print the maintainer repo root (exit 0) or nothing (exit 1, no route).
 
-    The gate `FLOW maintain evolution` checks before running a cold audit.
+    The gate the manager checks before consuming the machinery queue.
     """
     import argparse
 

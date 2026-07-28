@@ -2,11 +2,10 @@
 
 Library + thin CLI. Stdlib-only.
 
-When a merged-and-closed run's worktree is torn down (the worktree_janitor sweep, or the
-evolve-drain step-A orphan path), the reaper must read run_id/attribution out of the worktree's
+When a merged-and-closed run's worktree is torn down (the worktree_janitor sweep or the finalize
+teardown), the reaper must read run_id/attribution out of the worktree's
 `.flow/runs/<key>/state.json` and freeze the ship event BEFORE `reap_worktree` destroys that state.
-This module is the whole observe-at-close sequence behind one seam: the janitor imports the lib, the
-drain prose invokes the CLI.
+This module is the whole observe-at-close sequence behind one seam; both reapers import the lib.
 
 Sequence (`observe_at_close`):
   1. Idempotence pre-check: a frozen `ship-events/<key>.json` already at the main store -> skip.
@@ -21,23 +20,16 @@ Sequence (`observe_at_close`):
      state.json (state_path override) while the event itself writes against the MAIN root's store.
 
 Never raises: returns `{"action": "observed"|"skipped"|"failed", "reason", ...}`.
-
-CLI:
-  observe_at_close.py --workspace-root <main-root> --key <key> [--worktree <dir>]
-
-`--worktree` is the doomed worktree root (the janitor passes it); omitted on the drain path, where
-the worktree is auto-resolved from the pool. Prints the result dict as JSON. Exit 0 on
-observed/skipped, 1 on failed (advisory only; the drain invokes with `|| true`).
 """
 
 from __future__ import annotations
 
+import glob
 import json
 import re
 from pathlib import Path
 from typing import Any
 
-import _evolve_common
 import _memory_paths
 import _timeutil
 import observe_ship_event
@@ -49,19 +41,40 @@ _RUN_ID_RE = re.compile(r"^[0-9a-f]{16}$")
 _SHIPPED_AT_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 _ACCEPTANCE_STEM = "ACCEPTANCE-INVARIANT:"
 
+# worktree-dir form (branch `/` becomes `-`); both accepted while legacy dirs survive
+_WORKTREE_PREFIXES = ("feat-", "feature-")
+# pool bases relative to the repo root, newest first (`.claude/worktrees` mint,
+# `.flow/worktrees` legacy; see flow_worktree._worktree_path)
+_WORKTREE_BASES = (Path(".claude") / "worktrees", Path(".flow") / "worktrees")
+
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
+
+
+def _pool_run_dir(repo: Path, key: str) -> Path | None:
+    """The run's ticket dir under the worktree pool for `key`, else None.
+
+    Absent = no state to read (a leaked branch with no worktree, or the common
+    post-reap case), so the caller treats it as skipped rather than failed.
+    """
+    for base in _WORKTREE_BASES:
+        for prefix in _WORKTREE_PREFIXES:
+            for wt in sorted(glob.glob(str(repo / base / f"{prefix}{key}*"))):
+                run_dir = Path(wt) / ".flow" / "runs" / key
+                if run_dir.exists():
+                    return run_dir
+    return None
 
 
 def _resolve_run_dir(workspace_root: Path, key: str, worktree: Path | None) -> Path | None:
     """The run dir `.flow/runs/<key>` holding the doomed run's state.
 
-    Explicit `worktree` (the janitor's `entry["worktree"]`) roots the run dir directly; the drain
-    path omits it and resolves via the worktree pool.
+    Explicit `worktree` (the janitor's `entry["worktree"]`) roots the run dir directly; callers
+    without a known worktree resolve via the worktree pool.
     """
     if worktree is not None:
         return worktree / ".flow" / "runs" / key
-    return _evolve_common.run_dir_for(workspace_root, key)
+    return _pool_run_dir(workspace_root, key)
 
 
 def _read_run_id(state_path: Path) -> str | None:

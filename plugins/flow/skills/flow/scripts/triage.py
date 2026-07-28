@@ -74,7 +74,7 @@ def is_hot_change(files: list[str]) -> bool:
 
 
 def adjudicate_hot(workspace_root: Path) -> bool:
-    """`[evolve] adjudicate_hot` from workspace.toml (bool); default False.
+    """`[triage] adjudicate_hot` from workspace.toml (bool); default False.
 
     Default OFF: the hot hard-floor holds for delivery workspaces, so a hot change
     never self-proceeds unattended. Opt IN with an explicit
@@ -86,14 +86,14 @@ def adjudicate_hot(workspace_root: Path) -> bool:
     Lifting the floor removes BOTH the delivery-plan `proceed`->`block`
     downgrade and the flow_worktree bootstrap refusal. The remaining gates still
     hold: the merge-time guard-property review plus CI back-stop every hot
-    landing. No `[evolve]` key is validated by validate_workspace.py, so a
+    landing. No `[triage]` key is validated by validate_workspace.py, so a
     misspelled one reads as absent, i.e. as the conservative default.
     """
     try:
         config = load_workspace_toml(workspace_root)
     except WorkspaceConfigError:
         return False
-    section = config.get("evolve")
+    section = config.get("triage")
     if not isinstance(section, dict):
         return False
     value = section.get("adjudicate_hot")

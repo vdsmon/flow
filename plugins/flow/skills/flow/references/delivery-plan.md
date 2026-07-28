@@ -173,7 +173,7 @@ FLOW_HARNESS="<harness>" "<facade>" worktree create \
 ```
 
 `--branch` must begin with `feat/<ticket>` even when the repository normally uses
-`fix/`, `bugfix/`, `chore/`, or another type prefix. Flow's reap, drain, selection,
+`fix/`, `bugfix/`, `chore/`, or another type prefix. Flow's finalize, janitor sweep,
 and revision discovery identify newly minted ticket worktrees through that stable
 prefix; `--commit-type` carries the actual change type. Do not translate a bug-fix
 commit into a non-`feat/` Flow branch.

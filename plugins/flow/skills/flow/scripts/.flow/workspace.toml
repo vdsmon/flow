@@ -9,7 +9,7 @@ cloud_id = "x"
 project_key = "FT"
 
 [pipeline]
-stages = ["ticket", "plan", "implement", "code_review", "e2e", "commit", "create_pr", "review_loop", "review_brief", "reflect", "merge"]
+stages = ["ticket", "plan", "implement", "code_review", "e2e", "commit", "create_pr", "review_loop", "review_brief", "reflect"]
 
 [pipeline.handlers]
 ticket = "inline"
@@ -22,7 +22,6 @@ create_pr = "none"
 review_loop = "none"
 review_brief = "inline"
 reflect = "inline"
-merge = "none"
 
 [memory]
 namespace = "FT"

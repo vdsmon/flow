@@ -17,29 +17,20 @@ durable evidence and render only non-empty sections:
 4. open PRs with actionable review feedback;
 5. the smallest set of useful next `FLOW ...` invocations.
 
-Use run state, leases, fleet records, tracker state, pending mutation files, and forge
+Use run state, leases, tracker state, pending mutation files, and forge
 state as evidence. Host process or agent handles are advisory and must never override
 durable state. The cockpit performs no repairs, tracker writes, launches, or cleanup.
 If workspace discovery fails, show `FLOW workspace setup`; if the workspace is
 healthy and every section is empty, say so plainly.
 
-In the self-target workspace, add schedule and senses diagnostics without writing:
-
-```bash
-FLOW_HARNESS="<harness>" "<facade>" maintainer-preflight --json
-FLOW_HARNESS="<harness>" "<facade>" maintainer-senses --workspace-root . --dry-run --json
-```
-
-Normalize the joined data to an absolute temporary JSON file with `runs`, `deferred`,
-`pending`, `feedback`, and `maintenance` arrays, then use the shared renderer:
+Normalize the joined evidence to an absolute temporary JSON file with `runs`,
+`deferred`, `pending`, and `feedback` arrays, then use the shared renderer:
 
 ```bash
 FLOW_HARNESS="<harness>" "<facade>" cockpit render --evidence "<absolute-evidence-file>"
 ```
 
-Each maintenance item carries `label`, `detail`, and a logical `next_command`. Delete
-the temporary file after rendering. A failed diagnostic is visible as unavailable
-evidence; it never turns a read-only cockpit into a repair or alarm-filing path.
+Delete the temporary file after rendering.
 
 ## Target forms and precedence
 

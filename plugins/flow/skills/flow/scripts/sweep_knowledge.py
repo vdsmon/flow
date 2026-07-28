@@ -40,9 +40,11 @@ import memory_append
 import memory_embed
 import recall
 import recall_usage
-from _evolve_common import BRANCH_PREFIX as _BRANCH_PREFIX
 from _jsonl import iter_jsonl
 from _timeutil import ts_token
+
+# ticket-branch prefix, inlined from the retired drain cluster's shared lib
+_BRANCH_PREFIX = "feat/"
 
 DEFAULT_TYPES = ("DECISION", "FACT")
 # Calibrated against the live corpus (353 vectors, flow-ro3w): 0.93+ surfaces zero

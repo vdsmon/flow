@@ -8,7 +8,6 @@ Machine/tool sharp edges that repeatedly burn fresh sessions. None of these are 
 - **`gh api graphql` does not expand `{owner}` / `{repo}`.** Those placeholders work in REST paths only. Pass explicit owner/repo variables to GraphQL queries.
 - **`gh pr list --json commits,files` rejected at scale.** GraphQL node-cost limit (~500k) fails the bulk query. Fetch heavyweight fields per-PR instead of in the list call.
 - **A just-pushed PR's CI shows `CANCELLED`.** Same-SHA concurrency cancellation from a rapid re-push, not a failure; re-check after the newer run finishes.
-- **Unattended self-merge denied by the permission classifier.** "Merge Without Review … does not specifically authorize merging this PR" at the merge stage is the Claude Code auto-mode classifier, by design — not a flow gate failure. The green PR is a complete deliverable. Remedy: approve per-PR when asked, or add a specific Bash allow-rule for the merge command to enable unattended self-merge.
 
 ## mise
 

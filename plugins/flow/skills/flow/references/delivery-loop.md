@@ -166,7 +166,7 @@ index, stop for repair rather than forcing or overwriting drift.
 For grouped delivery, post the created PR URL to each covered ticket best-effort. A
 PR-ready notification fires at most once when the review loop is genuinely green and
 actionable feedback is resolved. Claude Code may use its notification capability;
-Codex reports in-thread; the forge receipt is the durable fallback. Unattended drains
+Codex reports in-thread; the forge receipt is the durable fallback. Unattended runs
 rely on durable reporting rather than a live notification.
 
 Backgrounding and session lifetime remain host-owned. The loop never stops its host,

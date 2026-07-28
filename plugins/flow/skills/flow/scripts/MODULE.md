@@ -12,7 +12,6 @@ The ordered file chain (prose → contract → code) for the questions a fresh r
 |----------|-------|
 | How does a stage get dispatched, end to end? | `references/delivery-loop.md` → `dispatch_stage.py` row below → `inventory.md` §Handler-descriptor JSON shape + §Stage lifecycle |
 | Where does run state live; what is its schema? | `state.py` row below (state lives in the worktree's `.flow/runs/<key>/`) → `inventory.md` §state.json schema |
-| What happens at the merge stage, incl. the hot auto-merge gate? | `references/stage-merge.md` (judgment) → `stage_merge.py` (plumbing) → `evolve_self_merge.py` `decide()` (the gate) |
 | How do memory commands work? | `references/command-memory.md` → `recall.py` / `memory_append.py` rows below; the store is `.flow/memory/<namespace>/knowledge.jsonl` |
 | How does self-evolution edit the machinery mid-run? | `references/self-evolution.md` → `references/stage-reflect.md` §Lens B → `machinery_edit.py` |
 | How do I add a tracker/forge backend? | §Adding a tracker/forge backend below |
@@ -26,7 +25,7 @@ The ordered file chain (prose → contract → code) for the questions a fresh r
 | `dispatch_stage.py` | State-machine driver for the delivery loop. Does NOT run handlers; emits a handler-descriptor JSON for the prose layer. `revise-open` opens a revision sub-run under a terminal run (own lease/state/snapshot at `runs/<ticket>/revisions/<id>/`, original untouched); `--revision <id>` redirects `next`/`advance`/`release` to drive that sub-run. | `advance --skill-output-from` reads optional structured stage output from a file; reads+writes `state.json` |
 | `state.py` (lib) | Atomic `state.json` read/write under flock, backup rotation, quarantine recovery. | — |
 | `lifecycle.py` (lib) | Pure reducer over normalized tracker, run, lease, snapshot, revision, and forge evidence. Returns the closed `start\|answer\|resume\|running\|repair\|revise\|show\|conflict` action vocabulary; its multi-target coordinator returns direct, needs-choice, sequential, or together and permits together only when every action is `start`. | no I/O; consumed by the public target router |
-| `cockpit.py` (lib) | Pure attention-first cockpit join and logical-FLOW renderer over normalized run, deferred, pending-write, PR-feedback, and maintainer-health evidence. | — |
+| `cockpit.py` (lib) | Pure attention-first cockpit join and logical-FLOW renderer over normalized run, deferred, pending-write, and PR-feedback evidence. | — |
 | `snapshot.py` (lib) | Canonical workspace snapshot at init; verify on each `next` (TOCTOU drift guard). The WORKSPACE drift snapshot — not state.json's `.bak` backups, which are state.py's. | — |
 | `lease.py` (lib) | Per-ticket run lease: acquire / refresh / release / expiry + takeover detection. | — |
 | `validate_workspace.py` | HARD GATE: schema-validate `workspace.toml` + `stage-registry.toml` on every run. | exit 1 = violations to stderr |
@@ -65,10 +64,9 @@ Pluggable PR-host seam, structural twin of the tracker seam. The `create_pr` and
 |--------|------|----------------|
 | `forge.py` (lib) | Forge Protocol base + `make_forge()` factory + `read_forge_config()` + normalized `PullRequest`/`CIStatus`/`ReviewThread`. `detect_pr` selects open or merged state; adapters include the optional head SHA and produce commit-pinned source URLs for reviewer evidence. Adapters load lazily inside `make_forge`. | — |
 | `forge_cli.py` | CLI wrapper around the Protocol (the only forge surface the prose calls); cap-gated subcommands degrade to `{"supported": false}` exit 0. `detect-pr` accepts `--state open\|merged`. | subcommand names in §Derived surfaces |
-| `forge_github.py` (lib) | GitHub `gh` adapter: detect/open PR, CI rollup (`statusCheckRollup`), mark-ready/merge/delete-branch, and commit-pinned `blob/<sha>/<path>#Lx-Ly` source URLs. review_threads/post_reply/resolve_thread supported via gh api graphql. `set_default_reviewers` raises `NotSupported` (solo repo, CODEOWNERS covers reviewers). `main_ci_health` reuses its `_classify_rollup`. | — |
+| `forge_github.py` (lib) | GitHub `gh` adapter: detect/open PR, CI rollup (`statusCheckRollup`), mark-ready/merge/delete-branch, and commit-pinned `blob/<sha>/<path>#Lx-Ly` source URLs. review_threads/post_reply/resolve_thread supported via gh api graphql. `set_default_reviewers` raises `NotSupported` (solo repo, CODEOWNERS covers reviewers). | — |
 | `forge_bitbucket.py` (lib) | Bitbucket `bkt` adapter (absorbs ship-it): detect/open PR, CI rollup from `bkt pr checks`, commit-pinned `src/<sha>/<path>#lines-x:y` source URLs, CodeRabbit review-thread fetch + verified resolve (`.resolution != null`), `set_default_reviewers` (GET `2.0/user` author + GET `default-reviewers`, drop author by `account_id`, PUT `{reviewers:[{uuid}]}`). | — |
 | `review_brief.py` | Deep, stdlib-only review-companion renderer. Strictly validates the motivation-first JSON model, binds local and PR heads to one full SHA, extracts source from that commit, builds responsive/CSP-protected self-contained HTML with exact Forge links, publishes atomically, and records/probes freshness. | writes `<ticket-dir>/stages/review_brief/<sha>/{brief.json,review-brief-*.html,receipt.json}` |
-| `main_ci_health.py` | Per-drain-turn main-CI health probe ("main" = the default BRANCH's CI, not the program's entrypoint): `gh api .../commits/<sha>/check-runs` (sha-keyed, owner/repo auto-resolved), uppercases each REST `status` then reuses `forge_github._classify_rollup` (inheriting the CANCELLED/STALE/NEUTRAL/SKIPPED to pending fold). Asymmetric: only `failed` pauses; green/pending/probe-`error` resume. Pure `classify_main_ci(check_runs)` for unit-testing. | `probe --workspace-root [--sha]`; consumed by `stage_merge.py` + `evolve_reap.py` |
 
 ### Adding a tracker/forge backend
 
@@ -120,10 +118,9 @@ Opening and versioning the PR (the host seam itself is §Forge above).
 | `sweep_knowledge.py` | Retro-curation sweep over `knowledge.jsonl`; propose-only until a confirmed manifest applies append-only supersession tombstones. Usage ranking and semantic clustering support `FLOW memory prune`. | subcommand names in §Derived surfaces |
 | `recall_pending.py` (lib) | Promote recall-pending entries into the per-ticket recall log; the promoting rewrite also moves >24h entries to `.stale`. The producer is the plan-phase `recall.py --record-pending` (post-gate write); the dispatcher promotes at init. | — |
 | `recall_usage.py` | Recall observability: append deduplicated usage and near-duplicate miss records beneath the v2 namespace; feeds recall-quality and pruning rank. | `record-usage --ticket --ticket-dir [--used-ids]` / `detect-misses --ticket --ticket-dir [--threshold]` |
-| `reflect_inputs.py` | Bundle the reflect-stage inputs (state + frontmatter + diff + subagent reports + friction + reflect_config + a best-effort `harness_eval` availability block advertising the corpus regression eval). | `--ticket --ticket-dir --ticket-frontmatter --cwd` |
+| `reflect_inputs.py` | Bundle the reflect-stage inputs (state + frontmatter + diff + subagent reports + friction + reflect_config). | `--ticket --ticket-dir --ticket-frontmatter --cwd` |
 | `observe_ship_event.py` | Sole writer of `ship-events/<ticket>.json` (atomic, dupe-safe). | `--ticket --evidence-json --run-id --tier --acceptance-invariant --lane --workspace-root` |
-| `observe_at_close.py` | Freeze the ship event from a doomed run's `state.json` before the post-merge reap (janitor sweep / drain step A) destroys it. `is_shipped`-gated (only `not_yet_observed` observes; PR#277's property never loosened) → run_id capture → tier/acceptance-invariant/lane gather → `observe_ship_event.observe` against the MAIN store, attribution stamped from the worktree's state.json. Never raises; returns an `{action}` dict (observed / skipped / failed). | `--workspace-root --key [--worktree]` |
-| `senses_deadman.py` | Nightly SENSES deadman (twin of the RUNS deadman): join the window's closed beads to the ship-event store, bucket each close observed / within-lag / missing / covered / unmerged / ignored, file ONE deduped P0 on divergence, and print a folded health digest (telemetry freshness incl. quarantine-sidecar growth, metric-trend deltas, loop liveness). Reads `is_shipped` through the tracker seam, never modifies it (PR#277 untouched). Pure `classify_closes` / `decide_alarm` / `run_record_summary` / `render_digest`; the CLI gathers via the injectable Runner + tracker seam. | `--workspace-root [--window-days --lag-hours --min-missing --max-gap --json --dry-run --run-record]`; exit 0 healthy / 1 divergence / 2 bd-git error / 4 not maintainer. Consumed by `ops/nightly-evolve.sh.template` |
+| `observe_at_close.py` | Freeze the ship event from a doomed run's `state.json` before the post-merge reap (janitor sweep / finalize) destroys it. `is_shipped`-gated (only `not_yet_observed` observes; PR#277's property never loosened) → run_id capture → tier/acceptance-invariant/lane gather → `observe_ship_event.observe` against the MAIN store, attribution stamped from the worktree's state.json. Never raises; returns an `{action}` dict (observed / skipped / failed). | `--workspace-root --key [--worktree]` |
 
 ## Self-evolution
 
@@ -134,35 +131,19 @@ The reflect stage's self-repair path — see `../references/self-evolution.md` f
 | `machinery_edit.py` | Flock-serialized applier for reflect lens-B self-edits to flow's OWN source. Refuses out-of-tree + snapshot-pinned paths + skill-root on a protected branch (main/master/dev/develop → propose+record instead). See `../references/self-evolution.md`. | `apply --skill-root --payload` |
 | `flow_beads_create.py` | File a self-work (machinery) bead into flow's OWN beads, gated on a route back to flow's repo; always targets flow's beads, never the run's tracker. | `--workspace-root --summary --description [--type --labels --parent --dedup-key --acceptance-invariant]`; exit 4 = not maintainer |
 
-## Maintenance drain engine
-
-The self-target-gated `FLOW maintain evolution drain` and
-`FLOW maintain backlog drain` loops plus their shared merge stage.
+## Close-out and worker seams
 
 | Script | Role | Contract notes |
 |--------|------|----------------|
-| `maintainer_preflight.py` | Host-neutral scheduled-run deadman plus clean-boundary gate. Reports hung, failed, stale, disarmed, and unavailable ledgers; before checkout/plugin mutation it also refuses dirt and recursively finds live/corrupt base or revision leases. | `[--run-record --now --json] [--workspace-root --require-clean-boundary]`; boundary refusal exit 3, absent ledger is silent |
-| `worker_pool.py` | Deterministic seams around host-native collaboration: reserves one driver slot, captures/compares strong read-only git receipts, and reduces durable driver-loss evidence. | `limit --configured --capacity` / `snapshot --workspace-root` / `guard --workspace-root --before` (exit 3 mutation) / `recover --evidence` |
-| `_evolve_common.py` (lib) | Shared maintenance-drain helpers: `ToolError`/`NotMaintainer`, tolerant JSON parsing, branch-to-key mapping, liveness joins, and selector primitives. | — |
-| `evolve_select.py` (lib) | Drain select core: select + partition the next bounded batch of evolve planning candidates (`bd ready -l evolve`, drop in-flight, backpressure, coarse hot/anchor serialization). Pure, no side effects; its internal `launch` field is selection data, not authorization. | raises NotMaintainer/ToolError. Consumed by `evolve_drain.py` (the `FLOW maintain evolution drain` loop) |
-| `queue_select.py` (lib) | Day-job sibling of `evolve_select.py`: select + partition the next bounded batch of non-evolve planning candidates (`bd ready` unlabelled minus epic/evolve/proposal/hot, drop in-flight, queue-scoped backpressure counting only PRs outside the active-evolve set, anchor dedup, `model_per_key` per-key). No hot-serialization layer. Pure, no side effects; its internal `launch` field is selection data, not authorization. | raises NotMaintainer/ToolError. Consumed by `queue_drain.py` (the `FLOW maintain backlog drain` loop) |
-| `queue_status.py` | Read-only backlog status: ready work, lease liveness, advisory next action, parked-PR feedback, and backpressure. | `--workspace-root [--cap --concurrency]`; exit 4 not maintainer / 2 tool error. Consumed by `references/command-maintain.md` |
-| `fleet.py` | Fleet liveness ledger: one registration + heartbeat record per launched run at `<shared .flow>/fleet/<key>.json`; storage resolves via `_memory_paths.resolve_memory_base` and is self-target-gated. `live_keys` uses a 7200-second heartbeat-staleness fallback matching the longest default stage lease; readers still reconcile it with the run lease. `is-live`, used before destructive drain actions, is lease-only and fails safe toward live on read errors. | exit 4 = not maintainer |
-| `evolve_reap.py` | Drain reap-step core: classify open evolve PRs for auto-merge (green + leaf + mergeable → `merge`; a hot leaf also merges under `[evolve] auto_merge_hot` + isolation, one hot per pass; a green DIRTY → `blocked` reason `"DIRTY"` (branches carry no version line, so a DIRTY is a genuine code conflict for a human); else not_green/skipped_hot/blocked). Probes main's own CI health each turn (`main_ci_health.py`): a red main holds every would-be-merge in `held_main_red` and files one deduped P0. Pure `classify`; the loop does the `gh pr merge`, `reap()` does the probe + P0. Role: orphan safety-net (a run that died before self-merging) + worktree teardown. | `--workspace-root`; exit 4 = not maintainer. Consumed by `FLOW maintain evolution drain` (reap step) |
-| `evolve_drain.py` | Drain loop's next-action decider: `decide(select_result, liveness, stranded=()) → {action: recover\|wait\|plan_required\|done, launch: [], plan_required, parked[, stranded]}` with precedence `recover > wait > plan_required > done`. CLI runs `evolve_select.select()` + annotates each in-flight bead with lease liveness. Fresh candidates require attended driver planning; they never authorize a launch. `stranded_pre_pr()` keeps pre-PR dead work from producing a false `done`. Pure `decide()`/`liveness_map()`/`stranded_pre_pr()` are reused by `queue_drain.py`. | `--workspace-root [--cap --concurrency]`; exit 4 = not maintainer, 2 = bd/git/gh error. Consumed by the `FLOW maintain evolution drain` loop |
-| `queue_drain.py` | Day-job sibling of `evolve_drain.py`: the `FLOW maintain backlog drain` loop's next-action decider. CLI runs `queue_select.select()`, queue-scopes the wait gate (subtracts active-evolve keys from `live_runs`/`launched_pending` — the shared worktree pool + fleet ledger must never make the day-job loop wait on a live evolve run), annotates in-flight day-job runs with lease liveness, and classifies merged flow PRs with a registered worktree or pending launch for reaping (pure `classify_reap`; a reaped launch key is dropped — merged-but-unclosed beads divert to the close path, never relaunch). Also detects STRANDED pre-PR day-job runs (`evolve_drain.stranded_pre_pr` over a day-job-scoped in_progress set: all in_progress minus epics minus `evolve`/`proposal`/`hot`) → `decide` returns `recover` (never false-positive `done`); the `references/command-maintain.md` §Recover prose reaps + reopens, bounded by the same `STRANDED-RECOVERY:` ladder. NEVER merges PRs (day-job PRs park for the human). | `--workspace-root [--cap --concurrency]`; exit 4 = not maintainer, 2 = bd/git/gh error. Consumed by the `FLOW maintain backlog drain` loop (`references/command-maintain.md` §drain) |
-| `worktree_janitor.py` | Workspace-local stale-worktree janitor. Derives the primary checkout from Git, recognizes only its managed worktree directories, resolves Jira or Beads keys, reads normalized tracker and forge state, and classifies each candidate conservatively. Open PRs are preserved; merged PRs require local-tip/head equality; terminal no-PR branches require a verified remote default and zero unique commits. A real sweep requires the preview's target and candidate confirmation IDs, then sends each removal through revision-aware `flow_worktree.reap_worktree`. | `sweep --workspace-root [--dry-run --confirmed-target --confirmed-candidate]`; exit 2 = repository-level git error. Consumed by `references/command-maintain.md` |
-| `finalize.py` | Post-merge close-out for one delivered ticket (`FLOW ticket finalize`): the delivery-workspace counterpart of the drain's merge-set reap. Probe (no writes): locate the ticket's managed worktree or unique local branch, require merged-PR proof through the forge seam (open/no PR exits 3 so a host-owned watch re-invokes until 0), refuse on a live/corrupt lease, a merged-head/tip mismatch, or invocation from the doomed worktree itself. On proof, each step best-effort and idempotent in drain order: tracker transition to done, `observe_at_close` ship-event freeze, remote branch delete, `reap_worktree` teardown. | `--workspace-root --key [--dry-run]`; exit 0 finalized / 2 probe error / 3 not merged / 4 refused. Consumed by `references/command-ticket.md` |
-| `evolve_self_merge.py` | Self-merge gate (the `merge` stage core): pure `decide(labels, is_maintainer, auto_merge_hot, ci_status, planned_files, eval_status, main_ci_status, changed_files) → {action, is_hot, reason}`, where `is_hot` is the `hot` label OR a guard-file hit in `planned_files` OR one in `changed_files` (the merge-time observed PR diff; can only raise hotness, never lower it; reuses `triage.is_hot_change`), and a non-"pass" `eval_status` (the `harness_eval` verdict, fed by the stage when the PR touches scripts) blocks the merge (Self-Harness no-degradation rule). The stage acts on it: a hot bead gets an independent reviewer subagent (§2) before `forge_cli merge`. | `--workspace-root --key --ci-status [--eval-status --main-ci-status --changed-files]`; consumed by `stage_merge.py` |
-| `stage_merge.py` | Merge-stage absorber (flow-nu1w.1): the `merge` stage's mechanical plumbing (§1 eligibility probe, §3 merge + Cover-close), shelled as subprocess argument lists so the decision code stays byte-identical to `evolve_self_merge.py`/`main_ci_health.py`/`forge_cli.py` (property-equivalence by construction). `probe` re-reads CI, replays `harness_eval.py` when the PR touches scripts, probes main's CI health, asks `evolve_self_merge.py` for the verdict, and (on a hot merge) writes the PR diff for the §2 independent-reviewer prose; no merge/close side effects. `execute` rebuilds the §3 push-state guard in Python (returncode-driven, so a deleted remote branch skips rather than closes), merges through the forge seam on CLEAN/DRAFT, and closes the bead + covers only after a successful merge; `delete-branch` is remote-only (local worktree teardown stays with the drain reap). Only pure import: `ticket_frontmatter.read` for the covers list. | `probe --workspace-root --ticket-dir --key` / `execute --workspace-root --pr --key [--already-merged]`; consumed by `references/stage-merge.md` |
+| `worker_pool.py` | Deterministic seams around host-native collaboration: reserves one driver slot, captures/compares strong read-only git receipts, and reduces durable driver-loss evidence. | `limit --configured --capacity` / `snapshot --workspace-root` / `guard --workspace-root --before` (exit 3 mutation) / `recover --evidence`. Consumed by `references/background-pipeline.md` §Worker contract |
+| `worktree_janitor.py` | Workspace-local stale-worktree janitor. Derives the primary checkout from Git, recognizes only its managed worktree directories, resolves Jira or Beads keys, reads normalized tracker and forge state, and classifies each candidate conservatively. Open PRs are preserved; merged PRs require local-tip/head equality; terminal no-PR branches require a verified remote default and zero unique commits. A real sweep requires the preview's target and candidate confirmation IDs, then sends each removal through revision-aware `flow_worktree.reap_worktree`. | `sweep --workspace-root [--dry-run --confirmed-target --confirmed-candidate]`; exit 2 = repository-level git error. Consumed by `references/command-workspace.md` |
+| `finalize.py` | Post-merge close-out for one delivered ticket (`FLOW ticket finalize`). Probe (no writes): locate the ticket's managed worktree or unique local branch, require merged-PR proof through the forge seam (open/no PR exits 3 so a host-owned watch re-invokes until 0), refuse on a live/corrupt lease, a merged-head/tip mismatch, or invocation from the doomed worktree itself. On proof, each step best-effort and idempotent in the canonical close-out order: tracker transition to done, `observe_at_close` ship-event freeze, remote branch delete, `reap_worktree` teardown. | `--workspace-root --key [--dry-run]`; exit 0 finalized / 2 probe error / 3 not merged / 4 refused. Consumed by `references/command-ticket.md` |
 
 ## Work-mode quality gate
 
 | Script | Role | Contract notes |
 |--------|------|----------------|
 | `metric.py` | Metrics calculator: shipped tickets/week, time-to-PR, friction events/run, and revert-rate — from ship-event and friction-jsonl evidence (revert-rate joins ship-events to `bd history` AND scans the default-branch git log for reverts, emitting durable revert events via observe_ship_event), and a `trend` roll-up of all five window measures (table + `--json`), plus a `corpus-health` measure over `knowledge.jsonl` (live-vs-superseded entry counts, supersession rate, and oldest live DECISION age; the dead-set now folds list-valued tombstones via `recall.superseded_ids`) and a `recall-hit-rate` measure (precision = used/surfaced + `RECALL_MISS` count, from `recall-usage.jsonl`; auto-resolves `--namespace` from workspace.toml when omitted; the fifth trend measure), plus a `fix-efficacy` measure (per closed MACHINERY-fix bead, reusing `friction_recurrence`'s distinctive-anchor selection then a structural `(stage, type, anchor)` tuple join grounded in pre-fix friction, with a `recurred`/`clean` verdict + evidence, `claimed_tuples`, and a per-bead unmeasurable reason; lifetime metric, `--since`/`--until` ignored). | Consumed by `references/command-measure.md` |
-| `harness_corpus.py` (lib) | ("harness" here = flow's OWN self-regression eval, not a test harness.) Frozen decider-fixture corpus loader/validator + replayer (regression-eval, epic flow-63q): replays held_in/held_out cases from the sibling `harness_corpus.json` data file against the four pure deciders (`evolve_select.partition`, `evolve_drain.decide`, `evolve_self_merge.decide`, `triage.is_hot_change`); candidate-checkout replay goes through `harness_eval.py`'s isolated `drive` subprocess driver, not the in-process `resolve=` hook. | Frozen by `tests/test_harness_corpus.py` (full replay each CI run) |
-| `harness_eval.py` | Regression-eval scorer (epic flow-63q): replays the frozen corpus against a candidate skill-checkout AND a baseline via an isolated subprocess driver per checkout; emits per-split pass/regress delta + `non_regression`; raw data only, gating policy lives in `stage_merge.py` (which maps the exit code to `evolve_self_merge.py --eval-status`). | `score --candidate <scripts-dir> [--baseline <scripts-dir> --corpus <file> --timeout-secs N]` prints delta JSON; exit 0 = clean, 1 = bad dirs, 2 = corpus/driver error, 3 = regression. `drive` is the internal stdin-JSON replay driver. |
 | `pending_mutations.py` (lib) | Transient tracker-mutation queue (create/transition/comment/link; entries with any other op are parked by sync). | — |
 | `sync.py` | Drain `pending-mutations.jsonl` + reconcile against live tracker. | `--workspace-root` |
 
@@ -174,12 +155,12 @@ The self-target-gated `FLOW maintain evolution drain` and
 | `group_candidates.py` | `FLOW ticket group` core: fetch + normalize grouping candidates (explicit keys, or the `--mine` assigned selector) through the tracker seam, then surface empty-body title-twin duplicate hints. Read-only; the lead+covers clustering judgment lives in `references/command-ticket.md`. | `[<key> ...] --mine --filter --workspace-root`; exit 1 tracker / 2 config / 3 no input. Consumed by `references/command-ticket.md` |
 | `group_persist.py` | `FLOW ticket group` defer-path persistence: record a cover set as a `flow-group covers:` marker comment on the lead (`persist`, idempotent), and read it back (`derive`) so a grouping survives propose→act across sessions. Cross-backend (only `comment`/`get`); `spec` auto-derives `--covers` from it. | `persist --lead --covers --workspace-root` / `derive --lead --workspace-root`; exit 1 tracker / 2 config / 3 args. Consumed by `references/command-ticket.md` + `references/delivery-plan.md` |
 | `triage.py` | `list`: read-only `deferred` + decided-mode `blocked` queue with each one's defer comment (beads only), every row tagged `queue=evolve\|day-job` (evolve label); `--ready` opt-in adds the ready queues. `decided`: probe a bead's recorded triage decision; returns `{decided,answer,is_hot,hitl}` JSON. `lane`: resolve a bead's verification lane (express\|light\|full) from its tier labels (delegates policy to `tier_policy.lane_for`; spec-time twin of `flow_worktree._lane_for_bead`). Houses `_GUARD_FILES` + `is_hot_change`. | — |
-| `tier_policy.py` (lib) | Pure tier→verification-lane decider: `lane_for(labels)` maps tier labels to a lane (`tier:trivial`→express, `tier:light`→light, hot/untiered→full). Scales gate depth to the cost of being wrong (the xqt verdict operationalized); same labels `evolve_select` reads for the worker model. The per-lane gate policy (what each lane skips) lives in the stage prose that branches on the lane string (`references/delivery-plan.md`, `stage-implement.md`, `stage-reflect.md`), not here. No I/O — callers supply the labels. `triage` uses it in `lane`; `flow_worktree` in `_lane_for_bead`. | — |
+| `tier_policy.py` (lib) | Pure tier→verification-lane decider: `lane_for(labels)` maps tier labels to a lane (`tier:trivial`→express, `tier:light`→light, hot/untiered→full). Scales gate depth to the cost of being wrong (the xqt verdict operationalized). The per-lane gate policy (what each lane skips) lives in the stage prose that branches on the lane string (`references/delivery-plan.md`, `stage-implement.md`, `stage-reflect.md`), not here. No I/O — callers supply the labels. `triage` uses it in `lane`; `flow_worktree` in `_lane_for_bead`. | — |
 | `model_resolve.py` | Resolve an optional native-agent model hint from `[models].<stage>`. Missing, disabled, or unsupported hints inherit the driver session model. | `--workspace-root --stage`; consumed by native agent dispatch |
 | `recover.py` | Inspect + remediate a broken run. | recipes in `references/delivery-repair.md` |
 | `flow_friction.py` | Append-only `friction.jsonl` log (the reflect/self-evolution feedstock). | `--ticket --run-id --stage --type --body [--detail --severity]` |
 | `friction_recurrence.py` | Read-only forward-join of `friction.jsonl` to MACHINERY-prefixed `knowledge.jsonl` entries: surfaces friction classes that recurred after a claimed fix, clustered two ways (`signature_classes`, a single distinctive anchor token, cross-cutting stage/type; `structural_classes`, `(stage, type, anchor)`), carrying evidence (entry ids, run ids, fix sha) for a downstream judge. Reads friction/knowledge/ship-events, never writes. | `--workspace-root` |
-| `friction_escalate.py` | Propose-only recurrence escalation: consumes `friction_recurrence.analyze` and files ONE deduped `recurrent`-labelled bead per signature class that recurred `>=K` times since its LATEST claimed MACHINERY fix (not the detector's earliest-anchored `post_fix_count`, which over-counts a multi-fix class). `K` + an exempt-anchor set are `[evolve]` workspace.toml knobs (`recurrence_escalation_k` default 3, `recurrence_exempt_anchors` default `[planned_files]`). Dedup key is the bare anchor (no `::`), so at most one bead per anchor ever and only the exact `evid:` dedup net fires. Labels are `recurrent` only, never `evolve`, so the drain loop never picks these up. Auto-dormant without a route back to flow's repo (`flow_beads_create.resolve_maintainer_repo`). | `escalate --workspace-root` |
+| `friction_escalate.py` | Propose-only recurrence escalation: consumes `friction_recurrence.analyze` and files ONE deduped `recurrent`-labelled bead per signature class that recurred `>=K` times since its LATEST claimed MACHINERY fix (not the detector's earliest-anchored `post_fix_count`, which over-counts a multi-fix class). `K` + an exempt-anchor set are `[reflect]` workspace.toml knobs (`recurrence_escalation_k` default 3, `recurrence_exempt_anchors` default `[planned_files]`). Dedup key is the bare anchor (no `::`), so at most one bead per anchor ever and only the exact `evid:` dedup net fires. Labels are `recurrent` only, never `evolve`, so nothing auto-gates them. Auto-dormant without a route back to flow's repo (`flow_beads_create.resolve_maintainer_repo`). | `escalate --workspace-root` |
 
 ## Shared helpers (lib)
 
@@ -217,7 +198,6 @@ reference doc); this table is for finding a doc, not for wiring.
 | Doc | Covers |
 |-----|--------|
 | `references/background-pipeline.md` | Backgrounding is a host operation applied to the driver conversation. |
-| `references/command-maintain.md` | Except for workspace-local worktree cleanup, maintenance is restricted to flow's own self-target workspace: the gate below refuses a… |
 | `references/command-measure.md` | FLOW measure reads immutable delivery evidence, tracker history where required, and memory telemetry. |
 | `references/command-memory.md` | Flow memory is append-only source data plus derived indexes. |
 | `references/command-target.md` | This reference owns bare FLOW, FLOW <target>..., and FLOW help. |
@@ -229,7 +209,6 @@ reference doc); this table is for finding a doc, not for wiring.
 | `references/delivery-revision.md` | A lifecycle revise action updates a delivered run's open PR. |
 | `references/e2e-recipes.md` | Read this at plan time — delivery-plan.md's recipe-settling step — the moment you settle a ticket's e2e_recipe. |
 | `references/harness.md` | Claude Code and Codex are the two hosts for the same Flow engine and public grammar. |
-| `references/loop-engineering.md` | Flow has three nested feedback loops |
 | `references/oversee.md` | Run a flow ticket through a driver agent spawned from a long-lived main session (the manager), which observes friction from outside while… |
 | `references/plan-surface.md` | The plan surface renders the human gate of references/delivery-plan.md section 5 as an interactive Lavish session: the exact complete plan… |
 | `references/revision-triage-board.md` | The revision board is the one review-adjacent use of Lavish; the planning-gate use lives in references/plan-surface.md. |
@@ -240,7 +219,6 @@ reference doc); this table is for finding a doc, not for wiring.
 | `references/stage-create_pr.md` | Opens a PR for the run's feature branch — a draft by default, or ready for review when [create_pr] draft = false in workspace.toml… |
 | `references/stage-e2e.md` | Execute the **e2e recipe the plan declared** and surface any failure. |
 | `references/stage-implement.md` | Implement the ticket against its approved plan using strict TDD, and report only when the tests are green. |
-| `references/stage-merge.md` | The terminal self-merge stage. |
 | `references/stage-plan.md` | The inline plan stage records the one human-approved Markdown plan authored by the driver. |
 | `references/stage-reflect.md` | Extract durable knowledge from this ticket's run, append entries to the compounding memory layer, and (if the ticket shipped) record an… |
 | `references/stage-review_brief.md` | Generate a beautiful, read-only HTML companion for the human reviewing the PR. |
@@ -258,16 +236,15 @@ markers are overwritten. `—` = none.
 <!-- flow:module-map:begin -->
 | Script | Subcommands | Imported by |
 |--------|-------------|-------------|
-| `_atomicio.py` | — | `diff_extract`, `dispatch_stage`, `fleet`, `flow_launcher`, `flow_worktree`, `init`, `lease`, `machinery_edit`, `memory_embed`, `pending_mutations`, `recall_pending`, `review_brief`, `runtime_layout`, `snapshot`, `state`, `ticket_frontmatter` |
-| `_evolve_common.py` | — | `evolve_drain`, `evolve_reap`, `evolve_select`, `evolve_self_merge`, `observe_at_close`, `queue_drain`, `queue_select`, `queue_status`, `sweep_knowledge` |
+| `_atomicio.py` | — | `diff_extract`, `dispatch_stage`, `flow_launcher`, `flow_worktree`, `init`, `lease`, `machinery_edit`, `memory_embed`, `pending_mutations`, `recall_pending`, `review_brief`, `runtime_layout`, `snapshot`, `state`, `ticket_frontmatter` |
 | `_harness.py` | — | `flow_launcher`, `flowctl`, `init` |
-| `_jsonl.py` | — | `friction_recurrence`, `memory_append`, `memory_embed`, `metric`, `pending_mutations`, `recall`, `recall_pending`, `recall_usage`, `reflect_inputs`, `senses_deadman`, `sweep_knowledge` |
-| `_locking.py` | — | `dispatch_stage`, `fleet`, `flow_friction`, `flow_worktree`, `lease`, `machinery_edit`, `memory_append`, `memory_embed`, `observe_ship_event`, `pending_mutations`, `recall_pending`, `recall_usage`, `runtime_layout`, `state`, `ticket_frontmatter` |
-| `_memory_paths.py` | — | `fleet`, `flow_friction`, `flow_worktree`, `friction_escalate`, `friction_recurrence`, `memory_append`, `memory_embed`, `metric`, `observe_at_close`, `observe_ship_event`, `recall`, `recall_usage`, `reflect_inputs`, `senses_deadman`, `sweep_knowledge` |
+| `_jsonl.py` | — | `friction_recurrence`, `memory_append`, `memory_embed`, `metric`, `pending_mutations`, `recall`, `recall_pending`, `recall_usage`, `reflect_inputs`, `sweep_knowledge` |
+| `_locking.py` | — | `dispatch_stage`, `flow_friction`, `flow_worktree`, `lease`, `machinery_edit`, `memory_append`, `memory_embed`, `observe_ship_event`, `pending_mutations`, `recall_pending`, `recall_usage`, `runtime_layout`, `state`, `ticket_frontmatter` |
+| `_memory_paths.py` | — | `flow_friction`, `flow_worktree`, `friction_escalate`, `friction_recurrence`, `memory_append`, `memory_embed`, `metric`, `observe_at_close`, `observe_ship_event`, `recall`, `recall_usage`, `reflect_inputs`, `sweep_knowledge` |
 | `_registry.py` | — | `dispatch_stage`, `init`, `lint_ticket`, `seam_check`, `validate_workspace` |
-| `_runner.py` | — | `_evolve_common`, `branch_ticket`, `create_pr`, `diff_extract`, `evolve_drain`, `evolve_reap`, `evolve_select`, `finalize`, `flow_beads_create`, `flow_worktree`, `forge_bitbucket`, `forge_github`, `friction_escalate`, `init`, `queue_drain`, `queue_select`, `queue_status`, `recall_pending`, `review_brief`, `senses_deadman`, `tracker_beads`, `version`, `worktree_janitor` |
-| `_timeutil.py` | — | `_evolve_common`, `dispatch_stage`, `evolve_drain`, `evolve_reap`, `fleet`, `flow_friction`, `flow_worktree`, `init`, `lease`, `memory_append`, `memory_embed`, `metric`, `observe_at_close`, `observe_ship_event`, `recall`, `recall_pending`, `recall_usage`, `recover`, `runtime_layout`, `senses_deadman`, `state`, `status`, `sweep_knowledge`, `ticket_frontmatter`, `tracker_cli`, `worktree_janitor` |
-| `_workspace.py` | — | `_evolve_common`, `branch_ticket`, `create_pr`, `flow_friction`, `flow_worktree`, `forge`, `friction_escalate`, `maintainer`, `metric`, `model_resolve`, `observe_ship_event`, `recover`, `reflect_inputs`, `revise_config`, `snapshot`, `status`, `tracker_cli`, `triage` |
+| `_runner.py` | — | `branch_ticket`, `create_pr`, `diff_extract`, `finalize`, `flow_beads_create`, `flow_worktree`, `forge_bitbucket`, `forge_github`, `friction_escalate`, `init`, `recall_pending`, `review_brief`, `tracker_beads`, `version`, `worktree_janitor` |
+| `_timeutil.py` | — | `dispatch_stage`, `flow_friction`, `flow_worktree`, `init`, `lease`, `memory_append`, `memory_embed`, `metric`, `observe_at_close`, `observe_ship_event`, `recall`, `recall_pending`, `recall_usage`, `recover`, `runtime_layout`, `state`, `status`, `sweep_knowledge`, `ticket_frontmatter`, `tracker_cli`, `worktree_janitor` |
+| `_workspace.py` | — | `branch_ticket`, `create_pr`, `flow_friction`, `flow_worktree`, `forge`, `friction_escalate`, `maintainer`, `metric`, `model_resolve`, `observe_ship_event`, `recover`, `reflect_inputs`, `revise_config`, `snapshot`, `status`, `tracker_cli`, `triage` |
 | `branch_ticket.py` | — | `finalize`, `worktree_janitor` |
 | `cockpit.py` | — | `cockpit_cli` |
 | `cockpit_cli.py` | `render` | — |
@@ -276,40 +253,31 @@ markers are overwritten. `—` = none.
 | `diff_extract.py` | `capture-implement-diff` `check-ownership` `record-baseline` `since-stage` | `reflect_inputs` |
 | `dispatch_stage.py` | `advance` `init` `next` `release` `revise-open` | — |
 | `embedder_fastembed.py` | — | — |
-| `evolve_drain.py` | — | `queue_drain`, `queue_status` |
-| `evolve_reap.py` | — | — |
-| `evolve_select.py` | — | `evolve_drain` |
-| `evolve_self_merge.py` | — | — |
 | `finalize.py` | — | — |
-| `fleet.py` | `is-live` | `_evolve_common`, `dispatch_stage` |
 | `flow_beads_create.py` | — | `friction_escalate` |
 | `flow_friction.py` | — | `recover` |
 | `flow_launcher.py` | — | `flow_worktree`, `init` |
 | `flow_worktree.py` | `create` `locate-or-reseed` `reap` | `finalize`, `worktree_janitor` |
 | `flowctl.py` | — | `seam_check` |
-| `forge.py` | — | `create_pr`, `finalize`, `forge_bitbucket`, `forge_cli`, `forge_github`, `queue_status`, `review_brief`, `revise_config`, `worktree_janitor` |
+| `forge.py` | — | `create_pr`, `finalize`, `forge_bitbucket`, `forge_cli`, `forge_github`, `review_brief`, `revise_config`, `worktree_janitor` |
 | `forge_bitbucket.py` | — | `forge` |
 | `forge_cli.py` | `ci-rollup` `delete-branch` `detect-pr` `mark-ready` `merge` `post-reply` `resolve-thread` `review-status` `review-threads` | — |
-| `forge_github.py` | — | `forge`, `main_ci_health` |
+| `forge_github.py` | — | `forge` |
 | `friction_escalate.py` | `escalate` | — |
 | `friction_recurrence.py` | — | `friction_escalate`, `metric`, `reflect_inputs` |
 | `group_candidates.py` | — | — |
 | `group_persist.py` | `derive` `persist` | — |
-| `harness_corpus.py` | — | `harness_eval`, `reflect_inputs` |
-| `harness_eval.py` | `drive` `score` | — |
 | `init.py` | — | — |
-| `lease.py` | `acquire` `classify` `release` | `_evolve_common`, `dispatch_stage`, `evolve_drain`, `evolve_reap`, `fleet`, `flow_worktree`, `maintainer_preflight`, `recover`, `runtime_layout`, `status`, `worktree_janitor` |
+| `lease.py` | `acquire` `classify` `release` | `dispatch_stage`, `flow_worktree`, `recover`, `runtime_layout`, `status`, `worktree_janitor` |
 | `lifecycle.py` | — | `lifecycle_cli` |
 | `lifecycle_cli.py` | `coordinate` `reduce` | — |
 | `lint_comments.py` | — | — |
 | `lint_ticket.py` | — | — |
 | `machinery_edit.py` | `apply` | — |
-| `main_ci_health.py` | `probe` | `evolve_reap` |
-| `maintainer.py` | — | `evolve_drain`, `evolve_reap`, `evolve_select`, `evolve_self_merge`, `fleet`, `flow_beads_create`, `queue_drain`, `queue_select`, `queue_status`, `senses_deadman` |
-| `maintainer_preflight.py` | — | — |
+| `maintainer.py` | — | `flow_beads_create` |
 | `memory_append.py` | — | `sweep_knowledge` |
 | `memory_embed.py` | `embed` `reindex` | `recall`, `recall_usage`, `sweep_knowledge` |
-| `metric.py` | `corpus-health` `fix-efficacy` `friction-per-run` `recall-hit-rate` `revert-rate` `tickets-per-week` `time-to-pr` `trend` | `senses_deadman` |
+| `metric.py` | `corpus-health` `fix-efficacy` `friction-per-run` `recall-hit-rate` `revert-rate` `tickets-per-week` `time-to-pr` `trend` | — |
 | `model_resolve.py` | — | `validate_workspace` |
 | `module_map.py` | — | `seam_check` |
 | `observe_at_close.py` | — | `finalize`, `worktree_janitor` |
@@ -319,9 +287,6 @@ markers are overwritten. `—` = none.
 | `public_commands.py` | — | `module_map`, `public_commands_check`, `public_commands_cli` |
 | `public_commands_check.py` | — | — |
 | `public_commands_cli.py` | `help` `route` | — |
-| `queue_drain.py` | — | `queue_status` |
-| `queue_select.py` | — | `queue_drain`, `queue_status` |
-| `queue_status.py` | — | — |
 | `recall.py` | — | `memory_embed`, `metric`, `recall_usage`, `reflect_inputs`, `sweep_knowledge` |
 | `recall_pending.py` | — | `dispatch_stage`, `recall` |
 | `recall_usage.py` | `detect-misses` `record-usage` | `metric`, `sweep_knowledge` |
@@ -332,20 +297,18 @@ markers are overwritten. `—` = none.
 | `runtime_layout.py` | — | `flow_launcher` |
 | `scrub_ci_skip.py` | — | — |
 | `seam_check.py` | — | — |
-| `senses_deadman.py` | — | — |
 | `snapshot.py` | — | `dispatch_stage`, `recover` |
-| `stage_merge.py` | `execute` `probe` | — |
 | `state.py` | — | `diff_extract`, `dispatch_stage`, `flow_worktree`, `recall_usage`, `recover`, `reflect_inputs`, `status` |
 | `status.py` | — | — |
 | `sweep_knowledge.py` | `apply` `apply-cluster` `cluster` `propose` | — |
 | `sync.py` | — | — |
-| `ticket_frontmatter.py` | `read` `update` | `diff_extract`, `evolve_self_merge`, `flow_worktree`, `lint_ticket`, `observe_at_close`, `reflect_inputs`, `review_brief`, `stage_merge` |
+| `ticket_frontmatter.py` | `read` `update` | `diff_extract`, `flow_worktree`, `lint_ticket`, `observe_at_close`, `reflect_inputs`, `review_brief` |
 | `tier_policy.py` | — | `flow_worktree`, `triage` |
-| `tracker.py` | — | `finalize`, `flow_worktree`, `group_candidates`, `group_persist`, `observe_at_close`, `senses_deadman`, `sync`, `tracker_beads`, `tracker_cli`, `tracker_jira`, `worktree_janitor` |
+| `tracker.py` | — | `finalize`, `flow_worktree`, `group_candidates`, `group_persist`, `observe_at_close`, `sync`, `tracker_beads`, `tracker_cli`, `tracker_jira`, `worktree_janitor` |
 | `tracker_beads.py` | — | `tracker`, `triage` |
-| `tracker_cli.py` | `comment` `create` `download-attachments` `get` `is-shipped` `link` `list-epics` `list-sprints` `list-types` `set-sprint` `state` `transition` | `finalize`, `group_candidates`, `group_persist`, `observe_at_close`, `senses_deadman`, `sync`, `triage`, `worktree_janitor` |
+| `tracker_cli.py` | `comment` `create` `download-attachments` `get` `is-shipped` `link` `list-epics` `list-sprints` `list-types` `set-sprint` `state` `transition` | `finalize`, `group_candidates`, `group_persist`, `observe_at_close`, `sync`, `triage`, `worktree_janitor` |
 | `tracker_jira.py` | — | `tracker` |
-| `triage.py` | `decided` `lane` `list` | `evolve_reap`, `evolve_self_merge`, `flow_worktree` |
+| `triage.py` | `decided` `lane` `list` | `flow_worktree` |
 | `validate_workspace.py` | — | `dispatch_stage` |
 | `version.py` | `stamp` | — |
 | `worker_pool.py` | `guard` `limit` `recover` `snapshot` | — |

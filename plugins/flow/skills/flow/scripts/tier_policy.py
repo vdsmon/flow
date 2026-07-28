@@ -4,8 +4,7 @@ flow runs the same verification on a comment typo as on a hot-concurrency change
 The xqt counterfactual (docs/research/xqt-counterfactual-verdict-2026-06.md) measured
 that as 6-25 min/run of overhead with zero quality gain below the complexity ceiling,
 and recommended bounding the machinery to high-complexity/hot work. flow already
-classifies beads (tier:trivial / tier:light, see command-maintain.md) but the label only
-picks the worker MODEL (evolve_select.py model_per_key). This maps the SAME labels to
+classifies beads (tier:trivial / tier:light); this maps those labels to
 a verification LANE that the spec/implement/reflect stages branch on (they read the
 lane string directly: delivery-plan.md `--auto`, stage-implement.md, stage-reflect.md;
 the per-lane gate policy lives in that prose, not here).

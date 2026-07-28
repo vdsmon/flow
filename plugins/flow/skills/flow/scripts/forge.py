@@ -23,7 +23,7 @@ Key invariants:
 - `resolve_thread` returns True ONLY when the thread is VERIFIED resolved. The
   Bitbucket adapter re-reads the comment and tests `.resolution != null`; it never
   trusts a top-level `resolved` flag (a hard-won ship-it gotcha).
-- The `green` verdict in `ci_rollup` follows `evolve_reap.rollup_is_green`:
+- The `green` verdict in `ci_rollup` is strict:
   non-empty AND every check completed-SUCCESS.
 """
 

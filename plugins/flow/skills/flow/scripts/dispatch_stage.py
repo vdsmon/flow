@@ -38,7 +38,6 @@ from pathlib import Path
 from typing import Any, cast
 
 import _locking
-import fleet
 import lease
 import recall_pending
 import state
@@ -738,22 +737,6 @@ def cmd_next(
     if lease_error is not None:
         return lease_error
 
-    # Shadow-write the fleet liveness ledger (epic flow-8by2.2): an upsert that
-    # registers + heartbeats this run under the shared .flow/fleet/. Maintainer-
-    # gated and fail-open: nothing reads it authoritatively yet (child-3 cuts the
-    # readers over), so a shadow-ledger fault must never break dispatch. Per-key
-    # flock contention is minimal (one writer per key; only a launch-register vs
-    # the first next briefly serialize).
-    with contextlib.suppress(Exception):
-        fleet.register_run(
-            workspace_root,
-            ticket,
-            ts.run_id,
-            now=utcnow_iso(),
-            hostname=host,
-            boot_id=boot,
-        )
-
     descriptor_path.parent.mkdir(parents=True, exist_ok=True)
     atomic_write_text(descriptor_path, json.dumps(payload, indent=2, sort_keys=True) + "\n")
     try:
@@ -828,12 +811,6 @@ def cmd_finish(
     ):
         with contextlib.suppress(Exception):
             lease.release(td, new_state.run_id, session_nonce)
-        # Positive-deregister from the fleet ledger so a completed run drops out of
-        # the reconciled liveness read at once, rather than lingering until the
-        # heartbeat-staleness window (epic flow-8by2.3). Maintainer-gated + fail-open:
-        # a shadow-ledger fault must never break a clean finish.
-        with contextlib.suppress(Exception):
-            fleet.deregister_run(workspace_root, ticket, run_id=new_state.run_id)
 
     return 0, {
         "stage": stage_name,

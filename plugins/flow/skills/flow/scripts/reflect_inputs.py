@@ -10,9 +10,7 @@ Reads:
   - per-stage subagent reports via `state.json.stages.<name>.output_path`
 
 Output: single JSON object to stdout, structured for the reflect LLM. Includes
-a best-effort `harness_eval` availability block advertising the frozen-corpus
-regression eval (`harness_eval.py score`) to the reflect agent, and a
-best-effort `friction_recurrence` block (recurring signature classes distilled
+a best-effort `friction_recurrence` block (recurring signature classes distilled
 from `friction_recurrence.analyze`; always present, `[]` when nothing
 recurred).
 
@@ -37,7 +35,6 @@ import _memory_paths
 import _workspace
 import diff_extract
 import friction_recurrence
-import harness_corpus
 import recall
 import state
 import ticket_frontmatter
@@ -82,28 +79,6 @@ def _label_facets(cwd: Path) -> list[str]:
     if isinstance(facets, list) and all(isinstance(x, str) for x in facets):
         return facets
     return []
-
-
-def _harness_eval_block(scripts_dir: Path | None = None) -> dict[str, Any]:
-    if scripts_dir is None:
-        scripts_dir = Path(__file__).resolve().parent
-    eval_path = scripts_dir / "harness_eval.py"
-    corpus_path = scripts_dir / "harness_corpus.json"
-    try:
-        if not eval_path.is_file():
-            return {"available": False, "reason": f"harness_eval.py not found at {eval_path}"}
-        cases = harness_corpus.load_corpus(corpus_path)
-    except (harness_corpus.CorpusError, OSError) as exc:
-        return {"available": False, "reason": str(exc)}
-    counts = {"held_in": 0, "held_out": 0}
-    for case in cases:
-        counts[case["split"]] += 1
-    return {
-        "available": True,
-        "eval_path": str(eval_path),
-        "corpus_path": str(corpus_path),
-        "case_counts": counts,
-    }
 
 
 def _recalled_ids(log_path: Path) -> list[str]:
@@ -282,7 +257,6 @@ def bundle(
         "recalled_entries": _recalled_entries(ticket_dir, cwd),
         "reflect_config": _reflect_config(cwd),
         "label_facets": _label_facets(cwd),
-        "harness_eval": _harness_eval_block(),
     }
 
 
