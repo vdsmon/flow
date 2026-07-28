@@ -134,6 +134,8 @@ class GitHubAdapter:
             "base": str(item.get("baseRefName") or ""),
             "head": str(item.get("headRefName") or ""),
             "state": str(item.get("state") or "OPEN"),
+            "title": str(item.get("title") or ""),
+            "updated_at": str(item.get("updatedAt") or ""),
             "head_sha": str(item["headRefOid"]) if item.get("headRefOid") else None,
         }
 
@@ -150,7 +152,7 @@ class GitHubAdapter:
                 "--state",
                 state,
                 "--json",
-                "number,url,isDraft,baseRefName,headRefName,headRefOid,state",
+                "number,url,title,updatedAt,isDraft,baseRefName,headRefName,headRefOid,state",
                 "--limit",
                 "1",
             ],
@@ -164,6 +166,34 @@ class GitHubAdapter:
             return self._pr_from_json(items[0])
         return None
 
+    def list_authored(self, state: PR_STATE = "open") -> list[PullRequest]:
+        raw = self._ok_read(
+            [
+                "gh",
+                "pr",
+                "list",
+                "--author",
+                "@me",
+                "--state",
+                state,
+                "--json",
+                "number,url,title,updatedAt,isDraft,baseRefName,headRefName,headRefOid,state",
+                "--limit",
+                "1000",
+            ],
+            "gh pr list authored",
+        )
+        try:
+            items = json.loads(raw or "[]")
+        except json.JSONDecodeError as exc:
+            raise ForgeError(f"gh pr list authored returned bad JSON: {exc}") from exc
+        prs = [self._pr_from_json(item) for item in items if isinstance(item, dict)]
+        return sorted(
+            prs,
+            key=lambda pr: (str(pr.get("updated_at") or ""), pr["number"]),
+            reverse=True,
+        )
+
     def pr_info(self, pr_id: str) -> PullRequest | None:
         # PR-number -> PR reverse lookup. Reads ANY state (no --state filter), so
         # `revise` can detect a MERGED PR. Returns None on empty/unparseable JSON;
@@ -176,7 +206,7 @@ class GitHubAdapter:
                 "view",
                 pr_id,
                 "--json",
-                "number,url,isDraft,baseRefName,headRefName,headRefOid,state",
+                "number,url,title,updatedAt,isDraft,baseRefName,headRefName,headRefOid,state",
             ],
             "gh pr view",
         )
@@ -220,6 +250,8 @@ class GitHubAdapter:
             "base": base,
             "head": head,
             "state": "OPEN",
+            "title": title,
+            "updated_at": "",
             "head_sha": None,
         }
 

@@ -5,7 +5,7 @@ import subprocess
 
 import pytest
 
-from forge import ForgeConfigError
+from forge import ForgeConfigError, ForgeError
 from forge_bitbucket import BitbucketAdapter
 
 CONFIG = {"workspace": "ws", "repo_slug": "rs", "workspace_root": "."}
@@ -124,6 +124,58 @@ def test_detect_pr_no_match_stops_at_last_page():
     fg, calls = _adapter(lambda a: json.dumps(listing))
     assert fg.detect_pr("feature/flow-x") is None
     assert len(calls) == 1
+
+
+def test_list_authored_filters_current_user_follows_pages_and_sorts_newest_first():
+    page1 = {
+        "values": [
+            {
+                "id": 7,
+                "title": "Older",
+                "updated_on": "2026-07-27T12:00:00Z",
+                "author": {"uuid": "{me}"},
+                "links": {"html": {"href": "https://bitbucket.org/ws/rs/pull-requests/7"}},
+            },
+            {"id": 6, "author": {"uuid": "{someone-else}"}},
+        ],
+        "next": "page2",
+    }
+    page2 = {
+        "values": [
+            {
+                "id": 8,
+                "title": "Newest",
+                "updated_on": "2026-07-28T12:00:00Z",
+                "author": {"uuid": "{me}"},
+                "draft": True,
+                "links": {"html": {"href": "https://bitbucket.org/ws/rs/pull-requests/8"}},
+            }
+        ]
+    }
+
+    def h(args):
+        path = _api_path(args)
+        if path == "2.0/user":
+            return json.dumps({"uuid": "{me}"})
+        if "page=1" in path:
+            return json.dumps(page1)
+        if "page=2" in path:
+            return json.dumps(page2)
+        return "null"
+
+    fg, calls = _adapter(h)
+    prs = fg.list_authored()
+    assert [pr["number"] for pr in prs] == [8, 7]
+    assert prs[0]["title"] == "Newest"
+    assert prs[0]["updated_at"] == "2026-07-28T12:00:00Z"
+    list_calls = [call for call in calls if "pullrequests?state=OPEN" in _api_path(call)]
+    assert len(list_calls) == 2
+
+
+def test_list_authored_requires_current_user_uuid():
+    fg, _ = _adapter(lambda _args: json.dumps({"display_name": "No UUID"}))
+    with pytest.raises(ForgeError, match="no uuid"):
+        fg.list_authored()
 
 
 def _pr_view(state: str = "OPEN") -> dict:

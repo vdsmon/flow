@@ -17,12 +17,13 @@ Seating runs a mechanical half and a judgment half, in this order:
 
 1. **Posture.** Run the seat script. It fetches origin, resolves the remote default
    branch **and the integration branch**, ensures the standing bench worktree exists
-   (§The workbench; created detached at the **integration branch** when absent, and
-   an existing bench is never mutated), and emits a JSON posture: primary-checkout
-   branch, cleanliness, and distance from the integration branch; bench state; fetch
-   result; and both refs: `default_branch` (what the remote calls default) and
-   `integration_branch` (`[create_pr] base` when the workspace declares one, the
-   remote default otherwise).
+   (§The workbench), reads configured integration names without constructing their
+   adapters, and scans registered worktrees for non-terminal local runs. The JSON
+   posture includes primary-checkout and bench Git state; `default_branch`;
+   `integration_branch` (`[create_pr] base` when configured, otherwise the remote
+   default); `integrations.tracker` (`jira` or `beads`);
+   `integrations.forge` (`github`, `bitbucket`, or null); and `local_runs` for
+   unfinished, failed, stale, corrupt, or contradictory base and revision runs.
 
    ```bash
    FLOW_HARNESS="<harness>" "<facade>" manager-seat --workspace-root .
@@ -32,37 +33,28 @@ Seating runs a mechanical half and a judgment half, in this order:
    could not assemble one — names the failure. Resolve it before continuing.
    `--dry-run` previews without fetching or creating anything.
 
-2. **Orient.** Read this charter, the project memory's manager entries, and the
-   durable ledger, then judge the posture against `integration_branch`, never
-   `default_branch`: they differ in every repository whose pull requests target
-   something other than the remote default, and the workbench contract is about
-   the branch work is cut from. A primary checkout that is dirty, off the
-   integration branch (`workspace_root.branch` is not `integration_branch` with
-   its `origin/` prefix stripped), or `ahead_integration > 0` violates that
-   contract and goes to the human before anything else; behind-only is a
-   fast-forward the manager performs itself when no run is live. An
-   `integration_unresolved` reason means the declared base did not resolve and
-   the numbers fell back to the remote default; fix the configuration before
-   trusting them. A bench parked mid-task (on a branch, or dirty) is in-flight
-   inline work: resume it or park it deliberately, never blindly. An idle bench
-   (detached and clean) whose `behind_integration`/`ahead_integration` are not
-   both zero is parked on the wrong root: re-park it detached at
-   `integration_branch` before any inline work. The seat script never mutates an
-   existing bench, so this one is the manager's own hand.
+2. **Orient locally.** Judge the posture against `integration_branch`, never
+   `default_branch`. A primary checkout that is dirty, off the integration branch,
+   or ahead of it is unsafe. A bench on a branch or with local changes is non-idle.
+   An `integration_unresolved` reason makes the branch posture unsafe. Surface any
+   such state and ask what to do. The seat script fast-forwards a clean, behind-only
+   primary checkout and re-parks a clean, detached, behind-only bench only when
+   `local_runs` is empty. It never resumes a run or discards a commit during seating.
 
-3. **Propose, then ask.** Read `bd ready`, triage under §Pickup, and report: the
-   posture in one line, then a ranked shortlist of candidates, each with its
-   reasoning and a recommended route (managed run, inline fix, veto, defer).
-   Seating ends with that question — the manager never starts work it has merely
-   recommended, because a human who is handed an already-running decision cannot
-   overrule it cheaply. Once the human answers, act under the authorities below
-   without asking again.
+3. **Report, then ask.** Report Git posture, configured tracker and forge, and any
+   `local_runs`. Do not load manager memory, the ledger, tracker tickets, pull
+   requests, CI, reviews, or comments. Do not suggest a menu or rank work before the
+   human names a direction. End the initial seating response with exactly:
+   “What would you like to do?”
 
-   Two things still happen unprompted, because neither is picking up new work: the
-   behind-only fast-forward in step 2, and finishing what is already in flight — a
-   parked PR whose gate is met merges under §Merging, and a live run is resumed or
-   relayed. Triage judgment is reported rather than executed: a veto is a durable
-   close, so it is recommended at seating and performed once the human agrees.
+After the human chooses a direction, load only the context needed for it. “My
+tickets” calls `tracker list-assigned --filter open`; select from its compact key,
+summary, status, and priority rows, then call `tracker get` only for the chosen
+ticket. “My PRs” calls `forge list-authored --state open`; select from its compact
+title, draft, update-time, and URL rows, then fetch CI, reviews, and comments only
+for the chosen PR. Load relevant manager memory and ledger context only after the
+choice. A ticket named after seating goes straight to the managed driver path
+without a general queue scan.
 
 A ticket handed to a seated manager — `FLOW <target>` or plain words — runs through
 the managed topology: the manager spawns the driver (§Spawn) rather than becoming

@@ -5,7 +5,7 @@ import subprocess
 
 import pytest
 
-from forge import NotSupported
+from forge import ForgeError, NotSupported
 from forge_github import GitHubAdapter
 
 Recorder = list[list[str]]
@@ -144,6 +144,44 @@ def test_detect_pr_selects_merged_state():
 def test_detect_pr_none_when_empty():
     fg, _ = _adapter({"list": "[]"})
     assert fg.detect_pr("feature/flow-x") is None
+
+
+def test_list_authored_filters_current_user_paginates_and_sorts_newest_first():
+    listing = json.dumps(
+        [
+            {
+                "number": 7,
+                "url": "https://github.com/o/r/pull/7",
+                "title": "Older",
+                "updatedAt": "2026-07-27T12:00:00Z",
+                "isDraft": False,
+                "state": "OPEN",
+            },
+            {
+                "number": 8,
+                "url": "https://github.com/o/r/pull/8",
+                "title": "Newest",
+                "updatedAt": "2026-07-28T12:00:00Z",
+                "isDraft": True,
+                "state": "OPEN",
+            },
+        ]
+    )
+    fg, calls = _adapter({"list": listing})
+    prs = fg.list_authored()
+    assert [pr["number"] for pr in prs] == [8, 7]
+    assert prs[0]["title"] == "Newest"
+    assert prs[0]["updated_at"] == "2026-07-28T12:00:00Z"
+    call = next(c for c in calls if c[:3] == ["gh", "pr", "list"])
+    assert call[call.index("--author") + 1] == "@me"
+    assert call[call.index("--state") + 1] == "open"
+    assert call[call.index("--limit") + 1] == "1000"
+
+
+def test_list_authored_rejects_malformed_json():
+    fg, _ = _adapter({"list": "not-json"})
+    with pytest.raises(ForgeError, match="bad JSON"):
+        fg.list_authored()
 
 
 def test_source_url_is_commit_pinned_and_encodes_path():
