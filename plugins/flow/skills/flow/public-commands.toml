@@ -232,7 +232,7 @@ usage = "FLOW manager"
 summary = "Assume the manager role in this session: charter, ledger, queue, then act."
 effect = "read"
 workspace = "required"
-reference = "references/oversee.md"
+reference = "references/manager.md"
 
 [[command]]
 id = "help"
