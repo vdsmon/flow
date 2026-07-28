@@ -251,8 +251,9 @@ successful regeneration when that workspace has enabled Flow-controlled merging.
 ## 5. Freshness contract
 
 Any later commit makes the brief stale, including machinery edits produced by
-`reflect` in Flow's self-target workspace. The merge stage runs `review-brief
-freshness`; if local `HEAD`, PR head, receipt SHA, and artifact do not all agree, the
+`reflect` in Flow's self-target workspace. The merger runs `review-brief
+freshness` before any other merge gate (`oversee.md` §Merging); if local `HEAD`, PR
+head, receipt SHA, and artifact do not all agree, the
 merge is blocked until this stage is retried/regenerated at the new pushed SHA.
 
 The human may keep reading an older file, but it is visibly labeled with its exact SHA

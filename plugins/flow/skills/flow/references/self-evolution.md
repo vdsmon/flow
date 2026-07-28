@@ -9,7 +9,7 @@ self-target merge authority.
 
 - **Producer A — the reflect stage** is the continuous producer. It records durable
   knowledge and friction, applies safe machinery edits through `machinery_edit.py`,
-  and files a `MACHINERY:` finding as an `evolve,machinery` bead when a change
+  and files a `MACHINERY:` finding as a `machinery` bead when a change
   cannot safely land inside the current run (`stage-reflect.md` owns the filing
   recipe and its dedup keys).
 - **The manager** files independently from outside the run — the same recipe, the

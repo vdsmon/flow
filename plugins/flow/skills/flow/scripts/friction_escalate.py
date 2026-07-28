@@ -10,8 +10,8 @@ early miss inflates the count even after a later fix held); this module re-grade
 each class against `max(fix.ts)` instead, so only a fix that genuinely did not
 hold escalates.
 
-Labels are `["recurrent"]` ONLY, never `evolve`: the manager's pickup triages
-the `evolve`-labelled machinery beads, so a bead lacking that label is never
+Labels are `["recurrent"]` ONLY, never `machinery`: the manager's pickup triages
+the `machinery`-labelled beads, so a bead lacking that label is never
 auto-gated, keeping this propose-only unconditionally. `bd list -l recurrent`
 surfaces them to the human.
 
@@ -141,7 +141,7 @@ def _describe(candidate: dict[str, Any]) -> str:
         f"Recurrence tickets: {', '.join(tickets) or 'n/a'}.",
         "",
         "Propose-only: informational evidence for the human, never auto-gated"
-        " (this bead carries no `evolve` label, so nothing routes it without a triage).",
+        " (this bead carries no `machinery` label, so nothing routes it without a triage).",
     ]
     return "\n".join(lines)
 
