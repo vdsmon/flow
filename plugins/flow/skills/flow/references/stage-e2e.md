@@ -3,7 +3,7 @@
 ## Purpose
 
 Execute the **e2e recipe the plan declared** and surface any failure.
-This stage runs BY DEFAULT (`stage-registry.toml` default handler is `subagent:general-purpose`): it is the ONE stage that observes the change actually behaving end-to-end, and it significantly improves end-to-end correctness — no other stage exercises the change running.
+This stage runs BY DEFAULT (`stage-registry.toml`'s default handler dispatches a subagent; see `command-workspace.md` for what a Claude Code workspace actually wires it to): it is the ONE stage that observes the change actually behaving end-to-end, and it significantly improves end-to-end correctness — no other stage exercises the change running.
 A workspace disables it only by explicitly setting `e2e = "none"` in `workspace.toml [pipeline.handlers]`; that is a deliberate opt-out, never the convenient default.
 When it runs, the spec/plan gate requires an `e2e_recipe` frontmatter field (see `FLOW_HARNESS="<harness>" "<facade>" worktree create --e2e-recipe`), so by the time you run there is a recipe to execute. You do NOT detect or guess a suite.
 
@@ -78,9 +78,9 @@ Your job is to run it exactly, not to reinterpret it.
    under `-q`) into shards, and run each shard by explicit nodeids (quote each — parametrized ids carry `[`, `]`, and spaces). A node-id
    partition is disjoint and exhaustive by construction, which is the actual fix.
    Run each shard as one foreground Bash call with an explicit `timeout`
-   <= 600000ms, never `run_in_background` or `Monitor` (this stage is a spawned
-   `subagent:general-purpose`, so a backgrounded command strands the turn — the
-   FT-1328 rule from `references/stage-implement.md` Step 5); short shards also
+   <= 600000ms, never `run_in_background` or `Monitor` (this stage runs as a
+   spawned subagent, so a backgrounded command strands the turn — the FT-1328
+   rule from `references/stage-implement.md` Step 5); short shards also
    dodge the ~360s idle watchdog. Then backstop the partition: the summed per-shard
    **collected-item count** MUST equal the collect-only total N. Sum the "collected
    K items" each shard reports, not the passed count — a green run can legitimately
