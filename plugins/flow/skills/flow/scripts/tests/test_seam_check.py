@@ -508,7 +508,10 @@ def test_malformed_runtime_token_sibling_runtime_file_in_shell_fence_is_accepted
     assert seam_check.malformed_runtime_token_problems("fixture.md", text) == []
 
 
-def test_main_flags_malformed_runtime_token(monkeypatch, tmp_path) -> None:
+def test_main_flags_malformed_runtime_token(monkeypatch, tmp_path, capsys) -> None:
+    # Stubbing docs_to_check starves main's direct-bootstrap floor and facade-coverage gates, so the
+    # exit code alone is vacuous (flow-iexr: proven with a green fixture, still exit 1). The message
+    # on stdout is what pins the malformed-token wiring into main, not the exit code by itself.
     fixture = tmp_path / "fixture.md"
     fixture.write_text(
         "```bash\n.flow/runtimeFLOW memory-append --type FACT --workspace-root .\n```\n",
@@ -516,6 +519,9 @@ def test_main_flags_malformed_runtime_token(monkeypatch, tmp_path) -> None:
     )
     monkeypatch.setattr(seam_check, "docs_to_check", lambda: [fixture])
     assert seam_check.main([]) == 1
+    out = capsys.readouterr().out
+    expected = "malformed runtime facade token (text glued onto .flow/runtime): .flow/runtimeFLOW"
+    assert expected in out
 
 
 # --- zsh-unsafe binding gate ---------------------------------------------------
@@ -1376,26 +1382,32 @@ def test_prose_docs_to_check_includes_scripts_markdown() -> None:
 
 
 _MAIN_GATE_CASES = [
-    ("scripts_missing_from_module_md", {"x.py"}),
-    ("scripts_missing_from_registry_descriptions", {"x.py"}),
-    ("phantom_module_md_rows", {"x.py"}),
-    ("docs_over_stage_doc_citation_limit", {"SKILL.md": 4}),
-    ("descriptor_key_drift", [("SKILL.md", 1, "gone")]),
-    ("role_literal_drift", [("SKILL.md", 1, "gone")]),
-    ("facade_entries_without_caller", {"ghost-entry"}),
+    ("scripts_missing_from_module_md", {"x.py"}, "x.py"),
+    ("scripts_missing_from_registry_descriptions", {"x.py"}, "x.py"),
+    ("phantom_module_md_rows", {"x.py"}, "x.py"),
+    ("docs_over_stage_doc_citation_limit", {"SKILL.md": 4}, "SKILL.md"),
+    ("descriptor_key_drift", [("SKILL.md", 1, "gone")], "gone"),
+    ("role_literal_drift", [("SKILL.md", 1, "gone")], "gone"),
+    ("facade_entries_without_caller", {"ghost-entry"}, "ghost-entry"),
 ]
 
 
-@pytest.mark.parametrize(("gate", "drift"), _MAIN_GATE_CASES, ids=[c[0] for c in _MAIN_GATE_CASES])
-def test_main_fails_on_gate_drift(monkeypatch, gate, drift) -> None:
+@pytest.mark.parametrize(
+    ("gate", "drift", "probe"), _MAIN_GATE_CASES, ids=[c[0] for c in _MAIN_GATE_CASES]
+)
+def test_main_fails_on_gate_drift(monkeypatch, gate, drift, probe, capsys) -> None:
+    # The exit code pins wiring only while the live corpus is green; the injected drift's own token
+    # in the output pins it unconditionally, whatever else happens to be red that day (flow-iexr).
     monkeypatch.setattr(seam_check, gate, lambda *a, **k: drift)
     assert seam_check.main([]) == 1
+    assert probe in capsys.readouterr().out
 
 
-def test_main_gate_case_table_covers_module_map_too(monkeypatch) -> None:
+def test_main_gate_case_table_covers_module_map_too(monkeypatch, capsys) -> None:
     # module_map.check is wired through the imported module, not a seam_check attr.
     monkeypatch.setattr(seam_check.module_map, "check", lambda *a, **k: ["stale block"])
     assert seam_check.main([]) == 1
+    assert "stale block" in capsys.readouterr().out
 
 
 # ─── dangling doc citations (flow-glrn) ──────────────────────────────────────

@@ -396,3 +396,19 @@ def test_dogfood_engine_and_test_file_clean():
     scripts_dir = Path(lint_comments.__file__).resolve().parent
     for target in (scripts_dir / "lint_comments.py", Path(__file__).resolve()):
         assert lint_file(target, line_length=100) == [], str(target)
+
+
+def test_all_files_skipped_exits_2(tmp_path, capsys):
+    # flow-1g07: a wrong-cwd relative-path invocation skipped every file and exited 0, so a
+    # comment-quality gate reported a clean pass having checked nothing. All-skipped is exit 2.
+    rc = lint_comments.cli_main([str(tmp_path / "missing_a.py"), str(tmp_path / "missing_b.py")])
+    assert rc == 2
+    assert "nothing was checked" in capsys.readouterr().err
+
+
+def test_partial_skip_with_one_clean_file_stays_0(tmp_path, capsys):
+    real = tmp_path / "clean.py"
+    real.write_text("x = 1\n", encoding="utf-8")
+    rc = lint_comments.cli_main([str(real), str(tmp_path / "missing.py")])
+    assert rc == 0
+    assert "skipped" in capsys.readouterr().err
