@@ -12,11 +12,15 @@ Sequence (live mode):
   3. Sync `refs/remotes/origin/HEAD` via `remote set-head origin --auto` (a plain fetch never
      rewrites an existing symref) and resolve the remote default branch from it; a dangling name
      counts as unset.
-  4. Ensure the standing bench worktree `.claude/worktrees/flow-manager`: created detached at
-     the remote default when absent. An existing bench is NEVER mutated, whatever its state; a bench
-     parked mid-task holds in-flight inline work that only judgment may resume or park.
-  5. Emit the posture: primary-checkout branch/cleanliness/ahead-behind, bench state, fetch
-     result, default branch.
+  4. Resolve the integration branch: the primary checkout's `[create_pr] base`, tried as
+     `origin/<base>`, when the workspace declares one; the remote default otherwise. A declared base
+     that fails to resolve falls back to the remote default and is named in
+     `integration_unresolved`.
+  5. Ensure the standing bench worktree `.claude/worktrees/flow-manager`: created detached at
+     the integration branch when absent. An existing bench is NEVER mutated, whatever its state;
+     a bench parked mid-task holds in-flight inline work that only judgment may resume or park.
+  6. Emit the posture: primary-checkout branch/cleanliness/distance-from-integration-branch, bench
+     state, fetch result, and both branch names (`default_branch`, `integration_branch`).
 
 `--dry-run` performs no ref update and no filesystem write (no fetch, no set-head, no worktree add);
 the posture reports `would_fetch` / `would_create`, computed from the refs as they are.
@@ -38,6 +42,7 @@ from pathlib import Path
 from typing import Any
 
 from _runner import Runner, default_runner
+from _workspace import WorkspaceConfigError, load_workspace_toml
 from worktree_janitor import _enumerate_worktrees
 
 BENCH_RELPATH = Path(".claude/worktrees/flow-manager")
@@ -89,26 +94,72 @@ def _default_branch(runner: Runner, main_root: Path, *, allow_set_head: bool) ->
     return name or None
 
 
-def _tree_posture(runner: Runner, root: Path, default: str | None) -> dict[str, Any]:
-    """One checkout's branch (None = detached), head, cleanliness, and distance from default."""
+def _integration_base_config(main_root: Path) -> str | None:
+    """`[create_pr] base` from the primary checkout's workspace.toml (non-empty str); None when
+    unset, unreadable, or the workspace declares no base."""
+    try:
+        config = load_workspace_toml(main_root)
+    except WorkspaceConfigError:
+        return None
+    section = config.get("create_pr")
+    if not isinstance(section, dict):
+        return None
+    value = section.get("base")
+    return value if isinstance(value, str) and value else None
+
+
+def _integration_branch(
+    runner: Runner, main_root: Path, default: str | None
+) -> tuple[str | None, str | None]:
+    """The branch this repository's work lands on: `[create_pr] base` as a remote-tracking ref when
+    the workspace declares one, the remote default otherwise. Returns `(integration_branch,
+    unresolved_reason)`; the reason is set only when a declared base failed to resolve, so a typo'd
+    base is visible in the posture instead of silently falling back.
+
+    Each candidate is checked as an exact ref under `refs/remotes/`, never resolved as a revision:
+    `git rev-parse --verify origin/main~1` answers with a commit, and the manager compares
+    `integration_branch` against a branch name, so an accepted revision expression would read as a
+    permanent, unfixable divergence. Exact-ref matching also keeps a local branch literally named
+    `origin/nodev` from shadowing the remote-tracking lookup, and excludes tags and bare SHAs.
+    """
+    base = _integration_base_config(main_root)
+    if base is None:
+        return default, None
+    candidates = [f"origin/{base}"]
+    if base.startswith("origin/"):
+        candidates.append(base)
+    for candidate in candidates:
+        probe = runner(
+            ["git", "show-ref", "--verify", "--quiet", f"refs/remotes/{candidate}"], main_root
+        )
+        if probe.returncode == 0:
+            return candidate, None
+    return default, f"[create_pr] base {base!r} did not resolve to a remote branch"
+
+
+def _tree_posture(runner: Runner, root: Path, integration: str | None) -> dict[str, Any]:
+    """One checkout's branch (None = detached), head, cleanliness, and distance from the integration
+    branch."""
     branch_probe = runner(["git", "symbolic-ref", "--quiet", "--short", "HEAD"], root)
     branch = branch_probe.stdout.strip() if branch_probe.returncode == 0 else None
     head = _run(runner, ["git", "rev-parse", "HEAD"], root, "git rev-parse HEAD")
     clean = _run(runner, ["git", "status", "--porcelain"], root, "git status") == ""
     posture: dict[str, Any] = {"branch": branch, "head": head, "clean": clean}
-    if default is not None:
-        counts = runner(["git", "rev-list", "--left-right", "--count", f"{default}...HEAD"], root)
+    if integration is not None:
+        counts = runner(
+            ["git", "rev-list", "--left-right", "--count", f"{integration}...HEAD"], root
+        )
         if counts.returncode == 0 and counts.stdout.split():
             behind, ahead = counts.stdout.split()
-            posture["behind_default"] = int(behind)
-            posture["ahead_default"] = int(ahead)
+            posture["behind_integration"] = int(behind)
+            posture["ahead_integration"] = int(ahead)
     return posture
 
 
 def _bench_posture(
     runner: Runner,
     main_root: Path,
-    default: str | None,
+    integration: str | None,
     registered: set[Path],
     *,
     dry_run: bool,
@@ -128,7 +179,7 @@ def _bench_posture(
             )
             return posture
         try:
-            tree = _tree_posture(runner, bench, default)
+            tree = _tree_posture(runner, bench, integration)
         except SeatError as exc:
             posture.update({"action": "failed", "reason": str(exc)})
             return posture
@@ -149,24 +200,25 @@ def _bench_posture(
     if dry_run:
         posture["action"] = "would_create"
         return posture
-    if default is None:
+    if integration is None:
         posture.update(
-            {"action": "failed", "reason": "no remote default branch to create the bench from"}
+            {"action": "failed", "reason": "no integration branch to create the bench from"}
         )
         return posture
     bench.parent.mkdir(parents=True, exist_ok=True)
-    result = runner(["git", "worktree", "add", "--detach", str(bench), default], main_root)
+    result = runner(["git", "worktree", "add", "--detach", str(bench), integration], main_root)
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or "unknown error").strip()
         posture.update({"action": "failed", "reason": detail})
         return posture
     posture["action"] = "created"
-    posture.update(_tree_posture(runner, bench, default))
+    posture.update(_tree_posture(runner, bench, integration))
     return posture
 
 
 def seat(workspace_root: Path, *, dry_run: bool = False) -> tuple[int, dict[str, Any]]:
-    """Fetch, resolve the default, ensure the bench, and return (exit_code, posture)."""
+    """Fetch, resolve the default and integration branches, ensure the bench, and return (exit_code,
+    posture)."""
     invoking = workspace_root.expanduser().resolve()
     runner = default_runner()
     main_root, entries = _primary_checkout(runner, invoking)
@@ -189,8 +241,12 @@ def seat(workspace_root: Path, *, dry_run: bool = False) -> tuple[int, dict[str,
 
     default = _default_branch(runner, main_root, allow_set_head=not dry_run)
     posture["default_branch"] = default
-    posture["workspace_root"] = _tree_posture(runner, main_root, default)
-    bench = _bench_posture(runner, main_root, default, registered, dry_run=dry_run)
+    integration, unresolved = _integration_branch(runner, main_root, default)
+    posture["integration_branch"] = integration
+    if unresolved is not None:
+        posture["integration_unresolved"] = unresolved
+    posture["workspace_root"] = _tree_posture(runner, main_root, integration)
+    bench = _bench_posture(runner, main_root, integration, registered, dry_run=dry_run)
     posture["bench"] = bench
     if bench.get("action") in ("failed", "unrecognized"):
         failed = True

@@ -16,10 +16,13 @@ human-merge keystone holds there.
 Seating runs a mechanical half and a judgment half, in this order:
 
 1. **Posture.** Run the seat script. It fetches origin, resolves the remote default
-   branch, ensures the standing bench worktree exists (§The workbench; created
-   detached at the remote default when absent, and an existing bench is never
-   mutated), and emits a JSON posture: primary-checkout branch, cleanliness, and
-   distance from the remote default; bench state; fetch result.
+   branch **and the integration branch**, ensures the standing bench worktree exists
+   (§The workbench; created detached at the **integration branch** when absent, and
+   an existing bench is never mutated), and emits a JSON posture: primary-checkout
+   branch, cleanliness, and distance from the integration branch; bench state; fetch
+   result; and both refs: `default_branch` (what the remote calls default) and
+   `integration_branch` (`[create_pr] base` when the workspace declares one, the
+   remote default otherwise).
 
    ```bash
    FLOW_HARNESS="<harness>" "<facade>" manager-seat --workspace-root .
@@ -30,12 +33,22 @@ Seating runs a mechanical half and a judgment half, in this order:
    `--dry-run` previews without fetching or creating anything.
 
 2. **Orient.** Read this charter, the project memory's manager entries, and the
-   durable ledger, then judge the posture: a primary checkout that is dirty, off the
-   default branch, or ahead of the remote default violates the workbench contract
-   below and goes to the human before anything else; behind-only is a fast-forward
-   the manager performs itself when no run is live. A bench parked mid-task (on a
-   branch, or dirty) is in-flight inline work — resume it or park it deliberately,
-   never blindly.
+   durable ledger, then judge the posture against `integration_branch`, never
+   `default_branch`: they differ in every repository whose pull requests target
+   something other than the remote default, and the workbench contract is about
+   the branch work is cut from. A primary checkout that is dirty, off the
+   integration branch (`workspace_root.branch` is not `integration_branch` with
+   its `origin/` prefix stripped), or `ahead_integration > 0` violates that
+   contract and goes to the human before anything else; behind-only is a
+   fast-forward the manager performs itself when no run is live. An
+   `integration_unresolved` reason means the declared base did not resolve and
+   the numbers fell back to the remote default; fix the configuration before
+   trusting them. A bench parked mid-task (on a branch, or dirty) is in-flight
+   inline work: resume it or park it deliberately, never blindly. An idle bench
+   (detached and clean) whose `behind_integration`/`ahead_integration` are not
+   both zero is parked on the wrong root: re-park it detached at
+   `integration_branch` before any inline work. The seat script never mutates an
+   existing bench, so this one is the manager's own hand.
 
 3. **Propose, then ask.** Read `bd ready`, triage under §Pickup, and report: the
    posture in one line, then a ranked shortlist of candidates, each with its
@@ -76,11 +89,13 @@ Spawn the driver as a named teammate with the ticket key and an absolute workspa
 The manager never works on the main checkout: that tree is the workspace root — its
 `.flow/` holds the shared memory store, the ticket files, and the runtime facade;
 drivers mint their worktrees off it and finalize runs from it — so it stays clean, on
-main, only ever fast-forwarded, and never advanced while a run is live. Inline work
-happens in one standing worktree, `.claude/worktrees/flow-manager`, parked on detached
-`origin/main` between tasks; every branch cuts fresh from `origin/main` there. Driver
-runs keep their own per-ticket pool worktrees; the manager never edits those. The
-janitor preserves the bench automatically (no ticket ownership).
+its integration branch, only ever fast-forwarded, and never advanced while a run is
+live. Inline work happens in one standing worktree, `.claude/worktrees/flow-manager`,
+parked detached on the integration branch between tasks; every branch cuts fresh from
+that ref there: `[create_pr] base` when the workspace declares one, the remote
+default otherwise, named `integration_branch` in the seat posture. Driver runs keep
+their own per-ticket pool worktrees; the manager never edits those. The janitor
+preserves the bench automatically (no ticket ownership).
 
 ## The manager's own hygiene
 
