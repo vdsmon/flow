@@ -31,9 +31,12 @@ The limit comes from `--line-length`, else per-file discovery: the nearest pypro
 walking up through the repo root; ruff's default 88 when nothing declares one.
 
 Exit codes:
-  0 = clean (unreadable/missing files are skipped with a stderr note)
+  0 = clean (an unreadable/missing file is skipped with a stderr note, as long as at least one
+      named file was actually checked)
   1 = findings printed (human lines on stdout, or a JSON array with --json)
-  2 = internal error
+  2 = internal error, or every named file was skipped: a gate that checked nothing must not report
+      clean (flow-1g07, where a wrong-cwd relative-path invocation skipped every file, exited 0, and
+      read as a clean pass on a comment floor that had inspected zero of its inputs)
 """
 
 from __future__ import annotations
@@ -498,12 +501,14 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
 def cli_main(argv: list[str]) -> int:
     args = _parse_args(argv)
     findings: list[Finding] = []
+    skipped = 0
     for name in args.files:
         path = Path(name)
         try:
             file_findings = lint_file(path, args.line_length)
         except (OSError, UnicodeDecodeError, ValueError) as exc:
             sys.stderr.write(f"lint-comments: skipped {name}: {exc}\n")
+            skipped += 1
             continue
         if args.diff_base and file_findings:
             changed = _changed_lines(path, args.diff_base)
@@ -515,6 +520,9 @@ def cli_main(argv: list[str]) -> int:
             else:
                 file_findings = [f for f in file_findings if f.line in changed]
         findings.extend(file_findings)
+    if args.files and skipped == len(args.files):
+        sys.stderr.write("lint-comments: every named file was skipped; nothing was checked\n")
+        return 2
     findings.sort(key=lambda f: (f.path, f.line, f.category))
     if args.json:
         sys.stdout.write(json.dumps([asdict(f) for f in findings], indent=1) + "\n")
