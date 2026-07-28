@@ -80,6 +80,37 @@ Leave your work as uncommitted changes in the working tree.
    Add or update unit tests that encode the new behavior.
    Run them and confirm they fail for the right reason.
 
+   **Mutate what the change claims; name the test that reds.** For every behavior this
+   change adds or protects (the plan's stated behaviors, plus any guard you added or
+   changed), break it in the production code, re-run the relevant suite, name the test
+   that goes red, then restore it and confirm green. When the change adds a test for
+   that behavior, the new test must be among the ones that red. An existing test going
+   red proves the behavior was already witnessed and says nothing about the new one, so
+   naming it would let a vacuous new test ship beside it. Reading the code and
+   concluding that the failure must come from the guard is what "fail for the right
+   reason" meant in practice, and four instances of false coverage got past exactly
+   that reasoning (flow-p58a).
+
+   Two outcomes mean you are not finished. If nothing reds, the behavior is
+   unwitnessed: a full suite passing around it is not coverage, and one such property
+   survived 15 green tests. If a test exists but nothing you break makes it red, it is
+   watching something other than the behavior. A test whose guard you have not deleted
+   and watched fail is not yet a test. The two usual culprits are a fake that answered
+   instead of the code (a runner matching on an argument prefix answers any call
+   sharing that prefix; a runner with a permissive default answers everything) and a
+   setup step whose broken state was repaired before the assertion ran. Match a fake on
+   the exact argument list, and let an unmatched call fail loudly.
+
+   Settle what an external tool actually does by running it, not by reasoning about it,
+   and neutralize your ambient config when you do (`GIT_CONFIG_GLOBAL` and
+   `GIT_CONFIG_NOSYSTEM`, the way `tests/conftest.py` does for the suite). In flow-4tk0
+   a global `fetch.prune = true` inverted such a result twice.
+
+   One trap in the mutation itself: a change that preserves the file's byte length can
+   be masked by a stale bytecode cache, because CPython invalidates a `.pyc` on mtime
+   and size. Clear `__pycache__` or set `PYTHONDONTWRITEBYTECODE=1` before you conclude
+   that nothing reds. Flipping a single digit is exactly the shape that hits this.
+
 4. Implement the production code.
    Smallest change that makes the tests pass. Match the surrounding file's structural conventions (docstring format, section banners, naming). The comment-quality bar below is absolute and never inherits a file's bad habits: a stricter host convention wins, a looser one does not.
 
@@ -111,6 +142,10 @@ Leave your work as uncommitted changes in the working tree.
    Do not return on red.
 
 6. Report what changed: the files touched, the tests added or updated, and the final test run result (command + pass summary).
+   For every behavior this change adds or protects, name the mutation you made and the
+   test that went red, one line each (step 3). A behavior reported without its mutation
+   is unwitnessed.
+
    If you stepped outside the planned files, say so prominently.
    Return this as your response.
 

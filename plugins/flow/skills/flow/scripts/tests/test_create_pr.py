@@ -36,24 +36,55 @@ def _pr(url: str, head: str, *, base: str = "main", draft: bool = False) -> Pull
     }
 
 
-def _git_runner(*, branch: str = "feature/flow-aut.7-x", push_rc: int = 0):
-    """Fake runner for the git-only calls create_pr still makes directly."""
+def _git_runner(
+    *,
+    branch: str = "feature/flow-aut.7-x",
+    push_rc: int = 0,
+    subject: str = "chore: add coverage",
+    raw_body: str = _RAW_BODY,
+):
+    """Fake runner for the git-only calls create_pr still makes directly.
+
+    Dispatches on the exact argument list of each of create_pr.py's four git calls (rev-parse, push,
+    log %s, log %b) rather than a two-element prefix, so a call create_pr does not make falls
+    through to the strict fallback instead of matching a clause meant for something else (witness 3:
+    `git rev-parse --verify` matched the old `["git", "rev-parse"]` prefix clause and got a
+    fabricated rc 0).
+    """
     calls: Recorder = []
+    push_argv = ["git", "push", "-u", "origin", f"{branch}:refs/heads/{branch}"]
 
     def run(args: list[str]) -> subprocess.CompletedProcess[str]:
         calls.append(args)
-        if args[:2] == ["git", "rev-parse"]:
+        if args == ["git", "rev-parse", "--abbrev-ref", "HEAD"]:
             return subprocess.CompletedProcess(args, 0, branch + "\n", "")
-        if args[:2] == ["git", "push"]:
+        if args == push_argv:
             return subprocess.CompletedProcess(args, push_rc, "", "remote rejected")
-        if args[:2] == ["git", "log"]:
-            fmt = next((a for a in args if a.startswith("--format=")), "")
-            if fmt == "--format=%b":
-                return subprocess.CompletedProcess(args, 0, _RAW_BODY, "")
-            return subprocess.CompletedProcess(args, 0, "chore: add coverage\n", "")
+        if args == ["git", "log", "-1", "--format=%s"]:
+            return subprocess.CompletedProcess(args, 0, subject + "\n", "")
+        if args == ["git", "log", "-1", "--format=%b"]:
+            return subprocess.CompletedProcess(args, 0, raw_body, "")
         return subprocess.CompletedProcess(args, 1, "", f"unexpected {args}")
 
     return run, calls
+
+
+# ─── the fake refuses calls create_pr does not make ──────────────────────────
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["git", "rev-parse", "--verify", "refs/heads/feature/flow-x"],
+        ["git", "log", "-1", "--format=%an"],
+        ["git", "push", "--dry-run", "origin", "HEAD"],
+    ],
+)
+def test_git_fake_refuses_calls_create_pr_does_not_make(argv):
+    run, _ = _git_runner()
+    result = run(argv)
+    assert result.returncode != 0
+    assert "unexpected" in result.stderr
 
 
 class _FakeForge:
@@ -338,16 +369,7 @@ def test_generic_forge_error_reviewers_degrades(tmp_path):
 
 def test_empty_prose_body_falls_back_to_subject(tmp_path):
     # a %b that is trailer-only (no prose) -> built body is empty -> subject used.
-    calls_runner, _ = _git_runner()
-
-    def run(args):
-        if args[:2] == ["git", "log"]:
-            fmt = next((a for a in args if a.startswith("--format=")), "")
-            if fmt == "--format=%b":
-                return subprocess.CompletedProcess(args, 0, "ticket: flow-x\n", "")
-            return subprocess.CompletedProcess(args, 0, "chore: subj only\n", "")
-        return calls_runner(args)
-
+    run, _ = _git_runner(subject="chore: subj only", raw_body="ticket: flow-x\n")
     fg = _FakeForge(existing=None)
     cp.open_or_get_pr(tmp_path, base="main", runner=run, forge=fg)
     assert fg.opened[0]["body"] == "chore: subj only"
@@ -425,18 +447,7 @@ def test_fallback_oversized_body_is_capped(tmp_path):
     # actually reaches enforce_cap on this path.
     huge = "\n".join(f"log {i}" for i in range(20000))
     raw = "ticket: flow-x\nCloses flow-nr8c\n\nWhy this change.\n\n```\n" + huge + "\n```\n"
-
-    def run(args):
-        if args[:2] == ["git", "rev-parse"]:
-            return subprocess.CompletedProcess(args, 0, "feature/flow-x\n", "")
-        if args[:2] == ["git", "push"]:
-            return subprocess.CompletedProcess(args, 0, "", "")
-        if args[:2] == ["git", "log"]:
-            fmt = next((a for a in args if a.startswith("--format=")), "")
-            if fmt == "--format=%b":
-                return subprocess.CompletedProcess(args, 0, raw, "")
-            return subprocess.CompletedProcess(args, 0, "chore: big body\n", "")
-        return subprocess.CompletedProcess(args, 1, "", f"unexpected {args}")
+    run, _ = _git_runner(branch="feature/flow-x", subject="chore: big body", raw_body=raw)
 
     fg = _FakeForge(existing=None)
     cp.open_or_get_pr(tmp_path, base="main", runner=run, forge=fg)
@@ -498,18 +509,7 @@ def test_bitbucket_fallback_body_details_flattened(tmp_path):
         "ticket: flow-x\nCloses flow-nr8c\n\nWhy.\n\n<details>\n<summary>run: ok</summary>\n\n"
         "```\nline a\n```\n\n</details>\n"
     )
-
-    def run(args):
-        if args[:2] == ["git", "rev-parse"]:
-            return subprocess.CompletedProcess(args, 0, "feature/flow-x\n", "")
-        if args[:2] == ["git", "push"]:
-            return subprocess.CompletedProcess(args, 0, "", "")
-        if args[:2] == ["git", "log"]:
-            fmt = next((a for a in args if a.startswith("--format=")), "")
-            if fmt == "--format=%b":
-                return subprocess.CompletedProcess(args, 0, raw, "")
-            return subprocess.CompletedProcess(args, 0, "chore: subj\n", "")
-        return subprocess.CompletedProcess(args, 1, "", f"unexpected {args}")
+    run, _ = _git_runner(branch="feature/flow-x", subject="chore: subj", raw_body=raw)
 
     fg = _FakeBitbucketForge(existing=None)
     cp.open_or_get_pr(tmp_path, base="main", runner=run, forge=fg)
