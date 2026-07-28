@@ -241,7 +241,8 @@ The hot path is:
 3. Request the first descriptor.
 4. For each descriptor, run its pre-hook, execute exactly its declared handler,
    capture the artifact, then atomically advance and receive the next descriptor.
-   Log any workaround as best-effort friction (`references/delivery-loop.md`).
+   Log any workaround as best-effort friction, typed by the snag it worked
+   around (`references/delivery-loop.md`).
 5. Release the lease on every post-acquisition exit path.
 6. Surface the durable result and PR URL.
 
