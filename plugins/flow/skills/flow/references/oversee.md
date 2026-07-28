@@ -2,6 +2,16 @@
 
 Run a flow ticket through a driver agent spawned from a long-lived main session (the manager), which observes friction from outside while the plan-approval keystone stays human. The driver runs the ordinary skill unmodified; the manager adds an outside view — timings, retries, stalls — that the run's own reflect stage cannot see about itself, and owns the work queue around the runs: triage, grouping, sequencing, and merges on met gates. Proven end-to-end in the flow-4vre pilot (PR #566) and refined by the flow-rgqm run (PR #568); every constraint in Roles, Relays, and Observation was witnessed in one of the two, not designed speculatively. The triage and merge authority is maintainer-granted (2026-07-28) rather than witnessed.
 
+## Seating the manager
+
+The manager is a role, not a process: its continuity lives in this charter, the
+project memory (the manager entries and the durable ledger), and the tracker — not in
+any one session. Any session in the self-target workspace assumes the role by reading
+this doc, the project memory's manager entries, the ledger, and `bd ready`, then
+acting under the authorities below; the human seats one by asking. A successor
+manager inherits everything a predecessor ledgered; nothing is handed off
+conversationally.
+
 ## Roles
 
 - **Manager** (the overseer): the main session. Spawns drivers, relays the gates, observes passively, and compiles the friction report; it also triages the queue with veto power, groups/merges tickets, amends plans at the relay (labeled as manager feedback, which the driver treats as revision input), sequences runs, and merges on a met gate. It never edits the run's files and never interrogates the driver mid-stage — questioning a working driver perturbs the thing being measured.
@@ -59,7 +69,7 @@ anything that differed from what oversee.md led you to expect.
 
 - **state.json** in the run worktree: per-stage `started_at_iso`/`finished_at_iso` are the timing backbone. A force-reset nulls a stage's timestamps; the rotating backups keep the prior snapshot.
 - **The driver transcript** (session JSONL): parse incrementally at driver stops for tool errors, retries, and time gaps — never load it whole. The deleted transcript miner is restorable from history for a deeper pass (`git show 0bed292^:plugins/flow/skills/flow/scripts/trace_mine.py`); it extracts tool errors, silent retries, drift markers, and stall gaps bucketed by dispatch stage, and runs unchanged on a teammate transcript once the file is copied under the workspace's `~/.claude/projects` slug (its path guard requires that layout).
-- **A manager ledger** kept outside the repo: timestamped notes on gates, stalls, and surprises. Cross-referencing the ledger against mined stall gaps is what separates human-wait (keystone cost) from machine friction — the miner alone cannot tell them apart.
+- **A manager ledger** kept outside the repo, in the project memory directory, append-only and durable across manager sessions: timestamped notes on gates, stalls, surprises, delegations, and single-witness papercuts — the papercut record is what lets a later manager promote on the second witness instead of restarting the count. Cross-referencing the ledger against mined stall gaps is what separates human-wait (keystone cost) from machine friction — the miner alone cannot tell them apart.
 
 ## Known limits of the overseen topology
 
