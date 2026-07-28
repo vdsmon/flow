@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -103,6 +104,27 @@ def _candidate_row(
     }
     row.update(extra)
     return row
+
+
+_SHA_RE = re.compile(r"^[0-9a-fA-F]{7,64}$")
+
+
+def _same_commit(tip: str | None, head_sha: str | None) -> bool:
+    """Whether two SHA spellings name one commit.
+
+    Bitbucket Cloud returns `source.commit.hash` abbreviated to 12 characters while `git worktree
+    list` reports 40, so raw inequality never matches there. Only well-formed hex of at least 7
+    characters may match by prefix, anything else has to be equal outright, and anything missing or
+    unrecognizable counts as a mismatch.
+    """
+    if not isinstance(tip, str) or not isinstance(head_sha, str) or not tip or not head_sha:
+        return False
+    left, right = tip.lower(), head_sha.lower()
+    if left == right:
+        return True
+    if not _SHA_RE.fullmatch(left) or not _SHA_RE.fullmatch(right):
+        return False
+    return left.startswith(right)
 
 
 def _confirmation_id(path: Path, branch: str, tip: str) -> str:
@@ -273,7 +295,7 @@ def sweep(  # noqa: C901
 
         if merged_pr is not None:
             head_sha = merged_pr.get("head_sha")
-            if not head_sha or tip != head_sha:
+            if not _same_commit(tip, head_sha):
                 result["skipped_merged_head_mismatch"].append(
                     {**row, "pr": merged_pr, "head_sha": head_sha}
                 )

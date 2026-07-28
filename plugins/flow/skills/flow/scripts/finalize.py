@@ -56,7 +56,12 @@ from flow_worktree import is_ticket_branch, reap_worktree
 from forge import make_forge, read_forge_config
 from tracker import make_tracker
 from tracker_cli import _read_tracker_config, _select_transition_id
-from worktree_janitor import _candidate_lease_blocker, _enumerate_worktrees, _managed
+from worktree_janitor import (
+    _candidate_lease_blocker,
+    _enumerate_worktrees,
+    _managed,
+    _same_commit,
+)
 
 _TERMINAL_STATES = frozenset({"done", "cancelled"})
 
@@ -181,7 +186,9 @@ def finalize(
         if blocker is not None:
             raise FinalizeRefused(f"{blocker[0]} lease at {blocker[1]}; a run may still own this")
         head_sha = merged_pr.get("head_sha")
-        if head_sha and tip != head_sha:
+        # Skipping when the merged PR reports no head is deliberate: the janitor sweep treats a
+        # missing head as a mismatch, and making the two symmetric would change a reachable path.
+        if head_sha and not _same_commit(tip, head_sha):
             raise FinalizeRefused(
                 f"worktree tip {tip} does not match merged PR head {head_sha}; "
                 "the worktree may hold newer work"

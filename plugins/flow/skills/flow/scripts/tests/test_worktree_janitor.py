@@ -8,6 +8,9 @@ import pytest
 
 import worktree_janitor as wj
 
+_FULL_TIP = "601c88815983ef5b8f0f8e91a4c61b880d81b8eb"
+_OTHER_TIP = "9f2ab41d77c0e5b3a8146d92ef0b7c15d3e6a840"
+
 
 def _cp(stdout: str = "", returncode: int = 0, stderr: str = ""):
     return subprocess.CompletedProcess([], returncode, stdout, stderr)
@@ -228,6 +231,78 @@ def test_merged_pr_reaps_only_when_local_tip_matches_head(monkeypatch, tmp_path)
         match / ".flow" / "runs" / "FT-10",
         ahead / ".flow" / "runs" / "FT-11",
     ]
+
+
+def test_merged_pr_reaps_when_forge_abbreviates_the_head(monkeypatch, tmp_path):
+    main = tmp_path / "repo"
+    wt = main / ".claude" / "worktrees" / "abbreviated"
+    branch = "feat/FT-12-x"
+    _runner, _forge, _lease, _reap_calls, order = _wire(
+        monkeypatch,
+        tmp_path,
+        entries=[(main, "main", "default-sha"), (wt, branch, _FULL_TIP)],
+        states={"FT-12": "done"},
+        prs={
+            (branch, "merged"): {
+                "id": "12",
+                "state": "MERGED",
+                "head_sha": _FULL_TIP[:12],
+            },
+        },
+    )
+
+    result = _confirmed_sweep(main)
+
+    assert [row["key"] for row in result["reaped"]] == ["FT-12"]
+    assert result["reaped"][0]["reason"] == "merged_pr_head_match"
+    assert result["skipped_merged_head_mismatch"] == []
+    assert order == [("observe", "FT-12"), ("reap", "FT-12")]
+
+
+def test_merged_pr_skips_when_abbreviated_head_is_a_different_commit(monkeypatch, tmp_path):
+    main = tmp_path / "repo"
+    wt = main / ".claude" / "worktrees" / "abbreviated"
+    branch = "feat/FT-12-x"
+    _runner, _forge, _lease, reap_calls, order = _wire(
+        monkeypatch,
+        tmp_path,
+        entries=[(main, "main", "default-sha"), (wt, branch, _FULL_TIP)],
+        states={"FT-12": "done"},
+        prs={
+            (branch, "merged"): {
+                "id": "12",
+                "state": "MERGED",
+                "head_sha": _OTHER_TIP[:12],
+            },
+        },
+    )
+
+    result = _confirmed_sweep(main)
+
+    assert [row["key"] for row in result["skipped_merged_head_mismatch"]] == ["FT-12"]
+    assert result["reaped"] == []
+    assert reap_calls == []
+    assert order == []
+
+
+def test_merged_pr_without_a_head_sha_is_never_reaped(monkeypatch, tmp_path):
+    main = tmp_path / "repo"
+    wt = main / ".claude" / "worktrees" / "headless"
+    branch = "feat/FT-12-x"
+    _runner, _forge, _lease, reap_calls, order = _wire(
+        monkeypatch,
+        tmp_path,
+        entries=[(main, "main", "default-sha"), (wt, branch, _FULL_TIP)],
+        states={"FT-12": "done"},
+        prs={(branch, "merged"): {"id": "12", "state": "MERGED"}},
+    )
+
+    result = _confirmed_sweep(main)
+
+    assert [row["key"] for row in result["skipped_merged_head_mismatch"]] == ["FT-12"]
+    assert result["reaped"] == []
+    assert reap_calls == []
+    assert order == []
 
 
 def test_terminal_no_pr_requires_verified_default_and_zero_unique_commits(monkeypatch, tmp_path):
