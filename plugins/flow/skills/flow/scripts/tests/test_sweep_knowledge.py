@@ -380,6 +380,36 @@ def test_apply_empty_superseded_id_errors_no_append(
     assert len(_read_entries(tmp_path)) == before
 
 
+def test_apply_empty_rationale_errors_no_append(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A record with no rationale must be refused, not applied.
+
+    The rationale IS the tombstone's body, so appending anyway would retire a live entry behind an
+    empty replacement and report success, which is unrecoverable in the sense that matters: nobody
+    knows to look for an absence. Absent, null and blank are the same operator mistake: a null
+    reaches `str()` as the literal "None", which is truthy, and a blank body is empty in every sense
+    that matters here.
+    """
+    _seed_workspace(tmp_path)
+    _write_entries(tmp_path, [_entry(FLOW_8WE_ID, "DECISION", "real")])
+    before = len(_read_entries(tmp_path))
+    manifest = tmp_path / "manifest.json"
+    for record in (
+        {"superseded_id": FLOW_8WE_ID, "superseding_ticket": "flow-x"},
+        {"superseded_id": FLOW_8WE_ID, "superseding_ticket": "flow-x", "rationale": None},
+        {"superseded_id": FLOW_8WE_ID, "superseding_ticket": "flow-x", "rationale": "  \t "},
+    ):
+        manifest.write_text(json.dumps([record]), encoding="utf-8")
+        rc = sweep_knowledge.cli_main(
+            ["apply", "--manifest", str(manifest), "--workspace-root", str(tmp_path)]
+        )
+        assert rc > 0, record
+        out = json.loads(capsys.readouterr().out)
+        assert out["results"][0]["result"] == "error", record
+        assert len(_read_entries(tmp_path)) == before, record
+
+
 # --- propose --with-usage + --type all ----------------------------------------
 
 

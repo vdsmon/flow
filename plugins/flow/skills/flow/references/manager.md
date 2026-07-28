@@ -134,6 +134,23 @@ Environment facts, all witnessed in prior managed runs:
 - Machinery APPLY-NOW is unavailable here (protected-branch skill root):
   lens-B findings route to propose-and-record; the refusal is the known
   limit, not a failure.
+- Write-tool confinement: a session's Edit/Write binds to its PINNED
+  worktree, not its working directory, and the pin can migrate to another
+  live run's worktree on any call, including after successful writes to the
+  same path. A refusal naming a worktree that is not your run root is this
+  defect, not a path mistake. Read the worktree the refusal names, because
+  it selects the remedy. Named a sibling worktree: re-pin through the host's
+  worktree switch (on Claude Code, EnterWorktree with an explicit path to
+  the run root), which is reliable for a driver session; moving the shell
+  cwd does nothing here. Named the repository root instead: that is the
+  other launch shape, where the switch can refuse and moving the shell cwd
+  into the run root is the fix. A stage subagent is pinned at spawn, cannot
+  re-pin, and should return BLOCKED at once rather than fight it, because
+  you have a documented takeover: re-pin yourself and run that stage inline
+  under the delivery loop's downgrade. Warn your agents that the switch can
+  report SUCCESS to a subagent and still leave the write refused, so its
+  return value proves nothing; only attempting the write does. Brief your
+  own stage agents on all of this in their prompts, and log it as friction.
 Work autonomously otherwise; report at natural stops. After done or a
 durable stop, send "main" the final status, PR URL, per-stage outcomes, and
 anything that differed from what manager.md led you to expect.
