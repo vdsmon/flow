@@ -580,21 +580,21 @@ def test_lane_non_beads_is_full(tmp_path: Path) -> None:
 # --- adjudicate_hot flag -----------------------------------------------------
 
 
-def _seed_evolve(root: Path, body: str) -> None:
-    """Append an `[evolve]` section to the seeded workspace.toml."""
+def _seed_triage(root: Path, body: str) -> None:
+    """Append a `[triage]` section to the seeded workspace.toml."""
     path = root / ".flow" / "workspace.toml"
     path.write_text(path.read_text(encoding="utf-8") + body, encoding="utf-8")
 
 
 def test_adjudicate_hot_true_when_explicitly_true(tmp_path: Path) -> None:
     _seed_workspace(tmp_path, backend="beads")
-    _seed_evolve(tmp_path, "\n[evolve]\nadjudicate_hot = true\n")
+    _seed_triage(tmp_path, "\n[triage]\nadjudicate_hot = true\n")
     assert triage.adjudicate_hot(tmp_path) is True
 
 
 def test_adjudicate_hot_default_off_when_key_absent(tmp_path: Path) -> None:
     _seed_workspace(tmp_path, backend="beads")
-    _seed_evolve(tmp_path, "\n[evolve]\nauto_merge_hot = true\n")
+    _seed_triage(tmp_path, "\n[triage]\nother_key = true\n")
     assert triage.adjudicate_hot(tmp_path) is False
 
 
@@ -605,7 +605,7 @@ def test_adjudicate_hot_default_off_when_section_absent(tmp_path: Path) -> None:
 
 def test_adjudicate_hot_false_when_explicitly_false(tmp_path: Path) -> None:
     _seed_workspace(tmp_path, backend="beads")
-    _seed_evolve(tmp_path, "\n[evolve]\nadjudicate_hot = false\n")
+    _seed_triage(tmp_path, "\n[triage]\nadjudicate_hot = false\n")
     assert triage.adjudicate_hot(tmp_path) is False
 
 

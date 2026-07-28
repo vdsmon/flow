@@ -22,22 +22,18 @@ def test_hot_path_command_resolution() -> None:
         "frontmatter": "ticket_frontmatter.py",
         "friction": "flow_friction.py",
         "model": "model_resolve.py",
-        "merge": "stage_merge.py",
         "lifecycle": "lifecycle_cli.py",
         "cockpit": "cockpit_cli.py",
-        "maintainer-preflight": "maintainer_preflight.py",
         "worker-pool": "worker_pool.py",
-        "maintainer-senses": "senses_deadman.py",
     }
     assert {name: flowctl.COMMANDS[name] for name in expected} == expected
 
 
 def test_default_commands_use_kebab_case() -> None:
-    assert flowctl.COMMANDS["evolve-drain"] == "evolve_drain.py"
-    assert flowctl.COMMANDS["evolve-reap"] == "evolve_reap.py"
     assert flowctl.COMMANDS["memory-append"] == "memory_append.py"
     assert flowctl.COMMANDS["recall-usage"] == "recall_usage.py"
     assert "init" not in flowctl.COMMANDS
+    assert "evolve-drain" not in flowctl.COMMANDS
     assert "evolve-session-cleanup" not in flowctl.COMMANDS
     assert "commands" not in flowctl.COMMANDS
     assert "cognitive-worker-smoke" not in flowctl.COMMANDS

@@ -25,13 +25,6 @@ def _evidence() -> dict[str, object]:
         "deferred": [{"target": "FT-3", "question": "Choose the API", "state": "deferred"}],
         "pending": [{"target": "FT-4", "operation": "transition"}],
         "feedback": [{"target": "FT-5", "pr": "17", "actionable_count": 2}],
-        "maintenance": [
-            {
-                "label": "nightly schedule",
-                "detail": "last fire failed",
-                "next_command": "FLOW maintain evolution audit",
-            }
-        ],
     }
 
 
@@ -43,7 +36,6 @@ def test_render_constructs_cockpit_dataclasses_and_emits_text(tmp_path: Path, ca
     assert "Needs attention" in output
     assert "Active" in output
     assert "FLOW pr:17" in output
-    assert "Maintainer health" in output
     assert output.endswith("\n")
 
 

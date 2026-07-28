@@ -18,7 +18,7 @@ from public_commands import (
 )
 
 REGISTRY = Path(__file__).resolve().parents[2] / "public-commands.toml"
-MAINTAIN_REFERENCE = Path(__file__).resolve().parents[2] / "references" / "command-maintain.md"
+WORKSPACE_REFERENCE = Path(__file__).resolve().parents[2] / "references" / "command-workspace.md"
 TRACKER_PATTERNS = (r"FT-\d+", r"flow-[a-z0-9]+")
 
 
@@ -30,18 +30,16 @@ def test_real_registry_is_complete_and_has_no_legacy_root_verbs() -> None:
         "memory",
         "measure",
         "workspace",
-        "maintain",
         "help",
     )
 
 
 def test_worktree_cleanup_is_documented_as_workspace_local_two_pass() -> None:
     registry = load_registry(REGISTRY)
-    command = registry.by_id["maintain.worktrees.clean"]
-    reference = MAINTAIN_REFERENCE.read_text(encoding="utf-8")
+    command = registry.by_id["workspace.worktrees.clean"]
+    reference = WORKSPACE_REFERENCE.read_text(encoding="utf-8")
 
     assert "invoking workspace" in command.summary.lower()
-    assert "maintainer --workspace-root . --require-current" in reference
     assert "worktree-janitor sweep --workspace-root . --dry-run" in reference
     assert "absolute `target_root`" in reference
     assert '--confirmed-target "<target_root>"' in reference
@@ -59,10 +57,7 @@ def test_worktree_cleanup_is_documented_as_workspace_local_two_pass() -> None:
         "workspace.inspect",
         "workspace.repair",
         "workspace.sync",
-        "maintain.backlog.status",
-        "maintain.backlog.drain",
-        "maintain.evolution.expand",
-        "maintain.worktrees.clean",
+        "workspace.worktrees.clean",
     }
     assert (
         not {
@@ -81,6 +76,7 @@ def test_worktree_cleanup_is_documented_as_workspace_local_two_pass() -> None:
             "init",
             "queue",
             "evolve",
+            "maintain",
         }
         & registry.root_tokens
     )
@@ -206,10 +202,7 @@ def test_routing_distinguishes_cockpit_explicit_help_static_command_and_targets(
         ["ticket"],
         ["memory"],
         ["workspace"],
-        ["maintain"],
-        ["maintain", "evolution"],
-        ["maintain", "backlog"],
-        ["maintain", "worktrees"],
+        ["workspace", "worktrees"],
     ],
 )
 def test_incomplete_namespace_is_unknown_not_implicit_help(tokens: list[str]) -> None:
@@ -230,6 +223,18 @@ def test_removed_root_command_is_rejected_instead_of_treated_as_target() -> None
 
     with pytest.raises(RegistryError, match="invalid target"):
         route_tokens(["FT-1", "resume", "--together"], registry, (r".*",))
+
+
+def test_retired_maintain_namespace_fails_normally_without_aliases() -> None:
+    registry = load_registry(REGISTRY)
+    for tokens in (
+        ["maintain"],
+        ["maintain", "evolution", "drain"],
+        ["maintain", "backlog", "status"],
+        ["maintain", "worktrees", "clean"],
+    ):
+        with pytest.raises(RegistryError):
+            route_tokens(tokens, registry, TRACKER_PATTERNS)
 
 
 def test_route_rejects_unknown_options_and_conflicting_options() -> None:
@@ -273,7 +278,7 @@ def test_renderers_are_deterministic_and_expose_logical_flow_not_host_syntax() -
     router = render_router_block(registry)
     assert router == render_router_block(registry)
     assert "Static namespaces win over target parsing." in router
-    assert "ticket | memory | measure | workspace | maintain | help" in router
+    assert "ticket | memory | measure | workspace | help" in router
 
 
 def test_generated_block_checker_detects_documentation_drift() -> None:

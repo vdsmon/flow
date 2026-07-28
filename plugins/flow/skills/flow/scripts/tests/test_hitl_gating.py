@@ -1,11 +1,11 @@
 """HITL label gate (flow-blh2): unattended machinery stays off decision-bound beads.
 
-A `hitl` bead (human-in-the-loop, resolves only through a live exchange) is filtered
-out of both drain selectors, refused early by the `--auto` bootstrap floor, and reads
-its decision escape from `triage.decided`. Interactive runs never consult the label.
+A `hitl` bead (human-in-the-loop, resolves only through a live exchange) is refused
+early by the `--auto` bootstrap floor and reads its decision escape from
+`triage.decided`. Interactive runs never consult the label.
 
-Offline: pure-function partition tests, a `_FakeRunner`-driven `triage.decided`, and
-direct `_enforce_autonomy_floors` calls with `triage.decided` monkeypatched.
+Offline: a `_FakeRunner`-driven `triage.decided`, and direct
+`_enforce_autonomy_floors` calls with `triage.decided` monkeypatched.
 """
 
 from __future__ import annotations
@@ -17,9 +17,7 @@ from typing import Any
 
 import pytest
 
-import evolve_select
 import flow_worktree as fw
-import queue_select
 import triage
 from tests.wsfactory import make_workspace, memory, tracker
 
@@ -58,47 +56,6 @@ def _show(
 
 def _tc(text: str, created_at: str = "2026-06-01T10:00:00Z") -> dict[str, Any]:
     return {"id": "c", "author": "x", "text": text, "created_at": created_at}
-
-
-# ─── selectors drop hitl from the auto-pickable set ───────────────────────────
-
-
-def test_queue_select_excluded_labels_contains_hitl() -> None:
-    assert "hitl" in queue_select._EXCLUDED_LABELS
-
-
-def test_queue_select_partition_drops_hitl_keeps_twin() -> None:
-    cands = [
-        {"id": "flow-h", "labels": ["hitl"], "issue_type": "task"},
-        {"id": "flow-a", "labels": [], "issue_type": "task"},
-    ]
-    result = queue_select.partition(cands, set(), 0)
-    assert result["launch"] == ["flow-a"]
-
-
-def test_evolve_select_partition_drops_hitl() -> None:
-    cands = [
-        {"id": "flow-e", "labels": ["evolve", "hitl"], "issue_type": "task"},
-        {"id": "flow-b", "labels": ["evolve"], "issue_type": "task"},
-    ]
-    result = evolve_select.partition(cands, set(), False, 0)
-    assert result["launch"] == ["flow-b"]
-
-
-def test_evolve_select_hitl_excluded_even_with_include_proposals() -> None:
-    # the hitl clause is unconditional: the dangerous proposal opt-in does not lift it.
-    cands = [{"id": "flow-e", "labels": ["evolve", "hitl"], "issue_type": "task"}]
-    result = evolve_select.partition(cands, set(), False, 0, include_proposals=True)
-    assert result["launch"] == []
-
-
-def test_evolve_select_hitl_inflight_accounting_unchanged() -> None:
-    # a hitl bead already in-flight still reports in skipped_in_flight (the split
-    # runs over all candidates); it simply never reaches launch.
-    cands = [{"id": "flow-e", "labels": ["evolve", "hitl"], "issue_type": "task"}]
-    result = evolve_select.partition(cands, {"flow-e"}, False, 0)
-    assert result["skipped_in_flight"] == ["flow-e"]
-    assert result["launch"] == []
 
 
 # ─── triage.decided carries the hitl field ────────────────────────────────────

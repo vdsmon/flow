@@ -40,10 +40,12 @@ may have drifted, so anchor on names.
 ## Also protected
 
 `tests/test_lease.py`, `tests/test_locking.py` (the witnessed-failure lease family),
-`tests/test_harness_corpus.py` (frozen CI replay), every `test_live_*` pin, and any sole
+every `test_live_*` pin, and any sole
 coverage of the four correctness guards (run lease, snapshot TOCTOU guard, atomic
 writes/quarantine, content-ownership commit gate) were never deletion-eligible in the pass
-and remain off-limits without maintainer sign-off.
+and remain off-limits without maintainer sign-off. (`tests/test_harness_corpus.py`, once
+listed here, retired with its deciders under the 2026-07-28 apparatus-retirement sign-off
+recorded in `audit-refutation-record.txt`.)
 
 ## Provenance
 
