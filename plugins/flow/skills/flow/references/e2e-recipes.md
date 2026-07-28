@@ -23,6 +23,8 @@ Two recipe values are not commands — they are conscious decisions the plan is 
 - `skip: <reason>` — this ticket has no meaningful e2e surface (a docs-only change, a change with nothing runnable to exercise). State the reason; the e2e stage reports it and finishes without executing anything. Never use this to dodge a real, runnable change — that's the convenient path this stage exists to close off.
 - `test-ci-only` — there is no separate E2E surface, so the e2e stage reuses the exact green test command and result already recorded by `implement` and leaves remote CI confirmation to `review_loop`. It never runs the suite a third time. This is also the unattended floor when no cookbook exists yet (see below): never a silent skip, never invented evidence, just the cheapest honest signal available.
 
+Bootstrap enforces that split rather than trusting it: `worktree create` refuses a recipe that expects the e2e stage to run when `[pipeline.handlers]` wires no `e2e` handler, so in a workspace with no e2e stage only `skip: <reason>` is accepted.
+
 ## The cookbook convention
 
 `<main-root>/.flow/e2e-recipes.md` is a per-repo decision table: "ticket touches X" -> runner/template, known-good fixtures, shared env-prep quirks (auth, containers). It is seeded by the first spec that settles a real recipe in a repo (post-gate, normal mode, per `delivery-plan.md` step 6) and grows every time a new kind of change needs a new row. It is machine-local in delivery workspaces — `.flow/` is gitignored — and self-regenerating: a fresh machine with no cookbook just re-derives one via the same explore-propose path, it never blocks on the absence.

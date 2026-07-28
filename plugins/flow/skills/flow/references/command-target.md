@@ -155,6 +155,8 @@ force operation.
   clamp to `full`.
 - `--e2e "<recipe>"` supplies the approved end-to-end recipe; persist it with the
   plan.
+  Bootstrap refuses a recipe that expects a run when the workspace wires no `e2e`
+  handler, so settle `skip: <reason>` there.
 - `--request "<additional intent>"` answers a saved question or requests a revision
   on an open PR. Reject it on an active approved run and on terminal delivery.
 - `--together` requests one coherent grouped run. All targets must be fresh, live,
