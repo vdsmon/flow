@@ -34,6 +34,10 @@ plugins/flow/**/.venv/
 **/.flow/runs/
 **/.flow/worktrees/
 **/.flow/*.lock
+
+# Only the repo-root .flow is real. A nested one is a drifted-cwd leak, and the
+# rules above miss its workspace.toml precisely because that filename stays tracked.
+/*/**/.flow/
 # flock targets under tickets/ (tickets/<key>.md stays tracked; *.lock above
 # does not reach the subdir). The .lock line also keeps frontmatter .md.lock
 # churn out of ownership and cleanliness checks.
