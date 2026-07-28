@@ -638,7 +638,11 @@ def test_capture_implement_diff_binary_content(tmp_repo: Path, tmp_path: Path) -
     _git(["commit", "-m", "add binary"], tmp_repo)
     out = diff_extract.capture_implement_diff(ticket_dir, tmp_repo)
     content = out.read_text(encoding="utf-8")
-    assert "GIT binary patch" in content or "blob.bin" in content
+    # separate asserts, not one `or`: "blob.bin" appears in the `diff --git a/blob.bin` header
+    # whatever flags were used, so an `or` holds even with --binary dropped and can never fail.
+    # --binary is what makes the payload appliable by the commit stage.
+    assert "GIT binary patch" in content
+    assert "blob.bin" in content
 
 
 def test_capture_implement_diff_with_rename(tmp_repo: Path, tmp_path: Path) -> None:
@@ -647,11 +651,15 @@ def test_capture_implement_diff_with_rename(tmp_repo: Path, tmp_path: Path) -> N
     _git(["add", "old.py"], tmp_repo)
     _git(["commit", "-m", "add old"], tmp_repo)
     ticket_dir = tmp_path / "runs" / "FT-1"
-    diff_extract.record_baseline("implement", ticket_dir, tmp_repo, files=["new.py"])
+    # both endpoints must be in the pathspec: scoped to "new.py" alone git reports a plain add and
+    # emits no rename record at all, so the docstring's claim would go unchecked.
+    diff_extract.record_baseline("implement", ticket_dir, tmp_repo, files=["old.py", "new.py"])
     _git(["mv", "old.py", "new.py"], tmp_repo)
     _git(["commit", "-m", "rename"], tmp_repo)
     out = diff_extract.capture_implement_diff(ticket_dir, tmp_repo)
-    assert out.exists()
+    content = out.read_text(encoding="utf-8")
+    assert "R100\told.py\tnew.py" in content
+    assert "rename from old.py" in content
 
 
 def test_capture_implement_diff_includes_untracked_new_file(tmp_repo: Path, tmp_path: Path) -> None:
@@ -1004,3 +1012,321 @@ def test_record_baseline_cli_malformed_array_exits_nonzero(
     )
     assert rc != 0
     assert "malformed JSON array literal" in capsys.readouterr().err
+
+
+# ─── capture-review-diff ─────────────────────────────────────────────────────
+
+
+def _index_snapshot(repo: Path, paths: list[str]) -> tuple[str, str, str]:
+    """Everything observable about the index for `paths`, for the purity assertion.
+
+    Scoped by pathspec because the tmp ticket dir sits inside the repo here, and its artifact is the
+    one thing the capture is allowed to create.
+    """
+    return (
+        _git(["status", "--porcelain", "-uall", "--", *paths], repo),
+        _git(["diff", "--no-ext-diff", "--cached", "--", *paths], repo),
+        _git(["ls-files", "-s", "--", *paths], repo),
+    )
+
+
+def test_capture_review_diff_includes_untracked_new_files(tmp_repo: Path, tmp_path: Path) -> None:
+    """New files are the payload's whole point: they must arrive as full + content."""
+    (tmp_repo / "tracked.py").write_text("one\n", encoding="utf-8")
+    _git(["add", "tracked.py"], tmp_repo)
+    _git(["commit", "-m", "add tracked"], tmp_repo)
+    ticket_dir = tmp_path / "runs" / "FT-1"
+    diff_extract.record_baseline(
+        "implement", ticket_dir, tmp_repo, files=["tracked.py", "a.py", "b.py", "c.py"]
+    )
+    (tmp_repo / "tracked.py").write_text("one\ntwo\n", encoding="utf-8")
+    for name, body in (("a.py", "alpha\n"), ("b.py", "beta\n"), ("c.py", "gamma\n")):
+        (tmp_repo / name).write_text(body, encoding="utf-8")
+
+    content = diff_extract.capture_review_diff(ticket_dir, tmp_repo).read_text(encoding="utf-8")
+
+    for name in ("tracked.py", "a.py", "b.py", "c.py"):
+        assert name in content
+    for line in ("+alpha", "+beta", "+gamma", "+two"):
+        assert line in content
+
+
+def test_capture_review_diff_elides_binary_content(tmp_repo: Path, tmp_path: Path) -> None:
+    """The one deliberate difference from the implement payload: no inlined binary."""
+    ticket_dir = tmp_path / "runs" / "FT-1"
+    diff_extract.record_baseline("implement", ticket_dir, tmp_repo, files=["blob.bin"])
+    (tmp_repo / "blob.bin").write_bytes(bytes(range(256)))
+
+    content = diff_extract.capture_review_diff(ticket_dir, tmp_repo).read_text(encoding="utf-8")
+
+    assert "blob.bin" in content
+    assert "Binary files" in content
+    assert "GIT binary patch" not in content
+    assert "literal 256" not in content
+
+
+def test_capture_review_diff_beats_plain_git_diff_shape(tmp_repo: Path, tmp_path: Path) -> None:
+    """The defect, pinned: `git diff <sha>` cannot see the files the run is about.
+
+    stage-code_review.md named that command as the review payload. On one tree it reports nothing
+    for three new files while the capture reports all three, which is the shape change this ticket
+    delivers.
+    """
+    ticket_dir = tmp_path / "runs" / "FT-1"
+    diff_extract.record_baseline("implement", ticket_dir, tmp_repo, files=["a.py", "b.py", "c.py"])
+    head = _git(["rev-parse", "HEAD"], tmp_repo).strip()
+    for name in ("a.py", "b.py", "c.py"):
+        (tmp_repo / name).write_text("body\n", encoding="utf-8")
+
+    old_payload = _git(["diff", "--no-ext-diff", head], tmp_repo)
+    new_payload = diff_extract.capture_review_diff(ticket_dir, tmp_repo).read_text(encoding="utf-8")
+
+    for name in ("a.py", "b.py", "c.py"):
+        assert name not in old_payload
+        assert name in new_payload
+
+
+def test_capture_review_diff_leaves_index_clean(tmp_repo: Path, tmp_path: Path) -> None:
+    ticket_dir = tmp_path / "runs" / "FT-1"
+    diff_extract.record_baseline("implement", ticket_dir, tmp_repo, files=["a.py"])
+    (tmp_repo / "a.py").write_text("hello\n", encoding="utf-8")
+
+    diff_extract.capture_review_diff(ticket_dir, tmp_repo)
+
+    assert "a.py" not in _git(["diff", "--cached", "--name-only"], tmp_repo)
+    assert _git(["status", "--short", "a.py"], tmp_repo).strip() == "?? a.py"
+
+
+def test_capture_review_diff_restores_index_on_diff_failure(tmp_repo: Path, tmp_path: Path) -> None:
+    """The `finally` reset must run on the raising path, not only the happy one."""
+    ticket_dir = tmp_path / "runs" / "FT-1"
+    ticket_dir.mkdir(parents=True)
+    (ticket_dir / "baseline.json").write_text(
+        json.dumps({"stage": "implement", "head_sha": "0" * 40, "planned_files": ["a.py"]}),
+        encoding="utf-8",
+    )
+    (tmp_repo / "a.py").write_text("hello\n", encoding="utf-8")
+
+    with pytest.raises(diff_extract._GitError):
+        diff_extract.capture_review_diff(ticket_dir, tmp_repo)
+
+    assert "a.py" not in _git(["diff", "--cached", "--name-only"], tmp_repo)
+    assert _git(["status", "--short", "a.py"], tmp_repo).strip() == "?? a.py"
+
+
+def test_capture_review_diff_failure_leaves_prior_payload_intact(
+    tmp_repo: Path, tmp_path: Path
+) -> None:
+    """Why step 5 must check the recapture's exit code: a failed recapture is silent.
+
+    The artifact is written only on success, so a raising capture leaves the earlier payload on disk
+    byte for byte. A driver that skips the exit code then re-reads pre-fix bytes, which is the
+    fail-open the recapture was added to close, and no missing or empty file signals it.
+    """
+    ticket_dir = tmp_path / "runs" / "FT-1"
+    diff_extract.record_baseline("implement", ticket_dir, tmp_repo, files=["a.py"])
+    (tmp_repo / "a.py").write_text("before\n", encoding="utf-8")
+    out = diff_extract.capture_review_diff(ticket_dir, tmp_repo)
+    first = out.read_text(encoding="utf-8")
+    assert "+before" in first
+
+    # recapture against a sha the repo does not have, standing in for any failing recapture
+    (ticket_dir / "baseline.json").write_text(
+        json.dumps({"stage": "implement", "head_sha": "0" * 40, "planned_files": ["a.py"]}),
+        encoding="utf-8",
+    )
+    (tmp_repo / "a.py").write_text("after\n", encoding="utf-8")
+
+    with pytest.raises(diff_extract._GitError):
+        diff_extract.capture_review_diff(ticket_dir, tmp_repo)
+
+    assert out.read_text(encoding="utf-8") == first
+    assert "+after" not in out.read_text(encoding="utf-8")
+
+
+def test_capture_implement_diff_restores_index_on_diff_failure(
+    tmp_repo: Path, tmp_path: Path
+) -> None:
+    """Same property on the untouched function, as a pure regression guard."""
+    ticket_dir = tmp_path / "runs" / "FT-1"
+    ticket_dir.mkdir(parents=True)
+    (ticket_dir / "baseline.json").write_text(
+        json.dumps({"stage": "implement", "head_sha": "0" * 40, "planned_files": ["a.py"]}),
+        encoding="utf-8",
+    )
+    (tmp_repo / "a.py").write_text("hello\n", encoding="utf-8")
+
+    with pytest.raises(diff_extract._GitError):
+        diff_extract.capture_implement_diff(ticket_dir, tmp_repo)
+
+    assert _git(["status", "--short", "a.py"], tmp_repo).strip() == "?? a.py"
+
+
+def test_capture_diff_includes_planned_file_deletion(tmp_repo: Path, tmp_path: Path) -> None:
+    """A deleted planned file must reach BOTH payloads.
+
+    `existing` filters the intent-to-add candidates to what is on disk; the diff pathspec takes the
+    unfiltered `paths`. Consolidating the two drops deletions silently, and the rest of this suite
+    stays green when it happens.
+    """
+    (tmp_repo / "keep.py").write_text("keep\n", encoding="utf-8")
+    (tmp_repo / "doomed.py").write_text("doomed\n", encoding="utf-8")
+    _git(["add", "keep.py", "doomed.py"], tmp_repo)
+    _git(["commit", "-m", "add both"], tmp_repo)
+    ticket_dir = tmp_path / "runs" / "FT-1"
+    diff_extract.record_baseline("implement", ticket_dir, tmp_repo, files=["keep.py", "doomed.py"])
+    (tmp_repo / "keep.py").write_text("keep\nmore\n", encoding="utf-8")
+    (tmp_repo / "doomed.py").unlink()
+
+    review = diff_extract.capture_review_diff(ticket_dir, tmp_repo).read_text(encoding="utf-8")
+    implement = diff_extract.capture_implement_diff(ticket_dir, tmp_repo).read_text(
+        encoding="utf-8"
+    )
+
+    for content in (review, implement):
+        assert "doomed.py" in content
+        assert "deleted file mode" in content
+
+
+def test_capture_review_diff_preserves_staged_deletion(tmp_repo: Path, tmp_path: Path) -> None:
+    """A review-side bug reaches the COMMIT payload through the shared index.
+
+    `git rm --cached` leaves a staged deletion the commit stage still needs. Without the carve-out,
+    intent-to-add plus the reset destroys it and the untrack never commits, and stage-commit.md's
+    own reset runs too late to notice.
+    """
+    (tmp_repo / "settings.json").write_text("{}\n", encoding="utf-8")
+    _git(["add", "settings.json"], tmp_repo)
+    _git(["commit", "-m", "add settings"], tmp_repo)
+    ticket_dir = tmp_path / "runs" / "FT-1"
+    diff_extract.record_baseline("implement", ticket_dir, tmp_repo, files=["settings.json"])
+    _git(["rm", "--cached", "settings.json"], tmp_repo)
+
+    diff_extract.capture_review_diff(ticket_dir, tmp_repo)
+
+    assert "D  settings.json" in _git(["status", "--short", "settings.json"], tmp_repo)
+    assert _git(["diff", "--no-ext-diff", "HEAD", "--", "settings.json"], tmp_repo).strip()
+
+
+def test_capture_review_diff_rejects_gitignored_planned_file(
+    tmp_repo: Path, tmp_path: Path
+) -> None:
+    """Surfaces one stage earlier than commit, with the same diagnosable error."""
+    ticket_dir = tmp_path / "runs" / "FT-1"
+    diff_extract.record_baseline("implement", ticket_dir, tmp_repo, files=["build/out.js"])
+    (tmp_repo / ".gitignore").write_text("build/\n", encoding="utf-8")
+    (tmp_repo / "build").mkdir()
+    (tmp_repo / "build" / "out.js").write_text("bundle\n", encoding="utf-8")
+
+    with pytest.raises(diff_extract._IgnoredPlannedFile, match="gitignored"):
+        diff_extract.capture_review_diff(ticket_dir, tmp_repo)
+
+
+def test_capture_review_diff_no_ext_diff(tmp_repo: Path, tmp_path: Path) -> None:
+    """Without --no-ext-diff the reviewer receives display output, not a patch."""
+    _git(["config", "diff.external", "/bin/echo"], tmp_repo)
+    ticket_dir = tmp_path / "runs" / "FT-1"
+    diff_extract.record_baseline("implement", ticket_dir, tmp_repo, files=["a.py"])
+    (tmp_repo / "a.py").write_text("hello\n", encoding="utf-8")
+
+    content = diff_extract.capture_review_diff(ticket_dir, tmp_repo).read_text(encoding="utf-8")
+
+    assert "diff --git a/a.py b/a.py" in content
+    assert "+hello" in content
+
+
+def test_capture_review_diff_is_observationally_pure(tmp_repo: Path, tmp_path: Path) -> None:
+    """Hold the shared-state hazard instead of sampling named properties.
+
+    Enumerating what the capture must not disturb has failed repeatedly on this file, so assert the
+    invariant directly: nothing observable about the index changes. This catches effects nobody
+    named, including the staged-deletion loss.
+    """
+    (tmp_repo / "tracked.py").write_text("one\n", encoding="utf-8")
+    (tmp_repo / "untrackme.json").write_text("{}\n", encoding="utf-8")
+    (tmp_repo / "prestaged.py").write_text("pre\n", encoding="utf-8")
+    _git(["add", "tracked.py", "untrackme.json", "prestaged.py"], tmp_repo)
+    _git(["commit", "-m", "seed"], tmp_repo)
+    ticket_dir = tmp_path / "runs" / "FT-1"
+    diff_extract.record_baseline(
+        "implement",
+        ticket_dir,
+        tmp_repo,
+        files=["tracked.py", "untrackme.json", "prestaged.py", "brandnew.py"],
+    )
+    # three index shapes at once: an untracked addition, a cache-untrack, a staged edit
+    (tmp_repo / "brandnew.py").write_text("new\n", encoding="utf-8")
+    _git(["rm", "--cached", "untrackme.json"], tmp_repo)
+    (tmp_repo / "prestaged.py").write_text("pre\nmore\n", encoding="utf-8")
+    _git(["add", "prestaged.py"], tmp_repo)
+
+    watched = ["tracked.py", "untrackme.json", "prestaged.py", "brandnew.py"]
+    before = _index_snapshot(tmp_repo, watched)
+    diff_extract.capture_review_diff(ticket_dir, tmp_repo)
+
+    assert _index_snapshot(tmp_repo, watched) == before
+
+
+def test_cli_capture_review_diff_writes_diff_path(
+    tmp_repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ticket_dir = tmp_path / "runs" / "FT-1"
+    diff_extract.record_baseline("implement", ticket_dir, tmp_repo, files=["a.py"])
+    (tmp_repo / "a.py").write_text("hello\n", encoding="utf-8")
+
+    rc = diff_extract.cli_main(
+        [
+            "capture-review-diff",
+            "--ticket",
+            "FT-1",
+            "--ticket-dir",
+            str(ticket_dir),
+            "--cwd",
+            str(tmp_repo),
+        ]
+    )
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert Path(payload["diff_path"]).exists()
+    assert Path(payload["diff_path"]).name == "review.diff"
+
+
+def test_cli_capture_review_diff_missing_baseline_exits_1(
+    tmp_repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ticket_dir = tmp_path / "runs" / "FT-1"
+
+    rc = diff_extract.cli_main(
+        [
+            "capture-review-diff",
+            "--ticket",
+            "FT-1",
+            "--ticket-dir",
+            str(ticket_dir),
+            "--cwd",
+            str(tmp_repo),
+        ]
+    )
+
+    assert rc == 1
+    assert "no baseline.json" in capsys.readouterr().err
+
+
+def test_capture_review_diff_ignores_missing_planned_file(tmp_repo: Path, tmp_path: Path) -> None:
+    """A planned file that was never created must not break the capture.
+
+    `existing` filters the intent-to-add candidates to what is on disk. Feeding the unfiltered
+    `paths` there instead makes `git add --intent-to-add` fail on the absent path, and no other
+    review-side test reaches that half of the filter.
+    """
+    ticket_dir = tmp_path / "runs" / "FT-1"
+    diff_extract.record_baseline(
+        "implement", ticket_dir, tmp_repo, files=["present.py", "never_created.py"]
+    )
+    (tmp_repo / "present.py").write_text("here\n", encoding="utf-8")
+
+    content = diff_extract.capture_review_diff(ticket_dir, tmp_repo).read_text(encoding="utf-8")
+
+    assert "present.py" in content
+    assert "never_created.py" not in content

@@ -538,14 +538,15 @@ Empty-string / empty-list / missing-key all count as violations.
 
 ### `diff_extract.py`
 
-Git diff capture for implement / commit / reflect stages.
+Git diff capture for implement / code_review / commit / reflect stages.
 Flag surface: MODULE.md §Frontmatter / diff / commit (seam-checked there); this table keeps the exit/output contract.
 
 | Subcommand | Exits | Output |
 |------------|-------|--------|
 | `since-stage` | 0=ok, 1=missing-state, 2=git-error | Reads `state.json` for `stages.<name>.started_at_sha`, diffs `<sha>..HEAD` → `{files_touched, insertions, deletions, binary}` JSON. |
 | `record-baseline` | 0=ok, 2=git-error | Writes `<ticket-dir>/baseline.json` with `{stage, head_sha, planned_files, blobs}`. |
-| `capture-implement-diff` | 0=ok, 1=missing-baseline / gitignored planned file, 2=git-error | Writes `<ticket-dir>/implement.diff` via `git diff --binary --raw`. |
+| `capture-implement-diff` | 0=ok, 1=missing-baseline / gitignored planned file, 2=git-error | Writes `<ticket-dir>/implement.diff` via `git diff --binary --raw`. `--binary` is what makes the patch appliable by stage-commit step 5's `git apply --cached --binary`. |
+| `capture-review-diff` | 0=ok, 1=missing-baseline / gitignored planned file, 2=git-error | Writes `<ticket-dir>/review.diff` via `git diff` with no `--binary`/`--raw`, so binary content is elided to a `Binary files ... differ` line instead of inlined. Same baseline, same `planned_files` scope, same index restore as `capture-implement-diff`; a separate function rather than a shared helper, so the review path cannot alter the guard path. Read by code_review's reviewer, never applied. |
 | `check-ownership` | 0=ok, 3=ownership violation (unowned paths), 1=missing/malformed baseline, 2=git-error | `{ok, planned_files, changed, unowned_changes}` JSON. Branch-wide: scans the dirty working tree AND the committed delta `baseline.head_sha..HEAD`, so a rogue mid-implement commit is seen too. Wired as stage-commit step 2b. Filename-level by design; hunk-level ownership stays a deliberate non-goal (bd flow-bq4). THIS is the content-ownership commit gate AGENTS.md names. |
 
 ### `compose_commit.py`

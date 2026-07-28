@@ -1,4 +1,4 @@
-"""Git diff capture for the dispatcher's implement / commit / reflect stages.
+"""Git diff capture for the dispatcher's implement / code_review / commit / reflect stages.
 
 Library + thin CLI. Stdlib-only.
 
@@ -21,6 +21,13 @@ Subcommands:
       Reads baseline.json for {head_sha, planned_files}, runs `git diff
       --binary --raw <head_sha> -- <files>`, writes to
       <ticket-dir>/implement.diff.
+
+  capture-review-diff --ticket <key> --ticket-dir <dir>
+      Same baseline/scope as capture-implement-diff, but runs `git diff
+      <head_sha> -- <files>` (no --binary/--raw) and writes to
+      <ticket-dir>/review.diff. Binary content is elided (`Binary files ...
+      differ`) rather than inlined, since this payload is read by code_review's
+      reviewer and never applied.
 
 Exit codes:
   0 = ok
@@ -151,6 +158,10 @@ def _baseline_path(ticket_dir: Path) -> Path:
 
 def _implement_diff_path(ticket_dir: Path) -> Path:
     return ticket_dir / "implement.diff"
+
+
+def _review_diff_path(ticket_dir: Path) -> Path:
+    return ticket_dir / "review.diff"
 
 
 def _untracked_files(files: list[str], cwd: Path, runner: Runner) -> list[str]:
@@ -393,6 +404,70 @@ def capture_implement_diff(
     return out_path
 
 
+# ─── capture-review-diff ─────────────────────────────────────────────────────
+
+
+def capture_review_diff(
+    ticket_dir: Path,
+    cwd: Path,
+    runner: Runner | None = None,
+) -> Path:
+    r = runner or _default_runner()
+    bpath = _baseline_path(ticket_dir)
+    if not bpath.exists():
+        raise _BaselineMissing(f"no baseline.json at {bpath}")
+    try:
+        baseline = json.loads(bpath.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise _BaselineMissing(f"baseline.json malformed: {exc}") from exc
+    head_sha = baseline.get("head_sha")
+    if not isinstance(head_sha, str) or not head_sha:
+        raise _BaselineMissing("baseline.json missing head_sha")
+    planned = baseline.get("planned_files", [])
+    if not isinstance(planned, list):
+        raise _BaselineMissing("baseline.json planned_files is not a list")
+    paths = [str(p) for p in planned]
+    existing = [p for p in paths if (cwd / p).exists()]
+    # stage intent-to-add for any planned file that exists but is untracked, so newly created files
+    # show up in the diff against head_sha; without this `git diff` emits nothing for them and they
+    # vanish from the payload.
+    untracked = _untracked_files(existing, cwd, r) if existing else []
+    # a `git rm --cached` path is absent from `git ls-files` (reads as untracked) but `git diff
+    # HEAD` already emits its deletion; carve it out so it skips the gitignore guard, the
+    # intent-to-add, and the finally reset.
+    if untracked:
+        staged_deleted = set(_staged_deletions(untracked, cwd, r))
+        untracked = [p for p in untracked if p not in staged_deleted]
+    # `git add --intent-to-add` hard-fails on a gitignored path, which would abort the commit stage
+    # with an opaque git error. Surface it as a diagnosable one instead (the bootstrap gate normally
+    # catches this earlier; this is the defense for a file gitignored after bootstrap).
+    if untracked:
+        ignored = _gitignored(untracked, cwd, r)
+        if ignored:
+            raise _IgnoredPlannedFile(
+                "planned file(s) gitignored, cannot be committed: " + ", ".join(ignored)
+            )
+        _git(["add", "--intent-to-add", "--", *untracked], cwd, r)
+    try:
+        # --no-ext-diff so a configured diff.external (e.g. difftastic) cannot replace the patch
+        # body with display output. Unlike capture_implement_diff, no --binary/--raw: this payload
+        # is read by a reviewer and never applied, so binary content is elided to a `Binary files
+        # ... differ` line rather than inlined.
+        args = ["diff", "--no-ext-diff", head_sha]
+        if paths:
+            args.append("--")
+            args.extend(paths)
+        raw = _git(args, cwd, r)
+    finally:
+        # capture is an observation; undo the intent-to-add so the index is left exactly as it was
+        # found (these paths were untracked, so reset restores that).
+        if untracked:
+            _git(["reset", "--quiet", "--", *untracked], cwd, r)
+    out_path = _review_diff_path(ticket_dir)
+    atomic_write_text(out_path, raw)
+    return out_path
+
+
 def _ownership_excluded(path: str) -> bool:
     # flow's own run state lives under .flow/; its writes are never an
     # unrelated user edit, so they never count against ownership. the
@@ -500,6 +575,11 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     p_capture.add_argument("--ticket-dir", required=True)
     p_capture.add_argument("--cwd", default=".")
 
+    p_review = sub.add_parser("capture-review-diff", help="dump review.diff.")
+    p_review.add_argument("--ticket", required=True)
+    p_review.add_argument("--ticket-dir", required=True)
+    p_review.add_argument("--cwd", default=".")
+
     p_own = sub.add_parser("check-ownership", help="refuse changes outside planned_files.")
     p_own.add_argument("--ticket", required=True)
     p_own.add_argument("--ticket-dir", required=True)
@@ -541,6 +621,12 @@ def cli_main(argv: list[str]) -> int:
             sys.stdout.write(json.dumps({"diff_path": str(out)}) + "\n")
             return 0
 
+        if args.cmd == "capture-review-diff":
+            ticket_dir = Path(args.ticket_dir).resolve()
+            out = capture_review_diff(ticket_dir, cwd)
+            sys.stdout.write(json.dumps({"diff_path": str(out)}) + "\n")
+            return 0
+
         if args.cmd == "check-ownership":
             ticket_dir = Path(args.ticket_dir).resolve()
             payload = check_ownership(ticket_dir, cwd)
@@ -566,6 +652,7 @@ if __name__ == "__main__":
 
 __all__ = [
     "capture_implement_diff",
+    "capture_review_diff",
     "check_ownership",
     "cli_main",
     "diff_since",

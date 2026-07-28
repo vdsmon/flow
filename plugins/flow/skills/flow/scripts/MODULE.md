@@ -92,7 +92,7 @@ details. A command change touches the skill router and is therefore hot.
 | `ticket_frontmatter.py` | TOML frontmatter r/w under flock + atomic rename (delimiter `+++`). | `read <path>` / `update <path> --set k=v` |
 | `lint_ticket.py` | HARD GATE: required frontmatter fields per stage. | `--stage --ticket-path --workspace-root` |
 | `lint_comments.py` | Deterministic comment-quality floor under the stage-implement bar (Step 4): flags em-dash, banned filler/inflation vocabulary, narration markers, and over-limit or under-filled comment/docstring prose in the files a run touched. Python is exact (tokenize + ast); other languages get line-start markers only, so string literals cannot false-positive. Markdown (`.md`/`.markdown`) runs the em-dash check only, outside fenced code blocks (docs are prose, so the banned-word and width checks stay off). Line limit auto-discovered per file (ruff/black/.editorconfig, default 88); `--line-length` overrides. `--diff-base <ref>` keeps only findings on lines changed vs the ref (how the stages scope a legacy file to the run's own edits). | `<file> [...] [--line-length N] [--diff-base REF] [--json]`; exit 0 clean / 1 findings. Consumed by `references/stage-implement.md` Step 4 |
-| `diff_extract.py` | Git diff capture for implement/commit/reflect; baseline + ownership. `check-ownership` IS the content-ownership commit gate (AGENTS.md's term): refuses a branch delta outside the baseline `planned_files`, dirty tree AND committed, so a rogue mid-implement commit is seen too. | subcommand names in §Derived surfaces |
+| `diff_extract.py` | Git diff capture for implement/code_review/commit/reflect; baseline + ownership. Two captures share a baseline and differ only in flags: `capture-implement-diff` keeps `--binary --raw` so the commit stage can apply the patch, `capture-review-diff` drops both so the reviewer gets a text-only payload with binary elided. They are deliberately separate functions, not one parameterised helper, so the guard function cannot be changed by editing the review path. `check-ownership` IS the content-ownership commit gate (AGENTS.md's term): refuses a branch delta outside the baseline `planned_files`, dirty tree AND committed, so a rogue mid-implement commit is seen too. | subcommand names in §Derived surfaces |
 | `compose_commit.py` | Deterministic conventional-commit header skeleton (LLM fills body). | `--ticket --type --summary [--scope --files --covers]` |
 | `scrub_ci_skip.py` | Neutralize bracketed GitHub CI-skip tokens (`[skip ci]` etc.) in a commit-message file, in place; strips the brackets, keeps the words. Exit 0 always. | `<message-path>` |
 
@@ -251,7 +251,7 @@ markers are overwritten. `—` = none.
 | `cockpit_cli.py` | `render` | — |
 | `compose_commit.py` | — | — |
 | `create_pr.py` | — | — |
-| `diff_extract.py` | `capture-implement-diff` `check-ownership` `record-baseline` `since-stage` | `reflect_inputs` |
+| `diff_extract.py` | `capture-implement-diff` `capture-review-diff` `check-ownership` `record-baseline` `since-stage` | `reflect_inputs` |
 | `dispatch_stage.py` | `advance` `init` `next` `release` `revise-open` | — |
 | `embedder_fastembed.py` | — | — |
 | `finalize.py` | — | — |

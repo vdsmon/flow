@@ -9,23 +9,53 @@ model, effort level, clone, or execution receipt.
 
 ## Inputs
 
-- `<ticket-dir>/state.json` for `stages.implement.started_at_sha`.
+- `<ticket-dir>/baseline.json` for `head_sha` and `planned_files`, written by the
+  implement stage's `records_diff_baseline` pre-hook.
+- `<ticket-dir>/review.diff`, the payload step 1 builds from that baseline.
 - `<ticket-dir>/stages/plan.out` when a plan exists.
-- The ticket context and current uncommitted working-tree change.
+- The ticket context.
 - The implementation report and test evidence.
 
 ## Steps
 
-1. Resolve the implementation baseline and capture the real working-tree diff:
+1. Build the review payload as one pre-built diff:
 
    ```bash
-   FLOW_HARNESS="<harness>" "<facade>" diff since-stage \
-     --stage implement --ticket <KEY> --ticket-dir <ticket-dir> --cwd .
-   git diff <started_at_sha>
+   FLOW_HARNESS="<harness>" "<facade>" diff capture-review-diff \
+     --ticket <KEY> --ticket-dir <ticket-dir> --cwd .
    ```
 
-   `since-stage` can report an empty committed range because implementation is still
-   uncommitted. `git diff <started_at_sha>` is the review payload in that case.
+   This writes `<ticket-dir>/review.diff`: a single text-only unified diff of the owned
+   change set against the implement baseline. Every modification, every deletion, and
+   every new file's complete content are present, because the capture stages
+   intent-to-add for untracked planned files first. Binary content is elided to a
+   `Binary files ... differ` line, which names the path without spending the payload on
+   bytes no reviewer can read.
+
+   Do NOT hand the reviewer a path list, and do not tell it to find the change itself.
+   `git diff <started_at_sha>` reports tracked changes only, so on a landing-shaped run
+   it cannot contain the new files the run is about, and a reviewer sent to discover
+   them opens each one in a separate round trip. On flow-pcj6 that shape hit a 600s
+   ceiling and returned no report; the same change at the same model and effort reviewed
+   in 2m32s once the payload was one pre-built diff. The lever is payload shape, not
+   model capability.
+
+   Exit 1 has two causes, distinguished by stderr, and their remedies are opposite. A
+   missing or malformed baseline is a repair (see Errors). `planned file(s) gitignored,
+   cannot be committed` means a planned file is ignored: do NOT retry implement, which
+   re-records the same baseline and fails identically. Fix the cause as `stage-commit.md`
+   directs, then rerun this step.
+
+   **An empty `review.diff` is a stop, not a clean review.** Exit 0 with a zero-byte
+   payload means the capture found nothing between the baseline and the working tree,
+   which on a ticket whose implement stage reported changes is a contradiction rather than
+   a pass. The reachable cause is the anchor: this payload is keyed to `baseline.json`'s
+   `head_sha`, and `record-baseline` recomputes that from live HEAD, so a
+   post-implementation ownership reconcile (`delivery-loop.md`) can move it past work
+   already committed during implement. `check-ownership` reports `ok` in that same state,
+   so nothing else catches it. Fail the stage and surface the ticket instead of reviewing
+   an empty payload: a reviewer handed nothing returns no findings, and that is
+   indistinguishable from a clean review.
 
 2. Exactly one fresh reviewer challenges the implementation. Which reviewer depends on
    the configured handler, and nothing else about this step changes:
@@ -37,9 +67,11 @@ model, effort level, clone, or execution receipt.
      The agent still performs the triage and fix passes below natively.
 
    The reviewer's hint role is `reviewer` (`model --stage code_review --role reviewer`).
-   Give the reviewer the ticket, approved plan, implementation report, diff, repository
-   root, and this document. It may inspect surrounding code and run focused read-only
-   checks. It must not edit files, stage changes, commit, or advance Flow state.
+   Give the reviewer the ticket, approved plan, implementation report, the
+   `<ticket-dir>/review.diff` built in step 1, repository root, and this document. Hand
+   over that file, not a list of paths to open. It may inspect surrounding code and run
+   focused read-only checks; the diff is its starting evidence, not a sandbox. It must
+   not edit files, stage changes, commit, or advance Flow state.
 
    Mutation is how tests that do not prove their claims are actually found, and it is
    not an exception to the line above: copy the engine to a scratch directory outside
@@ -79,8 +111,25 @@ model, effort level, clone, or execution receipt.
    pass. Minor findings remain for the human unless they are inseparable from an
    accepted fix.
 
-5. Re-read the resulting diff once and update the disposition report. Any unresolved
-   Critical finding fails the stage.
+5. Recapture, then re-read the resulting diff once and update the disposition report:
+
+   ```bash
+   FLOW_HARNESS="<harness>" "<facade>" diff capture-review-diff \
+     --ticket <KEY> --ticket-dir <ticket-dir> --cwd .
+   ```
+
+   The recapture is required, not tidiness. Step 1 writes a file once, so a fix pass in
+   step 4 does not change it, and re-reading the stale copy would judge fixes against
+   pre-fix bytes and let the unresolved-Critical check below run on evidence that
+   predates the fix. Any unresolved Critical finding fails the stage.
+
+   **Check this recapture's exit code before re-reading, for the same reason the recapture
+   exists.** The artifact is written atomically, so a capture that fails writes nothing and
+   leaves step 1's payload in place, and a driver that ignores the exit reads exactly the
+   pre-fix bytes this step was added to avoid. Step 1's exit-1 causes and the empty-payload
+   stop apply here unchanged, and a fix pass is one way to reach the gitignored case, by
+   adding a file the repo ignores. Treat a failed recapture as a stage failure rather than
+   re-reading the old payload.
 
 6. Resolve every `ask-user` finding with the human before completing. These findings
    surface only now because the reviewer reads the implemented diff; the plan gate
@@ -130,8 +179,15 @@ and any residual risk.
 
 ## Errors
 
-- Missing implementation baseline or unreadable diff: run `FLOW workspace repair
-  <KEY>`, then `retry --stage implement`.
+- Missing implementation baseline or unreadable diff (exit 1, stderr names a missing or
+  malformed `baseline.json`): run `FLOW workspace repair <KEY>`, then
+  `retry --stage implement`.
+- Gitignored planned file (exit 1, stderr `planned file(s) gitignored, cannot be
+  committed: <files>`): the same exit code, the opposite remedy. Do NOT retry implement:
+  it re-records the same baseline and the capture fails identically. Fix the cause as
+  `stage-commit.md` directs, by adding the narrowest `.gitignore` negation for the named
+  files (adding `.gitignore` to the plan via `record-baseline --files ...`), or by
+  dropping them from `planned_files` and re-recording. Then rerun step 1.
 - Reviewer failure: fail visibly; do not silently self-review. An external reviewer
   reports through a file, so name the command and its stderr rather than the empty
   artifact.
