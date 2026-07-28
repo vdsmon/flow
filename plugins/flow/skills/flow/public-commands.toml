@@ -4,7 +4,7 @@
 
 schema_version = 1
 logical_trigger = "FLOW"
-static_namespaces = ["ticket", "memory", "measure", "workspace", "help"]
+static_namespaces = ["ticket", "memory", "measure", "workspace", "manager", "help"]
 forbidden_root_tokens = [
   "spec",
   "do",
@@ -224,6 +224,15 @@ reference = "references/command-workspace.md"
 options = [
   { name = "--dry-run", value_type = "boolean", cardinality = "zero_or_one" },
 ]
+
+[[command]]
+id = "manager"
+path = ["manager"]
+usage = "FLOW manager"
+summary = "Assume the manager role in this session: charter, ledger, queue, then act."
+effect = "read"
+workspace = "required"
+reference = "references/manager.md"
 
 [[command]]
 id = "help"

@@ -14,7 +14,7 @@ self-target merge authority.
   recipe and its dedup keys).
 - **The manager** files independently from outside the run — the same recipe, the
   same file-anchored dedup keys — for friction only the outside view can see:
-  stalls, silent retries, cross-run patterns (`oversee.md` §Report and filing).
+  stalls, silent retries, cross-run patterns (`manager.md` §Report and filing).
 - **Recurrence escalation** (`friction_escalate`, invoked from reflect) files a
   `recurrent`-labelled bead when a claimed machinery fix did not hold. Propose-only,
   never auto-gated.
@@ -24,10 +24,10 @@ observing the same defect converge on one bead. A quiet run is a valid result.
 
 ## Consumer
 
-The manager is the bounded consumer (`oversee.md` §Pickup). Between runs it reads
+The manager is the bounded consumer (`manager.md` §Pickup). Between runs it reads
 `bd ready`, triages with veto power, groups or merges related beads, and routes each
-chosen ticket through an ordinary overseen pipeline run — attended planning, human
-plan approval, review, CI. On a met gate the manager merges (`oversee.md` §Merging);
+chosen ticket through an ordinary managed pipeline run — attended planning, human
+plan approval, review, CI. On a met gate the manager merges (`manager.md` §Merging);
 a hot change additionally passes the independent guard-property review before it
 lands. Delivery workspaces and held changes remain human-merge.
 
@@ -60,4 +60,4 @@ repository — machinery beads are then not this workspace's to work.
 - Immutable ship events and friction records drive `FLOW measure` outcomes; tracker
   status alone is not delivery evidence.
 
-The run-and-merge mechanics live in `oversee.md`.
+The run-and-merge mechanics live in `manager.md`.

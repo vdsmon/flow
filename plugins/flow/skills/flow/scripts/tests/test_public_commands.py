@@ -30,6 +30,7 @@ def test_real_registry_is_complete_and_has_no_legacy_root_verbs() -> None:
         "memory",
         "measure",
         "workspace",
+        "manager",
         "help",
     )
 
@@ -278,7 +279,7 @@ def test_renderers_are_deterministic_and_expose_logical_flow_not_host_syntax() -
     router = render_router_block(registry)
     assert router == render_router_block(registry)
     assert "Static namespaces win over target parsing." in router
-    assert "ticket | memory | measure | workspace | help" in router
+    assert "ticket | memory | measure | workspace | manager | help" in router
 
 
 def test_generated_block_checker_detects_documentation_drift() -> None:

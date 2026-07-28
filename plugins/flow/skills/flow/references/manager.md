@@ -1,25 +1,33 @@
-# Overseeing a run
+# The manager
 
 Run a flow ticket through a driver agent spawned from a long-lived main session (the manager), which observes friction from outside while the plan-approval keystone stays human. The driver runs the ordinary skill unmodified; the manager adds an outside view — timings, retries, stalls — that the run's own reflect stage cannot see about itself, and owns the work queue around the runs: triage, grouping, sequencing, and merges on met gates. Proven end-to-end in the flow-4vre pilot (PR #566) and refined by the flow-rgqm run (PR #568); every constraint in Roles, Relays, and Observation was witnessed in one of the two, not designed speculatively. The triage and merge authority is maintainer-granted (2026-07-28) rather than witnessed.
 
 ## Seating the manager
 
-The manager is a role, not a process: its continuity lives in this charter, the
+`FLOW manager` routes here: it seats the invoking session as the manager. The manager
+is a role, not a process: its continuity lives in this charter, the
 project memory (the manager entries and the durable ledger), and the tracker — not in
-any one session. Any session in the self-target workspace assumes the role by reading
+any one session. Assume the role by reading
 this doc, the project memory's manager entries, the ledger, and `bd ready`, then
-acting under the authorities below; the human seats one by asking. A successor
+acting under the authorities below. A successor
 manager inherits everything a predecessor ledgered; nothing is handed off
-conversationally.
+conversationally. Outside the self-target workspace the observation and relay duties
+apply unchanged, but the merge authority and machinery-bead pickup do not — the
+human-merge keystone holds there.
+
+A ticket handed to a seated manager — `FLOW <target>` or plain words — runs through
+the managed topology: the manager spawns the driver (§Spawn) rather than becoming
+it, because a manager driving its own ticket loses the outside view. A session that
+should drive directly is a fresh one, invoked with the target before any seating.
 
 ## Roles
 
-- **Manager** (the overseer): the main session. Spawns drivers, relays the gates, observes passively, and compiles the friction report; it also triages the queue with veto power, groups/merges tickets, amends plans at the relay (labeled as manager feedback, which the driver treats as revision input), sequences runs, and merges on a met gate. It never edits the run's files and never interrogates the driver mid-stage — questioning a working driver perturbs the thing being measured.
+- **Manager**: the main session. Spawns drivers, relays the gates, observes passively, and compiles the friction report; it also triages the queue with veto power, groups/merges tickets, amends plans at the relay (labeled as manager feedback, which the driver treats as revision input), sequences runs, and merges on a met gate. It never edits the run's files and never interrogates the driver mid-stage — questioning a working driver perturbs the thing being measured.
 - **Driver**: a named teammate agent running the flow skill exactly as written, with the gate relays below as its only environment delta.
 
 ## Pickup — the queue is the manager's
 
-The manager is the consumer of the machinery backlog: the `machinery`-labelled beads that `stage-reflect.md`'s filing recipe produces, alongside every other ready ticket. Between runs: read `bd ready`, triage with veto power, and route each chosen ticket through an overseen run below. Sequencing is the manager's call; the human hears what was picked and why, and can overrule any of it.
+The manager is the consumer of the machinery backlog: the `machinery`-labelled beads that `stage-reflect.md`'s filing recipe produces, alongside every other ready ticket. Between runs: read `bd ready`, triage with veto power, and route each chosen ticket through a managed run below. Sequencing is the manager's call; the human hears what was picked and why, and can overrule any of it.
 
 Triage is a filter against overengineering, not a queue pump. Before working any bead: was it witnessed more than once, or once with real cost? Is the lesson already recorded where its audience looks? Does the fix add standing surface a workaround avoids? Is the fix bigger than the lifetime cost of the friction? A bead that fails these is vetoed — closed, with the reasoning; a closed bead permanently blocks the dedup net from refiling it, so close only what should stay dead and defer the maybe-laters instead. When a bead survives, prefer deletion over a doc line over a new moving part. Group or merge related beads via `bd` parent links or close-as-dup with the surviving bead's scope widened, and group only on shared root cause or shared surface — one plan, one diff, one PR; grouping for tidiness manufactures scope. Vetoing is a first-class act, not a failure to act.
 
@@ -36,12 +44,12 @@ Three obligations on the manager's side, each from a witnessed failure or near-f
 - **Spawn from the template below**, substituting only the bracketed values — two hand-written spawn prompts already drifted from each other between the pilot runs.
 
 ```text
-You are a flow driver session running under references/oversee.md (read it).
+You are a flow driver session running under references/manager.md (read it).
 Task: run the flow ticket [KEY] through the complete flow pipeline in the
 workspace [ABSOLUTE_ROOT] (an initialized flow workspace). FLOW_HARNESS is
 [HARNESS]. Invoke the flow skill now and follow it exactly as written,
 including the entry contract and the skill-root re-pin rule.
-Environment facts, all witnessed in prior overseen runs:
+Environment facts, all witnessed in prior managed runs:
 - Plan gate: turn-boundary form — render the plan surface AND send the
   complete plain-text plan (exact text, base SHA, confidence + category
   scores, pass facts, resolved findings, residual risks) to "main", then stop
@@ -49,14 +57,14 @@ Environment facts, all witnessed in prior overseen runs:
   feedback. Nothing mutates before it except the planning-start ticket claim.
 - ask-user findings: relay to "main" the same way and wait.
 - Spawn your stage agents SYNCHRONOUSLY (unnamed subagents; the roster is
-  flat). Only a backgrounded or resumed child needs the overseer relay; you
+  flat). Only a backgrounded or resumed child needs the manager relay; you
   may poll such a child's transcript rather than waiting blind.
 - Machinery APPLY-NOW is unavailable here (protected-branch skill root):
   lens-B findings route to propose-and-record; the refusal is the known
   limit, not a failure.
 Work autonomously otherwise; report at natural stops. After done or a
 durable stop, send "main" the final status, PR URL, per-stage outcomes, and
-anything that differed from what oversee.md led you to expect.
+anything that differed from what manager.md led you to expect.
 ```
 
 ## Relays — the manager's standing obligations
@@ -71,7 +79,7 @@ anything that differed from what oversee.md led you to expect.
 - **The driver transcript** (session JSONL): parse incrementally at driver stops for tool errors, retries, and time gaps — never load it whole. The deleted transcript miner is restorable from history for a deeper pass (`git show 0bed292^:plugins/flow/skills/flow/scripts/trace_mine.py`); it extracts tool errors, silent retries, drift markers, and stall gaps bucketed by dispatch stage, and runs unchanged on a teammate transcript once the file is copied under the workspace's `~/.claude/projects` slug (its path guard requires that layout).
 - **A manager ledger** kept outside the repo, in the project memory directory, append-only and durable across manager sessions: timestamped notes on gates, stalls, surprises, delegations, and single-witness papercuts — the papercut record is what lets a later manager promote on the second witness instead of restarting the count. Cross-referencing the ledger against mined stall gaps is what separates human-wait (keystone cost) from machine friction — the miner alone cannot tell them apart.
 
-## Known limits of the overseen topology
+## Known limits of the managed topology
 
 Machinery APPLY-NOW is structurally unavailable: the driver's `skill_root` resolves to the marketplace clone, which sits on a protected branch, so `machinery_edit` refuses (exit 2) and every lens-B finding routes to propose-and-record. State this expectation in the driver's prompt so the refusal is read as the known limit, not a failure.
 
@@ -79,7 +87,7 @@ Machinery APPLY-NOW is structurally unavailable: the driver's `skill_root` resol
 
 What the manager observes routes by one hierarchy. Friction that bit a run gets a bead — always — because beads are the ledger `friction_recurrence` and the fix-efficacy measure join against; a silent fix starves the measurement loop. A single-witness papercut gets a ledger line in the run report instead; the second witness promotes it to a bead. Friction inside a run belongs to the run's own reflect first — the manager files only what the outside view sees (stalls, relay latency, cross-run patterns), and the dedup net converges the two producers.
 
-Who implements: an **obvious** improvement is implemented fully, in one motion — branch, gates, PR, merge under §Merging — with no bead unless it was friction-shaped; the PR is the record. Obvious means no alternatives worth weighing; the moment there are, it is judgment and routes to a proposal or an overseen run. Judgment-shaped, hot, or large work always goes through the pipeline with the plan gate. Never touch files a live run snapshots, and never perturb a working driver to fix friction live — observe, ledger, act after the run.
+Who implements: an **obvious** improvement is implemented fully, in one motion — branch, gates, PR, merge under §Merging — with no bead unless it was friction-shaped; the PR is the record. Obvious means no alternatives worth weighing; the moment there are, it is judgment and routes to a proposal or a managed run. Judgment-shaped, hot, or large work always goes through the pipeline with the plan gate. Never touch files a live run snapshots, and never perturb a working driver to fix friction live — observe, ledger, act after the run.
 
 ## Merging
 
