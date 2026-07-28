@@ -182,7 +182,7 @@ single-shot command is the whole contract.
 ## Ticket queues (read-only)
 
 The deferred and decided-mode blocked queues (with each ticket's defer reason) are a
-read-only lens; `--ready` folds the ready queues in, partitioned by queue:
+read-only lens; `--ready` folds the ready queue in:
 
 ```bash
 FLOW_HARNESS="<harness>" "<facade>" triage list --workspace-root . [--ready] [--json]

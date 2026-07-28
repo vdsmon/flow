@@ -1,6 +1,6 @@
 # Overseeing a run
 
-Run a flow ticket through a driver agent spawned from a long-lived main session (the manager), which observes friction from outside while the plan-approval keystone stays human. The driver runs the ordinary skill unmodified; the manager adds an outside view — timings, retries, stalls — that the run's own reflect stage cannot see about itself, and owns the work queue around the runs: triage, grouping, sequencing, and merges on met gates. Proven end-to-end in the flow-4vre pilot (PR #566) and refined by the flow-rgqm run (PR #568); every constraint in Roles, Relays, and Observation was witnessed in one of the two, not designed speculatively. The triage and merge authority carries different provenance: maintainer-granted on 2026-07-28, alongside the retirement of the unattended evolve/queue apparatus whose consumer role the manager absorbed.
+Run a flow ticket through a driver agent spawned from a long-lived main session (the manager), which observes friction from outside while the plan-approval keystone stays human. The driver runs the ordinary skill unmodified; the manager adds an outside view — timings, retries, stalls — that the run's own reflect stage cannot see about itself, and owns the work queue around the runs: triage, grouping, sequencing, and merges on met gates. Proven end-to-end in the flow-4vre pilot (PR #566) and refined by the flow-rgqm run (PR #568); every constraint in Roles, Relays, and Observation was witnessed in one of the two, not designed speculatively. The triage and merge authority is maintainer-granted (2026-07-28) rather than witnessed.
 
 ## Roles
 
@@ -9,7 +9,7 @@ Run a flow ticket through a driver agent spawned from a long-lived main session 
 
 ## Pickup — the queue is the manager's
 
-The manager is the consumer of the machinery backlog: the `evolve,machinery` beads that `stage-reflect.md`'s filing recipe produces (that recipe is unchanged; this section replaces the retired drain as its consumer), alongside every other ready ticket. Between runs: read `bd ready`, triage with veto power — file less than observed, veto duplication and surface-restoration, defer maybe-laters rather than close them (a closed bead permanently blocks the dedup net from refiling it) — group or merge related beads via `bd` parent links or close-as-dup with the surviving bead's scope widened, and route the chosen ticket through an overseen run below. Sequencing is the manager's call; the human hears what was picked and why, and can overrule any of it.
+The manager is the consumer of the machinery backlog: the `evolve,machinery` beads that `stage-reflect.md`'s filing recipe produces, alongside every other ready ticket. Between runs: read `bd ready`, triage with veto power — file less than observed, veto duplication and surface-restoration, defer maybe-laters rather than close them (a closed bead permanently blocks the dedup net from refiling it) — group or merge related beads via `bd` parent links or close-as-dup with the surviving bead's scope widened, and route the chosen ticket through an overseen run below. Sequencing is the manager's call; the human hears what was picked and why, and can overrule any of it.
 
 ## Spawn
 
@@ -73,7 +73,7 @@ Machinery APPLY-NOW is structurally unavailable: the driver's `skill_root` resol
 
 `property_removed: true` → do NOT merge; post a PR comment naming the property and leave the PR for the human. Only a clean review (`property_removed: false`) merges.
 
-**Merge rules** (inherited from the retired merge stage):
+**Merge rules:**
 
 - Verify branch push state first: an uncommitted change to a tracked file, an unpushed commit, or a remote branch already deleted means do not merge — resolve it or hand the PR to the human. Untracked scratch never counts.
 - A `DIRTY` PR is a genuine code conflict; leave it for the human. A CLOSED-but-not-merged PR is never auto-handled.

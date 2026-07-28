@@ -43,7 +43,6 @@ import recall_usage
 from _jsonl import iter_jsonl
 from _timeutil import ts_token
 
-# ticket-branch prefix, inlined from the retired drain cluster's shared lib
 _BRANCH_PREFIX = "feat/"
 
 DEFAULT_TYPES = ("DECISION", "FACT")

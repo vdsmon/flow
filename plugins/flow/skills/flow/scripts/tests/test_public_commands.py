@@ -225,7 +225,7 @@ def test_removed_root_command_is_rejected_instead_of_treated_as_target() -> None
         route_tokens(["FT-1", "resume", "--together"], registry, (r".*",))
 
 
-def test_retired_maintain_namespace_fails_normally_without_aliases() -> None:
+def test_maintain_tokens_fail_normally_without_aliases() -> None:
     registry = load_registry(REGISTRY)
     for tokens in (
         ["maintain"],

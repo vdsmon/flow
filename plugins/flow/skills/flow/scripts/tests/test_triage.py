@@ -325,10 +325,10 @@ def test_list_surfaces_blocked_with_stem_not_bare_blocked(tmp_path: Path) -> Non
     assert "flow-dag" not in keys  # bare dependency hold not surfaced
 
 
-# ─── list: --ready opt-in + queue tagging ─────────────────────────────────────
+# ─── list: --ready opt-in ─────────────────────────────────────────────────────
 
 
-def test_list_ready_adds_ready_rows_partitioned_by_queue(tmp_path: Path) -> None:
+def test_list_ready_adds_ready_rows(tmp_path: Path) -> None:
     _seed_workspace(tmp_path, backend="beads")
     ready_json = json.dumps(
         [
@@ -347,9 +347,6 @@ def test_list_ready_adds_ready_rows_partitioned_by_queue(tmp_path: Path) -> None
     assert set(rows) == {"flow-ev", "flow-dj", "flow-pr"}
     assert all(r["status"] == "ready" for r in payload)
     assert all(r["open_question"] == "" for r in payload)
-    assert rows["flow-ev"]["queue"] == "evolve"
-    assert rows["flow-dj"]["queue"] == "day-job"
-    assert rows["flow-pr"]["queue"] == "day-job"
     assert ["bd", "ready", "--json"] in [c[0] for c in runner.calls]
     assert not any("show" in c[0] for c in runner.calls)  # ready rows get no per-bead show
 
@@ -362,7 +359,7 @@ def test_list_default_makes_no_ready_call(tmp_path: Path) -> None:
     assert not any("ready" in c[0] for c in runner.calls)
 
 
-def test_queue_field_on_deferred_and_blocked_rows(tmp_path: Path) -> None:
+def test_deferred_and_blocked_rows_carry_status(tmp_path: Path) -> None:
     _seed_workspace(tmp_path, backend="beads")
     deferred_json = json.dumps([{"id": "flow-d", "title": "Deferred evolve", "labels": ["evolve"]}])
     blocked_json = json.dumps([{"id": "flow-hb", "title": "Hot block"}])
@@ -390,8 +387,8 @@ def test_queue_field_on_deferred_and_blocked_rows(tmp_path: Path) -> None:
     code, out, _ = _run(["--workspace-root", str(tmp_path), "--json"], runner)
     assert code == 0
     payload = json.loads(out)
-    queues = {row["key"]: row["queue"] for row in payload}
-    assert queues == {"flow-d": "evolve", "flow-hb": "day-job"}
+    statuses = {row["key"]: row["status"] for row in payload}
+    assert statuses == {"flow-d": "deferred", "flow-hb": "blocked"}
 
 
 def test_list_ready_wrapper_shape(tmp_path: Path) -> None:
@@ -406,19 +403,13 @@ def test_list_ready_wrapper_shape(tmp_path: Path) -> None:
     assert len(payload) == 1
     assert payload[0]["key"] == "flow-r"
     assert payload[0]["status"] == "ready"
-    assert payload[0]["queue"] == "evolve"
 
 
-def test_render_table_has_queue_column() -> None:
-    queueless = [{"key": "flow-a", "status": "deferred", "title": "T", "open_question": "q"}]
-    table = triage.render_table(queueless)
+def test_render_table_column_order() -> None:
+    rows = [{"key": "flow-a", "status": "deferred", "title": "T", "open_question": "q"}]
+    table = triage.render_table(rows)
     header = table.splitlines()[0]
-    assert "QUEUE" in header
-    assert header.index("STATUS") < header.index("QUEUE") < header.index("TITLE")
-    tagged = [
-        {"key": "flow-b", "status": "ready", "queue": "day-job", "title": "T", "open_question": ""}
-    ]
-    assert "day-job" in triage.render_table(tagged)
+    assert header.index("KEY") < header.index("STATUS") < header.index("TITLE")
 
 
 # ─── decided probe ───────────────────────────────────────────────────────────
