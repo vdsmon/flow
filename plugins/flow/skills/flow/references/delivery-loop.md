@@ -95,6 +95,11 @@ routing around the guard or diagnosing it; the driver's takeover below is cheape
 either. Briefed agents recognize the refusal and stop, where unbriefed ones each spend
 turns rediscovering it and tend to reinvent a worse workaround than the recorded one.
 
+The field block is a minimum, not a closed set. When an earlier `friction` call in
+this run answered with related knowledge (below), carry what the run leaned on into
+this prompt. The stage that hit the snag has already closed, so the entry reaches a
+reader only through the prompt of a stage that has not started yet.
+
 `Artifact path` always carries the descriptor's real `output_path`, never a
 placeholder. A stage reference may assign the WRITE of that file to the driver rather
 than to the agent, which changes who writes it, not what the field says: this section's
@@ -176,6 +181,16 @@ Log friction before working around drift, lease loss, reconciliation, missing to
 blockers, failed stages, retries, and state rollback. The `--type` names the snag the
 workaround answers, from the closed set `flow_friction.py` accepts; there is no
 workaround type. Friction logging is best-effort and cannot fail the run.
+
+The command answers. After the appended entry it prints the live knowledge entries
+whose text describes the same snag, above an absolute similarity floor, and prints
+nothing at all when the corpus holds none. Read what it prints before improvising a
+workaround. The corpus is otherwise queried once per run, at planning, against the
+ticket intent, so a snag that first appears mid-run has never been looked up. Silence
+is the common case and means the corpus has no answer, not that nothing was asked.
+Silence on stdout is not silence on stderr: a near-miss line naming the best entry that
+fell just under the floor is a diagnostic for recalibrating it, not an answer to read.
+The durable record is unchanged and no failure of the lookup can change the exit code.
 
 ## Post-implementation ownership reconcile
 

@@ -1209,3 +1209,220 @@ def test_digest_with_empty_label_rejected(tmp_path: Path) -> None:
     with pytest.raises(SystemExit) as exc:
         recall.cli_main(["--label", "", "--digest", "--workspace-root", str(tmp_path)])
     assert exc.value.code == 2
+
+
+# ─── similar_entries: the friction-keyed recall seam ─────────────────────────
+
+# The stub embedder bins each word by sum(ord(word)) % 4, so two texts whose words all land in one
+# bin are collinear (cosine 1.0) and mixing in another bin drops the cosine by a computable amount.
+# `memory_embed._entry_text` prefixes the entry type, and "LEARNED:" is itself a bin-1 word, so a
+# bin-1 body stays wholly in bin 1.
+_BIN1 = "isolated atomic embed"
+_BIN3 = "fsync worktree write"
+
+
+def _counting_embedder_cmd(tmp_path: Path) -> tuple[str, Path]:
+    """`_stub_embedder_cmd` plus a per-invocation counter file.
+
+    A silent path that still shells the embedder is a real defect (a wasted subprocess, and up to a
+    two-minute cold start), and a `[]` return alone cannot tell the two apart.
+    """
+    import sys as _sys
+
+    calls = tmp_path / "embedder-calls"
+    stub = tmp_path / "counting_embedder.py"
+    stub.write_text(
+        "import sys, json\n"
+        f"open({str(calls)!r}, 'a').write('x')\n"
+        "texts=[l.rstrip(chr(10)) for l in sys.stdin.read().splitlines()]\n"
+        "def vec(t):\n"
+        "    v=[0.0,0.0,0.0,0.0]\n"
+        "    for w in t.split():\n"
+        "        v[sum(map(ord,w))%4]+=1.0\n"
+        "    return v\n"
+        "sys.stdout.write(json.dumps([vec(t) for t in texts]))\n",
+        encoding="utf-8",
+    )
+    return f"{_sys.executable} {stub}", calls
+
+
+def _embed_calls(calls: Path) -> int:
+    return len(calls.read_text(encoding="utf-8")) if calls.exists() else 0
+
+
+def _reseed_semantic_config(root: Path, *, embedder: str, enabled: bool) -> None:
+    """Rewrite `[memory.semantic]`, preserving `model` and `embedder`.
+
+    Dropping `model` would fall the lookup back to `_DEFAULT_MODEL` while a built index header still
+    says "stub-model", so a test that flips only `enabled` would exit through the model-mismatch
+    branch and stay green with the `enabled` gate deleted.
+    """
+    make_workspace(
+        root,
+        tracker("jira"),
+        memory(),
+        {
+            "memory.semantic": {
+                "enabled": enabled,
+                "model": "stub-model",
+                "threshold": 0.0,
+                "embedder": embedder,
+            }
+        },
+    )
+
+
+def _seed_similar_workspace(
+    tmp_path: Path, entries: list[dict], *, embedder: str, model: str = "stub-model"
+) -> None:
+    """Semantic workspace + corpus + a sidecar index built under `model`."""
+    import memory_embed
+
+    _seed_semantic_workspace(tmp_path, embedder=embedder, threshold=0.0)
+    _write_entries(tmp_path, "demo", entries)
+    memory_embed.reindex(tmp_path, "demo", model=model, embedder=embedder)
+
+
+def test_similar_entries_returns_hit_above_floor(tmp_path: Path) -> None:
+    embedder = _stub_embedder_cmd(tmp_path)
+    _seed_similar_workspace(tmp_path, [_make_entry("a" * 16, _BIN1)], embedder=embedder)
+    hits = recall.similar_entries(tmp_path, _BIN1, top_n=3, threshold=0.82)
+    assert [h["id"] for h in hits] == ["a" * 16]
+    assert hits[0]["score"] == 1.0
+    assert hits[0]["body"] == _BIN1
+
+
+def test_similar_entries_silent_below_floor(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # "LEARNED: fsync worktree write" -> [0,1,0,3] against a [0,3,0,0] query: 0.3162,
+    # under the near-miss floor too, so nothing is returned and nothing is reported.
+    embedder = _stub_embedder_cmd(tmp_path)
+    _seed_similar_workspace(tmp_path, [_make_entry("a" * 16, _BIN3)], embedder=embedder)
+    assert recall.similar_entries(tmp_path, _BIN1, top_n=3, threshold=0.82) == []
+    assert "near-miss" not in capsys.readouterr().err
+
+
+def test_similar_entries_reports_near_miss_on_stderr(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # "LEARNED: isolated fsync worktree" -> [0,2,0,2] against [0,3,0,0]: 0.7071, inside
+    # [_NEAR_MISS_FLOOR, 0.82), the band the floor silences and the line keeps visible.
+    embedder = _stub_embedder_cmd(tmp_path)
+    _seed_similar_workspace(
+        tmp_path, [_make_entry("a" * 16, "isolated fsync worktree")], embedder=embedder
+    )
+    assert recall.similar_entries(tmp_path, _BIN1, top_n=3, threshold=0.82) == []
+    err = capsys.readouterr().err
+    assert "near-miss" in err
+    assert "a" * 16 in err
+
+
+def test_similar_entries_silent_when_index_absent(tmp_path: Path) -> None:
+    embedder, calls = _counting_embedder_cmd(tmp_path)
+    _seed_semantic_workspace(tmp_path, embedder=embedder, threshold=0.0)
+    _write_entries(tmp_path, "demo", [_make_entry("a" * 16, _BIN1)])
+    # no reindex: nothing to compare against, so the embedder must never be shelled.
+    assert recall.similar_entries(tmp_path, _BIN1, top_n=3, threshold=0.82) == []
+    assert _embed_calls(calls) == 0
+
+
+def test_similar_entries_silent_on_model_mismatch(tmp_path: Path) -> None:
+    embedder = _stub_embedder_cmd(tmp_path)
+    _seed_similar_workspace(
+        tmp_path, [_make_entry("a" * 16, _BIN1)], embedder=embedder, model="other-model"
+    )
+    assert recall.similar_entries(tmp_path, _BIN1, top_n=3, threshold=0.82) == []
+
+
+def test_similar_entries_silent_when_embedder_unavailable(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    embedder = _stub_embedder_cmd(tmp_path)
+    _seed_similar_workspace(tmp_path, [_make_entry("a" * 16, _BIN1)], embedder=embedder)
+    # index built and its model matched; only the embedder command is broken.
+    _reseed_semantic_config(tmp_path, embedder=str(tmp_path / "no-such-embedder"), enabled=True)
+    assert recall.similar_entries(tmp_path, _BIN1, top_n=3, threshold=0.82) == []
+    assert "embedder unavailable" in capsys.readouterr().err
+
+
+def test_similar_entries_silent_when_semantic_disabled(tmp_path: Path) -> None:
+    """A disabled workspace answers [] without shelling the embedder, even with a matching index
+    already on disk. Building the index FIRST is what makes this test able to fail: without it the
+    [] would come from the index-absent branch."""
+    embedder, calls = _counting_embedder_cmd(tmp_path)
+    _seed_similar_workspace(tmp_path, [_make_entry("a" * 16, _BIN1)], embedder=embedder)
+    _reseed_semantic_config(tmp_path, embedder=embedder, enabled=False)
+    before = _embed_calls(calls)
+    assert recall.similar_entries(tmp_path, _BIN1, top_n=3, threshold=0.82) == []
+    assert _embed_calls(calls) == before
+
+
+def test_similar_entries_excludes_same_ticket(tmp_path: Path) -> None:
+    embedder = _stub_embedder_cmd(tmp_path)
+    _seed_similar_workspace(
+        tmp_path,
+        [
+            _make_entry("a" * 16, _BIN1, ticket="FT-9"),
+            _make_entry("b" * 16, _BIN1, ticket="FT-2"),
+        ],
+        embedder=embedder,
+    )
+    hits = recall.similar_entries(tmp_path, _BIN1, top_n=3, threshold=0.82, exclude_ticket="FT-9")
+    assert [h["id"] for h in hits] == ["b" * 16]
+
+
+def test_similar_entries_skips_superseded_before_the_next_reindex(tmp_path: Path) -> None:
+    """A retracted entry must not come back as advice while its vector is still in the sidecar.
+
+    `memory_embed.reindex` is itself supersede-filtered, so a freshly built index omits a dead id
+    and the corpus-side filter can look redundant. The exposure is the window between a supersession
+    landing and the next reindex, which is real because supersessions land at reflect and reindexing
+    is a separate command: the sidecar still holds the retracted vector, and without the filter the
+    echo hands back a withdrawn entry at cosine 1.0 under a header saying the corpus already
+    describes the reader's snag.
+    """
+    embedder = _stub_embedder_cmd(tmp_path)
+    _seed_similar_workspace(tmp_path, [_make_entry("a" * 16, _BIN1)], embedder=embedder)
+    # The supersession lands in the corpus; the sidecar is deliberately NOT rebuilt, so "a" keeps
+    # the only indexed vector and "b" has none.
+    _write_entries(
+        tmp_path,
+        "demo",
+        [
+            _make_entry("a" * 16, _BIN1),
+            {**_make_entry("b" * 16, _BIN1), "supersedes": "a" * 16},
+        ],
+    )
+    assert recall.similar_entries(tmp_path, _BIN1, top_n=3, threshold=0.82) == []
+
+
+def test_similar_entries_override_shadows_the_corpus(tmp_path: Path) -> None:
+    """`entries` replaces the corpus load rather than adding to it.
+
+    The override diverges from disk on purpose, and the shadowed corpus entry scores HIGHER (1.0
+    against 0.9701), so ignoring `entries` would rank it first rather than merely append it.
+    """
+    embedder = _stub_embedder_cmd(tmp_path)
+    on_disk = _make_entry("d" * 16, _BIN1)
+    override = _make_entry("o" * 16, f"{_BIN1} fsync")
+    _seed_similar_workspace(tmp_path, [on_disk, override], embedder=embedder)
+    hits = recall.similar_entries(tmp_path, _BIN1, top_n=3, threshold=0.80, entries=[override])
+    assert [h["id"] for h in hits] == ["o" * 16]
+
+
+def test_similar_entries_orders_descending_and_caps_at_top_n(tmp_path: Path) -> None:
+    embedder = _stub_embedder_cmd(tmp_path)
+    _seed_similar_workspace(
+        tmp_path,
+        [
+            _make_entry("a" * 16, f"{_BIN1} fsync worktree"),  # [0,4,0,2] -> 0.8944
+            _make_entry("b" * 16, _BIN1),  # [0,4,0,0] -> 1.0
+            _make_entry("c" * 16, f"{_BIN1} fsync"),  # [0,4,0,1] -> 0.9701
+        ],
+        embedder=embedder,
+    )
+    # all three clear 0.80, and the corpus order is deliberately not the score order.
+    hits = recall.similar_entries(tmp_path, _BIN1, top_n=2, threshold=0.80)
+    assert [h["id"] for h in hits] == ["b" * 16, "c" * 16]
+    assert hits[0]["score"] > hits[1]["score"]
