@@ -706,47 +706,24 @@ def test_live_post_init_prose_has_no_bare_script_invocation() -> None:
     assert escaped == []
 
 
-def _evolution_drain_section() -> str:
-    text = (seam_check.SKILL_ROOT / "references" / "command-maintain.md").read_text(
+def test_live_worktrees_clean_section_invokes_janitor_facade() -> None:
+    """`FLOW workspace worktrees clean` must call the janitor seam, resolving to its
+    actual script, with zero facade-context errors."""
+    text = (seam_check.SKILL_ROOT / "references" / "command-workspace.md").read_text(
         encoding="utf-8"
     )
-    start = text.index("## `FLOW maintain evolution drain")
-    end = text.index("\n## `FLOW maintain worktrees clean")
-    return text[start:end]
-
-
-def test_live_evolution_drain_section_invokes_both_evolution_facades() -> None:
-    """`FLOW maintain evolution drain` must call both the reap and the decide seam,
-    each resolving to its actual script, with zero facade-context errors."""
-    section = _evolution_drain_section()
-    invocations = seam_check.find_facade_invocations("command-maintain.md", section)
+    start = text.index("## `FLOW workspace worktrees clean")
+    end = text.index("\n## Harness parity")
+    section = text[start:end]
+    invocations = seam_check.find_facade_invocations("command-workspace.md", section)
     by_command = {inv.facade_command: inv for inv in invocations}
 
-    assert "evolve-reap" in by_command
-    assert "evolve-drain" in by_command
-    assert by_command["evolve-reap"].script == "evolve_reap.py"
-    assert by_command["evolve-drain"].script == "evolve_drain.py"
+    assert "worktree-janitor" in by_command
+    assert by_command["worktree-janitor"].script == "worktree_janitor.py"
 
     for inv in invocations:
         assert [p for p in seam_check.validate(inv) if p.level == "ERROR"] == []
     assert seam_check.facade_context_problems(invocations) == []
-
-
-def test_live_evolution_drain_section_pins_dry_run_boundary_and_would_file_report() -> None:
-    """Dry-run must stop after reporting classifications with NO tracker write: `--dry-run` gets
-    forwarded to `evolve-reap`, which reports the would-file main-red P0 instead of filing it. The
-    old documented exception wording must be gone."""
-    flat = " ".join(_evolution_drain_section().split())
-
-    assert "would-merge" in flat
-    assert "needs-planning" in flat
-    assert "would-recover" in flat
-    assert "main-ci-red" in flat
-    assert "would file P0" in flat
-    assert "evolve-reap --workspace-root . [--include-proposals] [--dry-run]" in flat
-    assert "no merge, tracker" in flat.lower()
-    assert "fires on the dry-run path too" not in flat
-    assert "one exception" not in flat.lower()
 
 
 def test_live_init_carries_an_absolute_answers_path_across_calls() -> None:
@@ -910,7 +887,7 @@ def test_live_registry_yields_eleven_stage_docs() -> None:
     basenames: set[str] = set()
     for stage in data.get("stage", []):
         basenames |= set(seam_check._STAGE_DOC_RE.findall(stage.get("reference_doc", "")))
-    assert len(basenames) == 11
+    assert len(basenames) == 10
     assert "stage-e2e.md" in basenames
     assert "stage-review_brief.md" in basenames
 

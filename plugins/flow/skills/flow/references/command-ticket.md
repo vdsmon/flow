@@ -160,12 +160,12 @@ branch through the forge seam. An open PR, or no PR, exits 3 with zero writes. A
 or corrupt run lease, or a worktree tip that does not match the merged PR head,
 refuses with exit 4 and preserves everything.
 
-On merged proof, the sequence mirrors the evolve-drain reap, every step idempotent
+On merged proof, the sequence is the canonical close-out order, every step idempotent
 and best-effort once the probe passes:
 
 1. transition the ticket to its done state through the tracker seam (skipped when
    already terminal);
-2. freeze the ship event (`observe-at-close`) before the run state it reads is
+2. freeze the ship event (`observe_at_close`) before the run state it reads is
    destroyed;
 3. delete the remote branch through the forge seam (a forge that auto-deleted it at
    merge reports failed_or_absent, which is fine);
@@ -178,3 +178,15 @@ finalized ticket exits 0 as a no-op. Exit 3 makes the merge watch host-owned and
 daemon-free — the human (or a host scheduler the human configures) re-invokes
 finalize until it exits 0. Flow itself never schedules, backgrounds, or polls; the
 single-shot command is the whole contract.
+
+## Ticket queues (read-only)
+
+The deferred and decided-mode blocked queues (with each ticket's defer reason) are a
+read-only lens; `--ready` folds the ready queue in:
+
+```bash
+FLOW_HARNESS="<harness>" "<facade>" triage list --workspace-root . [--ready] [--json]
+```
+
+The manager reads this lens when triaging the backlog (`oversee.md` §Pickup); the
+listing itself launches, transitions, and files nothing.

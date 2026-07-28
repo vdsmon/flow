@@ -4,7 +4,6 @@ from cockpit import (
     CockpitInput,
     DeferredItem,
     FeedbackItem,
-    MaintenanceNotice,
     PendingMutation,
     build_cockpit,
     render_cockpit,
@@ -81,23 +80,3 @@ def test_empty_cockpit_has_one_useful_next_command() -> None:
 
     assert snapshot.next_commands == ("FLOW help",)
     assert "No active Flow work" in render_cockpit(snapshot)
-
-
-def test_maintainer_preflight_issues_are_visible_and_actionable() -> None:
-    snapshot = build_cockpit(
-        CockpitInput(
-            maintenance=(
-                MaintenanceNotice(
-                    "nightly schedule",
-                    "last fire failed",
-                    "FLOW maintain evolution audit",
-                ),
-            )
-        )
-    )
-
-    assert snapshot.maintenance[0].label == "nightly schedule"
-    assert snapshot.next_commands == ("FLOW maintain evolution audit",)
-    rendered = render_cockpit(snapshot)
-    assert "Maintainer health" in rendered
-    assert "last fire failed" in rendered

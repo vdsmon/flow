@@ -10,10 +10,10 @@ early miss inflates the count even after a later fix held); this module re-grade
 each class against `max(fix.ts)` instead, so only a fix that genuinely did not
 hold escalates.
 
-Labels are `["recurrent"]` ONLY, never `evolve`: drain candidates come from
-`bd ready -l evolve`, so a bead lacking that label is never auto-gated, keeping
-this propose-only unconditionally. `bd list -l recurrent` surfaces them to the
-maintainer.
+Labels are `["recurrent"]` ONLY, never `evolve`: the manager's pickup triages
+the `evolve`-labelled machinery beads, so a bead lacking that label is never
+auto-gated, keeping this propose-only unconditionally. `bd list -l recurrent`
+surfaces them to the human.
 
 Dedup key is the bare anchor (`recurrence-escalation-<anchor>`, no `::`
 separator), so only `flow_beads_create`'s exact `evid:` dedup net fires, never
@@ -48,7 +48,7 @@ DEFAULT_EXEMPT = frozenset({"planned_files"})
 
 
 def escalation_k(workspace_root: Path) -> int:
-    """`[evolve] recurrence_escalation_k` from workspace.toml (int); default 3.
+    """`[reflect] recurrence_escalation_k` from workspace.toml (int); default 3.
 
     Only an explicit int (excluding bool, TOML's `true`/`false`) overrides the
     default; an absent key/section/file, a read error, or any other type reads
@@ -58,7 +58,7 @@ def escalation_k(workspace_root: Path) -> int:
         config = load_workspace_toml(workspace_root)
     except WorkspaceConfigError:
         return DEFAULT_K
-    section = config.get("evolve")
+    section = config.get("reflect")
     if not isinstance(section, dict):
         return DEFAULT_K
     value = section.get("recurrence_escalation_k")
@@ -68,7 +68,7 @@ def escalation_k(workspace_root: Path) -> int:
 
 
 def exempt_anchors(workspace_root: Path) -> set[str]:
-    """`[evolve] recurrence_exempt_anchors` from workspace.toml (list[str]).
+    """`[reflect] recurrence_exempt_anchors` from workspace.toml (list[str]).
 
     Default `{"planned_files"}`. Only an explicit list overrides it, and it is
     used verbatim (an explicit `[]` means "no exemptions", not "use the
@@ -79,7 +79,7 @@ def exempt_anchors(workspace_root: Path) -> set[str]:
         config = load_workspace_toml(workspace_root)
     except WorkspaceConfigError:
         return set(DEFAULT_EXEMPT)
-    section = config.get("evolve")
+    section = config.get("reflect")
     if not isinstance(section, dict):
         return set(DEFAULT_EXEMPT)
     value = section.get("recurrence_exempt_anchors")
@@ -141,7 +141,7 @@ def _describe(candidate: dict[str, Any]) -> str:
         f"Recurrence tickets: {', '.join(tickets) or 'n/a'}.",
         "",
         "Propose-only: informational evidence for the human, never auto-gated"
-        " (this bead carries no `evolve` label, so the drain loop never picks it up).",
+        " (this bead carries no `evolve` label, so nothing routes it without a triage).",
     ]
     return "\n".join(lines)
 

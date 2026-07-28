@@ -33,19 +33,11 @@ class PendingMutation:
 
 
 @dataclass(frozen=True)
-class MaintenanceNotice:
-    label: str
-    detail: str
-    next_command: str
-
-
-@dataclass(frozen=True)
 class CockpitInput:
     runs: tuple[Mapping[str, object], ...] = ()
     deferred: tuple[DeferredItem, ...] = ()
     pending: tuple[PendingMutation, ...] = ()
     feedback: tuple[FeedbackItem, ...] = ()
-    maintenance: tuple[MaintenanceNotice, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -62,7 +54,6 @@ class CockpitSnapshot:
     active: tuple[CockpitItem, ...]
     pending_mutations: int
     pending_targets: tuple[str, ...]
-    maintenance: tuple[MaintenanceNotice, ...]
     next_commands: tuple[str, ...]
 
 
@@ -121,7 +112,6 @@ def build_cockpit(evidence: CockpitInput) -> CockpitSnapshot:
     commands = [item.next_command for item in attention]
     if evidence.pending:
         commands.append("FLOW workspace sync")
-    commands.extend(notice.next_command for notice in evidence.maintenance)
     commands.extend(item.next_command for item in active)
     if not commands:
         commands.append("FLOW help")
@@ -131,7 +121,6 @@ def build_cockpit(evidence: CockpitInput) -> CockpitSnapshot:
         active=tuple(active),
         pending_mutations=len(evidence.pending),
         pending_targets=pending_targets,
-        maintenance=tuple(evidence.maintenance),
         next_commands=_unique(commands),
     )
 
@@ -158,9 +147,6 @@ def render_cockpit(snapshot: CockpitSnapshot) -> str:
                 f"- {snapshot.pending_mutations} queued mutation(s) across {targets}",
             ]
         )
-    if snapshot.maintenance:
-        lines.append("Maintainer health")
-        lines.extend(f"- {notice.label} — {notice.detail}" for notice in snapshot.maintenance)
     if not lines:
         lines.append("No active Flow work.")
     lines.append("Next")
@@ -174,7 +160,6 @@ __all__ = [
     "CockpitSnapshot",
     "DeferredItem",
     "FeedbackItem",
-    "MaintenanceNotice",
     "PendingMutation",
     "build_cockpit",
     "render_cockpit",

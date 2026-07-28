@@ -5,9 +5,8 @@ Read-only. Lists every `deferred` bead (whole queue, unscoped by assignee) PLUS
 each with the last "could not self-approve" defer comment inline, so a human can
 answer it and reopen via the tracker_cli seams (the reopen mutation lives in
 command-target.md, not here). Deferred is a beads-native concept; non-beads
-backends short-circuit. Every row is tagged with its queue (`evolve` when the
-bead carries the evolve label, else `day-job`); `--ready` opt-in adds the ready
-queues via one extra `bd ready` call.
+backends short-circuit. `--ready` opt-in adds the ready
+queue via one extra `bd ready` call.
 
 `triage.py decided` is a separate probe used by the `--auto` path: it reads a
 bead's recorded triage decision + classifies whether the planned change is hot,
@@ -41,10 +40,9 @@ _DEFER_STEM = "flow --auto could not self-approve"
 # never matches.
 _DECISION_RE = re.compile(r"^(?:MAINTAINER\s+)?(?:TRIAGE-)?DECISION\b[^:\n]*:")
 
-# Guard set for hot-change classification (self-contained; not shared with
-# command-maintain.md prose). A change touching any of these basenames is hot: it
-# must not blind-ship from a decided-mode --auto run, even if the bead carries
-# no `hot` label.
+# Guard set for hot-change classification. A change touching any of these
+# basenames is hot: it must not blind-ship from a decided-mode --auto run, even
+# if the bead carries no `hot` label.
 _GUARD_FILES = frozenset(
     {
         "lease.py",
@@ -74,7 +72,7 @@ def is_hot_change(files: list[str]) -> bool:
 
 
 def adjudicate_hot(workspace_root: Path) -> bool:
-    """`[evolve] adjudicate_hot` from workspace.toml (bool); default False.
+    """`[triage] adjudicate_hot` from workspace.toml (bool); default False.
 
     Default OFF: the hot hard-floor holds for delivery workspaces, so a hot change
     never self-proceeds unattended. Opt IN with an explicit
@@ -86,14 +84,14 @@ def adjudicate_hot(workspace_root: Path) -> bool:
     Lifting the floor removes BOTH the delivery-plan `proceed`->`block`
     downgrade and the flow_worktree bootstrap refusal. The remaining gates still
     hold: the merge-time guard-property review plus CI back-stop every hot
-    landing. No `[evolve]` key is validated by validate_workspace.py, so a
+    landing. No `[triage]` key is validated by validate_workspace.py, so a
     misspelled one reads as absent, i.e. as the conservative default.
     """
     try:
         config = load_workspace_toml(workspace_root)
     except WorkspaceConfigError:
         return False
-    section = config.get("evolve")
+    section = config.get("triage")
     if not isinstance(section, dict):
         return False
     value = section.get("adjudicate_hot")
@@ -221,13 +219,6 @@ def _has_defer_stem(comments: list[Any]) -> bool:
     return any(_DEFER_STEM in _comment_text(c) for c in comments)
 
 
-def _queue_of(labels: list[Any]) -> str:
-    """Queue membership: `evolve` when the evolve label is present, else
-    `day-job` (the epic's literal non-evolve predicate; stricter candidate
-    filtering belongs to the drain's queue-select, not this read-only list)."""
-    return "evolve" if "evolve" in labels else "day-job"
-
-
 def collect(
     config: dict[str, Any],
     *,
@@ -245,8 +236,7 @@ def collect(
 
     deferred = _items(adapter._run_json(["list", "--status", "deferred"]))
     blocked = _items(adapter._run_json(["list", "--status", "blocked"]))
-    # ready surfacing is opt-in: one extra `bd ready` call covers both queues
-    # (labels are in the payload, partitioned client-side). Issued here, after
+    # ready surfacing is opt-in: one extra `bd ready` call. Issued here, after
     # the two lists and before any per-bead show, so the injectable runner's
     # call sequence stays deterministic.
     ready = _items(adapter._run_json(["ready"])) if include_ready else []
@@ -262,7 +252,6 @@ def collect(
                 "key": key,
                 "title": str(item.get("title", "")),
                 "status": "deferred",
-                "queue": _queue_of(item.get("labels") or []),
                 "open_question": _open_question(ticket.get("comments") or []),
             }
         )
@@ -283,7 +272,6 @@ def collect(
                 "key": key,
                 "title": str(item.get("title", "")),
                 "status": "blocked",
-                "queue": _queue_of(item.get("labels") or []),
                 "open_question": _open_question(comments),
             }
         )
@@ -296,7 +284,6 @@ def collect(
                 "key": str(item.get("id", "")),
                 "title": str(item.get("title", "")),
                 "status": "ready",
-                "queue": _queue_of(item.get("labels") or []),
                 "open_question": "",
             }
         )
@@ -312,7 +299,7 @@ def _truncate(text: str, width: int = 80) -> str:
 def render_table(rows: list[dict[str, Any]]) -> str:
     if not rows:
         return "(no deferred tickets)"
-    headers = ["KEY", "STATUS", "QUEUE", "TITLE", "OPEN QUESTION"]
+    headers = ["KEY", "STATUS", "TITLE", "OPEN QUESTION"]
     table = [headers]
     for r in rows:
         status = str(r.get("status", ""))
@@ -325,7 +312,6 @@ def render_table(rows: list[dict[str, Any]]) -> str:
             [
                 str(r["key"]),
                 status,
-                str(r.get("queue", "")),
                 _truncate(str(r["title"]), 40),
                 _truncate(str(r["open_question"])),
             ]
@@ -422,7 +408,7 @@ def cli_main(argv: list[str], runner: Any = None) -> int:
     p_list.add_argument(
         "--ready",
         action="store_true",
-        help="also list ready beads, tagged by queue (evolve / day-job)",
+        help="also list ready beads",
     )
 
     p_decided = sub.add_parser("decided", help="probe a bead's recorded triage decision")

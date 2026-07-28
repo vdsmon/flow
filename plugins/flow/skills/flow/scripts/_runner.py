@@ -43,8 +43,7 @@ def kw_default_runner() -> KwRunner:
 
 
 # Contract C: cwd bound into the closure, args-only call. Used by forge adapters
-# (forge_github, forge_bitbucket), the evolve cluster (evolve_reap, evolve_select),
-# and create_pr.
+# (forge_github, forge_bitbucket) and create_pr.
 CwdRunner = Callable[[list[str]], subprocess.CompletedProcess[str]]
 
 

@@ -7,19 +7,12 @@ backend = "beads"
 [tracker.beads]
 prefix = "flow"
 
-# Freeze lifted 2026-07-27: the simplification and reframing passes landed
-# (PR #554/#555/#560/#561), so this repo targets itself for self-evolution again.
 [maintainer]
 self_target = true
 
-[evolve]
-cap = 10
-concurrency = 8
-# Maintainer decision 2026-07-27: a HOT leaf PR auto-merges in this self-target
-# repo when the full gate holds (isolation + CI-green + agent diff review).
-auto_merge_hot = true
-# model tiering for spawned worker runs: fable for the interactive orchestrator, opus for spawned worker runs, sonnet for trivial.
-worker_model = "opus"
+[triage]
+# Self-target preference: a hot change ships on an advisor `proceed` like a
+# non-hot one; the manager's merge-time guard-property review still backstops it.
 adjudicate_hot = true
 
 # Optional native-agent model hints. Unsupported hints inherit the owner session model.
@@ -55,14 +48,12 @@ review_loop = "inline"
 reflect = "inline"
 
 [reflect]
-# Re-armed 2026-07-27: reflect is back in the pipeline and may repair the
-# harness from inside a run (machinery_edit; flock-serialized, snapshot-aware).
+# Reflect may repair the harness from inside a run (machinery_edit;
+# flock-serialized, snapshot-aware).
 machinery = true
 
 [memory]
 namespace = "flow"
-# Completed 2026-07-27: reflect writes the knowledge layer and plan-time recall
-# now reads it back — the loop the re-arm left half-open.
 compounding = true
 
 [memory.semantic]

@@ -17,29 +17,20 @@ durable evidence and render only non-empty sections:
 4. open PRs with actionable review feedback;
 5. the smallest set of useful next `FLOW ...` invocations.
 
-Use run state, leases, fleet records, tracker state, pending mutation files, and forge
+Use run state, leases, tracker state, pending mutation files, and forge
 state as evidence. Host process or agent handles are advisory and must never override
 durable state. The cockpit performs no repairs, tracker writes, launches, or cleanup.
 If workspace discovery fails, show `FLOW workspace setup`; if the workspace is
 healthy and every section is empty, say so plainly.
 
-In the self-target workspace, add schedule and senses diagnostics without writing:
-
-```bash
-FLOW_HARNESS="<harness>" "<facade>" maintainer-preflight --json
-FLOW_HARNESS="<harness>" "<facade>" maintainer-senses --workspace-root . --dry-run --json
-```
-
-Normalize the joined data to an absolute temporary JSON file with `runs`, `deferred`,
-`pending`, `feedback`, and `maintenance` arrays, then use the shared renderer:
+Normalize the joined evidence to an absolute temporary JSON file with `runs`,
+`deferred`, `pending`, and `feedback` arrays, then use the shared renderer:
 
 ```bash
 FLOW_HARNESS="<harness>" "<facade>" cockpit render --evidence "<absolute-evidence-file>"
 ```
 
-Each maintenance item carries `label`, `detail`, and a logical `next_command`. Delete
-the temporary file after rendering. A failed diagnostic is visible as unavailable
-evidence; it never turns a read-only cockpit into a repair or alarm-filing path.
+Delete the temporary file after rendering.
 
 ## Target forms and precedence
 
@@ -53,7 +44,7 @@ Accepted target forms are:
 - `pr:<positive-number>`;
 - a supported forge pull-request URL.
 
-`ticket`, `memory`, `measure`, `workspace`, `maintain`, and `help` are always parsed
+`ticket`, `memory`, `measure`, `workspace`, and `help` are always parsed
 as static roots first. An unrecognized first token is an error, even if the tracker
 might accept arbitrary strings. Resolve a PR through the forge seam, derive the
 ticket from the head branch, and feed that ticket into the ordinary classifier. Never
@@ -201,7 +192,7 @@ temporary file after parsing. The returned closed disposition is `direct`,
 
 ## Help
 
-`FLOW help` renders registry-generated help. `FLOW help ticket|memory|measure|workspace|maintain`
+`FLOW help` renders registry-generated help. `FLOW help ticket|memory|measure|workspace`
 filters to that namespace. Bare or incomplete namespaces are unknown commands; help
 has no implicit aliases. Render it with the loaded registry CLI (a direct-bootstrap
 call, since help must work before any workspace facade exists) and display its

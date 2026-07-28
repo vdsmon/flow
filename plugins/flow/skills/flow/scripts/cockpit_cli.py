@@ -13,7 +13,6 @@ from cockpit import (
     CockpitInput,
     DeferredItem,
     FeedbackItem,
-    MaintenanceNotice,
     PendingMutation,
     build_cockpit,
     render_cockpit,
@@ -45,7 +44,7 @@ def _load_object(raw_path: str) -> dict[str, object]:
         raise EvidenceError(f"cannot read normalized evidence: {exc}") from exc
     if not isinstance(payload, dict) or not all(isinstance(key, str) for key in payload):
         raise EvidenceError("evidence root must be a JSON object")
-    unknown = payload.keys() - {"runs", "deferred", "pending", "feedback", "maintenance"}
+    unknown = payload.keys() - {"runs", "deferred", "pending", "feedback"}
     if unknown:
         raise EvidenceError(f"unknown evidence field: {sorted(unknown)[0]}")
     return {str(key): value for key, value in payload.items()}
@@ -84,11 +83,6 @@ def _validate_scalar_types(evidence: CockpitInput) -> None:
             raise EvidenceError("feedback actionable_count must be an integer")
         if item.actionable_count < 0:
             raise EvidenceError("feedback actionable_count must be non-negative")
-    for item in evidence.maintenance:
-        if not all(
-            isinstance(value, str) for value in (item.label, item.detail, item.next_command)
-        ):
-            raise EvidenceError("maintenance fields must be strings")
 
 
 def _evidence(payload: dict[str, object]) -> CockpitInput:
@@ -102,16 +96,11 @@ def _evidence(payload: dict[str, object]) -> CockpitInput:
     feedback = tuple(
         _construct(FeedbackItem, entry, "feedback") for entry in _entries(payload, "feedback")
     )
-    maintenance = tuple(
-        _construct(MaintenanceNotice, entry, "maintenance")
-        for entry in _entries(payload, "maintenance")
-    )
     evidence = CockpitInput(
         runs=runs,
         deferred=tuple(item for item in deferred if isinstance(item, DeferredItem)),
         pending=tuple(item for item in pending if isinstance(item, PendingMutation)),
         feedback=tuple(item for item in feedback if isinstance(item, FeedbackItem)),
-        maintenance=tuple(item for item in maintenance if isinstance(item, MaintenanceNotice)),
     )
     _validate_scalar_types(evidence)
     return evidence

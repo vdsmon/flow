@@ -351,7 +351,7 @@ def _worktree_path(main_root: Path, branch: str, override: str | None) -> Path:
     is not permission-mediated (no allow rule or headless bypass exists), so an
     unattended run seeded anywhere else blocks forever at the spec->do
     transition. Read sites glob both this base and the legacy
-    `.flow/worktrees/` (`_evolve_common.WORKTREE_BASES`) so pre-relocation
+    `.flow/worktrees/` so pre-relocation
     worktrees stay discoverable until reaped.
     """
     if override:
@@ -505,8 +505,8 @@ def _checkpoint_dirty_worktree(ticket: str, worktree: Path, run: Runner) -> dict
     merged-orphan worktree would misfire as dirty (`.flow/tickets/<key>.md` always differs slightly
     from main's copy), and a dirty one could push a bootstrap-copied `.env` secret to a PUBLIC
     `flow-rescue/*` ref. `flow-rescue/*` is deliberately outside the `feat/`/`feature/`
-    ticket-branch namespace (`is_ticket_branch`, `_evolve_common.FLOW_KEY_RE`, `is_inflight` all
-    miss it), so it can never mark the ticket in-flight or block a fresh relaunch.
+    ticket-branch namespace (`is_ticket_branch` and every in-flight matcher miss it),
+    so it can never mark the ticket in-flight or block a fresh relaunch.
 
     DEVIATION from the literal maintainer decision text: the decision said push to
     `refs/heads/<run-branch>` verbatim. That target is unsafe here: `create_pr.py` pushes the run
@@ -933,7 +933,7 @@ def _enforce_autonomy_floors(
 
     HITL floor (flow-blh2, exit 8 via `_HitlBead`): a bead marked `hitl` (human-in-the-loop,
     resolves only through a live exchange) with no recorded decision defers, never bootstraps
-    unattended. Checked FIRST and NOT lifted by `[evolve] adjudicate_hot` (that flag lifts only the
+    unattended. Checked FIRST and NOT lifted by `[triage] adjudicate_hot` (that flag lifts only the
     hot half): a decision-bound bead needs a person regardless of the maintainer's hot-ship
     preference. A recorded decision means the human already weighed in, so it clears the floor.
 
@@ -941,7 +941,7 @@ def _enforce_autonomy_floors(
     `hot`-labelled bead) with no maintainer decision on file may NOT self-ship. This lives at the
     single shared bootstrap every self-approve path funnels through, so it holds for the clean
     >=90% path too. delivery-plan.md step 5 only carried the floor in the adjudication/decided
-    sub-branches, so a clean re-plan could slip a hot change past it. The `[evolve] adjudicate_hot`
+    sub-branches, so a clean re-plan could slip a hot change past it. The `[triage] adjudicate_hot`
     flag (default off) lifts this floor for the self-target workspace. The floor runs even
     with an EMPTY planned set: the `hot` label is independent evidence of hotness (`triage.decided`
     reads it), so omitting `--planned-files` must not disable the label half of the floor.
@@ -1041,11 +1041,10 @@ def _refuse_epic_bead(*, ticket: str, main_root: Path) -> None:
     """Refuse (exit 7) to bootstrap an epic (a container, not a single-PR unit).
 
     Witnessed (flow-jvxj, parent flow-8by2): an unattended epic target reached this
-    chokepoint on an epic bead. `evolve_select.py` filters `issue_type != "epic"`
-    unconditionally so drain never launches one, but a manual or misrouted
+    chokepoint on an epic bead. A manual or misrouted
     unattended epic delivery had no structural floor, and bootstrapping an epic
-    cram-ships fragments of an unaccepted empire as a single PR (the ouroboros
-    command-maintain.md §epic names). This mirrors the select-side filter at the
+    cram-ships fragments of an unaccepted empire as a single PR. This is the
+    structural floor at the
     bootstrap chokepoint. Tracker-agnostic ("epic"/"Epic") and unconditional
     (attended and unattended): an epic is decomposed before delivery, not
     implemented directly, either way.
@@ -1068,18 +1067,19 @@ def _refuse_epic_bead(*, ticket: str, main_root: Path) -> None:
     if str(ticket_type).strip().lower() == "epic":
         raise _EpicBead(
             f"refusing to bootstrap {ticket}: it is an EPIC (a container, not a "
-            "single-PR unit). An epic is decomposed into child beads via the expand "
-            "recipe (command-maintain.md §E), then each child runs at its own spec gate — "
-            "bootstrapping the epic directly would cram-ship fragments of an "
-            "unaccepted epic as one PR. Expand it, or run a child key instead."
+            "single-PR unit). An epic is decomposed into child beads first "
+            "(`FLOW ticket split`, references/command-ticket.md), then each child runs "
+            "at its own spec gate — bootstrapping the epic directly would cram-ship "
+            "fragments of an unaccepted epic as one PR. Split it, or run a child key "
+            "instead."
         )
 
 
 def _lane_for_bead(*, ticket: str, main_root: Path) -> str:
     """Resolve the verification lane (express|light|full) from the bead's tier labels.
 
-    Same labels evolve_select reads for model selection (tier:trivial -> sonnet) now
-    also pick how much verification the run does (tier_policy.lane_for). Fail-open to
+    The bead's tier labels
+    pick how much verification the run does (tier_policy.lane_for). Fail-open to
     "full" matches the terminal/epic reads: a flaky tracker never silently downshifts a
     run's gating. A non-beads tracker (no tier labels) resolves to "full" too.
     """
@@ -1190,9 +1190,9 @@ def _stamp_run_frontmatter(
 def _refuse_offcontract_branch(*, ticket: str, branch: str) -> None:
     """Keep every downstream matcher on the shared `feat/<key>-<slug>` branch contract.
 
-    The matchers include `is_ticket_branch`, the pool prefixes in `_evolve_common`, in-flight refs,
+    The matchers include `is_ticket_branch`, the worktree-pool prefixes, in-flight refs,
     reap eligibility, janitor PR joins, and `branch_ticket` parsing. A run that minted
-    `fix/<key>-...` produced a worktree invisible to reap and drain (witnessed 2026-07-09). Refuse
+    `fix/<key>-...` produced a worktree invisible to reap (witnessed 2026-07-09). Refuse
     the deviation at the one mint site instead of widening every parser.
     """
     if not branch.startswith(f"feat/{ticket}"):

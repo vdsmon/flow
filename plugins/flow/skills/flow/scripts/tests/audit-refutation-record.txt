@@ -436,3 +436,41 @@ SCANS NOW EXHAUSTED (do not re-walk): the value-trace digest scan itself, in all
 COVERAGE GAPS FOUND (deletion-independent, follow-up ticket material): neutralizing validate_workspace._validate_code_review_block entirely is caught by exactly ONE test (test_code_review_block_hard_fails_naming_replacement) — the removal-hard-fail invariant rests on a single node. metric.py's plan/create_pr `isinstance(..., dict)` guards admit an equivalent mutant (`or {}` kills nothing), so the guard's shape, as opposed to its presence, is unpinned. triage's 'default mode makes no bd ready call' invariant is observable only through _FakeRunner queue exhaustion, so it would silently stop being tested if the fake gained a default response.
 
 NO REPO STATE MODIFIED. Every mutation, the deletion and the restore ran in the scratch copy at /var/folders/xh/cmw393yj6tqfjyp4fq74bmww0000gq/T/tmp.bl3vzesQJL/flow (left pristine and re-verified at baseline: 9 failed, 3142 passed). In the worktree, `git status --porcelain` is empty for tracked AND untracked paths and HEAD is still 469a12e. Harness notes for anyone re-running: mise refuses to execute with cwd inside the scratch copy ('Config files ... are not trusted'), so run from the real scripts dir with absolute scratch test paths; `--deselect` with an absolute scratch nodeid silently no-ops on macOS because pytest resolves /var -> /private/var, so post-deletion checks must delete the function (my /tmp/r10lens/delfn.py) rather than deselect it; and tracing adds ~25% runtime, which flaked 5 timing-sensitive tests on one run — the reported traces come from runs whose failure set is exactly the known 9.
+
+================================================================================
+MAINTAINER SIGN-OFF: APPARATUS RETIREMENT (2026-07-28)
+================================================================================
+
+Authorized by the approved retirement plan (branch retire/unattended-apparatus;
+the maintainer approved the plan that names this sign-off explicitly). The
+unattended evolve/queue apparatus was retired wholesale — its test subjects were
+deleted together with the machinery they witnessed, so the ordinary three-clause
+deletion bar (named witness / no sole kill / post-deletion survival) does not
+apply: there is no surviving behavior left for these tests to witness.
+
+Test files deleted with their subjects: test_evolve_select.py, test_evolve_drain.py,
+test_evolve_reap.py, test_evolve_self_merge.py, test_queue_select.py,
+test_queue_drain.py, test_queue_status.py, test_evolve_common.py,
+test_senses_deadman.py, test_maintainer_preflight.py, test_stage_merge.py,
+test_harness_eval.py, test_harness_corpus.py (removed from AUDIT.md §Also
+protected under this same sign-off — the frozen corpus replay guarded deciders
+that no longer exist), test_ops_templates.py, test_fleet.py,
+test_launch_window_equivalence.py, test_main_ci_health.py. Individual functions
+removed from keeper files for the same reason: the selector half of
+test_hitl_gating.py, the fleet shadow-write trio in test_dispatch_stage.py, the
+_evolve_common rescue-branch pair in test_flow_worktree.py, the harness_eval
+block trio in test_reflect_inputs.py, the MaintenanceNotice test in
+test_cockpit.py, and the two command-maintain.md drain-section pins in
+test_seam_check.py.
+
+76 survivor-registry entries were purged in the same commit (every entry whose
+defining test lived only in the deleted files, including the whole-file
+test_queue_drain citation and the evolve/queue ambiguous bare names). The purge
+was attribution-checked: an entry was removed ONLY when its base name resolved
+exclusively to this retirement's deletions; whole-file citations of surviving
+files, parametrized ids, and truncated names were all kept. The deletion
+evidence that cited the purged entries described apparatus behavior that no
+longer exists, so the citing chains are discharged, not orphaned.
+
+Re-proposing any apparatus resurrection does not overturn this record; the
+retirement was a maintainer scope decision, not a mutation-evidence verdict.

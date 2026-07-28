@@ -33,7 +33,7 @@ def _seed_workspace(root: Path, *, maintainer: bool = False, namespace: str = "d
     )
 
 
-def _seed_evolve(root: Path, body: str) -> None:
+def _seed_reflect(root: Path, body: str) -> None:
     path = root / ".flow" / "workspace.toml"
     path.write_text(path.read_text(encoding="utf-8") + body, encoding="utf-8")
 
@@ -179,13 +179,13 @@ def test_escalation_k_default_when_no_workspace(tmp_path: Path):
 
 def test_escalation_k_override(tmp_path: Path):
     _seed_workspace(tmp_path)
-    _seed_evolve(tmp_path, "\n[evolve]\nrecurrence_escalation_k = 5\n")
+    _seed_reflect(tmp_path, "\n[reflect]\nrecurrence_escalation_k = 5\n")
     assert fe.escalation_k(tmp_path) == 5
 
 
 def test_escalation_k_wrong_type_falls_back_to_default(tmp_path: Path):
     _seed_workspace(tmp_path)
-    _seed_evolve(tmp_path, '\n[evolve]\nrecurrence_escalation_k = "five"\n')
+    _seed_reflect(tmp_path, '\n[reflect]\nrecurrence_escalation_k = "five"\n')
     assert fe.escalation_k(tmp_path) == 3
 
 
@@ -200,19 +200,21 @@ def test_exempt_anchors_default_when_no_workspace(tmp_path: Path):
 
 def test_exempt_anchors_override(tmp_path: Path):
     _seed_workspace(tmp_path)
-    _seed_evolve(tmp_path, '\n[evolve]\nrecurrence_exempt_anchors = ["foo_anchor", "bar_anchor"]\n')
+    _seed_reflect(
+        tmp_path, '\n[reflect]\nrecurrence_exempt_anchors = ["foo_anchor", "bar_anchor"]\n'
+    )
     assert fe.exempt_anchors(tmp_path) == {"foo_anchor", "bar_anchor"}
 
 
 def test_exempt_anchors_explicit_empty_list_means_no_exemptions(tmp_path: Path):
     _seed_workspace(tmp_path)
-    _seed_evolve(tmp_path, "\n[evolve]\nrecurrence_exempt_anchors = []\n")
+    _seed_reflect(tmp_path, "\n[reflect]\nrecurrence_exempt_anchors = []\n")
     assert fe.exempt_anchors(tmp_path) == set()
 
 
 def test_exempt_anchors_wrong_type_falls_back_to_default(tmp_path: Path):
     _seed_workspace(tmp_path)
-    _seed_evolve(tmp_path, '\n[evolve]\nrecurrence_exempt_anchors = "not-a-list"\n')
+    _seed_reflect(tmp_path, '\n[reflect]\nrecurrence_exempt_anchors = "not-a-list"\n')
     assert fe.exempt_anchors(tmp_path) == {"planned_files"}
 
 

@@ -1,6 +1,6 @@
 ---
 name: flow
-description: State-aware ticket-to-PR delivery and workspace operations. Use FLOW for a cockpit, a ticket or PR target, or the ticket, memory, measure, workspace, maintain namespaces.
+description: State-aware ticket-to-PR delivery and workspace operations. Use FLOW for a cockpit, a ticket or PR target, or the ticket, memory, measure, workspace namespaces.
 allowed-tools: Bash(.flow/runtime/flow:*), Bash(*/.flow/runtime/flow:*), Bash(python3:*), Bash(git:*), Bash(bd:*), Bash(jq:*), Bash(gh:*), Read, Write, Edit, Agent, Skill, AskUserQuestion, PushNotification, EnterWorktree
 ---
 
@@ -114,7 +114,7 @@ static routes still resolve, and explicit `ticket:<key>` remains available.
 <!-- flow:public-router:begin -->
 Interpret the invocation through `public-commands.toml`.
 Static namespaces win over target parsing.
-Static roots: `ticket | memory | measure | workspace | maintain | help`.
+Static roots: `ticket | memory | measure | workspace | help`.
 Bare `FLOW` is the read-only cockpit; a recognized target enters the lifecycle reducer.
 Unknown tokens stop. Never reinterpret removed commands as ticket keys.
 <!-- flow:public-router:end -->
@@ -137,15 +137,8 @@ FLOW workspace setup
 FLOW workspace inspect [<target>] [--json]
 FLOW workspace repair [<target>]
 FLOW workspace sync
-FLOW maintain backlog status [--preview]
-FLOW maintain backlog drain [--dry-run]
-FLOW maintain evolution audit
-FLOW maintain evolution propose
-FLOW maintain evolution epic
-FLOW maintain evolution expand <epic>
-FLOW maintain evolution drain [--dry-run] [--include-proposals]
-FLOW maintain worktrees clean [--dry-run]
-FLOW help [ticket|memory|measure|workspace|maintain]
+FLOW workspace worktrees clean [--dry-run]
+FLOW help [ticket|memory|measure|workspace]
 ```
 <!-- flow:public-grammar:end -->
 
@@ -169,7 +162,7 @@ Load the reference the router returned in `reference`; load no other.
 Bare `FLOW` is read-only. Build one compact view from durable evidence, in this
 order: active or stuck runs, deferred decisions, pending tracker mutations,
 actionable PR feedback, then the most useful next invocations. Use
-`references/command-target.md`; do not start, repair, or drain anything from the
+`references/command-target.md`; do not start or repair anything from the
 cockpit.
 
 ## Target lifecycle

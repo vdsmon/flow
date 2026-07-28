@@ -246,9 +246,9 @@ def test_underfill_skips_field_list_rows(tmp_path):
 
 def test_underfill_skips_fenced_lines(tmp_path):
     block = (
-        "# run the drain loop by hand when the janitor parks a worktree entry\n"
+        "# run the janitor sweep by hand when it parks a worktree entry\n"
         "# ```\n"
-        "# python3 evolve_drain.py --workspace-root . --cap 2 --concurrency 2\n"
+        "# python3 worktree_janitor.py sweep --workspace-root . --dry-run\n"
         "# ```\n"
         "x = 1\n"
     )

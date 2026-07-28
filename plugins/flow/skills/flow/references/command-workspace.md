@@ -139,6 +139,49 @@ changed precondition is superseded, not replayed blindly. Failed operations stay
 the queue. Unsupported operations remain parked with their evidence and do not poison
 replayable entries.
 
+## `FLOW workspace worktrees clean [--dry-run]`
+
+Sweep worktrees owned by the invoking workspace only. Resolve the absolute primary
+checkout from the first `git worktree list --porcelain` stanza and recognize only
+registered worktrees beneath its `.claude/worktrees` or legacy `.flow/worktrees`
+directory. Never consider the invoking checkout itself.
+
+A candidate is removable only when its normalized tracker state is `done` or
+`cancelled`, its exact run lease is not live or corrupt, and one of these PR proofs
+holds:
+
+- a merged PR has a head SHA equal to the local worktree tip;
+- no open or merged PR exists, the local `origin/HEAD` SHA matches a read-only
+  `git ls-remote` result, and the branch has zero commits unique from that default.
+
+An open PR always preserves its worktree. Missing ticket ownership, a stale remote
+default, a merged-head mismatch, unique commits, or any candidate probe failure also
+preserves it.
+
+```bash
+FLOW_HARNESS="<harness>" "<facade>" worktree-janitor sweep --workspace-root . --dry-run
+```
+
+First show the absolute `target_root`, every reapable candidate and its `confirmation_id`, and every
+preserved candidate with its reason. If the public invocation included `--dry-run`, stop there.
+Otherwise obtain confirmation for that exact target and candidate set. Then bind the destructive
+invocation to the preview values:
+
+```bash
+FLOW_HARNESS="<harness>" "<facade>" worktree-janitor sweep --workspace-root . \
+  --confirmed-target "<target_root>" \
+  --confirmed-candidate "<confirmation_id>" [...]
+```
+
+The second invocation re-probes ownership, tracker, forge, remote-default, unique-commit, and exact
+base/revision-lease evidence before it removes anything. A candidate absent from the preview or
+whose path, branch, or tip changed has a different confirmation ID and is preserved.
+
+A dirty candidate is checkpointed to a rescue ref before removal. Capture failure
+leaves the worktree intact. `observe_at_close` runs inside the guarded teardown after checkpointing
+and immediately before each removal attempt; the preview never observes or reaps. Never remove an
+unrecognized worktree merely because its branch name resembles Flow.
+
 ## Harness parity
 
 Claude Code may use its native worktree switch after Flow returns an absolute path;

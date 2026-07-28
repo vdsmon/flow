@@ -1,8 +1,8 @@
 """GitHub forge adapter (`gh` CLI).
 
 Implements the `Forge` Protocol for GitHub workspaces. PR mechanics lift the logic
-that lived gh-direct in `create_pr.py` (detect/open) plus the CI rollup semantics
-from `evolve_reap.rollup_is_green`.
+that lived gh-direct in `create_pr.py` (detect/open) plus strict CI rollup
+semantics.
 
 Review-thread ops normalize GitHub PR review threads via the GraphQL API
 (`reviewThreads` read, `addPullRequestReviewThreadReply` / `resolveReviewThread`
@@ -407,8 +407,8 @@ _SUPERSEDED_VERDICTS = frozenset({"CANCELLED", "STALE", "NEUTRAL", "SKIPPED"})
 
 
 def _classify_rollup(rollup: list[Any]) -> CIStatus:
-    """green iff non-empty and every check is completed-SUCCESS (matches
-    evolve_reap.rollup_is_green); pending if any check is still running (CheckRun
+    """green iff non-empty and every check is completed-SUCCESS;
+    pending if any check is still running (CheckRun
     status != COMPLETED, or a StatusContext with a non-terminal state); a superseded
     terminal verdict (_SUPERSEDED_VERDICTS) also reads as pending, not failed; failed
     only when a check reaches a terminal non-SUCCESS verdict outside those sets."""

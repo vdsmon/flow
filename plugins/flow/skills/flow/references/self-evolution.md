@@ -2,49 +2,52 @@
 
 Flow improves itself through the same ticket-to-PR lifecycle it applies to delivery
 work. The self-target workspace enables the machinery-edit guard, immutable ship
-events, and evolution policy; delivery workspaces never inherit self-target merge
-authority.
+events, and the machinery-bead filing route; delivery workspaces never inherit
+self-target merge authority.
 
 ## Producers
 
-- `FLOW maintain evolution audit` finds concrete correctness, robustness, test,
-  documentation, and measurement defects. Read-only discovery workers produce
-  evidence; the driver verifies and files bounded evolution fixes.
-- `FLOW maintain evolution propose` turns observed friction and architectural gaps
-  into attended proposal tickets. Judgment work is not silently mixed into the
-  autonomous fix queue.
-- `FLOW maintain evolution epic` works at initiative altitude and files only epic
-  parents plus a lazy child preview. `FLOW maintain evolution expand <epic>` is the
-  explicit, confirm-gated materialization step.
-- The reflect stage is the continuous producer. It records durable knowledge and
-  friction, applies safe machinery edits through `machinery_edit.py`, and files work
-  when a change cannot safely land inside the current run.
+- **Producer A — the reflect stage** is the continuous producer. It records durable
+  knowledge and friction, applies safe machinery edits through `machinery_edit.py`,
+  and files a `MACHINERY:` finding as an `evolve,machinery` bead when a change
+  cannot safely land inside the current run (`stage-reflect.md` owns the filing
+  recipe and its dedup keys).
+- **The manager** files independently from outside the run — the same recipe, the
+  same file-anchored dedup keys — for friction only the outside view can see:
+  stalls, silent retries, cross-run patterns (`oversee.md` §Report and filing).
+- **Recurrence escalation** (`friction_escalate`, invoked from reflect) files a
+  `recurrent`-labelled bead when a claimed machinery fix did not hold. Propose-only,
+  never auto-gated.
 
-All producers deduplicate against open and closed tracker evidence. A quiet audit is
-a valid result.
+All producers deduplicate against open and closed tracker evidence, so two producers
+observing the same defect converge on one bead. A quiet run is a valid result.
 
 ## Consumer
 
-`FLOW maintain evolution drain` is the bounded consumer. Its driver session
-classifies durable fleet, run, lease, worktree, tracker, CI, and PR evidence; reaps
-settled work; waits for already-authorized delivery; and reports fresh tickets as
-`plan_required` for attended planning.
+The manager is the bounded consumer (`oversee.md` §Pickup). Between runs it reads
+`bd ready`, triages with veto power, groups or merges related beads, and routes each
+chosen ticket through an ordinary overseen pipeline run — attended planning, human
+plan approval, review, CI. On a met gate the manager merges (`oversee.md` §Merging);
+a hot change additionally passes the independent guard-property review before it
+lands. Delivery workspaces and held changes remain human-merge.
 
-Workers are host-native collaboration agents. The driver uses the executable
-`worker-pool` reducers to reserve one host slot, guard discovery reads, and classify
-driver recovery. Handles are disposable; durable evidence is authoritative
-after a driver disappears. Flow never launches a detached host CLI, scans a host job
-directory, stops host sessions, or schedules self-teardown. The human may background
-the driver conversation through the host without changing these rules.
+Filing and triage are self-target-only. Confirm the route before consuming the
+queue:
 
-Ordinary evolution fixes may self-merge only inside the configured self-target
-envelope after green CI and all guard checks. Hot changes serialize and require the
-high-scrutiny lane; delivery workspaces and held changes remain human-merge.
+```bash
+FLOW_HARNESS="<harness>" "<facade>" maintainer --workspace-root . --require-current
+```
+
+A refusal stops the pickup and names any configured target outside the invoking
+repository — machinery beads are then not this workspace's to work.
 
 ## Guardrails
 
 - `machinery_edit.py` is the only in-run self-edit path. It serializes edits and
   records ownership for commit review.
+- A machinery fix never commits onto a protected branch: `machinery_edit.py`
+  refuses a skill root on main/master/dev/develop, and the finding routes to
+  propose-and-record instead.
 - Never edit `stage-registry.toml` or a wired handler while the run snapshots it.
   File the change, or use the evidence-specific `FLOW workspace repair <target>`
   path and confirm a snapshot reload.
@@ -52,10 +55,9 @@ high-scrutiny lane; delivery workspaces and held changes remain human-merge.
   is live.
 - Read-only discovery workers are accepted only when HEAD, index, tracked worktree,
   and untracked-worktree snapshots are unchanged.
-- The review and merge stages independently check the resulting diff. The producer's
-  confidence is not merge authority.
+- The review stages and the manager's merge checklist independently check the
+  resulting diff. The producer's confidence is not merge authority.
 - Immutable ship events and friction records drive `FLOW measure` outcomes; tracker
   status alone is not delivery evidence.
 
-The full command mechanics live in `command-maintain.md`. The feedback-loop model
-lives in `loop-engineering.md`.
+The run-and-merge mechanics live in `oversee.md`.

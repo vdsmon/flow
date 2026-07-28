@@ -1845,18 +1845,6 @@ def test_rescue_branch_not_ticket_branch() -> None:
     assert not fw.is_ticket_branch("flow-rescue/flow-x1-abc1234", "flow-x1")
 
 
-def test_rescue_branch_not_flow_key_re() -> None:
-    import _evolve_common
-
-    assert _evolve_common.key_from_ref("flow-rescue/flow-x1-abc1234") is None
-
-
-def test_rescue_branch_not_inflight() -> None:
-    import _evolve_common
-
-    assert not _evolve_common.is_inflight("flow-x1", {"flow-rescue/flow-x1-abc1234"})
-
-
 # ─── hot hard-floor (code-enforced, flow-aen) ─────────────────────────────────────────────────────
 # The is_hot_change floor lives here at the shared bootstrap so every autonomous self-approve path
 # (incl. clean >=90%, which step-5 prose never gated) is caught. triage.decided's own logic is

@@ -126,13 +126,3 @@ required_predecessors = []
 required_when_compounding = true
 reference_doc = "references/stage-reflect.md"
 roles = []
-
-[[stage]]
-name = "merge"
-description = "Terminal self-merge for evolve self-target runs (evolve_self_merge.py); bare default none = the human keystone"
-default_handler = "none"
-default_timeout_min = 15
-required_predecessors = ["reflect"]
-required_when_compounding = false
-reference_doc = "references/stage-merge.md"
-roles = []

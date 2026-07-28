@@ -4,7 +4,7 @@
 
 schema_version = 1
 logical_trigger = "FLOW"
-static_namespaces = ["ticket", "memory", "measure", "workspace", "maintain", "help"]
+static_namespaces = ["ticket", "memory", "measure", "workspace", "help"]
 forbidden_root_tokens = [
   "spec",
   "do",
@@ -21,6 +21,7 @@ forbidden_root_tokens = [
   "init",
   "queue",
   "evolve",
+  "maintain",
 ]
 
 [[command]]
@@ -213,89 +214,13 @@ workspace = "required"
 reference = "references/command-workspace.md"
 
 [[command]]
-id = "maintain.backlog.status"
-path = ["maintain", "backlog", "status"]
-usage = "FLOW maintain backlog status [--preview]"
-summary = "Inspect backlog fleet state and the next drain decision."
-effect = "read"
-workspace = "required"
-reference = "references/command-maintain.md"
-options = [
-  { name = "--preview", value_type = "boolean", cardinality = "zero_or_one" },
-]
-
-[[command]]
-id = "maintain.backlog.drain"
-path = ["maintain", "backlog", "drain"]
-usage = "FLOW maintain backlog drain [--dry-run]"
-summary = "Advance existing backlog delivery and report fresh planning candidates."
-effect = "write"
-workspace = "required"
-reference = "references/command-maintain.md"
-options = [
-  { name = "--dry-run", value_type = "boolean", cardinality = "zero_or_one" },
-]
-
-[[command]]
-id = "maintain.evolution.audit"
-path = ["maintain", "evolution", "audit"]
-usage = "FLOW maintain evolution audit"
-summary = "Audit Flow machinery and produce actionable evolution work."
-effect = "write"
-workspace = "required"
-reference = "references/command-maintain.md"
-
-[[command]]
-id = "maintain.evolution.propose"
-path = ["maintain", "evolution", "propose"]
-usage = "FLOW maintain evolution propose"
-summary = "Turn observed friction into evolution proposals."
-effect = "write"
-workspace = "required"
-reference = "references/command-maintain.md"
-
-[[command]]
-id = "maintain.evolution.epic"
-path = ["maintain", "evolution", "epic"]
-usage = "FLOW maintain evolution epic"
-summary = "Produce a weekly evolution epic from accepted proposals."
-effect = "write"
-workspace = "required"
-reference = "references/command-maintain.md"
-
-[[command]]
-id = "maintain.evolution.expand"
-path = ["maintain", "evolution", "expand"]
-usage = "FLOW maintain evolution expand <epic>"
-summary = "Expand an accepted epic into runnable child work."
-effect = "confirm"
-workspace = "required"
-reference = "references/command-maintain.md"
-arguments = [
-  { name = "epic", value_type = "ticket", cardinality = "one" },
-]
-
-[[command]]
-id = "maintain.evolution.drain"
-path = ["maintain", "evolution", "drain"]
-usage = "FLOW maintain evolution drain [--dry-run] [--include-proposals]"
-summary = "Advance existing evolution delivery and report fresh planning candidates."
-effect = "write"
-workspace = "required"
-reference = "references/command-maintain.md"
-options = [
-  { name = "--dry-run", value_type = "boolean", cardinality = "zero_or_one" },
-  { name = "--include-proposals", value_type = "boolean", cardinality = "zero_or_one" },
-]
-
-[[command]]
-id = "maintain.worktrees.clean"
-path = ["maintain", "worktrees", "clean"]
-usage = "FLOW maintain worktrees clean [--dry-run]"
+id = "workspace.worktrees.clean"
+path = ["workspace", "worktrees", "clean"]
+usage = "FLOW workspace worktrees clean [--dry-run]"
 summary = "Remove safe stale Flow worktrees from the invoking workspace."
 effect = "confirm"
 workspace = "required"
-reference = "references/command-maintain.md"
+reference = "references/command-workspace.md"
 options = [
   { name = "--dry-run", value_type = "boolean", cardinality = "zero_or_one" },
 ]
@@ -303,11 +228,11 @@ options = [
 [[command]]
 id = "help"
 path = ["help"]
-usage = "FLOW help [ticket|memory|measure|workspace|maintain]"
+usage = "FLOW help [ticket|memory|measure|workspace]"
 summary = "Show all commands or help for one namespace."
 effect = "read"
 workspace = "none"
 reference = "references/command-target.md"
 arguments = [
-  { name = "topic", value_type = "choice", cardinality = "zero_or_one", choices = ["ticket", "memory", "measure", "workspace", "maintain"] },
+  { name = "topic", value_type = "choice", cardinality = "zero_or_one", choices = ["ticket", "memory", "measure", "workspace"] },
 ]

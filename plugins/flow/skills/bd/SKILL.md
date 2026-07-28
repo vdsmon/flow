@@ -37,7 +37,7 @@ Flag/visibility quirks:
 
 - `bd list` defaults to **limit 50** and sorts by priority — any join/dedup over the full set needs `--limit 0`.
 - `bd list` **hides closed** issues by default: `--status closed` or `--all` to see them.
-- `bd ready` **excludes deferred** issues — deferring in place is how you drop a bead from a drain loop.
+- `bd ready` **excludes deferred** issues — deferring in place is how you park a bead without closing it.
 - A leading-dash title aborts (`bd create "--foo"` parses as a flag): use `--title="--foo"`.
 - Comment ORDER is not guaranteed newest-last; pick "newest" by max timestamp, not last element.
 
