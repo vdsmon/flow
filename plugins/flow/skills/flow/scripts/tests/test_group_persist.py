@@ -104,3 +104,61 @@ def test_cli_derive_roundtrips(capsys, monkeypatch) -> None:
     assert gp.cli_main(["derive", "--lead", "FT-1184"]) == 0
     out = json.loads(capsys.readouterr().out)
     assert out == {"lead": "FT-1184", "covers": ["FT-1207", "FT-1208"]}
+
+
+def test_clear_dissolves_a_non_empty_cover_set() -> None:
+    # Seeds a NON-EMPTY marker first: the defect this ticket fixes is that a recorded group could
+    # not be dissolved, so the test must pass through that real state, not start from an already-
+    # empty one.
+    tracker = _FakeTracker([_marker_comment("FT-1207, FT-1208", "2026-06-01T00:00:00Z")])
+    out = gp.clear(tracker, "FT-1184")
+    assert out["persisted"] is True
+    assert out["covers"] == []
+    assert gp.derive(tracker, "FT-1184")["covers"] == []
+
+
+def test_clear_on_never_grouped_lead_writes_nothing() -> None:
+    tracker = _FakeTracker()
+    out = gp.clear(tracker, "FT-1184")
+    assert out["persisted"] is False
+    assert out["reason"] == "unchanged"
+    assert tracker.get("FT-1184")["comments"] == []
+
+
+def test_clear_is_idempotent() -> None:
+    tracker = _FakeTracker([_marker_comment("FT-1207, FT-1208", "2026-06-01T00:00:00Z")])
+    first = gp.clear(tracker, "FT-1184")
+    assert first["persisted"] is True
+    second = gp.clear(tracker, "FT-1184")
+    assert second["persisted"] is False
+    assert second["reason"] == "unchanged"
+    # only the original marker plus the one dissolution marker; the second clear() call appended
+    # nothing further
+    assert len(tracker.get("FT-1184")["comments"]) == 2
+
+
+def test_cli_clear_then_derive_reports_empty(capsys, monkeypatch) -> None:
+    import json
+
+    tracker = _FakeTracker()
+    monkeypatch.setattr(gp, "_tracker_for", lambda root: tracker)
+    assert gp.cli_main(["persist", "--lead", "FT-1184", "--covers", "FT-1207,FT-1208"]) == 0
+    capsys.readouterr()
+    assert gp.cli_main(["clear", "--lead", "FT-1184"]) == 0
+    capsys.readouterr()
+    assert gp.cli_main(["derive", "--lead", "FT-1184"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out == {"lead": "FT-1184", "covers": []}
+
+
+def test_empty_marker_wins_on_equal_timestamps() -> None:
+    # `latest_covers` sorts on `created_at` alone; `list.sort` is stable, so an exact timestamp tie
+    # leaves input order deciding. Beads comments carry whole-second resolution, and the adapter
+    # returns them oldest first (per `bd show <key> --json --include-comments`), so a same-second
+    # clear right after a persist lands the empty marker last in the input list, which is the case
+    # this test seeds.
+    comments = [
+        _marker_comment("FT-1207, FT-1208", "2026-06-01T00:00:00Z"),
+        _marker_comment("", "2026-06-01T00:00:00Z"),
+    ]
+    assert gp.latest_covers(comments) == []
