@@ -10,6 +10,7 @@ from typing import Any, override
 
 import pytest
 
+import _memory_paths
 import pending_mutations
 import tracker_cli
 from tests.wsfactory import make_workspace, memory, tracker
@@ -606,6 +607,52 @@ def test_is_shipped_emits_state(tmp_path: Path, capsys: pytest.CaptureFixture[st
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["state"] == "not_shipped"
+
+
+def _freeze_event(tmp_path: Path, key: str, body: str) -> None:
+    frozen = _memory_paths.ship_event_path(tmp_path, "demo", key)
+    frozen.parent.mkdir(parents=True, exist_ok=True)
+    frozen.write_text(body, encoding="utf-8")
+
+
+def test_is_shipped_prefers_frozen_event_file(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # ShipState's documented contract: state=shipped iff source=frozen_event_file. The consult lives
+    # at this seam because adapters deliberately know nothing of .flow/ (flow-n5mq: every frozen
+    # ticket re-read as not_yet_observed, so reflect's skip branch never fired at all).
+    _seed_workspace(tmp_path)
+    tk = _FakeTracker()
+    _freeze_event(
+        tmp_path, "FT-1", json.dumps({"ticket": "FT-1", "shipped_at": "2026-07-28T05:31:22Z"})
+    )
+    rc = tracker_cli.cli_main(
+        ["--workspace-root", str(tmp_path), "is-shipped", "--key", "FT-1"],
+        tracker_factory=_factory(tk),
+    )
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["state"] == "shipped"
+    assert payload["source"] == "frozen_event_file"
+    assert payload["shipped_at"] == "2026-07-28T05:31:22Z"
+    assert payload["evidence"]["ticket"] == "FT-1"
+    assert not any(name == "is_shipped" for name, _, _ in tk.calls)
+
+
+def test_is_shipped_malformed_frozen_file_falls_through_to_backend(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _seed_workspace(tmp_path)
+    tk = _FakeTracker()
+    _freeze_event(tmp_path, "FT-1", "not json {")
+    rc = tracker_cli.cli_main(
+        ["--workspace-root", str(tmp_path), "is-shipped", "--key", "FT-1"],
+        tracker_factory=_factory(tk),
+    )
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["state"] == "not_shipped"
+    assert any(name == "is_shipped" for name, _, _ in tk.calls)
 
 
 # ─── new-verb subcommands: list-types / list-epics / list-sprints / set-sprint ─

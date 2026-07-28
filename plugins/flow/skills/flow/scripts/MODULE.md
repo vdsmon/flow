@@ -52,7 +52,7 @@ The fifth run-safety mechanism, the content-ownership commit gate, is `diff_extr
 | Script | Role | Contract notes |
 |--------|------|----------------|
 | `tracker.py` (lib) | Tracker Protocol base + `make_tracker()` factory. Adapters load lazily inside `make_tracker`; `flow_worktree` imports lazily in `_refuse_terminal_bead`. | — |
-| `tracker_cli.py` | CLI wrapper around the Protocol (the only tracker surface the prose calls). | subcommand names in §Derived surfaces |
+| `tracker_cli.py` | CLI wrapper around the Protocol (the only tracker surface the prose calls). `is-shipped` consults the frozen ship-event file before the adapter (state=shipped / source=frozen_event_file when one exists), so the live backend query runs only for a never-observed ticket. | subcommand names in §Derived surfaces |
 | `tracker_jira.py` (lib) | Jira Cloud REST v3 + Agile/1.0 adapter (Basic auth via `ATLASSIAN_EMAIL`/`ATLASSIAN_API_TOKEN`). | — |
 | `tracker_beads.py` (lib) | Beads `bd` CLI adapter (local-only tracker). | — |
 
@@ -240,7 +240,7 @@ markers are overwritten. `—` = none.
 | `_harness.py` | — | `flow_launcher`, `flowctl`, `init` |
 | `_jsonl.py` | — | `friction_recurrence`, `memory_append`, `memory_embed`, `metric`, `pending_mutations`, `recall`, `recall_pending`, `recall_usage`, `reflect_inputs`, `sweep_knowledge` |
 | `_locking.py` | — | `dispatch_stage`, `flow_friction`, `flow_worktree`, `lease`, `machinery_edit`, `memory_append`, `memory_embed`, `observe_ship_event`, `pending_mutations`, `recall_pending`, `recall_usage`, `runtime_layout`, `state`, `ticket_frontmatter` |
-| `_memory_paths.py` | — | `flow_friction`, `flow_worktree`, `friction_escalate`, `friction_recurrence`, `memory_append`, `memory_embed`, `metric`, `observe_at_close`, `observe_ship_event`, `recall`, `recall_usage`, `reflect_inputs`, `sweep_knowledge` |
+| `_memory_paths.py` | — | `flow_friction`, `flow_worktree`, `friction_escalate`, `friction_recurrence`, `memory_append`, `memory_embed`, `metric`, `observe_at_close`, `observe_ship_event`, `recall`, `recall_usage`, `reflect_inputs`, `sweep_knowledge`, `tracker_cli` |
 | `_registry.py` | — | `dispatch_stage`, `init`, `lint_ticket`, `seam_check`, `validate_workspace` |
 | `_runner.py` | — | `branch_ticket`, `create_pr`, `diff_extract`, `finalize`, `flow_beads_create`, `flow_worktree`, `forge_bitbucket`, `forge_github`, `friction_escalate`, `init`, `recall_pending`, `review_brief`, `tracker_beads`, `version`, `worktree_janitor` |
 | `_timeutil.py` | — | `dispatch_stage`, `flow_friction`, `flow_worktree`, `init`, `lease`, `memory_append`, `memory_embed`, `metric`, `observe_at_close`, `observe_ship_event`, `recall`, `recall_pending`, `recall_usage`, `recover`, `runtime_layout`, `state`, `status`, `sweep_knowledge`, `ticket_frontmatter`, `tracker_cli`, `worktree_janitor` |
