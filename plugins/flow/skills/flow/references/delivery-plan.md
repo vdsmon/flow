@@ -201,6 +201,9 @@ it back and pass it as `--covers`:
 FLOW_HARNESS="<harness>" "<facade>" group-persist derive --lead "<ticket>" --workspace-root .
 ```
 
+An empty derived result means the group was dissolved, so omit `--covers` entirely
+rather than passing it through as an empty or literal value.
+
 Bootstrap preserves the isolated ticket worktree, single-ticket claim, current-base resolution,
 atomic run state, planned-file ownership, and spill protection. It writes the approved text to
 `stages/plan.out` and marks `plan` complete so delivery resumes at implementation. Bind

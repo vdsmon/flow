@@ -1,17 +1,22 @@
 """FLOW ticket group persistence: durably record a cover set between propose and act.
 
-`group` proposes a lead + covers, but if you do not run `spec --covers` right
-away the decision lived only in the proposal. This persists it where it survives
-sessions, machines, and the review wait, and is re-derivable, using only the
-mandatory, cross-backend tracker ops (`comment` to write, `get` to read).
+`group` proposes a lead + covers, but if you do not persist it right away the decision lives only in
+the proposal. This records it where it survives sessions, machines, and the review wait, and is re-
+derivable, using only the mandatory, cross-backend tracker ops (`comment` to write, `get` to read).
 
 A cover set is recorded as a marker COMMENT on the lead ticket:
 
     flow-group covers: FT-1207, FT-1208, FT-1209
 
-`derive` reads it back from `get(lead)` (no search, no label-merge, portable
-across jira and beads). `spec <lead>` with no `--covers` consumes it to auto-fill
-the run. Persisting is an explicit act, so `group` itself stays read-only.
+`derive` reads it back from `get(lead)` (no search, no label-merge, portable across jira and beads).
+The `references/delivery-plan.md` §6 bootstrap derives it with no `--covers` given, to auto-fill a
+grouped run. Persisting is an explicit act, so `group` itself stays read-only.
+
+`clear` dissolves a recorded set by persisting an empty cover list: the marker becomes `flow-group
+covers:` with nothing after it, and `derive` then reports `[]`, which every consumer already treats
+as "not grouped". `persist` itself keeps refusing an empty `--covers` (the guard is not lifted), so
+`clear` is the only path to an empty recorded set, and clearing a lead that was never grouped is a
+no-op rather than a dissolution marker for a group that never existed.
 
 Duplicate verdicts are NOT handled here: a dup is a one-time terminal mutation
 (a `duplicates` link + close), left as an explicit human action in the proposal.
@@ -78,9 +83,11 @@ def latest_covers(comments: list[dict[str, Any]]) -> list[str] | None:
 def persist(tracker: Any, lead: str, covers: list[str]) -> dict[str, Any]:
     """Write the cover marker on the lead, unless the latest one already records
     the same set (order-insensitive: re-persisting FT-2,FT-1 over an FT-1, FT-2
-    marker is a no-op, not a redundant second comment)."""
+    marker is a no-op, not a redundant second comment). "No marker at all" and
+    "an empty marker" count as the same recorded state, so clearing a lead that
+    was never grouped is also a no-op rather than a needless dissolution write."""
     existing = latest_covers(tracker.get(lead).get("comments", []))
-    if existing is not None and set(existing) == set(covers):
+    if set(existing or []) == set(covers):
         return {"persisted": False, "reason": "unchanged", "lead": lead, "covers": covers}
     tracker.comment(lead, {"body": format_marker(covers), "fmt": "plain"})
     return {"persisted": True, "lead": lead, "covers": covers}
@@ -91,8 +98,17 @@ def derive(tracker: Any, lead: str) -> dict[str, Any]:
     return {"lead": lead, "covers": covers}
 
 
+def clear(tracker: Any, lead: str) -> dict[str, Any]:
+    """Dissolve a recorded cover set by persisting an empty one.
+
+    A no-op for a lead that was never grouped: the relaxed no-op check in `persist` treats "no
+    marker" and "empty marker" as the same recorded state.
+    """
+    return persist(tracker, lead, [])
+
+
 def _parse_args(argv: list[str]) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Persist / derive a /flow cover set.")
+    parser = argparse.ArgumentParser(description="Persist / derive / clear a /flow cover set.")
     sub = parser.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("persist", help="record the cover set as a marker comment on the lead")
     p.add_argument("--lead", required=True)
@@ -101,6 +117,9 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     d = sub.add_parser("derive", help="read the cover set back from the lead's marker comment")
     d.add_argument("--lead", required=True)
     d.add_argument("--workspace-root", default=".")
+    c = sub.add_parser("clear", help="dissolve a recorded cover set (persist an empty one)")
+    c.add_argument("--lead", required=True)
+    c.add_argument("--workspace-root", default=".")
     return parser.parse_args(argv)
 
 
@@ -123,6 +142,8 @@ def cli_main(argv: list[str]) -> int:
                 sys.stderr.write("group-persist: --covers resolved to nothing\n")
                 return 3
             result = persist(tracker, args.lead, covers)
+        elif args.cmd == "clear":
+            result = clear(tracker, args.lead)
         else:
             result = derive(tracker, args.lead)
     except TrackerError as exc:
@@ -136,4 +157,12 @@ if __name__ == "__main__":
     raise SystemExit(cli_main(sys.argv[1:]))
 
 
-__all__ = ["cli_main", "derive", "format_marker", "latest_covers", "parse_marker", "persist"]
+__all__ = [
+    "clear",
+    "cli_main",
+    "derive",
+    "format_marker",
+    "latest_covers",
+    "parse_marker",
+    "persist",
+]

@@ -86,6 +86,17 @@ need one plan, one diff, and one PR. It is not a general project or label bucket
      --lead "<lead>" --covers "<c1>,<c2>" --workspace-root .
    ```
 
+   To dissolve a previously recorded set instead of replacing it (the group was
+   split apart and the covers revert to standalone tickets), clear it rather than
+   persisting an empty `--covers`: `persist` refuses an empty set on purpose, to
+   catch an accidentally empty shell expansion instead of silently dissolving a
+   group. Clearing a lead that was never grouped is a no-op:
+
+   ```bash
+   FLOW_HARNESS="<harness>" "<facade>" group-persist clear \
+     --lead "<lead>" --workspace-root .
+   ```
+
 8. For run now, enter `FLOW <lead> <key1> <key2> --together` in the same
    conversation. The target path revalidates freshness and groupability before the
    gate.
