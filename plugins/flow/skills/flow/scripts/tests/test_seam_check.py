@@ -647,6 +647,16 @@ def test_live_router_carries_rooted_cross_harness_context() -> None:
     assert "binding, not the convenience switch" in spec.lower()
 
 
+def test_live_artifact_path_field_is_never_a_placeholder() -> None:
+    """Artifact path pins the descriptor's real output_path even when the driver writes it."""
+    text = (seam_check.SKILL_ROOT / "references" / "delivery-loop.md").read_text(encoding="utf-8")
+    flat = " ".join(text.split())
+
+    assert "`Artifact path` always carries the descriptor's real `output_path`" in flat
+    assert "never a placeholder" in flat
+    assert "assign the WRITE of that file to the driver rather than to the agent" in flat
+
+
 def test_live_codex_entry_contract_preflights_exact_skill_root() -> None:
     skill = (seam_check.SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
 
