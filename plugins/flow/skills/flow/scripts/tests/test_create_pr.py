@@ -101,6 +101,10 @@ class _FakeForge:
     def detect_pr(self, branch: str, state: PR_STATE = "open") -> PullRequest | None:
         return _pr(self._existing, branch) if self._existing else None
 
+    def list_authored(self, state: PR_STATE = "open") -> list[PullRequest]:
+        del state
+        return []
+
     def pr_info(self, pr_id: str) -> PullRequest | None:
         return None
 

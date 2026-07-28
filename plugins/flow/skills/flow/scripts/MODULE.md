@@ -45,7 +45,7 @@ The fifth run-safety mechanism, the content-ownership commit gate, is `diff_extr
 | `cockpit_cli.py` | Construct the cockpit evidence model from an absolute JSON file and render the deterministic attention-first snapshot without probing or mutation. | `render --evidence <absolute-json-file> [--json]`; logical text or compact snapshot JSON, structured JSON errors |
 | `flow_worktree.py` | Post-approval worktree seeding plus the exported `is_ticket_branch` ownership predicate shared by preview and reap. Resolves the approved base, seeds the approved Markdown plan and `state.json`, stamps frontmatter, and binds the worktree's v2 memory pointer to main. Reap guards base/revision state, verifies an optional expected tip, and checkpoints dirty work before removal. | flags per `--help`; `create --auto` gates the unattended path |
 | `branch_ticket.py` | Resolve ticket key from current git branch (backend-aware regex); `--branch <name>` resolves from an explicit branch instead (the PR->ticket enabler for revise). | `--workspace-root [--branch]`; exit 0 match / 1 env / 3 no-match |
-| `manager_seat.py` | Deterministic half of manager seating (`references/manager.md` §Seating): fetch origin, resolve the remote default branch and the integration branch (`[create_pr] base` when the workspace declares one, the remote default otherwise), ensure the standing bench worktree `.claude/worktrees/flow-manager` (created detached at the integration branch when absent; an existing bench is never mutated), and emit the JSON posture the judgment half reads. Invocable from the bench itself; the posture always describes the primary checkout. | `--workspace-root [--dry-run]`; exit 0 posture ok, 2 failure (posture printed for fetch/bench failures; a pre-posture probe error goes to stderr instead). Consumed by `references/manager.md` |
+| `manager_seat.py` | Deterministic half of manager seating (`references/manager.md` §Seating): fetch origin, resolve default/integration refs, name configured tracker/forge without adapter construction, scan registered worktrees for non-terminal base/revision runs, safely fast-forward or re-park only without local run evidence, ensure the standing bench, and emit bounded local posture. Invocable from the bench itself; posture always describes the primary checkout. | `--workspace-root [--dry-run]`; exit 0 posture ok, 2 failure (posture printed for fetch/bench failures; a pre-posture probe error goes to stderr instead). Consumed by `references/manager.md` |
 | `_harness.py` (lib) | The closed host-adapter vocabulary: `flow_harness()` reads `FLOW_HARNESS`, defaults an unset selector to `claude-code`, and raises `HarnessError` on anything but `codex`/`claude-code`. Deliberately import-light — the workspace shims read it on every facade call. | — |
 
 ## Tracker
@@ -53,7 +53,7 @@ The fifth run-safety mechanism, the content-ownership commit gate, is `diff_extr
 | Script | Role | Contract notes |
 |--------|------|----------------|
 | `tracker.py` (lib) | Tracker Protocol base + `make_tracker()` factory. Adapters load lazily inside `make_tracker`; `flow_worktree` imports lazily in `_refuse_terminal_bead`. | — |
-| `tracker_cli.py` | CLI wrapper around the Protocol (the only tracker surface the prose calls). `is-shipped` consults the frozen ship-event file before the adapter (state=shipped / source=frozen_event_file when one exists), so the live backend query runs only for a never-observed ticket. | subcommand names in §Derived surfaces |
+| `tracker_cli.py` | CLI wrapper around the Protocol (the only tracker surface the prose calls). `list-assigned` exposes compact cross-backend assigned-ticket reads with a default non-terminal filter. `is-shipped` consults the frozen ship-event file before the adapter (state=shipped / source=frozen_event_file when one exists), so the live backend query runs only for a never-observed ticket. | subcommand names in §Derived surfaces |
 | `tracker_jira.py` (lib) | Jira Cloud REST v3 + Agile/1.0 adapter (Basic auth via `ATLASSIAN_EMAIL`/`ATLASSIAN_API_TOKEN`). | — |
 | `tracker_beads.py` (lib) | Beads `bd` CLI adapter (local-only tracker). | — |
 
@@ -64,7 +64,7 @@ Pluggable PR-host seam, structural twin of the tracker seam. The `create_pr` and
 | Script | Role | Contract notes |
 |--------|------|----------------|
 | `forge.py` (lib) | Forge Protocol base + `make_forge()` factory + `read_forge_config()` + normalized `PullRequest`/`CIStatus`/`ReviewThread`. `detect_pr` selects open or merged state; adapters include the optional head SHA and produce commit-pinned source URLs for reviewer evidence. Adapters load lazily inside `make_forge`. | — |
-| `forge_cli.py` | CLI wrapper around the Protocol (the only forge surface the prose calls); cap-gated subcommands degrade to `{"supported": false}` exit 0. `detect-pr` accepts `--state open\|merged`. | subcommand names in §Derived surfaces |
+| `forge_cli.py` | CLI wrapper around the Protocol (the only forge surface the prose calls); `list-authored` returns compact open PR rows, and cap-gated subcommands degrade to `{"supported": false}` exit 0. `detect-pr` accepts `--state open\|merged`. | subcommand names in §Derived surfaces |
 | `forge_github.py` (lib) | GitHub `gh` adapter: detect/open PR, CI rollup (`statusCheckRollup`), mark-ready/merge/delete-branch, and commit-pinned `blob/<sha>/<path>#Lx-Ly` source URLs. review_threads/post_reply/resolve_thread supported via gh api graphql. `set_default_reviewers` raises `NotSupported` (solo repo, CODEOWNERS covers reviewers). | — |
 | `forge_bitbucket.py` (lib) | Bitbucket `bkt` adapter (absorbs ship-it): detect/open PR, CI rollup from `bkt pr checks`, commit-pinned `src/<sha>/<path>#lines-x:y` source URLs, CodeRabbit review-thread fetch + verified resolve (`.resolution != null`), `set_default_reviewers` (GET `2.0/user` author + GET `default-reviewers`, drop author by `account_id`, PUT `{reviewers:[{uuid}]}`). | — |
 | `review_brief.py` | Deep, stdlib-only review-companion renderer. Strictly validates the motivation-first JSON model, binds local and PR heads to one full SHA, extracts source from that commit, builds responsive/CSP-protected self-contained HTML with exact Forge links, publishes atomically, and records/probes freshness. | writes `<ticket-dir>/stages/review_brief/<sha>/{brief.json,review-brief-*.html,receipt.json}` |
@@ -244,7 +244,7 @@ markers are overwritten. `—` = none.
 | `_memory_paths.py` | — | `flow_friction`, `flow_worktree`, `friction_escalate`, `friction_recurrence`, `memory_append`, `memory_embed`, `metric`, `observe_at_close`, `observe_ship_event`, `recall`, `recall_usage`, `reflect_inputs`, `sweep_knowledge`, `tracker_cli` |
 | `_registry.py` | — | `dispatch_stage`, `init`, `lint_ticket`, `seam_check`, `validate_workspace` |
 | `_runner.py` | — | `branch_ticket`, `create_pr`, `diff_extract`, `finalize`, `flow_beads_create`, `flow_worktree`, `forge_bitbucket`, `forge_github`, `friction_escalate`, `init`, `manager_seat`, `recall_pending`, `review_brief`, `tracker_beads`, `version`, `worktree_janitor` |
-| `_timeutil.py` | — | `dispatch_stage`, `flow_friction`, `flow_worktree`, `init`, `lease`, `memory_append`, `memory_embed`, `metric`, `observe_at_close`, `observe_ship_event`, `recall`, `recall_pending`, `recall_usage`, `recover`, `runtime_layout`, `state`, `status`, `sweep_knowledge`, `ticket_frontmatter`, `tracker_cli`, `worktree_janitor` |
+| `_timeutil.py` | — | `dispatch_stage`, `flow_friction`, `flow_worktree`, `init`, `lease`, `manager_seat`, `memory_append`, `memory_embed`, `metric`, `observe_at_close`, `observe_ship_event`, `recall`, `recall_pending`, `recall_usage`, `recover`, `runtime_layout`, `state`, `status`, `sweep_knowledge`, `ticket_frontmatter`, `tracker_cli`, `worktree_janitor` |
 | `_workspace.py` | — | `branch_ticket`, `create_pr`, `flow_friction`, `flow_worktree`, `forge`, `friction_escalate`, `maintainer`, `manager_seat`, `metric`, `model_resolve`, `observe_ship_event`, `recover`, `reflect_inputs`, `revise_config`, `snapshot`, `status`, `tracker_cli`, `triage` |
 | `branch_ticket.py` | — | `finalize`, `worktree_janitor` |
 | `cockpit.py` | — | `cockpit_cli` |
@@ -262,14 +262,14 @@ markers are overwritten. `—` = none.
 | `flowctl.py` | — | `seam_check` |
 | `forge.py` | — | `create_pr`, `finalize`, `forge_bitbucket`, `forge_cli`, `forge_github`, `review_brief`, `revise_config`, `worktree_janitor` |
 | `forge_bitbucket.py` | — | `forge` |
-| `forge_cli.py` | `ci-rollup` `delete-branch` `detect-pr` `mark-ready` `merge` `post-reply` `resolve-thread` `review-status` `review-threads` | — |
+| `forge_cli.py` | `ci-rollup` `delete-branch` `detect-pr` `list-authored` `mark-ready` `merge` `post-reply` `resolve-thread` `review-status` `review-threads` | — |
 | `forge_github.py` | — | `forge` |
 | `friction_escalate.py` | `escalate` | — |
 | `friction_recurrence.py` | — | `friction_escalate`, `metric`, `reflect_inputs` |
 | `group_candidates.py` | — | — |
 | `group_persist.py` | `clear` `derive` `persist` | — |
 | `init.py` | — | — |
-| `lease.py` | `acquire` `classify` `release` | `dispatch_stage`, `flow_worktree`, `recover`, `runtime_layout`, `status`, `worktree_janitor` |
+| `lease.py` | `acquire` `classify` `release` | `dispatch_stage`, `flow_worktree`, `manager_seat`, `recover`, `runtime_layout`, `status`, `worktree_janitor` |
 | `lifecycle.py` | — | `lifecycle_cli` |
 | `lifecycle_cli.py` | `coordinate` `reduce` | — |
 | `lint_comments.py` | — | — |
@@ -308,7 +308,7 @@ markers are overwritten. `—` = none.
 | `tier_policy.py` | — | `flow_worktree`, `triage` |
 | `tracker.py` | — | `finalize`, `flow_worktree`, `group_candidates`, `group_persist`, `observe_at_close`, `sync`, `tracker_beads`, `tracker_cli`, `tracker_jira`, `worktree_janitor` |
 | `tracker_beads.py` | — | `tracker`, `triage` |
-| `tracker_cli.py` | `comment` `create` `download-attachments` `get` `is-shipped` `link` `list-epics` `list-sprints` `list-types` `set-sprint` `state` `transition` | `finalize`, `group_candidates`, `group_persist`, `observe_at_close`, `sync`, `triage`, `worktree_janitor` |
+| `tracker_cli.py` | `comment` `create` `download-attachments` `get` `is-shipped` `link` `list-assigned` `list-epics` `list-sprints` `list-types` `set-sprint` `state` `transition` | `finalize`, `group_candidates`, `group_persist`, `observe_at_close`, `sync`, `triage`, `worktree_janitor` |
 | `tracker_jira.py` | — | `tracker` |
 | `triage.py` | `decided` `lane` `list` | `flow_worktree` |
 | `validate_workspace.py` | — | `dispatch_stage` |

@@ -8,6 +8,7 @@ stderr with structured exit codes.
 
 Subcommands:
   get --key FT-1                         tracker.get(key) -> JSON
+  list-assigned [--filter open]          tracker.list_assigned(filter) -> [TicketRef]
   state --key FT-1                       tracker.state(key) -> JSON
   transition --key FT-1 --to-state in_progress [--field k=v ...]
   comment --key FT-1 --text "..."        tracker.comment(key, body)
@@ -117,6 +118,21 @@ _BD_ACCEPTED_STATUSES: frozenset[str] = frozenset(
 def _cmd_get(tracker_obj: Any, args: argparse.Namespace) -> int:
     ticket = tracker_obj.get(args.key)
     sys.stdout.write(json.dumps(ticket, indent=2, sort_keys=True, default=str) + "\n")
+    return 0
+
+
+def _cmd_list_assigned(tracker_obj: Any, args: argparse.Namespace) -> int:
+    tickets = tracker_obj.list_assigned(args.filter)
+    compact = [
+        {
+            "key": ticket.get("key", ""),
+            "summary": ticket.get("summary", ""),
+            "status": ticket.get("status", ""),
+            "priority": ticket.get("priority", ""),
+        }
+        for ticket in tickets
+    ]
+    sys.stdout.write(json.dumps(compact, indent=2, sort_keys=True, default=str) + "\n")
     return 0
 
 
@@ -358,6 +374,13 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     p_get = sub.add_parser("get", help="tracker.get(key)")
     p_get.add_argument("--key", required=True)
 
+    p_assigned = sub.add_parser("list-assigned", help="tracker.list_assigned(filter)")
+    p_assigned.add_argument(
+        "--filter",
+        default="open",
+        help="backend filter (default: assigned non-terminal tickets)",
+    )
+
     p_state = sub.add_parser("state", help="tracker.state(key)")
     p_state.add_argument("--key", required=True)
 
@@ -441,6 +464,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
 
 _DISPATCH: dict[str, Any] = {
     "get": _cmd_get,
+    "list-assigned": _cmd_list_assigned,
     "state": _cmd_state,
     "transition": _cmd_transition,
     "comment": _cmd_comment,

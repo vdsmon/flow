@@ -99,6 +99,8 @@ class BitbucketAdapter:
             "base": str(dest),
             "head": str(src),
             "state": str(item.get("state") or "OPEN"),
+            "title": str(item.get("title") or ""),
+            "updated_at": str(item.get("updated_on") or ""),
             "head_sha": str(head_sha) if head_sha else None,
         }
 
@@ -121,6 +123,33 @@ class BitbucketAdapter:
             if "next" not in data:
                 return None
             page += 1
+
+    def list_authored(self, state: PR_STATE = "open") -> list[PullRequest]:
+        me = self._api("2.0/user", "bkt whoami") or {}
+        author_uuid = str(me.get("uuid") or "")
+        if not author_uuid:
+            raise ForgeError("bkt whoami returned no uuid")
+        prs: list[PullRequest] = []
+        page = 1
+        while True:
+            data = self._api(
+                f"{self._base()}/pullrequests?state={state.upper()}&pagelen=50&page={page}",
+                "bkt pr list authored",
+            )
+            data = data or {}
+            prs.extend(
+                self._pr_from_api(item)
+                for item in data.get("values") or []
+                if ((item.get("author") or {}).get("uuid")) == author_uuid
+            )
+            if "next" not in data:
+                break
+            page += 1
+        return sorted(
+            prs,
+            key=lambda pr: (str(pr.get("updated_at") or ""), pr["number"]),
+            reverse=True,
+        )
 
     def pr_info(self, pr_id: str) -> PullRequest | None:
         # PR-id -> PR reverse lookup. Reads ANY state (no state filter), so `revise`

@@ -55,6 +55,8 @@ class PullRequest(TypedDict):
     base: str
     head: str
     state: str  # backend-native ("OPEN"/"open"/"MERGED"/...)
+    title: NotRequired[str]
+    updated_at: NotRequired[str]
     head_sha: NotRequired[str | None]
 
 
@@ -124,6 +126,7 @@ class Forge(Protocol):
     backend: str  # "github" | "bitbucket"
 
     def detect_pr(self, branch: str, state: PR_STATE = "open") -> PullRequest | None: ...
+    def list_authored(self, state: PR_STATE = "open") -> list[PullRequest]: ...
     def pr_info(self, pr_id: str) -> PullRequest | None: ...  # PR-number reverse lookup, ANY state
     def open_pr(self, base: str, head: str, title: str, body: str, draft: bool) -> PullRequest: ...
     def ci_rollup(self, pr_id: str) -> CIStatus: ...

@@ -9,6 +9,7 @@ surface the prose calls, mirroring `tracker_cli.py`.
 
 Subcommands:
   detect-pr      --branch B                         forge.detect_pr(branch) -> PR|null
+  list-authored  [--state open]                     forge.list_authored(state) -> [PR]
   ci-rollup      --pr ID                            forge.ci_rollup(id) -> CIStatus (one-shot)
   review-threads --pr ID                            forge.review_threads(id) -> [thread]
   review-status  --pr ID                            forge.bot_review_present(id) -> {reviewed}
@@ -55,6 +56,23 @@ def _emit(obj: Any) -> int:
 
 def _cmd_detect_pr(forge: Any, args: argparse.Namespace) -> int:
     return _emit(forge.detect_pr(args.branch, state=args.state))
+
+
+def _cmd_list_authored(forge: Any, args: argparse.Namespace) -> int:
+    prs = forge.list_authored(state=args.state)
+    return _emit(
+        [
+            {
+                "id": pr["id"],
+                "number": pr["number"],
+                "title": pr.get("title", ""),
+                "draft": pr["draft"],
+                "updated_at": pr.get("updated_at", ""),
+                "url": pr["url"],
+            }
+            for pr in prs
+        ]
+    )
 
 
 def _cmd_ci_rollup(forge: Any, args: argparse.Namespace) -> int:
@@ -105,6 +123,9 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument("--branch", required=True)
     p.add_argument("--state", choices=("open", "merged"), default="open")
 
+    p = sub.add_parser("list-authored", help="forge.list_authored(state)")
+    p.add_argument("--state", choices=("open",), default="open")
+
     p = sub.add_parser("ci-rollup", help="forge.ci_rollup(pr) — one-shot")
     p.add_argument("--pr", required=True)
 
@@ -140,6 +161,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
 
 _DISPATCH: dict[str, Any] = {
     "detect-pr": _cmd_detect_pr,
+    "list-authored": _cmd_list_authored,
     "ci-rollup": _cmd_ci_rollup,
     "review-threads": _cmd_review_threads,
     "review-status": _cmd_review_status,

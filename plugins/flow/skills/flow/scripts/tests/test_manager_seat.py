@@ -56,6 +56,30 @@ def _bench(repo: SimpleNamespace) -> Path:
     return repo.workspace / manager_seat.BENCH_RELPATH
 
 
+def _write_run(
+    worktree: Path,
+    ticket: str,
+    *,
+    run_id: str = "run-1",
+    status: str = "pending",
+    revision: str | None = None,
+) -> Path:
+    run_dir = worktree / ".flow" / "runs" / ticket
+    if revision is not None:
+        run_dir = run_dir / "revisions" / revision
+    run_dir.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "schema_version": 1,
+        "ticket": ticket,
+        "run_id": run_id,
+        "backend": "beads",
+        "started_at": "2026-07-28T12:00:00Z",
+        "stages": {"plan": {"status": status}},
+    }
+    (run_dir / "state.json").write_text(json.dumps(payload), encoding="utf-8")
+    return run_dir
+
+
 def test_creates_bench_detached_at_default(repo: SimpleNamespace) -> None:
     code, posture = manager_seat.seat(repo.workspace)
     assert code == 0
@@ -152,7 +176,8 @@ def test_fetch_surfaces_remote_movement(repo: SimpleNamespace) -> None:
     _git(["push", "--quiet", "origin", "main"], repo.seed)
     code, posture = manager_seat.seat(repo.workspace)
     assert code == 0
-    assert posture["workspace_root"]["behind_integration"] == 1
+    assert posture["workspace_root"]["action"] == "fast_forwarded"
+    assert posture["workspace_root"]["behind_integration"] == 0
     assert posture["workspace_root"]["ahead_integration"] == 0
 
 
@@ -249,7 +274,7 @@ def test_bench_seating_reads_the_primary_checkouts_declared_base(repo: SimpleNam
     assert "integration_unresolved" not in posture
 
 
-def test_bench_off_integration_shows_the_gap_unmutated(repo: SimpleNamespace) -> None:
+def test_clean_detached_bench_is_reparked_when_no_local_run(repo: SimpleNamespace) -> None:
     code, posture = manager_seat.seat(repo.workspace)
     assert code == 0
     assert posture["bench"]["action"] == "created"
@@ -262,8 +287,106 @@ def test_bench_off_integration_shows_the_gap_unmutated(repo: SimpleNamespace) ->
     assert posture["integration_branch"] == "origin/dev"
     assert posture["bench"]["action"] == "present"
     assert posture["bench"]["head"] == bench_head_before
-    assert posture["bench"]["behind_integration"] > 0
     assert posture["bench"]["ahead_integration"] > 0
+
+
+def test_behind_only_bench_is_reparked_when_no_local_run(repo: SimpleNamespace) -> None:
+    (repo.workspace / ".git" / "info" / "exclude").write_text(".claude/\n", encoding="utf-8")
+    manager_seat.seat(repo.workspace)
+    bench = _bench(repo)
+    (repo.seed / "second.md").write_text("second\n")
+    _git(["add", "."], repo.seed)
+    _git(["commit", "-m", "second"], repo.seed)
+    _git(["push", "--quiet", "origin", "main"], repo.seed)
+    code, posture = manager_seat.seat(bench)
+    assert code == 0
+    assert posture["workspace_root"]["action"] == "fast_forwarded"
+    assert posture["bench"]["action"] == "reparked"
+    assert posture["bench"]["head"] == _git(["rev-parse", "origin/main"], repo.workspace)
+    assert posture["bench"]["behind_integration"] == 0
+
+
+def test_configured_integrations_are_named_without_adapter_construction(
+    repo: SimpleNamespace,
+) -> None:
+    (repo.workspace / ".flow").mkdir()
+    (repo.workspace / ".flow" / "workspace.toml").write_text(
+        '[tracker]\nbackend = "jira"\n[forge]\nbackend = "bitbucket"\n',
+        encoding="utf-8",
+    )
+    code, posture = manager_seat.seat(repo.workspace)
+    assert code == 0
+    assert posture["integrations"] == {"tracker": "jira", "forge": "bitbucket"}
+
+
+def test_local_runs_cover_base_revision_failure_stale_corruption_and_completed_omission(
+    repo: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_run(repo.workspace, "flow-open")
+    _write_run(repo.workspace, "flow-failed", status="failed")
+    stale = _write_run(repo.workspace, "flow-stale", revision="r1")
+    corrupt = repo.workspace / ".flow" / "runs" / "flow-corrupt"
+    corrupt.mkdir(parents=True)
+    (corrupt / "state.json").write_text("{broken", encoding="utf-8")
+    _write_run(repo.workspace, "flow-done", status="completed")
+
+    real_classify = manager_seat.lease.classify
+
+    def classify(path, *args, **kwargs):
+        if path == stale:
+            return {"state": "expired_foreign", "holder": {}}
+        return real_classify(path, *args, **kwargs)
+
+    monkeypatch.setattr(manager_seat.lease, "classify", classify)
+    code, posture = manager_seat.seat(repo.workspace)
+    assert code == 0
+    by_ticket = {row["ticket"]: row for row in posture["local_runs"]}
+    assert by_ticket["flow-open"]["status"] == "unfinished"
+    assert by_ticket["flow-failed"]["status"] == "failed"
+    assert by_ticket["flow-stale"]["status"] == "stale"
+    assert by_ticket["flow-stale"]["revision"] == "r1"
+    assert by_ticket["flow-corrupt"]["status"] == "corrupt"
+    assert "flow-done" not in by_ticket
+
+
+def test_contradictory_duplicate_run_evidence_is_marked(repo: SimpleNamespace) -> None:
+    sibling = repo.workspace.parent / "sibling"
+    _git(["worktree", "add", "--detach", str(sibling), "origin/main"], repo.workspace)
+    _write_run(repo.workspace, "flow-dupe", run_id="run-a")
+    _write_run(sibling, "flow-dupe", run_id="run-b", status="failed")
+    code, posture = manager_seat.seat(repo.workspace)
+    assert code == 0
+    duplicates = [row for row in posture["local_runs"] if row["ticket"] == "flow-dupe"]
+    assert len(duplicates) == 2
+    assert all(row["contradictory"] is True for row in duplicates)
+
+
+def test_local_run_prevents_primary_fast_forward(repo: SimpleNamespace) -> None:
+    _write_run(repo.workspace, "flow-open")
+    (repo.seed / "second.md").write_text("second\n")
+    _git(["add", "."], repo.seed)
+    _git(["commit", "-m", "second"], repo.seed)
+    _git(["push", "--quiet", "origin", "main"], repo.seed)
+    code, posture = manager_seat.seat(repo.workspace)
+    assert code == 0
+    assert "action" not in posture["workspace_root"]
+    assert posture["workspace_root"]["behind_integration"] == 1
+
+
+def test_non_idle_bench_prevents_primary_fast_forward(repo: SimpleNamespace) -> None:
+    (repo.workspace / ".git" / "info" / "exclude").write_text(".claude/\n", encoding="utf-8")
+    manager_seat.seat(repo.workspace)
+    bench = _bench(repo)
+    _git(["switch", "-c", "manager/inflight"], bench)
+    (repo.seed / "second.md").write_text("second\n")
+    _git(["add", "."], repo.seed)
+    _git(["commit", "-m", "second"], repo.seed)
+    _git(["push", "--quiet", "origin", "main"], repo.seed)
+    code, posture = manager_seat.seat(repo.workspace)
+    assert code == 0
+    assert posture["bench"]["branch"] == "manager/inflight"
+    assert "action" not in posture["workspace_root"]
+    assert posture["workspace_root"]["behind_integration"] == 1
 
 
 def test_unresolvable_configured_base_falls_back_and_says_so(repo: SimpleNamespace) -> None:

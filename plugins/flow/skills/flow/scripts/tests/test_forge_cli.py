@@ -31,6 +31,22 @@ class _FakeForge:
             "state": "OPEN",
         }
 
+    def list_authored(self, state="open"):
+        self.calls.append(("list_authored", state))
+        return [
+            {
+                "id": "7",
+                "url": "https://example.test/7",
+                "number": 7,
+                "title": "Newest",
+                "draft": True,
+                "updated_at": "2026-07-28T12:00:00Z",
+                "base": "main",
+                "head": "feature/flow-x",
+                "state": "OPEN",
+            }
+        ]
+
     def pr_info(self, pr_id):
         self.calls.append(("pr_info", pr_id))
         return {
@@ -93,6 +109,10 @@ class _FailingForge(_FakeForge):
     def detect_pr(self, branch, state="open"):
         raise ForgeError(f"network failed for {branch}")
 
+    @override
+    def list_authored(self, state="open"):
+        raise ForgeError(f"network failed for {state}")
+
 
 @pytest.fixture
 def ws(tmp_path):
@@ -122,6 +142,22 @@ def test_detect_pr_passes_state_selector(ws, capsys):
     assert rc == 0
     assert json.loads(capsys.readouterr().out)["number"] == 7
     assert ("detect_pr", "feature/flow-x", "merged") in fake.calls
+
+
+def test_list_authored_emits_compact_shape(ws, capsys):
+    rc, fake = _run(["list-authored"], ws)
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out) == [
+        {
+            "draft": True,
+            "id": "7",
+            "number": 7,
+            "title": "Newest",
+            "updated_at": "2026-07-28T12:00:00Z",
+            "url": "https://example.test/7",
+        }
+    ]
+    assert ("list_authored", "open") in fake.calls
 
 
 def test_ci_rollup(ws, capsys):

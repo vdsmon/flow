@@ -1,9 +1,8 @@
 """Deterministic half of manager seating (`FLOW manager`).
 
 Library + thin CLI behind the `manager-seat` facade command. `references/manager.md` §Seating runs
-it first: the judgment half of seating (charter, memory, ledger, queue) starts from the JSON posture
-this script emits, so every seated manager begins from the same fresh mechanical picture instead of
-re-deriving it by hand.
+it first so every seated manager begins from the same bounded local picture instead of re-deriving
+it by hand or eagerly reading remote work queues.
 
 Sequence (live mode):
   1. Resolve the primary checkout from `git worktree list`; seating may be invoked from the
@@ -16,11 +15,12 @@ Sequence (live mode):
      `origin/<base>`, when the workspace declares one; the remote default otherwise. A declared base
      that fails to resolve falls back to the remote default and is named in
      `integration_unresolved`.
-  5. Ensure the standing bench worktree `.claude/worktrees/flow-manager`: created detached at
-     the integration branch when absent. An existing bench is NEVER mutated, whatever its state;
-     a bench parked mid-task holds in-flight inline work that only judgment may resume or park.
-  6. Emit the posture: primary-checkout branch/cleanliness/distance-from-integration-branch, bench
-     state, fetch result, and both branch names (`default_branch`, `integration_branch`).
+  5. Read configured tracker/forge names without constructing either adapter, and scan registered
+     worktrees for unfinished, failed, stale, or corrupt base and revision runs.
+  6. Ensure the standing bench worktree `.claude/worktrees/flow-manager`: created detached at
+     the integration branch when absent. A clean detached bench is fast-forward re-parked only
+     when no unfinished local run makes that unsafe; all other existing bench state is preserved.
+  7. Emit the posture: Git state, configured integrations, and unfinished local run evidence.
 
 `--dry-run` performs no ref update and no filesystem write (no fetch, no set-head, no worktree add);
 the posture reports `would_fetch` / `would_create`, computed from the refs as they are.
@@ -38,10 +38,13 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
+import lease
 from _runner import Runner, default_runner
+from _timeutil import utcnow_iso
 from _workspace import WorkspaceConfigError, load_workspace_toml
 from worktree_janitor import _enumerate_worktrees
 
@@ -108,6 +111,155 @@ def _integration_base_config(main_root: Path) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
+def _configured_integrations(main_root: Path) -> dict[str, str | None]:
+    """Configured adapter names without importing or constructing either adapter."""
+    try:
+        config = load_workspace_toml(main_root)
+    except WorkspaceConfigError:
+        return {"tracker": None, "forge": None}
+    tracker = config.get("tracker")
+    forge = config.get("forge")
+    tracker_name = tracker.get("backend") if isinstance(tracker, dict) else None
+    forge_name = forge.get("backend") if isinstance(forge, dict) else None
+    return {
+        "tracker": tracker_name if tracker_name in ("jira", "beads") else None,
+        "forge": forge_name if forge_name in ("github", "bitbucket") else None,
+    }
+
+
+def _run_dirs(worktree: Path) -> list[tuple[str, str | None, Path]]:
+    def has_evidence(path: Path) -> bool:
+        return bool(
+            (path / "state.json").exists()
+            or (path / "run.lock").exists()
+            or list(path.glob("state.json.*.bak"))
+            or list(path.glob("state.json.quarantine.*"))
+        )
+
+    runs_root = worktree / ".flow" / "runs"
+    if not runs_root.is_dir():
+        return []
+    found: list[tuple[str, str | None, Path]] = []
+    for base in sorted(path for path in runs_root.iterdir() if path.is_dir()):
+        if has_evidence(base):
+            found.append((base.name, None, base))
+        revisions = base / "revisions"
+        if revisions.is_dir():
+            revision_dirs = sorted(path for path in revisions.iterdir() if path.is_dir())
+            found.extend(
+                (base.name, revision.name, revision)
+                for revision in revision_dirs
+                if has_evidence(revision)
+            )
+    return found
+
+
+def _classify_run(
+    ticket: str,
+    revision: str | None,
+    run_dir: Path,
+    worktree: Path,
+    *,
+    now: str,
+    current_boot: str,
+    hostname: str,
+) -> dict[str, Any] | None:
+    row: dict[str, Any] = {
+        "ticket": ticket,
+        "revision": revision,
+        "kind": "revision" if revision is not None else "base",
+        "worktree": str(worktree),
+        "path": str(run_dir),
+    }
+    try:
+        raw = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+        stages = raw["stages"]
+        if (
+            raw.get("schema_version") != 1
+            or not isinstance(raw.get("run_id"), str)
+            or not isinstance(stages, dict)
+            or any(not isinstance(record, dict) for record in stages.values())
+        ):
+            raise ValueError("invalid state shape")
+        statuses = [record.get("status") for record in stages.values()]
+        if any(
+            status not in ("pending", "in_progress", "completed", "failed") for status in statuses
+        ):
+            raise ValueError("invalid stage status")
+        row["run_id"] = raw["run_id"]
+    except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+        row["status"] = "corrupt"
+        row["reason"] = "state.json is missing or invalid"
+        return row
+
+    lease_info = lease.classify(
+        run_dir,
+        now,
+        current_boot=current_boot,
+        hostname=hostname,
+    )
+    lease_state = str(lease_info.get("state"))
+    row["lease"] = lease_state
+    if lease_state == "corrupt":
+        row["status"] = "corrupt"
+        row["reason"] = "run.lock is invalid"
+    elif "failed" in statuses:
+        row["status"] = "failed"
+    elif lease_state.startswith("expired_"):
+        row["status"] = "stale"
+    elif statuses and all(status == "completed" for status in statuses) and lease_state == "free":
+        return None
+    else:
+        row["status"] = "unfinished"
+    return row
+
+
+def _local_runs(entries: list[dict[str, str | None]]) -> list[dict[str, Any]]:
+    """Return non-terminal local run evidence from every registered worktree."""
+    now = utcnow_iso()
+    current_boot = lease.boot_id()
+    hostname = lease.hostname()
+    rows: list[dict[str, Any]] = []
+    for entry in entries:
+        raw_path = entry.get("worktree")
+        if not raw_path:
+            continue
+        worktree = Path(str(raw_path)).expanduser().resolve()
+        if not worktree.is_dir():
+            continue
+        for ticket, revision, run_dir in _run_dirs(worktree):
+            row = _classify_run(
+                ticket,
+                revision,
+                run_dir,
+                worktree,
+                now=now,
+                current_boot=current_boot,
+                hostname=hostname,
+            )
+            if row is not None:
+                rows.append(row)
+
+    identities: dict[tuple[str, str | None], list[dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        identities[(str(row["ticket"]), row["revision"])].append(row)
+    for duplicates in identities.values():
+        signatures = {(row.get("run_id"), row["status"]) for row in duplicates}
+        if len(duplicates) > 1 and len(signatures) > 1:
+            for row in duplicates:
+                row["contradictory"] = True
+    severity = {"corrupt": 0, "failed": 1, "stale": 2, "unfinished": 3}
+    return sorted(
+        rows,
+        key=lambda row: (
+            severity[str(row["status"])],
+            str(row["ticket"]),
+            str(row["revision"] or ""),
+            str(row["worktree"]),
+        ),
+    )
+
+
 def _integration_branch(
     runner: Runner, main_root: Path, default: str | None
 ) -> tuple[str | None, str | None]:
@@ -156,6 +308,35 @@ def _tree_posture(runner: Runner, root: Path, integration: str | None) -> dict[s
     return posture
 
 
+def _maybe_fast_forward_primary(
+    runner: Runner,
+    main_root: Path,
+    integration: str | None,
+    tree: dict[str, Any],
+    *,
+    dry_run: bool,
+    safe: bool,
+) -> dict[str, Any]:
+    expected_branch = integration.removeprefix("origin/") if integration is not None else None
+    can_fast_forward = (
+        safe
+        and integration is not None
+        and tree.get("branch") == expected_branch
+        and tree.get("clean") is True
+        and tree.get("ahead_integration", 0) == 0
+        and tree.get("behind_integration", 0) > 0
+    )
+    if not can_fast_forward:
+        return tree
+    if dry_run:
+        return {**tree, "action": "would_fast_forward"}
+    result = runner(["git", "merge", "--ff-only", integration], main_root)
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "unknown error").strip()
+        return {**tree, "action": "fast_forward_failed", "reason": detail}
+    return {**_tree_posture(runner, main_root, integration), "action": "fast_forwarded"}
+
+
 def _bench_posture(
     runner: Runner,
     main_root: Path,
@@ -163,6 +344,7 @@ def _bench_posture(
     registered: set[Path],
     *,
     dry_run: bool,
+    allow_repark: bool,
 ) -> dict[str, Any]:
     bench = main_root / BENCH_RELPATH
     posture: dict[str, Any] = {"path": str(bench)}
@@ -182,6 +364,27 @@ def _bench_posture(
             tree = _tree_posture(runner, bench, integration)
         except SeatError as exc:
             posture.update({"action": "failed", "reason": str(exc)})
+            return posture
+        can_repark = (
+            allow_repark
+            and integration is not None
+            and tree.get("branch") is None
+            and tree.get("clean") is True
+            and tree.get("ahead_integration", 0) == 0
+            and tree.get("behind_integration", 0) > 0
+        )
+        if can_repark and dry_run:
+            posture["action"] = "would_repark"
+            posture.update(tree)
+            return posture
+        if can_repark:
+            result = runner(["git", "checkout", "--detach", integration], bench)
+            if result.returncode != 0:
+                detail = (result.stderr or result.stdout or "unknown error").strip()
+                posture.update({"action": "failed", "reason": detail})
+                return posture
+            posture["action"] = "reparked"
+            posture.update(_tree_posture(runner, bench, integration))
             return posture
         posture["action"] = "present"
         posture.update(tree)
@@ -216,6 +419,29 @@ def _bench_posture(
     return posture
 
 
+def _existing_bench_blocks_fast_forward(
+    runner: Runner, main_root: Path, integration: str | None
+) -> bool:
+    """Whether an existing bench has work or invalid posture that must be preserved."""
+    bench = main_root / BENCH_RELPATH
+    if not bench.exists():
+        return False
+    if not bench.is_dir():
+        return True
+    top = runner(["git", "rev-parse", "--show-toplevel"], bench)
+    if top.returncode != 0 or Path(top.stdout.strip()).resolve() != bench.resolve():
+        return True
+    try:
+        tree = _tree_posture(runner, bench, integration)
+    except SeatError:
+        return True
+    return bool(
+        tree.get("branch") is not None
+        or tree.get("clean") is not True
+        or tree.get("ahead_integration", 0) > 0
+    )
+
+
 def seat(workspace_root: Path, *, dry_run: bool = False) -> tuple[int, dict[str, Any]]:
     """Fetch, resolve the default and integration branches, ensure the bench, and return (exit_code,
     posture)."""
@@ -245,9 +471,30 @@ def seat(workspace_root: Path, *, dry_run: bool = False) -> tuple[int, dict[str,
     posture["integration_branch"] = integration
     if unresolved is not None:
         posture["integration_unresolved"] = unresolved
-    posture["workspace_root"] = _tree_posture(runner, main_root, integration)
-    bench = _bench_posture(runner, main_root, integration, registered, dry_run=dry_run)
+    posture["integrations"] = _configured_integrations(main_root)
+    local_runs = _local_runs(entries)
+    posture["local_runs"] = local_runs
+    bench_has_work = _existing_bench_blocks_fast_forward(runner, main_root, integration)
+    root_tree = _tree_posture(runner, main_root, integration)
+    posture["workspace_root"] = _maybe_fast_forward_primary(
+        runner,
+        main_root,
+        integration,
+        root_tree,
+        dry_run=dry_run,
+        safe=not local_runs and not bench_has_work,
+    )
+    bench = _bench_posture(
+        runner,
+        main_root,
+        integration,
+        registered,
+        dry_run=dry_run,
+        allow_repark=not local_runs,
+    )
     posture["bench"] = bench
+    if posture["workspace_root"].get("action") == "fast_forward_failed":
+        failed = True
     if bench.get("action") in ("failed", "unrecognized"):
         failed = True
     return (EXIT_ERROR if failed else EXIT_OK), posture

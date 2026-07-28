@@ -36,7 +36,10 @@ class _FakeTracker:
 
     def list_assigned(self, filter: str = "open") -> list[dict[str, Any]]:
         self._record("list_assigned", filter)
-        return [{"key": "FT-1"}, {"key": "FT-2"}]
+        return [
+            {"key": "FT-1", "summary": "One", "status": "Open", "priority": "High"},
+            {"key": "FT-2", "summary": "Two", "status": "Doing", "priority": "Low"},
+        ]
 
     def state(self, key: str) -> dict[str, Any]:
         self._record("state", key)
@@ -158,6 +161,38 @@ def test_get_emits_json(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> N
     payload = json.loads(capsys.readouterr().out)
     assert payload["key"] == "FT-1"
     assert tk.calls[0] == ("get", ("FT-1",), {})
+
+
+@pytest.mark.parametrize("backend", ["jira", "beads"])
+def test_list_assigned_defaults_to_open_and_emits_compact_refs(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], backend: str
+) -> None:
+    _seed_workspace(tmp_path, backend=backend)
+    tk = _FakeTracker()
+    rc = tracker_cli.cli_main(
+        ["--workspace-root", str(tmp_path), "list-assigned"],
+        tracker_factory=_factory(tk),
+    )
+    assert rc == 0
+    assert tk.calls == [("list_assigned", ("open",), {})]
+    assert json.loads(capsys.readouterr().out) == [
+        {"key": "FT-1", "priority": "High", "status": "Open", "summary": "One"},
+        {"key": "FT-2", "priority": "Low", "status": "Doing", "summary": "Two"},
+    ]
+
+
+def test_list_assigned_passes_explicit_filter(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _seed_workspace(tmp_path)
+    tk = _FakeTracker()
+    rc = tracker_cli.cli_main(
+        ["--workspace-root", str(tmp_path), "list-assigned", "--filter", "all"],
+        tracker_factory=_factory(tk),
+    )
+    assert rc == 0
+    capsys.readouterr()
+    assert tk.calls == [("list_assigned", ("all",), {})]
 
 
 def test_state_emits_normalized(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
