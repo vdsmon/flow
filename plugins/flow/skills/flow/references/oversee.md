@@ -67,17 +67,25 @@ Machinery APPLY-NOW is structurally unavailable: the driver's `skill_root` resol
 
 **Standing merge authority (maintainer-granted 2026-07-28):** a parked PR whose gate is met — CI green, review clean — is merged by the manager, hot PRs included; for a hot PR the manager first executes the guard-property review below; the human gets a notification, never a question. Plan approval stays human; merge on a met gate is delegated. This holds only in flow's own self-target repo — in delivery workspaces the human-merge keystone holds.
 
-**Guard-property review (hot diffs only).** A `hot` diff touches a guard or safety-machinery file. Spawn one fresh reviewer agent that did not write the change and prompt it to refute:
+**Guard-property review (hot diffs only).** A `hot` diff touches a guard or safety-machinery file. Hot merges serialize: the manager lands at most one hot diff at a time and re-checks CI between them — that isolation, plus this review, plus green is the hot path VISION.md names. A human merging a hot PR by hand owns the same check personally. Spawn one fresh reviewer agent that did not write the change and prompt it to refute:
 
 > Review this PR diff for the flow self-target. Question: does it DELETE or WEAKEN any safety property — lease exclusivity (one run per ticket), snapshot drift-detection, atomic-write + corrupt-file quarantine, content-ownership refusal, or self-edit flock serialization? Guard *code* may be refactored/sped up freely; a guard *property* may only be replaced by a provably-equivalent one, never dropped. Default to "property removed" when uncertain. Return a verdict: `{property_removed: bool, which: str, why: str}`.
 
-`property_removed: true` → do NOT merge; post a PR comment naming the property and leave the PR for the human. Only a clean review (`property_removed: false`) merges.
+`property_removed: true` → do NOT merge; post a PR comment naming the property and leave the PR for the human. Only a clean review (`property_removed: false`) merges. The reviewer has no write or merge authority.
 
 **Merge rules:**
 
 - Verify branch push state first: an uncommitted change to a tracked file, an unpushed commit, or a remote branch already deleted means do not merge — resolve it or hand the PR to the human. Untracked scratch never counts.
+- When the run's workspace configures a review brief, verify its freshness before any other gate and block the merge while it is stale or missing — the driver re-renders at the current SHA (`stage-review_brief.md` owns the render):
+
+  ```bash
+  FLOW_HARNESS="<harness>" "<facade>" review-brief freshness \
+    --workspace-root . --ticket-dir "<ticket-dir>" --pr-id "<pr>"
+  ```
+
 - A `DIRTY` PR is a genuine code conflict; leave it for the human. A CLOSED-but-not-merged PR is never auto-handled.
-- Merges never stamp the version — the server-side `version-stamp.yml` Action stamps `main` after the merge lands.
+- Mark a draft ready before merging; merge without squash (this repo keeps merge commits). Merges never stamp the version — the server-side `version-stamp.yml` Action stamps `main` after the merge lands.
+- A grouped lead's covers close with it: after the merge, close every key in the lead's `covers` frontmatter through the tracker seam and drop the `bd dep` suppression edge, so a covered sibling never re-surfaces in `bd ready`. Best-effort, like the lead close.
 - Close order: merge first, then finalize — the bead close is bookkeeping, never what makes the merge safe.
 
 ## Report and filing

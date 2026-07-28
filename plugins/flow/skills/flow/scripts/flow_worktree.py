@@ -933,7 +933,7 @@ def _enforce_autonomy_floors(
 
     HITL floor (flow-blh2, exit 8 via `_HitlBead`): a bead marked `hitl` (human-in-the-loop,
     resolves only through a live exchange) with no recorded decision defers, never bootstraps
-    unattended. Checked FIRST and NOT lifted by `[evolve] adjudicate_hot` (that flag lifts only the
+    unattended. Checked FIRST and NOT lifted by `[triage] adjudicate_hot` (that flag lifts only the
     hot half): a decision-bound bead needs a person regardless of the maintainer's hot-ship
     preference. A recorded decision means the human already weighed in, so it clears the floor.
 
@@ -941,7 +941,7 @@ def _enforce_autonomy_floors(
     `hot`-labelled bead) with no maintainer decision on file may NOT self-ship. This lives at the
     single shared bootstrap every self-approve path funnels through, so it holds for the clean
     >=90% path too. delivery-plan.md step 5 only carried the floor in the adjudication/decided
-    sub-branches, so a clean re-plan could slip a hot change past it. The `[evolve] adjudicate_hot`
+    sub-branches, so a clean re-plan could slip a hot change past it. The `[triage] adjudicate_hot`
     flag (default off) lifts this floor for the self-target workspace. The floor runs even
     with an EMPTY planned set: the `hot` label is independent evidence of hotness (`triage.decided`
     reads it), so omitting `--planned-files` must not disable the label half of the floor.

@@ -45,6 +45,9 @@ repository — machinery beads are then not this workspace's to work.
 
 - `machinery_edit.py` is the only in-run self-edit path. It serializes edits and
   records ownership for commit review.
+- A machinery fix never commits onto a protected branch: `machinery_edit.py`
+  refuses a skill root on main/master/dev/develop, and the finding routes to
+  propose-and-record instead.
 - Never edit `stage-registry.toml` or a wired handler while the run snapshots it.
   File the change, or use the evidence-specific `FLOW workspace repair <target>`
   path and confirm a snapshot reload.

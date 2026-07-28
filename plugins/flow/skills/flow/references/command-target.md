@@ -44,7 +44,7 @@ Accepted target forms are:
 - `pr:<positive-number>`;
 - a supported forge pull-request URL.
 
-`ticket`, `memory`, `measure`, `workspace`, `maintain`, and `help` are always parsed
+`ticket`, `memory`, `measure`, `workspace`, and `help` are always parsed
 as static roots first. An unrecognized first token is an error, even if the tracker
 might accept arbitrary strings. Resolve a PR through the forge seam, derive the
 ticket from the head branch, and feed that ticket into the ordinary classifier. Never
@@ -192,7 +192,7 @@ temporary file after parsing. The returned closed disposition is `direct`,
 
 ## Help
 
-`FLOW help` renders registry-generated help. `FLOW help ticket|memory|measure|workspace|maintain`
+`FLOW help` renders registry-generated help. `FLOW help ticket|memory|measure|workspace`
 filters to that namespace. Bare or incomplete namespaces are unknown commands; help
 has no implicit aliases. Render it with the loaded registry CLI (a direct-bootstrap
 call, since help must work before any workspace facade exists) and display its
