@@ -31,6 +31,7 @@ CI runs all four on every push. Runtime is stdlib-only (`python3`); the venv/mis
 - **Never run `uv run` inside a worktree.** `uv run pytest` creates `plugins/flow/skills/flow/scripts/uv.lock`; the content-ownership commit gate treats it as unowned drift and exits 3. Use the repository's configured `mise` tasks instead. If a stray `uv.lock` already landed, remove it before committing.
 - **`gh pr merge` needs a real branch** — a detached HEAD fails with "could not determine current branch"; merge from a throwaway branch off `origin/main`.
 - **`stage-registry.toml` lives at the skill root** (`plugins/flow/skills/flow/`), never under `scripts/`. A `scripts/stage-registry.toml` entry in `planned_files` reads as unowned drift and aborts the run.
+- **Mutation-checking a test?** Clear `__pycache__` or set `PYTHONDONTWRITEBYTECODE=1` first. A mutation that preserves the file's byte length (flipping `1` to `0`) is masked by the stale `.pyc`, because CPython invalidates on mtime AND size, so the test stays green and you wrongly conclude nothing guards the behavior. `pytest -B` is not the fix: `-B` is an interpreter flag and pytest rejects it.
 - **Deleting tests?** Read `plugins/flow/skills/flow/scripts/tests/AUDIT.md` first — ~200 tests are protected witnesses cited in landed deletion evidence, and every previously refuted deletion is recorded there with its distinguishing mutation.
 - **Env/CLI quirks** (gh keyring 401, GraphQL `{owner}`/`{repo}`, mise shim heal, zsh word-split, ty ignore syntax): `plugins/flow/skills/flow/references/troubleshooting.md`.
 
