@@ -147,8 +147,9 @@ descriptor.
   a background task needed for continuation.
 
 Log friction before working around drift, lease loss, reconciliation, missing tools,
-blockers, failed stages, retries, and state rollback. Friction logging is best-effort
-and cannot fail the run.
+blockers, failed stages, retries, and state rollback. The `--type` names the snag the
+workaround answers, from the closed set `flow_friction.py` accepts; there is no
+workaround type. Friction logging is best-effort and cannot fail the run.
 
 ## Post-implementation ownership reconcile
 
