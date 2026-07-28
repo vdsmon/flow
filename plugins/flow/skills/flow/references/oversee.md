@@ -1,6 +1,6 @@
 # Overseeing a run
 
-Run a flow ticket through a driver agent spawned from a long-lived main session (the overseer), which observes friction from outside while every human gate stays human. The driver runs the ordinary skill unmodified; the overseer adds an outside view — timings, retries, stalls — that the run's own reflect stage cannot see about itself. Proven end-to-end in the flow-4vre pilot (PR #566); every constraint in Roles, Relays, and Observation was witnessed there, not designed speculatively.
+Run a flow ticket through a driver agent spawned from a long-lived main session (the overseer), which observes friction from outside while every human gate stays human. The driver runs the ordinary skill unmodified; the overseer adds an outside view — timings, retries, stalls — that the run's own reflect stage cannot see about itself. Proven end-to-end in the flow-4vre pilot (PR #566) and refined by the flow-rgqm run (PR #568); every constraint in Roles, Relays, and Observation was witnessed in one of the two, not designed speculatively.
 
 ## Roles
 
@@ -9,19 +9,23 @@ Run a flow ticket through a driver agent spawned from a long-lived main session 
 
 ## Spawn
 
-Spawn the driver as a named teammate with the ticket key and an absolute workspace root, and state the harness selector explicitly in its prompt. The team roster is flat: a teammate cannot spawn named teammates, so the driver's own workers (implement, review, assessment) must be unnamed subagents — the skill's native-agent roles work unchanged that way.
+Spawn the driver as a named teammate with the ticket key and an absolute workspace root, and state the harness selector explicitly in its prompt. The team roster is flat: a teammate cannot spawn named teammates, so the driver's own workers (implement, review, assessment) must be unnamed subagents — the skill's native-agent roles work unchanged that way. The driver should spawn stage agents SYNCHRONOUSLY (not in the background): a synchronous spawn returns the result directly, which removes the child-completion routing problem for that call entirely; only a resumed or backgrounded child needs the relay below, and the driver may poll such a child's transcript rather than waiting blind.
 
 ## Relays — the overseer's standing obligations
 
-- **Plan gate.** The driver uses the turn-boundary gate form — the one SKILL.md gives Codex when native Plan mode is inactive; an agent-hosted driver has no plan mode of its own, and SKILL.md's Claude Code row assumes the top-level session: present the complete plan (exact text, base SHA, confidence and category scores, pass facts, resolved findings, residual risks) to the overseer and wait. The overseer relays verbatim to the human and returns the approval or revision feedback. Approval never originates from an agent.
+- **Plan gate.** The driver uses the turn-boundary gate form — the one SKILL.md gives Codex when native Plan mode is inactive; an agent-hosted driver has no plan mode of its own, and SKILL.md's Claude Code row assumes the top-level session: present the complete plan (exact text, base SHA, confidence and category scores, pass facts, resolved findings, residual risks) to the overseer and wait. The plan surface is still owed under this topology when its gate passes (`plan-surface.md` makes skipping a defect): the driver renders it AND sends the complete plain-text plan, so the gate never depends on the surface being opened, and the overseer relays the surface URL prominently to the human — without that push the surface degrades unused, since the human talks to the overseer, not the driver. The overseer relays verbatim and returns the approval or revision feedback. Approval never originates from an agent.
 - **ask-user findings.** Same relay, both directions, verbatim.
-- **Child completions.** A teammate's own subagent completion notification routes to the top-level session, not to the spawning teammate — the driver sleeps through its child finishing. The overseer MUST relay every child completion (verdict summary plus where the full result lives), or mandate poll-after-spawn in the driver prompt. The pilot lost 62 minutes to exactly this before the relay existed.
+- **Child completions.** A BACKGROUNDED subagent's completion notification routes to the top-level session, not to the spawning teammate — the driver sleeps through its child finishing (the pilot lost 62 minutes to exactly this). Synchronous spawns avoid the problem; where a background or resumed child is unavoidable, the overseer relays its completion (verdict summary plus where the full result lives) or the driver polls its transcript.
 
 ## Observation channels (all passive)
 
 - **state.json** in the run worktree: per-stage `started_at_iso`/`finished_at_iso` are the timing backbone. A force-reset nulls a stage's timestamps; the rotating backups keep the prior snapshot.
 - **The driver transcript** (session JSONL): parse incrementally at driver stops for tool errors, retries, and time gaps — never load it whole. The deleted transcript miner is restorable from history for a deeper pass (`git show 0bed292^:plugins/flow/skills/flow/scripts/trace_mine.py`); it extracts tool errors, silent retries, drift markers, and stall gaps bucketed by dispatch stage, and runs unchanged on a teammate transcript once the file is copied under the workspace's `~/.claude/projects` slug (its path guard requires that layout).
 - **An overseer ledger** kept outside the repo: timestamped notes on gates, stalls, and surprises. Cross-referencing the ledger against mined stall gaps is what separates human-wait (keystone cost) from machine friction — the miner alone cannot tell them apart.
+
+## Known limits of the overseen topology
+
+Machinery APPLY-NOW is structurally unavailable: the driver's `skill_root` resolves to the marketplace clone, which sits on a protected branch, so `machinery_edit` refuses (exit 2) and every lens-B finding routes to propose-and-record. State this expectation in the driver's prompt so the refusal is read as the known limit, not a failure.
 
 ## Report and filing
 
