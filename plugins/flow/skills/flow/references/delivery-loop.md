@@ -81,6 +81,12 @@ Artifact path: <absolute output_path>
 State that inherited cwd is non-authoritative, every repository operation stays
 beneath the workspace, and every facade call applies the call-local `FLOW_HARNESS`
 selector to the absolute bound `facade`.
+
+`Artifact path` always carries the descriptor's real `output_path`, never a
+placeholder. A stage reference may assign the WRITE of that file to the driver rather
+than to the agent, which changes who writes it, not what the field says: this section's
+capture rule is the driver's half of the same contract.
+
 A workspace may provide an optional agent hint per stage, or per role within a
 stage. A bare stage string and a single-role table both resolve with no `--role`;
 only a stage that launches several roles (code_review's reviewer and fixer) needs
