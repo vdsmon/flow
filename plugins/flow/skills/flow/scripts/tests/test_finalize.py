@@ -7,6 +7,9 @@ import pytest
 
 import finalize as fz
 
+_FULL_TIP = "601c88815983ef5b8f0f8e91a4c61b880d81b8eb"
+_OTHER_TIP = "9f2ab41d77c0e5b3a8146d92ef0b7c15d3e6a840"
+
 
 def _cp(stdout: str = "", returncode: int = 0, stderr: str = ""):
     return subprocess.CompletedProcess([], returncode, stdout, stderr)
@@ -226,6 +229,60 @@ def test_merged_head_mismatch_refuses(monkeypatch, tmp_path):
         tmp_path,
         entries=[entry],
         prs={("feat/FT-1-x", "merged"): {"id": "7", "head_sha": "head-sha"}},
+    )
+    with pytest.raises(fz.FinalizeRefused, match="does not match merged PR head"):
+        fz.finalize(main, "FT-1")
+
+
+def test_abbreviated_merged_head_matches_full_tip(monkeypatch, tmp_path):
+    main = tmp_path / "repo"
+    entry = _worktree_entry(main, tip=_FULL_TIP)
+    _, _, _, order, _, reaped = _wire(
+        monkeypatch,
+        tmp_path,
+        entries=[entry],
+        prs={("feat/FT-1-x", "merged"): {"id": "7", "head_sha": _FULL_TIP[:12]}},
+    )
+    code, _report = fz.finalize(main, "FT-1")
+    assert code == fz.EXIT_OK
+    assert order == ["transition", "observe", "delete_branch", "reap"]
+    assert reaped[0]["expected_tip"] == _FULL_TIP
+
+
+def test_abbreviated_merged_head_of_a_different_commit_still_refuses(monkeypatch, tmp_path):
+    main = tmp_path / "repo"
+    entry = _worktree_entry(main, tip=_FULL_TIP)
+    _wire(
+        monkeypatch,
+        tmp_path,
+        entries=[entry],
+        prs={("feat/FT-1-x", "merged"): {"id": "7", "head_sha": _OTHER_TIP[:12]}},
+    )
+    with pytest.raises(fz.FinalizeRefused, match="does not match merged PR head"):
+        fz.finalize(main, "FT-1")
+
+
+def test_head_sha_too_short_to_trust_still_refuses(monkeypatch, tmp_path):
+    main = tmp_path / "repo"
+    entry = _worktree_entry(main, tip=_FULL_TIP)
+    _wire(
+        monkeypatch,
+        tmp_path,
+        entries=[entry],
+        prs={("feat/FT-1-x", "merged"): {"id": "7", "head_sha": _FULL_TIP[:4]}},
+    )
+    with pytest.raises(fz.FinalizeRefused, match="does not match merged PR head"):
+        fz.finalize(main, "FT-1")
+
+
+def test_non_string_head_sha_refuses_instead_of_raising(monkeypatch, tmp_path):
+    main = tmp_path / "repo"
+    entry = _worktree_entry(main, tip=_FULL_TIP)
+    _wire(
+        monkeypatch,
+        tmp_path,
+        entries=[entry],
+        prs={("feat/FT-1-x", "merged"): {"id": "7", "head_sha": 12345}},
     )
     with pytest.raises(fz.FinalizeRefused, match="does not match merged PR head"):
         fz.finalize(main, "FT-1")
