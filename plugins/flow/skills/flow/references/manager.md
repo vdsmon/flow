@@ -25,9 +25,9 @@ Seating runs a mechanical half and a judgment half, in this order:
    FLOW_HARNESS="<harness>" "<facade>" manager-seat --workspace-root .
    ```
 
-   A non-zero exit means the fetch or the bench failed; the posture names the
-   failure — resolve it before continuing. `--dry-run` previews without fetching
-   or creating anything.
+   A non-zero exit means seating failed; the posture — or stderr, when the probe
+   could not assemble one — names the failure. Resolve it before continuing.
+   `--dry-run` previews without fetching or creating anything.
 
 2. **Orient.** Read this charter, the project memory's manager entries, and the
    durable ledger, then judge the posture: a primary checkout that is dirty, off the

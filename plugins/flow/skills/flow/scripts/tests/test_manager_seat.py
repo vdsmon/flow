@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
@@ -69,13 +70,62 @@ def test_present_bench_is_never_mutated(repo: SimpleNamespace) -> None:
 
 
 def test_dry_run_writes_nothing(repo: SimpleNamespace) -> None:
+    # Move origin and unset origin/HEAD first, so a fetch or set-head that leaked through the
+    # dry-run gate would be visible in the refs instead of vacuously matching an idle remote.
+    before = _git(["rev-parse", "origin/main"], repo.workspace)
+    (repo.seed / "second.md").write_text("second\n")
+    _git(["add", "."], repo.seed)
+    _git(["commit", "-m", "second"], repo.seed)
+    _git(["push", "--quiet", "origin", "main"], repo.seed)
+    _git(["symbolic-ref", "--delete", "refs/remotes/origin/HEAD"], repo.workspace)
     code, posture = manager_seat.seat(repo.workspace, dry_run=True)
     assert code == 0
     assert posture["dry_run"] is True
     assert posture["fetch"] == {"action": "would_fetch"}
+    assert posture["default_branch"] is None
     assert posture["bench"]["action"] == "would_create"
     assert not _bench(repo).exists()
     assert not (repo.workspace / ".claude").exists()
+    assert _git(["rev-parse", "origin/main"], repo.workspace) == before
+    probe = subprocess.run(
+        ["git", "symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"],
+        cwd=str(repo.workspace),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert probe.returncode != 0
+
+
+def test_live_seat_tracks_a_remote_default_rename(repo: SimpleNamespace) -> None:
+    # A plain fetch never rewrites an existing origin/HEAD, so only the set-head sync keeps the
+    # posture truthful after the remote renames its default branch.
+    _git(["branch", "-m", "main", "master"], repo.origin)
+    code, posture = manager_seat.seat(repo.workspace)
+    assert code == 0
+    assert posture["default_branch"] == "origin/master"
+    assert posture["bench"]["action"] == "created"
+    assert posture["bench"]["head"] == _git(["rev-parse", "origin/master"], repo.workspace)
+
+
+def test_deleted_bench_with_stale_registration_fails_predictably(repo: SimpleNamespace) -> None:
+    manager_seat.seat(repo.workspace)
+    shutil.rmtree(_bench(repo))
+    for dry_run in (True, False):
+        code, posture = manager_seat.seat(repo.workspace, dry_run=dry_run)
+        assert code == manager_seat.EXIT_ERROR
+        assert posture["bench"]["action"] == "failed"
+        assert "prune" in posture["bench"]["reason"]
+
+
+def test_file_at_bench_path_is_unrecognized_in_both_modes(repo: SimpleNamespace) -> None:
+    bench = _bench(repo)
+    bench.parent.mkdir(parents=True)
+    bench.write_text("not a worktree\n")
+    for dry_run in (True, False):
+        code, posture = manager_seat.seat(repo.workspace, dry_run=dry_run)
+        assert code == manager_seat.EXIT_ERROR
+        assert posture["bench"]["action"] == "unrecognized"
 
 
 def test_fetch_surfaces_remote_movement(repo: SimpleNamespace) -> None:
