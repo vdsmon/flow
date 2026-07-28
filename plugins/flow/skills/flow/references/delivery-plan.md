@@ -53,6 +53,11 @@ An empty result is normal. Further memory or history reads are useful only when 
 answer a concrete planning question; do not expand planning into a general repository
 audit.
 
+This is the run's first query against the corpus, not its only one. A problem that
+first appears during implement, code_review, or commit is keyed off the friction entry
+the driver logs for it, and the `friction` command answers that entry with the matching
+live knowledge (`delivery-loop.md`). Planning does not have to anticipate every snag.
+
 When the ticket names a concrete failing artifact — a generated file, a payload, a load id —
 fetch and inspect the real artifact read-only during grounding. The actual bytes settle questions
 code reading cannot, and they anchor the plan's verification to reality.

@@ -110,6 +110,7 @@ Subsequent stages depend on `<ticket-dir>/ticket.json` being present.
        --detail "<failure_kind>: <failure_detail>" \
        --workspace-root . || true
      ```
+     Read what `friction` prints after the appended entry: when a live knowledge entry already describes this snag it is echoed there, and that answer is worth reading before the next stage starts. It prints nothing when the corpus holds none. See `delivery-loop.md` for the standing obligation and for carrying a hit into the next agent's prompt.
 
 ## Outputs
 

@@ -395,6 +395,103 @@ def _semantic_rank(
     return results, f"semantic-active model={model} cosine_candidates={len(cosine_order)}"
 
 
+# Cosines under a caller's floor but still close enough that the floor may be mis-set. One stderr
+# line keeps that band visible for recalibration instead of lost, mirroring
+# `recall_usage._NEAR_MISS_FLOOR`.
+_NEAR_MISS_FLOOR = 0.70
+
+
+def similar_entries(
+    workspace_root: Path,
+    text: str,
+    *,
+    top_n: int,
+    threshold: float,
+    exclude_ticket: str | None = None,
+    entries: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """Live entries whose cosine against `text` clears an ABSOLUTE floor, best first.
+
+    Pure cosine over the `memory_embed` sidecar, deliberately not the `_semantic_rank` fusion path:
+    that one mixes BM25 into the ranking and returns `top_n` results unconditionally, so it can
+    never be silent, and a recall that always answers teaches its reader to skip it.
+
+    Returns [] with no exception when semantic memory is off, the sidecar index is absent, its model
+    does not match the configured one, the embedder is unavailable, the corpus is empty, or nothing
+    clears `threshold`. The best cosine in [`_NEAR_MISS_FLOOR`, `threshold`) writes one stderr line
+    and is not returned.
+
+    `exclude_ticket` drops entries this same ticket wrote, which the run already has in context.
+    `entries` overrides the corpus load, the same shape `rank` and `_semantic_rank` take, but the
+    vectors still come from the sidecar, so an entry absent from it is skipped.
+    """
+    config = _memory_paths.load_semantic_config(workspace_root)
+    if not config.get("enabled"):
+        return []
+    try:
+        namespace = _memory_paths.resolve_namespace(workspace_root)
+    except _memory_paths._MemoryConfigError:
+        return []
+
+    import memory_embed
+
+    if entries is None:
+        entries = filter_superseded(
+            _load_entries(_memory_paths.knowledge_path(workspace_root, namespace))
+        )
+    if exclude_ticket:
+        entries = [e for e in entries if e.get("ticket") != exclude_ticket]
+    if not entries or not text.strip():
+        return []
+
+    model = str(config.get("model") or memory_embed._DEFAULT_MODEL)
+    header, indexed = memory_embed.load_index(workspace_root, namespace)
+    if not indexed or header.get("model") != model:
+        return []
+    try:
+        query_vec = memory_embed.embed(
+            [text], model=model, embedder=config.get("embedder") or None
+        )[0]
+    except memory_embed._EmbedderUnavailable as exc:
+        sys.stderr.write(f"recall: similar-entries embedder unavailable: {exc}\n")
+        return []
+
+    scored: list[tuple[float, dict[str, Any]]] = []
+    near_miss: tuple[float, str] | None = None
+    for entry in entries:
+        eid = entry.get("id")
+        if not isinstance(eid, str):
+            continue
+        vec = indexed.get(eid)
+        if vec is None:
+            continue
+        sim = _cosine(query_vec, vec)
+        if sim >= threshold:
+            scored.append((sim, entry))
+        elif sim >= _NEAR_MISS_FLOOR and (near_miss is None or sim > near_miss[0]):
+            near_miss = (sim, eid)
+    if near_miss is not None:
+        sys.stderr.write(
+            f"recall: similar-entries near-miss {near_miss[1]} "
+            f"sim={round(near_miss[0], 4)} floor={threshold}\n"
+        )
+
+    scored.sort(key=lambda pair: (-pair[0], _neg_ts_key(str(pair[1].get("ts", "")))))
+    return [
+        {
+            "id": entry.get("id"),
+            "type": entry.get("type"),
+            "branch": entry.get("branch"),
+            "ticket": entry.get("ticket"),
+            "body": entry.get("body"),
+            "ts": entry.get("ts"),
+            "score": round(sim, 6),
+            "labels": entry.get("labels") or [],
+        }
+        for sim, entry in scored[:top_n]
+    ]
+
+
 # ─── Digest rendering ───────────────────────────────────────────────────────
 
 _DIGEST_SECTION_ORDER = ("DECISION", "FACT", "LEARNED", "PATTERN", "INVESTIGATION", "DEVIATION")
@@ -681,6 +778,7 @@ __all__ = [
     "filter_superseded",
     "rank",
     "rrf_fuse",
+    "similar_entries",
     "superseded_ids",
     "tokenize",
 ]
