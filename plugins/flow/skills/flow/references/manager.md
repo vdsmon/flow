@@ -35,6 +35,17 @@ Triage is a filter against overengineering, not a queue pump. Before working any
 
 Spawn the driver as a named teammate with the ticket key and an absolute workspace root, and state the harness selector explicitly in its prompt. The driver's model is the manager's call at spawn, recorded in the ledger: opus by default (the driver plans, and planning gates everything downstream), the manager's own model for a hot or unusually complex ticket, never below opus for a driver — the cheap-tier savings belong to the in-run worker roles `[models]` already governs, not to the seat that authors the plan. The team roster is flat: a teammate cannot spawn named teammates, so the driver's own workers (implement, review, assessment) must be unnamed subagents — the skill's native-agent roles work unchanged that way. The driver should spawn stage agents SYNCHRONOUSLY (not in the background): a synchronous spawn returns the result directly, which removes the child-completion routing problem for that call entirely; only a resumed or backgrounded child needs the relay below, and the driver may poll such a child's transcript rather than waiting blind.
 
+## The workbench
+
+The manager never works on the main checkout: that tree is the workspace root — its
+`.flow/` holds the shared memory store, the ticket files, and the runtime facade;
+drivers mint their worktrees off it and finalize runs from it — so it stays clean, on
+main, only ever fast-forwarded, and never advanced while a run is live. Inline work
+happens in one standing worktree, `.claude/worktrees/manager`, parked on detached
+`origin/main` between tasks; every branch cuts fresh from `origin/main` there. Driver
+runs keep their own per-ticket pool worktrees; the manager never edits those. The
+janitor preserves the bench automatically (no ticket ownership).
+
 ## The manager's own hygiene
 
 Three obligations on the manager's side, each from a witnessed failure or near-failure:
