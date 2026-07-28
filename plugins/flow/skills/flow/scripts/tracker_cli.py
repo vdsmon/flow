@@ -42,6 +42,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import _memory_paths
 import _workspace
 import pending_mutations
 from _timeutil import utcnow_iso
@@ -245,8 +246,36 @@ def _cmd_create(tracker_obj: Any, args: argparse.Namespace) -> int:
     return 0
 
 
+def _frozen_ship_state(workspace_root: Path, key: str) -> dict[str, Any] | None:
+    """The frozen ship-event record as a ShipState dict, or None when absent or unreadable.
+
+    Restores ShipState's documented contract (state=shipped iff source=frozen_event_file): adapters
+    deliberately know nothing of `.flow/`, so the frozen-file consult lives at this seam, where
+    workspace_root is known. Anything short of a well-formed record falls through to the live
+    backend query instead of failing the read (flow-n5mq: every frozen ticket re-read as
+    not_yet_observed, so stage-reflect step 5's skip branch was unreachable and every retry of a
+    re-observation landed another dupe file beside the frozen one).
+    """
+    try:
+        namespace = _memory_paths.resolve_namespace(workspace_root)
+        path = _memory_paths.ship_event_path(workspace_root, namespace, key)
+        record = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, _memory_paths._MemoryConfigError):
+        return None
+    if not isinstance(record, dict):
+        return None
+    shipped_at = record.get("shipped_at")
+    return {
+        "state": "shipped",
+        "shipped_at": shipped_at if isinstance(shipped_at, str) else None,
+        "evidence": record,
+        "source": "frozen_event_file",
+    }
+
+
 def _cmd_is_shipped(tracker_obj: Any, args: argparse.Namespace) -> int:
-    ship = tracker_obj.is_shipped(args.key)
+    frozen = _frozen_ship_state(Path(args.workspace_root).resolve(), args.key)
+    ship = frozen if frozen is not None else tracker_obj.is_shipped(args.key)
     sys.stdout.write(json.dumps(ship, indent=2, sort_keys=True, default=str) + "\n")
     return 0
 
