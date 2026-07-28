@@ -233,3 +233,75 @@ def test_folded_plain_description_is_a_structural_problem_and_write_refuses_it(
     with pytest.raises(RegistryError):
         public_commands_check.write(tmp_path, registry_path=REGISTRY_PATH)
     assert skill.read_text(encoding="utf-8") == document
+
+
+# ─── namespace drift (flow-glrn) ─────────────────────────────────────────────
+
+
+def _namespace_fixture(tmp_path: Path, *, static_roots: str, manifest_list: str) -> Path:
+    """A skill tree deep enough for both manifest ancestors, with drift planted."""
+    skill_root = tmp_path / "plugins" / "flow" / "skills" / "flow"
+    (skill_root / "references").mkdir(parents=True)
+    (skill_root / "references" / "command-target.md").write_text(
+        f"{static_roots} are always parsed\nas static roots first.\n", encoding="utf-8"
+    )
+    plugin_dir = tmp_path / "plugins" / "flow" / ".claude-plugin"
+    plugin_dir.mkdir(parents=True)
+    (plugin_dir / "plugin.json").write_text(
+        f'{{"description": "the {manifest_list} namespaces share one engine"}}',
+        encoding="utf-8",
+    )
+    market_dir = tmp_path / ".claude-plugin"
+    market_dir.mkdir(parents=True)
+    (market_dir / "marketplace.json").write_text(
+        '{"description": "no list here"}', encoding="utf-8"
+    )
+    return skill_root
+
+
+def _namespace_problems(problems: list[str]) -> list[str]:
+    return [p for p in problems if "names a namespace" in p]
+
+
+def test_retired_namespace_in_static_roots_sentence_is_drift(tmp_path: Path) -> None:
+    skill_root = _namespace_fixture(
+        tmp_path,
+        static_roots="`ticket`, `memory`, `maintain`, and `help`",
+        manifest_list="ticket, memory, measure, and workspace",
+    )
+    problems = _namespace_problems(
+        public_commands_check.check(
+            skill_root, registry_path=REGISTRY_PATH, require_references=False
+        )
+    )
+    assert problems == [
+        "command-target.md static roots names a namespace the registry does not have: maintain"
+    ]
+
+
+def test_retired_namespace_in_manifest_list_is_drift(tmp_path: Path) -> None:
+    skill_root = _namespace_fixture(
+        tmp_path,
+        static_roots="`ticket`, `memory`, and `help`",
+        manifest_list="ticket, memory, measure, and maintain",
+    )
+    problems = _namespace_problems(
+        public_commands_check.check(
+            skill_root, registry_path=REGISTRY_PATH, require_references=False
+        )
+    )
+    assert problems == ["plugin.json names a namespace the registry does not have: maintain"]
+
+
+def test_live_namespaces_are_clean(tmp_path: Path) -> None:
+    skill_root = _namespace_fixture(
+        tmp_path,
+        static_roots="`ticket`, `memory`, `measure`, `workspace`, and `help`",
+        manifest_list="ticket, memory, measure, and workspace",
+    )
+    problems = _namespace_problems(
+        public_commands_check.check(
+            skill_root, registry_path=REGISTRY_PATH, require_references=False
+        )
+    )
+    assert problems == []

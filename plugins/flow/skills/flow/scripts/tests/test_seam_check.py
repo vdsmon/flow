@@ -1396,3 +1396,52 @@ def test_main_gate_case_table_covers_module_map_too(monkeypatch) -> None:
     # module_map.check is wired through the imported module, not a seam_check attr.
     monkeypatch.setattr(seam_check.module_map, "check", lambda *a, **k: ["stale block"])
     assert seam_check.main([]) == 1
+
+
+# ─── dangling doc citations (flow-glrn) ──────────────────────────────────────
+
+
+def test_dangling_path_citation_is_error() -> None:
+    problems = seam_check.dangling_doc_citation_problems(
+        "t.md", "the schema lives in `references/ghost-doc.md` today"
+    )
+    assert len(problems) == 1
+    assert problems[0].level == "ERROR"
+    assert "ghost-doc.md" in problems[0].msg
+
+
+def test_existing_path_citation_is_clean() -> None:
+    text = "see `references/stage-implement.md` and references/troubleshooting.md"
+    assert seam_check.dangling_doc_citation_problems("t.md", text) == []
+
+
+def test_dangling_bare_family_citation_is_error() -> None:
+    # The witnessed dangler shape: robustness.md kept citing `command-maintain.md` after the doc was
+    # deleted, and every automated gate stayed green until a reviewer read the sentence by hand.
+    problems = seam_check.dangling_doc_citation_problems(
+        "t.md", "the merge mechanics live in `command-maintain.md` today"
+    )
+    assert len(problems) == 1
+    assert "command-maintain.md" in problems[0].msg
+
+
+def test_bare_citation_outside_doc_families_is_ignored() -> None:
+    # Ticket-dir artifacts share the .md suffix but never the reference-doc name families, so the
+    # bare citation form structurally cannot reach them and must stay silent on both names here.
+    text = "union it with `instruction.md`; write the body at `pr_body.md`"
+    assert seam_check.dangling_doc_citation_problems("t.md", text) == []
+
+
+def test_placeholder_citation_is_ignored() -> None:
+    text = "drop a reference doc under references/stage-<name>.md"
+    assert seam_check.dangling_doc_citation_problems("t.md", text) == []
+
+
+def test_main_flags_dangling_doc_citation(monkeypatch, tmp_path, capsys) -> None:
+    # Same non-vacuous shape as test_main_flags_zsh_unsafe_binding: the finding's message on stdout
+    # is what pins main's wiring of this check, because the exit code alone would pin nothing.
+    fixture = tmp_path / "fixture.md"
+    fixture.write_text("see `references/ghost-doc.md`\n", encoding="utf-8")
+    monkeypatch.setattr(seam_check, "docs_to_check", lambda: [fixture])
+    assert seam_check.main([]) == 1
+    assert "cites a references doc that does not exist: ghost-doc.md" in capsys.readouterr().out
