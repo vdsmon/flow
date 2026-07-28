@@ -327,20 +327,65 @@ def _seed_state(worktree: Path, ticket: str, plan_text: str, head_sha: str) -> s
 
 
 def _e2e_enabled(main_root: Path) -> bool:
-    """True when the workspace wires e2e to a real handler (not 'none').
+    """True when the workspace both lists the e2e stage and wires it to a real handler.
 
-    A 'none' handler short-circuits the stage before its reference doc loads, so
-    no recipe is needed there. Only a disabled e2e (handler 'none') skips the
-    recipe demand.
+    Both halves are load-bearing. The dispatcher walks `[pipeline] stages` and looks up each one in
+    `[pipeline.handlers]`, so a handler entry for a stage the pipeline does not list is dead config
+    that `validate_workspace` accepts without complaint. Reading the handler alone would treat that
+    workspace as e2e-enabled, demand a recipe, and then run nothing, which is the same silent
+    non-verification this gate exists to close. A 'none' handler short-circuits the stage before its
+    reference doc loads, so no recipe is needed there either.
     """
     try:
         data = _workspace.load_workspace_toml(main_root)
     except _workspace.WorkspaceConfigError:
         return False
     pipeline = data.get("pipeline")
-    handlers = pipeline.get("handlers") if isinstance(pipeline, dict) else None
+    if not isinstance(pipeline, dict):
+        return False
+    stages = pipeline.get("stages")
+    if not (isinstance(stages, list) and "e2e" in stages):
+        return False
+    handlers = pipeline.get("handlers")
     handler = handlers.get("e2e") if isinstance(handlers, dict) else None
     return isinstance(handler, str) and handler.strip().lower() != "none"
+
+
+def _recipe_expects_a_run(recipe: str | None) -> bool:
+    """True when the recipe promises work only a live e2e stage can carry out.
+
+    `skip: <reason>` is the plan deciding that nothing runs, so it promises nothing and is exempt.
+    `test-ci-only` is not exempt: it still expects the e2e stage to reuse the green command
+    `implement` recorded and to emit its evidence block. This function is the only reader of the
+    sentinel, so the narrow case-sensitive spelling is a deliberate choice and not a parser
+    contract: anything else counts as a real recipe and is refused.
+    """
+    if not (recipe and recipe.strip()):
+        return False
+    return not recipe.strip().startswith("skip:")
+
+
+def _refuse_unrunnable_e2e(*, main_root: Path, e2e_recipe: str | None) -> None:
+    """Refuse both ways a plan can name an e2e lane that will not execute.
+
+    Wired without a recipe leaves the stage nothing to run. A runnable recipe with no wired stage is
+    stamped into frontmatter and read by nothing, which is the direction that used to fail silently.
+    Refuse while the human is still at the gate rather than at the unattended tail.
+    """
+    if _e2e_enabled(main_root):
+        if not (e2e_recipe and e2e_recipe.strip()):
+            raise _ConfigError(
+                "e2e handler is enabled in workspace.toml; pass --e2e-recipe "
+                "(the approved plan must declare the e2e recipe/fixture, or 'skip: <reason>')"
+            )
+    elif _recipe_expects_a_run(e2e_recipe):
+        raise _ConfigError(
+            "--e2e-recipe expects the e2e stage to run, but no e2e stage will run: "
+            "workspace.toml does not list 'e2e' in [pipeline] stages, or [pipeline.handlers] "
+            "has no 'e2e' key or sets it to 'none', or the file could not be read. Add 'e2e' "
+            "to [pipeline] stages AND wire it in [pipeline.handlers], or settle the recipe as "
+            "'skip: <reason>'."
+        )
 
 
 def _worktree_path(main_root: Path, branch: str, override: str | None) -> Path:
@@ -1227,15 +1272,7 @@ def bootstrap(
 
     _refuse_offcontract_branch(ticket=ticket, branch=branch)
 
-    # e2e is default-on; unless a workspace explicitly disabled it, the approved
-    # plan must declare what the e2e stage runs. Refuse here, while the user is
-    # still present at the spec gate, rather than let the unattended tail block
-    # at the e2e lint gate.
-    if _e2e_enabled(main_root) and not (e2e_recipe and e2e_recipe.strip()):
-        raise _ConfigError(
-            "e2e handler is enabled in workspace.toml; pass --e2e-recipe "
-            "(the approved plan must declare the e2e recipe/fixture, or 'skip: <reason>')"
-        )
+    _refuse_unrunnable_e2e(main_root=main_root, e2e_recipe=e2e_recipe)
 
     _refuse_terminal_bead(ticket=ticket, main_root=main_root)
 
@@ -1470,8 +1507,9 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         "--e2e-recipe",
         default=None,
         help="the e2e recipe the plan declared (runner + fixture + command + expected, "
-        "or 'skip: <reason>' / 'test-ci-only'); required unless the workspace explicitly "
-        "disabled e2e (handler 'none'). Seeds frontmatter e2e_recipe so the e2e stage "
+        "or 'skip: <reason>' / 'test-ci-only'); required when the workspace wires an e2e "
+        "handler. Where no e2e stage is wired, only 'skip: <reason>' is accepted, because "
+        "nothing would run anything else. Seeds frontmatter e2e_recipe so the e2e stage "
         "runs unattended",
     )
     p.add_argument("--no-mise-trust", action="store_true")

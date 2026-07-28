@@ -525,6 +525,108 @@ def test_e2e_none_does_not_require_recipe(tmp_path: Path) -> None:
     assert res["ticket"] == "FT-1"
 
 
+# The inverse half of the same gate (flow-t5f0): a recipe that expects the e2e stage to run, handed
+# to a pipeline that will never run it. `_main_checkout` writes no [pipeline.handlers] table at all,
+# so it is the unwired fixture.
+
+_REAL_RECIPE = "pytest tests/e2e/test_probe.py -k smoke, expect 1 passed"
+
+
+def _main_with_e2e_handler_but_no_stage(tmp: Path) -> Path:
+    """Handler entry present, `e2e` absent from [pipeline] stages: valid config, dead handler."""
+    main = _main_checkout(tmp, stages=["ticket", "plan", "implement", "commit", "reflect"])
+    ws = main / ".flow" / "workspace.toml"
+    ws.write_text(
+        ws.read_text(encoding="utf-8") + '[pipeline.handlers]\ne2e = "subagent:general-purpose"\n',
+        encoding="utf-8",
+    )
+    return main
+
+
+def test_e2e_handler_wired_but_stage_unlisted_refuses_real_recipe(tmp_path: Path) -> None:
+    # the dispatcher walks [pipeline] stages, so a handler for an unlisted stage runs nothing.
+    # reading the handler alone let a real recipe through and stamped it for no one to read.
+    main = _main_with_e2e_handler_but_no_stage(tmp_path)
+    with pytest.raises(fw._ConfigError, match="no e2e stage will run") as excinfo:
+        _run(tmp_path, main, runner=_fake_runner(main=main), e2e_recipe=_REAL_RECIPE)
+    # the remedy must send the reader to BOTH edits: wiring only the handler lands right back in
+    # this dead-config case, recipe demanded and nothing running it
+    assert "Add 'e2e' to [pipeline] stages AND wire it in [pipeline.handlers]" in str(excinfo.value)
+    assert not (tmp_path / "wt").exists()
+
+
+def test_e2e_handler_wired_but_stage_unlisted_needs_no_recipe(tmp_path: Path) -> None:
+    # the other half: no stage will run, so nothing should be demanded either
+    main = _main_with_e2e_handler_but_no_stage(tmp_path)
+    res = _run(tmp_path, main, runner=_fake_runner(main=main))
+    assert res["ticket"] == "FT-1"
+
+
+def test_e2e_unwired_with_real_recipe_refuses(tmp_path: Path) -> None:
+    main = _main_checkout(tmp_path)
+    with pytest.raises(fw._ConfigError, match="no e2e stage will run"):
+        _run(tmp_path, main, runner=_fake_runner(main=main), e2e_recipe=_REAL_RECIPE)
+    # gate fires before any git side effect: no worktree dir
+    assert not (tmp_path / "wt").exists()
+
+
+def test_e2e_unwired_with_skip_sentinel_stamps_frontmatter(tmp_path: Path) -> None:
+    import ticket_frontmatter
+
+    main = _main_checkout(tmp_path)
+    recipe = "skip: docs-only, no runnable surface"
+    _run(tmp_path, main, runner=_fake_runner(main=main), e2e_recipe=recipe)
+    fm = ticket_frontmatter.read(tmp_path / "wt" / ".flow" / "tickets" / "FT-1.md")
+    assert fm["e2e_recipe"] == recipe
+
+
+def test_e2e_unwired_with_test_ci_only_refuses(tmp_path: Path) -> None:
+    # test-ci-only is not a skip: it still expects the e2e stage to run and emit its evidence block,
+    # so it is a broken promise in an unwired pipeline.
+    main = _main_checkout(tmp_path)
+    with pytest.raises(fw._ConfigError, match="no e2e stage will run"):
+        _run(tmp_path, main, runner=_fake_runner(main=main), e2e_recipe="test-ci-only")
+
+
+def test_e2e_none_with_real_recipe_refuses(tmp_path: Path) -> None:
+    # explicitly disabled and absent are the same outcome: nothing executes the recipe
+    main = _main_with_e2e_handler(tmp_path, "none")
+    with pytest.raises(fw._ConfigError, match="no e2e stage will run"):
+        _run(tmp_path, main, runner=_fake_runner(main=main), e2e_recipe=_REAL_RECIPE)
+
+
+def test_e2e_unwired_prose_beginning_with_skip_refuses(tmp_path: Path) -> None:
+    # pins the sentinel to its exact spelling: `skip` without the colon is prose, not a decision, so
+    # it must not buy an exemption
+    main = _main_checkout(tmp_path)
+    with pytest.raises(fw._ConfigError, match="no e2e stage will run"):
+        _run(
+            tmp_path,
+            main,
+            runner=_fake_runner(main=main),
+            e2e_recipe="skipping the flaky suite, rerun by hand",
+        )
+
+
+def test_e2e_unreadable_workspace_with_real_recipe_refuses(tmp_path: Path) -> None:
+    # the third reason _e2e_enabled returns False: it swallows WorkspaceConfigError, so an
+    # unreadable workspace is indistinguishable from an unwired one. The refusal must name that
+    # cause instead of blaming [pipeline.handlers].
+    main = _main_checkout(tmp_path)
+    (main / ".flow" / "workspace.toml").unlink()
+    with pytest.raises(fw._ConfigError, match="could not be read"):
+        _run(tmp_path, main, runner=_fake_runner(main=main), e2e_recipe=_REAL_RECIPE)
+
+
+def test_e2e_refusal_precedes_terminal_bead_refusal(tmp_path: Path, monkeypatch) -> None:
+    # pins the new branch's position: it must fire ahead of _refuse_terminal_bead, which itself
+    # reads workspace.toml and would otherwise mask the e2e cause
+    main = _main_checkout(tmp_path)
+    _patch_tracker(monkeypatch, _FakeTracker(normalized="done"))
+    with pytest.raises(fw._ConfigError, match="no e2e stage will run"):
+        _run(tmp_path, main, runner=_fake_runner(main=main), e2e_recipe=_REAL_RECIPE)
+
+
 # ─── terminal-bead refusal gate (flow-d6gq) ───────────────────────────────────
 
 
