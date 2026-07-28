@@ -258,6 +258,14 @@ _TRAILING_COMMENT_RE = re.compile(r"(?:^|(?<=\s))#.*$")
 
 # A fenced-code block delimiter (``` or ~~~), ignoring leading whitespace.
 _FENCE_RE = re.compile(r"^\s*(```|~~~)")
+
+# Doc-citation drift (flow-glrn): a live doc naming a references/ file that no longer exists. The
+# path form is unambiguous; the bare backticked form is checked only for the three reference-doc
+# name families, which no ticket-dir artifact (`instruction.md`, `pr_body.md`, ...) uses, so run
+# artifacts can never false-positive. Placeholder citations (`references/stage-<name>.md`) fall
+# outside both character classes by construction.
+_DOC_PATH_CITE_RE = re.compile(r"references/([A-Za-z0-9._-]+\.md)")
+_DOC_BARE_CITE_RE = re.compile(r"`((?:command|stage|delivery)-[a-z0-9._-]+\.md)`")
 # Reusable docs use logical FLOW. Host-specific invocations belong only at the
 # conversation boundary, never in stage/command recipes.
 _HOST_PUBLIC_RE = re.compile(r"^(?:/flow|\$flow:flow)\s+\S")
@@ -642,6 +650,33 @@ def zsh_unsafe_binding_problems(doc_name: str, text: str) -> list[Problem]:
                             raw=span.strip(),
                         )
                     )
+    return problems
+
+
+def dangling_doc_citation_problems(doc_name: str, text: str) -> list[Problem]:
+    """ERROR on a citation of a references/ doc that does not exist on disk.
+
+    Four such danglers shipped invisibly during the apparatus retirement: a deleted doc's citers
+    pass every other gate, because no gate reads doc filenames out of prose. This pins the class at
+    the same doc-level surface as the other prose checks.
+    """
+    problems: list[Problem] = []
+    references_dir = SKILL_ROOT / "references"
+    for lineno, line in enumerate(text.splitlines(), start=1):
+        cited = {m.group(1) for m in _DOC_PATH_CITE_RE.finditer(line)}
+        cited |= {m.group(1) for m in _DOC_BARE_CITE_RE.finditer(line)}
+        for name in sorted(cited):
+            if (references_dir / name).exists():
+                continue
+            problems.append(
+                Problem(
+                    doc=doc_name,
+                    line=lineno,
+                    level="ERROR",
+                    msg=f"cites a references doc that does not exist: {name}",
+                    raw=line.strip(),
+                )
+            )
     return problems
 
 
@@ -1330,6 +1365,7 @@ def main(argv: list[str]) -> int:
         problems.extend(host_specific_invocation_problems(doc.name, text))
         problems.extend(malformed_runtime_token_problems(doc.name, text))
         problems.extend(zsh_unsafe_binding_problems(doc.name, text))
+        problems.extend(dangling_doc_citation_problems(doc.name, text))
 
     direct_count = len(
         [inv for doc in docs for inv in find_invocations(doc.name, doc.read_text(encoding="utf-8"))]
