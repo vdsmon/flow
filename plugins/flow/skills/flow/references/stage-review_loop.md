@@ -40,8 +40,8 @@ i=0; errors=0; while [ $i -lt 8 ]; do
   if [ "$rc" -ne 0 ]; then
     errors=$((errors+1)); [ "$errors" -ge 3 ] && break
   else
-    status=$(printf '%s' "$out" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("status", ""))')
-    [ "$status" = green ] || [ "$status" = failed ] && break
+    ci_status=$(printf '%s' "$out" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("status", ""))')
+    if [ "$ci_status" = green ] || [ "$ci_status" = failed ]; then break; fi
     errors=0
   fi
   i=$((i+1)); sleep 60
