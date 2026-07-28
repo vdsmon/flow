@@ -157,7 +157,11 @@ def test_reconfigure_migrates_legacy_flow_namespace_before_writing(tmp_path: Pat
 # ─── Bare happy paths ────────────────────────────────────────────────────────
 
 
-def test_bare_jira_init_writes_workspace_toml(tmp_path: Path) -> None:
+def test_bare_jira_init_writes_workspace_toml(tmp_path: Path, monkeypatch) -> None:
+    # Pinned to Codex so these read as the harness-neutral registry defaults; the
+    # bundled `flow:implementer` / `flow:e2e-runner` types apply only under Claude
+    # Code (see the composition tests below).
+    monkeypatch.setenv("FLOW_HARNESS", "codex")
     result = initmod.run_init(_jira_config(tmp_path))
     assert result.workspace_toml_path == tmp_path / ".flow" / "workspace.toml"
     assert (tmp_path / ".flow" / ".initialized").exists()
@@ -932,8 +936,11 @@ def test_reconfigure_handler_flag_overrides_preservation(tmp_path: Path) -> None
     assert result.handlers["code_review"] == "inline"
 
 
-def test_fresh_init_preserves_nothing(tmp_path: Path) -> None:
+def test_fresh_init_preserves_nothing(tmp_path: Path, monkeypatch) -> None:
     # No reconfigure -> existing_handlers is {} -> handlers equal registry defaults.
+    # Pinned to Codex; under Claude Code e2e's default is the bundled
+    # `flow:e2e-runner` type instead (see the composition tests below).
+    monkeypatch.setenv("FLOW_HARNESS", "codex")
     result = initmod.run_init(dataclasses.replace(_jira_config(tmp_path), bundle="bare"))
     assert result.handlers["code_review"] == "inline"
     assert result.handlers["e2e"] == "subagent:general-purpose"
@@ -942,7 +949,9 @@ def test_fresh_init_preserves_nothing(tmp_path: Path) -> None:
 
 def test_reconfigure_freezes_value_differing_from_current_default(tmp_path: Path) -> None:
     # A prior value that differs from the current default is frozen on reconfigure
-    # (e2e default is subagent:general-purpose; a prior "none" is preserved).
+    # (e2e's current default is the registry default under Codex, or the bundled
+    # `flow:e2e-runner` type under Claude Code; a prior "none" differs from either
+    # and is preserved).
     first = dataclasses.replace(
         _jira_config(tmp_path),
         bundle="custom",
@@ -955,8 +964,11 @@ def test_reconfigure_freezes_value_differing_from_current_default(tmp_path: Path
     assert result.handlers["e2e"] == "none"
 
 
-def test_reconfigure_preserved_warning_names_value_and_default(tmp_path: Path) -> None:
-    # The reset-that-wasn't is legible: the warning carries value AND registry default.
+def test_reconfigure_preserved_warning_names_value_and_default(tmp_path: Path, monkeypatch) -> None:
+    # The reset-that-wasn't is legible: the warning carries value AND current default.
+    # Pinned to Codex, where the current default happens to be the registry default;
+    # the Claude Code twin below covers the case where the two diverge.
+    monkeypatch.setenv("FLOW_HARNESS", "codex")
     first = dataclasses.replace(
         _jira_config(tmp_path),
         bundle="custom",
@@ -969,6 +981,28 @@ def test_reconfigure_preserved_warning_names_value_and_default(tmp_path: Path) -
     line = next(w for w in result.warnings if "e2e" in w)
     assert "none" in line
     assert "subagent:general-purpose" in line
+
+
+def test_claude_code_preserved_warning_names_current_not_registry_default(
+    tmp_path: Path, monkeypatch
+) -> None:
+    # Under Claude Code the preserved value IS the registry default, so the old
+    # "registry default: subagent:flow:implementer" label claimed a difference that
+    # does not exist. The interpolated field is the default this workspace would now
+    # receive (the bundled type), and the label has to say that.
+    monkeypatch.setenv("FLOW_HARNESS", "codex")
+    initmod.run_init(_jira_config(tmp_path))
+
+    monkeypatch.setenv("FLOW_HARNESS", "claude-code")
+    result = initmod.run_init(
+        dataclasses.replace(_jira_config(tmp_path), bundle="bare"), reconfigure=True
+    )
+    line = next(w for w in result.warnings if "implement=" in w)
+    assert line == (
+        "reconfigure preserved implement=subagent:general-purpose "
+        "(current default: subagent:flow:implementer)"
+    )
+    assert "registry default" not in line
 
 
 # ─── flow-js8p: stabilize installed skill-root path ─────────────────────
@@ -1065,3 +1099,123 @@ def test_reconfigure_hard_kill_leaves_no_stale_ledger(
         initmod.run_init(_jira_config(tmp_path), reconfigure=True)
 
     assert not progress.exists()
+
+
+# ─── Bundled stage agent defaults (implement / e2e) ──────────────────────────
+
+
+def test_claude_code_composes_bundled_stage_agents(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("FLOW_HARNESS", "claude-code")
+    result = initmod.run_init(_jira_config(tmp_path))
+    assert result.handlers["implement"] == "subagent:flow:implementer"
+    assert result.handlers["e2e"] == "subagent:flow:e2e-runner"
+    assert result.handlers["code_review"] == "inline"
+
+
+def test_codex_composes_general_purpose_for_stage_agents(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("FLOW_HARNESS", "codex")
+    result = initmod.run_init(_jira_config(tmp_path))
+    assert result.handlers["implement"] == "subagent:general-purpose"
+    assert result.handlers["e2e"] == "subagent:general-purpose"
+
+
+def test_explicit_handler_beats_bundled_stage_agent(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("FLOW_HARNESS", "claude-code")
+    config = dataclasses.replace(
+        _jira_config(tmp_path),
+        bundle="custom",
+        handler_overrides={"implement": "subagent:custom-implementer"},
+    )
+    result = initmod.run_init(config)
+    assert result.handlers["implement"] == "subagent:custom-implementer"
+    # The untouched stage still gets the bundled default.
+    assert result.handlers["e2e"] == "subagent:flow:e2e-runner"
+
+
+def test_codex_reconfigure_drops_bundled_stage_agents(tmp_path: Path, monkeypatch) -> None:
+    # The _FLOW_OWNED_HANDLERS path: reconfiguring a Claude-Code-initialized
+    # workspace under Codex must not preserve the bundled types as an operator
+    # customization the way a genuine customization would survive.
+    monkeypatch.setenv("FLOW_HARNESS", "claude-code")
+    first = initmod.run_init(_jira_config(tmp_path))
+    assert first.handlers["implement"] == "subagent:flow:implementer"
+    assert first.handlers["e2e"] == "subagent:flow:e2e-runner"
+
+    monkeypatch.setenv("FLOW_HARNESS", "codex")
+    result = initmod.run_init(
+        dataclasses.replace(_jira_config(tmp_path), bundle="bare"), reconfigure=True
+    )
+    assert result.handlers["implement"] == "subagent:general-purpose"
+    assert result.handlers["e2e"] == "subagent:general-purpose"
+
+
+def test_claude_code_reconfigure_preserves_stored_general_purpose(
+    tmp_path: Path, monkeypatch
+) -> None:
+    # Pins WHERE the bundled-agent block runs: before `_preserved_handlers`, so a
+    # stored value is compared against the bundled type. Move that block after the
+    # call and a stored `subagent:general-purpose` reads as "equals the default", is
+    # not preserved, and gets silently upgraded to the bundled type, breaking the
+    # preservation promise in references/command-workspace.md.
+    #
+    # No other test sees that reordering: mutating the harness guard to `if True:`
+    # removes the condition, never the order. Without this test the whole point of
+    # the change is invisible to the suite.
+    monkeypatch.setenv("FLOW_HARNESS", "codex")
+    first = initmod.run_init(_jira_config(tmp_path))
+    assert first.handlers["implement"] == "subagent:general-purpose"
+    assert first.handlers["e2e"] == "subagent:general-purpose"
+
+    monkeypatch.setenv("FLOW_HARNESS", "claude-code")
+    result = initmod.run_init(
+        dataclasses.replace(_jira_config(tmp_path), bundle="bare"), reconfigure=True
+    )
+    assert result.handlers["implement"] == "subagent:general-purpose"
+    assert result.handlers["e2e"] == "subagent:general-purpose"
+
+
+def _frontmatter_name(path: Path) -> str:
+    lines = path.read_text(encoding="utf-8").splitlines()
+    assert lines[0].strip() == "---", f"{path} missing frontmatter opening ---"
+    end = next(i for i in range(1, len(lines)) if lines[i].strip() == "---")
+    for line in lines[1:end]:
+        if line.startswith("name:"):
+            return line.split(":", 1)[1].strip()
+    raise AssertionError(f"{path} frontmatter has no name: field")
+
+
+def test_every_bundled_agent_type_resolves_to_a_matching_agent_file() -> None:
+    # The main safety gain: HANDLER_RE and parse_handler validate the charset only,
+    # and nothing under scripts/ references agents/, so a typo in either bundled map
+    # would ship silently and fail only at spawn time, on every run.
+    agents_dir = Path(initmod.__file__).resolve().parent.parent.parent.parent / "agents"
+    bundled_types = {initmod._BUNDLED_CODEX_REVIEWER, *initmod._BUNDLED_STAGE_AGENTS.values()}
+    assert bundled_types  # a suite with an empty set would vacuously pass below
+    prefix = "subagent:flow:"
+    for handler in bundled_types:
+        assert handler.startswith(prefix), handler
+        name = handler[len(prefix) :]
+        agent_path = agents_dir / f"{name}.md"
+        assert agent_path.is_file(), f"missing agent definition: {agent_path}"
+        assert _frontmatter_name(agent_path) == name
+
+
+def test_run_init_writes_bundled_stage_agents_to_disk_under_claude_code(
+    tmp_path: Path, monkeypatch
+) -> None:
+    # Covers _render_workspace_toml -> atomic_write_text -> _verify_workspace_toml,
+    # the path a composition-only test never reaches: read the WRITTEN toml, not the
+    # returned dict.
+    monkeypatch.setenv("FLOW_HARNESS", "claude-code")
+    result = initmod.run_init(_jira_config(tmp_path))
+    handlers = _handlers_of(result.workspace_toml_path)
+    assert handlers["implement"] == "subagent:flow:implementer"
+    assert handlers["e2e"] == "subagent:flow:e2e-runner"
+
+
+def test_run_init_writes_general_purpose_to_disk_under_codex(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("FLOW_HARNESS", "codex")
+    result = initmod.run_init(_jira_config(tmp_path))
+    handlers = _handlers_of(result.workspace_toml_path)
+    assert handlers["implement"] == "subagent:general-purpose"
+    assert handlers["e2e"] == "subagent:general-purpose"

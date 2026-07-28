@@ -430,14 +430,26 @@ def _legal_handler_string(value: str) -> bool:
 
 _BUNDLED_CODEX_REVIEWER = "subagent:flow:codex-reviewer"
 
-# Handler values only the probe produces, so preserving one as an operator
-# customization would keep a dead handler wired after its tool is uninstalled.
+# A plugin-namespaced `subagent:` type (`flow:<name>`) is a Claude Code agent type.
+# Codex ships no agents of its own (`plugins/flow/.codex-plugin/plugin.json` declares
+# `skills` only), so a Codex-hosted run keeps `subagent:general-purpose` for both
+# stages below. `_compose_handlers` applies this map only under the Claude Code
+# harness, beside the registry-default computation `default_handler` still floors.
+_BUNDLED_STAGE_AGENTS = {
+    "implement": "subagent:flow:implementer",
+    "e2e": "subagent:flow:e2e-runner",
+}
+
+# Handler values Flow itself supplies from a precondition: the Codex PATH probe for
+# the bundled reviewer, the Claude Code harness gate for the bundled stage agents above.
+# Preserving one as an operator customization would keep it wired after its precondition
+# is gone (the tool uninstalled, or a reconfigure under a different harness).
 #
 # The rule is deliberately one-way. Going the other direction, a stored `inline` is
 # indistinguishable from an operator who wants inline review, so installing Codex after
 # setup does not retroactively switch an existing workspace; that needs an explicit
 # --handler code_review=... or a fresh init.
-_PROBE_OWNED_HANDLERS = frozenset({_BUNDLED_CODEX_REVIEWER})
+_FLOW_OWNED_HANDLERS = frozenset({_BUNDLED_CODEX_REVIEWER, *_BUNDLED_STAGE_AGENTS.values()})
 
 
 def _codex_reviewer_handler() -> str:
@@ -460,15 +472,22 @@ def _codex_reviewer_handler() -> str:
 def _preserved_handlers(
     existing_handlers: dict[str, str] | None, defaults: dict[str, str]
 ) -> tuple[dict[str, str], list[str]]:
-    """Prior handlers that differ from the current registry default (reconfigure
-    preservation). Returns (preserved, warning lines that carry value + default)."""
+    """Prior handlers that differ from the current default (reconfigure preservation).
+
+    `defaults` is the handler table this workspace would receive right now: the
+    registry default under Codex, the bundled type under Claude Code (see
+    `_BUNDLED_STAGE_AGENTS`). The warning says "current default" for exactly that
+    reason. Calling it the registry default would be false under Claude Code, where
+    a preserved `subagent:general-purpose` IS the registry default.
+
+    Returns (preserved, warning lines that carry value + current default)."""
     preserved = {
         stage: val
         for stage, val in (existing_handlers or {}).items()
-        if stage in defaults and val != defaults[stage] and val not in _PROBE_OWNED_HANDLERS
+        if stage in defaults and val != defaults[stage] and val not in _FLOW_OWNED_HANDLERS
     }
     lines = [
-        f"reconfigure preserved {stage}={val} (registry default: {defaults[stage]})"
+        f"reconfigure preserved {stage}={val} (current default: {defaults[stage]})"
         for stage, val in preserved.items()
     ]
     return preserved, lines
@@ -504,10 +523,16 @@ def _compose_handlers(
     bare: defaults from stage-registry.toml.
     custom: defaults + user overrides; rejects illegal handler strings.
 
+    Under Claude Code, `implement` and `e2e` default to their bundled agent types
+    (`_BUNDLED_STAGE_AGENTS`) rather than the raw registry default; Codex keeps the
+    registry default for both.
+
     On reconfigure, `existing_handlers` carries the prior workspace's handlers.
-    Any stage whose prior value differs from the current registry default is
-    preserved. Precedence: --handler > existing customization > default.
-    `existing_handlers` None or {} (fresh init) is a no-op.
+    Any stage whose prior value differs from the current default (registry default,
+    or bundled type under Claude Code) is preserved, unless that prior value is
+    itself Flow-owned (`_FLOW_OWNED_HANDLERS`). Precedence: --handler > preserved
+    > bundled > registry default. `existing_handlers` None or {} (fresh init) is a
+    no-op.
     """
     handlers: dict[str, str] = {
         s.name: s.default_handler for s in registry if s.name in pipeline_stages
@@ -520,6 +545,17 @@ def _compose_handlers(
             f"code_review defaults to {codex_reviewer} (codex found on PATH); verify "
             "`codex exec review` runs authenticated, or set code_review=inline"
         )
+
+    # Bundled stage agents replace the registry default only under Claude Code; see
+    # `_BUNDLED_STAGE_AGENTS` above for why Codex keeps `subagent:general-purpose`.
+    # This runs before `_preserved_handlers` so a bundled type is the "current
+    # default" that preservation compares a reconfigured value against, giving
+    # precedence --handler > preserved > bundled > registry default in both the
+    # `bare` and `custom` branches below.
+    if flow_harness() == "claude-code":
+        for stage, bundled in _BUNDLED_STAGE_AGENTS.items():
+            if stage in handlers:
+                handlers[stage] = bundled
 
     preserved, preserved_warnings = _preserved_handlers(existing_handlers, dict(handlers))
 
