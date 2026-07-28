@@ -14,24 +14,31 @@ Subcommands:
 
   record-baseline --stage <name> --ticket <key> --ticket-dir <dir>
                   [--files <comma-sep>] [--capture-blobs]
-      Writes <ticket-dir>/baseline.json: head_sha + planned_files + (when
-      --capture-blobs set) per-file index entries via `git ls-files -s`.
+      Writes <ticket-dir>/baseline.json: head_sha + origin_sha + planned_files +
+      (when --capture-blobs set) per-file index entries via `git ls-files -s`.
+      head_sha is the diff anchor and is recomputed from live HEAD on every
+      record. origin_sha is the ownership anchor: it is written once, on the
+      first record, and every later record preserves it. The post-implement
+      reconcile re-records to widen planned_files, so an anchor that followed
+      HEAD would leave check-ownership nothing to scan.
 
   capture-implement-diff --ticket <key> --ticket-dir <dir>
       Reads baseline.json for {head_sha, planned_files}, runs `git diff
       --binary --raw <head_sha> -- <files>`, writes to
-      <ticket-dir>/implement.diff.
+      <ticket-dir>/implement.diff. Refuses an empty planned_files (exit 1): with
+      no pathspec git diffs the whole repository, and an empty owned set can
+      never legitimately produce a scoped capture.
 
   capture-review-diff --ticket <key> --ticket-dir <dir>
-      Same baseline/scope as capture-implement-diff, but runs `git diff
-      <head_sha> -- <files>` (no --binary/--raw) and writes to
-      <ticket-dir>/review.diff. Binary content is elided (`Binary files ...
-      differ`) rather than inlined, since this payload is read by code_review's
-      reviewer and never applied.
+      Same baseline/scope as capture-implement-diff, including the empty
+      planned_files refusal, but runs `git diff <head_sha> -- <files>` (no
+      --binary/--raw) and writes to <ticket-dir>/review.diff. Binary content is
+      elided (`Binary files ... differ`) rather than inlined, since this payload
+      is read by code_review's reviewer and never applied.
 
 Exit codes:
   0 = ok
-  1 = missing baseline / state.json
+  1 = missing baseline / state.json / empty planned_files
   2 = git error (stderr propagated)
   3 = check-ownership only: ownership violation (unowned paths in the diff)
 """
@@ -56,6 +63,15 @@ class OwnershipResult(TypedDict):
     planned_files: list[str]
     changed: list[str]
     unowned_changes: list[str]
+    # the sha the committed-delta half scanned from, and which baseline field it came from:
+    # "origin_sha", or "head_sha_fallback" for a baseline written before origin_sha existed.
+    # committed_scan_empty says that half listed no path between the anchor and HEAD. It describes
+    # that half alone: the ordinary healthy run has every edit uncommitted, so the range is empty
+    # while the working-tree half checks the whole change. What signals a scan that covered nothing
+    # is the conjunction of ok, an empty changed, and committed_scan_empty.
+    ownership_anchor: str
+    anchor_source: str
+    committed_scan_empty: bool
 
 
 class _GitError(Exception):
@@ -313,6 +329,27 @@ def _union_frontmatter_planned(files: list[str], ticket: str | None, cwd: Path) 
     return merged
 
 
+def _recorded_origin_sha(ticket_dir: Path) -> str:
+    """Read origin_sha out of an existing baseline.json, or "" if there is none.
+
+    A malformed or unreadable baseline yields "" so the caller records a fresh anchor:
+    record_baseline's job is to write the baseline down, never to refuse over one. The fresh anchor
+    is live HEAD, and unlike check_ownership's head_sha_fallback that re-anchor leaves no mark on
+    the result: a later scan reports anchor_source "origin_sha" for an anchor that moved.
+    """
+    bpath = _baseline_path(ticket_dir)
+    if not bpath.exists():
+        return ""
+    try:
+        prior = json.loads(bpath.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return ""
+    if not isinstance(prior, dict):
+        return ""
+    origin = prior.get("origin_sha")
+    return origin if isinstance(origin, str) else ""
+
+
 def record_baseline(
     stage: str,
     ticket_dir: Path,
@@ -329,9 +366,13 @@ def record_baseline(
     files = _union_frontmatter_planned(files, ticket, cwd)
     if capture_blobs and files:
         blobs = _ls_files_blobs(files, cwd, r)
+    # the ownership anchor is written once and preserved by every later record, and the module
+    # docstring says why re-recording must not move it.
+    origin = _recorded_origin_sha(ticket_dir) or head
     payload: dict[str, Any] = {
         "stage": stage,
         "head_sha": head,
+        "origin_sha": origin,
         "planned_files": files,
         "blobs": blobs,
     }
@@ -364,6 +405,12 @@ def capture_implement_diff(
     if not isinstance(planned, list):
         raise _BaselineMissing("baseline.json planned_files is not a list")
     paths = [str(p) for p in planned]
+    if not paths:
+        # with no pathspec `git diff` covers the whole repository, so an empty owned set would widen
+        # the capture instead of narrowing it. There is no scoped patch to produce, so refuse.
+        raise _BaselineMissing(
+            "baseline.json planned_files is empty; refusing a repo-wide implement diff"
+        )
     existing = [p for p in paths if (cwd / p).exists()]
     # stage intent-to-add for any planned file that exists but is untracked, so
     # newly created files show up in the diff against head_sha; without this
@@ -427,6 +474,14 @@ def capture_review_diff(
     if not isinstance(planned, list):
         raise _BaselineMissing("baseline.json planned_files is not a list")
     paths = [str(p) for p in planned]
+    if not paths:
+        # spelled out again rather than shared with capture_implement_diff: the two captures are
+        # kept apart so the commit-side guard cannot be changed by an edit to the review path.
+        # Nothing downstream of this payload checks ownership, so a repo-wide review diff would
+        # reach a reviewer unfiltered.
+        raise _BaselineMissing(
+            "baseline.json planned_files is empty; refusing a repo-wide review diff"
+        )
     existing = [p for p in paths if (cwd / p).exists()]
     # stage intent-to-add for any planned file that exists but is untracked, so newly created files
     # show up in the diff against head_sha; without this `git diff` emits nothing for them and they
@@ -489,10 +544,15 @@ def check_ownership(
     Filename-level gate (the commit stage stages by patch from implement.diff, so
     this guards against unrelated edits sneaking into the commit). The scan covers
     the full delta against the recorded baseline: commits made since
-    baseline.head_sha AND the dirty working tree, so a change smuggled in via a
+    baseline.origin_sha AND the dirty working tree, so a change smuggled in via a
     rogue `git commit` mid-implement is seen too, not only uncommitted edits.
     Hunk-level ownership against implement.diff is a deeper check deferred to a
     later phase.
+
+    The committed half anchors on origin_sha, not head_sha: head_sha follows HEAD on
+    every re-record, so after the post-implement reconcile it would leave an empty
+    range that checks nothing. The result names the anchor it used and whether that
+    half found anything, so a green answer states what it covered.
     """
     r = runner or _default_runner()
     bpath = _baseline_path(ticket_dir)
@@ -505,6 +565,11 @@ def check_ownership(
     head_sha = baseline.get("head_sha")
     if not isinstance(head_sha, str) or not head_sha:
         raise _BaselineMissing("baseline.json missing head_sha")
+    origin_sha = baseline.get("origin_sha")
+    if isinstance(origin_sha, str) and origin_sha:
+        anchor, anchor_source = origin_sha, "origin_sha"
+    else:
+        anchor, anchor_source = head_sha, "head_sha_fallback"
     planned = baseline.get("planned_files", [])
     owned = {str(p) for p in planned} if isinstance(planned, list) else set()
     # --untracked-files=all lists each untracked file individually; without it
@@ -527,15 +592,13 @@ def check_ownership(
             changed.add(path)
     # `git status` is blind to changes already committed on the branch, so a
     # rogue `git commit` of an unplanned file mid-implement would slip past a
-    # working-tree-only scan and ride into the PR. Diff the recorded baseline
-    # sha against HEAD to cover the committed delta too (empty on the normal
-    # path where HEAD still equals head_sha). --no-renames lists both rename
-    # endpoints so an out-of-scope rename source is seen here as well.
-    raw = _git(["diff", "--name-only", "--no-renames", f"{head_sha}..HEAD"], cwd, r)
-    for line in raw.splitlines():
-        tok = line.strip()
-        if not tok:
-            continue
+    # working-tree-only scan and ride into the PR. Diff the run's origin against
+    # HEAD to cover the committed delta too (empty on the normal path where HEAD
+    # still equals the anchor). --no-renames lists both rename endpoints so an
+    # out-of-scope rename source is seen here as well.
+    raw = _git(["diff", "--name-only", "--no-renames", f"{anchor}..HEAD"], cwd, r)
+    committed_lines = [line.strip() for line in raw.splitlines() if line.strip()]
+    for tok in committed_lines:
         path = _unquote_porcelain_path(tok)
         if _ownership_excluded(path):
             continue
@@ -546,6 +609,9 @@ def check_ownership(
         "planned_files": sorted(owned),
         "changed": sorted(changed),
         "unowned_changes": unowned,
+        "ownership_anchor": anchor,
+        "anchor_source": anchor_source,
+        "committed_scan_empty": not committed_lines,
     }
 
 

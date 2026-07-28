@@ -336,6 +336,172 @@ def test_check_ownership_missing_head_sha_raises(tmp_repo: Path, tmp_path: Path)
         diff_extract.check_ownership(ticket_dir, tmp_repo)
 
 
+# ─── ownership anchor (origin_sha) ───────────────────────────────────────────
+
+
+def test_record_baseline_first_record_sets_origin_sha_to_head(
+    tmp_repo: Path, tmp_path: Path
+) -> None:
+    ticket_dir = tmp_path / "runs" / "FT-1"
+    payload = diff_extract.record_baseline("implement", ticket_dir, tmp_repo, files=["a.py"])
+    assert payload["origin_sha"] == payload["head_sha"]
+    assert payload["origin_sha"] == _git(["rev-parse", "HEAD"], tmp_repo).strip()
+
+
+def test_record_baseline_rerecord_keeps_origin_sha_and_moves_head_sha(
+    tmp_repo: Path, tmp_path: Path
+) -> None:
+    # the post-implement reconcile re-records to widen planned_files. the diff anchor (head_sha)
+    # follows HEAD; the ownership anchor (origin_sha) must stay at the run origin, asserted here as
+    # two separate facts.
+    ticket_dir = tmp_path / "runs" / "FT-1"
+    first = diff_extract.record_baseline("implement", ticket_dir, tmp_repo, files=["a.py"])
+    (tmp_repo / "a.py").write_text("print('planned')\n", encoding="utf-8")
+    _git(["add", "a.py"], tmp_repo)
+    _git(["commit", "-m", "planned work"], tmp_repo)
+    second = diff_extract.record_baseline("implement", ticket_dir, tmp_repo, files=["a.py", "b.py"])
+    assert second["origin_sha"] == first["origin_sha"]
+    assert second["head_sha"] != first["head_sha"]
+    on_disk = json.loads((ticket_dir / "baseline.json").read_text(encoding="utf-8"))
+    assert on_disk["origin_sha"] == first["origin_sha"]
+    assert on_disk["head_sha"] == second["head_sha"]
+
+
+def test_record_baseline_over_corrupt_baseline_records_fresh_origin_sha(
+    tmp_repo: Path, tmp_path: Path
+) -> None:
+    # reading the prior anchor must never turn recording into a refusal: `workspace repair` then
+    # `retry --stage implement` re-records over whatever is on disk, and a half-written or truncated
+    # baseline there would otherwise abort the pre-hook.
+    for body in ("not json at all", "[]", json.dumps({"origin_sha": 123})):
+        ticket_dir = tmp_path / "runs" / body[:4]
+        ticket_dir.mkdir(parents=True)
+        (ticket_dir / "baseline.json").write_text(body, encoding="utf-8")
+        payload = diff_extract.record_baseline("implement", ticket_dir, tmp_repo, files=["a.py"])
+        assert payload["origin_sha"] == _git(["rev-parse", "HEAD"], tmp_repo).strip()
+        assert payload["origin_sha"] == payload["head_sha"]
+
+
+def test_check_ownership_refuses_committed_unplanned_after_rerecord(
+    tmp_repo: Path, tmp_path: Path
+) -> None:
+    # Regression: the reconcile re-records the baseline, which moved the scanned
+    # anchor to HEAD and left the committed range empty, so an unplanned file committed
+    # mid-implement rode into the PR while the gate reported ok.
+    ticket_dir = tmp_repo / ".flow" / "runs" / "FT-1"
+    diff_extract.record_baseline("implement", ticket_dir, tmp_repo, files=["a.py"])
+    (tmp_repo / "a.py").write_text("print('planned')\n", encoding="utf-8")
+    (tmp_repo / "rogue.py").write_text("print('rogue')\n", encoding="utf-8")
+    _git(["add", "a.py", "rogue.py"], tmp_repo)
+    _git(["commit", "-m", "planned plus rogue"], tmp_repo)
+    diff_extract.record_baseline("implement", ticket_dir, tmp_repo, files=["a.py"])
+    assert "rogue.py" not in _git(["status", "--porcelain"], tmp_repo)
+    payload = diff_extract.check_ownership(ticket_dir, tmp_repo)
+    assert payload["ok"] is False
+    assert "rogue.py" in payload["unowned_changes"]
+    assert payload["anchor_source"] == "origin_sha"
+    assert payload["committed_scan_empty"] is False
+
+
+def test_check_ownership_scan_reaches_committed_planned_work_after_rerecord(
+    tmp_repo: Path, tmp_path: Path
+) -> None:
+    # the assertion is on `changed`, not on `ok`: an anchor that follows HEAD reports ok here too,
+    # with `changed` empty, so only `changed` tells the two apart.
+    ticket_dir = tmp_repo / ".flow" / "runs" / "FT-1"
+    origin = _git(["rev-parse", "HEAD"], tmp_repo).strip()
+    diff_extract.record_baseline("implement", ticket_dir, tmp_repo, files=["planned.py"])
+    (tmp_repo / "planned.py").write_text("print('planned')\n", encoding="utf-8")
+    _git(["add", "planned.py"], tmp_repo)
+    _git(["commit", "-m", "planned work"], tmp_repo)
+    diff_extract.record_baseline("implement", ticket_dir, tmp_repo, files=["planned.py"])
+    payload = diff_extract.check_ownership(ticket_dir, tmp_repo)
+    assert "planned.py" in payload["changed"]
+    assert payload["ownership_anchor"] == origin
+    assert payload["committed_scan_empty"] is False
+
+
+def test_check_ownership_legacy_baseline_without_origin_sha_falls_back(
+    tmp_repo: Path, tmp_path: Path
+) -> None:
+    # a baseline written by an older engine has no origin_sha. the scan falls back to head_sha,
+    # which is the pre-change behavior, and names the fallback in the result. the unowned commit
+    # between head_sha and HEAD is what proves the fallback anchor is really scanned instead of
+    # quietly becoming an empty range.
+    legacy_anchor = _git(["rev-parse", "HEAD"], tmp_repo).strip()
+    (tmp_repo / "rogue.py").write_text("print('rogue')\n", encoding="utf-8")
+    _git(["add", "rogue.py"], tmp_repo)
+    _git(["commit", "-m", "rogue"], tmp_repo)
+    ticket_dir = tmp_repo / ".flow" / "runs" / "FT-1"
+    ticket_dir.mkdir(parents=True)
+    (ticket_dir / "baseline.json").write_text(
+        json.dumps(
+            {
+                "stage": "implement",
+                "head_sha": legacy_anchor,
+                "planned_files": ["a.py"],
+                "blobs": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    payload = diff_extract.check_ownership(ticket_dir, tmp_repo)
+    # the scan result comes first: naming the fallback proves nothing on its own, since an anchor
+    # that reported head_sha and scanned HEAD would report it identically.
+    assert "rogue.py" in payload["changed"]
+    assert payload["ok"] is False
+    assert payload["anchor_source"] == "head_sha_fallback"
+    assert payload["ownership_anchor"] == legacy_anchor
+
+
+def test_check_ownership_empty_origin_sha_falls_back(tmp_repo: Path, tmp_path: Path) -> None:
+    # origin_sha of "" has to fail the anchor guard on emptiness, not on type alone. git reads the
+    # empty left side of "..HEAD" as HEAD, so an anchor of "" scans an empty range at exit 0 while
+    # the payload still claims it anchored on origin_sha, which is the fail-open shape this gate
+    # exists to remove. the committed rogue file is what separates the two anchors, so it is
+    # asserted first: a type-only guard reaches the same anchor_source by a different route.
+    empty_origin_anchor = _git(["rev-parse", "HEAD"], tmp_repo).strip()
+    (tmp_repo / "rogue.py").write_text("print('rogue')\n", encoding="utf-8")
+    _git(["add", "rogue.py"], tmp_repo)
+    _git(["commit", "-m", "rogue"], tmp_repo)
+    ticket_dir = tmp_repo / ".flow" / "runs" / "FT-1"
+    ticket_dir.mkdir(parents=True)
+    (ticket_dir / "baseline.json").write_text(
+        json.dumps(
+            {
+                "stage": "implement",
+                "head_sha": empty_origin_anchor,
+                "origin_sha": "",
+                "planned_files": ["a.py"],
+                "blobs": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    payload = diff_extract.check_ownership(ticket_dir, tmp_repo)
+    assert "rogue.py" in payload["changed"]
+    assert payload["ok"] is False
+    assert payload["anchor_source"] == "head_sha_fallback"
+    assert payload["ownership_anchor"] == empty_origin_anchor
+
+
+def test_check_ownership_empty_committed_scan_still_checks_working_tree(
+    tmp_repo: Path, tmp_path: Path
+) -> None:
+    # the common healthy shape: everything uncommitted, so the committed half finds nothing while
+    # the porcelain half still catches the unowned file. committed_scan_empty is a statement about
+    # that half alone, never about the gate as a whole.
+    ticket_dir = tmp_repo / ".flow" / "runs" / "FT-1"
+    diff_extract.record_baseline("implement", ticket_dir, tmp_repo, files=["a.py"])
+    (tmp_repo / "a.py").write_text("print('planned')\n", encoding="utf-8")
+    (tmp_repo / "rogue.py").write_text("print('rogue')\n", encoding="utf-8")
+    payload = diff_extract.check_ownership(ticket_dir, tmp_repo)
+    assert payload["committed_scan_empty"] is True
+    assert payload["anchor_source"] == "origin_sha"
+    assert payload["ok"] is False
+    assert "rogue.py" in payload["unowned_changes"]
+
+
 def test_unquote_porcelain_path_octal_utf8() -> None:
     # quotePath=false keeps non-ASCII literal so this is unreachable through
     # check_ownership; exercise the octal multibyte round-trip at the helper level.
@@ -840,6 +1006,55 @@ def test_capture_implement_diff_ignores_missing_planned_file(
     assert "present.py" in content
 
 
+def test_capture_implement_diff_refuses_empty_planned_files(tmp_repo: Path, tmp_path: Path) -> None:
+    # an empty planned set appends no pathspec, which made git diff the whole repository. an empty
+    # scope has nothing to capture, so refuse instead of widening.
+    ticket_dir = tmp_path / "runs" / "FT-1"
+    diff_extract.record_baseline("implement", ticket_dir, tmp_repo, files=[])
+    (tmp_repo / "unrelated.py").write_text("print('unrelated')\n", encoding="utf-8")
+    with pytest.raises(diff_extract._BaselineMissing, match="planned_files is empty"):
+        diff_extract.capture_implement_diff(ticket_dir, tmp_repo)
+    assert not (ticket_dir / "implement.diff").exists()
+
+
+def test_capture_implement_diff_refuses_absent_planned_files_key(
+    tmp_repo: Path, tmp_path: Path
+) -> None:
+    # the frontmatter seeder omits planned_files entirely when it is empty, so the absent key
+    # reaches the capture as often as the empty list does.
+    ticket_dir = tmp_path / "runs" / "FT-1"
+    ticket_dir.mkdir(parents=True)
+    head = _git(["rev-parse", "HEAD"], tmp_repo).strip()
+    (ticket_dir / "baseline.json").write_text(
+        json.dumps({"stage": "implement", "head_sha": head, "origin_sha": head, "blobs": {}}),
+        encoding="utf-8",
+    )
+    (tmp_repo / "unrelated.py").write_text("print('unrelated')\n", encoding="utf-8")
+    with pytest.raises(diff_extract._BaselineMissing, match="planned_files is empty"):
+        diff_extract.capture_implement_diff(ticket_dir, tmp_repo)
+    assert not (ticket_dir / "implement.diff").exists()
+
+
+def test_cli_capture_implement_diff_empty_planned_files_exits_1(
+    tmp_repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ticket_dir = tmp_path / "runs" / "FT-1"
+    diff_extract.record_baseline("implement", ticket_dir, tmp_repo, files=[])
+    rc = diff_extract.cli_main(
+        [
+            "capture-implement-diff",
+            "--ticket",
+            "FT-1",
+            "--ticket-dir",
+            str(ticket_dir),
+            "--cwd",
+            str(tmp_repo),
+        ]
+    )
+    assert rc == 1
+    assert "planned_files is empty" in capsys.readouterr().err
+
+
 # ─── CLI ─────────────────────────────────────────────────────────────────────
 
 
@@ -1330,3 +1545,59 @@ def test_capture_review_diff_ignores_missing_planned_file(tmp_repo: Path, tmp_pa
 
     assert "present.py" in content
     assert "never_created.py" not in content
+
+
+def test_capture_review_diff_refuses_empty_planned_files(tmp_repo: Path, tmp_path: Path) -> None:
+    """The review payload is the unguarded consumer: nothing downstream checks ownership.
+
+    The guard is written out separately here rather than shared with the implement capture, so
+    deleting either one reds its own test.
+    """
+    ticket_dir = tmp_path / "runs" / "FT-1"
+    diff_extract.record_baseline("implement", ticket_dir, tmp_repo, files=[])
+    (tmp_repo / "unrelated.py").write_text("print('unrelated')\n", encoding="utf-8")
+
+    with pytest.raises(diff_extract._BaselineMissing, match="planned_files is empty"):
+        diff_extract.capture_review_diff(ticket_dir, tmp_repo)
+
+    assert not (ticket_dir / "review.diff").exists()
+
+
+def test_capture_review_diff_refuses_absent_planned_files_key(
+    tmp_repo: Path, tmp_path: Path
+) -> None:
+    ticket_dir = tmp_path / "runs" / "FT-1"
+    ticket_dir.mkdir(parents=True)
+    head = _git(["rev-parse", "HEAD"], tmp_repo).strip()
+    (ticket_dir / "baseline.json").write_text(
+        json.dumps({"stage": "implement", "head_sha": head, "origin_sha": head, "blobs": {}}),
+        encoding="utf-8",
+    )
+    (tmp_repo / "unrelated.py").write_text("print('unrelated')\n", encoding="utf-8")
+
+    with pytest.raises(diff_extract._BaselineMissing, match="planned_files is empty"):
+        diff_extract.capture_review_diff(ticket_dir, tmp_repo)
+
+    assert not (ticket_dir / "review.diff").exists()
+
+
+def test_cli_capture_review_diff_empty_planned_files_exits_1(
+    tmp_repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ticket_dir = tmp_path / "runs" / "FT-1"
+    diff_extract.record_baseline("implement", ticket_dir, tmp_repo, files=[])
+
+    rc = diff_extract.cli_main(
+        [
+            "capture-review-diff",
+            "--ticket",
+            "FT-1",
+            "--ticket-dir",
+            str(ticket_dir),
+            "--cwd",
+            str(tmp_repo),
+        ]
+    )
+
+    assert rc == 1
+    assert "planned_files is empty" in capsys.readouterr().err

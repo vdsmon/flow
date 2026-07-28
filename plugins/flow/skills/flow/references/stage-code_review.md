@@ -40,11 +40,15 @@ model, effort level, clone, or execution receipt.
    in 2m32s once the payload was one pre-built diff. The lever is payload shape, not
    model capability.
 
-   Exit 1 has two causes, distinguished by stderr, and their remedies are opposite. A
+   Exit 1 has three causes, distinguished by stderr, and their remedies differ. A
    missing or malformed baseline is a repair (see Errors). `planned file(s) gitignored,
    cannot be committed` means a planned file is ignored: do NOT retry implement, which
    re-records the same baseline and fails identically. Fix the cause as `stage-commit.md`
-   directs, then rerun this step.
+   directs, then rerun this step. `baseline.json planned_files is empty` means the run
+   owns no files, so the capture refuses rather than hand a reviewer a repo-wide diff.
+   Retrying implement loops here too, for the same reason: the re-record writes the same
+   empty planned set. Put the run's files into the ticket frontmatter `planned_files` (or
+   pass them to `record-baseline --files ...`), then rerun this step.
 
    **An empty `review.diff` is a stop, not a clean review.** Exit 0 with a zero-byte
    payload means the capture found nothing between the baseline and the working tree,
@@ -53,7 +57,11 @@ model, effort level, clone, or execution receipt.
    `head_sha`, and `record-baseline` recomputes that from live HEAD, so a
    post-implementation ownership reconcile (`delivery-loop.md`) can move it past work
    already committed during implement. `check-ownership` reports `ok` in that same state,
-   so nothing else catches it. Fail the stage and surface the ticket instead of reviewing
+   so nothing else catches it. That gate now anchors on `origin_sha`, which no re-record
+   moves, so it does catch an UNOWNED file committed mid-implement; this state is a
+   different one, where the committed work is planned and `ok` is the correct answer
+   while the payload is still empty. The capture anchor is unchanged and still moves.
+   Fail the stage and surface the ticket instead of reviewing
    an empty payload: a reviewer handed nothing returns no findings, and that is
    indistinguishable from a clean review.
 
@@ -188,6 +196,11 @@ and any residual risk.
   `stage-commit.md` directs, by adding the narrowest `.gitignore` negation for the named
   files (adding `.gitignore` to the plan via `record-baseline --files ...`), or by
   dropping them from `planned_files` and re-recording. Then rerun step 1.
+- Empty planned set (exit 1, stderr `baseline.json planned_files is empty`): the run owns
+  no files, so the capture refuses a repo-wide payload. Do NOT retry implement: the
+  re-record writes the same empty planned set and the capture fails identically, which
+  loops. Put the files the run edited into the ticket frontmatter `planned_files` (or pass
+  them to `record-baseline --files ...`), then rerun step 1.
 - Reviewer failure: fail visibly; do not silently self-review. An external reviewer
   reports through a file, so name the command and its stderr rather than the empty
   artifact.

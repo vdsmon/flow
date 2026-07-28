@@ -200,6 +200,13 @@ implementation diff, and verify it applies cleanly with binary support. Do not w
 for incidental files. Planned binary deliverables that an agent could not create are
 copied into the worktree before diff capture and remain inside the declared set.
 
+Re-recording moves the diff anchor (`baseline.head_sha`) to live HEAD and leaves the
+ownership anchor (`baseline.origin_sha`) at the run's origin. So the widened set is what
+changes for `check-ownership`, never the range it scans: work committed during implement
+stays inside that range and an unplanned file committed there is still refused. The
+capture anchor does move, which is why a recapture after a mid-implement commit can
+return a payload missing the committed half (`stage-code_review.md`).
+
 Never stage unrelated changes. If the ownership patch cannot apply to the clean
 index, stop for repair rather than forcing or overwriting drift.
 
