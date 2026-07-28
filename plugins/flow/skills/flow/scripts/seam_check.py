@@ -155,6 +155,107 @@ _RUNTIME_SUBSTRING = ".flow/runtime"
 # Anything else means text was glued directly onto the runtime-dir substring with no separator, the
 # flow-lhhn corruption shape (`.flow/runtimeFLOW`).
 _RUNTIME_SUBSTRING_SEPARATORS = frozenset({"/", '"', "'", ")"})
+# zsh special-parameter names that abort a plain assignment (50) plus two names that assign silently
+# and then corrupt the rest of the recipe instead (path shadows PATH, argv shadows the positional
+# parameters). Derived by executing every name zsh itself declares special and keeping only the ones
+# that fail, both in the ambient shell and under `env -i` (identical results):
+# ```
+#   env -i zsh -c 'zmodload zsh/parameter; print -l ${(k)parameters}' |
+#   grep -E '^[A-Za-z_][A-Za-z0-9_]*$' | sort -u |
+#   while read -r n; do env -i zsh -c "$n=x" 2>/dev/null || print -r -- "$n"; done
+# ```
+# Rerun that command against a newer zsh to refresh this set instead of re-guessing names by hand.
+_ZSH_UNSAFE_BINDING_NAMES = frozenset(
+    {
+        "aliases",
+        "ARGC",
+        "builtins",
+        "commands",
+        "dis_aliases",
+        "dis_builtins",
+        "dis_functions",
+        "dis_functions_source",
+        "dis_galiases",
+        "dis_patchars",
+        "dis_reswords",
+        "dis_saliases",
+        "EGID",
+        "EUID",
+        "funcfiletrace",
+        "funcsourcetrace",
+        "funcstack",
+        "functions",
+        "functions_source",
+        "functrace",
+        "galiases",
+        "GID",
+        "HISTCMD",
+        "history",
+        "historywords",
+        "jobdirs",
+        "jobstates",
+        "jobtexts",
+        "keymaps",
+        "LINENO",
+        "modules",
+        "nameddirs",
+        "options",
+        "parameters",
+        "patchars",
+        "PPID",
+        "reswords",
+        "saliases",
+        "status",
+        "termcap",
+        "terminfo",
+        "TTYIDLE",
+        "UID",
+        "userdirs",
+        "usergroups",
+        "widgets",
+        "zsh_eval_context",
+        "ZSH_EVAL_CONTEXT",
+        "zsh_scheduled_events",
+        "ZSH_SUBSHELL",
+        "path",
+        "argv",
+    }
+)
+# A binding position: start of span, a shell control/sequencing character, or a keyword that opens a
+# new simple command (optionally followed by short-option flags, e.g. `typeset -g`, `local -r`),
+# immediately before the bound name. The keyword set carries the POSIX/bash declaration words plus
+# zsh's own (`integer`, `float`, `private`) and the `nocorrect` precommand modifier: each of those
+# four aborts on a reserved name exactly like a bare assignment (verified on zsh 5.9), and `integer`
+# is the idiomatic zsh counter declaration, so a zsh-targeted gate that omitted them would be blind
+# to the most likely spelling in this macOS/zsh-only repo.
+_SHELL_CMD_HEAD = (
+    r"(?:^|[;&|(){}`!]|"
+    r"\b(?:do|then|else|elif|if|while|until|local|export|typeset|declare|readonly"
+    r"|integer|float|private|nocorrect)\b(?:\s+-\S+)*)"
+)
+_SHELL_ASSIGN_RE = re.compile(_SHELL_CMD_HEAD + r"\s*([A-Za-z_][A-Za-z0-9_]*)\+?=")
+# Arithmetic-command binding. The operator alternation covers every compound assignment zsh accepts
+# (`+= -= *= /= %= &= ^= |= <<= >>= **=`) and the postfix increments, ordered longest-first so `<<=`
+# is not read as `<` plus a stray `=`. Comparison reads (`== != >= <=`) stay silent because the
+# operator class excludes `= ! < >` as single characters and the trailing `=` is fenced by `(?!=)`.
+# An `$(( ... ))` expansion never reaches this pattern: `_VALUE_SPAN_RE` masks it before the scan.
+_SHELL_ARITH_RE = re.compile(
+    r"\(\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?:\+\+|--|(?:\*\*|<<|>>|[-+*/%&^|])?=(?!=))"
+)
+# The prefix increment `(( ++NAME ))`, whose operator sits where the postfix pattern expects a name.
+_SHELL_ARITH_PREFIX_RE = re.compile(r"\(\(\s*(?:\+\+|--)\s*([A-Za-z_][A-Za-z0-9_]*)")
+_SHELL_FOR_BIND_RE = re.compile(r"\b(?:for|foreach)\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?:\bin\b|;|\()")
+# `read` binds every trailing simple name, not only the first, so the capture is the whole
+# whitespace-separated name list and the caller membership-tests every element (`read -r a status`
+# and `while ... | read -r num status` both abort on zsh). A name reached any other way (an `-A`
+# array, a `-d` delimiter value, a subscripted element) stays out of scope.
+_SHELL_READ_BIND_RE = re.compile(
+    r"\bread\s+(?:-\S+\s+)*([A-Za-z_][A-Za-z0-9_]*(?:\s+[A-Za-z_][A-Za-z0-9_]*)*)"
+)
+# Cuts a trailing shell comment off a recipe span. Anchored to span-start or preceding whitespace so
+# `${#argv[@]}` and `$#` are never mistaken for a comment opener.
+_TRAILING_COMMENT_RE = re.compile(r"(?:^|(?<=\s))#.*$")
+
 # A fenced-code block delimiter (``` or ~~~), ignoring leading whitespace.
 _FENCE_RE = re.compile(r"^\s*(```|~~~)")
 # Reusable docs use logical FLOW. Host-specific invocations belong only at the
@@ -499,6 +600,48 @@ def malformed_runtime_token_problems(doc_name: str, text: str) -> list[Problem]:
                     raw=span.strip(),
                 )
             )
+    return problems
+
+
+def zsh_unsafe_binding_problems(doc_name: str, text: str) -> list[Problem]:
+    """ERROR on a recipe span binding a name zsh reserves or silently repurposes.
+
+    Scoped to `_executable_recipe_spans`, the same surface `malformed_runtime_token_problems` uses.
+    Per span: a whole-line shell comment is skipped outright; quoted/substituted values are masked
+    with `_VALUE_SPAN_RE` so a query string or inline Python never contributes a false binding; a
+    trailing comment is then cut with `_TRAILING_COMMENT_RE`. The binding regexes then run over what
+    remains, and a captured name in `_ZSH_UNSAFE_BINDING_NAMES` is the drift. Every pattern puts the
+    bound name(s) in group 1 and that group is split on whitespace, because `read` captures a whole
+    trailing name list while the others capture exactly one name. Both comment filters live here,
+    not in `_executable_recipe_spans`, so the shared helper's own behavior
+    (`malformed_runtime_token_problems`'s scan) stays unchanged.
+    """
+    problems: list[Problem] = []
+    for lineno, span in _executable_recipe_spans(text):
+        if span.lstrip().startswith("#"):
+            continue
+        masked = _VALUE_SPAN_RE.sub(_MASKED_VALUE, span)
+        masked = _TRAILING_COMMENT_RE.sub("", masked)
+        for pattern in (
+            _SHELL_ASSIGN_RE,
+            _SHELL_ARITH_RE,
+            _SHELL_ARITH_PREFIX_RE,
+            _SHELL_FOR_BIND_RE,
+            _SHELL_READ_BIND_RE,
+        ):
+            for match in pattern.finditer(masked):
+                for name in match.group(1).split():
+                    if name not in _ZSH_UNSAFE_BINDING_NAMES:
+                        continue
+                    problems.append(
+                        Problem(
+                            doc=doc_name,
+                            line=lineno,
+                            level="ERROR",
+                            msg=f"binds zsh-reserved/unsafe name in a recipe: {name}",
+                            raw=span.strip(),
+                        )
+                    )
     return problems
 
 
@@ -1186,6 +1329,7 @@ def main(argv: list[str]) -> int:
         text = doc.read_text(encoding="utf-8")
         problems.extend(host_specific_invocation_problems(doc.name, text))
         problems.extend(malformed_runtime_token_problems(doc.name, text))
+        problems.extend(zsh_unsafe_binding_problems(doc.name, text))
 
     direct_count = len(
         [inv for doc in docs for inv in find_invocations(doc.name, doc.read_text(encoding="utf-8"))]

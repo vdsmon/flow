@@ -518,6 +518,192 @@ def test_main_flags_malformed_runtime_token(monkeypatch, tmp_path) -> None:
     assert seam_check.main([]) == 1
 
 
+# --- zsh-unsafe binding gate ---------------------------------------------------
+
+
+def test_zsh_unsafe_binding_flags_the_review_loop_defect_shape() -> None:
+    # The exact defect fixed in stage-review_loop.md: zsh reserves `status` as a read-only alias for
+    # `$?`, so this assignment aborts the whole recipe before anything downstream ever runs.
+    text = "```bash\n  status=$(printf '%s' \"$out\" | python3 -c 'import json; print(1)')\n```\n"
+    problems = seam_check.zsh_unsafe_binding_problems("fixture.md", text)
+    assert len(problems) == 1
+    assert problems[0].level == "ERROR"
+    assert problems[0].doc == "fixture.md"
+    assert problems[0].line == 2
+    assert "status" in problems[0].msg
+
+
+def test_zsh_unsafe_binding_catches_while_control_flow_head() -> None:
+    # Regression guard for the design's revision 1: without the control-flow keywords in
+    # `_SHELL_CMD_HEAD`, a `while` loop binding the name right after the keyword slips past.
+    text = "```bash\nwhile status=$(cmd); do echo x; done\n```\n"
+    problems = seam_check.zsh_unsafe_binding_problems("fixture.md", text)
+    assert len(problems) == 1
+    assert "status" in problems[0].msg
+
+
+@pytest.mark.parametrize("keyword", ["integer", "float", "private", "nocorrect"])
+def test_zsh_unsafe_binding_catches_zsh_declaration_keyword(keyword: str) -> None:
+    # `_SHELL_CMD_HEAD` shipped only the POSIX/bash declaration words, so zsh's own binding keywords
+    # slipped past a zsh-targeted gate. All four abort with `read-only variable: status` on zsh 5.9,
+    # and `integer NAME=0` is the idiomatic zsh counter declaration, the likeliest future spelling.
+    text = f"```bash\n{keyword} status=1\n```\n"
+    problems = seam_check.zsh_unsafe_binding_problems("fixture.md", text)
+    assert len(problems) == 1
+    assert "status" in problems[0].msg
+
+
+def test_zsh_unsafe_binding_catches_keyword_with_short_flag() -> None:
+    # Regression guard for revision 2: `read -r status` was caught while `typeset -g status=`
+    # slipped through, because only the read pattern skipped a short-option flag before the name.
+    text = "```bash\ntypeset -g status=1\n```\n"
+    problems = seam_check.zsh_unsafe_binding_problems("fixture.md", text)
+    assert len(problems) == 1
+    assert "status" in problems[0].msg
+
+
+def test_zsh_unsafe_binding_catches_append_assignment() -> None:
+    text = "```bash\nstatus+=green\n```\n"
+    problems = seam_check.zsh_unsafe_binding_problems("fixture.md", text)
+    assert len(problems) == 1
+    assert "status" in problems[0].msg
+
+
+def test_zsh_unsafe_binding_catches_spaced_arithmetic_assignment() -> None:
+    # `_SHELL_ASSIGN_RE` requires the `=` to abut the name with no space, so it cannot see this
+    # spaced arithmetic form; `_SHELL_ARITH_RE` exists to catch it instead.
+    text = "```bash\n(( status = 1 ))\n```\n"
+    problems = seam_check.zsh_unsafe_binding_problems("fixture.md", text)
+    assert len(problems) == 1
+    assert "status" in problems[0].msg
+
+
+@pytest.mark.parametrize("operator", ["|=", "&=", "^=", "<<=", ">>=", "**="])
+def test_zsh_unsafe_binding_catches_compound_arithmetic_assignment(operator: str) -> None:
+    # `_SHELL_ARITH_RE`'s operator class was single-character, so every multi-character compound
+    # assignment was silent even though zsh aborts on all of them (rc=2, verified on zsh 5.9).
+    text = f"```bash\n(( status {operator} 1 ))\n```\n"
+    problems = seam_check.zsh_unsafe_binding_problems("fixture.md", text)
+    assert len(problems) == 1
+    assert "status" in problems[0].msg
+
+
+@pytest.mark.parametrize("form", ["status++", "status--", "++status", "--status"])
+def test_zsh_unsafe_binding_catches_arithmetic_increment(form: str) -> None:
+    # An increment binds without ever writing `=`; the prefix forms need `_SHELL_ARITH_PREFIX_RE`
+    # because the operator sits where the postfix pattern expects the name. All four abort on zsh.
+    text = f"```bash\n(( {form} ))\n```\n"
+    problems = seam_check.zsh_unsafe_binding_problems("fixture.md", text)
+    assert len(problems) == 1
+    assert "status" in problems[0].msg
+
+
+@pytest.mark.parametrize("operator", ["==", "!=", ">=", "<="])
+def test_zsh_unsafe_binding_ignores_arithmetic_comparison(operator: str) -> None:
+    # `(( status == 1 ))` reads `$?`, the idiomatic zsh check, and must never read as a binding. A
+    # comparison operator contains a character the assignment operator class must keep excluded, so
+    # this is the pin that widening that class for compound assignment did not over-fire.
+    text = f"```bash\n(( status {operator} 1 )) && echo yes\n```\n"
+    assert seam_check.zsh_unsafe_binding_problems("fixture.md", text) == []
+
+
+def test_zsh_unsafe_binding_ignores_arithmetic_expansion_read() -> None:
+    # `_VALUE_SPAN_RE` masks a `$(( ... ))` expansion before the scan, so an ordinary counter bump
+    # stays silent; only the bare `(( ... ))` command form is a binding position.
+    text = "```bash\nerrors=$((errors+1))\nn=$((status+1))\n```\n"
+    assert seam_check.zsh_unsafe_binding_problems("fixture.md", text) == []
+
+
+def test_zsh_unsafe_binding_catches_for_loop_no_in() -> None:
+    text = "```bash\nfor status; do echo $status; done\n```\n"
+    problems = seam_check.zsh_unsafe_binding_problems("fixture.md", text)
+    assert len(problems) == 1
+    assert "status" in problems[0].msg
+
+
+def test_zsh_unsafe_binding_catches_read_binding() -> None:
+    text = "```bash\nread status\n```\n"
+    problems = seam_check.zsh_unsafe_binding_problems("fixture.md", text)
+    assert len(problems) == 1
+    assert "status" in problems[0].msg
+
+
+def test_zsh_unsafe_binding_catches_read_second_name() -> None:
+    # `read` binds its whole trailing name list; capturing only the first name let an unsafe name in
+    # any later position slip. `read -r a status` aborts on zsh 5.9 exactly as `read status` does.
+    text = "```bash\nread -r a status\n```\n"
+    problems = seam_check.zsh_unsafe_binding_problems("fixture.md", text)
+    assert len(problems) == 1
+    assert "status" in problems[0].msg
+
+
+def test_zsh_unsafe_binding_catches_read_in_while_pipeline() -> None:
+    # The realistic future shape: a CI-poll loop reading two columns per line. Silent before the
+    # name list was captured, and it dies on the first iteration.
+    text = "```bash\ngh pr list --json number,state | while read -r num status; do :; done\n```\n"
+    problems = seam_check.zsh_unsafe_binding_problems("fixture.md", text)
+    assert len(problems) == 1
+    assert "status" in problems[0].msg
+
+
+def test_zsh_unsafe_binding_accepts_cli_flag_value() -> None:
+    text = "```bash\ntracker_cli.py update --set status=in_progress\n```\n"
+    assert seam_check.zsh_unsafe_binding_problems("fixture.md", text) == []
+
+
+def test_zsh_unsafe_binding_accepts_the_fixed_ci_status_line() -> None:
+    text = (
+        "```bash\n"
+        "  ci_status=$(printf '%s' \"$out\" | python3 -c 'import json; print(1)')\n"
+        '  if [ "$ci_status" = green ]; then break; fi\n'
+        "```\n"
+    )
+    assert seam_check.zsh_unsafe_binding_problems("fixture.md", text) == []
+
+
+def test_zsh_unsafe_binding_accepts_a_quoted_read() -> None:
+    text = '```bash\n[ "$status" = green ] && echo yes\n```\n'
+    assert seam_check.zsh_unsafe_binding_problems("fixture.md", text) == []
+
+
+def test_zsh_unsafe_binding_accepts_a_quoted_query_string() -> None:
+    text = '```bash\ngh api "repo/x?per_page=1&status=queued"\n```\n'
+    assert seam_check.zsh_unsafe_binding_problems("fixture.md", text) == []
+
+
+def test_zsh_unsafe_binding_accepts_an_infence_comment_line() -> None:
+    text = "```bash\n# for status in green/failed we break early\necho ok\n```\n"
+    assert seam_check.zsh_unsafe_binding_problems("fixture.md", text) == []
+
+
+def test_zsh_unsafe_binding_accepts_a_trailing_comment() -> None:
+    text = "```bash\ngh pr view --json state  # read status from the rollup\n```\n"
+    assert seam_check.zsh_unsafe_binding_problems("fixture.md", text) == []
+
+
+def test_zsh_unsafe_binding_accepts_select_in() -> None:
+    # `select status in a b` prints a menu; unlike `for`/`foreach` it does not abort.
+    text = "```bash\nselect status in a b; do break; done\n```\n"
+    assert seam_check.zsh_unsafe_binding_problems("fixture.md", text) == []
+
+
+def test_zsh_unsafe_binding_accepts_non_shell_fence() -> None:
+    text = "```text\nstatus=queued\n```\n"
+    assert seam_check.zsh_unsafe_binding_problems("fixture.md", text) == []
+
+
+def test_main_flags_zsh_unsafe_binding(monkeypatch, tmp_path, capsys) -> None:
+    # Stubbing `docs_to_check` down to one fixture starves main's direct-bootstrap floor and its
+    # facade-coverage gates, so `main([])` returns 1 from dozens of unrelated errors whether or not
+    # the zsh check is wired in. The exit code therefore pins nothing; the finding's own message on
+    # stdout is what reds this test if the `zsh_unsafe_binding_problems` call in main is dropped.
+    fixture = tmp_path / "fixture.md"
+    fixture.write_text("```bash\nstatus=$(cmd)\n```\n", encoding="utf-8")
+    monkeypatch.setattr(seam_check, "docs_to_check", lambda: [fixture])
+    assert seam_check.main([]) == 1
+    assert "binds zsh-reserved/unsafe name in a recipe: status" in capsys.readouterr().out
+
+
 def test_surface_of_real_script_has_subcommands_and_flags() -> None:
     surface = seam_check.surface_of("dispatch_stage.py")
     assert surface is not None
