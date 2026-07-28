@@ -45,6 +45,7 @@ The fifth run-safety mechanism, the content-ownership commit gate, is `diff_extr
 | `cockpit_cli.py` | Construct the cockpit evidence model from an absolute JSON file and render the deterministic attention-first snapshot without probing or mutation. | `render --evidence <absolute-json-file> [--json]`; logical text or compact snapshot JSON, structured JSON errors |
 | `flow_worktree.py` | Post-approval worktree seeding plus the exported `is_ticket_branch` ownership predicate shared by preview and reap. Resolves the approved base, seeds the approved Markdown plan and `state.json`, stamps frontmatter, and binds the worktree's v2 memory pointer to main. Reap guards base/revision state, verifies an optional expected tip, and checkpoints dirty work before removal. | flags per `--help`; `create --auto` gates the unattended path |
 | `branch_ticket.py` | Resolve ticket key from current git branch (backend-aware regex); `--branch <name>` resolves from an explicit branch instead (the PR->ticket enabler for revise). | `--workspace-root [--branch]`; exit 0 match / 1 env / 3 no-match |
+| `manager_seat.py` | Deterministic half of manager seating (`references/manager.md` §Seating): fetch origin, resolve the remote default branch, ensure the standing bench worktree `.claude/worktrees/flow-manager` (created detached at the remote default when absent; an existing bench is never mutated), and emit the JSON posture the judgment half reads. Invocable from the bench itself; the posture always describes the primary checkout. | `--workspace-root [--dry-run]`; exit 0 posture ok, 2 probe/fetch/bench failure (posture still printed). Consumed by `references/manager.md` |
 | `_harness.py` (lib) | The closed host-adapter vocabulary: `flow_harness()` reads `FLOW_HARNESS`, defaults an unset selector to `claude-code`, and raises `HarnessError` on anything but `codex`/`claude-code`. Deliberately import-light — the workspace shims read it on every facade call. | — |
 
 ## Tracker
@@ -242,7 +243,7 @@ markers are overwritten. `—` = none.
 | `_locking.py` | — | `dispatch_stage`, `flow_friction`, `flow_worktree`, `lease`, `machinery_edit`, `memory_append`, `memory_embed`, `observe_ship_event`, `pending_mutations`, `recall_pending`, `recall_usage`, `runtime_layout`, `state`, `ticket_frontmatter` |
 | `_memory_paths.py` | — | `flow_friction`, `flow_worktree`, `friction_escalate`, `friction_recurrence`, `memory_append`, `memory_embed`, `metric`, `observe_at_close`, `observe_ship_event`, `recall`, `recall_usage`, `reflect_inputs`, `sweep_knowledge`, `tracker_cli` |
 | `_registry.py` | — | `dispatch_stage`, `init`, `lint_ticket`, `seam_check`, `validate_workspace` |
-| `_runner.py` | — | `branch_ticket`, `create_pr`, `diff_extract`, `finalize`, `flow_beads_create`, `flow_worktree`, `forge_bitbucket`, `forge_github`, `friction_escalate`, `init`, `recall_pending`, `review_brief`, `tracker_beads`, `version`, `worktree_janitor` |
+| `_runner.py` | — | `branch_ticket`, `create_pr`, `diff_extract`, `finalize`, `flow_beads_create`, `flow_worktree`, `forge_bitbucket`, `forge_github`, `friction_escalate`, `init`, `manager_seat`, `recall_pending`, `review_brief`, `tracker_beads`, `version`, `worktree_janitor` |
 | `_timeutil.py` | — | `dispatch_stage`, `flow_friction`, `flow_worktree`, `init`, `lease`, `memory_append`, `memory_embed`, `metric`, `observe_at_close`, `observe_ship_event`, `recall`, `recall_pending`, `recall_usage`, `recover`, `runtime_layout`, `state`, `status`, `sweep_knowledge`, `ticket_frontmatter`, `tracker_cli`, `worktree_janitor` |
 | `_workspace.py` | — | `branch_ticket`, `create_pr`, `flow_friction`, `flow_worktree`, `forge`, `friction_escalate`, `maintainer`, `metric`, `model_resolve`, `observe_ship_event`, `recover`, `reflect_inputs`, `revise_config`, `snapshot`, `status`, `tracker_cli`, `triage` |
 | `branch_ticket.py` | — | `finalize`, `worktree_janitor` |
@@ -275,6 +276,7 @@ markers are overwritten. `—` = none.
 | `lint_ticket.py` | — | — |
 | `machinery_edit.py` | `apply` | — |
 | `maintainer.py` | — | `flow_beads_create` |
+| `manager_seat.py` | — | — |
 | `memory_append.py` | — | `sweep_knowledge` |
 | `memory_embed.py` | `embed` `reindex` | `recall`, `recall_usage`, `sweep_knowledge` |
 | `metric.py` | `corpus-health` `fix-efficacy` `friction-per-run` `recall-hit-rate` `revert-rate` `tickets-per-week` `time-to-pr` `trend` | — |
@@ -312,5 +314,5 @@ markers are overwritten. `—` = none.
 | `validate_workspace.py` | — | `dispatch_stage` |
 | `version.py` | `stamp` | — |
 | `worker_pool.py` | `guard` `limit` `recover` `snapshot` | — |
-| `worktree_janitor.py` | `sweep` | `finalize` |
+| `worktree_janitor.py` | `sweep` | `finalize`, `manager_seat` |
 <!-- flow:module-map:end -->
