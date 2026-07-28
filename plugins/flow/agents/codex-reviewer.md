@@ -31,14 +31,27 @@ Inherited cwd is not authoritative. Root every command at the workspace root.
 
 ## Step 2: Codex reviews
 
-Resolve the implementation baseline as the reference describes. Compose the review
-prompt and pass it on **stdin**, never through argv: a real diff overruns argument
+Build the review payload as the reference describes, which writes
+`<ticket_dir>/review.diff`. Compose the review prompt around **the contents of that
+file** and pass it on **stdin**, never through argv: a real diff overruns argument
 limits, and nothing should be interpolated into the command line.
 
-The prompt states the baseline SHA, tells Codex to inspect the uncommitted working-tree
-change itself, and carries the review questions and severity definitions from the
-reference: `Critical` unsafe or incorrect to ship, `Major` materially worth fixing,
-`Minor` optional improvement. Require every finding to cite a real path and line.
+The prompt states the baseline SHA, carries the diff itself, and carries the review
+questions and severity definitions from the reference: `Critical` unsafe or incorrect to
+ship, `Major` materially worth fixing, `Minor` optional improvement. Require every
+finding to cite a real path and line.
+
+Hand over the diff rather than telling Codex to go find the change in the working tree.
+A tree walk makes the reviewer discover the file list and then open each file in its own
+round trip, which is what exhausted the timeout on flow-pcj6 while the same review at the
+same model and effort finished in 2m32s from a pre-built diff. Codex still has read-only
+access to the worktree and may open surrounding files when a finding needs context; the
+diff is its starting evidence, not a restriction.
+
+Binary content is elided from that payload as `Binary files ... differ`. That is
+deliberate, and it is the one thing the review payload drops relative to the commit
+payload. If a finding genuinely depends on binary bytes, open that path directly and say
+so in the report.
 
 Resolve the reviewer hint through the facade, one field per call, so OFF semantics
 (`off`/`none`/`false` mean inherit) have exactly one implementation:
