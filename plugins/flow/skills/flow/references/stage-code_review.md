@@ -41,6 +41,15 @@ model, effort level, clone, or execution receipt.
    root, and this document. It may inspect surrounding code and run focused read-only
    checks. It must not edit files, stage changes, commit, or advance Flow state.
 
+   Mutation is how tests that do not prove their claims are actually found, and it is
+   not an exception to the line above: copy the engine to a scratch directory outside
+   the worktree, break the property there, re-run the suite, and see what reds. The
+   worktree stays untouched. Four times in flow's history an adversarial reader settled
+   by mutation what reading alone could not, twice from this stage and twice from a
+   plan assessor: three tests that could not fail, and one correct property with no
+   test at all, where 15 tests stayed green while the behavior broke. Reading produces
+   the candidate; mutation is what tells you whether it is real.
+
    Ask it to look for correctness defects, missing behavior, regressions, unsafe
    boundaries, tests that do not prove their claims, needless complexity, and code
    that conflicts with established repository conventions. Require each finding to
