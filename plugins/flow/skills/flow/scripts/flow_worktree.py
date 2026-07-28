@@ -1067,10 +1067,11 @@ def _refuse_epic_bead(*, ticket: str, main_root: Path) -> None:
     if str(ticket_type).strip().lower() == "epic":
         raise _EpicBead(
             f"refusing to bootstrap {ticket}: it is an EPIC (a container, not a "
-            "single-PR unit). An epic is decomposed into child beads via the expand "
-            "recipe (command-maintain.md §E), then each child runs at its own spec gate — "
-            "bootstrapping the epic directly would cram-ship fragments of an "
-            "unaccepted epic as one PR. Expand it, or run a child key instead."
+            "single-PR unit). An epic is decomposed into child beads first "
+            "(`FLOW ticket split`, references/command-ticket.md), then each child runs "
+            "at its own spec gate — bootstrapping the epic directly would cram-ship "
+            "fragments of an unaccepted epic as one PR. Split it, or run a child key "
+            "instead."
         )
 
 

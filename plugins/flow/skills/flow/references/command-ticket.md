@@ -165,7 +165,7 @@ and best-effort once the probe passes:
 
 1. transition the ticket to its done state through the tracker seam (skipped when
    already terminal);
-2. freeze the ship event (`observe-at-close`) before the run state it reads is
+2. freeze the ship event (`observe_at_close`) before the run state it reads is
    destroyed;
 3. delete the remote branch through the forge seam (a forge that auto-deleted it at
    merge reports failed_or_absent, which is fine);

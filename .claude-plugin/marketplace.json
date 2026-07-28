@@ -1,7 +1,7 @@
 {
   "name": "vdsmon-flow",
   "metadata": {
-    "description": "flow — state-aware ticket→PR delivery for Claude Code and Codex. One target command starts, resumes, repairs, revises, or reports from durable evidence; the ticket, memory, measure, workspace, and maintain namespaces share one engine."
+    "description": "flow — state-aware ticket→PR delivery for Claude Code and Codex. One target command starts, resumes, repairs, revises, or reports from durable evidence; the ticket, memory, measure, and workspace namespaces share one engine."
   },
   "owner": {
     "name": "Victor De Simone",

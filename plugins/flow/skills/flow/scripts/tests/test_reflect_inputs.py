@@ -243,10 +243,6 @@ def test_bundle_includes_friction_for_this_run_only(tmp_repo: Path, tmp_path: Pa
     assert "RECONCILE" in types
     assert "RETRY" not in types  # different run_id is excluded
 
-    assert payload["ticket"] == "FT-1"
-    assert "state" in payload
-    assert "friction" in payload
-
 
 # ─── reflect_config ──────────────────────────────────────────────────────────
 

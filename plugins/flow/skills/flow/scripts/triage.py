@@ -40,10 +40,9 @@ _DEFER_STEM = "flow --auto could not self-approve"
 # never matches.
 _DECISION_RE = re.compile(r"^(?:MAINTAINER\s+)?(?:TRIAGE-)?DECISION\b[^:\n]*:")
 
-# Guard set for hot-change classification (self-contained; not shared with
-# command-maintain.md prose). A change touching any of these basenames is hot: it
-# must not blind-ship from a decided-mode --auto run, even if the bead carries
-# no `hot` label.
+# Guard set for hot-change classification. A change touching any of these
+# basenames is hot: it must not blind-ship from a decided-mode --auto run, even
+# if the bead carries no `hot` label.
 _GUARD_FILES = frozenset(
     {
         "lease.py",
