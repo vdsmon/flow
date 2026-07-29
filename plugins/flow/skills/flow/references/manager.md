@@ -184,7 +184,7 @@ Who implements: an **obvious** improvement is implemented fully, in one motion �
 **Merge rules:**
 
 - Verify branch push state first: an uncommitted change to a tracked file, an unpushed commit, or a remote branch already deleted means do not merge — resolve it or hand the PR to the human. Untracked scratch never counts.
-- When the run's workspace configures a review brief, verify its freshness before any other gate and block the merge while it is stale or missing — the driver re-renders at the current SHA (`stage-review_brief.md` owns the render):
+- When the run's workspace configures a review brief, verify its freshness before any other gate and block the merge while it is stale or missing, and have the driver re-render at the current SHA (`stage-review_brief.md` owns the render). Exit 1 is the refusal and exit 0 covers both `current` and `disabled`, so a workspace with no `review_brief` stage wired passes this gate legitimately rather than silently. Read the exit code, and read `.status` when you need to tell those two apart:
 
   ```bash
   FLOW_HARNESS="<harness>" "<facade>" review-brief freshness \

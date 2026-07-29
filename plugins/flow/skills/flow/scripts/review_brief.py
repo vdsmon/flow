@@ -11,6 +11,15 @@ CLI:
   review_brief.py freshness --workspace-root DIR --ticket-dir DIR --pr-id ID
 
 Both commands print one JSON object. Runtime dependencies are Python stdlib only.
+
+Exit codes:
+  0 = render succeeded, or freshness verdict `current` / `disabled`
+  1 = freshness verdict `stale` / `missing` (the brief should exist and does not match)
+  2 = validation refused, or any other ReviewBriefError
+
+`freshness` is a gate, not a report: manager.md blocks a merge while the brief is stale or
+missing, so those two verdicts must be legible from the exit code alone. `disabled` is 0 because
+an unwired review_brief stage is a deliberate opt-out rather than a stale brief.
 """
 
 from __future__ import annotations
@@ -1505,6 +1514,13 @@ def cli_main(argv: list[str]) -> int:
         print(f"review-brief: {exc}", file=sys.stderr)
         return 2
     print(_json(asdict(result)), end="")
+    # `freshness` is read as a gate: manager.md blocks a merge while the brief is stale or missing.
+    # Returning 0 for every verdict made that gate unreadable from the exit code, so a caller
+    # checking $? saw success in all four states. `disabled` stays 0 because an unwired review_brief
+    # stage is a deliberate opt-out, not a stale brief; only a brief that should exist and does not
+    # is a refusal.
+    if isinstance(result, Freshness) and result.status in ("stale", "missing"):
+        return 1
     return 0
 
 
