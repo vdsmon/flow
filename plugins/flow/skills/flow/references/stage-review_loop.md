@@ -61,10 +61,16 @@ FLOW_HARNESS="<harness>" "<facade>" forge --workspace-root . review-status --pr 
 FLOW_HARNESS="<harness>" "<facade>" forge --workspace-root . review-threads --pr "$PR_ID"
 ```
 
-If review status is unsupported, say so and use the available thread list. If a known
-review bot has not finished, wait once for a short bounded interval and retry the two
-probes. Do not start a background monitor or an unbounded wait. If it still has not
-finished, continue with an explicit `automated review incomplete` caveat; never call
+If review status is unsupported, say so and use the available thread list. Wait only for
+a review bot the workspace explicitly declares. With none declared, which is the default,
+an empty thread list on green CI is review-clean and owes no caveat: do not infer a bot
+from other pull requests, and do not read an unsupported review status as a pending one.
+Establishing by hand that no bot exists costs more than the wait it avoids, and it
+re-establishes the same static fact every run.
+
+When a declared bot has not finished, wait once for a short bounded interval and retry
+the two probes. Do not start a background monitor or an unbounded wait. If it still has
+not finished, continue with an explicit `automated review incomplete` caveat; never call
 that state review-clean.
 
 Only unresolved Critical or Major threads are actionable. Minor and nit findings stay
