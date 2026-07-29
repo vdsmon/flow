@@ -98,7 +98,15 @@ and `apply-floor` is not consulted.
 ## 3. Optional single fix pass
 
 If CI failed or actionable threads exist, and no fix pass has run yet, launch one
-fresh native fixer. Give it the failing logs and all accepted findings together. It
+fresh native fixer. Its hint role is `fixer`:
+
+```bash
+FLOW_HARNESS="<harness>" "<facade>" model --workspace-root . --stage review_loop --role fixer
+```
+
+An empty result means inherit the session model. Effort is not resolved here: this fixer is
+always host-native, and a native launch has no effort lever, so a resolved value would be
+dropped. Give it the failing logs and all accepted findings together. It
 edits directly in the authoritative ticket worktree, runs only the checks affected by
 its changes, creates one conventional follow-up commit, and pushes it. It must not
 create a clone, export/import a patch, or retry under another model.

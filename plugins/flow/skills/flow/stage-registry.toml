@@ -20,9 +20,26 @@
 #                                   (dispatch_stage.py); the dispatcher does NOT enforce them, a
 #                                   handler or pre-handler hook keys off a role string. Live reader:
 #                                   records_diff_baseline (implement pre-handler hook, SKILL.md).
+#   agent_defaults.<role>         - {tier, effort} defaults for a LAUNCH role. Distinct from
+#                                   `roles` above, which are dispatch markers: "role" means two
+#                                   different things in flow and these must never be merged.
+#                                   A workspace [models] entry overrides; "off" opts out entirely.
 #
 # Timeouts for plan / code_review / e2e / commit / create_pr / review_loop
 # are inferred defaults (the plan only specified ticket, implement, reflect explicitly).
+
+# Tier -> model name, per harness. Two tiers only. A model rename edits this table rather
+# than every stage entry. Identifiers are FULL: a bare "sol" is not a Codex model name, and
+# a rejected -m does not fail loudly (the reviewer retries without it), so a wrong value
+# here silently disables the policy. The Codex names are validated against the real CLI in
+# a Codex-authenticated CI gate, never at init (which can only probe PATH, not acceptance).
+[tiers.claude-code]
+standard = "sonnet"
+deep = "opus"
+
+[tiers.codex]
+standard = "gpt-5.6-terra"
+deep = "gpt-5.6-sol"
 
 [[stage]]
 name = "ticket"
@@ -44,6 +61,10 @@ required_when_compounding = false
 reference_doc = "references/stage-plan.md"
 roles = []
 
+[stage.agent_defaults.assessor]
+tier = "deep"
+effort = "medium"    # CALLER site: prefers the Codex assessor, so effort is carriable
+
 [[stage]]
 name = "implement"
 description = "Code + unit tests in the ticket worktree; the handler reports only when green"
@@ -55,6 +76,11 @@ required_when_compounding = false
 reference_doc = "references/stage-implement.md"
 roles = ["records_diff_baseline"]
 
+[stage.agent_defaults.implementer]
+tier = "standard"
+# no effort: always host-native here, and the Agent tool CALL carries no effort
+# parameter, so a resolved value would be dropped. Pinned in the agent frontmatter instead.
+
 [[stage]]
 name = "code_review"
 description = "A fresh native reviewer challenges the implementation diff"
@@ -64,6 +90,14 @@ required_predecessors = ["implement"]
 required_when_compounding = false
 reference_doc = "references/stage-code_review.md"
 roles = []
+
+[stage.agent_defaults.reviewer]
+tier = "deep"
+effort = "medium"    # HANDLER site: Codex when the bundled reviewer is wired
+
+[stage.agent_defaults.fixer]
+tier = "standard"
+# no effort: the fixer is always native (stage-code_review.md step 4)
 
 [[stage]]
 name = "e2e"
@@ -75,6 +109,10 @@ required_fields = ["e2e_recipe"]
 required_when_compounding = false
 reference_doc = "references/stage-e2e.md"
 roles = []
+
+[stage.agent_defaults.runner]
+tier = "standard"
+# no effort: native launch, see implement above
 
 [[stage]]
 name = "commit"
@@ -107,6 +145,10 @@ required_when_compounding = false
 reference_doc = "references/stage-review_loop.md"
 roles = []
 
+[stage.agent_defaults.fixer]
+tier = "standard"
+# no effort: native launch, see implement above
+
 [[stage]]
 name = "review_brief"
 description = "Local review companion (review_brief.py); no human gate, Forge stays the formal surface"
@@ -116,6 +158,10 @@ required_predecessors = ["create_pr"]
 required_when_compounding = false
 reference_doc = "references/stage-review_brief.md"
 roles = []
+
+[stage.agent_defaults.author]
+tier = "standard"
+# no effort: native launch, see implement above
 
 [[stage]]
 name = "reflect"

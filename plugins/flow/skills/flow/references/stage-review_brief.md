@@ -12,7 +12,16 @@ artifact, opens it when configured, records `STATUS=completed`, and advances to
 Forge. Forge remains the source of truth for the full diff, comments, approval, and
 merge authorization.
 
-Authorship may run inline or in one fresh native agent. In either case, the author
+Authorship may run inline or in one fresh native agent. When it runs in an agent, its hint
+role is `author`:
+
+```bash
+FLOW_HARNESS="<harness>" "<facade>" model --workspace-root . --stage review_brief --role author
+```
+
+An empty result means inherit the session model. Effort is not resolved here: the author is
+always host-native, and a native launch has no effort lever, so a resolved value would be
+dropped. In either case, the author
 returns only the validated content model. `review_brief.py` retains deterministic
 snapshot binding, HTML rendering, publication, and freshness. No authoring agent may
 render, publish, open a browser, or mutate source.

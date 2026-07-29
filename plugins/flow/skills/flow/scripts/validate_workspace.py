@@ -31,7 +31,15 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from _registry import HANDLER_RE, StageEntry, load_registry
+from _registry import (
+    CODEX_HANDLERS,
+    HANDLER_RE,
+    LAUNCH_CALLER,
+    LAUNCH_HANDLER,
+    LAUNCH_KINDS,
+    StageEntry,
+    load_registry,
+)
 from model_resolve import OFF_VALUES
 
 KNOWN_BACKENDS: tuple[str, ...] = ("jira", "beads")
@@ -259,19 +267,56 @@ def _warn_inline_stage_model(
             )
 
 
+def _warn_unusable_effort_hint(
+    data: dict[str, Any], handlers: dict[str, str], result: ValidationResult
+) -> None:
+    """Warn when an EXPLICIT effort hint lands on a launcher that cannot carry it.
+
+    Only a Codex launcher spends effort (`-c model_reasoning_effort=...`). A host-native
+    launch has no lever, because Flow dispatches through the Agent tool, whose call takes
+    no effort parameter — the agent's own frontmatter is the only native lever.
+
+    Scoped to what the operator WROTE, never to a shipped registry default. A warning
+    exists to say "the thing you configured will not take effect"; a default landing
+    somewhere it cannot be used is Flow's problem to get right, and warning about it would
+    put a standing complaint in every workspace's console about config nobody typed.
+    """
+    models = data.get("models")
+    if not isinstance(models, dict):
+        return
+    for stage, entry in models.items():
+        if not isinstance(entry, dict):
+            continue
+        for role, value in entry.items():
+            if not isinstance(value, dict):
+                continue
+            effort = value.get("effort")
+            if not isinstance(effort, str) or effort.strip().lower() in OFF_VALUES:
+                continue
+            kind = LAUNCH_KINDS.get(str(stage), {}).get(str(role), "")
+            if kind == LAUNCH_CALLER:
+                continue  # the caller may launch Codex; it decides at runtime
+            codex = kind == LAUNCH_HANDLER and handlers.get(str(stage), "") in CODEX_HANDLERS
+            if not codex:
+                result.warn(
+                    f"models.{stage}.{role}.effort",
+                    "this role launches a host-native agent, which has no effort lever "
+                    "(the Agent tool call carries no effort parameter), so the hint is "
+                    "resolved and then dropped; pin effort in the agent's frontmatter",
+                )
+
+
 # The stages that actually launch an agent, and the roles they launch. This is the
 # liveness truth for [models] keys: a hint for a stage outside this map (or a role a
 # stage never launches) would silently do nothing, so it is a violation, not a no-op.
 # Sources: delivery-plan.md (plan assessor), stage-registry.toml subagent handlers
 # (implement, e2e), stage-code_review.md (reviewer + fixer), stage-review_loop.md §3
 # (fixer), stage-review_brief.md (author).
+# Derived from _registry.LAUNCH_KINDS so the launch map has ONE definition. That map also
+# records HOW each role is launched (handler / native / caller), which model_resolve needs
+# and this validator does not.
 _LAUNCH_SITES: dict[str, frozenset[str]] = {
-    "plan": frozenset({"assessor"}),
-    "implement": frozenset({"implementer"}),
-    "code_review": frozenset({"reviewer", "fixer"}),
-    "e2e": frozenset({"runner"}),
-    "review_loop": frozenset({"fixer"}),
-    "review_brief": frozenset({"author"}),
+    stage: frozenset(roles) for stage, roles in LAUNCH_KINDS.items()
 }
 
 _HINT_FIELDS = frozenset({"model", "effort"})
@@ -428,6 +473,7 @@ def validate(
     _validate_model_hints(data, handlers, result)
 
     _warn_inline_stage_model(data, handlers, result)
+    _warn_unusable_effort_hint(data, handlers, result)
 
     if not result.ok or backend is None:
         return result, None

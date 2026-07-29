@@ -43,7 +43,8 @@ import recall_pending
 import state
 import validate_workspace as vw
 from _atomicio import atomic_write_text
-from _registry import StageEntry, registry_by_name
+from _harness import HarnessError, flow_harness
+from _registry import CODEX_HANDLERS, StageEntry, registry_by_name
 from _timeutil import utcnow_iso
 from snapshot import (
     classify_drift,
@@ -122,6 +123,23 @@ _REVISION_DEFAULT_STAGES = (
 
 
 # ─── Handler-string parsing ──────────────────────────────────────────────────
+
+
+def _launcher_harness_for(handler: str) -> str:
+    """The harness of the agent this handler launches, or "" when unclassifiable.
+
+    "" is not a failure: it means the site gets no registry default rather than a guessed
+    vocabulary, which is the safe direction for a third-party handler that today receives
+    no hint at all.
+    """
+    if handler in CODEX_HANDLERS:
+        return "codex"
+    if handler == "inline" or handler.startswith("subagent:"):
+        try:
+            return flow_harness()
+        except HarnessError:
+            return ""
+    return ""
 
 
 def _parse_handler(value: str) -> dict[str, Any]:
@@ -712,6 +730,13 @@ def cmd_next(
         "roles": stage_meta.roles if stage_meta else [],
         **handler_descriptor,
     }
+    # Bind the launcher's harness ONCE, here, so hint resolution cannot re-read
+    # [pipeline.handlers] later and disagree with the handler already dispatched. A
+    # reconfigure between this descriptor and the agent's `model` call would otherwise
+    # hand a Codex model name to a native launcher, or the reverse.
+    launcher_harness = _launcher_harness_for(snapshot.handlers[next_stage])
+    if launcher_harness:
+        payload["launcher_harness"] = launcher_harness
     # Attach reference_doc regardless of handler type so the do-loop can pass it
     # to a spawned subagent (and to inline / skill / none handlers alike).
     if stage_meta is not None and stage_meta.reference_doc:

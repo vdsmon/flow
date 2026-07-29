@@ -57,9 +57,16 @@ Resolve the reviewer hint through the facade, one field per call, so OFF semanti
 (`off`/`none`/`false` mean inherit) have exactly one implementation:
 
 ```bash
-FLOW_HARNESS="<harness>" "<facade>" model --workspace-root . --stage code_review --role reviewer
+FLOW_HARNESS="<harness>" "<facade>" model --workspace-root . --stage code_review --role reviewer --launcher-harness codex
 FLOW_HARNESS="<harness>" "<facade>" model --workspace-root . --stage code_review --role reviewer --field effort
 ```
+
+`--launcher-harness codex` is NOT `FLOW_HARNESS`. `FLOW_HARNESS` names the host this
+process runs under; the agent being launched here is Codex, so the model vocabulary is
+Codex's whichever host dispatched this stage. Resolution can also derive that from the
+wired handler, but passing it explicitly is what makes the value immune to a workspace
+reconfigure between dispatch and this call. Effort needs no such flag; it has no
+per-harness vocabulary.
 
 Pass a non-empty model as `-m` and a non-empty effort as
 `-c model_reasoning_effort=<value>`. Omit either flag when its call prints nothing,

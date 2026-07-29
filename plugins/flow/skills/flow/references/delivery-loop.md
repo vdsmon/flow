@@ -112,12 +112,23 @@ the launching role named. `--field effort` reads the optional effort hint:
 
 ```bash
 FLOW_HARNESS="<harness>" "<facade>" model --workspace-root . --stage "<stage>" \
-  [--role "<role>"] [--field model|effort]
+  [--role "<role>"] [--field model|effort] [--launcher-harness "<harness>"]
 ```
 
-An empty result means inherit the driver session model. Apply a non-empty hint only
-when the current host supports it; unsupported hints also inherit. This is a
-convenience, not execution provenance: Flow does not attest the provider or model.
+An empty result means inherit the driver session model. Resolution reads the workspace's
+`[models]` first, then falls back to the registry's shipped default for that role; an
+explicit `off`/`none`/`""` in `[models]` inherits and deliberately skips the default.
+
+`--launcher-harness` names the engine about to be LAUNCHED, which is not `FLOW_HARNESS`:
+under Claude Code a stage may be wired to the bundled Codex reviewer, whose model
+vocabulary is Codex's. When the descriptor carries `launcher_harness`, pass that value —
+it was bound at dispatch, so it cannot drift if the workspace is reconfigured mid-stage.
+A bundled Codex agent passes `codex`. Omit the flag for a host-native launch.
+
+Apply a non-empty hint only when the current host supports it; unsupported hints also
+inherit. Effort in particular reaches only a Codex launcher, because the Agent tool call
+carries no effort parameter — a native agent's effort is pinned in its own frontmatter.
+This is a convenience, not execution provenance: Flow does not attest the provider or model.
 
 Capture the complete returned report at the exact absolute artifact path before
 advancing. Prefer the host's exact-write primitive. If unavailable, use a
