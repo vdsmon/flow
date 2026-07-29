@@ -11,7 +11,7 @@ Code review answers: is it built right. The plan assessment already answered whe
 it was the right thing to build, and it cannot reach what only running code shows.
 
 Four categories carry nearly every finding worth having. They were derived from what
-review actually caught across five delivered tickets on 2026-07-28, not from taste,
+review actually caught across five delivered tickets, not from taste,
 and every high-value finding in that set fell into one of them:
 
 1. **Tests that pass for the wrong reason.** A test asserting an outcome two code

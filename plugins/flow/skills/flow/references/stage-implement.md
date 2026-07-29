@@ -120,7 +120,7 @@ Leave your work as uncommitted changes in the working tree.
    The same doubt applies to any gate you are about to trust. A green result proves the
    gate ran only if you have watched it fail: before believing a clean linter, checker or
    suite, make it red once on purpose and put it back. flow-1g07 exited 0 having skipped
-   every file. Every reviewer that fired such a control on 2026-07-28 found something
+   every file. Every reviewer that fired such a control found something
    real; the ones that trusted exit 0 found nothing.
 
 4. Implement the production code.
