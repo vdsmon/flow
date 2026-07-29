@@ -311,7 +311,7 @@ markers are overwritten. `—` = none.
 | `tracker_cli.py` | `comment` `create` `download-attachments` `get` `is-shipped` `link` `list-assigned` `list-epics` `list-sprints` `list-types` `set-sprint` `state` `transition` | `finalize`, `group_candidates`, `group_persist`, `observe_at_close`, `sync`, `triage`, `worktree_janitor` |
 | `tracker_jira.py` | — | `tracker` |
 | `triage.py` | `decided` `lane` `list` | `flow_worktree` |
-| `validate_workspace.py` | — | `dispatch_stage` |
+| `validate_workspace.py` | — | `dispatch_stage`, `review_brief` |
 | `version.py` | `stamp` | — |
 | `worker_pool.py` | `guard` `limit` `recover` `snapshot` | — |
 | `worktree_janitor.py` | `sweep` | `finalize`, `manager_seat` |
