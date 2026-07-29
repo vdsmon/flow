@@ -111,6 +111,18 @@ Leave your work as uncommitted changes in the working tree.
    and size. Clear `__pycache__` or set `PYTHONDONTWRITEBYTECODE=1` before you conclude
    that nothing reds. Flipping a single digit is exactly the shape that hits this.
 
+   A second trap makes a mutation report a survivor it did not earn: REPLACE THE BLOCK,
+   never insert near it. An inserted line leaves the original path reachable, so the
+   mutant runs the same code and reds nothing, and you read that as a coverage gap that
+   does not exist. On flow-pcj6 two such false survivors cost a probe round; the tell was
+   that they were the only mutations written by insertion rather than replacement.
+
+   The same doubt applies to any gate you are about to trust. A green result proves the
+   gate ran only if you have watched it fail: before believing a clean linter, checker or
+   suite, make it red once on purpose and put it back. flow-1g07 exited 0 having skipped
+   every file. Every reviewer that fired such a control on 2026-07-28 found something
+   real; the ones that trusted exit 0 found nothing.
+
 4. Implement the production code.
    Smallest change that makes the tests pass. Match the surrounding file's structural conventions (docstring format, section banners, naming). The comment-quality bar below is absolute and never inherits a file's bad habits: a stricter host convention wins, a looser one does not.
 
@@ -119,9 +131,9 @@ Leave your work as uncommitted changes in the working tree.
    Terse but not cryptic: plain language, self-contained, readable by a human and an agent. No em-dashes, no filler (`just`, `simply`, `note that`), no inflated verbs (`leverage`, `robustly`, `seamlessly`), no rule-of-three, no "not X but Y".
    Before returning, run the deterministic floor over every file you touched, scoped to this run's own lines:
    ```bash
-   FLOW_HARNESS="<harness>" "<facade>" lint-comments --diff-base <started_at_sha> <touched-files>
+   FLOW_HARNESS="<harness>" "<facade>" lint-comments --diff-base <started_at_sha> <absolute-touched-files>
    ```
-   (`<started_at_sha>` is `stages.implement.started_at_sha` in the run's `state.json`; the scoping keeps a legacy file's pre-existing comments out of your gate. Omit `--diff-base` only when every touched file is new.) Exit 1 lists em-dashes, banned filler, narration markers, and over-limit or under-filled comment prose as `file:line` findings; fix by rewording or refilling and re-run until exit 0. The checks are mechanical, so every finding on prose you wrote is fixable; if one is a misread of structured text (a field list or table the linter took for prose), restructure that comment so it reads as what it is rather than leaving the finding standing. The linter discovers the project's configured line length (ruff/black/.editorconfig, default 88). Then reread the comments you added against the judgment half the linter cannot check: a rename beats a comment, and a rationale stated once beats a repeat. If `humanize:humanize` is in your available skills you MUST run it as the final polish pass and apply its rewrite, then re-run the linter once (a rewrite can reintroduce mechanical findings); skip only if the skill is absent, and if it errors, log one line and proceed (a polish hiccup never fails a green stage).
+   (`<started_at_sha>` is `stages.implement.started_at_sha` in the run's `state.json`; the scoping keeps a legacy file's pre-existing comments out of your gate. Pass the file paths ABSOLUTE or explicitly rooted at `run_root`: this command resolves them against its own cwd, which is non-authoritative, and a path that resolves nowhere is skipped rather than failing. Omit `--diff-base` only when every touched file is new.) Exit 1 lists em-dashes, banned filler, narration markers, and over-limit or under-filled comment prose as `file:line` findings; fix by rewording or refilling and re-run until exit 0. The checks are mechanical, so every finding on prose you wrote is fixable; if one is a misread of structured text (a field list or table the linter took for prose), restructure that comment so it reads as what it is rather than leaving the finding standing. The linter discovers the project's configured line length (ruff/black/.editorconfig, default 88). Then reread the comments you added against the judgment half the linter cannot check: a rename beats a comment, and a rationale stated once beats a repeat. If `humanize:humanize` is in your available skills you MUST run it as the final polish pass and apply its rewrite, then re-run the linter once (a rewrite can reintroduce mechanical findings); skip only if the skill is absent, and if it errors, log one line and proceed (a polish hiccup never fails a green stage).
 
 5. Run the project's FULL CI-equivalent gate before declaring green — not just the tests.
    Discover the gate the same way you discover the test command (CI config / mise / package.json / Makefile), and run every part CI runs:

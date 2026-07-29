@@ -2,10 +2,33 @@
 
 ## Purpose
 
-Have one fresh native reviewer challenge the implementation before commit. The
+Have one fresh reviewer challenge the implementation before commit. The
 reviewer is logically independent from the driver and implementer, but it reads the
 same authoritative ticket worktree. Flow does not require a particular provider,
 model, effort level, clone, or execution receipt.
+
+Code review answers: is it built right. The plan assessment already answered whether
+it was the right thing to build, and it cannot reach what only running code shows.
+
+Four categories carry nearly every finding worth having. They were derived from what
+review actually caught across five delivered tickets on 2026-07-28, not from taste,
+and every high-value finding in that set fell into one of them:
+
+1. **Tests that pass for the wrong reason.** A test asserting an outcome two code
+   paths can produce; a test named for a scope its assertion does not have; a
+   disjunct that is always true.
+2. **Documented properties with no witness.** Any behavior the prose or a docstring
+   asserts whose loss no test would catch.
+3. **Fail-opens.** Anything reporting success while doing nothing, or turning a
+   documented refusal into silence. Ask directly: what input makes this pass while
+   accomplishing nothing?
+4. **Prose claims the code does not make good on.** Commands emitted from string
+   literals that do not exist or return nothing; a recipe naming a payload its own
+   command cannot produce.
+
+Prove a finding rather than argue it: reproduce it in a scratch copy, and fire a
+positive control before trusting any green gate, because a gate that skipped its
+input reports the same zero as a gate that passed.
 
 ## Inputs
 

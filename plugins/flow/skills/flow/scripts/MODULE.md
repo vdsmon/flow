@@ -215,7 +215,7 @@ reference doc); this table is for finding a doc, not for wiring.
 | `references/revision-triage-board.md` | The revision board is the one review-adjacent use of Lavish; the planning-gate use lives in references/plan-surface.md. |
 | `references/robustness.md` | The threat → file → witnessed-failure index that AGENTS.md's "Robustness (do not erode)" paragraph points at. |
 | `references/self-evolution.md` | Flow improves itself through the same ticket-to-PR lifecycle it applies to delivery work. |
-| `references/stage-code_review.md` | Have one fresh native reviewer challenge the implementation before commit. |
+| `references/stage-code_review.md` | Have one fresh reviewer challenge the implementation before commit. |
 | `references/stage-commit.md` | Compose a conventional commit, apply the recorded implement-stage diff, and transition the tracker ticket. |
 | `references/stage-create_pr.md` | Opens a PR for the run's feature branch — a draft by default, or ready for review when [create_pr] draft = false in workspace.toml… |
 | `references/stage-e2e.md` | Execute the **e2e recipe the plan declared** and surface any failure. |
