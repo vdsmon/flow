@@ -53,6 +53,36 @@ def parse_handler(value: str) -> ParsedHandler | None:
     return None
 
 
+# Which engine launches each site's agent. `roles` (above) is a different concept
+# entirely — dispatch markers like `records_diff_baseline` — and the two must never be
+# conflated; see `agent_defaults` on StageEntry.
+#   handler — the workspace's `[pipeline.handlers][stage]` IS this agent
+#   native  — always a fresh host-native agent, whatever the stage handler is
+#   caller  — chosen at runtime with a documented fallback, so only the caller knows
+LAUNCH_HANDLER = "handler"
+LAUNCH_NATIVE = "native"
+LAUNCH_CALLER = "caller"
+
+LAUNCH_KINDS: dict[str, dict[str, str]] = {
+    "plan": {"assessor": LAUNCH_CALLER},
+    "implement": {"implementer": LAUNCH_HANDLER},
+    "code_review": {"reviewer": LAUNCH_HANDLER, "fixer": LAUNCH_NATIVE},
+    "e2e": {"runner": LAUNCH_HANDLER},
+    "review_loop": {"fixer": LAUNCH_NATIVE},
+    "review_brief": {"author": LAUNCH_NATIVE},
+}
+
+# Handlers that shell out to Codex, so their model vocabulary is Codex's rather than the
+# host's. `codex-assessor` also shells to Codex but is never a handler; it is the one
+# LAUNCH_CALLER site. A handler outside this set and outside the flow-owned native agents
+# is UNKNOWN: it gets no registry default at all (see model_resolve), because injecting a
+# host model name into a third-party Codex launcher would break a supported configuration
+# that today receives no hint whatsoever.
+CODEX_HANDLERS = frozenset({"subagent:flow:codex-reviewer"})
+
+TIERS = ("standard", "deep")
+
+
 @dataclass(frozen=True)
 class StageEntry:
     name: str
@@ -64,12 +94,47 @@ class StageEntry:
     reference_doc: str | None = None
     roles: list[str] = field(default_factory=list)
     required_fields: list[str] = field(default_factory=list)
+    # Per-launch-role `{tier, effort}` defaults. Named `agent_defaults`, never `roles`:
+    # `roles` is taken and load-bearing (dispatch markers), and TOML rejects a table that
+    # collides with an existing array anyway.
+    agent_defaults: dict[str, dict[str, str]] = field(default_factory=dict)
+
+
+def registry_path() -> Path:
+    """The shipped stage-registry.toml beside this scripts directory."""
+    return Path(__file__).resolve().parent.parent / "stage-registry.toml"
+
+
+def load_tiers(path: Path | None = None) -> dict[str, dict[str, str]]:
+    """Parse the `[tiers.<harness>]` model maps. Missing or malformed -> {}."""
+    try:
+        data = tomllib.loads((path or registry_path()).read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError):
+        return {}
+    tiers = data.get("tiers")
+    if not isinstance(tiers, dict):
+        return {}
+    return {
+        str(harness): {str(k): str(v) for k, v in table.items() if isinstance(v, str)}
+        for harness, table in tiers.items()
+        if isinstance(table, dict)
+    }
 
 
 def _str_list(value: object) -> list[str]:
     if not isinstance(value, list):
         return []
     return [str(item) for item in value]
+
+
+def _agent_defaults(value: object) -> dict[str, dict[str, str]]:
+    if not isinstance(value, dict):
+        return {}
+    out: dict[str, dict[str, str]] = {}
+    for role, table in value.items():
+        if isinstance(table, dict):
+            out[str(role)] = {str(k): str(v) for k, v in table.items() if isinstance(v, str)}
+    return out
 
 
 def load_registry(path: Path) -> list[StageEntry]:
@@ -99,6 +164,7 @@ def load_registry(path: Path) -> list[StageEntry]:
                 reference_doc=entry.get("reference_doc"),
                 roles=_str_list(entry.get("roles")),
                 required_fields=_str_list(entry.get("required_fields")),
+                agent_defaults=_agent_defaults(entry.get("agent_defaults")),
             )
         )
     return out

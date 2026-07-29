@@ -640,3 +640,63 @@ def test_models_hint_for_stage_outside_pipeline_rejected(tmp_path: Path) -> None
     _append_forge(root, '[models]\ne2e = "sonnet"\n')
     result, _ = vw.validate(root)
     assert any("models.e2e" in v and "not in [pipeline].stages" in v for v in result.violations)
+
+
+# ─── effort-hint warning scoping (flow-0nnm) ──────────────────────────────────
+
+
+def _ws_with_models(tmp_path: Path, models: list[str], handlers: dict[str, str]) -> Path:
+    flow = tmp_path / ".flow"
+    flow.mkdir(parents=True, exist_ok=True)
+    (flow / ".initialized").touch()
+    stages = ["ticket", "plan", "implement", "code_review", "commit", "reflect"]
+    wired = dict.fromkeys(stages, "inline")
+    wired.update(handlers)
+    lines = [
+        "[tracker]",
+        'backend = "beads"',
+        "[tracker.beads]",
+        'prefix = "test"',
+        "[pipeline]",
+        "stages = [" + ", ".join(f'"{s}"' for s in stages) + "]",
+        "[pipeline.handlers]",
+        *(f'{k} = "{v}"' for k, v in wired.items()),
+        "[memory]",
+        'namespace = "FT"',
+        "compounding = false",
+        *(["[models]", *models] if models else []),
+    ]
+    (flow / "workspace.toml").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return tmp_path
+
+
+def test_shipped_defaults_alone_produce_no_warnings(tmp_path: Path) -> None:
+    # The direct guard against standing noise: a workspace that configures no [models] at
+    # all must validate silently. If flow's own defaults ever land somewhere they cannot be
+    # used, this test says so instead of every operator's console.
+    result, snapshot = vw.validate(_ws_with_models(tmp_path, [], {}))
+    assert result.ok
+    assert snapshot is not None
+    assert result.warnings == []
+
+
+def test_explicit_effort_on_a_native_role_warns(tmp_path: Path) -> None:
+    root = _ws_with_models(
+        tmp_path,
+        ["[models.code_review]", 'fixer = { model = "sonnet", effort = "high" }'],
+        {"code_review": "subagent:flow:codex-reviewer"},
+    )
+    result, _ = vw.validate(root)
+    assert result.ok
+    assert any("models.code_review.fixer.effort" in w for w in result.warnings)
+
+
+def test_explicit_effort_on_the_codex_reviewer_does_not_warn(tmp_path: Path) -> None:
+    root = _ws_with_models(
+        tmp_path,
+        ["[models.code_review]", 'reviewer = { model = "gpt-5.6-sol", effort = "high" }'],
+        {"code_review": "subagent:flow:codex-reviewer"},
+    )
+    result, _ = vw.validate(root)
+    assert result.ok
+    assert not any("effort" in w for w in result.warnings)

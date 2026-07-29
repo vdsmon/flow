@@ -80,9 +80,16 @@ Resolve the assessor hint through the facade, one field per call, so OFF semanti
 (`off`/`none`/`false` mean inherit) have exactly one implementation:
 
 ```bash
-FLOW_HARNESS="<harness>" "<facade>" model --workspace-root . --stage plan --role assessor
+FLOW_HARNESS="<harness>" "<facade>" model --workspace-root . --stage plan --role assessor --launcher-harness codex
 FLOW_HARNESS="<harness>" "<facade>" model --workspace-root . --stage plan --role assessor --field effort
 ```
+
+`--launcher-harness codex` is load-bearing and is NOT the same as `FLOW_HARNESS`.
+`FLOW_HARNESS` names the host this process runs under; under Claude Code that is
+`claude-code`, while the agent being launched here is Codex. Without the flag the assessor
+resolves the host's vocabulary and hands a Claude model name to `codex exec -m`. Effort
+needs no such flag, because effort has no per-harness vocabulary. The host-native fallback
+assessor, being native, omits the flag and correctly takes the parent harness.
 
 Pass a non-empty model as `-m` and a non-empty effort as `-c model_reasoning_effort=<value>`.
 Omit either flag when its call prints nothing, so Codex falls back to the operator's own
