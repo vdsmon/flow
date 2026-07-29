@@ -78,6 +78,12 @@ Dissolving a group means clearing its recorded cover set with `group-persist cle
 
 Spawn the driver as a named teammate with the ticket key and an absolute workspace root, and state the harness selector explicitly in its prompt. The driver's model is the manager's call at spawn, recorded in the ledger: opus by default (the driver plans, and planning gates everything downstream), the manager's own model for a hot or unusually complex ticket, never below opus for a driver, because the cheap-tier savings belong to the in-run worker roles `[models]` already governs, not to the seat that authors the plan. The driver's own workers (implement, review, assessment) stay unnamed subagents; the skill's native-agent roles work unchanged that way. Naming them is the obvious-looking fix and the wrong one: a *named* spawn is coerced into the asynchronous teammate model regardless of `run_in_background: false`, and its result never returns to the spawner (probed directly; the host's own tool description does not state this, so re-probe rather than trust this line if the host changes). Each worker's own first spawn, unnamed, is the only call that returns synchronously, so that is the shape stage workers keep.
 
+The manager also decides at spawn whether the plan assessment runs at all, and says so in the
+prompt. A ticket that is one defect, one call site, one test does not need it: the assessment
+answers whether this is the right thing to build, and a ticket with one obvious shape has nothing
+to be wrong about there. Its defects live in the diff, where code review reaches them. Skip it and
+say why; when the ticket carries a design choice, a guard file, or two plausible shapes, keep it.
+
 Synchronous return covers that first spawn and nothing after it. There is no synchronous resume: `SendMessage` to an idle agent offers no such option and always restarts it in the background. Capture the raw agent id from the spawn result at dispatch, because an unnamed agent has no other handle. Because the adversarial confidence loop must continue the *same* assessor across passes, pass 1 returns to the driver and every later pass routes its completion to the manager instead. On a multi-pass loop the relay below is the normal path rather than the exception, so tell the driver to expect it.
 
 ## The workbench
@@ -201,3 +207,29 @@ Who implements: an **obvious** improvement is implemented fully, in one motion â
 After the run: a per-stage wall-clock table, the mined event summary, qualitative observations, and ranked suggestions, each classified ground truth vs judgment per the repo-root VISION.md's operating line. Machinery-shaped findings file through the `flow-beads-create` recipe that `stage-reflect.md` owns, with file-anchored dedup keys â€” the run's own reflect files independently, and the dedup net keeps the two producers from double-filing. After the merge (manager or human), close the ticket with the finalize recipe `command-ticket.md` owns, run from the primary checkout.
 
 Cross-run pattern detection is where the outside view beats per-run reflect outright: the same hiccup seen twice files once, pre-deduplicated, with two witnesses.
+
+## Synthesis
+
+Reflect records; the manager synthesises. Both are needed and neither substitutes for the other.
+A driver's reflect writes at maximum context, with the evidence still on disk, and its
+`flow-beads-create` recipe mints the `evid:` and `evidfile:` labels that make a finding checkable
+later. A manager reading a relay summary cannot produce either. So the division is by altitude,
+not by ownership.
+
+**The manager files nothing a driver reported.** A relayed finding goes back to that driver's
+reflect, which has the dedup net; filing it directly races that net and loses, because two
+producers with no shared index converge on duplicates. Dedup AFTER reflect has run, not before.
+
+What only the outside view sees, and what the manager therefore owns:
+
+- **Cross-run pairs.** Two runs whose separate records only mean something together. One driver
+  sees its own pin drift; two drivers drifting into each other's worktrees is contention, and
+  neither run can see it alone.
+- **Repeated shapes.** The same class of defect surfacing in unrelated tickets. A single instance
+  is a bug; the fourth is a property of the system, and only the seat holding all four can say so.
+- **Promotion on the second witness.** A single-witness papercut stays in the ledger. The second
+  witness, usually from a different run, is what earns it a rule in `AGENTS.md` or a bead. Holding
+  the line at one witness is what keeps the gotcha lists worth reading.
+
+Run this when a fleet drains, not per run: the patterns are not visible until the runs that
+carry them have finished.

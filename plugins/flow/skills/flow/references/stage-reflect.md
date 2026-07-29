@@ -98,6 +98,18 @@ The taxonomy is closed:
 
    **You are empowered to FIX the process you just ran, right now.** You are the highest-fidelity judge of this harness that will ever exist for this run: you lived every stage, and no later reviewer (a skill-polishing agent, a human, a future session) will have the context you have at this moment. Recording friction for someone else to maybe act on later is the lossy path — it decays, it gets deprioritized, the fix arrives with half the understanding. Default to fixing it yourself, here. The only gate is blast radius:
 
+   **Check the branch before authoring a payload.** `machinery_edit` refuses (exit 2) when
+   skill-root sits on a protected branch, and that is the steady state whenever `skill_root`
+   resolves to the installed marketplace clone rather than a feature checkout. One read settles it:
+
+   ```bash
+   git -C "<absolute skill_root>" rev-parse --abbrev-ref HEAD
+   ```
+
+   `main`, `master`, `dev` or `develop` means APPLY NOW cannot succeed for any finding this run.
+   Skip it and take PROPOSE + RECORD directly. The refusal is a correct guardrail, not a signal
+   worth spending a payload and a subprocess on once per finding to rediscover.
+
    - **APPLY NOW (the default).** Surgical, high-confidence fixes to flow's OWN process files: a `references/*.md` clarification, a localized bug in a flow engine script (`scripts/*.py`). These carry zero re-review churn and are revertible (rationale, incl. the `skill_root==worktree` dogfood exception: self-evolution.md §Producers — Producer A). Flow's own scripts and reference docs are NOT in the run's canonical snapshot on any tree machinery_edit will accept (it refuses protected-branch skill roots, and worktree copies are never hashed), so editing them mid-run is safe; only the MAIN checkout's engine tree on a protected branch is snapshot-hashed (the `engine` component), and that tree is already un-editable by the sanctioned path. Re-Read the file before editing (a sibling fleet agent may have shifted the anchor; "anchor not found" usually means it is already fixed — treat that as done). If you touch a script, run its test suite and add a regression test for the bug you fixed. Do not ask permission to improve the tool you are running; that is the whole point of reflecting from inside the run.
      - **Apply the edit through `scripts/machinery_edit.py`, NOT the raw Edit tool.** `machinery_edit.py` holds a single global flock across the whole read -> replace -> atomic-write, so concurrent machinery writers serialize and any concurrent reader sees old-or-new, never a torn file; it also refuses `stage-registry.toml` and any path outside the skill tree (rationale: self-evolution.md §Guardrails — machinery_edit flock). Invoke it per fix:
        ```bash
