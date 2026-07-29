@@ -17,7 +17,7 @@ Lavish session involved.
 ## Gate and degradation
 
 Open the surface only at the section 5 human gate of an attended planning conversation, after
-the confidence gate holds (`delivery-plan.md`'s threshold, zero blockers) and after the
+the plan gate holds (`delivery-plan.md`: no blocker remains) and after the
 section 4 base recheck. A fresh unattended invocation stops before the gate, so attendance is
 structural, not probed. Run the presence check as the first surface action:
 
@@ -71,7 +71,7 @@ DaisyUI component reference. Paste this layout net verbatim into
 ```
 
 The surface renders exactly the section 5 evidence list of `delivery-plan.md` — the plan, base
-SHA, scores, pass count, replacement fact, resolved findings, and residual risks — item for
+SHA, replacement fact, whether the assessment was skipped, resolved findings, and residual risks, item for
 item from that list, not from memory. Render no input-playbook decision controls: section 1 raised every
 human-only answer, grant, and scope choice when it was discovered, so the surface reviews a
 settled plan rather than collecting decisions.

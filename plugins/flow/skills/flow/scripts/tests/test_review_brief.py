@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import subprocess
 from pathlib import Path
+from typing import Literal
 
 import pytest
 
@@ -616,3 +617,41 @@ def test_freshness_disabled_flag_unaffected_by_skip_authorization(tmp_path: Path
 
     assert result.status == "disabled"
     assert result.reason == "review brief is disabled"
+
+
+@pytest.mark.parametrize(
+    ("status", "expected_code"),
+    [
+        ("current", 0),
+        ("disabled", 0),
+        ("stale", 1),
+        ("missing", 1),
+    ],
+)
+def test_cli_freshness_exit_code_matches_verdict(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    status: Literal["current", "stale", "missing", "disabled"],
+    expected_code: int,
+):
+    # freshness is read as a merge gate (manager.md blocks while stale/missing), so the verdict has
+    # to be legible from $? alone. Before this mapping existed every verdict returned 0 and a caller
+    # that checked the exit code saw success in all four states.
+    def _fake(request, **_kwargs):
+        return rb.Freshness(status, SHA_A, SHA_A, SHA_A, None, "fake")
+
+    monkeypatch.setattr(rb, "freshness", _fake)
+
+    code = rb.cli_main(
+        [
+            "freshness",
+            "--workspace-root",
+            str(tmp_path),
+            "--ticket-dir",
+            str(tmp_path),
+            "--pr-id",
+            "42",
+        ]
+    )
+
+    assert code == expected_code

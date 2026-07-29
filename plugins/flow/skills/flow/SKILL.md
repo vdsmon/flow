@@ -208,25 +208,25 @@ inspect default-branch code, search relevant memory, settle factual questions, a
 write one complete plan with a verification lane and E2E recipe. The driver alone
 asks human questions or requests access and permission.
 
-Every plan receives one independent adversarial assessment. Continue the same
-assessor with the complete revised plan for at most three completed passes in one
-autonomous round. Score repository grounding/design correctness/scope completeness/
-verification quality/operational feasibility at weights 25/25/20/20/10. The gate
-requires an unrounded weighted score of at least 90.0 and zero blockers. One
-disclosed replacement assessor is allowed if the original context is lost; it does
-not reset the pass count. Read `references/delivery-plan.md` for the full contract.
+Every plan receives one independent adversarial assessment, and it answers one
+question: is this the right thing to build. The gate is zero blockers; there is no
+score. When the assessment returns blockers, fix them and ask the same assessor to
+confirm the fixes only, not to re-read the plan. A second full pass happens only when
+an assessor says the design is wrong, never because it listed improvements. The
+manager may skip the assessment entirely for a ticket that is one defect, one call
+site, one test. One disclosed replacement assessor is allowed if the original context
+is lost. Read `references/delivery-plan.md` for the full contract.
 
 - Claude Code uses native plan mode and its exit boundary.
 - Codex uses native Plan mode when active; otherwise present the complete plan, end
   the turn, and wait for explicit approval.
 
-Before approval, re-fetch the default branch and restart bounded assessment when
-relevant paths moved. Present the exact plan, base SHA, confidence and category
-scores, pass/replacement facts, resolved findings, and residual risks. No worktree,
-repository edit, or run exists before explicit human approval; the planning-start
-ticket claim is the one prior mutation. A
-fresh unattended invocation stops before mutation; confidence never substitutes for
-human approval.
+Before approval, re-fetch the default branch and reassess when relevant paths moved.
+Present the exact plan, base SHA, whether a replacement assessor was used, resolved
+findings, and residual risks. No worktree, repository edit, or run exists before
+explicit human approval; the planning-start ticket claim is the one prior mutation. A
+fresh unattended invocation stops before mutation; a clean assessment never
+substitutes for human approval.
 
 ## Delivery loop
 

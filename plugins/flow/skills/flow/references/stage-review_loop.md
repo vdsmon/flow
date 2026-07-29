@@ -21,9 +21,10 @@ PR_ID=$(printf '%s' "$PR_URL" | grep -oE '[0-9]+$')
 For a revision run, resolve the already-open PR from the branch:
 
 ```bash
-PR_ID=$(FLOW_HARNESS="<harness>" "<facade>" forge --workspace-root . \
-  detect-pr --branch "$(git rev-parse --abbrev-ref HEAD)" | \
-  python3 -c 'import sys,json;d=json.load(sys.stdin);print(d.get("id","") if d else "")')
+out=$(FLOW_HARNESS="<harness>" "<facade>" forge --workspace-root . \
+  detect-pr --branch "$(git rev-parse --abbrev-ref HEAD)"); rc=$?
+[ "$rc" -ne 0 ] && echo "detect-pr failed: rc=$rc" >&2 && exit "$rc"
+PR_ID=$(printf '%s' "$out" | python3 -c 'import sys,json;d=json.load(sys.stdin);print(d.get("id","") if d else "")')
 ```
 
 An empty PR id is a failed stage.

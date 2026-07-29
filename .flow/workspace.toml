@@ -15,10 +15,14 @@ self_target = true
 # non-hot one; the manager's merge-time guard-property review still backstops it.
 adjudicate_hot = true
 
-# Optional native-agent model hints. Unsupported hints inherit the owner session model.
+# Optional model hints. Unsupported hints inherit the owner session model. A value's
+# vocabulary belongs to whatever launches the agent: a host model name for a native
+# agent, a reviewer-CLI model name for a bundled reviewer. code_review carries no hint
+# because its handler is the Codex reviewer, and a host name like "opus" would reach
+# `codex exec -m` and mean nothing there; with the key absent the reviewer omits the
+# flag and takes the Codex default.
 [models]
 implement = "sonnet"
-code_review = "opus"
 review_loop = "sonnet"
 
 # This repo opens PRs ready for review (maintainer preference). The engine
@@ -35,13 +39,14 @@ backend = "github"
 [forge.github]
 
 [pipeline]
-stages = ["ticket", "plan", "implement", "code_review", "commit", "create_pr", "review_loop", "reflect"]
+stages = ["ticket", "plan", "implement", "code_review", "e2e", "commit", "create_pr", "review_loop", "reflect"]
 
 [pipeline.handlers]
 ticket = "inline"
 plan = "inline"
-implement = "subagent:general-purpose"
-code_review = "inline"
+implement = "subagent:flow:implementer"
+code_review = "subagent:flow:codex-reviewer"
+e2e = "subagent:flow:e2e-runner"
 commit = "inline"
 create_pr = "inline"
 review_loop = "inline"

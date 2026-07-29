@@ -1287,7 +1287,11 @@ def test_review_brief_reads_unattended_frontmatter_through_allowlisted_facade_on
         encoding="utf-8"
     )
     assert text.count('"<facade>" frontmatter read') == 1
-    assert 'UNATTENDED=$(FLOW_HARNESS="<harness>" "<facade>" frontmatter read' in text
+    # Anchored to the property, not the spelling: one binding of UNATTENDED, and the facade read's
+    # own exit code checked before the value is parsed. Piping the read straight into python3 would
+    # make $? the parser's, so a failed read would read as an empty field.
+    assert text.count("UNATTENDED=$(") == 1
+    assert "frontmatter read .flow/tickets/<KEY>.md); rc=$?" in text
 
 
 def test_review_brief_reuses_same_unattended_signal_for_skip_and_no_open() -> None:
