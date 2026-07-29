@@ -82,7 +82,11 @@ The manager also decides at spawn whether the plan assessment runs at all, and s
 prompt. A ticket that is one defect, one call site, one test does not need it: the assessment
 answers whether this is the right thing to build, and a ticket with one obvious shape has nothing
 to be wrong about there. Its defects live in the diff, where code review reaches them. Skip it and
-say why; when the ticket carries a design choice, a guard file, or two plausible shapes, keep it.
+say why; when the ticket carries a design choice or two plausible shapes, keep it. A guard file is
+deliberately not one of those triggers. It states blast radius, which the full verification lane
+and the merge-time guard-property review already price, and an assessor holding no diff cannot
+check a safety property in the first place. Keep the triggers that ask whether this is the right
+thing to build, and leave the one that asks whether it is dangerous to the stages holding the code.
 
 Synchronous return covers that first spawn and nothing after it. There is no synchronous resume: `SendMessage` to an idle agent offers no such option and always restarts it in the background. Capture the raw agent id from the spawn result at dispatch, because an unnamed agent has no other handle. Because the assessment must continue the *same* assessor across a confirm pass, pass 1 returns to the driver and any later pass routes its completion to the manager instead. On a multi-pass loop the relay below is the normal path rather than the exception, so tell the driver to expect it.
 
