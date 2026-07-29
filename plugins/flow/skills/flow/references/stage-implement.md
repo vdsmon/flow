@@ -19,7 +19,9 @@ When `<ticket-dir>` contains `/revisions/`, this is a **revision** (see `referen
 2. `<ticket-dir>/instruction.md` if it exists — a free-text change-request the human gave to `FLOW <target>`. Its text IS the work to do; treat it as the plan.
 3. else the PR's unresolved human review threads as the Major+ fix set. Resolve the PR from the branch and fetch its threads through the forge seam:
    ```bash
-   PR_ID=$(FLOW_HARNESS="<harness>" "<facade>" forge --workspace-root . detect-pr --branch "$(git rev-parse --abbrev-ref HEAD)" | python3 -c 'import sys,json;d=json.load(sys.stdin);print(d.get("id","") if d else "")')
+   out=$(FLOW_HARNESS="<harness>" "<facade>" forge --workspace-root . detect-pr --branch "$(git rev-parse --abbrev-ref HEAD)"); rc=$?
+   [ "$rc" -ne 0 ] && echo "detect-pr failed: rc=$rc" >&2 && exit "$rc"
+   PR_ID=$(printf '%s' "$out" | python3 -c 'import sys,json;d=json.load(sys.stdin);print(d.get("id","") if d else "")')
    FLOW_HARNESS="<harness>" "<facade>" forge --workspace-root . review-threads --pr "$PR_ID"
    ```
    The unresolved Major+ threads (each carries `file` / `line` / `title` / `body`) are the work list.

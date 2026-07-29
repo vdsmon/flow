@@ -136,7 +136,7 @@ This stage always runs in the bare workspace pipeline.
 
 ## Note: no `lint_ticket` HARD GATE
 
-Other stages call `FLOW_HARNESS="<harness>" "<facade>" lint-ticket --stage <name> --ticket-path .flow/tickets/<KEY>.md` as a HARD GATE before doing any work.
+`commit` and `e2e` call `FLOW_HARNESS="<harness>" "<facade>" lint-ticket --stage <name> --ticket-path .flow/tickets/<KEY>.md` as a HARD GATE before doing any work, for their own required fields. They are the only stages that do: `implement` declares `required_fields` in `stage-registry.toml` and nothing calls the linter for it, so that declaration is not enforced today. A declaration is not an enforcement; check the consumer before relying on one.
 The `ticket` stage is the exception: this stage CREATES the ticket frontmatter file.
 Running `lint_ticket` here would always fail (universal `ticket` + `status` fields don't exist yet because step 3 is what writes them).
 Future stages can safely lint because step 3 leaves a valid frontmatter behind.

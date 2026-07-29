@@ -565,7 +565,7 @@ A fleet runs many `/flow` jobs at once; several can hit reflect together. The ra
 
 Flag surface: MODULE.md §Self-evolution.
 Payload contract: JSON `{file, old, new}` via `--payload <file>` or stdin; `file` is rel-to-skill-root or absolute; `old` must be a unique anchor.
-Exit 0=applied or already_applied (idempotent), 1=usage/IO error, 2=refused (out-of-tree or snapshot-pinned), 3=anchor_not_found, 4=ambiguous (non-unique anchor).
+Exit 0=applied or already_applied (idempotent), 1=usage/IO error, 2=refused (out-of-tree, snapshot-pinned, skill-root on a protected branch, or a detached HEAD), 3=anchor_not_found, 4=ambiguous (non-unique anchor).
 
 ## Memory cohort
 

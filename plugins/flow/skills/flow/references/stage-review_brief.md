@@ -39,7 +39,9 @@ bootstrap-stamped signal is the sole source of truth and is what
 `review_brief.freshness()` cross-checks downstream:
 
 ```bash
-UNATTENDED=$(FLOW_HARNESS="<harness>" "<facade>" frontmatter read .flow/tickets/<KEY>.md \
+fm=$(FLOW_HARNESS="<harness>" "<facade>" frontmatter read .flow/tickets/<KEY>.md); rc=$?
+[ "$rc" -ne 0 ] && echo "frontmatter read failed: rc=$rc" >&2 && exit "$rc"
+UNATTENDED=$(printf '%s' "$fm" \
   | python3 -c "import json,sys; print(str(json.load(sys.stdin).get('unattended') is True).lower())")
 ```
 
@@ -74,9 +76,10 @@ PR_ID=$(printf '%s' "$PR_URL" | grep -oE '[0-9]+$')
 For a revision sub-run, resolve the already-open PR from the rooted worktree branch:
 
 ```bash
-PR_ID=$(FLOW_HARNESS="<harness>" "<facade>" forge --workspace-root . \
-  detect-pr --branch "$(git rev-parse --abbrev-ref HEAD)" | \
-  python3 -c 'import sys,json;d=json.load(sys.stdin);print(d.get("id","") if d else "")')
+out=$(FLOW_HARNESS="<harness>" "<facade>" forge --workspace-root . \
+  detect-pr --branch "$(git rev-parse --abbrev-ref HEAD)"); rc=$?
+[ "$rc" -ne 0 ] && echo "detect-pr failed: rc=$rc" >&2 && exit "$rc"
+PR_ID=$(printf '%s' "$out" | python3 -c 'import sys,json;d=json.load(sys.stdin);print(d.get("id","") if d else "")')
 ```
 
 When the native PR pipeline is configured, an empty PR id is a stage failure, never a

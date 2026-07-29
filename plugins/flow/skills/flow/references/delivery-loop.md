@@ -137,7 +137,14 @@ is the preferred answer. First re-pin this session on the run root through the h
 native worktree switch (on Claude Code, `EnterWorktree` with an explicit path), then
 run the stage inline: same reference, same artifact path, same advance. That route
 keeps atomic replacement and the read-before-edit guard, and a driver session re-pins
-reliably where a subagent cannot. Only if no such switch exists, or the re-pin does not
+reliably where a subagent cannot. Reliably means per attempt, not durably: the pin can be
+taken again mid-stage, so re-issue the switch on every refusal rather than assuming one
+re-pin holds for the run. Treat the write attempt as the only evidence, and note that
+confinement guards tracked paths, so a successful write under a gitignored path is not
+proof the re-pin took. Root every git and grep call with an absolute path or `-C
+<absolute>`: an agent thread's cwd can reset between calls, and a relative path then
+reads a different worktree silently, which is worse than a refusal because it points at
+the wrong conclusion. Only if no such switch exists, or the re-pin does not
 take, write through Bash: an exact-match replacement asserting one hit per substitution
 when editing an existing file, and the collision-safe quoted heredoc above when creating
 a new one, which is the shape a stage artifact needs. Say so in the report: that route
