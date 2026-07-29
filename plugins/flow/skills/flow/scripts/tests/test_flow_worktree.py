@@ -608,6 +608,21 @@ def test_e2e_unwired_prose_beginning_with_skip_refuses(tmp_path: Path) -> None:
         )
 
 
+def test_e2e_unwired_capitalized_skip_refuses(tmp_path: Path) -> None:
+    # the other half of the exact spelling, and the half the test above does not reach: `Skip:` has
+    # the colon and differs only in case. Without this witness a case-folded comparison passes the
+    # whole suite while letting a recipe nobody will execute through the gate.
+    main = _main_checkout(tmp_path)
+    with pytest.raises(fw._ConfigError, match="no e2e stage will run"):
+        _run(
+            tmp_path,
+            main,
+            runner=_fake_runner(main=main),
+            e2e_recipe="Skip: docs-only, no runnable surface",
+        )
+    assert not (tmp_path / "wt").exists()
+
+
 def test_e2e_unreadable_workspace_with_real_recipe_refuses(tmp_path: Path) -> None:
     # the third reason _e2e_enabled returns False: it swallows WorkspaceConfigError, so an
     # unreadable workspace is indistinguishable from an unwired one. The refusal must name that
@@ -625,6 +640,59 @@ def test_e2e_refusal_precedes_terminal_bead_refusal(tmp_path: Path, monkeypatch)
     _patch_tracker(monkeypatch, _FakeTracker(normalized="done"))
     with pytest.raises(fw._ConfigError, match="no e2e stage will run"):
         _run(tmp_path, main, runner=_fake_runner(main=main), e2e_recipe=_REAL_RECIPE)
+
+
+# ─── e2e recipe normalization (flow-8b2o) ──────────────────────────────────────
+
+
+# Two readers of the same `e2e_recipe` string, the gate above and the frontmatter stamp, used to
+# normalize differently: the gate stripped before testing the `skip:` sentinel, the stamp wrote the
+# raw value. These pin the single upstream normalization that keeps both readers looking at the same
+# bytes.
+
+
+def test_e2e_padded_skip_is_exempt_and_stamped_normalized(tmp_path: Path) -> None:
+    import ticket_frontmatter
+
+    main = _main_checkout(tmp_path)
+    recipe = "  skip: docs-only, no runnable surface\n"
+    res = _run(tmp_path, main, runner=_fake_runner(main=main), e2e_recipe=recipe)
+    fm = ticket_frontmatter.read(Path(res["worktree"]) / ".flow" / "tickets" / "FT-1.md")
+    assert fm["e2e_recipe"] == "skip: docs-only, no runnable surface"
+
+
+def test_e2e_wired_padded_recipe_is_stamped_normalized(tmp_path: Path) -> None:
+    import ticket_frontmatter
+
+    main = _main_with_e2e_handler(tmp_path, "subagent:general-purpose")
+    recipe = f"  {_REAL_RECIPE}  \n"
+    res = _run(tmp_path, main, runner=_fake_runner(main=main), e2e_recipe=recipe)
+    fm = ticket_frontmatter.read(Path(res["worktree"]) / ".flow" / "tickets" / "FT-1.md")
+    assert fm["e2e_recipe"] == _REAL_RECIPE
+
+
+def test_e2e_whitespace_only_recipe_is_not_stamped(tmp_path: Path) -> None:
+    import ticket_frontmatter
+
+    main = _main_checkout(tmp_path)
+    res = _run(tmp_path, main, runner=_fake_runner(main=main), e2e_recipe="   ")
+    fm = ticket_frontmatter.read(Path(res["worktree"]) / ".flow" / "tickets" / "FT-1.md")
+    assert "e2e_recipe" not in fm
+
+
+def test_e2e_reasonless_skip_refuses_when_unwired(tmp_path: Path) -> None:
+    main = _main_checkout(tmp_path)
+    with pytest.raises(fw._ConfigError, match="states no reason"):
+        _run(tmp_path, main, runner=_fake_runner(main=main), e2e_recipe="skip:")
+    assert not (tmp_path / "wt").exists()
+
+
+def test_e2e_reasonless_skip_refuses_when_wired(tmp_path: Path) -> None:
+    # the half that would stay open if only the unwired branch refused a bare `skip:`
+    main = _main_with_e2e_handler(tmp_path, "subagent:general-purpose")
+    with pytest.raises(fw._ConfigError, match="states no reason"):
+        _run(tmp_path, main, runner=_fake_runner(main=main), e2e_recipe="skip:")
+    assert not (tmp_path / "wt").exists()
 
 
 # ─── terminal-bead refusal gate (flow-d6gq) ───────────────────────────────────

@@ -356,24 +356,39 @@ def _recipe_expects_a_run(recipe: str | None) -> bool:
 
     `skip: <reason>` is the plan deciding that nothing runs, so it promises nothing and is exempt.
     `test-ci-only` is not exempt: it still expects the e2e stage to reuse the green command
-    `implement` recorded and to emit its evidence block. This function is the only reader of the
-    sentinel, so the narrow case-sensitive spelling is a deliberate choice and not a parser
-    contract: anything else counts as a real recipe and is refused.
+    `implement` recorded and to emit its evidence block. Three places read this sentinel: here, the
+    reasonless-`skip:` refusal in `_refuse_unrunnable_e2e` below, and `references/stage-e2e.md` step
+    2, which matches it against the stamped frontmatter value from outside this module. That third
+    reader is why `bootstrap()` normalizes the string once upstream instead of stripping it again
+    here. The narrow case-sensitive spelling is a deliberate choice and not a parser contract:
+    anything else counts as a real recipe and is refused.
     """
-    if not (recipe and recipe.strip()):
+    if not recipe:
         return False
-    return not recipe.strip().startswith("skip:")
+    return not recipe.startswith("skip:")
 
 
 def _refuse_unrunnable_e2e(*, main_root: Path, e2e_recipe: str | None) -> None:
-    """Refuse both ways a plan can name an e2e lane that will not execute.
+    """Refuse three ways a plan can name an e2e lane that will not execute.
 
-    Wired without a recipe leaves the stage nothing to run. A runnable recipe with no wired stage is
-    stamped into frontmatter and read by nothing, which is the direction that used to fail silently.
-    Refuse while the human is still at the gate rather than at the unattended tail.
+    A reasonless `skip:` states no reason, so it is a recorded omission rather than a recorded
+    decision, whether or not an e2e stage is wired. Wired without a recipe leaves the stage nothing
+    to run. A runnable recipe with no wired stage is stamped into frontmatter and read by nothing,
+    which is the direction that used to fail silently. Refuse while the human is still at the gate
+    rather than at the unattended tail.
     """
+    if (
+        e2e_recipe
+        and e2e_recipe.startswith("skip:")
+        and not e2e_recipe.removeprefix("skip:").strip()
+    ):
+        raise _ConfigError(
+            "--e2e-recipe 'skip:' states no reason: the sentinel is 'skip: <reason>', and the "
+            "reason is what makes the skip a recorded decision instead of an omission. State "
+            "where this change's runnable surface is already observed."
+        )
     if _e2e_enabled(main_root):
-        if not (e2e_recipe and e2e_recipe.strip()):
+        if not e2e_recipe:
             raise _ConfigError(
                 "e2e handler is enabled in workspace.toml; pass --e2e-recipe "
                 "(the approved plan must declare the e2e recipe/fixture, or 'skip: <reason>')"
@@ -1269,6 +1284,11 @@ def bootstrap(
 ) -> dict[str, Any]:
     run = runner or _default_runner()
     main_root = main_root.expanduser().resolve()
+
+    # The e2e gate below and the frontmatter stamp downstream are two readers of this one string,
+    # and normalizing once here keeps them from disagreeing about what counts as present or as the
+    # `skip:` sentinel.
+    e2e_recipe = (e2e_recipe or "").strip() or None
 
     _refuse_offcontract_branch(ticket=ticket, branch=branch)
 
