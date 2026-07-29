@@ -4,8 +4,8 @@ The inline plan stage records the one human-approved Markdown plan authored by t
 not launch a planner agent and owns no plan-version or assessment transaction protocol.
 
 Before mutation, the driver must complete `references/delivery-plan.md` end to end — the
-claim, the read-only investigation, the plan, the adversarial assessment loop, the
-confidence gate, the base recheck, and explicit human approval. That file is the whole
+claim, the read-only investigation, the plan, the adversarial assessment, the
+zero-blocker gate, the base recheck, and explicit human approval. That file is the whole
 contract; this stage doc adds nothing to it.
 
 For ordinary delivery, `worktree create` writes the approved text to `stages/plan.out` and marks

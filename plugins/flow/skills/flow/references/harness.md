@@ -78,13 +78,14 @@ engine every later run resolves.
 
 Fresh targets remain read-only through planning. The driver reads the ticket and repository, asks
 the human every factual/access/permission question, and writes one complete Markdown plan. The
-driver then launches one fresh independent host-native assessor with the plan, base SHA, relevant
-repository context, and the adversarial confidence contract from `delivery-plan.md`.
+driver then launches one fresh independent assessor with the plan, base SHA, relevant
+repository context, and the adversarial assessment contract from `delivery-plan.md`. The assessor
+need not run on the host engine; a different engine is the stronger form of independence.
 
-The pass budget, replacement rule, and confidence threshold are `delivery-plan.md`'s contract —
+The pass rule, the replacement rule, and the zero-blocker gate are `delivery-plan.md`'s contract,
 stated there and summarized in SKILL.md's gate, nowhere else. The driver rechecks the default
-branch, presents the exact plan and confidence evidence, and waits for explicit human approval.
-Confidence cannot replace approval.
+branch, presents the exact plan and its evidence, and waits for explicit human approval.
+A clean assessment cannot replace approval.
 
 No worktree, branch, run, ticket mutation, or approval artifact exists before the gate. A fresh
 unattended invocation stops without mutation. The approved plan and base SHA pass directly to

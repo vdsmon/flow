@@ -82,46 +82,37 @@ verified.
 Prefer deletion and reuse over new layers. A revision replaces this conversational plan text. Do
 not create a version graph, feedback object, schema, receipt, or model-authored envelope.
 
-## 3. Run the adversarial confidence loop
+## 3. Run the adversarial assessment
 
-Every plan receives an independent review. Launch one fresh independent agent through the host;
-it acts as assessor and did not author the plan. Continue that same assessor for every
-reassessment so it can verify its previous findings against the complete revised plan.
+Every plan receives one independent assessment. Launch one fresh independent agent through the
+host; it acts as assessor and did not author the plan. The manager may skip this entirely for a
+ticket that is one defect, one call site, one test, and says so at spawn.
 
-The assessor tries to disprove the plan. It looks for contradicted assumptions, missed callers or
-invariants, unnecessary machinery, unverifiable claims, hidden access requirements, and scope that
-is incomplete or excessive. A blocker must name a concrete failure mode with repository evidence
-or a specific counterexample; vague preferences are not blockers.
+The assessor answers ONE question: is this the right thing to build. It checks whether the plan
+targets the right actor and the right seam, whether the evidence the plan claims is obtainable at
+all, and whether any factual claim about this repository is false when checked against the
+repository rather than against the plan's own reasoning.
 
-The assessor assigns each dimension a whole-number score from 0 to 100 using this rubric:
+It returns blockers only, each naming a concrete failure mode with repository evidence or a
+specific counterexample, and what would close it. Vague preferences are not blockers. It does not
+score, does not assess style or the completeness of enumerations, does not recompute arithmetic,
+and does not list improvements. There is no rubric and no number.
 
-| Dimension | Weight |
-|---|---:|
-| Repository grounding | 25% |
-| Design correctness | 25% |
-| Scope completeness | 20% |
-| Verification quality | 20% |
-| Operational feasibility | 10% |
+Design errors are the reason this pass exists: code review checks the diff against the plan, so it
+cannot tell you the plan targets the wrong thing.
 
-Compute the weighted result without rounding. Display it to one decimal place, but only the
-unrounded value determines the gate. The assessor returns concise Markdown with a verdict, the
-overall score, all five category scores each displayed out of 100, deductions, blocking findings,
-non-blocking deductions, and findings resolved since the prior pass. A score increase cites the changed plan
-text or new repository evidence that earned it.
+When blockers come back, the driver fixes them and asks the SAME assessor to confirm the fixes
+only, against the changed text, never to re-read the whole plan. A second full pass happens only
+when an assessor says the design is wrong, never because it listed improvements. A failed
+invocation returning no assessment is not a pass; prompt the same assessor once for its verdict.
 
-If confidence is below 90.0 or any blocker remains, the driver updates the same complete plan or
-supplies concrete counter-evidence, then asks the same assessor to re-evaluate it. One autonomous
-round permits at most three completed assessments. A failed assessor invocation returning no
-assessment does not consume a pass. An idle or acknowledgement signal without the full verdict is
-the same failed invocation: prompt the same assessor once for the verdict.
-
-If pass three still misses the gate, stop and show the current plan, scores, unresolved findings,
-and the exact human decision, access, or evidence needed. A substantive human clarification may
-start one new bounded round; a request to ignore the score may not.
+If blockers survive the confirm pass, stop and show the current plan, the unresolved findings, and
+the exact human decision, access, or evidence needed. A substantive human clarification may start
+one new bounded round.
 
 If the assessor context is lost, one disclosed replacement is allowed for the entire planning
-effort. Give it the complete current plan and prior findings. It scores from scratch and does not
-reset the pass count. If that replacement is also lost, stop visibly.
+effort. Give it the complete current plan and prior findings. If that replacement is also lost,
+stop visibly.
 
 ## 4. Recheck the base
 
@@ -130,19 +121,18 @@ Immediately before the human gate, fetch the default branch again.
 - Unchanged: continue.
 - Proven-disjoint movement: update the recorded base and continue.
 - Movement in a planned or behaviorally relevant path, including ambiguous overlap: update the
-  plan against the new base and begin a new bounded assessment round.
+  plan against the new base and reassess it.
 
-This recheck and its re-assessment remedy run before presentation. The post-convergence recheck
-in section 5 is settled with the human directly and never re-enters the assessment loop.
+This recheck and its reassessment remedy run before presentation. The post-convergence recheck
+in section 5 is settled with the human directly and never re-enters the assessment.
 
 ## 5. Human gate
 
-The gate opens only when the unrounded confidence is at least 90.0 and no blocker remains. Show:
+The gate opens when no blocker remains. Show:
 
 - the exact complete plan;
 - the recorded base SHA;
-- weighted confidence and all category scores;
-- completed pass count and whether a replacement assessor was used;
+- whether a replacement assessor was used, and whether the assessment was skipped;
 - findings resolved during assessment; and
 - residual non-blocking risks.
 
