@@ -16,11 +16,11 @@ Subcommands:
                   [--files <comma-sep>] [--capture-blobs]
       Writes <ticket-dir>/baseline.json: head_sha + origin_sha + planned_files +
       (when --capture-blobs set) per-file index entries via `git ls-files -s`.
-      head_sha is the diff anchor and is recomputed from live HEAD on every
-      record. origin_sha is the ownership anchor: it is written once, on the
-      first record, and every later record preserves it. The post-implement
-      reconcile re-records to widen planned_files, so an anchor that followed
-      HEAD would leave check-ownership nothing to scan.
+      head_sha is the moving implement-diff anchor and is recomputed from live
+      HEAD on every record. origin_sha is the stable review and ownership
+      anchor: it is written once, on the first record, and every later record
+      preserves it. The post-implement reconcile re-records to widen
+      planned_files without hiding committed work from either consumer.
 
   capture-implement-diff --ticket <key> --ticket-dir <dir>
       Reads baseline.json for {head_sha, planned_files}, runs `git diff
@@ -30,9 +30,11 @@ Subcommands:
       never legitimately produce a scoped capture.
 
   capture-review-diff --ticket <key> --ticket-dir <dir>
-      Same baseline/scope as capture-implement-diff, including the empty
-      planned_files refusal, but runs `git diff <head_sha> -- <files>` (no
-      --binary/--raw) and writes to <ticket-dir>/review.diff. Binary content is
+      Same scope as capture-implement-diff, including the empty planned_files
+      refusal, but runs `git diff <origin_sha> -- <files>` (no --binary/--raw)
+      and writes to <ticket-dir>/review.diff. origin_sha is stable across
+      baseline re-records, so the payload retains committed work. A legacy
+      baseline without origin_sha falls back to head_sha. Binary content is
       elided (`Binary files ... differ`) rather than inlined, since this payload
       is read by code_review's reviewer and never applied.
 
@@ -470,6 +472,20 @@ def capture_review_diff(
     head_sha = baseline.get("head_sha")
     if not isinstance(head_sha, str) or not head_sha:
         raise _BaselineMissing("baseline.json missing head_sha")
+    if "origin_sha" in baseline:
+        origin_sha = baseline["origin_sha"]
+        object_format = _git(["rev-parse", "--show-object-format=storage"], cwd, r).strip()
+        object_id_length = {"sha1": 40, "sha256": 64}.get(object_format)
+        if (
+            not isinstance(origin_sha, str)
+            or object_id_length is None
+            or len(origin_sha) != object_id_length
+            or any(char not in "0123456789abcdefABCDEF" for char in origin_sha)
+        ):
+            raise _BaselineMissing("baseline.json has invalid origin_sha")
+        anchor = origin_sha
+    else:
+        anchor = head_sha
     planned = baseline.get("planned_files", [])
     if not isinstance(planned, list):
         raise _BaselineMissing("baseline.json planned_files is not a list")
@@ -483,8 +499,8 @@ def capture_review_diff(
             "baseline.json planned_files is empty; refusing a repo-wide review diff"
         )
     existing = [p for p in paths if (cwd / p).exists()]
-    # stage intent-to-add for any planned file that exists but is untracked, so newly created files
-    # show up in the diff against head_sha; without this `git diff` emits nothing for them and they
+    # Stage intent-to-add for a planned file that exists but is untracked, so new files show up in
+    # the diff against the anchor. Without this step, `git diff` emits nothing for them and they
     # vanish from the payload.
     untracked = _untracked_files(existing, cwd, r) if existing else []
     # a `git rm --cached` path is absent from `git ls-files` (reads as untracked) but `git diff
@@ -508,7 +524,7 @@ def capture_review_diff(
         # body with display output. Unlike capture_implement_diff, no --binary/--raw: this payload
         # is read by a reviewer and never applied, so binary content is elided to a `Binary files
         # ... differ` line rather than inlined.
-        args = ["diff", "--no-ext-diff", head_sha]
+        args = ["diff", "--no-ext-diff", anchor]
         if paths:
             args.append("--")
             args.extend(paths)
