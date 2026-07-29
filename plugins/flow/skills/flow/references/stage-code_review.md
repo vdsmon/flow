@@ -32,8 +32,8 @@ input reports the same zero as a gate that passed.
 
 ## Inputs
 
-- `<ticket-dir>/baseline.json` for `head_sha` and `planned_files`, written by the
-  implement stage's `records_diff_baseline` pre-hook.
+- `<ticket-dir>/baseline.json` for `origin_sha`, `head_sha`, and `planned_files`,
+  written by the implement stage's `records_diff_baseline` pre-hook.
 - `<ticket-dir>/review.diff`, the payload step 1 builds from that baseline.
 - `<ticket-dir>/stages/plan.out` when a plan exists.
 - The ticket context.
@@ -49,11 +49,14 @@ input reports the same zero as a gate that passed.
    ```
 
    This writes `<ticket-dir>/review.diff`: a single text-only unified diff of the owned
-   change set against the implement baseline. Every modification, every deletion, and
-   every new file's complete content are present, because the capture stages
-   intent-to-add for untracked planned files first. Binary content is elided to a
-   `Binary files ... differ` line, which names the path without spending the payload on
-   bytes no reviewer can read.
+   change set against the stable `origin_sha` captured when the baseline was first
+   recorded. Every planned change is present, whether it was committed, staged, left
+   unstaged, added, modified, or deleted. This remains true after a baseline re-record
+   moves `head_sha`. A baseline
+   written before `origin_sha` existed falls back to `head_sha`; a present but invalid
+   `origin_sha` is refused. The capture stages intent-to-add for untracked planned files
+   first. Binary content is elided to a `Binary files ... differ` line, which names the
+   path without spending the payload on bytes no reviewer can read.
 
    Do NOT hand the reviewer a path list, and do not tell it to find the change itself.
    `git diff <started_at_sha>` reports tracked changes only, so on a landing-shaped run
@@ -73,20 +76,15 @@ input reports the same zero as a gate that passed.
    empty planned set. Put the run's files into the ticket frontmatter `planned_files` (or
    pass them to `record-baseline --files ...`), then rerun this step.
 
-   **An empty `review.diff` is a stop, not a clean review.** Exit 0 with a zero-byte
-   payload means the capture found nothing between the baseline and the working tree,
-   which on a ticket whose implement stage reported changes is a contradiction rather than
-   a pass. The reachable cause is the anchor: this payload is keyed to `baseline.json`'s
-   `head_sha`, and `record-baseline` recomputes that from live HEAD, so a
-   post-implementation ownership reconcile (`delivery-loop.md`) can move it past work
-   already committed during implement. `check-ownership` reports `ok` in that same state,
-   so nothing else catches it. That gate now anchors on `origin_sha`, which no re-record
-   moves, so it does catch an UNOWNED file committed mid-implement; this state is a
-   different one, where the committed work is planned and `ok` is the correct answer
-   while the payload is still empty. The capture anchor is unchanged and still moves.
-   Fail the stage and surface the ticket instead of reviewing
-   an empty payload: a reviewer handed nothing returns no findings, and that is
-   indistinguishable from a clean review.
+   **An incomplete or empty `review.diff` is a stop, not a clean review.** The former
+   `head_sha` anchor moved to live HEAD when the post-implementation ownership reconcile
+   re-recorded the baseline. A fully committed implementation then produced a zero-byte
+   payload. A partial commit was harder to detect: the remaining dirty edit kept the
+   payload non-empty while every committed planned change was omitted. The stable
+   `origin_sha` anchor prevents both forms, while `head_sha` remains the moving anchor for
+   the commit payload. If capture still produces no payload for an implement stage that
+   reported changes, fail the stage and surface the ticket. A reviewer handed nothing
+   returns no findings, which is indistinguishable from a clean review.
 
 2. Exactly one fresh reviewer challenges the implementation. Which reviewer depends on
    the configured handler, and nothing else about this step changes:

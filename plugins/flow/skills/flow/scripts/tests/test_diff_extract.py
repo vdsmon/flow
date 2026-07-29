@@ -1245,6 +1245,129 @@ def _index_snapshot(repo: Path, paths: list[str]) -> tuple[str, str, str]:
     )
 
 
+def test_capture_review_diff_includes_committed_changes_after_rerecord(
+    tmp_repo: Path, tmp_path: Path
+) -> None:
+    ticket_dir = tmp_path / "runs" / "FT-1"
+    planned = ["committed.py", "dirty.py"]
+    first = diff_extract.record_baseline("implement", ticket_dir, tmp_repo, files=planned)
+    (tmp_repo / "committed.py").write_text("committed\n", encoding="utf-8")
+    _git(["add", "committed.py"], tmp_repo)
+    _git(["commit", "-m", "partial implement"], tmp_repo)
+    (tmp_repo / "dirty.py").write_text("dirty\n", encoding="utf-8")
+
+    second = diff_extract.record_baseline("implement", ticket_dir, tmp_repo, files=planned)
+    content = diff_extract.capture_review_diff(ticket_dir, tmp_repo).read_text(encoding="utf-8")
+
+    assert second["origin_sha"] == first["head_sha"]
+    assert second["head_sha"] != first["head_sha"]
+    assert "committed.py" in content
+    assert "+committed" in content
+    assert "dirty.py" in content
+    assert "+dirty" in content
+
+
+def test_capture_review_diff_includes_fully_committed_change_after_rerecord(
+    tmp_repo: Path, tmp_path: Path
+) -> None:
+    ticket_dir = tmp_path / "runs" / "FT-1"
+    diff_extract.record_baseline("implement", ticket_dir, tmp_repo, files=["committed.py"])
+    (tmp_repo / "committed.py").write_text("committed\n", encoding="utf-8")
+    _git(["add", "committed.py"], tmp_repo)
+    _git(["commit", "-m", "implement"], tmp_repo)
+    diff_extract.record_baseline("implement", ticket_dir, tmp_repo, files=["committed.py"])
+
+    content = diff_extract.capture_review_diff(ticket_dir, tmp_repo).read_text(encoding="utf-8")
+
+    assert content
+    assert "committed.py" in content
+    assert "+committed" in content
+
+
+def test_capture_review_diff_legacy_baseline_falls_back_to_head_sha(
+    tmp_repo: Path, tmp_path: Path
+) -> None:
+    ticket_dir = tmp_path / "runs" / "FT-1"
+    ticket_dir.mkdir(parents=True)
+    head = _git(["rev-parse", "HEAD"], tmp_repo).strip()
+    (ticket_dir / "baseline.json").write_text(
+        json.dumps({"stage": "implement", "head_sha": head, "planned_files": ["legacy.py"]}),
+        encoding="utf-8",
+    )
+    (tmp_repo / "legacy.py").write_text("legacy\n", encoding="utf-8")
+
+    content = diff_extract.capture_review_diff(ticket_dir, tmp_repo).read_text(encoding="utf-8")
+
+    assert "legacy.py" in content
+    assert "+legacy" in content
+
+
+def test_capture_review_diff_accepts_sha256_origin_sha(tmp_path: Path) -> None:
+    repo = tmp_path / "sha256"
+    repo.mkdir()
+    _git(["init", "--initial-branch=main", "--object-format=sha256"], repo)
+    _git(["config", "user.email", "test@example.com"], repo)
+    _git(["config", "user.name", "test"], repo)
+    (repo / "README.md").write_text("# initial\n", encoding="utf-8")
+    _git(["add", "README.md"], repo)
+    _git(["commit", "-m", "initial"], repo)
+    ticket_dir = tmp_path / "runs" / "FT-1"
+
+    baseline = diff_extract.record_baseline("implement", ticket_dir, repo, files=["planned.py"])
+    (repo / "planned.py").write_text("planned\n", encoding="utf-8")
+
+    content = diff_extract.capture_review_diff(ticket_dir, repo).read_text(encoding="utf-8")
+
+    assert len(baseline["origin_sha"]) == 64
+    assert "planned.py" in content
+    assert "+planned" in content
+
+
+@pytest.mark.parametrize("invalid_origin", ["", "not-a-sha", "g" * 40, "a" * 64, None, 7])
+def test_capture_review_diff_rejects_invalid_present_origin_sha(
+    tmp_repo: Path, tmp_path: Path, invalid_origin: object
+) -> None:
+    ticket_dir = tmp_path / "runs" / "FT-1"
+    ticket_dir.mkdir(parents=True)
+    head = _git(["rev-parse", "HEAD"], tmp_repo).strip()
+    (ticket_dir / "baseline.json").write_text(
+        json.dumps(
+            {
+                "stage": "implement",
+                "head_sha": head,
+                "origin_sha": invalid_origin,
+                "planned_files": ["a.py"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_repo / "a.py").write_text("hello\n", encoding="utf-8")
+
+    with pytest.raises(diff_extract._BaselineMissing, match="invalid origin_sha"):
+        diff_extract.capture_review_diff(ticket_dir, tmp_repo)
+
+    assert not (ticket_dir / "review.diff").exists()
+
+
+def test_capture_implement_diff_keeps_moving_head_sha_after_rerecord(
+    tmp_repo: Path, tmp_path: Path
+) -> None:
+    ticket_dir = tmp_path / "runs" / "FT-1"
+    planned = ["committed.py", "dirty.py"]
+    diff_extract.record_baseline("implement", ticket_dir, tmp_repo, files=planned)
+    (tmp_repo / "committed.py").write_text("committed\n", encoding="utf-8")
+    _git(["add", "committed.py"], tmp_repo)
+    _git(["commit", "-m", "partial implement"], tmp_repo)
+    (tmp_repo / "dirty.py").write_text("dirty\n", encoding="utf-8")
+    diff_extract.record_baseline("implement", ticket_dir, tmp_repo, files=planned)
+
+    content = diff_extract.capture_implement_diff(ticket_dir, tmp_repo).read_text(encoding="utf-8")
+
+    assert "committed.py" not in content
+    assert "dirty.py" in content
+    assert "+dirty" in content
+
+
 def test_capture_review_diff_includes_untracked_new_files(tmp_repo: Path, tmp_path: Path) -> None:
     """New files are the payload's whole point: they must arrive as full + content."""
     (tmp_repo / "tracked.py").write_text("one\n", encoding="utf-8")
