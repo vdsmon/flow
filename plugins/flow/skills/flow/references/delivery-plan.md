@@ -104,8 +104,16 @@ and does not list improvements. There is no rubric and no number.
 Design errors are the reason this pass exists: code review checks the diff against the plan, so it
 cannot tell you the plan targets the wrong thing.
 
+The driver supplies the assessor two absolute paths it cannot derive: one to write its verdict
+to, and one to the previous verdict on a confirm pass (or `none` on the first). Both live outside
+any ticket dir, because planning runs before approval and no run, worktree, or stage directory
+exists yet. An assessor told to write under `<ticket_dir>/stages/` produces nothing parseable and
+fails closed.
+
 When blockers come back, the driver fixes them and asks the SAME assessor to confirm the fixes
-only, against the changed text, never to re-read the whole plan. A second full pass happens only
+only, against the changed text, never to re-read the whole plan. Same assessor means continuity of
+judgment, not a live session: a bundled Codex assessor runs each call fresh, so the driver hands it
+the prior verdict and the changed text rather than relying on it to remember. A second full pass happens only
 when an assessor says the design is wrong, never because it listed improvements. A failed
 invocation returning no assessment is not a pass; prompt the same assessor once for its verdict.
 

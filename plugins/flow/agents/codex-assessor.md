@@ -22,7 +22,14 @@ Harness: <claude-code|codex>
 Ticket: <ticket>
 Plan path: <absolute plan file>
 Base SHA: <the plan's recorded base>
+Verdict path: <absolute path for your JSON verdict>
+Prior verdict path: <absolute path to the previous verdict, or none>
 ```
+
+`Verdict path` is supplied by the driver and is NOT under a ticket dir. Planning runs before
+approval, so no run, worktree, or stage directory exists yet; writing to `<ticket_dir>/stages/`
+would fail and the assessment would come back unparseable. Use the path you were given, and if
+your prompt carries none, say so and stop rather than inventing one.
 
 Inherited cwd is not authoritative. Root every command at the workspace root.
 
@@ -64,7 +71,8 @@ argument about whether it is plausible.
 
 Set `design_is_wrong` true only when the plan's approach itself will not work, not when it needs
 corrections. That flag is what earns a second full assessment; everything else is closed by a
-confirm pass against the changed text.
+confirm pass against the changed text. It is a required field: emit it on every verdict,
+including a clean one, so the driver never has to infer the routing from its absence.
 
 ## Running the assessment
 
@@ -91,7 +99,7 @@ codex exec -C "<workspace root>" -s read-only \
   --ignore-rules --ephemeral \
   [-m <assessor model>] [-c model_reasoning_effort=<assessor effort>] \
   --output-schema "<skill_root>/scripts/assets/codex-assess.schema.json" \
-  -o "<ticket_dir>/stages/codex-assess.json" \
+  -o "<verdict path>" \
   - < "<prompt file>"
 ```
 
@@ -102,6 +110,14 @@ text. Do not re-read the whole plan and do not raise new blockers that were avai
 first pass. A confirm pass that reopens settled ground is how a one-pass gate becomes a loop.
 
 New blockers are legitimate only when the fix itself introduced them.
+
+**You do not remember the first pass, so the scope has to be handed to you.** Every call runs
+`--ephemeral`, which starts a fresh Codex session with no prior context; "the same assessor"
+is a contract about continuity of judgment, not about a live session. So a confirm pass MUST
+carry, in its prompt: the prior verdict JSON read from `Prior verdict path`, and the changed
+plan text. Read that file and scope yourself to the blockers it lists. If `Prior verdict path`
+is `none` on a call the driver calls a confirm pass, that is a broken invocation: say so and
+stop, rather than assessing from scratch and reporting it as a confirmation.
 
 ## Failure
 

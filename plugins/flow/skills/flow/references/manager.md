@@ -84,7 +84,7 @@ answers whether this is the right thing to build, and a ticket with one obvious 
 to be wrong about there. Its defects live in the diff, where code review reaches them. Skip it and
 say why; when the ticket carries a design choice, a guard file, or two plausible shapes, keep it.
 
-Synchronous return covers that first spawn and nothing after it. There is no synchronous resume: `SendMessage` to an idle agent offers no such option and always restarts it in the background. Capture the raw agent id from the spawn result at dispatch, because an unnamed agent has no other handle. Because the adversarial confidence loop must continue the *same* assessor across passes, pass 1 returns to the driver and every later pass routes its completion to the manager instead. On a multi-pass loop the relay below is the normal path rather than the exception, so tell the driver to expect it.
+Synchronous return covers that first spawn and nothing after it. There is no synchronous resume: `SendMessage` to an idle agent offers no such option and always restarts it in the background. Capture the raw agent id from the spawn result at dispatch, because an unnamed agent has no other handle. Because the assessment must continue the *same* assessor across a confirm pass, pass 1 returns to the driver and any later pass routes its completion to the manager instead. On a multi-pass loop the relay below is the normal path rather than the exception, so tell the driver to expect it.
 
 ## The workbench
 
@@ -115,11 +115,15 @@ workspace [ABSOLUTE_ROOT] (an initialized flow workspace). FLOW_HARNESS is
 [HARNESS]. Invoke the flow skill now and follow it exactly as written,
 including the entry contract and the skill-root re-pin rule.
 Environment facts, all witnessed in prior managed runs:
-- Plan gate: turn-boundary form — render the plan surface AND send the
-  complete plain-text plan (exact text, base SHA, confidence + category
-  scores, pass facts, resolved findings, residual risks) to "main", then stop
-  and wait. Approval arrives as a message containing APPROVED, or revision
-  feedback. Nothing mutates before it except the planning-start ticket claim.
+- Plan assessment: [ASSESSMENT] (either "run one assessment" or
+  "SKIP the assessment, this ticket is one defect / one call site / one
+  test"). The gate is zero blockers; there is no score to compute or report.
+- Plan gate: turn-boundary form. Render the plan surface AND send the
+  complete plain-text plan (exact text, base SHA, whether the assessment was
+  skipped or a replacement assessor was used, resolved findings, residual
+  risks) to "main", then stop and wait. Approval arrives as a message
+  containing APPROVED, or revision feedback. Nothing mutates before it except
+  the planning-start ticket claim.
 - ask-user findings: relay to "main" the same way and wait.
 - Spawn stage agents synchronously where you can (unnamed subagents).
   Known limit: there is NO synchronous resume, so every assessor pass

@@ -2,7 +2,11 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "additionalProperties": false,
-  "required": ["summary", "blockers"],
+  "required": [
+    "summary",
+    "design_is_wrong",
+    "blockers"
+  ],
   "properties": {
     "summary": {
       "type": "string",
@@ -16,7 +20,12 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["title", "failure_mode", "evidence", "closes_when"],
+        "required": [
+          "title",
+          "failure_mode",
+          "evidence",
+          "closes_when"
+        ],
         "properties": {
           "title": {
             "type": "string",
