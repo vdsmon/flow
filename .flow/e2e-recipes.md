@@ -2,23 +2,23 @@
 
 Plan-time reference for authoring the `--e2e-recipe` string that `/flow spec` stamps into ticket frontmatter. The e2e stage is the one stage that observes the change actually *behaving* — not compiling, not passing review, behaving — and it significantly improves end-to-end correctness. Author a real recipe whenever the ticket has a runnable surface. `skip:` is the exceptional, justified path, never the convenient one.
 
-## Precondition: no e2e stage is wired here right now
+## What e2e is for here, and what it is not
 
-`[pipeline.handlers]` in `.flow/workspace.toml` carries no `e2e` key, so nothing executes the recipes below, and `worktree create` refuses a recipe that expects the stage to run. Until the handler is restored, settle `skip: <reason>` at the gate and run the matching row from the table below by hand, recording the result in the ticket.
+The e2e stage observes the change BEHAVING. It is not a third run of the gates implement already ran and CI runs again: `mise run lint`, `mise run test` and `seam_check.py` are the implement gate, they run in CI on every push, and repeating them under an e2e recipe buys a slower green rather than new evidence.
 
-The absence is drift rather than a decision: PR #427 wired the stage here, the 2026-07-18 stabilization freeze removed it alongside `reflect`, `merge` and `review_brief`, and the 2026-07-27 lift restored only four coupled parts and not this one. Restoring it is tracked separately, so treat the table below as the recipe you will run by hand today and the recipe the stage will run once it is back.
+So in this repo most ticket classes settle `skip: <reason>`, and that is the honest answer rather than a dodge. The one class that earns a real recipe is live pipeline behavior, because the suite genuinely does not observe dispatch: a run's own wiring, bootstrap, and stage transitions are exercised only by driving them.
 
 ## Decide the recipe
 
 | ticket touches | recipe |
 |---|---|
-| engine scripts (`plugins/flow/skills/flow/scripts/*.py`) | `test-ci-only` (definition below) |
-| prose↔CLI seam only (`SKILL.md`, `references/*.md` naming flags/scripts) | seam gate: `python3 seam_check.py` from the scripts dir (add `mise run test` when scripts changed too) |
-| hooks (`plugins/flow/hooks/`) | hooks suite: `mise exec python -- pytest ../../../hooks/tests` from the scripts dir (also covered inside `mise run test`) |
-| live pipeline behavior (dispatch loop, bootstrap, stage wiring) | live-run smoke, settled per ticket: exercise the changed path for real (e.g. `flow_worktree.py create` against a scratch ticket, or a `dispatch_stage.py` cycle in a throwaway run dir) — the suite alone does not observe dispatch behavior |
+| engine scripts (`plugins/flow/skills/flow/scripts/*.py`) | `skip: covered by the implement gate and CI (lint, suite, seam_check)` |
+| prose↔CLI seam only (`SKILL.md`, `references/*.md` naming flags/scripts) | `skip: seam_check runs in the implement gate and in CI` |
+| hooks (`plugins/flow/hooks/`) | `skip: hooks suite runs inside mise run test` |
+| live pipeline behavior (dispatch loop, bootstrap, stage wiring) | live-run smoke, settled per ticket: exercise the changed path for real (`flow_worktree.py create` against a scratch ticket, or a `dispatch_stage.py` cycle in a throwaway run dir). This is the row the stage exists for, because the suite alone does not observe dispatch behavior |
 | docs/meta only (README, dev-history, inventory prose) | `skip: docs-only, no runnable surface` |
 
-While no e2e stage is wired here (see the precondition above), every row other than the docs/meta one is a recipe you settle as `skip: <reason>` and then run by hand, because bootstrap refuses a recipe that expects a stage to run.
+A `skip:` here is a claim that the change's runnable surface is already observed somewhere named, not that nobody looked. State where in the reason, so the gate reads as a decision rather than an omission.
 
 ## test-ci-only definition
 
@@ -44,4 +44,4 @@ None. Runtime is stdlib `python3`; the dev venv resolves via `mise` from the scr
 
 `test-ci-only` — the cheap gate above and nothing heavier. The floor for engine-script tickets and the `--auto` fallback when no richer recipe was settled.
 
-`test-ci-only` is itself refused while no e2e stage is wired here: it expects the stage to run and emit its evidence block, so it is not a way to opt out. Settle `skip: <reason>` and run the gate by hand instead.
+`test-ci-only` remains available for a ticket whose runnable surface genuinely is the gate and nothing heavier, and it is the `--auto` fallback when no richer recipe was settled. Prefer a named `skip:` when the gate already covers the change, so the ticket records which check did the observing.
