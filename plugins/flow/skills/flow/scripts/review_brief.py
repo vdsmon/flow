@@ -41,6 +41,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Literal, Protocol, cast
 
 import ticket_frontmatter
+import validate_workspace
 from _atomicio import atomic_write_text
 from _runner import CwdRunner as Runner
 from _runner import cwd_default_runner
@@ -1398,6 +1399,28 @@ def _skip_authorization(workspace_root: Path, ticket_dir: Path) -> Freshness | N
     return None
 
 
+def _wiring_authorization(workspace_root: Path) -> Freshness | None:
+    """Accept `disabled` for a workspace whose pipeline wires no `review_brief` stage.
+
+    Keys on the WIRING, never on the absence of a stage record: a wired stage that has
+    simply not run yet must still block, or this turns a false refusal into a false pass,
+    which is the worse failure. `validate` reports an unreadable or invalid workspace as a
+    None snapshot, and that resolves to None here so the caller falls through and blocks
+    rather than reading "cannot tell" as "not wired".
+    """
+    _result, snapshot = validate_workspace.validate(workspace_root)
+    if snapshot is None or "review_brief" in snapshot.stages:
+        return None
+    return Freshness(
+        "disabled",
+        None,
+        None,
+        None,
+        None,
+        "workspace pipeline wires no review_brief stage",
+    )
+
+
 def freshness(
     request: FreshnessRequest,
     *,
@@ -1409,6 +1432,9 @@ def freshness(
         return Freshness("disabled", None, None, None, None, "review brief is disabled")
     workspace_root = request.workspace_root.resolve()
     ticket_dir = request.ticket_dir.resolve()
+    wiring = _wiring_authorization(workspace_root)
+    if wiring is not None:
+        return wiring
     authorization = _skip_authorization(workspace_root, ticket_dir)
     if authorization is not None:
         return authorization

@@ -619,6 +619,77 @@ def test_freshness_disabled_flag_unaffected_by_skip_authorization(tmp_path: Path
     assert result.reason == "review brief is disabled"
 
 
+# ─── wiring authorization (flow-7vnm) ──────────────────────────────────────────
+
+
+def _write_workspace(root: Path, *, stages: list[str]) -> None:
+    flow = root / ".flow"
+    flow.mkdir(parents=True, exist_ok=True)
+    (flow / ".initialized").touch()
+    lines = [
+        "[tracker]",
+        'backend = "beads"',
+        "[tracker.beads]",
+        'prefix = "testpkg"',
+        "[pipeline]",
+        "stages = [" + ", ".join(f'"{s}"' for s in stages) + "]",
+        "[pipeline.handlers]",
+        *(f'{s} = "inline"' for s in stages),
+        "[memory]",
+        'namespace = "FT"',
+        "compounding = false",
+    ]
+    (flow / "workspace.toml").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def test_unwired_review_brief_stage_is_disabled_without_probing_the_forge(tmp_path: Path):
+    # The gate's third `disabled` path. No forge or runner is supplied on purpose: resolving
+    # this from the wiring must short-circuit before any PR lookup, which is what makes it
+    # cheap enough to run at every merge.
+    _write_workspace(tmp_path, stages=["ticket", "plan", "implement", "commit", "reflect"])
+    ticket_dir = tmp_path / ".flow" / "runs" / _KEY
+
+    result = rb.freshness(_freshness_request(tmp_path, ticket_dir))
+
+    assert result.status == "disabled"
+    assert result.reason == "workspace pipeline wires no review_brief stage"
+
+
+def test_wired_review_brief_that_never_ran_still_blocks(tmp_path: Path):
+    # The distinguishing case, and the reason this keys on the WIRING rather than on the
+    # absence of a stage record. Both workspaces lack a receipt; only the unwired one may
+    # pass. Keying on "no record" would turn this false block into a false pass, which is
+    # strictly worse than the refusal it replaces.
+    _write_workspace(
+        tmp_path,
+        stages=["ticket", "plan", "implement", "commit", "create_pr", "review_brief", "reflect"],
+    )
+    ticket_dir = tmp_path / ".flow" / "runs" / _KEY
+
+    result = rb.freshness(
+        _freshness_request(tmp_path, ticket_dir), forge=FakeForge(), runner=GitRunner()
+    )
+
+    assert result.status == "missing"
+
+
+def test_unreadable_workspace_fails_closed_rather_than_reading_as_unwired(tmp_path: Path):
+    # "Cannot tell" must never resolve to "not wired". A corrupt workspace.toml yields no
+    # snapshot, and that has to fall through to the blocking path.
+    flow = tmp_path / ".flow"
+    flow.mkdir(parents=True, exist_ok=True)
+    (flow / ".initialized").touch()
+    (flow / "workspace.toml").write_text("garbage", encoding="utf-8")
+    ticket_dir = tmp_path / ".flow" / "runs" / _KEY
+
+    result = rb.freshness(
+        _freshness_request(tmp_path, ticket_dir), forge=FakeForge(), runner=GitRunner()
+    )
+
+    assert result.status != "disabled"
+    assert result.status == "missing"
+
+
 @pytest.mark.parametrize(
     ("status", "expected_code"),
     [
