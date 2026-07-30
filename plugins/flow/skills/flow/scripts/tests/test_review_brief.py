@@ -705,7 +705,7 @@ def test_cli_freshness_exit_code_matches_verdict(
     status: Literal["current", "stale", "missing", "disabled"],
     expected_code: int,
 ):
-    # freshness is read as a merge gate (manager.md blocks while stale/missing), so the verdict has
+    # freshness is read as a merge gate (foreman.md blocks while stale/missing), so the verdict has
     # to be legible from $? alone. Before this mapping existed every verdict returned 0 and a caller
     # that checked the exit code saw success in all four states.
     def _fake(request, **_kwargs):

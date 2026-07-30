@@ -1,4 +1,4 @@
-"""Real-git tests for manager_seat: the module is git plumbing, so fakes would prove nothing."""
+"""Real-git tests for foreman_seat: the module is git plumbing, so fakes would prove nothing."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from types import SimpleNamespace
 
 import pytest
 
-import manager_seat
+import foreman_seat
 
 
 def _git(args: list[str], cwd: Path) -> str:
@@ -34,6 +34,9 @@ def repo(tmp_path: Path) -> SimpleNamespace:
     seed = tmp_path / "seed"
     _git(["clone", str(origin), str(seed)], tmp_path)
     (seed / "README.md").write_text("seed\n")
+    marker = seed / foreman_seat.SELF_TARGET_MARKER
+    marker.mkdir(parents=True)
+    (marker / ".keep").write_text("")
     _git(["add", "."], seed)
     _git(["commit", "-m", "seed"], seed)
     _git(["push", "--quiet", "origin", "main"], seed)
@@ -53,7 +56,7 @@ def repo(tmp_path: Path) -> SimpleNamespace:
 
 
 def _bench(repo: SimpleNamespace) -> Path:
-    return repo.workspace / manager_seat.BENCH_RELPATH
+    return repo.workspace / foreman_seat.BENCH_RELPATH
 
 
 def _write_run(
@@ -81,7 +84,7 @@ def _write_run(
 
 
 def test_creates_bench_detached_at_default(repo: SimpleNamespace) -> None:
-    code, posture = manager_seat.seat(repo.workspace)
+    code, posture = foreman_seat.seat(repo.workspace)
     assert code == 0
     assert posture["fetch"] == {"action": "fetched"}
     assert posture["default_branch"] == "origin/main"
@@ -97,17 +100,17 @@ def test_creates_bench_detached_at_default(repo: SimpleNamespace) -> None:
 
 
 def test_present_bench_is_never_mutated(repo: SimpleNamespace) -> None:
-    manager_seat.seat(repo.workspace)
+    foreman_seat.seat(repo.workspace)
     bench = _bench(repo)
-    _git(["switch", "-c", "manager/inflight"], bench)
+    _git(["switch", "-c", "foreman/inflight"], bench)
     (bench / "wip.txt").write_text("in flight\n")
-    code, posture = manager_seat.seat(repo.workspace)
+    code, posture = foreman_seat.seat(repo.workspace)
     assert code == 0
     assert posture["bench"]["action"] == "present"
-    assert posture["bench"]["branch"] == "manager/inflight"
+    assert posture["bench"]["branch"] == "foreman/inflight"
     assert posture["bench"]["clean"] is False
     assert (bench / "wip.txt").read_text() == "in flight\n"
-    assert _git(["symbolic-ref", "--short", "HEAD"], bench) == "manager/inflight"
+    assert _git(["symbolic-ref", "--short", "HEAD"], bench) == "foreman/inflight"
 
 
 def test_dry_run_writes_nothing(repo: SimpleNamespace) -> None:
@@ -119,7 +122,7 @@ def test_dry_run_writes_nothing(repo: SimpleNamespace) -> None:
     _git(["commit", "-m", "second"], repo.seed)
     _git(["push", "--quiet", "origin", "main"], repo.seed)
     _git(["symbolic-ref", "--delete", "refs/remotes/origin/HEAD"], repo.workspace)
-    code, posture = manager_seat.seat(repo.workspace, dry_run=True)
+    code, posture = foreman_seat.seat(repo.workspace, dry_run=True)
     assert code == 0
     assert posture["dry_run"] is True
     assert posture["fetch"] == {"action": "would_fetch"}
@@ -142,7 +145,7 @@ def test_live_seat_tracks_a_remote_default_rename(repo: SimpleNamespace) -> None
     # A plain fetch never rewrites an existing origin/HEAD, so only the set-head sync keeps the
     # posture truthful after the remote renames its default branch.
     _git(["branch", "-m", "main", "master"], repo.origin)
-    code, posture = manager_seat.seat(repo.workspace)
+    code, posture = foreman_seat.seat(repo.workspace)
     assert code == 0
     assert posture["default_branch"] == "origin/master"
     assert posture["bench"]["action"] == "created"
@@ -150,11 +153,11 @@ def test_live_seat_tracks_a_remote_default_rename(repo: SimpleNamespace) -> None
 
 
 def test_deleted_bench_with_stale_registration_fails_predictably(repo: SimpleNamespace) -> None:
-    manager_seat.seat(repo.workspace)
+    foreman_seat.seat(repo.workspace)
     shutil.rmtree(_bench(repo))
     for dry_run in (True, False):
-        code, posture = manager_seat.seat(repo.workspace, dry_run=dry_run)
-        assert code == manager_seat.EXIT_ERROR
+        code, posture = foreman_seat.seat(repo.workspace, dry_run=dry_run)
+        assert code == foreman_seat.EXIT_ERROR
         assert posture["bench"]["action"] == "failed"
         assert "prune" in posture["bench"]["reason"]
 
@@ -164,8 +167,8 @@ def test_file_at_bench_path_is_unrecognized_in_both_modes(repo: SimpleNamespace)
     bench.parent.mkdir(parents=True)
     bench.write_text("not a worktree\n")
     for dry_run in (True, False):
-        code, posture = manager_seat.seat(repo.workspace, dry_run=dry_run)
-        assert code == manager_seat.EXIT_ERROR
+        code, posture = foreman_seat.seat(repo.workspace, dry_run=dry_run)
+        assert code == foreman_seat.EXIT_ERROR
         assert posture["bench"]["action"] == "unrecognized"
 
 
@@ -174,7 +177,7 @@ def test_fetch_surfaces_remote_movement(repo: SimpleNamespace) -> None:
     _git(["add", "."], repo.seed)
     _git(["commit", "-m", "second"], repo.seed)
     _git(["push", "--quiet", "origin", "main"], repo.seed)
-    code, posture = manager_seat.seat(repo.workspace)
+    code, posture = foreman_seat.seat(repo.workspace)
     assert code == 0
     assert posture["workspace_root"]["action"] == "fast_forwarded"
     assert posture["workspace_root"]["behind_integration"] == 0
@@ -183,16 +186,16 @@ def test_fetch_surfaces_remote_movement(repo: SimpleNamespace) -> None:
 
 def test_fetch_failure_still_emits_posture(repo: SimpleNamespace) -> None:
     _git(["remote", "set-url", "origin", str(repo.workspace / "missing.git")], repo.workspace)
-    code, posture = manager_seat.seat(repo.workspace)
-    assert code == manager_seat.EXIT_ERROR
+    code, posture = foreman_seat.seat(repo.workspace)
+    assert code == foreman_seat.EXIT_ERROR
     assert posture["fetch"]["action"] == "failed"
     # origin/HEAD and origin/main survive from the clone, so the bench still materializes.
     assert posture["bench"]["action"] == "created"
 
 
 def test_invoked_from_bench_targets_primary_checkout(repo: SimpleNamespace) -> None:
-    manager_seat.seat(repo.workspace)
-    code, posture = manager_seat.seat(_bench(repo))
+    foreman_seat.seat(repo.workspace)
+    code, posture = foreman_seat.seat(_bench(repo))
     assert code == 0
     assert Path(posture["target_root"]) == repo.workspace.resolve()
     assert posture["bench"]["action"] == "present"
@@ -200,13 +203,13 @@ def test_invoked_from_bench_targets_primary_checkout(repo: SimpleNamespace) -> N
 
 def test_plain_directory_at_bench_path_is_unrecognized(repo: SimpleNamespace) -> None:
     _bench(repo).mkdir(parents=True)
-    code, posture = manager_seat.seat(repo.workspace)
-    assert code == manager_seat.EXIT_ERROR
+    code, posture = foreman_seat.seat(repo.workspace)
+    assert code == foreman_seat.EXIT_ERROR
     assert posture["bench"]["action"] == "unrecognized"
 
 
 def test_cli_prints_posture_json(repo: SimpleNamespace, capsys: pytest.CaptureFixture) -> None:
-    code = manager_seat.cli_main(["--workspace-root", str(repo.workspace)])
+    code = foreman_seat.cli_main(["--workspace-root", str(repo.workspace)])
     assert code == 0
     posture = json.loads(capsys.readouterr().out)
     assert posture["bench"]["action"] == "created"
@@ -215,15 +218,15 @@ def test_cli_prints_posture_json(repo: SimpleNamespace, capsys: pytest.CaptureFi
 def test_non_repo_workspace_is_a_probe_error(tmp_path: Path) -> None:
     plain = tmp_path / "plain"
     plain.mkdir()
-    code = manager_seat.cli_main(["--workspace-root", str(plain)])
-    assert code == manager_seat.EXIT_ERROR
+    code = foreman_seat.cli_main(["--workspace-root", str(plain)])
+    assert code == foreman_seat.EXIT_ERROR
 
 
 def test_integration_branch_from_create_pr_base(repo: SimpleNamespace) -> None:
     (repo.workspace / ".flow").mkdir()
     (repo.workspace / ".flow" / "workspace.toml").write_text('[create_pr]\nbase = "dev"\n')
     _git(["switch", "-c", "dev", "origin/dev"], repo.workspace)
-    code, posture = manager_seat.seat(repo.workspace)
+    code, posture = foreman_seat.seat(repo.workspace)
     assert code == 0
     assert posture["default_branch"] == "origin/main"
     assert posture["integration_branch"] == "origin/dev"
@@ -249,7 +252,7 @@ def test_integration_branch_from_create_pr_base(repo: SimpleNamespace) -> None:
     # The other accepted spelling: `origin/origin/dev` misses, and the literal falls through to be
     # verified as `refs/remotes/origin/dev`.
     (repo.workspace / ".flow" / "workspace.toml").write_text('[create_pr]\nbase = "origin/dev"\n')
-    code, posture = manager_seat.seat(repo.workspace)
+    code, posture = foreman_seat.seat(repo.workspace)
     assert code == 0
     assert posture["integration_branch"] == "origin/dev"
     assert "integration_unresolved" not in posture
@@ -258,15 +261,15 @@ def test_integration_branch_from_create_pr_base(repo: SimpleNamespace) -> None:
 def test_bench_seating_reads_the_primary_checkouts_declared_base(repo: SimpleNamespace) -> None:
     # The delivery-workspace shape: `.flow/workspace.toml` is untracked, so a bench worktree carries
     # none of its own. Reading `[create_pr] base` from the invoking root rather than the primary
-    # checkout would seat a bench-invoked manager on the remote default with nothing in the posture
+    # checkout would seat a bench-invoked foreman on the remote default with nothing in the posture
     # saying so.
-    manager_seat.seat(repo.workspace)
+    foreman_seat.seat(repo.workspace)
     (repo.workspace / ".flow").mkdir()
     (repo.workspace / ".flow" / "workspace.toml").write_text('[create_pr]\nbase = "dev"\n')
     bench = _bench(repo)
     assert bench.is_dir()
     assert not (bench / ".flow").exists()
-    code, posture = manager_seat.seat(bench)
+    code, posture = foreman_seat.seat(bench)
     assert code == 0
     assert Path(posture["target_root"]) == repo.workspace.resolve()
     assert posture["default_branch"] == "origin/main"
@@ -275,14 +278,14 @@ def test_bench_seating_reads_the_primary_checkouts_declared_base(repo: SimpleNam
 
 
 def test_clean_detached_bench_is_reparked_when_no_local_run(repo: SimpleNamespace) -> None:
-    code, posture = manager_seat.seat(repo.workspace)
+    code, posture = foreman_seat.seat(repo.workspace)
     assert code == 0
     assert posture["bench"]["action"] == "created"
     bench_head_before = posture["bench"]["head"]
 
     (repo.workspace / ".flow").mkdir()
     (repo.workspace / ".flow" / "workspace.toml").write_text('[create_pr]\nbase = "dev"\n')
-    code, posture = manager_seat.seat(repo.workspace)
+    code, posture = foreman_seat.seat(repo.workspace)
     assert code == 0
     assert posture["integration_branch"] == "origin/dev"
     assert posture["bench"]["action"] == "present"
@@ -292,13 +295,13 @@ def test_clean_detached_bench_is_reparked_when_no_local_run(repo: SimpleNamespac
 
 def test_behind_only_bench_is_reparked_when_no_local_run(repo: SimpleNamespace) -> None:
     (repo.workspace / ".git" / "info" / "exclude").write_text(".claude/\n", encoding="utf-8")
-    manager_seat.seat(repo.workspace)
+    foreman_seat.seat(repo.workspace)
     bench = _bench(repo)
     (repo.seed / "second.md").write_text("second\n")
     _git(["add", "."], repo.seed)
     _git(["commit", "-m", "second"], repo.seed)
     _git(["push", "--quiet", "origin", "main"], repo.seed)
-    code, posture = manager_seat.seat(bench)
+    code, posture = foreman_seat.seat(bench)
     assert code == 0
     assert posture["workspace_root"]["action"] == "fast_forwarded"
     assert posture["bench"]["action"] == "reparked"
@@ -314,7 +317,7 @@ def test_configured_integrations_are_named_without_adapter_construction(
         '[tracker]\nbackend = "jira"\n[forge]\nbackend = "bitbucket"\n',
         encoding="utf-8",
     )
-    code, posture = manager_seat.seat(repo.workspace)
+    code, posture = foreman_seat.seat(repo.workspace)
     assert code == 0
     assert posture["integrations"] == {"tracker": "jira", "forge": "bitbucket"}
 
@@ -330,15 +333,15 @@ def test_local_runs_cover_base_revision_failure_stale_corruption_and_completed_o
     (corrupt / "state.json").write_text("{broken", encoding="utf-8")
     _write_run(repo.workspace, "flow-done", status="completed")
 
-    real_classify = manager_seat.lease.classify
+    real_classify = foreman_seat.lease.classify
 
     def classify(path, *args, **kwargs):
         if path == stale:
             return {"state": "expired_foreign", "holder": {}}
         return real_classify(path, *args, **kwargs)
 
-    monkeypatch.setattr(manager_seat.lease, "classify", classify)
-    code, posture = manager_seat.seat(repo.workspace)
+    monkeypatch.setattr(foreman_seat.lease, "classify", classify)
+    code, posture = foreman_seat.seat(repo.workspace)
     assert code == 0
     by_ticket = {row["ticket"]: row for row in posture["local_runs"]}
     assert by_ticket["flow-open"]["status"] == "unfinished"
@@ -354,7 +357,7 @@ def test_contradictory_duplicate_run_evidence_is_marked(repo: SimpleNamespace) -
     _git(["worktree", "add", "--detach", str(sibling), "origin/main"], repo.workspace)
     _write_run(repo.workspace, "flow-dupe", run_id="run-a")
     _write_run(sibling, "flow-dupe", run_id="run-b", status="failed")
-    code, posture = manager_seat.seat(repo.workspace)
+    code, posture = foreman_seat.seat(repo.workspace)
     assert code == 0
     duplicates = [row for row in posture["local_runs"] if row["ticket"] == "flow-dupe"]
     assert len(duplicates) == 2
@@ -367,7 +370,7 @@ def test_local_run_prevents_primary_fast_forward(repo: SimpleNamespace) -> None:
     _git(["add", "."], repo.seed)
     _git(["commit", "-m", "second"], repo.seed)
     _git(["push", "--quiet", "origin", "main"], repo.seed)
-    code, posture = manager_seat.seat(repo.workspace)
+    code, posture = foreman_seat.seat(repo.workspace)
     assert code == 0
     assert "action" not in posture["workspace_root"]
     assert posture["workspace_root"]["behind_integration"] == 1
@@ -375,16 +378,16 @@ def test_local_run_prevents_primary_fast_forward(repo: SimpleNamespace) -> None:
 
 def test_non_idle_bench_prevents_primary_fast_forward(repo: SimpleNamespace) -> None:
     (repo.workspace / ".git" / "info" / "exclude").write_text(".claude/\n", encoding="utf-8")
-    manager_seat.seat(repo.workspace)
+    foreman_seat.seat(repo.workspace)
     bench = _bench(repo)
-    _git(["switch", "-c", "manager/inflight"], bench)
+    _git(["switch", "-c", "foreman/inflight"], bench)
     (repo.seed / "second.md").write_text("second\n")
     _git(["add", "."], repo.seed)
     _git(["commit", "-m", "second"], repo.seed)
     _git(["push", "--quiet", "origin", "main"], repo.seed)
-    code, posture = manager_seat.seat(repo.workspace)
+    code, posture = foreman_seat.seat(repo.workspace)
     assert code == 0
-    assert posture["bench"]["branch"] == "manager/inflight"
+    assert posture["bench"]["branch"] == "foreman/inflight"
     assert "action" not in posture["workspace_root"]
     assert posture["workspace_root"]["behind_integration"] == 1
 
@@ -392,7 +395,7 @@ def test_non_idle_bench_prevents_primary_fast_forward(repo: SimpleNamespace) -> 
 def test_unresolvable_configured_base_falls_back_and_says_so(repo: SimpleNamespace) -> None:
     # `origin/nodev` as a LOCAL branch and `main~1` as a revision expression both satisfy `git
     # rev-parse --verify origin/<base>` while naming no remote branch. `main~1` is the dangerous
-    # one: accepted silently, it can never equal a branch name, so the manager's
+    # one: accepted silently, it can never equal a branch name, so the foreman's
     # branch-vs-integration comparison would report a divergence no rebase can clear.
     _git(["branch", "local-only"], repo.workspace)
     _git(["branch", "origin/nodev"], repo.workspace)
@@ -400,7 +403,15 @@ def test_unresolvable_configured_base_falls_back_and_says_so(repo: SimpleNamespa
     workspace_toml = repo.workspace / ".flow" / "workspace.toml"
     for base in ("nope", "local-only", "nodev", "main~1"):
         workspace_toml.write_text(f'[create_pr]\nbase = "{base}"\n')
-        code, posture = manager_seat.seat(repo.workspace)
+        code, posture = foreman_seat.seat(repo.workspace)
         assert code == 0
         assert posture["integration_branch"] == "origin/main"
         assert base in posture["integration_unresolved"]
+
+
+def test_refuses_outside_the_self_target(repo: SimpleNamespace) -> None:
+    # A delivery workspace installs the engine rather than carrying its source, so the marker
+    # tree is absent there and seating must refuse before assembling any posture.
+    shutil.rmtree(repo.workspace / "plugins")
+    with pytest.raises(foreman_seat.SeatError, match="self-target"):
+        foreman_seat.seat(repo.workspace)

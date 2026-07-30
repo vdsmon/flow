@@ -1,10 +1,13 @@
-"""Deterministic half of manager seating (`FLOW manager`).
+"""Deterministic half of foreman seating (`FLOW foreman`).
 
-Library + thin CLI behind the `manager-seat` facade command. `references/manager.md` §Seating runs
-it first so every seated manager begins from the same bounded local picture instead of re-deriving
+Library + thin CLI behind the `foreman-seat` facade command. `references/foreman.md` §Seating runs
+it first so every seated foreman begins from the same bounded local picture instead of re-deriving
 it by hand or eagerly reading remote work queues.
 
 Sequence (live mode):
+  0. Refuse outside the self-target: the foreman is flow's own maintenance seat, so the primary
+     checkout must contain the engine source tree. A delivery workspace runs plain driver sessions
+     instead of seating a foreman.
   1. Resolve the primary checkout from `git worktree list`; seating may be invoked from the
      bench itself, and the posture always describes the primary checkout.
   2. `git fetch origin`, so every judgment that follows sees the current remote.
@@ -17,16 +20,16 @@ Sequence (live mode):
      `integration_unresolved`.
   5. Read configured tracker/forge names without constructing either adapter, and scan registered
      worktrees for unfinished, failed, stale, or corrupt base and revision runs.
-  6. Ensure the standing bench worktree `.claude/worktrees/flow-manager`: created detached at
-     the integration branch when absent. A clean detached bench is fast-forward re-parked only
-     when no unfinished local run makes that unsafe; all other existing bench state is preserved.
+  6. Ensure the standing bench worktree `.claude/worktrees/flow-foreman`: created detached at the
+     integration branch when absent. A clean detached bench is fast-forward re-parked only when no
+     unfinished local run makes that unsafe; all other existing bench state is preserved.
   7. Emit the posture: Git state, configured integrations, and unfinished local run evidence.
 
 `--dry-run` performs no ref update and no filesystem write (no fetch, no set-head, no worktree add);
 the posture reports `would_fetch` / `would_create`, computed from the refs as they are.
 
 CLI:
-  manager_seat.py --workspace-root <root> [--dry-run]
+  foreman_seat.py --workspace-root <root> [--dry-run]
 
 Exit codes:
   0 = posture emitted, every action succeeded
@@ -48,7 +51,11 @@ from _timeutil import utcnow_iso
 from _workspace import WorkspaceConfigError, load_workspace_toml
 from worktree_janitor import _enumerate_worktrees
 
-BENCH_RELPATH = Path(".claude/worktrees/flow-manager")
+BENCH_RELPATH = Path(".claude/worktrees/flow-foreman")
+
+# The engine source tree only the self-target contains; delivery workspaces install the engine
+# rather than carrying its source, so this path is what tells the two apart.
+SELF_TARGET_MARKER = Path("plugins/flow/skills/flow/scripts")
 
 EXIT_OK = 0
 EXIT_ERROR = 2
@@ -269,7 +276,7 @@ def _integration_branch(
     base is visible in the posture instead of silently falling back.
 
     Each candidate is checked as an exact ref under `refs/remotes/`, never resolved as a revision:
-    `git rev-parse --verify origin/main~1` answers with a commit, and the manager compares
+    `git rev-parse --verify origin/main~1` answers with a commit, and the foreman compares
     `integration_branch` against a branch name, so an accepted revision expression would read as a
     permanent, unfixable divergence. Exact-ref matching also keeps a local branch literally named
     `origin/nodev` from shadowing the remote-tracking lookup, and excludes tags and bare SHAs.
@@ -448,6 +455,11 @@ def seat(workspace_root: Path, *, dry_run: bool = False) -> tuple[int, dict[str,
     invoking = workspace_root.expanduser().resolve()
     runner = default_runner()
     main_root, entries = _primary_checkout(runner, invoking)
+    if not (main_root / SELF_TARGET_MARKER).is_dir():
+        raise SeatError(
+            "the foreman seats only in flow's self-target repository; "
+            "a delivery workspace runs plain driver sessions instead"
+        )
     registered = {
         Path(str(e["worktree"])).expanduser().resolve() for e in entries[1:] if e.get("worktree")
     }
@@ -501,14 +513,14 @@ def seat(workspace_root: Path, *, dry_run: bool = False) -> tuple[int, dict[str,
 
 
 def cli_main(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(description="Deterministic half of manager seating.")
+    parser = argparse.ArgumentParser(description="Deterministic half of foreman seating.")
     parser.add_argument("--workspace-root", required=True)
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args(argv)
     try:
         code, posture = seat(Path(args.workspace_root), dry_run=bool(args.dry_run))
     except SeatError as exc:
-        print(f"manager-seat: {exc}", file=sys.stderr)
+        print(f"foreman-seat: {exc}", file=sys.stderr)
         return EXIT_ERROR
     print(json.dumps(posture, indent=2))
     return code

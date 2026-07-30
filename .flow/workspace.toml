@@ -12,7 +12,7 @@ self_target = true
 
 [triage]
 # Self-target preference: a hot change ships on an advisor `proceed` like a
-# non-hot one; the manager's merge-time guard-property review still backstops it.
+# non-hot one; the foreman's merge-time guard-property review still backstops it.
 adjudicate_hot = true
 
 # No [models] block on purpose. stage-registry.toml now ships a default tier and effort

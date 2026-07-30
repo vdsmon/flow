@@ -88,7 +88,7 @@ Every plan receives one independent assessment. Launch one fresh independent age
 assessor and did not author the plan. Prefer the bundled `subagent:flow:codex-assessor`, which runs
 the assessment on a different engine than the one that wrote the plan, so the independence is
 structural rather than instructed; a host-native agent is the fallback when Codex is unavailable.
-The manager may skip the assessment entirely for a ticket that is one defect, one call site, one
+The foreman may skip the assessment entirely for a ticket that is one defect, one call site, one
 test, and says so at spawn.
 
 The assessor answers ONE question: is this the right thing to build. It checks whether the plan

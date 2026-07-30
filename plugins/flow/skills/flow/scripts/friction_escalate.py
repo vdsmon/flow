@@ -10,7 +10,7 @@ early miss inflates the count even after a later fix held); this module re-grade
 each class against `max(fix.ts)` instead, so only a fix that genuinely did not
 hold escalates.
 
-Labels are `["recurrent"]` ONLY, never `machinery`: the manager's pickup triages
+Labels are `["recurrent"]` ONLY, never `machinery`: the foreman's pickup triages
 the `machinery`-labelled beads, so a bead lacking that label is never
 auto-gated, keeping this propose-only unconditionally. `bd list -l recurrent`
 surfaces them to the human.

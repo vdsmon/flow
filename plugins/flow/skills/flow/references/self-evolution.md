@@ -12,9 +12,9 @@ self-target merge authority.
   and files a `MACHINERY:` finding as a `machinery` bead when a change
   cannot safely land inside the current run (`stage-reflect.md` owns the filing
   recipe and its dedup keys).
-- **The manager** files independently from outside the run — the same recipe, the
-  same file-anchored dedup keys — for friction only the outside view can see:
-  stalls, silent retries, cross-run patterns (`manager.md` §Report and filing).
+- **The foreman** files independently from outside the run, with the same recipe
+  and the same file-anchored dedup keys, for friction only the outside view can see:
+  stalls, silent retries, cross-run patterns (`foreman.md` §Report and filing).
 - **Recurrence escalation** (`friction_escalate`, invoked from reflect) files a
   `recurrent`-labelled bead when a claimed machinery fix did not hold. Propose-only,
   never auto-gated.
@@ -24,10 +24,10 @@ observing the same defect converge on one bead. A quiet run is a valid result.
 
 ## Consumer
 
-The manager is the bounded consumer (`manager.md` §Pickup). Between runs it reads
+The foreman is the bounded consumer (`foreman.md` §Pickup). Between runs it reads
 `bd ready`, triages with veto power, groups or merges related beads, and routes each
 chosen ticket through an ordinary managed pipeline run — attended planning, human
-plan approval, review, CI. On a met gate the manager merges (`manager.md` §Merging);
+plan approval, review, CI. On a met gate the foreman merges (`foreman.md` §Merging);
 a hot change additionally passes the independent guard-property review before it
 lands. Delivery workspaces and held changes remain human-merge.
 
@@ -55,9 +55,9 @@ repository — machinery beads are then not this workspace's to work.
   is live.
 - Read-only discovery workers are accepted only when HEAD, index, tracked worktree,
   and untracked-worktree snapshots are unchanged.
-- The review stages and the manager's merge checklist independently check the
+- The review stages and the foreman's merge checklist independently check the
   resulting diff. The producer's confidence is not merge authority.
 - Immutable ship events and friction records drive `FLOW measure` outcomes; tracker
   status alone is not delivery evidence.
 
-The run-and-merge mechanics live in `manager.md`.
+The run-and-merge mechanics live in `foreman.md`.

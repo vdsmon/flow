@@ -1,4 +1,4 @@
-"""Regression tests for the write-confinement briefing in manager.md + delivery-loop.md.
+"""Regression tests for the write-confinement briefing in foreman.md + delivery-loop.md.
 
 These are string pins, not behavior coverage. They prove the sentences are present so a
 later editor cannot silently drop them; they cannot prove an agent obeys them, and no
@@ -10,19 +10,19 @@ carrying the known workarounds to the agents who hit it is the whole deliverable
 import pathlib
 
 REFERENCES = pathlib.Path(__file__).parent.parent.parent / "references"
-MANAGER = REFERENCES / "manager.md"
+FOREMAN = REFERENCES / "foreman.md"
 DELIVERY_LOOP = REFERENCES / "delivery-loop.md"
 
 
 def _spawn_template() -> str:
-    """The fenced spawn template in manager.md, flattened, WITHOUT the surrounding prose.
+    """The fenced spawn template in foreman.md, flattened, WITHOUT the surrounding prose.
 
     The bullet has to live inside the fence, not merely somewhere in the file: outside it
     `lint_comments` starts checking the prose, and more importantly the driver spawn prompt
     stops carrying the briefing, which is the entire delivery mechanism. Searching the whole
     document would pass on a bullet that had drifted out of the fence.
     """
-    text = MANAGER.read_text()
+    text = FOREMAN.read_text()
     start = text.index("```text")
     end = text.index("```", start + len("```text"))
     return " ".join(text[start:end].split())
@@ -42,7 +42,7 @@ def _flat(path: pathlib.Path) -> str:
 def test_spawn_template_names_the_pinned_worktree_binding():
     text = _spawn_template()
     assert "binds to its PINNED" in text, (
-        "manager.md's spawn template must tell the driver that write confinement binds to "
+        "foreman.md's spawn template must tell the driver that write confinement binds to "
         "the session's PINNED worktree, not its working directory. Without that, a driver "
         "reads a refusal as its own path mistake and looks in the wrong place."
     )
@@ -51,7 +51,7 @@ def test_spawn_template_names_the_pinned_worktree_binding():
 def test_spawn_template_names_the_driver_repin():
     text = _spawn_template()
     assert "EnterWorktree" in text, (
-        "manager.md's spawn template must name the driver's re-pin (EnterWorktree with an "
+        "foreman.md's spawn template must name the driver's re-pin (EnterWorktree with an "
         "explicit path). It is the one remedy witnessed working for a driver session, and "
         "cd is not a substitute: cd moves the working directory, not the pin."
     )
@@ -60,7 +60,7 @@ def test_spawn_template_names_the_driver_repin():
 def test_spawn_template_tells_a_blocked_subagent_to_return_blocked():
     text = _spawn_template()
     assert "return BLOCKED at once" in text, (
-        "manager.md's spawn template must tell a blocked stage subagent to return BLOCKED "
+        "foreman.md's spawn template must tell a blocked stage subagent to return BLOCKED "
         "immediately rather than fight the guard. A subagent's pin is fixed at spawn so it "
         "cannot recover, and the driver has a documented takeover that is cheaper."
     )

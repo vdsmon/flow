@@ -44,7 +44,7 @@ Accepted target forms are:
 - `pr:<positive-number>`;
 - a supported forge pull-request URL.
 
-`ticket`, `memory`, `measure`, `workspace`, `manager`, and `help` are always parsed
+`ticket`, `memory`, `measure`, `workspace`, `foreman`, and `help` are always parsed
 as static roots first. An unrecognized first token is an error, even if the tracker
 might accept arbitrary strings. Resolve a PR through the forge seam, derive the
 ticket from the head branch, and feed that ticket into the ordinary classifier. Never
