@@ -4,7 +4,7 @@
 
 schema_version = 1
 logical_trigger = "FLOW"
-static_namespaces = ["ticket", "memory", "measure", "workspace", "manager", "help"]
+static_namespaces = ["ticket", "memory", "measure", "workspace", "foreman", "help"]
 forbidden_root_tokens = [
   "spec",
   "do",
@@ -226,13 +226,13 @@ options = [
 ]
 
 [[command]]
-id = "manager"
-path = ["manager"]
-usage = "FLOW manager"
-summary = "Assume the manager role in this session: charter, ledger, queue, then act."
+id = "foreman"
+path = ["foreman"]
+usage = "FLOW foreman"
+summary = "Seat this session as the foreman, flow's self-target maintenance role: charter, ledger, queue, then act."
 effect = "read"
 workspace = "required"
-reference = "references/manager.md"
+reference = "references/foreman.md"
 
 [[command]]
 id = "help"

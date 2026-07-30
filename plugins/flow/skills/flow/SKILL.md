@@ -1,6 +1,6 @@
 ---
 name: flow
-description: State-aware ticket-to-PR delivery and workspace operations. Use FLOW for a cockpit, a ticket or PR target, or the ticket, memory, measure, workspace, manager namespaces.
+description: State-aware ticket-to-PR delivery and workspace operations. Use FLOW for a cockpit, a ticket or PR target, or the ticket, memory, measure, workspace, foreman namespaces.
 allowed-tools: Bash(.flow/runtime/flow:*), Bash(*/.flow/runtime/flow:*), Bash(python3:*), Bash(git:*), Bash(bd:*), Bash(jq:*), Bash(gh:*), Read, Write, Edit, Agent, Skill, AskUserQuestion, PushNotification, EnterWorktree
 ---
 
@@ -114,7 +114,7 @@ static routes still resolve, and explicit `ticket:<key>` remains available.
 <!-- flow:public-router:begin -->
 Interpret the invocation through `public-commands.toml`.
 Static namespaces win over target parsing.
-Static roots: `ticket | memory | measure | workspace | manager | help`.
+Static roots: `ticket | memory | measure | workspace | foreman | help`.
 Bare `FLOW` is the read-only cockpit; a recognized target enters the lifecycle reducer.
 Unknown tokens stop. Never reinterpret removed commands as ticket keys.
 <!-- flow:public-router:end -->
@@ -138,7 +138,7 @@ FLOW workspace inspect [<target>] [--json]
 FLOW workspace repair [<target>]
 FLOW workspace sync
 FLOW workspace worktrees clean [--dry-run]
-FLOW manager
+FLOW foreman
 FLOW help [ticket|memory|measure|workspace]
 ```
 <!-- flow:public-grammar:end -->
@@ -213,7 +213,7 @@ question: is this the right thing to build. The gate is zero blockers; there is 
 score. When the assessment returns blockers, fix them and ask the same assessor to
 confirm the fixes only, not to re-read the plan. A second full pass happens only when
 an assessor says the design is wrong, never because it listed improvements. The
-manager may skip the assessment entirely for a ticket that is one defect, one call
+foreman may skip the assessment entirely for a ticket that is one defect, one call
 site, one test. One disclosed replacement assessor is allowed if the original context
 is lost. Read `references/delivery-plan.md` for the full contract.
 
