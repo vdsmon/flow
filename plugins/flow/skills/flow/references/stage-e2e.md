@@ -65,6 +65,13 @@ Your job is to run it exactly, not to reinterpret it.
    command the recipe specifies. Only when a genuinely interactive step cannot
    complete unattended do you stop and report the blocker.
 
+   After the verdict and evidence capture, run the recipe's env-teardown, pass
+   or fail: whatever env-prep started, this stage stops, so a container or
+   service brought up for verification never outlives the run. Teardown is
+   best-effort and one-way: a teardown failure goes into the report but never
+   converts the verdict, and a recipe with `none` skips it. Never tear down a
+   service the recipe did not start.
+
    **Chunking a heavy module.** When a single module cannot finish in one Bash
    call — it exceeds the ~600s ceiling (`timeout` <= 600000ms) or risks the ~360s
    idle watchdog (flow-rbr) — and must be split across calls, do NOT chunk it by
