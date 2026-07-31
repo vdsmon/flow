@@ -130,6 +130,39 @@ def test_target_classification(token: str, kind: TargetKind, value: str) -> None
     assert classified.value == value
 
 
+@pytest.mark.parametrize(
+    ("token", "kind", "value"),
+    [
+        ("ft-42", TargetKind.TICKET, "FT-42"),
+        ("Ft-42", TargetKind.TICKET, "FT-42"),
+        ("FLOW-A0D", TargetKind.TICKET, "flow-a0d"),
+        ("FT-42.", TargetKind.TICKET, "FT-42"),
+        ("FT-42,", TargetKind.TICKET, "FT-42"),
+        (
+            "https://brinta.atlassian.net/browse/ft-1470",
+            TargetKind.TICKET_URL,
+            "FT-1470",
+        ),
+        (
+            "https://brinta.atlassian.net/browse/FT-1470.",
+            TargetKind.TICKET_URL,
+            "FT-1470",
+        ),
+    ],
+)
+def test_pasted_target_normalization(token: str, kind: TargetKind, value: str) -> None:
+    classified = classify_root_token(token, TRACKER_PATTERNS)
+    assert classified.kind is kind
+    assert classified.value == value
+    assert classified.raw == token
+
+
+def test_dotted_beads_key_survives_punctuation_strip() -> None:
+    classified = classify_root_token("flow-kx17.2", ("flow-[a-z0-9]+(?:\\.[a-z0-9]+)*",))
+    assert classified.kind is TargetKind.TICKET
+    assert classified.value == "flow-kx17.2"
+
+
 def test_static_namespace_wins_even_when_tracker_pattern_matches_everything() -> None:
     classified = classify_root_token("memory", (r".*",))
     assert classified.kind is TargetKind.NAMESPACE
