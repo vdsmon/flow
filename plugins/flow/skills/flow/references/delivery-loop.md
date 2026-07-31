@@ -39,6 +39,16 @@ FLOW_HARNESS="<harness>" "<facade>" dispatch next \
 After each handler, `advance` both finishes that stage and returns the next descriptor;
 do not issue a redundant `next` between stages.
 
+**Advancing is an obligation, and a summary is not a stopping point.** The turn that
+captures a stage artifact issues the `advance` in that same turn, and the turn that
+receives a descriptor executes it. The only three ways a driver turn ends mid-run are
+`done: true`, a durable `blocked_by` stop, or a question only the human can answer;
+narrating progress is none of them. This line exists on three same-day witnesses
+(2026-07-31): drivers went idle after plan approval, after an implement return, and
+before commit, each time wrapping up with a status summary instead of advancing, and
+each time a human nudge was what resumed a healthy run. If there is a wrap-up worth
+writing, write it AND issue the next loop step in the same turn.
+
 Descriptor cases:
 
 - `done: true`: exit cleanly;
