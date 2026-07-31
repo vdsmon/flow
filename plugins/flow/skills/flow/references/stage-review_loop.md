@@ -61,17 +61,27 @@ FLOW_HARNESS="<harness>" "<facade>" forge --workspace-root . review-status --pr 
 FLOW_HARNESS="<harness>" "<facade>" forge --workspace-root . review-threads --pr "$PR_ID"
 ```
 
-If review status is unsupported, say so and use the available thread list. Wait only for
-a review bot the workspace explicitly declares. With none declared, which is the default,
-an empty thread list on green CI is review-clean and owes no caveat: do not infer a bot
-from other pull requests, and do not read an unsupported review status as a pending one.
-Establishing by hand that no bot exists costs more than the wait it avoids, and it
-re-establishes the same static fact every run.
+If review status is unsupported, say so and use the available thread list.
 
-When a declared bot has not finished, wait once for a short bounded interval and retry
-the two probes. Do not start a background monitor or an unbounded wait. If it still has
-not finished, continue with an explicit `automated review incomplete` caveat; never call
-that state review-clean.
+A review bot is judged by ACTIVITY on this pull request, never by posted output alone and
+never by a workspace declaration (no config key declares one, and a repository can carry an
+active bot no config mentions). Posted comments cannot distinguish a bot mid-review from a
+bot that is deactivated or unconfigured, which is exactly the state a run got stuck against
+(CO-222, 2026-07-31). So after CI is green, probe for a sign of life with bounded re-runs of
+the two probes above for up to five minutes, never a background monitor: an in-progress or
+placeholder marker, a bot-authored check, or its first thread on THIS pull request. Other
+pull requests are not evidence.
+
+No sign of life inside the window means the bot is deactivated or not configured for this
+repository: record `no review-bot activity within 5m; treated as absent` and an empty thread
+list on green CI is then review-clean carrying that one note, not an
+`automated review incomplete` caveat.
+
+A sign of life flips the obligation: the review is coming, so keep waiting in the same
+bounded polls until the bot FINISHES, meaning its completion marker appears or its
+in-progress marker clears. Only when a completion signal never arrives does the stage
+continue with the explicit `automated review incomplete` caveat, and that state is never
+called review-clean.
 
 Only unresolved Critical or Major threads are actionable. Minor and nit findings stay
 open and are listed in the report.
