@@ -62,7 +62,7 @@ the human to ask for one.
 
 ## Pickup
 
-The foreman is the consumer of the machinery backlog: the `machinery`-labelled beads that `stage-reflect.md`'s filing recipe produces, alongside every other ready ticket. Between runs: read `bd ready` and triage with veto power. The triage and the sequencing are the foreman's; the decision to start is the human's, so the queue is presented, not consumed (§Seating step 3), and a surviving ticket is handed back as a recommendation to run directly, never spawned. Route anything the human starts through an ordinary session.
+The foreman is the consumer of the machinery backlog: the `machinery`-labelled beads its own sweep minted (§Friction handling), alongside every other ready ticket. Between runs: read `bd ready` and triage with veto power. The triage and the sequencing are the foreman's; the decision to start is the human's, so the queue is presented, not consumed (§Seating step 3), and a surviving ticket is handed back as a recommendation to run directly, never spawned. Route anything the human starts through an ordinary session.
 
 Triage is a filter against overengineering, not a queue pump. Before working any bead: was it witnessed more than once, or once with real cost? Is the lesson already recorded where its audience looks? Does the fix add standing surface a workaround avoids? Is the fix bigger than the lifetime cost of the friction? A bead that fails these is vetoed and closed, with the reasoning; a closed bead permanently blocks the dedup net from refiling it, so close only what should stay dead and defer the maybe-laters instead. When a bead survives, prefer deletion over a doc line over a new moving part. Group or merge related beads via `bd` parent links or close-as-dup with the surviving bead's scope widened, and group only on shared root cause or shared surface: one plan, one diff, one PR; grouping for tidiness manufactures scope. Vetoing is a first-class act, not a failure to act.
 
@@ -116,7 +116,18 @@ outlives its citation. Cite a ticket key or a merged commit instead.
 
 ## Friction handling
 
-What the sweep observes routes by one hierarchy. Friction that bit a run gets a bead, always, because beads are the ledger `friction_recurrence` and the fix-efficacy measure join against; a silent fix starves the measurement loop. A single-witness papercut gets a ledger line instead; the second witness promotes it to a bead. Friction inside a run belongs to the run's own reflect first; the foreman files only what the outside view sees (cross-run patterns, latency the run could not measure about itself), and the dedup net converges the two producers.
+What the sweep observes routes by one hierarchy, and the foreman is the only seat that mints beads: reflect records, the foreman files. A bead requires a delivery-workspace witness, or a second independent witness with real cost. Friction witnessed only by a self-target run is flow examining itself and never becomes backlog on its own; it gets a ledger line or a knowledge entry and waits for its delivery witness. Friction that clears the bar gets a bead always, because beads are what the `friction_recurrence` and fix-efficacy measures join against, and a silent fix starves the measurement loop. A single-witness papercut gets a ledger line instead; the second witness promotes it. Before minting, dedup against reflect's `MACHINERY:` entries and existing beads with the file-anchored keys; one defect, one bead. Mint with the shared recipe, carrying the entry's evidence and its dedup anchor:
+
+```bash
+FLOW_HARNESS="<harness>" "<facade>" flow-beads-create \
+  --workspace-root . \
+  --summary "<the finding title>" \
+  --description "<the MACHINERY entry body + the file:line evidence + the witness that cleared the bar>" \
+  --type chore --labels machinery \
+  --dedup-key "<primary-relfile>::<short-symptom>"
+```
+
+Exit 0 prints the bead key; exit 5 means a bead for this finding already exists (reference it, never refile); a finding marked HOT in its entry adds `hot` to `--labels` so the bead rides the high-scrutiny lane and the merge-time guard-property review.
 
 Who implements: an **obvious** improvement is implemented fully, in one motion (branch, gates, PR, merge under §Merging), with no bead unless it was friction-shaped; the PR is the record. Obvious means no alternatives worth weighing; the moment there are, it is judgment and routes to a proposal or an ordinary run. Judgment-shaped, hot, or large work always goes through the pipeline with the plan gate. Never touch files a live run snapshots.
 
@@ -165,9 +176,10 @@ A run's reflect writes at maximum context, with the evidence still on disk, and 
 later. A foreman reading evidence after the reap cannot produce either. So the division is by
 altitude, not by ownership.
 
-**The foreman files nothing a run already reported.** A finding that reached reflect goes through
-reflect's dedup net; filing it again races that net and loses, because two
-producers with no shared index converge on duplicates. Dedup AFTER reflect has run, not before.
+**Runs record; only the foreman files.** Reflect leaves `MACHINERY:` entries and friction events
+behind; the sweep is what turns the qualifying ones into beads (§Friction handling owns the
+witness bar). One minting seat plus the file-anchored dedup keys is what keeps one defect one
+bead; sweep after the runs have finished, never while one is writing.
 
 What only the outside view sees, and what the foreman therefore owns:
 

@@ -1,6 +1,6 @@
 """File a self-work (machinery) bead into flow's OWN beads DB.
 
-Used by the reflect sling-bead path and the foreman's out-of-run filing. Two guarantees:
+Used by the foreman's sweep, the sole bead-minting seat. Two guarantees:
 
 - Gated on a route back to flow's repo. Without one the bead is NOT filed (exit 4),
   so a delivery run never requires a flow checkout and machinery friction stays dormant.

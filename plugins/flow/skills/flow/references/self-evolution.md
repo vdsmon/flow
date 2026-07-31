@@ -7,26 +7,28 @@ self-target merge authority.
 
 ## Producers
 
-- **Producer A — the reflect stage** is the continuous producer. It records durable
-  knowledge and friction, applies safe machinery edits through `machinery_edit.py`,
-  and files a `MACHINERY:` finding as a `machinery` bead when a change
-  cannot safely land inside the current run (`stage-reflect.md` owns the filing
-  recipe and its dedup keys).
-- **The foreman** files independently from outside the run, with the same recipe
-  and the same file-anchored dedup keys, for friction only the outside view can see:
-  stalls, silent retries, cross-run patterns (`foreman.md` §Report and filing).
+- **Producer A (the reflect stage)** is the continuous recorder. It records durable
+  knowledge and friction and applies safe machinery edits through
+  `machinery_edit.py`; it files no beads. A `MACHINERY:` entry carrying its
+  evidence and a candidate dedup anchor is where reflect stops
+  (`stage-reflect.md` owns the entry shape).
+- **The foreman** is the only bead producer. Its sweep reads the recorded entries
+  and friction logs across every workspace and mints beads with the file-anchored
+  dedup keys, only for findings with a delivery-workspace witness or a second
+  real-cost witness (`foreman.md` §Friction handling). Friction witnessed only by
+  flow running itself stays a ledger line until a real witness arrives.
 - **Recurrence escalation** (`friction_escalate`, invoked from reflect) files a
   `recurrent`-labelled bead when a claimed machinery fix did not hold. Propose-only,
-  never auto-gated.
+  never auto-gated; the foreman's triage applies the same witness bar.
 
-All producers deduplicate against open and closed tracker evidence, so two producers
-observing the same defect converge on one bead. A quiet run is a valid result.
+A single minting seat plus file-anchored keys is what keeps one defect one bead. A
+quiet run is a valid result.
 
 ## Consumer
 
 The foreman is the bounded consumer (`foreman.md` §Pickup). Between runs it reads
-`bd ready`, triages with veto power, groups or merges related beads, and routes each
-chosen ticket through an ordinary managed pipeline run — attended planning, human
+`bd ready`, triages with veto power, groups or merges related beads, and hands each
+chosen ticket back to the human to run directly: attended planning, human
 plan approval, review, CI. On a met gate the foreman merges (`foreman.md` §Merging);
 a hot change additionally passes the independent guard-property review before it
 lands. Delivery workspaces and held changes remain human-merge.
