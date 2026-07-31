@@ -12,24 +12,24 @@ self-target merge authority.
   `machinery_edit.py`; it files no beads. A `MACHINERY:` entry carrying its
   evidence and a candidate dedup anchor is where reflect stops
   (`stage-reflect.md` owns the entry shape).
-- **The foreman** is the only bead producer. Its sweep reads the recorded entries
+- **The seat** (`FLOW scrutinize`) is the only bead producer. Its sweep reads the recorded entries
   and friction logs across every workspace and mints beads with the file-anchored
   dedup keys, only for findings with a delivery-workspace witness or a second
-  real-cost witness (`foreman.md` §Friction handling). Friction witnessed only by
+  real-cost witness (`scrutinize.md` §Friction handling). Friction witnessed only by
   flow running itself stays a ledger line until a real witness arrives.
 - **Recurrence escalation** (`friction_escalate`, invoked from reflect) files a
   `recurrent`-labelled bead when a claimed machinery fix did not hold. Propose-only,
-  never auto-gated; the foreman's triage applies the same witness bar.
+  never auto-gated; the seat's triage applies the same witness bar.
 
 A single minting seat plus file-anchored keys is what keeps one defect one bead. A
 quiet run is a valid result.
 
 ## Consumer
 
-The foreman is the bounded consumer (`foreman.md` §Pickup). Between runs it reads
+The seat is the bounded consumer (`scrutinize.md` §Pickup). Between runs it reads
 `bd ready`, triages with veto power, groups or merges related beads, and hands each
 chosen ticket back to the human to run directly: attended planning, human
-plan approval, review, CI. On a met gate the foreman merges (`foreman.md` §Merging);
+plan approval, review, CI. On a met gate the seat merges (`scrutinize.md` §Merging);
 a hot change additionally passes the independent guard-property review before it
 lands. Delivery workspaces and held changes remain human-merge.
 
@@ -57,9 +57,9 @@ repository — machinery beads are then not this workspace's to work.
   is live.
 - Read-only discovery workers are accepted only when HEAD, index, tracked worktree,
   and untracked-worktree snapshots are unchanged.
-- The review stages and the foreman's merge checklist independently check the
+- The review stages and the seat's merge checklist independently check the
   resulting diff. The producer's confidence is not merge authority.
 - Immutable ship events and friction records drive `FLOW measure` outcomes; tracker
   status alone is not delivery evidence.
 
-The run-and-merge mechanics live in `foreman.md`.
+The run-and-merge mechanics live in `scrutinize.md`.

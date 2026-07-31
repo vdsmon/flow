@@ -45,7 +45,7 @@ The fifth run-safety mechanism, the content-ownership commit gate, is `diff_extr
 | `cockpit_cli.py` | Construct the cockpit evidence model from an absolute JSON file and render the deterministic attention-first snapshot without probing or mutation. | `render --evidence <absolute-json-file> [--json]`; logical text or compact snapshot JSON, structured JSON errors |
 | `flow_worktree.py` | Post-approval worktree seeding plus the exported `is_ticket_branch` ownership predicate shared by preview and reap. Resolves the approved base, seeds the approved Markdown plan and `state.json`, stamps frontmatter, and binds the worktree's v2 memory pointer to main. Reap guards base/revision state, verifies an optional expected tip, and checkpoints dirty work before removal. | flags per `--help`; `create --auto` gates the unattended path |
 | `branch_ticket.py` | Resolve ticket key from current git branch (backend-aware regex); `--branch <name>` resolves from an explicit branch instead (the PR->ticket enabler for revise). | `--workspace-root [--branch]`; exit 0 match / 1 env / 3 no-match |
-| `foreman_seat.py` | Deterministic half of foreman seating (`references/foreman.md` §Seating): refuse outside the self-target, fetch origin, resolve default/integration refs, name configured tracker/forge without adapter construction, scan registered worktrees for non-terminal base/revision runs, safely fast-forward or re-park only without local run evidence, ensure the standing bench, and emit bounded local posture. Invocable from the bench itself; posture always describes the primary checkout. | `--workspace-root [--dry-run]`; exit 0 posture ok, 2 failure (posture printed for fetch/bench failures; a pre-posture probe error goes to stderr instead). Consumed by `references/foreman.md` |
+| `scrutinize_seat.py` | Deterministic half of the scrutinize seating (`references/scrutinize.md` §Seating): refuse outside the self-target, fetch origin, resolve default/integration refs, name configured tracker/forge without adapter construction, scan registered worktrees for non-terminal base/revision runs, safely fast-forward or re-park only without local run evidence, ensure the standing bench, and emit bounded local posture. Invocable from the bench itself; posture always describes the primary checkout. | `--workspace-root [--dry-run]`; exit 0 posture ok, 2 failure (posture printed for fetch/bench failures; a pre-posture probe error goes to stderr instead). Consumed by `references/scrutinize.md` |
 | `_harness.py` (lib) | The closed host-adapter vocabulary: `flow_harness()` reads `FLOW_HARNESS`, defaults an unset selector to `claude-code`, and raises `HarnessError` on anything but `codex`/`claude-code`. Deliberately import-light — the workspace shims read it on every facade call. | — |
 
 ## Tracker
@@ -209,11 +209,11 @@ reference doc); this table is for finding a doc, not for wiring.
 | `references/delivery-repair.md` | Repairs are evidence-specific, target-specific, and confirmation-gated. |
 | `references/delivery-revision.md` | A lifecycle revise action updates a delivered run's open PR. |
 | `references/e2e-recipes.md` | Read this at plan time — delivery-plan.md's recipe-settling step — the moment you settle a ticket's e2e_recipe. |
-| `references/foreman.md` | The foreman is flow's maintenance seat, and it works AFTER the fact. |
 | `references/harness.md` | Claude Code and Codex are the two hosts for the same Flow engine and public grammar. |
 | `references/plan-surface.md` | The plan surface renders the human gate of references/delivery-plan.md section 5 as an interactive Lavish session: the exact complete plan… |
 | `references/revision-triage-board.md` | The revision board is the one review-adjacent use of Lavish; the planning-gate use lives in references/plan-surface.md. |
 | `references/robustness.md` | The threat → file → witnessed-failure index that AGENTS.md's "Robustness (do not erode)" paragraph points at. |
+| `references/scrutinize.md` | Scrutiny is flow's post-hoc maintenance verb. |
 | `references/self-evolution.md` | Flow improves itself through the same ticket-to-PR lifecycle it applies to delivery work. |
 | `references/stage-code_review.md` | Have one fresh reviewer challenge the implementation before commit. |
 | `references/stage-commit.md` | Compose a conventional commit, apply the recorded implement-stage diff, and transition the tracker ticket. |
@@ -243,9 +243,9 @@ markers are overwritten. `—` = none.
 | `_locking.py` | — | `dispatch_stage`, `flow_friction`, `flow_worktree`, `lease`, `machinery_edit`, `memory_append`, `memory_embed`, `observe_ship_event`, `pending_mutations`, `recall_pending`, `recall_usage`, `runtime_layout`, `state`, `ticket_frontmatter` |
 | `_memory_paths.py` | — | `flow_friction`, `flow_worktree`, `friction_escalate`, `friction_recurrence`, `memory_append`, `memory_embed`, `metric`, `observe_at_close`, `observe_ship_event`, `recall`, `recall_usage`, `reflect_inputs`, `sweep_knowledge`, `tracker_cli` |
 | `_registry.py` | — | `dispatch_stage`, `init`, `lint_ticket`, `model_resolve`, `seam_check`, `validate_workspace` |
-| `_runner.py` | — | `branch_ticket`, `create_pr`, `diff_extract`, `finalize`, `flow_beads_create`, `flow_worktree`, `foreman_seat`, `forge_bitbucket`, `forge_github`, `friction_escalate`, `init`, `recall_pending`, `review_brief`, `tracker_beads`, `version`, `worktree_janitor` |
-| `_timeutil.py` | — | `dispatch_stage`, `flow_friction`, `flow_worktree`, `foreman_seat`, `init`, `lease`, `memory_append`, `memory_embed`, `metric`, `observe_at_close`, `observe_ship_event`, `recall`, `recall_pending`, `recall_usage`, `recover`, `runtime_layout`, `state`, `status`, `sweep_knowledge`, `ticket_frontmatter`, `tracker_cli`, `worktree_janitor` |
-| `_workspace.py` | — | `branch_ticket`, `create_pr`, `flow_friction`, `flow_worktree`, `foreman_seat`, `forge`, `friction_escalate`, `maintainer`, `metric`, `model_resolve`, `observe_ship_event`, `recover`, `reflect_inputs`, `revise_config`, `snapshot`, `status`, `tracker_cli`, `triage` |
+| `_runner.py` | — | `branch_ticket`, `create_pr`, `diff_extract`, `finalize`, `flow_beads_create`, `flow_worktree`, `forge_bitbucket`, `forge_github`, `friction_escalate`, `init`, `recall_pending`, `review_brief`, `scrutinize_seat`, `tracker_beads`, `version`, `worktree_janitor` |
+| `_timeutil.py` | — | `dispatch_stage`, `flow_friction`, `flow_worktree`, `init`, `lease`, `memory_append`, `memory_embed`, `metric`, `observe_at_close`, `observe_ship_event`, `recall`, `recall_pending`, `recall_usage`, `recover`, `runtime_layout`, `scrutinize_seat`, `state`, `status`, `sweep_knowledge`, `ticket_frontmatter`, `tracker_cli`, `worktree_janitor` |
+| `_workspace.py` | — | `branch_ticket`, `create_pr`, `flow_friction`, `flow_worktree`, `forge`, `friction_escalate`, `maintainer`, `metric`, `model_resolve`, `observe_ship_event`, `recover`, `reflect_inputs`, `revise_config`, `scrutinize_seat`, `snapshot`, `status`, `tracker_cli`, `triage` |
 | `branch_ticket.py` | — | `finalize`, `worktree_janitor` |
 | `cockpit.py` | — | `cockpit_cli` |
 | `cockpit_cli.py` | `render` | — |
@@ -260,7 +260,6 @@ markers are overwritten. `—` = none.
 | `flow_launcher.py` | — | `flow_worktree`, `init` |
 | `flow_worktree.py` | `create` `locate-or-reseed` `reap` | `finalize`, `worktree_janitor` |
 | `flowctl.py` | — | `seam_check` |
-| `foreman_seat.py` | — | — |
 | `forge.py` | — | `create_pr`, `finalize`, `forge_bitbucket`, `forge_cli`, `forge_github`, `review_brief`, `revise_config`, `worktree_janitor` |
 | `forge_bitbucket.py` | — | `forge` |
 | `forge_cli.py` | `ci-rollup` `delete-branch` `detect-pr` `list-authored` `mark-ready` `merge` `post-reply` `resolve-thread` `review-status` `review-threads` | — |
@@ -270,7 +269,7 @@ markers are overwritten. `—` = none.
 | `group_candidates.py` | — | — |
 | `group_persist.py` | `clear` `derive` `persist` | — |
 | `init.py` | — | — |
-| `lease.py` | `acquire` `classify` `release` | `dispatch_stage`, `flow_worktree`, `foreman_seat`, `recover`, `runtime_layout`, `status`, `worktree_janitor` |
+| `lease.py` | `acquire` `classify` `release` | `dispatch_stage`, `flow_worktree`, `recover`, `runtime_layout`, `scrutinize_seat`, `status`, `worktree_janitor` |
 | `lifecycle.py` | — | `lifecycle_cli` |
 | `lifecycle_cli.py` | `coordinate` `reduce` | — |
 | `lint_comments.py` | — | — |
@@ -298,6 +297,7 @@ markers are overwritten. `—` = none.
 | `revise_config.py` | `apply-floor` | — |
 | `runtime_layout.py` | — | `flow_launcher` |
 | `scrub_ci_skip.py` | — | — |
+| `scrutinize_seat.py` | — | — |
 | `seam_check.py` | — | — |
 | `snapshot.py` | — | `dispatch_stage`, `recover` |
 | `state.py` | — | `diff_extract`, `dispatch_stage`, `flow_worktree`, `recall_usage`, `recover`, `reflect_inputs`, `status` |
@@ -314,5 +314,5 @@ markers are overwritten. `—` = none.
 | `validate_workspace.py` | — | `dispatch_stage`, `review_brief` |
 | `version.py` | `stamp` | — |
 | `worker_pool.py` | `guard` `limit` `recover` `snapshot` | — |
-| `worktree_janitor.py` | `sweep` | `finalize`, `foreman_seat` |
+| `worktree_janitor.py` | `sweep` | `finalize`, `scrutinize_seat` |
 <!-- flow:module-map:end -->

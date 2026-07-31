@@ -1,15 +1,15 @@
-"""Regression tests for the foreman's bounded seating contract."""
+"""Regression tests for the seat's bounded seating contract."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
-FOREMAN_DOC = Path(__file__).resolve().parents[2] / "references" / "foreman.md"
+SCRUTINIZE_DOC = Path(__file__).resolve().parents[2] / "references" / "scrutinize.md"
 
 
 def _seating() -> str:
-    text = FOREMAN_DOC.read_text(encoding="utf-8")
-    return text.split("## Seating the foreman", 1)[1].split("## Pickup", 1)[0]
+    text = SCRUTINIZE_DOC.read_text(encoding="utf-8")
+    return text.split("## Seating", 1)[1].split("## Pickup", 1)[0]
 
 
 def test_seating_has_an_open_direction_boundary_without_a_queue_scan() -> None:

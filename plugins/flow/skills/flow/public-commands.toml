@@ -4,7 +4,7 @@
 
 schema_version = 1
 logical_trigger = "FLOW"
-static_namespaces = ["ticket", "memory", "measure", "workspace", "foreman", "help"]
+static_namespaces = ["ticket", "memory", "measure", "workspace", "scrutinize", "help"]
 forbidden_root_tokens = [
   "spec",
   "do",
@@ -226,13 +226,16 @@ options = [
 ]
 
 [[command]]
-id = "foreman"
-path = ["foreman"]
-usage = "FLOW foreman"
-summary = "Seat this session as the foreman, flow's self-target maintenance role: charter, ledger, queue, then act."
+id = "scrutinize"
+path = ["scrutinize"]
+usage = "FLOW scrutinize [<workspace>]"
+summary = "Seat this session for a scrutiny: sweep run evidence post-hoc, triage the queue, merge met gates. An argument scopes it to one delivery workspace (name or path)."
 effect = "read"
 workspace = "required"
-reference = "references/foreman.md"
+reference = "references/scrutinize.md"
+arguments = [
+  { name = "workspace", value_type = "text", cardinality = "zero_or_one" },
+]
 
 [[command]]
 id = "help"

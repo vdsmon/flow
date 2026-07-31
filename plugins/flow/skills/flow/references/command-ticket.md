@@ -199,5 +199,5 @@ read-only lens; `--ready` folds the ready queue in:
 FLOW_HARNESS="<harness>" "<facade>" triage list --workspace-root . [--ready] [--json]
 ```
 
-The foreman reads this lens when triaging the backlog (`foreman.md` §Pickup); the
+The seat reads this lens when triaging the backlog (`scrutinize.md` §Pickup); the
 listing itself launches, transitions, and files nothing.
