@@ -41,6 +41,11 @@ goes into a visible **Unanchored threads** section. Never silently drop it. An
 instruction-driven revision with no threads may still open the board as an interdiff
 and convergence surface.
 
+Whenever the board opens, quote the open output's `url:` field verbatim in the chat
+message announcing it, exactly as `plan-surface.md` mandates for the plan surface:
+browser auto-open can fail silently from a sandboxed session, and the quoted URL is
+the safety net.
+
 Paste this layout net verbatim into `<head>`; the board contains dense authored text
 and must remain sendable at narrow widths:
 

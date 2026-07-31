@@ -78,7 +78,11 @@ settled plan rather than collecting decisions.
 
 ## Human-driver loop
 
-Open once, then run one persistent poll owned by the session for the whole surface. Strip
+Open once, then run one persistent poll owned by the session for the whole surface. The
+open's output includes a `url:` field: quote that URL verbatim in the chat message that
+announces the surface, every time. Browser auto-open from a sandboxed background session
+can fail silently with the surface live and the human seeing nothing (FT-1320: an hour of
+blindness while the surface and poll ran); the quoted URL is the one-line safety net. Strip
 `dom_snapshot` from every poll read and batch annotations into one send. Lavish live-reloads
 the same file, so never kill/re-arm the poll around a re-render and never re-run the open
 command mid-loop.
