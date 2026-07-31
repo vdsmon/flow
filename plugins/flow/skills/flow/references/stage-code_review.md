@@ -136,6 +136,24 @@ input reports the same zero as a gate that passed.
    record "reviewer did not read the repository" as the stage failure, and do not
    triage its findings.
 
+   The path half of read-proof is mechanical. Run it from the worktree root before
+   triage; exit 2 is the stop above, not a finding to argue with:
+
+   ```bash
+   python3 - "<ticket_dir>/stages/codex-review.json" <<'EOF'
+   import json, pathlib, sys
+   report = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+   missing = sorted({f["file"] for f in report.get("findings", [])
+                     if f.get("file") and not pathlib.Path(f["file"]).exists()})
+   if missing:
+       print("read-proof FAILED; cited paths not in the tree:")
+       for gone in missing:
+           print(" ", gone)
+       raise SystemExit(2)
+   print(f"read-proof ok: {len(report.get('findings', []))} findings, every cited path exists")
+   EOF
+   ```
+
 3. Triage the returned findings. Dismiss only demonstrably incorrect or duplicate
    observations and record why. Findings whose fix would leave `planned_files` are
    not silently expanded here.

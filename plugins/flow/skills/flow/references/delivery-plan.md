@@ -134,6 +134,28 @@ A verdict that fails read-proof is not a pass and its findings are not findings:
 assessor, record "assessor did not read the repository", and continue under the replacement rule
 below, disclosing the replacement at the gate.
 
+The path half of that check is mechanical. Blocker evidence is free text, so extract everything
+path-shaped from it and require each to exist; run from the workspace root, and exit 2 is the
+stop above:
+
+```bash
+python3 - "<verdict path>" <<'EOF'
+import json, pathlib, re, sys
+verdict = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+cited = set()
+for blocker in verdict.get("blockers", []):
+    for text in blocker.values():
+        cited.update(re.findall(r"[A-Za-z0-9_./-]+\.(?:py|md|toml|json|yml|yaml|sql|sh)\b", str(text)))
+missing = sorted(p for p in cited if "/" in p and not pathlib.Path(p).exists())
+if missing:
+    print("read-proof FAILED; cited paths not in the tree:")
+    for gone in missing:
+        print(" ", gone)
+    raise SystemExit(2)
+print(f"read-proof ok: {len(cited)} path-shaped citations checked")
+EOF
+```
+
 When blockers come back, the driver fixes them and asks the SAME assessor to confirm the fixes
 only, against the changed text, never to re-read the whole plan. Same assessor means continuity of
 judgment, not a live session: a bundled Codex assessor runs each call fresh, so the driver hands it
