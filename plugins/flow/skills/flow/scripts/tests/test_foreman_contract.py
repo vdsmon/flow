@@ -9,7 +9,7 @@ FOREMAN_DOC = Path(__file__).resolve().parents[2] / "references" / "foreman.md"
 
 def _seating() -> str:
     text = FOREMAN_DOC.read_text(encoding="utf-8")
-    return text.split("## Seating the foreman", 1)[1].split("## Roles", 1)[0]
+    return text.split("## Seating the foreman", 1)[1].split("## Pickup", 1)[0]
 
 
 def test_seating_has_an_open_direction_boundary_without_a_queue_scan() -> None:
@@ -35,4 +35,4 @@ def test_remote_reads_are_deferred_until_the_user_selects_work() -> None:
         assert forbidden not in before_choice
     assert "tracker list-assigned --filter open" in after_choice
     assert "forge list-authored --state open" in after_choice
-    assert "without a general queue scan" in after_choice
+    assert "a general queue scan still waits" in " ".join(after_choice.split())
