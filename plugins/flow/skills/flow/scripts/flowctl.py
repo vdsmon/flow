@@ -32,7 +32,7 @@ COMMANDS = {
     "lifecycle": "lifecycle_cli.py",
     "machinery-edit": "machinery_edit.py",
     "maintainer": "maintainer.py",
-    "foreman-seat": "foreman_seat.py",
+    "scrutinize-seat": "scrutinize_seat.py",
     "memory-append": "memory_append.py",
     "metric": "metric.py",
     "model": "model_resolve.py",

@@ -264,7 +264,7 @@ successful regeneration when that workspace has enabled Flow-controlled merging.
 
 Any later commit makes the brief stale, including machinery edits produced by
 `reflect` in Flow's self-target workspace. The merger runs `review-brief
-freshness` before any other merge gate (`foreman.md` §Merging); if local `HEAD`, PR
+freshness` before any other merge gate (`scrutinize.md` §Merging); if local `HEAD`, PR
 head, receipt SHA, and artifact do not all agree, the
 merge is blocked until this stage is retried/regenerated at the new pushed SHA.
 
