@@ -25,6 +25,7 @@ Validates:
 from __future__ import annotations
 
 import argparse
+import shutil
 import sys
 import tomllib
 from dataclasses import dataclass, field
@@ -114,7 +115,9 @@ def _validate_forge_block(data: dict[str, Any], result: ValidationResult) -> Non
 
     Unlike `[tracker]`, an absent `[forge]` is NOT a violation (a workspace that
     keeps create_pr/review_loop at `none` needs no forge). github requires no
-    sub-keys; bitbucket requires `workspace` + `repo_slug`.
+    sub-keys; bitbucket requires `workspace` + `repo_slug` plus the `bkt` CLI on
+    PATH, probed here so a missing binary surfaces at the dispatch gate with its
+    install command instead of as a mid-run ForgeError.
     """
     forge = data.get("forge")
     if forge is None:
@@ -134,6 +137,12 @@ def _validate_forge_block(data: dict[str, Any], result: ValidationResult) -> Non
             for key in ("workspace", "repo_slug"):
                 if not isinstance(bb.get(key), str) or not bb[key]:
                     result.add(f"forge.bitbucket.{key}", "missing or not a non-empty string")
+        if shutil.which("bkt") is None:
+            result.add(
+                "forge.bitbucket",
+                "bkt CLI not found on PATH; install it with: "
+                "brew install avivsinai/tap/bitbucket-cli",
+            )
 
 
 def _parse_stages(pipeline: dict[str, Any], result: ValidationResult) -> list[str] | None:
