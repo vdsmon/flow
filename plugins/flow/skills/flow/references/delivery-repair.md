@@ -17,9 +17,17 @@ holders cannot be probed. Lease state remains authoritative.
 ### Expired or stale lease
 
 Offer takeover only when the lease is expired or reboot-clearable. Show that takeover
-clears the lock, rotates ownership, resets in-progress stages to pending, and refreshes
+clears the lock, rotates ownership, resets in-progress stages to pending, quarantines
+each reset stage's `stages/<name>.out` to a `.stale-*` sibling, and refreshes
 the snapshot. Confirm before applying. If the lease still classifies live, ordinary
 takeover refuses.
+
+The quarantine is why a takeover session must never act on a reset stage's old report:
+the dead holder may have mutated the worktree after writing it, so the artifact can
+describe a tree that no longer exists (FT-1502's takeover nearly re-asked the human
+findings a pre-fix `code_review.out` still listed as open). After any takeover, diff
+the worktree before trusting ANY surviving stage artifact; the `.stale-*` file is
+context for the re-run, never a stage result.
 
 ```bash
 FLOW_HARNESS="<harness>" "<facade>" recover takeover --ticket "<ticket>" --workspace-root .
