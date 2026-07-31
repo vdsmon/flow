@@ -209,7 +209,7 @@ reference doc); this table is for finding a doc, not for wiring.
 | `references/delivery-repair.md` | Repairs are evidence-specific, target-specific, and confirmation-gated. |
 | `references/delivery-revision.md` | A lifecycle revise action updates a delivered run's open PR. |
 | `references/e2e-recipes.md` | Read this at plan time — delivery-plan.md's recipe-settling step — the moment you settle a ticket's e2e_recipe. |
-| `references/foreman.md` | The foreman is flow's self-target maintenance seat: flow running flow, and nothing else. |
+| `references/foreman.md` | The foreman is flow's maintenance seat, and it works AFTER the fact. |
 | `references/harness.md` | Claude Code and Codex are the two hosts for the same Flow engine and public grammar. |
 | `references/plan-surface.md` | The plan surface renders the human gate of references/delivery-plan.md section 5 as an interactive Lavish session: the exact complete plan… |
 | `references/revision-triage-board.md` | The revision board is the one review-adjacent use of Lavish; the planning-gate use lives in references/plan-surface.md. |
