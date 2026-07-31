@@ -92,6 +92,18 @@ existing workspace takes an explicit `--handler code_review=subagent:flow:codex-
 
 The same invariant holds for any bundled agent: a workspace must never name an agent type its installed engine does not provide. A fresh Claude Code init writes `implement` and `e2e` to the bundled `flow:implementer` and `flow:e2e-runner` agent types; a Codex reconfigure drops both back to `subagent:general-purpose` for the same reason the reviewer does. An existing workspace adopts the bundled types only through a fresh init or an explicit `--handler implement=subagent:flow:implementer` (and the equivalent `--handler e2e=subagent:flow:e2e-runner`).
 
+A workspace whose PRs live on Bitbucket adds the `[forge]` block by hand:
+`backend = "bitbucket"` plus `[forge.bitbucket]` with `workspace` and `repo_slug`.
+That backend reaches the host through the `bkt` CLI, so install it first:
+
+```bash
+brew install avivsinai/tap/bitbucket-cli
+```
+
+Validation probes PATH for the binary and fails with that install command when it
+is missing, so a run cannot start against a Bitbucket forge the machine cannot
+reach.
+
 ## `FLOW workspace inspect [<target>] [--json]`
 
 Inspection is read-only. With no target, report every run, stage progress, lease,

@@ -390,22 +390,45 @@ def test_forge_github_valid(tmp_path: Path) -> None:
     assert result.ok
 
 
-def test_forge_bitbucket_valid(tmp_path: Path) -> None:
+def test_forge_bitbucket_valid(tmp_path: Path, monkeypatch) -> None:
     root = _make_workspace(tmp_path, backend="beads")
     _append_forge(
         root,
         '[forge]\nbackend = "bitbucket"\n[forge.bitbucket]\nworkspace = "ws"\nrepo_slug = "rs"\n',
     )
+    monkeypatch.setattr(vw.shutil, "which", lambda name: "/opt/homebrew/bin/bkt")
     result, _ = vw.validate(root)
     assert result.ok
 
 
-def test_forge_bitbucket_missing_keys_fails(tmp_path: Path) -> None:
+def test_forge_bitbucket_missing_keys_fails(tmp_path: Path, monkeypatch) -> None:
     root = _make_workspace(tmp_path, backend="beads")
     _append_forge(root, '[forge]\nbackend = "bitbucket"\n[forge.bitbucket]\n')
+    monkeypatch.setattr(vw.shutil, "which", lambda name: "/opt/homebrew/bin/bkt")
     result, _ = vw.validate(root)
     assert not result.ok
-    assert any("forge.bitbucket" in v for v in result.violations)
+    assert any("forge.bitbucket.workspace" in v for v in result.violations)
+    assert any("forge.bitbucket.repo_slug" in v for v in result.violations)
+
+
+def test_forge_bitbucket_missing_bkt_cli_fails(tmp_path: Path, monkeypatch) -> None:
+    root = _make_workspace(tmp_path, backend="beads")
+    _append_forge(
+        root,
+        '[forge]\nbackend = "bitbucket"\n[forge.bitbucket]\nworkspace = "ws"\nrepo_slug = "rs"\n',
+    )
+    monkeypatch.setattr(vw.shutil, "which", lambda name: None)
+    result, _ = vw.validate(root)
+    assert not result.ok
+    assert any("brew install avivsinai/tap/bitbucket-cli" in v for v in result.violations)
+
+
+def test_forge_github_needs_no_bkt(tmp_path: Path, monkeypatch) -> None:
+    root = _make_workspace(tmp_path, backend="beads")
+    _append_forge(root, '[forge]\nbackend = "github"\n[forge.github]\n')
+    monkeypatch.setattr(vw.shutil, "which", lambda name: None)
+    result, _ = vw.validate(root)
+    assert result.ok
 
 
 def test_forge_unknown_backend_fails(tmp_path: Path) -> None:
