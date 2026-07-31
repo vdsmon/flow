@@ -92,9 +92,13 @@ existing workspace takes an explicit `--handler code_review=subagent:flow:codex-
 
 The same invariant holds for any bundled agent: a workspace must never name an agent type its installed engine does not provide. A fresh Claude Code init writes `implement` and `e2e` to the bundled `flow:implementer` and `flow:e2e-runner` agent types; a Codex reconfigure drops both back to `subagent:general-purpose` for the same reason the reviewer does. An existing workspace adopts the bundled types only through a fresh init or an explicit `--handler implement=subagent:flow:implementer` (and the equivalent `--handler e2e=subagent:flow:e2e-runner`).
 
-A workspace whose PRs live on Bitbucket adds the `[forge]` block by hand:
-`backend = "bitbucket"` plus `[forge.bitbucket]` with `workspace` and `repo_slug`.
-That backend reaches the host through the `bkt` CLI, so install it first:
+Setup derives the `[forge]` block from the repository's `origin` remote: a
+github.com remote writes `backend = "github"`, a bitbucket.org remote writes
+`backend = "bitbucket"` with `workspace` and `repo_slug` parsed from the URL, and
+any other remote derives nothing. The derived block wins on reconfigure, so the
+workspace converges after a repository move; a hand-authored block (the escape
+hatch for exotic remotes) is preserved only while the remote stays underivable.
+A Bitbucket forge reaches the host through the `bkt` CLI, so install it first:
 
 ```bash
 brew install avivsinai/tap/bitbucket-cli

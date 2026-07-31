@@ -1219,3 +1219,112 @@ def test_run_init_writes_general_purpose_to_disk_under_codex(tmp_path: Path, mon
     handlers = _handlers_of(result.workspace_toml_path)
     assert handlers["implement"] == "subagent:general-purpose"
     assert handlers["e2e"] == "subagent:general-purpose"
+
+
+# ─── [forge] derivation from the origin remote ───────────────────────────────
+
+
+def _remote_runner(url: str | None) -> initmod.Runner:
+    """bd-ok runner that also answers `git remote get-url origin` (None = no remote)."""
+
+    def runner(
+        args: list[str],
+        *,
+        cwd: Path | None = None,
+        check: bool = False,
+    ) -> subprocess.CompletedProcess[str]:
+        del cwd, check
+        if args[:2] == ["bd", "init"] or args[:2] == ["bd", "ready"]:
+            stdout = "[]" if args[1] == "ready" else ""
+            return subprocess.CompletedProcess(args=args, returncode=0, stdout=stdout, stderr="")
+        if args[:4] == ["git", "remote", "get-url", "origin"]:
+            if url is None:
+                return subprocess.CompletedProcess(
+                    args=args, returncode=2, stdout="", stderr="error: No such remote 'origin'"
+                )
+            return subprocess.CompletedProcess(
+                args=args, returncode=0, stdout=url + "\n", stderr=""
+            )
+        return subprocess.CompletedProcess(args=args, returncode=1, stdout="", stderr="unmocked")
+
+    return runner
+
+
+def _forge_of(toml_path: Path) -> dict:
+    return tomllib.loads(toml_path.read_text(encoding="utf-8")).get("forge", {})
+
+
+def test_parse_forge_remote_shapes() -> None:
+    parse = initmod._parse_forge_remote
+    assert parse("git@github.com:vdsmon/flow.git") == {"backend": "github"}
+    assert parse("https://github.com/vdsmon/flow") == {"backend": "github"}
+    assert parse("git@bitbucket.org:brinta-uy/brinta-data-platform.git") == {
+        "backend": "bitbucket",
+        "workspace": "brinta-uy",
+        "repo_slug": "brinta-data-platform",
+    }
+    assert parse("https://user@bitbucket.org/ws/rs.git") == {
+        "backend": "bitbucket",
+        "workspace": "ws",
+        "repo_slug": "rs",
+    }
+    assert parse("ssh://git@bitbucket.org/ws/rs.git") == {
+        "backend": "bitbucket",
+        "workspace": "ws",
+        "repo_slug": "rs",
+    }
+    assert parse("git@gitlab.com:group/project.git") is None
+    assert parse("https://bitbucket.org/only-workspace") is None
+    assert parse("not a url") is None
+
+
+def test_run_init_derives_bitbucket_forge_from_remote(tmp_path: Path) -> None:
+    runner = _remote_runner("git@bitbucket.org:brinta-uy/brinta-data-platform.git")
+    result = initmod.run_init(_beads_config(tmp_path), runner=runner)
+    forge = _forge_of(result.workspace_toml_path)
+    assert forge["backend"] == "bitbucket"
+    assert forge["bitbucket"] == {"workspace": "brinta-uy", "repo_slug": "brinta-data-platform"}
+
+
+def test_run_init_derives_github_forge_from_remote(tmp_path: Path) -> None:
+    runner = _remote_runner("https://github.com/vdsmon/flow.git")
+    result = initmod.run_init(_beads_config(tmp_path), runner=runner)
+    assert _forge_of(result.workspace_toml_path) == {"backend": "github", "github": {}}
+
+
+def test_run_init_writes_no_forge_without_a_derivable_remote(tmp_path: Path) -> None:
+    result = initmod.run_init(_beads_config(tmp_path), runner=_remote_runner(None))
+    assert _forge_of(result.workspace_toml_path) == {}
+
+
+def test_reconfigure_preserves_hand_authored_forge_when_remote_underivable(
+    tmp_path: Path,
+) -> None:
+    initmod.run_init(_beads_config(tmp_path), runner=_remote_runner(None))
+    toml_path = tmp_path / ".flow" / "workspace.toml"
+    hand_authored = '\n[forge]\nbackend = "bitbucket"\n\n[forge.bitbucket]\nworkspace = "ws"\n'
+    toml_path.write_text(
+        toml_path.read_text(encoding="utf-8") + hand_authored + 'repo_slug = "rs"\n',
+        encoding="utf-8",
+    )
+    initmod.run_init(_beads_config(tmp_path), runner=_remote_runner(None), reconfigure=True)
+    forge = _forge_of(toml_path)
+    assert forge["backend"] == "bitbucket"
+    assert forge["bitbucket"] == {"workspace": "ws", "repo_slug": "rs"}
+
+
+def test_reconfigure_derived_forge_wins_over_stored_block(tmp_path: Path) -> None:
+    initmod.run_init(
+        _beads_config(tmp_path),
+        runner=_remote_runner("git@github.com:vdsmon/flow.git"),
+    )
+    toml_path = tmp_path / ".flow" / "workspace.toml"
+    assert _forge_of(toml_path)["backend"] == "github"
+    initmod.run_init(
+        _beads_config(tmp_path),
+        runner=_remote_runner("git@bitbucket.org:ws/rs.git"),
+        reconfigure=True,
+    )
+    forge = _forge_of(toml_path)
+    assert forge["backend"] == "bitbucket"
+    assert forge["bitbucket"] == {"workspace": "ws", "repo_slug": "rs"}
