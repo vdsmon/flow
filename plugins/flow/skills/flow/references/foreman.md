@@ -1,6 +1,6 @@
 # The foreman
 
-The foreman is flow's self-target maintenance seat: flow running flow, and nothing else. It exists only in this repository, and it works AFTER the fact. Runs are ordinary flow sessions that know nothing about the foreman; every workspace, this one included, runs them directly with the human at the plan gate. The foreman is seated between runs to sweep the durable evidence they left behind, synthesize what no single run can see, tend the queue, and merge parked PRs whose gate is met. Owning the queue means judging it and recommending from it, not starting work the human did not ask for. The triage and merge authority is maintainer-granted rather than witnessed.
+The foreman is flow's maintenance seat, and it works AFTER the fact. It is seated only in this repository, but its view is every workspace flow runs in: runs are ordinary flow sessions that know nothing about the foreman, in delivery workspaces and the self-target alike, and the foreman is seated between runs to sweep the durable evidence they all left behind, synthesize what no single run can see, tend the machinery queue, and merge this repository's parked PRs whose gate is met. Delivery-run evidence is the primary signal, not an extra: the veto-pass test that shaped this seat found the valuable friction in real delivery runs and the weak findings in flow examining itself. Owning the queue means judging it and recommending from it, not starting work the human did not ask for. The triage and merge authority is maintainer-granted rather than witnessed; merge authority and inline work never leave this repository, and a delivery workspace's PRs stay the human's.
 
 There is no live supervision. The foreman never spawns, watches, relays for, or interrogates a running session: the one topology that did (drivers as background teammates, gate relays, stall watches) was retired after its failure modes proved to be the topology's own, and its play-by-play is preserved in the ledger archives. A session that should run a ticket is a fresh one, invoked with the target directly.
 
@@ -88,9 +88,14 @@ the same command. A control action is verified by its effect, never by the reque
 
 ## The sweep
 
-The foreman's observation is entirely post-hoc. After runs finish (a drain, a
-morning pickup, or whenever the human asks), sweep the durable evidence and
-synthesize. The sources, all passive and all survivable past the run:
+The foreman's observation is entirely post-hoc, and it covers every initialized
+flow workspace on this machine, not just the self-target. Discover them by finding
+`.flow/workspace.toml` under the human's project roots (the 2026-07-28 sweep's
+whole-home find is the precedent); each workspace's evidence lives where its own
+layout puts it, so resolve per workspace rather than assuming one shared root.
+After runs finish (a drain, a morning pickup, or whenever the human asks), sweep
+the durable evidence and synthesize. The sources, all passive and all survivable
+past the run:
 
 - **Session transcripts** under `~/.claude/projects/<workspace-slug>/`, keyed by the
   session's working directory (the slug moves with cwd, so resolve it fresh, never
