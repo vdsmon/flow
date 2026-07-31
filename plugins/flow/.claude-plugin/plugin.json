@@ -1,6 +1,6 @@
 {
   "name": "flow",
-  "version": "0.118.74",
+  "version": "0.118.75",
   "description": "State-aware ticket-to-PR delivery for Claude Code and Codex. Bare /flow shows the cockpit; /flow <ticket|pr> starts, resumes, repairs, revises, or reports from durable evidence.",
   "author": {
     "name": "Victor De Simone",
