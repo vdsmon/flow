@@ -128,6 +128,14 @@ input reports the same zero as a gate that passed.
    same-context self-review. An external reviewer that exits non-zero, exceeds its
    timeout, or leaves no parseable report is a missing reviewer.
 
+   A parseable report is accepted only with read-proof: every file path the report
+   cites must exist in the worktree, and the reviewer's transcript must show it read
+   the payload or the tree (a clean exit with zero local reads has been witnessed,
+   with the reviewer web-searching the repository it was standing in and inventing
+   path spellings). A report that fails read-proof is a missing reviewer too: stop,
+   record "reviewer did not read the repository" as the stage failure, and do not
+   triage its findings.
+
 3. Triage the returned findings. Dismiss only demonstrably incorrect or duplicate
    observations and record why. Findings whose fix would leave `planned_files` are
    not silently expanded here.

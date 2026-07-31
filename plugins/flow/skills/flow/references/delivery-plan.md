@@ -117,6 +117,15 @@ any ticket dir, because planning runs before approval and no run, worktree, or s
 exists yet. An assessor told to write under `<ticket_dir>/stages/` produces nothing parseable and
 fails closed.
 
+A verdict is accepted only with read-proof. Before acting on it, the driver verifies the assessor
+actually read this repository: every file path the verdict cites exists in the tree, and the
+assessor's transcript shows at least one local read. A schema-valid envelope is no evidence of
+reading; a Codex assessor has been witnessed exiting clean with zero local commands, web-searching
+the private repository it was standing in, and citing a directory spelling that does not exist.
+A verdict that fails read-proof is not a pass and its findings are not findings: stop that
+assessor, record "assessor did not read the repository", and continue under the replacement rule
+below, disclosing the replacement at the gate.
+
 When blockers come back, the driver fixes them and asks the SAME assessor to confirm the fixes
 only, against the changed text, never to re-read the whole plan. Same assessor means continuity of
 judgment, not a live session: a bundled Codex assessor runs each call fresh, so the driver hands it

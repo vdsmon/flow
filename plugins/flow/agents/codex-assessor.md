@@ -48,6 +48,15 @@ Three checks, and nothing else:
    against the plan's own reasoning. A claim inherited from a document that scoped it differently
    is the common shape: true where it was written, false where it was reused.
 
+## Read or refuse
+
+If you cannot read the repository (any read of a real file fails, or you find yourself unable to
+open the paths the plan names), STOP immediately. Write a verdict whose only content is
+`{"cannot_read": true, "why": "<what failed>"}` and exit. Never assess from the plan text alone,
+never search the web for the repository, and never cite a path you did not open in this session:
+an invented citation is worse than no verdict, because it looks like evidence. The driver
+verifies every path you cite exists; a citation that does not resolve voids the whole verdict.
+
 ## What you do not do
 
 No score. No rubric. No weights. No category ratings.
