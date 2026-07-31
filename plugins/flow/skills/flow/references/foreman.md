@@ -114,6 +114,18 @@ Never read a run directory for evidence: finalize reaps it, so anything worth
 keeping is already in the stores above, and prose that cites a run directory
 outlives its citation. Cite a ticket key or a merged commit instead.
 
+**The sweep cursor bounds how far back to read.** `sweep-cursor.json`, kept beside
+the ledger in the project memory directory, holds one row per workspace root with
+the ISO timestamp its evidence was last swept through. A sweep reads each
+workspace's evidence newer than its row and advances that row only after the
+sweep's outputs are durable (beads minted, ledger line written), never before: a
+crashed sweep re-reads its window, and re-reading is idempotent because minting
+dedups on the file-anchored keys. Advance a workspace's row only when its evidence
+was actually read; a workspace the sweep skipped or failed on keeps its old row, so
+nothing is silently dropped. No row yet means a bounded default window (the last
+seven days), never all of history. The cursor is foreman state on the foreman's
+side; no workspace carries it.
+
 ## Friction handling
 
 What the sweep observes routes by one hierarchy, and the foreman is the only seat that mints beads: reflect records, the foreman files. A bead requires a delivery-workspace witness, or a second independent witness with real cost. Friction witnessed only by a self-target run is flow examining itself and never becomes backlog on its own; it gets a ledger line or a knowledge entry and waits for its delivery witness. Friction that clears the bar gets a bead always, because beads are what the `friction_recurrence` and fix-efficacy measures join against, and a silent fix starves the measurement loop. A single-witness papercut gets a ledger line instead; the second witness promotes it. Before minting, dedup against reflect's `MACHINERY:` entries and existing beads with the file-anchored keys; one defect, one bead. Mint with the shared recipe, carrying the entry's evidence and its dedup anchor:
