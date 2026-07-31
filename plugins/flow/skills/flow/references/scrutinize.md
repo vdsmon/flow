@@ -180,6 +180,8 @@ Who implements: the seat, inline, on the bench, always. Machinery work the seat 
 - A grouped lead's covers close with it: after the merge, close every key in the lead's `covers` frontmatter through the tracker seam and drop the `bd dep` suppression edge, so a covered sibling never re-surfaces in `bd ready`. Best-effort, like the lead close.
 - Close order: merge first, then finalize; the bead close is bookkeeping, never what makes the merge safe.
 
+**Delivery closes the merge (standing duty, 2026-07-31).** Landed engine changes reach runs only through the installed plugin, so after the seat's merges settle and the server-side stamp lands on main, the seat runs `claude plugin marketplace update vdsmon-flow` and verifies freshness by effect, never by the update command's success line: `claude plugin details flow` must report the version main's plugin.json carries, and the versioned cache directory for that version must exist. A stale marketplace or cache is the seat's defect to fix before the scrutiny ends; a stale cache has already cost a session its agent registry (2026-07-29, missing agent types compiled from an old cache). State the limit honestly when reporting: a session compiles its agent registry at start, so already-open sessions keep their old registry until restarted, and a live run stays sealed to the engine pinned at its start either way.
+
 ## The ledger
 
 The seat's ledger lives outside the repo in the project memory directory, durable
