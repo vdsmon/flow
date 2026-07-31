@@ -21,7 +21,15 @@ Planning's first act mutates the ticket: transition it to `in_progress` in the t
 FLOW_HARNESS="<harness>" "<facade>" tracker \
   --workspace-root . \
   transition --key <KEY> --to-state in_progress
+mkdir -p .flow/tickets && [ -f ".flow/tickets/<KEY>.planning-started" ] || \
+  date -u +"%Y-%m-%dT%H:%M:%SZ" > ".flow/tickets/<KEY>.planning-started"
 ```
+
+The second line marks when attended planning began. It is what lets the frozen ship event
+separate human-facing planning time from machine delivery time (`metric time-to-pr` reports
+the split as `attended_hours`), it writes only when absent so a resumed or revised planning
+conversation keeps the first start, and like the claim it is best-effort: a failure to write
+it never blocks planning.
 
 The claim is best-effort and never blocks planning: exit 3 (already `in_progress`, or the
 tracker has no such state) continues silently; any other failure logs one warning and

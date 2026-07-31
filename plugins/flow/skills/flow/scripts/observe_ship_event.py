@@ -198,10 +198,22 @@ def _attribution_stamp(
         return None
     if not isinstance(create_pr_finished, str) or not create_pr_finished:
         return None
-    return {
+    stamp = {
         "plan_started_at_iso": plan_started,
         "create_pr_finished_at_iso": create_pr_finished,
     }
+    # Optional third timestamp: written at the planning-start tracker claim
+    # (delivery-plan.md §1), before any run exists, so it lives beside the claim
+    # flock rather than in state.json. Its absence is legal on every run that
+    # predates the recipe; the stamp stays two-key there.
+    planning_path = workspace_root / ".flow" / "tickets" / f"{ticket}.planning-started"
+    try:
+        planning_started = planning_path.read_text(encoding="utf-8").strip()
+    except OSError:
+        planning_started = ""
+    if planning_started:
+        stamp["planning_started_at_iso"] = planning_started
+    return stamp
 
 
 # ─── Public API ──────────────────────────────────────────────────────────────
