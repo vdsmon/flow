@@ -351,14 +351,25 @@ def compute_time_to_pr(
             skipped.append({"ticket": ticket, "reason": "negative duration"})
             continue
         hours.append(duration)
-        tickets.append(
-            {
-                "ticket": ticket,
-                "time_to_pr_hours": duration,
-                "plan_started_at": plan_started_raw,
-                "create_pr_finished_at": create_pr_finished_raw,
-            }
-        )
+        row = {
+            "ticket": ticket,
+            "time_to_pr_hours": duration,
+            "plan_started_at": plan_started_raw,
+            "create_pr_finished_at": create_pr_finished_raw,
+        }
+        # Attended split: planning_started_at_iso is stamped from the planning-start
+        # claim (observe_ship_event), so planning->plan_started is human-facing time
+        # and plan_started->create_pr stays the machine span time_to_pr already is.
+        attribution = event.get("flow_attribution")
+        if isinstance(attribution, dict):
+            planning_raw = attribution.get("planning_started_at_iso")
+            planning = parse_iso(planning_raw) if isinstance(planning_raw, str) else None
+            if planning is not None:
+                attended = (plan_started - planning).total_seconds() / 3600.0
+                if attended >= 0:
+                    row["planning_started_at"] = planning_raw
+                    row["attended_hours"] = attended
+        tickets.append(row)
 
     tickets.sort(key=lambda t: (t["time_to_pr_hours"], str(t["ticket"])))
     return {

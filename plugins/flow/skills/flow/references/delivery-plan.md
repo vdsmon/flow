@@ -21,7 +21,15 @@ Planning's first act mutates the ticket: transition it to `in_progress` in the t
 FLOW_HARNESS="<harness>" "<facade>" tracker \
   --workspace-root . \
   transition --key <KEY> --to-state in_progress
+mkdir -p .flow/tickets && [ -f ".flow/tickets/<KEY>.planning-started" ] || \
+  date -u +"%Y-%m-%dT%H:%M:%SZ" > ".flow/tickets/<KEY>.planning-started"
 ```
+
+The second line marks when attended planning began. It is what lets the frozen ship event
+separate human-facing planning time from machine delivery time (`metric time-to-pr` reports
+the split as `attended_hours`), it writes only when absent so a resumed or revised planning
+conversation keeps the first start, and like the claim it is best-effort: a failure to write
+it never blocks planning.
 
 The claim is best-effort and never blocks planning: exit 3 (already `in_progress`, or the
 tracker has no such state) continues silently; any other failure logs one warning and
@@ -94,7 +102,9 @@ not create a version graph, feedback object, schema, receipt, or model-authored 
 Every plan receives one independent assessment. Launch one fresh independent agent; it acts as
 assessor and did not author the plan. Prefer the bundled `subagent:flow:codex-assessor`, which runs
 the assessment on a different engine than the one that wrote the plan, so the independence is
-structural rather than instructed; a host-native agent is the fallback when Codex is unavailable.
+structural rather than instructed; a host-native agent is the fallback when Codex is unavailable,
+and unavailable includes an exhausted Codex quota (a live `~/.flow/codex-cooldown.json`, whose
+mechanics `codex-reviewer.md` owns) so the fallback engages without burning a timeout.
 The human may skip the assessment entirely for a ticket that is one defect, one call site, one
 test, and says so at spawn.
 
@@ -125,6 +135,28 @@ the private repository it was standing in, and citing a directory spelling that 
 A verdict that fails read-proof is not a pass and its findings are not findings: stop that
 assessor, record "assessor did not read the repository", and continue under the replacement rule
 below, disclosing the replacement at the gate.
+
+The path half of that check is mechanical. Blocker evidence is free text, so extract everything
+path-shaped from it and require each to exist; run from the workspace root, and exit 2 is the
+stop above:
+
+```bash
+python3 - "<verdict path>" <<'EOF'
+import json, pathlib, re, sys
+verdict = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+cited = set()
+for blocker in verdict.get("blockers", []):
+    for text in blocker.values():
+        cited.update(re.findall(r"[A-Za-z0-9_./-]+\.(?:py|md|toml|json|yml|yaml|sql|sh)\b", str(text)))
+missing = sorted(p for p in cited if "/" in p and not pathlib.Path(p).exists())
+if missing:
+    print("read-proof FAILED; cited paths not in the tree:")
+    for gone in missing:
+        print(" ", gone)
+    raise SystemExit(2)
+print(f"read-proof ok: {len(cited)} path-shaped citations checked")
+EOF
+```
 
 When blockers come back, the driver fixes them and asks the SAME assessor to confirm the fixes
 only, against the changed text, never to re-read the whole plan. Same assessor means continuity of

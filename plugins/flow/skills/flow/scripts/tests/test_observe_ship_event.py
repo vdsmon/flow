@@ -214,6 +214,26 @@ def test_stamp_present_when_state_coherent(tmp_path: Path) -> None:
     }
 
 
+def test_stamp_carries_planning_started_when_claim_file_present(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path)
+    _seed_state(tmp_path, "FT-1", run_id="abcdef0123456789")
+    tickets_dir = tmp_path / ".flow" / "tickets"
+    tickets_dir.mkdir(parents=True, exist_ok=True)
+    (tickets_dir / "FT-1.planning-started").write_text("2026-05-27T22:30:00Z\n", encoding="utf-8")
+    path, _ = observe_ship_event.observe(tmp_path, "FT-1", _payload(), "abcdef0123456789")
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert data["flow_attribution"]["planning_started_at_iso"] == "2026-05-27T22:30:00Z"
+    assert data["flow_attribution"]["plan_started_at_iso"] == "2026-05-28T00:00:00Z"
+
+
+def test_stamp_stays_two_key_without_claim_file(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path)
+    _seed_state(tmp_path, "FT-1", run_id="abcdef0123456789")
+    path, _ = observe_ship_event.observe(tmp_path, "FT-1", _payload(), "abcdef0123456789")
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert "planning_started_at_iso" not in data["flow_attribution"]
+
+
 def test_no_stamp_when_no_state(tmp_path: Path) -> None:
     _seed_workspace(tmp_path)
     path, _ = observe_ship_event.observe(tmp_path, "FT-1", _payload(), "abcdef0123456789")

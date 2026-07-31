@@ -117,6 +117,7 @@ def takeover(
     now_iso = now_iso or utcnow_iso()
     td = _ticket_dir(workspace_root, ticket)
     reset: list[str] = []
+    stale_artifacts: list[str] = []
     run_id_holder: list[str] = []
 
     def _reset_and_snapshot() -> None:
@@ -130,6 +131,20 @@ def takeover(
                 if rec.status == "in_progress":
                     state.force_stage_status(td, name, "pending")
                     reset.append(name)
+                    # A reset stage's artifact is unverified evidence: the dead
+                    # holder may have mutated the worktree after writing it, so
+                    # the file can describe a tree that no longer exists
+                    # (FT-1502: a takeover nearly re-asked the human findings a
+                    # pre-fix code_review.out still listed as open). Quarantine
+                    # it with the reset so nothing reads it as current.
+                    artifact = td / "stages" / f"{name}.out"
+                    if artifact.exists():
+                        stale = artifact.with_name(
+                            f"{name}.out.stale-{now_iso.replace(':', '').replace('+', '')}"
+                        )
+                        with contextlib.suppress(OSError):
+                            artifact.rename(stale)
+                            stale_artifacts.append(str(stale))
         with contextlib.suppress(Exception):
             write_snapshot(workspace_root, ticket, skill_root=_skill_root())
 
@@ -146,6 +161,8 @@ def takeover(
     quarantined = result["quarantined"]
     lease_state = result["state"]
     payload: dict[str, Any] = {"ticket": ticket, "took_over": True, "reset_stages": reset}
+    if stale_artifacts:
+        payload["stale_artifacts"] = sorted(stale_artifacts)
     if quarantined is not None:
         payload["quarantined"] = str(quarantined)
     if run_id_holder and (lease_state != "free" or reset):

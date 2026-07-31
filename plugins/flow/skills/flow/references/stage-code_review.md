@@ -126,7 +126,11 @@ input reports the same zero as a gate that passed.
 
    A missing or failed reviewer is a visible stage failure. Do not replace it with
    same-context self-review. An external reviewer that exits non-zero, exceeds its
-   timeout, or leaves no parseable report is a missing reviewer.
+   timeout, or leaves no parseable report is a missing reviewer. One carve-out:
+   a quota-shaped Codex failure (or a live `~/.flow/codex-cooldown.json`) degrades
+   to one fresh host-native reviewer through the `inline` route, disclosed at the
+   top of the report; `codex-reviewer.md` owns the cooldown mechanics. Same-context
+   self-review stays forbidden either way.
 
    A parseable report is accepted only with read-proof: every file path the report
    cites must exist in the worktree, and the reviewer's transcript must show it read
@@ -135,6 +139,24 @@ input reports the same zero as a gate that passed.
    path spellings). A report that fails read-proof is a missing reviewer too: stop,
    record "reviewer did not read the repository" as the stage failure, and do not
    triage its findings.
+
+   The path half of read-proof is mechanical. Run it from the worktree root before
+   triage; exit 2 is the stop above, not a finding to argue with:
+
+   ```bash
+   python3 - "<ticket_dir>/stages/codex-review.json" <<'EOF'
+   import json, pathlib, sys
+   report = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+   missing = sorted({f["file"] for f in report.get("findings", [])
+                     if f.get("file") and not pathlib.Path(f["file"]).exists()})
+   if missing:
+       print("read-proof FAILED; cited paths not in the tree:")
+       for gone in missing:
+           print(" ", gone)
+       raise SystemExit(2)
+   print(f"read-proof ok: {len(report.get('findings', []))} findings, every cited path exists")
+   EOF
+   ```
 
 3. Triage the returned findings. Dismiss only demonstrably incorrect or duplicate
    observations and record why. Findings whose fix would leave `planned_files` are

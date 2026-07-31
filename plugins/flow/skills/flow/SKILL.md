@@ -247,6 +247,11 @@ The hot path is:
 5. Release the lease on every post-acquisition exit path.
 6. Surface the durable result and PR URL.
 
+Steps 3-4 are one unbroken motion: the turn that captures an artifact also issues the
+advance, and the turn that receives a descriptor executes it. A driver turn ends mid-run
+only on `done`, a durable stop, or a question only the human can answer; a progress
+summary is not a stopping point (`references/delivery-loop.md`).
+
 Resource pressure changes topology, never the loop. Under a host usage-guard warning
 against spawning agents, run an agent-handler stage in the driver instead
 (`references/delivery-loop.md`), still through its descriptor, artifact, and advance.

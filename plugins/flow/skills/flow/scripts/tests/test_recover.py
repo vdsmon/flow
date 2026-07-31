@@ -86,6 +86,37 @@ def test_takeover_clears_expired_lease_and_resets(tmp_path: Path) -> None:
     assert ts.stages["ticket"].status == "pending"
 
 
+def test_takeover_quarantines_reset_stage_artifact(tmp_path: Path) -> None:
+    td = _ws(tmp_path)
+    boot, host = _identity()
+    lease.acquire(
+        td, "old-run", 1, "2020-01-01T00:00:00Z", current_boot=boot, hostname=host, cwd=str(td)
+    )
+    state.begin_stage(td, "ticket", "sha")
+    stages_dir = td / "stages"
+    stages_dir.mkdir(parents=True, exist_ok=True)
+    (stages_dir / "ticket.out").write_text("describes the pre-crash tree", encoding="utf-8")
+    rc, payload = recover.takeover(tmp_path, "T-1", now_iso=_now())
+    assert rc == 0
+    assert not (stages_dir / "ticket.out").exists()
+    stale = list(stages_dir.glob("ticket.out.stale-*"))
+    assert len(stale) == 1
+    assert stale[0].read_text(encoding="utf-8") == "describes the pre-crash tree"
+    assert payload["stale_artifacts"] == [str(stale[0])]
+
+
+def test_takeover_without_artifact_reports_no_stale_key(tmp_path: Path) -> None:
+    td = _ws(tmp_path)
+    boot, host = _identity()
+    lease.acquire(
+        td, "old-run", 1, "2020-01-01T00:00:00Z", current_boot=boot, hostname=host, cwd=str(td)
+    )
+    state.begin_stage(td, "ticket", "sha")
+    rc, payload = recover.takeover(tmp_path, "T-1", now_iso=_now())
+    assert rc == 0
+    assert "stale_artifacts" not in payload
+
+
 def test_takeover_appends_lease_loss_friction(tmp_path: Path) -> None:
     td = _ws(tmp_path)
     ts_before, _ = state.read(td)

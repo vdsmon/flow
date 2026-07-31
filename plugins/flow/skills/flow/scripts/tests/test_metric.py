@@ -359,6 +359,44 @@ def test_ttp_happy_single(tmp_path: Path) -> None:
     assert result["tickets"][0]["create_pr_finished_at"] == "2026-05-20T12:00:00Z"
 
 
+def test_ttp_attended_split_from_planning_stamp(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path)
+    path = _write_stamped_ship_event(
+        tmp_path,
+        "FT-1",
+        shipped_at="2026-05-20T10:00:00Z",
+        plan_started="2026-05-20T00:00:00Z",
+        create_pr_finished="2026-05-20T12:00:00Z",
+    )
+    record = json.loads(path.read_text(encoding="utf-8"))
+    record["flow_attribution"]["planning_started_at_iso"] = "2026-05-19T23:00:00Z"
+    path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    result = _compute_ttp(tmp_path)
+    row = result["tickets"][0]
+    assert row["time_to_pr_hours"] == 12.0
+    assert row["planning_started_at"] == "2026-05-19T23:00:00Z"
+    assert row["attended_hours"] == 1.0
+
+
+def test_ttp_unparseable_planning_stamp_adds_no_attended_keys(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path)
+    path = _write_stamped_ship_event(
+        tmp_path,
+        "FT-1",
+        shipped_at="2026-05-20T10:00:00Z",
+        plan_started="2026-05-20T00:00:00Z",
+        create_pr_finished="2026-05-20T12:00:00Z",
+    )
+    record = json.loads(path.read_text(encoding="utf-8"))
+    record["flow_attribution"]["planning_started_at_iso"] = "not-a-timestamp"
+    path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    result = _compute_ttp(tmp_path)
+    row = result["tickets"][0]
+    assert row["time_to_pr_hours"] == 12.0
+    assert "attended_hours" not in row
+    assert "planning_started_at" not in row
+
+
 def test_ttp_excludes_not_attributed(tmp_path: Path) -> None:
     _seed_workspace(tmp_path)
     # no state.json -> not attributed; must not be measured even with timestamps absent

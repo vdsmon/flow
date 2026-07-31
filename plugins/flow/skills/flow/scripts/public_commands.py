@@ -402,6 +402,22 @@ def _matches_tracker_key(key: str, patterns: tuple[str, ...] | list[str]) -> boo
     return False
 
 
+def _canonical_tracker_key(key: str, patterns: tuple[str, ...] | list[str]) -> str | None:
+    """Return the canonical spelling of `key` when it matches the grammar, else None.
+
+    Humans paste keys in whatever case the chat rendered them (`ft-1530` for
+    `FT-1530`), and the configured patterns stay case-exact on purpose. Rather than
+    loosening the grammar, try the exact token and then its two case-normalized
+    spellings against the unchanged patterns; whichever matches IS the canonical
+    key, by construction of the jira (uppercase project) and beads (lowercase
+    prefix) derivations above.
+    """
+    for candidate in (key, key.upper(), key.lower()):
+        if _matches_tracker_key(candidate, patterns):
+            return candidate
+    return None
+
+
 def classify_root_token(
     token: str,
     tracker_key_patterns: tuple[str, ...] | list[str] = (),
@@ -434,12 +450,28 @@ def classify_root_token(
             return ClassifiedTarget(TargetKind.PR_URL, match.group(1), token)
         match = _JIRA_BROWSE_PATH_RE.search(parsed.path)
         if match:
-            key = match.group(1)
-            if _matches_tracker_key(key, tracker_key_patterns):
-                return ClassifiedTarget(TargetKind.TICKET_URL, key, token)
+            canonical = _canonical_tracker_key(match.group(1), tracker_key_patterns)
+            if canonical is not None:
+                return ClassifiedTarget(TargetKind.TICKET_URL, canonical, token)
 
-    if _matches_tracker_key(token, tracker_key_patterns):
-        return ClassifiedTarget(TargetKind.TICKET, token, token)
+    canonical = _canonical_tracker_key(token, tracker_key_patterns)
+    if canonical is not None:
+        return ClassifiedTarget(TargetKind.TICKET, canonical, token)
+
+    # A target pasted mid-sentence often drags punctuation with it (`FT-1530.`).
+    # Retry once without it, only after every direct reading failed, and keep the
+    # raw token in the result. rstrip cannot corrupt a dotted beads key such as
+    # flow-kx17.2: those end in an alphanumeric, so a trailing dot is never theirs.
+    stripped = token.rstrip(".,;:!?")
+    if stripped and stripped != token:
+        retried = classify_root_token(
+            stripped,
+            tracker_key_patterns,
+            static_namespaces=static_namespaces,
+            forbidden_root_tokens=forbidden_root_tokens,
+        )
+        if retried.kind is not TargetKind.UNKNOWN:
+            return ClassifiedTarget(retried.kind, retried.value, token)
 
     return ClassifiedTarget(TargetKind.UNKNOWN, token, token)
 
@@ -696,7 +728,7 @@ def route_tokens(
                 forbidden_root_tokens=registry.forbidden_root_tokens,
             )
             normalized_positionals.append(
-                target.value if target.kind is TargetKind.TICKET_URL else value
+                target.value if target.kind in {TargetKind.TICKET, TargetKind.TICKET_URL} else value
             )
         return Route(
             kind="command",

@@ -108,6 +108,26 @@ Compose the prompt around **the contents of the plan file** and pass it on **std
 through argv. Read the plan yourself rather than telling Codex to go find it: a plan is large,
 and a reader sent to discover it spends its budget on round trips instead of on the question.
 
+Before spending the call, check the global quota cooldown; exit 3 means codex usage is
+known-exhausted, and the right move is to say exactly that and stop, so the driver takes
+the sanctioned host-native fallback without burning a timeout:
+
+```bash
+python3 - <<'EOF'
+import datetime as dt
+import json, pathlib
+marker = pathlib.Path.home() / ".flow" / "codex-cooldown.json"
+if marker.exists():
+    data = json.loads(marker.read_text(encoding="utf-8"))
+    until = dt.datetime.fromisoformat(data["until"].replace("Z", "+00:00"))
+    if dt.datetime.now(dt.timezone.utc) < until:
+        print(f"codex cooling down until {data['until']}: {data.get('reason', '')}")
+        raise SystemExit(3)
+    marker.unlink()
+print("codex available")
+EOF
+```
+
 Run exactly one foreground call with an explicit 600000 ms timeout:
 
 ```bash
@@ -136,6 +156,11 @@ is `none` on a call the driver calls a confirm pass, that is a broken invocation
 stop, rather than assessing from scratch and reporting it as a confirmation.
 
 ## Failure
+
+A quota-shaped failure (429, rate limit, usage limit, quota) is different in one way: record
+it in `~/.flow/codex-cooldown.json` exactly as `codex-reviewer.md` prescribes before reporting,
+so sibling runs skip the discovery cost, and name the quota plainly so the driver reaches for
+the host-native fallback rather than a retry. After any successful call, delete that marker.
 
 A call that exits non-zero, exceeds the timeout, or leaves no parseable JSON is a failed
 assessment, and a failed assessment is not a pass. Report the failure plainly rather than
