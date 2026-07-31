@@ -38,6 +38,13 @@ very short and obviously equivalent. Working around a missing grant or decision 
 tokens and drifts the plan toward a less precise result. An assessor never relays those
 questions.
 
+A push to a repository other than this workspace's own is one of those grants, and the one
+easiest to miss. The driver assumes the approved plan covers it, so nothing is asked until the
+push is denied, deep in the autonomous tail where no human is watching. Ask for it while
+planning, name the other repository and what will be pushed there, and keep the human's own
+words. A plan that merely mentions the repository is not a grant, and a host that gates pushes
+reads the grant, not the approval.
+
 When the workspace compounds memory (`[memory] compounding = true`), recall prior
 knowledge before writing the plan — this read is what makes past runs pay into this
 one. Write the ticket's intent plus its text to a temporary file and query:
@@ -146,6 +153,11 @@ The gate opens when no blocker remains. Show:
 - whether a replacement assessor was used, and whether the assessment was skipped;
 - findings resolved during assessment; and
 - residual non-blocking risks.
+
+When the plan pushes to a repository outside this workspace, show the section 1 authorization
+too, quoted in the human's own words, beside the plan. The approved evidence then carries the
+grant the autonomous tail depends on, so delivery does not stop at a denied push after the gate
+has closed.
 
 Present through the Lavish plan surface when its gate passes (`references/plan-surface.md`); on
 a failed gate, fall back to this plain presentation plus one visible
