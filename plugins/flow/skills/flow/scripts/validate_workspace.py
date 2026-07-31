@@ -145,6 +145,26 @@ def _validate_forge_block(data: dict[str, Any], result: ValidationResult) -> Non
             )
 
 
+def _validate_codex_cli(handlers: dict[str, str] | None, result: ValidationResult) -> None:
+    """Probe the codex CLI when any stage is wired to a Codex-backed handler.
+
+    Same contract as the bkt probe in `_validate_forge_block`: the wiring quietly
+    assumes a machine-level binary, so a missing install must surface here with its
+    install command instead of as a mid-run exit 127 at the wired stage.
+    """
+    if not handlers:
+        return
+    wired = sorted(stage for stage, value in handlers.items() if value in CODEX_HANDLERS)
+    if not wired or shutil.which("codex") is not None:
+        return
+    for stage in wired:
+        result.add(
+            f"pipeline.handlers.{stage}",
+            "codex CLI not found on PATH while this stage is wired to a Codex "
+            "handler; install it with: npm install -g @openai/codex",
+        )
+
+
 def _parse_stages(pipeline: dict[str, Any], result: ValidationResult) -> list[str] | None:
     stages_raw = pipeline.get("stages")
     if not isinstance(stages_raw, list) or not stages_raw:
@@ -479,6 +499,7 @@ def validate(
 
     registry = stage_registry or load_registry(_stage_registry_path())
     stages, handlers = _validate_pipeline_block(data, registry, compounding, result)
+    _validate_codex_cli(handlers, result)
     _validate_model_hints(data, handlers, result)
 
     _warn_inline_stage_model(data, handlers, result)
