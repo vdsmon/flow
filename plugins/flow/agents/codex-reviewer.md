@@ -152,7 +152,14 @@ Any of these is a missing reviewer, which the reference makes a visible stage fa
 - `codex` is not on PATH, or the call exits non-zero;
 - the call exceeds its timeout;
 - `<ticket_dir>/stages/codex-review.json` is absent, does not parse as JSON, or does not
-  match the schema.
+  match the schema;
+- the report fails read-proof: it cites a path that does not exist in the worktree, or the
+  Codex transcript shows zero local reads (witnessed: a clean exit that web-searched the
+  repository it was standing in and invented path spellings).
+
+If Codex reports it cannot read the workspace, that is the whole report: surface "reviewer
+could not read the repository" and fail the stage visibly. Never let it review from the PR
+description, the web, or memory of similar code.
 
 The one exception is the launch-parameter retry above: a first call rejected for the
 reviewer's model or effort hint is not yet a missing reviewer, because no review was
