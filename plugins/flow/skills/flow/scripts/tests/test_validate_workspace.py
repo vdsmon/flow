@@ -13,6 +13,15 @@ import pytest
 
 import validate_workspace as vw
 
+
+@pytest.fixture(autouse=True)
+def _clis_on_path(monkeypatch):
+    """Pin the CLI probes: CI runners carry neither bkt nor codex while dev machines
+    may carry both, and these tests assert config semantics, not host state. A test
+    exercising a missing binary overrides this stub with its own setattr."""
+    monkeypatch.setattr(vw.shutil, "which", lambda name: f"/stub/bin/{name}")
+
+
 # ─── Helpers ─────────────────────────────────────────────────────────────────
 
 
