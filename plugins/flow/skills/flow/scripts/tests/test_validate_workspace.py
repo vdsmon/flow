@@ -13,6 +13,15 @@ import pytest
 
 import validate_workspace as vw
 
+
+@pytest.fixture(autouse=True)
+def _clis_on_path(monkeypatch):
+    """Pin the CLI probes: CI runners carry neither bkt nor codex while dev machines
+    may carry both, and these tests assert config semantics, not host state. A test
+    exercising a missing binary overrides this stub with its own setattr."""
+    monkeypatch.setattr(vw.shutil, "which", lambda name: f"/stub/bin/{name}")
+
+
 # ─── Helpers ─────────────────────────────────────────────────────────────────
 
 
@@ -426,6 +435,44 @@ def test_forge_bitbucket_missing_bkt_cli_fails(tmp_path: Path, monkeypatch) -> N
 def test_forge_github_needs_no_bkt(tmp_path: Path, monkeypatch) -> None:
     root = _make_workspace(tmp_path, backend="beads")
     _append_forge(root, '[forge]\nbackend = "github"\n[forge.github]\n')
+    monkeypatch.setattr(vw.shutil, "which", lambda name: None)
+    result, _ = vw.validate(root)
+    assert result.ok
+
+
+_CODEX_STAGES = ["ticket", "plan", "implement", "code_review", "commit", "reflect"]
+
+
+def _codex_handlers() -> dict[str, str]:
+    handlers = dict.fromkeys(_CODEX_STAGES, "inline")
+    handlers["code_review"] = "subagent:flow:codex-reviewer"
+    return handlers
+
+
+def test_codex_handler_missing_codex_cli_fails(tmp_path: Path, monkeypatch) -> None:
+    root = _make_workspace(
+        tmp_path, backend="beads", stages=_CODEX_STAGES, handlers=_codex_handlers()
+    )
+    monkeypatch.setattr(vw.shutil, "which", lambda name: None)
+    result, _ = vw.validate(root)
+    assert not result.ok
+    assert any(
+        "pipeline.handlers.code_review" in v and "npm install -g @openai/codex" in v
+        for v in result.violations
+    )
+
+
+def test_codex_handler_with_codex_cli_passes(tmp_path: Path, monkeypatch) -> None:
+    root = _make_workspace(
+        tmp_path, backend="beads", stages=_CODEX_STAGES, handlers=_codex_handlers()
+    )
+    monkeypatch.setattr(vw.shutil, "which", lambda name: "/usr/local/bin/codex")
+    result, _ = vw.validate(root)
+    assert result.ok
+
+
+def test_inline_handlers_need_no_codex_cli(tmp_path: Path, monkeypatch) -> None:
+    root = _make_workspace(tmp_path, backend="beads")
     monkeypatch.setattr(vw.shutil, "which", lambda name: None)
     result, _ = vw.validate(root)
     assert result.ok
