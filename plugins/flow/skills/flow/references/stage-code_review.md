@@ -126,7 +126,11 @@ input reports the same zero as a gate that passed.
 
    A missing or failed reviewer is a visible stage failure. Do not replace it with
    same-context self-review. An external reviewer that exits non-zero, exceeds its
-   timeout, or leaves no parseable report is a missing reviewer.
+   timeout, or leaves no parseable report is a missing reviewer. One carve-out:
+   a quota-shaped Codex failure (or a live `~/.flow/codex-cooldown.json`) degrades
+   to one fresh host-native reviewer through the `inline` route, disclosed at the
+   top of the report; `codex-reviewer.md` owns the cooldown mechanics. Same-context
+   self-review stays forbidden either way.
 
    A parseable report is accepted only with read-proof: every file path the report
    cites must exist in the worktree, and the reviewer's transcript must show it read

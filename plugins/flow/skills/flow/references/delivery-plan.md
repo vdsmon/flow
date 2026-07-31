@@ -102,7 +102,9 @@ not create a version graph, feedback object, schema, receipt, or model-authored 
 Every plan receives one independent assessment. Launch one fresh independent agent; it acts as
 assessor and did not author the plan. Prefer the bundled `subagent:flow:codex-assessor`, which runs
 the assessment on a different engine than the one that wrote the plan, so the independence is
-structural rather than instructed; a host-native agent is the fallback when Codex is unavailable.
+structural rather than instructed; a host-native agent is the fallback when Codex is unavailable,
+and unavailable includes an exhausted Codex quota (a live `~/.flow/codex-cooldown.json`, whose
+mechanics `codex-reviewer.md` owns) so the fallback engages without burning a timeout.
 The human may skip the assessment entirely for a ticket that is one defect, one call site, one
 test, and says so at spawn.
 

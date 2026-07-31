@@ -72,6 +72,26 @@ Pass a non-empty model as `-m` and a non-empty effort as
 `-c model_reasoning_effort=<value>`. Omit either flag when its call prints nothing,
 so Codex falls back to the operator's own configuration.
 
+Before spending the call, check the global quota cooldown. Exit 3 means codex usage is
+known-exhausted: skip straight to the quota fallback in Failure below without attempting
+the call, so no run re-spends a ten-minute timeout rediscovering a dead quota.
+
+```bash
+python3 - <<'EOF'
+import datetime as dt
+import json, pathlib
+marker = pathlib.Path.home() / ".flow" / "codex-cooldown.json"
+if marker.exists():
+    data = json.loads(marker.read_text(encoding="utf-8"))
+    until = dt.datetime.fromisoformat(data["until"].replace("Z", "+00:00"))
+    if dt.datetime.now(dt.timezone.utc) < until:
+        print(f"codex cooling down until {data['until']}: {data.get('reason', '')}")
+        raise SystemExit(3)
+    marker.unlink()
+print("codex available")
+EOF
+```
+
 Run exactly one foreground call with an explicit 600000 ms timeout:
 
 ```bash
@@ -164,6 +184,36 @@ description, the web, or memory of similar code.
 The one exception is the launch-parameter retry above: a first call rejected for the
 reviewer's model or effort hint is not yet a missing reviewer, because no review was
 attempted. Only the retry's outcome counts here.
+
+**Quota exhaustion degrades; it does not fail the stage.** When the call fails with a
+quota-shaped error (stderr naming 429, rate limit, usage limit, or quota), or the
+cooldown check above exits 3, this is the second carve-out: record the cooldown, then
+run the stage's reviewer as one fresh host-native agent through the `inline` route in
+the stage reference instead, and say so at the top of your report: the engine
+substitution, the CLI's error text, and that independence dropped from cross-engine to
+fresh-context. The human weighs that disclosure at review time. Record the cooldown so
+sibling runs skip the discovery cost:
+
+```bash
+python3 - "<the CLI's quota error line>" <<'EOF'
+import datetime as dt
+import json, pathlib, re, sys
+reason = sys.argv[1]
+found = re.search(r"resets? (?:at|in) ([0-9TZ:+.\-]+)", reason)
+until = found.group(1) if found else (
+    dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=1)
+).strftime("%Y-%m-%dT%H:%M:%SZ")
+home = pathlib.Path.home() / ".flow"
+home.mkdir(parents=True, exist_ok=True)
+(home / "codex-cooldown.json").write_text(
+    json.dumps({"until": until, "reason": reason}) + "\n", encoding="utf-8"
+)
+print(f"codex cooldown recorded until {until}")
+EOF
+```
+
+After any SUCCESSFUL codex call, delete `~/.flow/codex-cooldown.json` if it exists: the
+quota is back and the marker must not outlive it.
 
 Report the command and its stderr plainly and fail. Never substitute your own review for
 the Codex one, and never report a review that did not run.
