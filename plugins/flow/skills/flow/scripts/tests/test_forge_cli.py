@@ -97,6 +97,9 @@ class _FakeForge:
     def mark_ready(self, pr_id):
         self.calls.append(("mark_ready", pr_id))
 
+    def update_pr_body(self, pr_id, body):
+        self.calls.append(("update_pr_body", pr_id, body))
+
     def merge(self, pr_id, squash=True):
         self.calls.append(("merge", pr_id, squash))
 
@@ -237,6 +240,20 @@ def test_ok_dispatch(ws, capsys, argv, expected_call):
     assert rc == 0
     assert json.loads(capsys.readouterr().out) == {"ok": True}
     assert expected_call in fake.calls
+
+
+def test_update_body_reads_file_and_dispatches(ws, capsys, tmp_path):
+    body = tmp_path / "pr-body.md"
+    body.write_text("## Evidence\ngreen", encoding="utf-8")
+    rc, fake = _run(["update-body", "--pr", "7", "--body-file", str(body)], ws)
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out) == {"ok": True}
+    assert ("update_pr_body", "7", "## Evidence\ngreen") in fake.calls
+
+
+def test_update_body_missing_file_is_loud(ws, tmp_path):
+    with pytest.raises(FileNotFoundError):
+        _run(["update-body", "--pr", "7", "--body-file", str(tmp_path / "absent.md")], ws)
 
 
 def test_factory_error_returns_2(ws, capsys):

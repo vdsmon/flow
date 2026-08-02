@@ -50,7 +50,7 @@ def _adapter(responses: dict | None = None) -> tuple[GitHubAdapter, Recorder]:
             kind = _graphql_mutation(args)
             key = {"read": "threads", "resolve": "resolve", "reply": "reply"}[kind]
             return subprocess.CompletedProcess(args, 0, responses.get(key, "{}"), "")
-        if args[:3] in (["gh", "pr", "ready"], ["gh", "pr", "merge"]):
+        if args[:3] in (["gh", "pr", "ready"], ["gh", "pr", "merge"], ["gh", "pr", "edit"]):
             return subprocess.CompletedProcess(args, 0, "", "")
         if args[:3] == ["git", "push", "origin"]:
             return subprocess.CompletedProcess(args, 0, "", "")
@@ -373,6 +373,12 @@ def test_mark_ready_merge_delete_argv():
     assert _ran(calls, ["gh", "pr", "ready", "7"])
     assert _ran(calls, ["gh", "pr", "merge", "7", "--squash"])
     assert _ran(calls, ["git", "push", "origin", "--delete", "feature/flow-x"])
+
+
+def test_update_pr_body_argv():
+    fg, calls = _adapter()
+    fg.update_pr_body("7", "## Evidence\ngreen")
+    assert _ran(calls, ["gh", "pr", "edit", "7", "--body", "## Evidence\ngreen"])
 
 
 def test_set_default_reviewers_raises_not_supported():

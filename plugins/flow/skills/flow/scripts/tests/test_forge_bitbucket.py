@@ -473,6 +473,16 @@ def test_mark_ready_merge_delete_argv():
     assert _ran_prefix(calls, ["git", "push", "origin", "--delete", "feature/flow-x"])
 
 
+def test_update_pr_body_puts_description():
+    fg, calls = _adapter(lambda a: "null")
+    fg.update_pr_body("9", "## Evidence\ngreen")
+
+    path = "2.0/repositories/ws/rs/pullrequests/9"
+    put = next(c for c in calls if _api_path(c) == path)
+    assert put[put.index("-X") + 1] == "PUT"
+    assert _payload_for_path(calls, path) == {"description": "## Evidence\ngreen"}
+
+
 def test_merge_no_squash_emits_empty_payload():
     # squash=False sends {} (still carried as -d "{}" since {} is not None).
     fg, calls = _adapter(lambda a: "null")
