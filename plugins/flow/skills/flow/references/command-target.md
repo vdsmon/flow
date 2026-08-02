@@ -151,8 +151,7 @@ force operation.
 - `--unattended` asks the driver not to prompt during an already approved,
   bootstrapped delivery. It conflicts with `--verify`. A fresh target always stops
   at the human plan gate without mutation; unattended mode cannot authorize planning.
-- `--verify express|light|full` fixes the attended verification lane. Hot changes
-  clamp to `full`.
+- `--verify express|light|full` fixes the attended verification lane; left unset, the driver proposes a lane at the plan gate from the ticket's class and the human confirms it there (`references/delivery-plan.md` section 2). The tiers are execution profiles, not moods. `express` is for a ticket that is one defect, one call site, one test: the assessment is skipped by default and the plan records `skip: <reason>` or a named smoke check as its e2e recipe. `light` keeps one assessment pass and the planned recipe. `full` runs everything the workspace wires. A lane never re-wires a handler: a stage the workspace sets to `none` stays skipped in every lane, and a lane cannot re-enable it. Hot changes clamp to `full`, and so does any change on a path the workspace treats as high-stakes (in a tax-forms workspace, the money arithmetic), whatever its size.
 - `--e2e "<recipe>"` supplies the approved end-to-end recipe; persist it with the
   plan.
   Bootstrap refuses a recipe that expects a run when the workspace wires no `e2e`

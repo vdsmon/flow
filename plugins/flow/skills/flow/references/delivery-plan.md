@@ -86,8 +86,11 @@ The driver writes and revises one canonical plan containing:
 - exact files expected to change;
 - constraints and behavior that must remain intact;
 - implementation steps in dependency order;
-- proportionate verification, including an E2E recipe only when behavior requires one; and
+- proportionate verification, including an E2E recipe only when behavior requires one;
+- the verification lane the driver proposes (express, light, or full) with a one-line class rationale, unless the invocation already fixed one with `--verify`; and
 - the default-branch SHA used for inspection.
+
+The lane comes from the ticket's class, not from optimism. Express is for a ticket that is one defect, one call site, one test; light is the default for bounded work on known patterns; full is for cross-cutting, novel, or hot work. Hot changes clamp to full, and so does any change on a path the workspace treats as high-stakes (in a tax-forms workspace, the money arithmetic), whatever its size. When in doubt between two lanes, propose the slower one; the human demotes with one word at the gate.
 
 Write the plan in basic English: simple words, short sentences, as brief as completeness
 allows, for a reader arriving with little context. Name files and behaviors explicitly, spell
@@ -106,7 +109,7 @@ structural rather than instructed; a host-native agent is the fallback when Code
 and unavailable includes an exhausted Codex quota (a live `~/.flow/codex-cooldown.json`, whose
 mechanics `codex-reviewer.md` owns) so the fallback engages without burning a timeout.
 The human may skip the assessment entirely for a ticket that is one defect, one call site, one
-test, and says so at spawn.
+test, and says so at spawn. On an express-lane plan that skip is the proposed default: the plan's lane bullet carries the class rationale, and the human approving an express lane at the gate is the say-so. A light or full lane always runs the pass.
 
 The assessor answers ONE question: is this the right thing to build. It checks whether the plan
 targets the right actor and the right seam, whether the evidence the plan claims is obtainable at
@@ -117,6 +120,8 @@ It returns blockers only, each naming a concrete failure mode with repository ev
 specific counterexample, and what would close it. Vague preferences are not blockers. It does not
 score, does not assess style or the completeness of enumerations, does not recompute arithmetic,
 and does not list improvements. There is no rubric and no number.
+
+The pass is bounded: it reads the files the plan names and the seams they touch, not the repository at large, and it returns its verdict in minutes. It is a targeted refutation, not an audit; a short blocker list that arrives now is worth more than a thorough one that arrives late.
 
 Design errors are the reason this pass exists: code review checks the diff against the plan, so it
 cannot tell you the plan targets the wrong thing.
@@ -191,6 +196,7 @@ The gate opens when no blocker remains. Show:
 
 - the exact complete plan;
 - the recorded base SHA;
+- the verification lane the plan proposes and its one-line class rationale;
 - whether a replacement assessor was used, and whether the assessment was skipped;
 - findings resolved during assessment; and
 - residual non-blocking risks.
