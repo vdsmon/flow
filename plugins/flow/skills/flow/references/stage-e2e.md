@@ -152,6 +152,20 @@ Your job is to run it exactly, not to reinterpret it.
   A `skip: <reason>` run is the exception: its report is the skip line, no
   sentinel.
 
+## Early-tail workspaces (PR already open when this stage runs)
+
+A workspace may order its pipeline with `commit` and `create_pr` BEFORE this stage (the early tail), so CI and the PR review bot work on the pushed head while the recipe executes instead of waiting for it. Everything above holds unchanged; two duties extend the contract, and both are conditional on that order, detected by `stages/create_pr.out` already existing:
+
+- **A code fix pushes.** A fix stays bounded exactly as in a classic run (one cycle, planned files only, run the checks the fix touches), but it no longer waits for a later commit stage: land it as a follow-up conventional commit through the same machinery `stage-commit.md` owns, and push, so the open PR's CI re-runs on the fixed head. An env or fixture failure changes no code and pushes nothing, exactly as before.
+- **The evidence lands on the PR.** The PR opened without an `## Evidence` section for this stage (the PR-body degrade rule omits what does not exist yet). After writing the report, append the evidence section, built by the same rules the create_pr reference states for it, to the authored body file `$TICKET_DIR/stages/pr_body.md`, then push the updated description:
+
+```bash
+FLOW_HARNESS="<harness>" "<facade>" forge --workspace-root . update-body \
+  --pr "$PR_ID" --body-file "$TICKET_DIR/stages/pr_body.md"
+```
+
+Resolve `$PR_ID` as the trailing number of the `PR_URL=` line in `stages/create_pr.out`. A failed `update-body` is friction, not a failed stage: the evidence is already durable in `e2e.out`, so log it and continue.
+
 ## Errors
 
 - Recipe runs and fails → report the failure and return with the stage
