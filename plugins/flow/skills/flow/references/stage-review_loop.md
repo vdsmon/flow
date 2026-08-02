@@ -135,32 +135,22 @@ FLOW_HARNESS="<harness>" "<facade>" forge --workspace-root . resolve-thread \
   --pr "$PR_ID" --thread "<CID>"
 ```
 
-A disagreed finding gets a reasoned reply and stays open. Do not claim it resolved.
-That reply is what addresses the finding (section 4). A reply that only asserts
-disagreement addresses nothing.
+A disagreed finding gets a reasoned reply that names what was checked and what that showed; a reply that only asserts disagreement addresses nothing. That reply is what addresses the finding, and what happens to the thread afterwards depends on who authored it (section 4): a bot-authored thread is resolved only after the bot concedes, and a human reviewer's thread stays open for its author.
 
 ## 4. Complete
 
-Addressed is not the same as resolved in the forge. A Critical or Major thread is
-addressed when this stage did one of these:
+Addressed is not the same as resolved in the forge, and the resolution rule depends on the thread's author. A bot-authored thread is one authored by the review bot that section 2 identified by activity on this pull request; every other thread belongs to a human reviewer. The end state for bot-authored threads is zero open threads (human ruling, brinta PR 3119, 2026-07-31): a bot thread left open is a question still standing, so it is resolved the moment its ask is settled, and the only settled state that stays open is a disagreement the bot has not conceded. A Critical or Major thread is addressed when this stage did one of these:
 
-- fixed it: the fix commit is pushed, the reply names it, and the thread is resolved
-  (section 3);
-- disagreed with it: a posted reply names what was checked and what that showed, and
-  the thread stays open;
-- deferred it: a posted reply carries the reason and the filed ticket key, and the
-  thread stays open;
-- carried a human's own `defer` or `dismiss` disposition from a revision sub-run: the
-  recorded reason is posted as the reply and stands on its own, no ticket key needed,
-  and the thread stays open (`references/revision-triage-board.md`).
+- fixed it: the fix commit is pushed, the reply names it, and the thread is resolved (section 3);
+- disagreed with it: a posted reply names what was checked and what that showed; on a bot-authored thread, keep polling for the bot's response in the same bounded five-minute shape as section 2's sign-of-life probe, resolve on a concession, and leave the thread open and reported on a push-back or on silence; a human reviewer's thread always stays open, because its author owns the concession;
+- deferred it: a posted reply carries the reason and the filed ticket key; a bot-authored thread is then resolved, because the ticket is the durable receipt, and a human reviewer's thread stays open;
+- carried a human's own `defer` or `dismiss` disposition from a revision sub-run: the recorded reason is posted as the reply and stands on its own, no ticket key needed; a bot-authored thread is then resolved and a human reviewer's thread stays open (`references/revision-triage-board.md`).
 
 Anything else is unaddressed. You have no dismissal of your own: deciding that a
 correct finding should never happen is a judgment about project priorities rather than
 about the code, and it belongs to the human on the revision board.
 
-A thread can carry more than one ask. Fixing part of it does not settle the rest: if
-anything on the thread is disagreed with or deferred, the thread stays open and is
-reported that way, whatever else was fixed on it.
+A thread can carry more than one ask, and fixing part of it does not settle the rest. A bot-authored thread resolves only when every ask on it ended in a fix, a concession, or a filed ticket; a human reviewer's thread stays open when anything on it was disagreed with or deferred. A partially settled thread is reported with what remains, whatever else was fixed on it.
 
 Disagreement is a judgment about the finding, never about the budget: a thread you did
 not fix only because the one fix pass is already spent is unaddressed, and the stage
@@ -174,19 +164,14 @@ reads only each thread's first comment, and the Bitbucket one keeps only the rev
 own comments. Your reply is invisible in the re-fetch either way, so this stage's own
 record of what it replied to is the authority.
 
-Completing is not a review-clean verdict. A disagreed or deferred thread stays open
-on the pull request, so it is still standing in front of whoever decides the merge.
-Leaving it open is the point: resolving a finding you do not agree with hides it, and
-a finding you have measured to be wrong is never applied just to clear this gate.
+Completing is not a review-clean verdict. A human reviewer's disagreed or deferred thread stays open on the pull request, so it is still standing in front of whoever decides the merge; leaving that one open is the point, because resolving a human's finding you do not agree with hides it from the merge decision. A bot-authored thread has no such audience once its ask is settled, which is why it resolves on a fix, a concession, or a filed ticket. The one bot thread that stays open is a disagreement without a concession, and a finding you have measured to be wrong is never applied just to clear this gate.
 
 Complete when CI is green and every Critical or Major thread is addressed. Write
 `$TICKET_DIR/stages/review_loop.out` with:
 
 - final CI state;
 - whether the one fix pass ran and its commit;
-- threads fixed; threads disagreed with, deferred, or carrying the human's own
-  disposition, each with the reply's evidence, reason, or filed ticket key; and
-  threads left open;
+- threads fixed; threads disagreed with, deferred, or carrying the human's own disposition, each with the reply's evidence, reason, or filed ticket key, and whether it ended resolved (fix, bot concession, filed ticket, carried disposition) or left open;
 - whether automated review completed or remained unavailable/incomplete.
 
 Stop on probe exhaustion, failed CI after the fix pass, or an unaddressed
