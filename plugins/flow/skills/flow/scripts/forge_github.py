@@ -269,6 +269,9 @@ class GitHubAdapter:
     def mark_ready(self, pr_id: str) -> None:
         self._ok(["gh", "pr", "ready", pr_id], "gh pr ready")
 
+    def update_pr_body(self, pr_id: str, body: str) -> None:
+        self._ok(["gh", "pr", "edit", pr_id, "--body", body], "gh pr edit")
+
     def merge(self, pr_id: str, squash: bool = True) -> None:
         args = ["gh", "pr", "merge", pr_id]
         if squash:

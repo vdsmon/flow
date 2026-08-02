@@ -262,7 +262,7 @@ markers are overwritten. `—` = none.
 | `flowctl.py` | — | `seam_check` |
 | `forge.py` | — | `create_pr`, `finalize`, `forge_bitbucket`, `forge_cli`, `forge_github`, `review_brief`, `revise_config`, `worktree_janitor` |
 | `forge_bitbucket.py` | — | `forge` |
-| `forge_cli.py` | `ci-rollup` `delete-branch` `detect-pr` `list-authored` `mark-ready` `merge` `post-reply` `resolve-thread` `review-status` `review-threads` | — |
+| `forge_cli.py` | `ci-rollup` `delete-branch` `detect-pr` `list-authored` `mark-ready` `merge` `post-reply` `resolve-thread` `review-status` `review-threads` `update-body` | — |
 | `forge_github.py` | — | `forge` |
 | `friction_escalate.py` | `escalate` | — |
 | `friction_recurrence.py` | — | `friction_escalate`, `metric`, `reflect_inputs` |

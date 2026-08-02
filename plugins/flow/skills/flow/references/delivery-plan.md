@@ -39,6 +39,7 @@ ticket mutation before the human gate.
 
 The driver reads the ticket, relevant repository files, and directly applicable project
 instructions. Fetch the default branch and record its SHA. Resolve factual questions read-only.
+When the data already in hand shows a coupled small sibling, the fetched ticket's own links or a ready-ticket list a recall pass already loaded, say so to the human in one line before the gate ("FT-xxxx looks coupled and small; group it?"); never make an extra tracker call to go looking, and no sibling in hand means no mention. Grouping stays the human's call because it changes run identity and review shape.
 If an answer, access grant, permission, or scope choice is needed, the driver asks the human
 directly through the host adapter's user-input capability and waits. Raise such a blocker as soon
 as it is discovered; do not navigate around it toward an alternative path unless the detour is
@@ -234,8 +235,11 @@ FLOW_HARNESS="<harness>" "<facade>" worktree create \
   --planned-files "<comma-separated-paths>" \
   --commit-type "<type>" \
   --commit-summary "<summary>" \
+  --lane "<gate-confirmed lane>" \
   --e2e-recipe "<recipe or skip: reason>"
 ```
+
+`--lane` carries the lane the human confirmed at the gate (section 2's lane bullet) into durable run state: bootstrap persists it in the ticket frontmatter, a hot change still clamps to full there, and the sweep's lane watch splits its metrics on that recorded field rather than on plan text.
 
 `--branch` must begin with `feat/<ticket>` even when the repository normally uses
 `fix/`, `bugfix/`, `chore/`, or another type prefix. Flow's finalize, janitor sweep,

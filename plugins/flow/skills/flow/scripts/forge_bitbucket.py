@@ -199,6 +199,14 @@ class BitbucketAdapter:
             payload={"draft": False},
         )
 
+    def update_pr_body(self, pr_id: str, body: str) -> None:
+        self._api(
+            f"{self._base()}/pullrequests/{pr_id}",
+            "bkt pr body",
+            method="PUT",
+            payload={"description": body},
+        )
+
     def merge(self, pr_id: str, squash: bool = True) -> None:
         payload = {"merge_strategy": "squash"} if squash else {}
         self._api(

@@ -101,6 +101,12 @@ def _cmd_mark_ready(forge: Any, args: argparse.Namespace) -> int:
     return _emit({"ok": True})
 
 
+def _cmd_update_body(forge: Any, args: argparse.Namespace) -> int:
+    body = Path(args.body_file).read_text(encoding="utf-8")
+    forge.update_pr_body(args.pr, body)
+    return _emit({"ok": True})
+
+
 def _cmd_merge(forge: Any, args: argparse.Namespace) -> int:
     forge.merge(args.pr, squash=bool(args.squash))
     return _emit({"ok": True})
@@ -149,6 +155,12 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     p = sub.add_parser("mark-ready", help="forge.mark_ready(pr)")
     p.add_argument("--pr", required=True)
 
+    p = sub.add_parser(
+        "update-body", help="forge.update_pr_body(pr, body) — replace the PR description"
+    )
+    p.add_argument("--pr", required=True)
+    p.add_argument("--body-file", required=True, dest="body_file")
+
     p = sub.add_parser("merge", help="forge.merge(pr, squash)")
     p.add_argument("--pr", required=True)
     p.add_argument("--squash", action="store_true")
@@ -168,6 +180,7 @@ _DISPATCH: dict[str, Any] = {
     "post-reply": _cmd_post_reply,
     "resolve-thread": _cmd_resolve_thread,
     "mark-ready": _cmd_mark_ready,
+    "update-body": _cmd_update_body,
     "merge": _cmd_merge,
     "delete-branch": _cmd_delete_branch,
 }

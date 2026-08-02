@@ -135,6 +135,7 @@ class Forge(Protocol):
     def post_reply(self, pr_id: str, thread_id: str, body: str) -> None: ...  # cap-gated
     def resolve_thread(self, pr_id: str, thread_id: str) -> bool: ...  # cap-gated
     def mark_ready(self, pr_id: str) -> None: ...  # cap-gated ready_toggle
+    def update_pr_body(self, pr_id: str, body: str) -> None: ...  # cap-gated
     def merge(self, pr_id: str, squash: bool = True) -> None: ...
     def delete_branch(self, branch: str) -> None: ...  # cap-gated delete_branch
     def set_default_reviewers(self, pr_id: str) -> None: ...  # cap-gated default_reviewers
