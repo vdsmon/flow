@@ -213,6 +213,13 @@ input reports the same zero as a gate that passed.
 
 7. Write `<ticket-dir>/stages/code_review.out` and complete the stage.
 
+## Base comparisons
+
+Comparing branch behavior against the base (a stash-and-rerun, a checkout of an owned file's base version, any A/B that mutates the tree) is sometimes the only way to judge a finding, and until now no recipe owned it, so runs improvised. Two rules, both witnessed in one delivery run (FT-1528, 2026-07-31):
+
+- **Exclusive worktree, or no comparison.** A tree-mutating comparison requires that nothing else holds the worktree: never start one while a stage agent or fixer is live, and never launch an agent while one is in flight. The witness: a stash-push emptied the tree under a live fixer mid-edit; the fixer chased a phantom AttributeError and popped the stash itself, and both sides of the comparison ran against a mutating tree and were discarded. When an agent may be running, take a scratch copy outside the worktree instead, the same shape as step 2's mutation rule.
+- **A comparison counts only when both sides prove they ran.** Equal results with zero tests executed on each side read as a plausible clean outcome. The witness: mixing two test roots in one pytest invocation aborted collection (`N errors during collection`, `Interrupted`) on BOTH sides, reporting symmetrical numbers while nothing executed. Read each side's summary line and require a nonzero executed count; an aborted collection is not a fast suite. This is the positive control from Purpose applied to comparisons: equal zeros prove nothing.
+
 ## Output
 
 The first line is the stable format marker:
