@@ -48,6 +48,17 @@ continues. The point is that the tracker shows the ticket claimed the moment wor
 not after approval, so nothing else picks it up as available. This is the one sanctioned
 ticket mutation before the human gate.
 
+The marker directory just written is also the zero-cost view of concurrent planning: glob
+`.flow/tickets/*.planning-started` and check mtimes. Another key's marker fresh within the
+last hour means a sibling session may be planning in parallel; when the two tickets read
+like the same file family, say so to the human in one line ("FT-yyyy started planning
+minutes ago; same family? group or sequence?") and let them rule. Two sessions that planned
+sibling CSV-layout tickets in parallel on 2026-08-03 each independently wrote the identical
+helper into the same shared file, and the second branch paid a mid-run rebase and a
+re-captured e2e baseline for it; the markers had recorded the collision before either
+worktree existed. This is a filesystem stat, not a tracker call, and silence (no fresh
+marker, or obviously unrelated work) means no mention.
+
 The driver reads the ticket, relevant repository files, and directly applicable project
 instructions. Fetch the default branch and record its SHA. Resolve factual questions read-only.
 When the data already in hand shows a coupled small sibling, the fetched ticket's own links or a ready-ticket list a recall pass already loaded, say so to the human in one line before the gate ("FT-xxxx looks coupled and small; group it?"); never make an extra tracker call to go looking, and no sibling in hand means no mention. Grouping stays the human's call because it changes run identity and review shape.
