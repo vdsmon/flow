@@ -56,7 +56,22 @@ def _fake_runner(branch_name: str, returncode: int = 0):
         pytest.param("jira", "FT", "FT-1-and-FT-2", "FT-1", id="jira-first-match-wins"),
         pytest.param("jira", "FT", "feature/something-without-key", None, id="jira-no-match"),
         pytest.param("jira", "MY-PROJ", "MY-PROJ-77-feature", "MY-PROJ-77", id="jira-dash-key"),
-        pytest.param("jira", "FT", "XYZ-1234-some-feature", None, id="jira-other-project-prefix"),
+        # Cross-project keys resolve: intake accepts and delivers them (CO-222 in an
+        # FT workspace), so the resolver must see their branches too, or the finalize
+        # sweep goes blind and single-key finalize falls to the guard-skipping
+        # local-branch path.
+        pytest.param(
+            "jira", "FT", "XYZ-1234-some-feature", "XYZ-1234", id="jira-cross-project-key"
+        ),
+        pytest.param(
+            "jira", "FT", "feat/CO-222-efd-contrib-bloco-m-credits", "CO-222", id="jira-co-witness"
+        ),
+        # The home project outranks a foreign key even when the foreign one comes
+        # first in the branch name; flow-minted branches carry exactly one key, so
+        # this only decides hand-named multi-key branches.
+        pytest.param("jira", "FT", "CO-2-then-FT-1", "FT-1", id="jira-home-project-outranks"),
+        # A single-letter prefix is not a Jira key shape (min 2 chars).
+        pytest.param("jira", "FT", "feat/X-1-thing", None, id="jira-single-letter-no-match"),
         pytest.param("beads", "bd", "feature/bd-a4f7-add-rate-limit", "bd-a4f7", id="beads-simple"),
         pytest.param("beads", "bd", "bd-abc12345/feature", "bd-abc12345", id="beads-long-hash"),
         pytest.param(
