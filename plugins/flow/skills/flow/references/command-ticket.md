@@ -147,7 +147,7 @@ If interrupted between child creation and the parent marker, search the tracker 
 the approved rung summaries, write the marker with the existing keys, and continue
 forward. Never mint a duplicate ladder from scratch.
 
-## `FLOW ticket finalize <ticket> [--dry-run]`
+## `FLOW ticket finalize (<ticket> | --all) [--dry-run]`
 
 Close out one delivered ticket after its PR merged. A delivery workspace parks
 a green PR for the human, and the human merges it on the forge; nothing on that path
@@ -189,6 +189,27 @@ finalized ticket exits 0 as a no-op. Exit 3 makes the merge watch host-owned and
 daemon-free — the human (or a host scheduler the human configures) re-invokes
 finalize until it exits 0. Flow itself never schedules, backgrounds, or polls; the
 single-shot command is the whole contract.
+
+### The sweep form
+
+`--all` runs the same per-key probe and close-out over every managed worktree that
+carries a `.flow/runs/<key>` run dir, isolating failures so one refused ticket never
+stops the rest. A worktree without a run dir belongs to a human's ad-hoc work and is
+never swept; finalize it by explicit key when you mean it. The report buckets every
+candidate into `finalized`, `not_merged` (still parked, normal, zero writes),
+`refused`, or `errors`, with the per-key detail alongside; the exit is 0 unless a
+probe error occurred.
+
+```bash
+FLOW_HARNESS="<harness>" "<facade>" finalize --workspace-root . --all [--dry-run]
+```
+
+The sweep exists because merged runs were witnessed parking unfinalized for days
+(2026-08-03: two merged deliveries still held claims, worktrees, and no frozen ship
+event, and the time-to-pr measure was blind to both), with close-out depending on a
+human typing "merged" into the right session. Run it at every fresh delivery start
+(`delivery-plan.md` opens with it) and whenever the cockpit shows a merged PR whose
+close-out is incomplete.
 
 ## Ticket queues (read-only)
 

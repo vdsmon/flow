@@ -14,8 +14,19 @@ Keep `owner` for real resource ownership such as leases, repositories, branches,
 
 ## 1. Ground the work
 
-Planning's first act mutates the ticket: transition it to `in_progress` in the tracker backend
-(Atlassian MCP first when available; REST fallback):
+Before touching the new ticket, close out what already merged: run the finalize sweep once
+from the primary checkout. Merged deliveries have been witnessed parking for days with open
+claims, live worktrees, and no frozen ship event, because close-out waited on a human typing
+"merged" into the right session; the sweep makes every fresh start heal them instead. It
+writes only behind merged-PR proof, reports still-parked tickets without touching them, and
+one line of its report (`finalized: [...]`) is worth relaying to the human:
+
+```bash
+FLOW_HARNESS="<harness>" "<facade>" finalize --workspace-root . --all
+```
+
+Planning's first act on the ticket itself then mutates it: transition it to `in_progress` in
+the tracker backend (Atlassian MCP first when available; REST fallback):
 
 ```bash
 FLOW_HARNESS="<harness>" "<facade>" tracker \
@@ -36,6 +47,17 @@ tracker has no such state) continues silently; any other failure logs one warnin
 continues. The point is that the tracker shows the ticket claimed the moment work starts,
 not after approval, so nothing else picks it up as available. This is the one sanctioned
 ticket mutation before the human gate.
+
+The marker directory just written is also the zero-cost view of concurrent planning: glob
+`.flow/tickets/*.planning-started` and check mtimes. Another key's marker fresh within the
+last hour means a sibling session may be planning in parallel; when the two tickets read
+like the same file family, say so to the human in one line ("FT-yyyy started planning
+minutes ago; same family? group or sequence?") and let them rule. Two sessions that planned
+sibling CSV-layout tickets in parallel on 2026-08-03 each independently wrote the identical
+helper into the same shared file, and the second branch paid a mid-run rebase and a
+re-captured e2e baseline for it; the markers had recorded the collision before either
+worktree existed. This is a filesystem stat, not a tracker call, and silence (no fresh
+marker, or obviously unrelated work) means no mention.
 
 The driver reads the ticket, relevant repository files, and directly applicable project
 instructions. Fetch the default branch and record its SHA. Resolve factual questions read-only.

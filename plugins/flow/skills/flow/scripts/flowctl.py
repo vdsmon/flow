@@ -33,6 +33,7 @@ COMMANDS = {
     "machinery-edit": "machinery_edit.py",
     "maintainer": "maintainer.py",
     "scrutinize-seat": "scrutinize_seat.py",
+    "scrutinize-trace": "scrutinize_trace.py",
     "memory-append": "memory_append.py",
     "metric": "metric.py",
     "model": "model_resolve.py",

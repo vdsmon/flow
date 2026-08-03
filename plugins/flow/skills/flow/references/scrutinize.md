@@ -103,11 +103,25 @@ past the run:
 
 - **Session transcripts** under `~/.claude/projects/<workspace-slug>/`, keyed by the
   session's working directory (the slug moves with cwd, so resolve it fresh, never
-  from a cached path). Parse incrementally for tool errors, retries, and time gaps;
-  never load a transcript whole.
+  from a cached path). Mine them with the engine's miner rather than a fresh one-off
+  (every seat before it rebuilt the same ~90-line script from scratch); it parses
+  incrementally and never loads a transcript whole:
+
+  ```bash
+  FLOW_HARNESS="<harness>" "<facade>" scrutinize-trace \
+    --transcript-dir "<abs transcript dir>" --since "<cursor iso>" [--session <id>] [--json]
+  ```
+
+- **Subagent transcripts** beside each session: `<session-id>/subagents/agent-*.jsonl`
+  with a `.meta.json` naming each agent. Stage-agent wall clock lives HERE, not in the
+  driver transcript (the driver only shows spawn and notification); the miner above
+  joins the spans automatically. The 2026-08-03 assessor finding (11-15 min wrappers
+  around a 2.4-min codex call) was only visible at this layer.
 - **The friction log** (`friction.jsonl` in the workspace memory namespace): the
   run's own account of what bit it, and the join key for recurrence and
-  fix-efficacy measures.
+  fix-efficacy measures. Runs under-log: two identical missing-tool hits in one day
+  left no entry, so treat the friction log as the floor and the transcripts' tool
+  errors as the census.
 - **Ship events** (frozen at finalize): per-run timings, tiers, and acceptance
   invariants; the timing backbone now that run directories are reaped.
 - **The knowledge store** and `bd`: what reflect recorded and filed, the dedup net
@@ -117,6 +131,19 @@ past the run:
 Never read a run directory for evidence: finalize reaps it, so anything worth
 keeping is already in the stores above, and prose that cites a run directory
 outlives its citation. Cite a ticket key or a merged commit instead.
+
+**Heal close-out before measuring.** Ship events freeze at finalize, so a merged run
+nobody finalized is a hole in the timing backbone the lenses below read (witnessed
+2026-08-03: two merged deliveries invisible to `metric time-to-pr`, worktrees and
+claims still live). Before the lens work, run the finalize sweep on the scoped
+workspace and relay its receipts; it writes only behind merged-PR proof, reports
+still-parked tickets without touching them, and skips ad-hoc worktrees that carry no
+run. Runs mid-flight hold their leases, so the sweep leaves them alone by
+construction.
+
+```bash
+FLOW_HARNESS="<harness>" "<facade>" finalize --workspace-root "<workspace>" --all
+```
 
 **The sweep cursor bounds how far back to read.** `sweep-cursor.json`, kept beside
 the ledger in the project memory directory, holds one row per workspace root with
@@ -130,9 +157,9 @@ nothing is silently dropped. No row yet means a bounded default window (the last
 seven days), never all of history. The cursor is seat state on the seat's
 side; no workspace carries it.
 
-**The performance lens.** Every sweep reports where wall clock went, not only what broke (standing directive, 2026-07-31: run time is the metric the human watches). Read `metric time-to-pr` and `metric friction-per-run` over the window (both take `--workspace-root` and require `--namespace`), then reconstruct per-stage spans for the window's runs from the driver transcripts: dispatch calls and stage-agent spawns carry timestamps, and the gaps between them are the stages. Report the split (planning-to-gate, implement, code_review, e2e, review_loop waits) and name the widest span with its cause when the evidence shows one. Medians hide the tail; the outlier run usually carries the machinery finding, and a stage spending its time on environment bootstrap or a vacuous verdict is a lever, not a constant.
+**The performance lens.** Every sweep reports where wall clock went, not only what broke (standing directive, 2026-07-31: run time is the metric the human watches). Read `metric time-to-pr` and `metric friction-per-run` over the window (both take `--workspace-root` and require `--namespace`), then reconstruct per-stage spans for the window's runs from the `scrutinize-trace` output: the dispatch spine and the subagent spans carry the timestamps, and the gaps between them are the stages. Report the split (planning-to-gate, implement, code_review, e2e, review_loop waits) and name the widest span with its cause when the evidence shows one. Medians hide the tail; the outlier run usually carries the machinery finding, and a stage spending its time on environment bootstrap or a vacuous verdict is a lever, not a constant.
 
-**The lane watch.** The 2026-08-02 ceremony reduction (verify tiers as execution profiles, code_review unwired on bot-covered workspaces, assessor bounded) is a live rollout judged by the sweep, not a settled fact. Split every performance and quality read by lane (the frontmatter `lane` field bootstrap records) and report, per lane: time-to-pr, friction per run, review-bot Major threads per PR, CI runs per PR (the early-tail churn gauge: a climbing count means e2e is pushing fixes into open PRs often enough to reconsider the order), and reverts. The revert triggers are explicit and act before a trend accumulates: a Major money-path defect reaching the human merge on an express run, or an express or light lane whose bot-thread rate climbs above the full-lane baseline, restores the dropped layer (re-wire the workspace's code_review handler, demote the ticket class) before the next run starts. Watching the levers is what made removing them safe to try.
+**The lane watch.** The 2026-08-02 ceremony reduction (verify tiers as execution profiles, code_review unwired on bot-covered workspaces, assessor bounded) is a live rollout judged by the sweep, not a settled fact. Split every performance and quality read by lane (the frontmatter `lane` field bootstrap records) and report, per lane: time-to-pr, friction per run, review-bot Major threads per PR, CI runs per PR (the early-tail churn gauge: a climbing count means e2e is pushing fixes into open PRs often enough to reconsider the order), and reverts. The revert triggers are explicit and act before a trend accumulates: a Major money-path defect reaching the human merge on an express run, or an express or light lane whose bot-thread rate climbs above the full-lane baseline, restores the dropped layer (re-wire the workspace's code_review handler, demote the ticket class) before the next run starts. Watching the levers is what made removing them safe to try. Read an empty `lane` on a plugin at or past 0.118.80 as `full`: bootstrap deliberately stamps only `express` and `light` (absent is the stages' full-lane default), so an empty field on a newer run is a full-lane run, not a recording hole; one seat already burned a thread re-deriving that.
 
 **The nudge lens.** A human prompt that should not have been needed is among the highest-signal friction there is (standing directive, 2026-07-31): every nudge marks a place the pipeline stalled, asked what it should have answered itself, or lost its thread. Sweep the window's driver transcripts for mid-run user messages: an interruption, a "why did you stop?", a "try again", a re-statement of something already decided. Each one is a finding about flow, never about the human, and the stage boundary or gate it landed on names the defect's address. A nudge shape seen twice is bead-worthy like any other friction; three witnesses of the same shape in one day is how the driver-idles defect earned its bead.
 

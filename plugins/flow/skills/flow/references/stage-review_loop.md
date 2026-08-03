@@ -31,9 +31,17 @@ An empty PR id is a failed stage.
 
 ## 1. Wait for CI
 
-Poll `ci-rollup` in bounded foreground calls. Read the command exit code before
-parsing JSON; a probe error is not `pending`. Stop each call after eight probes and
-return control to the driver before another call.
+On a host with a native watch capability that notifies the same driver session (Claude
+Code's Monitor tool), prefer one bounded watch on the `ci-rollup` command over blocking
+sleeps: the driver stays free between events instead of pinning its one shell lane inside a
+sleep loop, and the 2026-08-03 window showed exactly that split, one driver absorbing review
+events while planning continued and another spending its wall clock inside `sleep 70`
+iterations. The wait must still live and die with the driver session; a detached process
+that outlives it is the topology this stage forbids.
+
+Where no such capability exists, poll `ci-rollup` in bounded foreground calls. Read the
+command exit code before parsing JSON; a probe error is not `pending`. Stop each call after
+eight probes and return control to the driver before another call.
 
 ```bash
 i=0; errors=0; while [ $i -lt 8 ]; do
@@ -67,8 +75,9 @@ A review bot is judged by ACTIVITY on this pull request, never by posted output 
 never by a workspace declaration (no config key declares one, and a repository can carry an
 active bot no config mentions). Posted comments cannot distinguish a bot mid-review from a
 bot that is deactivated or unconfigured, which is exactly the state a run got stuck against
-(CO-222, 2026-07-31). So after CI is green, probe for a sign of life with bounded re-runs of
-the two probes above for up to five minutes, never a background monitor: an in-progress or
+(CO-222, 2026-07-31). So after CI is green, probe for a sign of life for up to five minutes,
+with bounded re-runs of the two probes above or a session-owned watch on them (section 1's
+host-capability rule applies here unchanged): an in-progress or
 placeholder marker, a bot-authored check, or its first thread on THIS pull request. Other
 pull requests are not evidence.
 

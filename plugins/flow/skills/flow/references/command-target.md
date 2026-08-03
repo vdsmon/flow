@@ -63,6 +63,24 @@ Normalize these sources before choosing an action:
 - forge PR identity, state, and actionable unresolved feedback;
 - ship-event integrity.
 
+Gather it with this card, not with `--help` archaeology: sessions have been witnessed
+spending their first minutes re-deriving these spellings with six or more probe calls,
+including a deliberately bogus subcommand run just to dump the listing. Every line below is
+seam-checked against the real CLI; paste what applies, skip what the target makes moot:
+
+```bash
+FLOW_HARNESS="<harness>" "<facade>" status --workspace-root . --ticket "<key>" --json
+FLOW_HARNESS="<harness>" "<facade>" tracker --workspace-root . state --key "<key>"
+FLOW_HARNESS="<harness>" "<facade>" tracker --workspace-root . get --key "<key>"
+FLOW_HARNESS="<harness>" "<facade>" tracker --workspace-root . is-shipped --key "<key>"
+FLOW_HARNESS="<harness>" "<facade>" forge --workspace-root . detect-pr --branch "<branch>" --state open
+```
+
+`status --json` carries the run, worktree, and lease view in one shot; the two tracker calls
+give liveness and content; `is-shipped` reads the frozen ship event; `detect-pr` (repeat with
+`--state merged` when the open probe is empty) settles PR identity. Derive `<branch>` from the
+run state or the managed worktree; a fresh ticket has none and skips the forge line.
+
 Do not mutate while probing. Missing evidence is not contradictory by itself.
 Contradictions include two live owners, terminal tracker state with an active run that
 cannot be explained by a revision, mutually incompatible PR receipts, or old and new

@@ -7,8 +7,12 @@ tools: Bash, Read, Glob, Grep
 You assess one plan. You did not write it, and you do not edit anything: no file writes, no
 staging, no commits, no Flow state. Your whole output is a verdict.
 
-Read `references/delivery-plan.md` section 3 first. It is authoritative. Where this file and
-that document disagree, the document wins, except for the Codex substitution below.
+This file is your complete contract; it restates `references/delivery-plan.md` section 3 for
+this role, and the driver enforces that section from outside. Do not open that document, and
+do not explore the repository yourself: Codex does the reading. Wall clock spent here is a
+tax on every plan, so the whole job is four motions: read the plan file, run the preflight
+block, compose the prompt, run the codex call. Anything else you are about to do first is a
+delay, not diligence.
 
 ## Rooted context
 
@@ -85,13 +89,33 @@ including a clean one, so the driver never has to infer the routing from its abs
 
 ## Running the assessment
 
-Resolve the assessor hint through the facade, one field per call, so OFF semantics
-(`off`/`none`/`false` mean inherit) have exactly one implementation:
+Run the whole preflight as ONE command: the quota cooldown probe and both hint fields
+together, labeled so the outputs stay attributable. Three separate calls have been witnessed
+costing minutes of thinking between them; one call costs one round trip. The hint still
+resolves through the facade, one field per invocation inside the block, so OFF semantics
+(`off`/`none`/`false` mean inherit) keep exactly one implementation:
 
 ```bash
-FLOW_HARNESS="<harness>" "<facade>" model --workspace-root . --stage plan --role assessor --launcher-harness codex
-FLOW_HARNESS="<harness>" "<facade>" model --workspace-root . --stage plan --role assessor --field effort
+set -e
+python3 - <<'EOF'
+import datetime as dt
+import json, pathlib
+marker = pathlib.Path.home() / ".flow" / "codex-cooldown.json"
+if marker.exists():
+    data = json.loads(marker.read_text(encoding="utf-8"))
+    until = dt.datetime.fromisoformat(data["until"].replace("Z", "+00:00"))
+    if dt.datetime.now(dt.timezone.utc) < until:
+        print(f"codex cooling down until {data['until']}: {data.get('reason', '')}")
+        raise SystemExit(3)
+    marker.unlink()
+print("codex available")
+EOF
+echo "model=$(FLOW_HARNESS="<harness>" "<facade>" model --workspace-root . --stage plan --role assessor --launcher-harness codex)"
+echo "effort=$(FLOW_HARNESS="<harness>" "<facade>" model --workspace-root . --stage plan --role assessor --field effort)"
 ```
+
+Exit 3 from the block is the known-exhausted quota: say exactly that and stop, so the driver
+takes the sanctioned host-native fallback without burning a timeout.
 
 `--launcher-harness codex` is load-bearing and is NOT the same as `FLOW_HARNESS`.
 `FLOW_HARNESS` names the host this process runs under; under Claude Code that is
@@ -107,26 +131,6 @@ configuration.
 Compose the prompt around **the contents of the plan file** and pass it on **stdin**, never
 through argv. Read the plan yourself rather than telling Codex to go find it: a plan is large,
 and a reader sent to discover it spends its budget on round trips instead of on the question.
-
-Before spending the call, check the global quota cooldown; exit 3 means codex usage is
-known-exhausted, and the right move is to say exactly that and stop, so the driver takes
-the sanctioned host-native fallback without burning a timeout:
-
-```bash
-python3 - <<'EOF'
-import datetime as dt
-import json, pathlib
-marker = pathlib.Path.home() / ".flow" / "codex-cooldown.json"
-if marker.exists():
-    data = json.loads(marker.read_text(encoding="utf-8"))
-    until = dt.datetime.fromisoformat(data["until"].replace("Z", "+00:00"))
-    if dt.datetime.now(dt.timezone.utc) < until:
-        print(f"codex cooling down until {data['until']}: {data.get('reason', '')}")
-        raise SystemExit(3)
-    marker.unlink()
-print("codex available")
-EOF
-```
 
 Run exactly one foreground call with an explicit 600000 ms timeout:
 
@@ -166,3 +170,10 @@ A call that exits non-zero, exceeds the timeout, or leaves no parseable JSON is 
 assessment, and a failed assessment is not a pass. Report the failure plainly rather than
 substituting your own read of the plan: an assessment that silently became a self-review is
 exactly the independence this agent exists to provide.
+
+## Reporting back
+
+The verdict JSON is the deliverable and the driver reads it from `Verdict path`. Your final
+message is three lines at most: the verdict path, the blocker count, and `design_is_wrong`.
+Do not restate blockers in prose, summarize the plan, or narrate what Codex did; every
+paragraph here is duplicate wall clock on a stage whose whole value is arriving fast.

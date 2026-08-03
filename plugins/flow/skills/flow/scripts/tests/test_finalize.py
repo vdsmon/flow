@@ -388,3 +388,113 @@ def test_cli_exit_codes(monkeypatch, tmp_path):
         prs={("feat/FT-1-x", "open"): {"id": "7"}},
     )
     assert fz.cli_main(["--workspace-root", str(main), "--key", "FT-1"]) == fz.EXIT_NOT_MERGED
+
+
+def _mkrun(entry: tuple[Path, str, str], key: str) -> None:
+    (entry[0] / ".flow" / "runs" / key).mkdir(parents=True)
+
+
+def _resolve_from_branch(_root, _cwd, branch=None):
+    if not branch:
+        return None
+    for part in branch.split("/"):
+        if part.startswith("FT-"):
+            return "-".join(part.split("-")[:2])
+    return None
+
+
+def test_sweep_skips_worktrees_without_run_dir(monkeypatch, tmp_path):
+    main = tmp_path / "repo"
+    with_run = _worktree_entry(main, "FT-1")
+    without_run = _worktree_entry(main, "FT-2")
+    without_run[0].mkdir(parents=True)
+    _mkrun(with_run, "FT-1")
+    _wire(monkeypatch, tmp_path, entries=[with_run, without_run])
+    monkeypatch.setattr(fz.branch_ticket, "resolve", _resolve_from_branch)
+    assert fz._sweep_candidates(main) == ["FT-1"]
+
+
+def test_sweep_finalizes_merged_and_reports_parked(monkeypatch, tmp_path):
+    main = tmp_path / "repo"
+    merged = _worktree_entry(main, "FT-1", tip=_FULL_TIP)
+    parked = _worktree_entry(main, "FT-2")
+    _mkrun(merged, "FT-1")
+    _mkrun(parked, "FT-2")
+    _, _tracker, _forge, _order, observed, reaped = _wire(
+        monkeypatch,
+        tmp_path,
+        entries=[merged, parked],
+        prs={
+            ("feat/FT-1-x", "merged"): {"id": "7", "head_sha": _FULL_TIP},
+            ("feat/FT-2-x", "open"): {"id": "8"},
+        },
+    )
+    monkeypatch.setattr(fz.branch_ticket, "resolve", _resolve_from_branch)
+    code, report = fz.finalize_all(main)
+    assert code == fz.EXIT_OK
+    assert report["candidates"] == ["FT-1", "FT-2"]
+    assert report["finalized"] == ["FT-1"]
+    assert report["not_merged"] == ["FT-2"]
+    assert report["refused"] == []
+    assert report["errors"] == []
+    assert [k for k, _ in observed] == ["FT-1"]
+    assert len(reaped) == 1
+    assert report["per_key"]["FT-2"]["reason"] == "pr_open"
+
+
+def test_sweep_isolates_refusals(monkeypatch, tmp_path):
+    main = tmp_path / "repo"
+    blocked = _worktree_entry(main, "FT-1", tip=_FULL_TIP)
+    merged = _worktree_entry(main, "FT-2", tip=_FULL_TIP)
+    _mkrun(blocked, "FT-1")
+    _mkrun(merged, "FT-2")
+    _, _, _, _order, observed, _reaped = _wire(
+        monkeypatch,
+        tmp_path,
+        entries=[blocked, merged],
+        prs={
+            ("feat/FT-1-x", "merged"): {"id": "7", "head_sha": _FULL_TIP},
+            ("feat/FT-2-x", "merged"): {"id": "8", "head_sha": _FULL_TIP},
+        },
+    )
+    monkeypatch.setattr(fz.branch_ticket, "resolve", _resolve_from_branch)
+    monkeypatch.setattr(
+        fz,
+        "_candidate_lease_blocker",
+        lambda path, key: ("live", path) if key == "FT-1" else None,
+    )
+    code, report = fz.finalize_all(main)
+    assert code == fz.EXIT_OK
+    assert report["refused"] == ["FT-1"]
+    assert report["finalized"] == ["FT-2"]
+    assert "live lease" in report["per_key"]["FT-1"]["refused"]
+    assert [k for k, _ in observed] == ["FT-2"]
+
+
+def test_sweep_dry_run_writes_nothing(monkeypatch, tmp_path):
+    main = tmp_path / "repo"
+    merged = _worktree_entry(main, "FT-1", tip=_FULL_TIP)
+    _mkrun(merged, "FT-1")
+    _, _, _, order, observed, reaped = _wire(
+        monkeypatch,
+        tmp_path,
+        entries=[merged],
+        prs={("feat/FT-1-x", "merged"): {"id": "7", "head_sha": _FULL_TIP}},
+    )
+    monkeypatch.setattr(fz.branch_ticket, "resolve", _resolve_from_branch)
+    code, report = fz.finalize_all(main, dry_run=True)
+    assert code == fz.EXIT_OK
+    assert report["finalized"] == ["FT-1"]
+    assert report["per_key"]["FT-1"]["steps"]["reap"] == {"action": "would_run"}
+    assert order == []
+    assert observed == []
+    assert reaped == []
+
+
+def test_cli_key_and_all_are_mutually_exclusive(monkeypatch, tmp_path, capsys):
+    with pytest.raises(SystemExit) as exc:
+        fz.cli_main(["--workspace-root", str(tmp_path), "--key", "FT-1", "--all"])
+    assert exc.value.code == 2
+    with pytest.raises(SystemExit) as exc:
+        fz.cli_main(["--workspace-root", str(tmp_path)])
+    assert exc.value.code == 2
