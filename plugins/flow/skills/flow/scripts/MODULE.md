@@ -46,6 +46,7 @@ The fifth run-safety mechanism, the content-ownership commit gate, is `diff_extr
 | `flow_worktree.py` | Post-approval worktree seeding plus the exported `is_ticket_branch` ownership predicate shared by preview and reap. Resolves the approved base, seeds the approved Markdown plan and `state.json`, stamps frontmatter, and binds the worktree's v2 memory pointer to main. Reap guards base/revision state, verifies an optional expected tip, and checkpoints dirty work before removal. | flags per `--help`; `create --auto` gates the unattended path |
 | `branch_ticket.py` | Resolve ticket key from current git branch (backend-aware regex); `--branch <name>` resolves from an explicit branch instead (the PR->ticket enabler for revise). | `--workspace-root [--branch]`; exit 0 match / 1 env / 3 no-match |
 | `scrutinize_seat.py` | Deterministic half of the scrutinize seating (`references/scrutinize.md` §Seating): refuse outside the self-target, fetch origin, resolve default/integration refs, name configured tracker/forge without adapter construction, scan registered worktrees for non-terminal base/revision runs, safely fast-forward or re-park only without local run evidence, ensure the standing bench, and emit bounded local posture. Invocable from the bench itself; posture always describes the primary checkout. | `--workspace-root [--dry-run]`; exit 0 posture ok, 2 failure (posture printed for fetch/bench failures; a pre-posture probe error goes to stderr instead). Consumed by `references/scrutinize.md` |
+| `scrutinize_trace.py` | Transcript trace miner for the scrutinize sweep (`references/scrutinize.md` §The sweep): one incremental pass per session file under a `~/.claude/projects/<slug>/` dir, emitting the dispatch spine (facade calls), user messages with an `is_skill` flag (nudge lens; plain-string and list content both read), agent spawns joined to `<session>/subagents/agent-*.jsonl` spans (per-stage wall clock lives there), and tool errors with their originating command. Read-only; replaces the per-seat ad-hoc miner rebuilt every sweep before 2026-08-03. | `--transcript-dir [--since <iso>] [--session <id>]... [--json]`; exit 0 mined / 2 missing dir. Consumed by `references/scrutinize.md` |
 | `_harness.py` (lib) | The closed host-adapter vocabulary: `flow_harness()` reads `FLOW_HARNESS`, defaults an unset selector to `claude-code`, and raises `HarnessError` on anything but `codex`/`claude-code`. Deliberately import-light — the workspace shims read it on every facade call. | — |
 
 ## Tracker
@@ -298,6 +299,7 @@ markers are overwritten. `—` = none.
 | `runtime_layout.py` | — | `flow_launcher` |
 | `scrub_ci_skip.py` | — | — |
 | `scrutinize_seat.py` | — | — |
+| `scrutinize_trace.py` | — | — |
 | `seam_check.py` | — | — |
 | `snapshot.py` | — | `dispatch_stage`, `recover` |
 | `state.py` | — | `diff_extract`, `dispatch_stage`, `flow_worktree`, `recall_usage`, `recover`, `reflect_inputs`, `status` |
