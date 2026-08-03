@@ -77,10 +77,24 @@ def _current_branch(cwd: Path, runner: Runner) -> str:
 def _match_key(branch: str, cfg: _TrackerConfig) -> str | None:
     if cfg.backend == "jira":
         assert cfg.project_key is not None
-        pattern = re.compile(rf"\b({re.escape(cfg.project_key)}-\d+)\b")
-    else:
-        assert cfg.prefix is not None
-        pattern = re.compile(rf"\b({re.escape(cfg.prefix)}-[0-9a-z]{{3,}}(?:\.\d+)*)\b")
+        # Configured project first, then any Jira-shaped key (letter + uppercase
+        # alphanumerics, 2-10 chars, dash, digits). Intake accepts cross-project
+        # tickets and flow delivers them (CO-222 in an FT workspace, 2026-07-31),
+        # so a resolver anchored to the home project left their worktrees invisible
+        # to the finalize sweep and pushed their finalize onto the guard-skipping
+        # local-branch fallback. Configured-first keeps home-project precedence on
+        # multi-key branches and keeps supporting configured keys the generic shape
+        # cannot carry (a dashed project_key).
+        for pattern in (
+            re.compile(rf"\b({re.escape(cfg.project_key)}-\d+)\b"),
+            re.compile(r"\b([A-Z][A-Z0-9]{1,9}-\d+)\b"),
+        ):
+            m = pattern.search(branch)
+            if m:
+                return m.group(1)
+        return None
+    assert cfg.prefix is not None
+    pattern = re.compile(rf"\b({re.escape(cfg.prefix)}-[0-9a-z]{{3,}}(?:\.\d+)*)\b")
     m = pattern.search(branch)
     return m.group(1) if m else None
 
