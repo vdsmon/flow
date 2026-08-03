@@ -46,7 +46,7 @@ def test_detect_pr_filters_by_source_branch():
         ]
     }
     fg, _ = _adapter(
-        lambda a: json.dumps(listing) if "pullrequests?state=OPEN" in _api_path(a) else "null"
+        lambda a: json.dumps(listing) if "state%20%3D%20%22OPEN%22" in _api_path(a) else "null"
     )
     pr = fg.detect_pr("feature/flow-x")
     assert pr is not None
@@ -54,6 +54,37 @@ def test_detect_pr_filters_by_source_branch():
     assert pr["draft"] is True
     assert pr["head"] == "feature/flow-x"
     assert pr["base"] == "main"
+
+
+def test_detect_pr_sends_server_side_branch_and_state_filter():
+    # Without `q=source.branch.name=...` the merged-state probe walked every PR in the
+    # repo (3100+ witnessed). State must ride INSIDE q, never as the state= param:
+    # Bitbucket ignores the param when q is present (live control returned an OPEN PR
+    # from state=MERGED&q=<branch>, which finalize would have taken as merged proof).
+    fg, calls = _adapter(lambda _a: json.dumps({"values": []}))
+    assert fg.detect_pr("feature/flow-x", state="merged") is None
+    (call,) = calls
+    path = _api_path(call)
+    assert "q=source.branch.name%20%3D%20%22feature%2Fflow-x%22" in path
+    assert "state%20%3D%20%22MERGED%22" in path
+    assert "state=MERGED&" not in path
+
+
+def test_detect_pr_rejects_wrong_state_item_from_filtered_listing():
+    # The client-side state check is the backstop for the param-ignored quirk: a
+    # listing that leaks an OPEN item into a merged probe must not become merged proof.
+    listing = {
+        "values": [
+            {
+                "id": 9,
+                "source": {"branch": {"name": "feature/flow-x"}},
+                "destination": {"branch": {"name": "main"}},
+                "state": "OPEN",
+            }
+        ]
+    }
+    fg, _ = _adapter(lambda _a: json.dumps(listing))
+    assert fg.detect_pr("feature/flow-x", state="merged") is None
 
 
 def test_detect_pr_selects_merged_state_and_emits_head_sha():
@@ -76,7 +107,7 @@ def test_detect_pr_selects_merged_state_and_emits_head_sha():
 
     assert pr is not None
     assert pr["head_sha"] == "merged-head"
-    assert any("pullrequests?state=MERGED" in _api_path(call) for call in calls)
+    assert any("state%20%3D%20%22MERGED%22" in _api_path(call) for call in calls)
 
 
 def test_source_url_is_commit_pinned_and_encodes_path():
@@ -116,7 +147,7 @@ def test_detect_pr_follows_pagination():
     pr = fg.detect_pr("feature/flow-x")
     assert pr is not None
     assert pr["id"] == "9"
-    assert len([c for c in calls if "pullrequests?state=OPEN" in _api_path(c)]) == 2
+    assert len([c for c in calls if "state%20%3D%20%22OPEN%22" in _api_path(c)]) == 2
 
 
 def test_detect_pr_no_match_stops_at_last_page():

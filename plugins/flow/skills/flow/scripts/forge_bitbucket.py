@@ -107,18 +107,30 @@ class BitbucketAdapter:
     # ─── PR mechanics ─────────────────────────────────────────────────────
 
     def detect_pr(self, branch: str, state: PR_STATE = "open") -> PullRequest | None:
-        # follow `next` like _fetch_all_comments: on a busy workspace the run's PR
-        # can sit past page 1, and a miss here breaks create_pr's resume idempotency.
+        # Server-side source-branch filter (`q=`): without it this walked EVERY PR in the
+        # repo client-side, and a branch with no merged PR meant exhausting all pages
+        # (3100+ PRs, ~2 min per probe witnessed 2026-08-03 when the finalize sweep made
+        # the merged-state probe routine).
+        # State lives INSIDE `q`, never as the `state=` URL param alongside it: Bitbucket
+        # ignores the param when `q` is present, and the live control that proved it
+        # returned an OPEN PR from a state=MERGED&q=<branch> probe, which finalize would
+        # have taken as merged proof. The client-side state and branch checks below stay:
+        # `q` is belt-and-braces, not trusted alone.
+        # Still follow `next` like _fetch_all_comments: even filtered, a same-named
+        # recreated branch can yield multiple PRs, and a miss here breaks create_pr's
+        # resume idempotency.
+        wanted_state = state.upper()
+        query = quote(f'source.branch.name = "{branch}" AND state = "{wanted_state}"', safe="")
         page = 1
         while True:
             data = self._api(
-                f"{self._base()}/pullrequests?state={state.upper()}&pagelen=50&page={page}",
+                f"{self._base()}/pullrequests?q={query}&pagelen=50&page={page}",
                 "bkt pr list",
             )
             data = data or {}
             for item in data.get("values") or []:
                 src = ((item.get("source") or {}).get("branch") or {}).get("name")
-                if src == branch:
+                if src == branch and str(item.get("state") or "").upper() == wanted_state:
                     return self._pr_from_api(item)
             if "next" not in data:
                 return None
