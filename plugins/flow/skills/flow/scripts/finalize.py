@@ -30,14 +30,20 @@ Finalize (each step best-effort once the probe passes; order mirrors the evolve-
 Idempotent: every step skips when its outcome already holds, so re-running converges and a
 finalized ticket exits 0 as a no-op.
 
+Sweep (`--all`): enumerate every managed worktree that carries a `.flow/runs/<key>` run dir and
+run the same per-key probe/close-out on each, isolating failures so one refused ticket never
+stops the rest. Worktrees without a run dir (a human's ad-hoc worktree) are never swept; they
+stay explicit-key-only. Exit 3 keys are normal sweep output ("still parked"), not failures.
+
 CLI:
-  finalize.py --workspace-root <root> --key <key> [--dry-run]
+  finalize.py --workspace-root <root> (--key <key> | --all) [--dry-run]
 
 Exit codes:
-  0 = finalized (or already finalized)
+  0 = finalized (or already finalized); for --all, sweep completed with no probe errors
   2 = workspace/config/probe error
-  3 = not merged yet (open PR or no PR; no writes)
-  4 = refused (invoked from the doomed worktree, live/corrupt lease, or head mismatch)
+  3 = not merged yet (open PR or no PR; no writes; single-key form only)
+  4 = refused (invoked from the doomed worktree, live/corrupt lease, or head mismatch;
+      single-key form only)
 """
 
 from __future__ import annotations
@@ -224,14 +230,88 @@ def finalize(
     return EXIT_OK, report
 
 
+def _sweep_candidates(workspace_root: Path) -> list[str]:
+    """Ticket keys of managed worktrees that carry a `.flow/runs/<key>` run dir.
+
+    Only run-carrying worktrees qualify: a worktree without one belongs to a human's
+    ad-hoc work and is finalized only by explicit key.
+    """
+    invoking = workspace_root.expanduser().resolve()
+    runner = _default_runner(invoking)
+    entries = _enumerate_worktrees(
+        _run(runner, ["git", "worktree", "list", "--porcelain"], "git worktree list")
+    )
+    if not entries or not entries[0].get("worktree"):
+        raise FinalizeError("git worktree list returned no primary checkout")
+    main_root = Path(str(entries[0]["worktree"])).expanduser().resolve()
+    keys: list[str] = []
+    for entry in entries[1:]:
+        raw_path, branch = entry.get("worktree"), entry.get("branch")
+        if not raw_path or not branch:
+            continue
+        path = Path(raw_path).expanduser().resolve()
+        if not _managed(path, main_root):
+            continue
+        try:
+            resolved = branch_ticket.resolve(main_root, path, branch=branch)
+        except Exception:
+            continue
+        if not resolved or not is_ticket_branch(branch, resolved):
+            continue
+        if not (path / ".flow" / "runs" / resolved).is_dir():
+            continue
+        if resolved not in keys:
+            keys.append(resolved)
+    return keys
+
+
+def finalize_all(workspace_root: Path, *, dry_run: bool = False) -> tuple[int, dict[str, Any]]:
+    """Run the single-key close-out over every sweep candidate, isolating failures."""
+    report: dict[str, Any] = {
+        "dry_run": dry_run,
+        "candidates": [],
+        "finalized": [],
+        "not_merged": [],
+        "refused": [],
+        "errors": [],
+        "per_key": {},
+    }
+    candidates = _sweep_candidates(workspace_root)
+    report["candidates"] = candidates
+    for key in candidates:
+        try:
+            code, key_report = finalize(workspace_root, key, dry_run=dry_run)
+        except FinalizeRefused as exc:
+            report["refused"].append(key)
+            report["per_key"][key] = {"refused": str(exc)}
+            continue
+        except FinalizeError as exc:
+            report["errors"].append(key)
+            report["per_key"][key] = {"error": str(exc)}
+            continue
+        report["per_key"][key] = key_report
+        if code == EXIT_NOT_MERGED:
+            report["not_merged"].append(key)
+        else:
+            report["finalized"].append(key)
+    return (EXIT_ERROR if report["errors"] else EXIT_OK), report
+
+
 def cli_main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description="Close out one merged delivery.")
     parser.add_argument("--workspace-root", required=True)
-    parser.add_argument("--key", required=True)
+    target = parser.add_mutually_exclusive_group(required=True)
+    target.add_argument("--key")
+    target.add_argument(
+        "--all", action="store_true", help="sweep every run-carrying managed worktree"
+    )
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args(argv)
     try:
-        code, report = finalize(Path(args.workspace_root), args.key, dry_run=bool(args.dry_run))
+        if args.all:
+            code, report = finalize_all(Path(args.workspace_root), dry_run=bool(args.dry_run))
+        else:
+            code, report = finalize(Path(args.workspace_root), args.key, dry_run=bool(args.dry_run))
     except FinalizeRefused as exc:
         print(json.dumps({"key": args.key, "refused": str(exc)}, indent=2))
         return EXIT_REFUSED
@@ -254,4 +334,5 @@ __all__ = [
     "FinalizeRefused",
     "cli_main",
     "finalize",
+    "finalize_all",
 ]

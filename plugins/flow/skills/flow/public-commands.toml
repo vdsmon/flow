@@ -95,15 +95,16 @@ arguments = [
 [[command]]
 id = "ticket.finalize"
 path = ["ticket", "finalize"]
-usage = "FLOW ticket finalize <ticket> [--dry-run]"
+usage = "FLOW ticket finalize (<ticket> | --all) [--dry-run]"
 summary = "Close out a merged delivery: ticket done, ship event frozen, branch and worktree reaped."
 effect = "write"
 workspace = "required"
 reference = "references/command-ticket.md"
 arguments = [
-  { name = "ticket", value_type = "ticket", cardinality = "one" },
+  { name = "ticket", value_type = "ticket", cardinality = "zero_or_one" },
 ]
 options = [
+  { name = "--all", value_type = "boolean", cardinality = "zero_or_one" },
   { name = "--dry-run", value_type = "boolean", cardinality = "zero_or_one" },
 ]
 

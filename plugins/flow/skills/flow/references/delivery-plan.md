@@ -14,8 +14,19 @@ Keep `owner` for real resource ownership such as leases, repositories, branches,
 
 ## 1. Ground the work
 
-Planning's first act mutates the ticket: transition it to `in_progress` in the tracker backend
-(Atlassian MCP first when available; REST fallback):
+Before touching the new ticket, close out what already merged: run the finalize sweep once
+from the primary checkout. Merged deliveries have been witnessed parking for days with open
+claims, live worktrees, and no frozen ship event, because close-out waited on a human typing
+"merged" into the right session; the sweep makes every fresh start heal them instead. It
+writes only behind merged-PR proof, reports still-parked tickets without touching them, and
+one line of its report (`finalized: [...]`) is worth relaying to the human:
+
+```bash
+FLOW_HARNESS="<harness>" "<facade>" finalize --workspace-root . --all
+```
+
+Planning's first act on the ticket itself then mutates it: transition it to `in_progress` in
+the tracker backend (Atlassian MCP first when available; REST fallback):
 
 ```bash
 FLOW_HARNESS="<harness>" "<facade>" tracker \
