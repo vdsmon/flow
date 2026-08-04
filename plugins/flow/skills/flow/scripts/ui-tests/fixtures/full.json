@@ -1,10 +1,8 @@
 {
-  "schema_version": 1,
   "mode": "full",
   "title": "Cleanup that cannot escape its workspace",
   "outcome": "The invoking workspace is now the hard boundary for cleanup.",
   "risk": "high",
-  "change_shape": "Cross-cutting safety change",
   "motivation": {
     "observed_problem": "Cleanup could derive scope from unrelated maintainer state.",
     "why_it_matters": "A destructive candidate set could include another repository."
@@ -14,27 +12,62 @@
       "name": "An operator starts from workspace A",
       "before_label": "scope could drift",
       "after_label": "scope is derived once",
-      "before_steps": ["Invoke in A", "Read global state", "Select worktree in B"],
-      "after_steps": ["Invoke in A", "Resolve A", "Reject worktree in B"]
+      "before_steps": [
+        "Invoke in A",
+        "Read global state",
+        "Select worktree in B"
+      ],
+      "after_steps": [
+        "Invoke in A",
+        "Resolve A",
+        "Reject worktree in B"
+      ]
     }
   ],
   "system_map": {
     "caption": "One boundary now feeds discovery and deletion.",
     "nodes": [
-      {"id": "workspace", "label": "Invoking workspace boundary", "kind": "Boundary", "changed": true},
-      {"id": "discover", "label": "Candidate discovery and safety filtering", "kind": "Filter", "changed": true},
-      {"id": "reap", "label": "Validated worktree cleanup action", "kind": "Action", "changed": false}
+      {
+        "id": "workspace",
+        "label": "Invoking workspace boundary",
+        "kind": "Boundary",
+        "changed": true
+      },
+      {
+        "id": "discover",
+        "label": "Candidate discovery and safety filtering",
+        "kind": "Filter",
+        "changed": true
+      },
+      {
+        "id": "reap",
+        "label": "Validated worktree cleanup action",
+        "kind": "Action",
+        "changed": false
+      }
     ],
     "edges": [
-      {"from": "workspace", "to": "discover"},
-      {"from": "discover", "to": "reap"}
+      {
+        "from": "workspace",
+        "to": "discover"
+      },
+      {
+        "from": "discover",
+        "to": "reap"
+      }
     ]
   },
   "decisions": [
-    {"title": "Resolve once", "body": "Pass the boundary into downstream mechanics."}
+    {
+      "title": "Resolve once",
+      "body": "Pass the boundary into downstream mechanics."
+    }
   ],
   "invariants": [
-    {"title": "Scope is stable", "body": "Discovery and action share one identity."}
+    {
+      "title": "Scope is stable",
+      "body": "Discovery and action share one identity."
+    }
   ],
   "code_evidence": [
     {
@@ -46,8 +79,10 @@
     }
   ],
   "verification": [
-    {"claim": "Scope scenarios pass", "evidence": "12 targeted tests passed.", "status": "passed"}
-  ],
-  "limitations": ["The Forge remains the source of truth for the full diff."],
-  "reviewer_prompts": ["Does every destructive path receive the same scope?"]
+    {
+      "claim": "Scope scenarios pass",
+      "evidence": "12 targeted tests passed.",
+      "status": "passed"
+    }
+  ]
 }

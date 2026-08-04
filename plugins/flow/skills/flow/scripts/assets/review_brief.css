@@ -327,8 +327,6 @@ h1 {
 .check b { display: block; margin-bottom: 4px; font-size: 16px; }
 .check p { margin: 0; color: var(--muted); font-size: 16px; line-height: 1.45; }
 
-.plain-list { margin: 0; padding: 18px 20px 18px 38px; }
-.plain-list li { margin: 7px 0; color: #4b5057; font-size: 16px; line-height: 1.55; }
 .prompt-list { counter-reset: prompt; display: grid; gap: 9px; padding: 0; list-style: none; }
 .prompt-list li { display: grid; grid-template-columns: 29px minmax(0, 1fr); gap: 10px; align-items: center; padding: 14px 16px; font-size: 16px; }
 .prompt-list li::before { counter-increment: prompt; display: grid; width: 27px; height: 27px; place-items: center; border-radius: 6px; color: var(--accent-ink); background: var(--accent-soft); font: 700 13px / 1 var(--font-mono); content: counter(prompt); }
@@ -357,7 +355,7 @@ h1 {
   }
 
   .shell { border-color: #262b32; box-shadow: none; }
-  .deck, .plain-list li { color: #c3c8ce; }
+  .deck { color: #c3c8ce; }
   .rail { background: rgb(23 26 31 / 65%); }
   .num { color: #c6cbd1; background: #2a2e35; }
   .pill { background: #1a1d23; }
