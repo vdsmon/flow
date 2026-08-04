@@ -80,7 +80,7 @@ class Lease:
     pid: int = 0  # informational only; never used for liveness gating
     session_id: str = ""  # informational; the owning Claude session UUID
     session_pid: int = 0  # informational; nearest claude-comm ancestor pid
-    session_nonce: str = ""  # per-acquire; "" only for a pre-upgrade lease
+    session_nonce: str = ""  # per-acquire
 
 
 class LeaseError(Exception):
@@ -396,9 +396,9 @@ def refresh(
 
     The nonce is checked both-non-empty (mirrors the boot_id rule): a rotated
     on-disk nonce against our carried one means a force/takeover happened and we
-    lost the lease. An empty nonce on either side (a pre-upgrade lease, or a
-    caller that lost its nonce across a compaction) falls back to run_id-only.
-    The on-disk nonce is preserved across the refresh.
+    lost the lease. An empty nonce on either side (a caller that lost its nonce
+    across a compaction) falls back to run_id-only. The on-disk nonce is
+    preserved across the refresh.
 
     Raises:
         LeaseLost, LeaseError
