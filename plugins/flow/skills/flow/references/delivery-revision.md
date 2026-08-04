@@ -34,9 +34,9 @@ checkout for revision edits.
 
 In attended mode, fetch unresolved review threads through the forge seam and present
 one disposition set: fix now, defer, or dismiss, with reasons. Persist the whole set
-atomically under the revision directory. If the interactive board capability is
-unavailable, fall back to the stage protocol's severity floor and say why. A board
-failure never changes which PR is being updated. The complete board mechanics and
+atomically under the revision directory. If no disposition set is produced, fall
+back to the stage protocol's severity floor and say why. A missing disposition set
+never changes which PR is being updated. The complete board mechanics and
 artifact schema live in `references/revision-triage-board.md`.
 
 ## Execute

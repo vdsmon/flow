@@ -239,8 +239,8 @@ The renderer atomically publishes under the full SHA:
 The HTML is a single local file with inline CSS, system fonts, no JavaScript, no
 runtime network dependency, restrictive CSP, responsive/print layouts, server-side
 highlighting, an inline SVG system map, exact Forge source links, and the full Forge
-diff link. It is an ephemeral run artifact: no server, package install, durable host,
-or Lavish session is involved.
+diff link. It is an ephemeral run artifact: no server, package install, or durable
+host is involved.
 
 Topic sections are collapsible without JavaScript (native `details`). A full brief
 starts with every topic folded so the reader lands on the title, outcome, and
