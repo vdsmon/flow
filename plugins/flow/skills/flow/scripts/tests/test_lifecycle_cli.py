@@ -58,6 +58,31 @@ def test_reduce_rejects_relative_malformed_or_non_normalized_evidence(
     assert json.loads(capsys.readouterr().err)["error"]["code"] == "invalid_evidence"
 
 
+def test_missing_field_error_names_the_full_required_set(tmp_path: Path, capsys) -> None:
+    partial = _fresh()
+    del partial["lease_state"]
+    path = _write(tmp_path / "partial.json", partial)
+
+    assert lifecycle_cli.cli_main(["reduce", "--evidence", str(path)]) == 2
+    message = json.loads(capsys.readouterr().err)["error"]["message"]
+    assert "missing evidence field: lease_state" in message
+    for field in ("lease_state", "pr_state", "run_state", "target_exists", "ticket_state"):
+        assert field in message
+    assert "command-target.md" in message
+
+
+def test_unknown_field_error_names_required_and_optional_sets(tmp_path: Path, capsys) -> None:
+    payload = _fresh()
+    payload["lease"] = "free"
+    path = _write(tmp_path / "unknown.json", payload)
+
+    assert lifecycle_cli.cli_main(["reduce", "--evidence", str(path)]) == 2
+    message = json.loads(capsys.readouterr().err)["error"]["message"]
+    assert "unknown evidence field: lease" in message
+    assert "optional" in message
+    assert "contradictions" in message
+
+
 def test_reduce_rejects_invalid_request_as_structured_error(tmp_path: Path, capsys) -> None:
     payload = _fresh()
     payload.update(run_state="healthy", request=True, scope_approved=True)

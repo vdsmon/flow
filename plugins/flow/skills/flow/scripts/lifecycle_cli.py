@@ -86,10 +86,18 @@ def _boolean(payload: dict[str, object], name: str, default: bool = False) -> bo
 def _evidence(payload: dict[str, object]) -> LifecycleEvidence:
     missing = _REQUIRED - payload.keys()
     if missing:
-        raise EvidenceError(f"missing evidence field: {sorted(missing)[0]}")
+        raise EvidenceError(
+            f"missing evidence field: {sorted(missing)[0]} "
+            f"(all of these are required: {', '.join(sorted(_REQUIRED))}; "
+            "the shape is documented at command-target.md section Read-only evidence probe)"
+        )
     unknown = payload.keys() - (_REQUIRED | _OPTIONAL)
     if unknown:
-        raise EvidenceError(f"unknown evidence field: {sorted(unknown)[0]}")
+        raise EvidenceError(
+            f"unknown evidence field: {sorted(unknown)[0]} "
+            f"(required: {', '.join(sorted(_REQUIRED))}; "
+            f"optional: {', '.join(sorted(_OPTIONAL))})"
+        )
     contradictions = payload.get("contradictions", [])
     if not isinstance(contradictions, list) or not all(
         isinstance(item, str) for item in contradictions
