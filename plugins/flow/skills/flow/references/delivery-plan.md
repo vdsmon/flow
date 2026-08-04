@@ -59,6 +59,14 @@ re-captured e2e baseline for it; the markers had recorded the collision before e
 worktree existed. This is a filesystem stat, not a tracker call, and silence (no fresh
 marker, or obviously unrelated work) means no mention.
 
+When the workspace configures a credential preflight (`[preflight] credential_check` in workspace.toml), run it now, while the human is attending:
+
+```bash
+FLOW_HARNESS="<harness>" "<facade>" preflight check --workspace-root .
+```
+
+`status: unconfigured` is silence and costs nothing. The configured command should be a check-then-login wrapper (brinta's `mise sso` verifies in about a second while the session is valid and opens the interactive login only on expiry), which is exactly why it runs here and never after the gate: the human completes the browser round-trip in seconds while present, where a stage agent discovering the same expiry mid-run can only stop and wait. A failed or timed-out check is reported to the human and never blocks planning by itself.
+
 The driver reads the ticket, relevant repository files, and directly applicable project
 instructions. Fetch the default branch and record its SHA. Resolve factual questions read-only.
 When the data already in hand shows a coupled small sibling, the fetched ticket's own links or a ready-ticket list a recall pass already loaded, say so to the human in one line before the gate ("FT-xxxx looks coupled and small; group it?"); never make an extra tracker call to go looking, and no sibling in hand means no mention. Grouping stays the human's call because it changes run identity and review shape.
