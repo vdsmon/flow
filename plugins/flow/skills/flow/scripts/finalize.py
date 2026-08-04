@@ -54,6 +54,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import _runner
 import branch_ticket
 import observe_at_close
 from _runner import CwdRunner as Runner
@@ -86,11 +87,7 @@ class FinalizeRefused(Exception):
 
 
 def _run(runner: Runner, args: list[str], what: str) -> str:
-    result = runner(args)
-    if result.returncode != 0:
-        detail = (result.stderr or result.stdout or "unknown error").strip()
-        raise FinalizeError(f"{what} failed: {detail}")
-    return result.stdout.strip()
+    return _runner.checked(runner(args), what, FinalizeError, strip=True)
 
 
 def _locate_worktree(

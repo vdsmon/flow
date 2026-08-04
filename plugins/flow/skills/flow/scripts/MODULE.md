@@ -172,7 +172,7 @@ The highest-fan-in modules in the flat dir: a signature change here ripples thro
 | Script | Role |
 |--------|------|
 | `_timeutil.py` | UTC ISO8601 parse + format; `utcnow_iso`/`utcnow_iso_ms`/`iso_z` emitters + the colon-free `ts_token` quarantine-filename stamp. |
-| `_runner.py` | Subprocess-runner factories: positional-cwd `Runner`/`default_runner`, keyword-only `KwRunner`/`kw_default_runner`, cwd-bound `CwdRunner`/`cwd_default_runner`; each consumer picks the one flavor its call style needs. |
+| `_runner.py` | Subprocess-runner factories (positional-cwd, keyword-only, cwd-bound) plus the shared result handling every runner caller repeats: `checked` (raise-typed-error-or-return-stdout), `git_text` (one git call, optional `core.quotePath=false`), `gitignored` (check-ignore, whose exit 1 is a clean no). |
 | `_workspace.py` | workspace.toml load + `plugin_version` manifest self-read. |
 | `_locking.py` | Flock retry is the substrate under the lease, state, and memory writers. |
 | `_atomicio.py` | Atomic temp-write + fsync + `os.replace` + parent-dir fsync (the rename itself is crash-durable). |
@@ -246,7 +246,7 @@ markers are overwritten. `—` = none.
 | `_registry.py` | — | `dispatch_stage`, `init`, `lint_ticket`, `model_resolve`, `seam_check`, `validate_workspace` |
 | `_runner.py` | — | `branch_ticket`, `create_pr`, `diff_extract`, `finalize`, `flow_beads_create`, `flow_worktree`, `forge_bitbucket`, `forge_github`, `friction_escalate`, `init`, `recall_pending`, `review_brief`, `scrutinize_seat`, `tracker_beads`, `version`, `worktree_janitor` |
 | `_timeutil.py` | — | `dispatch_stage`, `flow_friction`, `flow_worktree`, `init`, `lease`, `memory_append`, `memory_embed`, `metric`, `observe_at_close`, `observe_ship_event`, `recall`, `recall_pending`, `recall_usage`, `recover`, `scrutinize_seat`, `state`, `status`, `sweep_knowledge`, `ticket_frontmatter`, `tracker_cli`, `worktree_janitor` |
-| `_workspace.py` | — | `branch_ticket`, `create_pr`, `flow_friction`, `flow_worktree`, `forge`, `friction_escalate`, `maintainer`, `metric`, `model_resolve`, `observe_ship_event`, `preflight`, `recover`, `reflect_inputs`, `revise_config`, `scrutinize_seat`, `snapshot`, `status`, `tracker_cli`, `triage` |
+| `_workspace.py` | — | `_memory_paths`, `branch_ticket`, `create_pr`, `flow_friction`, `flow_worktree`, `forge`, `friction_escalate`, `machinery_edit`, `maintainer`, `metric`, `model_resolve`, `observe_ship_event`, `preflight`, `recover`, `reflect_inputs`, `revise_config`, `scrutinize_seat`, `snapshot`, `status`, `tracker_cli`, `triage` |
 | `branch_ticket.py` | — | `finalize`, `worktree_janitor` |
 | `cockpit.py` | — | `cockpit_cli` |
 | `cockpit_cli.py` | `render` | — |

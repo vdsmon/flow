@@ -40,6 +40,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal, Protocol, cast
 
+import _runner
 import ticket_frontmatter
 import validate_workspace
 from _atomicio import atomic_write_text
@@ -632,10 +633,7 @@ def _infer_locale(content: Mapping[str, Any]) -> Literal["en", "pt-BR"]:
 
 
 def _ok(result: subprocess.CompletedProcess[str], what: str) -> str:
-    if result.returncode != 0:
-        detail = (result.stderr or result.stdout or "unknown error").strip()
-        raise ReviewBriefError(f"{what} failed: {detail}")
-    return result.stdout or ""
+    return _runner.checked(result, what, ReviewBriefError)
 
 
 def _resolve_forge(workspace_root: Path) -> Forge:

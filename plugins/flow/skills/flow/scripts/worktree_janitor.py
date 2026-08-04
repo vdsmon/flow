@@ -19,6 +19,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import _runner
 import branch_ticket
 import lease
 import observe_at_close
@@ -55,11 +56,7 @@ class _JanitorError(Exception):
 
 
 def _run(runner: Runner, args: list[str], what: str) -> str:
-    result = runner(args)
-    if result.returncode != 0:
-        detail = (result.stderr or result.stdout or "unknown error").strip()
-        raise _JanitorError(f"{what} failed: {detail}")
-    return result.stdout.strip()
+    return _runner.checked(runner(args), what, _JanitorError, strip=True)
 
 
 def _enumerate_worktrees(porcelain: str) -> list[dict[str, str | None]]:

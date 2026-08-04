@@ -30,6 +30,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import _runner
 from _runner import CwdRunner as Runner
 from _runner import cwd_default_runner as _default_runner
 
@@ -63,9 +64,7 @@ class ToolError(Exception):
 
 
 def _ok(result, what: str) -> str:
-    if result.returncode != 0:
-        raise ToolError(f"{what} failed: {result.stderr.strip()}")
-    return result.stdout or ""
+    return _runner.checked(result, what, ToolError, stderr_only=True)
 
 
 def bump_patch(version: str) -> str:

@@ -37,13 +37,15 @@ import subprocess
 import sys
 from pathlib import Path
 
+import _runner
+import _workspace
 import pr_body
 from _runner import CwdRunner as Runner
 from _runner import cwd_default_runner as _default_runner
 from _workspace import WorkspaceConfigError, load_workspace_toml
 from forge import Forge, ForgeError, NotSupported, make_forge, read_forge_config
 
-_PROTECTED = {"main", "master", "dev", "develop"}
+_PROTECTED = _workspace.PROTECTED_BRANCHES
 
 
 def _draft_config(workspace_root: Path) -> bool:
@@ -81,9 +83,7 @@ class RefusedBranch(Exception):
 
 
 def _ok(result: subprocess.CompletedProcess[str], what: str) -> str:
-    if result.returncode != 0:
-        raise ToolError(f"{what} failed: {result.stderr.strip()}")
-    return result.stdout or ""
+    return _runner.checked(result, what, ToolError, stderr_only=True)
 
 
 def _compose_body(raw: str, subject: str, body_file: Path, *, flatten: bool = False) -> str:

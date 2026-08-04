@@ -53,3 +53,9 @@ def plugin_version() -> str:
 
 
 __all__ = ["WorkspaceConfigError", "load_workspace_toml", "plugin_version", "workspace_toml_path"]
+
+
+# The integration branches no run may push to or edit from. snapshot.py keeps its
+# own copy inside the TOCTOU guard file by design; every non-guard consumer reads
+# this one.
+PROTECTED_BRANCHES = frozenset({"main", "master", "dev", "develop"})
