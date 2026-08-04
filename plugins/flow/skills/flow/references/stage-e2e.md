@@ -58,7 +58,15 @@ Your job is to run it exactly, not to reinterpret it.
    without running them a third time. If the ticket has no runnable behavior at
    all, the plan must use `skip: <reason>` instead.
 
-3. Execute the recipe exactly as written. Run its env-prep first (the recipe
+3. When the workspace configures `[preflight] credential_probe` (workspace.toml), run the silent credential probe before anything else in this step:
+
+   ```bash
+   FLOW_HARNESS="<harness>" "<facade>" preflight probe --workspace-root .
+   ```
+
+   Exit 0 (`ok` or `unconfigured`) continues. Exit 2 means the credential is expired or unusable: stop the stage and report the blocker, and log it as friction; never launch an interactive login from this stage (an unattended run hangs in it, and an attended one pays the wait at the worst point). The human refreshes through the attended plan-time check and resumes.
+
+   Then execute the recipe exactly as written. Run its env-prep first (the recipe
    spells out any auth refresh, container/service bring-up, or resource tuning
    it needs), then the command, against the fixture it names.
    If an env-prep step needs credentials that have expired, run the refresh

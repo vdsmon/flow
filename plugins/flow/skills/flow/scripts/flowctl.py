@@ -38,6 +38,7 @@ COMMANDS = {
     "metric": "metric.py",
     "model": "model_resolve.py",
     "observe-ship-event": "observe_ship_event.py",
+    "preflight": "preflight.py",
     "recall": "recall.py",
     "recall-usage": "recall_usage.py",
     "recover": "recover.py",
