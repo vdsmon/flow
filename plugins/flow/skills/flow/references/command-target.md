@@ -93,6 +93,26 @@ JSON file and invoke the shared reducer:
 FLOW_HARNESS="<harness>" "<facade>" lifecycle reduce --evidence "<absolute-evidence-file>"
 ```
 
+The evidence file has exactly this shape, and all five state fields are required even when a field feels moot for the target at hand (a fresh ticket with no worktree still says `"lease_state": "free"`; omitting any of the five fails the whole reduce with `invalid_evidence`, witnessed across several 2026-08-04 runs). The booleans and `contradictions` are optional and default to false and empty; unknown keys are rejected:
+
+```json
+{
+  "target_exists": true,
+  "ticket_state": "open",
+  "run_state": "none",
+  "lease_state": "free",
+  "pr_state": "none",
+  "request": false,
+  "scope_approved": false,
+  "stored_question": false,
+  "actionable_feedback": false,
+  "ship_event_corrupt": false,
+  "contradictions": []
+}
+```
+
+Allowed values: `ticket_state` open|deferred|blocked|done|cancelled; `run_state` none|healthy|failed|stale|drifted|corrupt|completed; `lease_state` free|owned|live_foreign|stale_foreign; `pr_state` none|open|merged|closed.
+
 Delete the temporary file after parsing the compact result. The reducer returns one
 of the actions below. Use that result exactly; do not add a prose-only priority rule
 around it.
