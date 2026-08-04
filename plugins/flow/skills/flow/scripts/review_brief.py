@@ -1116,18 +1116,6 @@ def _render_verification(
     )
 
 
-def _render_list_section(
-    section_id: str, heading: str, items: Sequence[str], *, unfolded: bool
-) -> str:
-    if not items:
-        return ""
-    rows = "".join(f"<li>{_e(item)}</li>" for item in items)
-    head = f'<div class="section-head"><h2>{_e(heading)}</h2></div>'
-    return _section(
-        section_id, head, f'<ul class="plain-list panel">{rows}</ul>', unfolded=unfolded
-    )
-
-
 def _navigation(content: Mapping[str, Any], copy: Mapping[str, str]) -> list[tuple[str, str]]:
     links: list[tuple[str, str]] = [("why", copy["why_nav"])]
     optional = [
