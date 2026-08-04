@@ -169,14 +169,10 @@ def test_install_uses_atomic_replacement_for_both_files(tmp_path: Path, monkeypa
     ]
 
 
-@pytest.mark.parametrize("harness", [None, "claude-code"])
 def test_stabilize_skill_dir_rewrites_claude_cache_to_marketplace(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, harness: str | None
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    if harness is None:
-        monkeypatch.delenv("FLOW_HARNESS", raising=False)
-    else:
-        monkeypatch.setenv("FLOW_HARNESS", harness)
+    monkeypatch.setenv("FLOW_HARNESS", "claude-code")
     marketplace = tmp_path / "plugins" / "marketplaces" / "vdsmon-flow"
     (marketplace / ".claude-plugin").mkdir(parents=True)
     (marketplace / ".claude-plugin" / "marketplace.json").write_text(
@@ -300,7 +296,6 @@ def test_executing_skill_dir_ignores_stale_ambient_install(
     ambient = _fixture_skill(tmp_path / "ambient", "")
     monkeypatch.setattr(flow_launcher, "SKILL_ROOT", executing)
     monkeypatch.setenv("FLOW_SKILL_DIR", str(ambient))
-    monkeypatch.setenv("CLAUDE_SKILL_DIR", str(ambient))
 
     assert flow_launcher.executing_skill_dir() == executing.resolve()
 
@@ -313,7 +308,6 @@ def test_shim_invoked_outside_repo_observes_workspace_and_arguments(tmp_path: Pa
 payload = {
     "cwd": os.getcwd(),
     "flow_skill": os.environ["FLOW_SKILL_DIR"],
-    "claude_skill": os.environ["CLAUDE_SKILL_DIR"],
     "args": sys.argv[1:],
 }
 print(json.dumps(payload))
@@ -334,7 +328,6 @@ print(json.dumps(payload))
     assert observed == {
         "cwd": str(root.resolve()),
         "flow_skill": str(skill.resolve()),
-        "claude_skill": str(skill.resolve()),
         "args": ["hello world", "--json"],
     }
 
@@ -472,7 +465,7 @@ def test_launcher_cli_repairs_legacy_workspace_from_executing_install(
     executing = _fixture_skill(tmp_path / "executing", "")
     ambient = _fixture_skill(tmp_path / "ambient", "")
     monkeypatch.setattr(flow_launcher, "SKILL_ROOT", executing)
-    monkeypatch.setenv("CLAUDE_SKILL_DIR", str(ambient))
+    monkeypatch.setenv("FLOW_SKILL_DIR", str(ambient))
 
     assert flow_launcher.cli_main(["--workspace-root", str(root)]) == 0
     assert (root / ".flow" / "runtime" / "skill-root").read_text(encoding="utf-8") == (

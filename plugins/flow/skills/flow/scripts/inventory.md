@@ -129,8 +129,8 @@ Status normalization to `TransitionFailureKind` happens in `_classify_transition
 Regex patterns for 400-body signal detection:
 
 ```python
-_RE_WRONG_SOURCE  = re.compile(r"(?i)\btransition\b.*\b(not valid|invalid|cannot be applied)\b")
-_RE_VALIDATOR     = re.compile(r"(?i)\bvalidat(or|ion)\b.*\b(fail|error|reject)\b")
+_RE_WRONG_SOURCE = re.compile(r"(?i)\btransition\b.*\b(not valid|invalid|cannot be applied)\b")
+_RE_VALIDATOR = re.compile(r"(?i)\bvalidat(or|ion)\b.*\b(fail|error|reject)\b")
 _RE_REQUIRED_HINT = re.compile(r"(?i)\b(required|must be)\b")
 ```
 

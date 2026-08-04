@@ -265,7 +265,7 @@ def _ensure_flow_config(main_root: Path, worktree: Path, shared_memory: Path) ->
     `shared_memory` (main's resolved `.flow/memory` base, or the corresponding
     configured external base) through `.flow/runtime/memory-root`.
 
-    The redirect lives in the sibling, NOT in workspace.toml: the tracked
+    The redirect lives in the runtime pointer, NOT in workspace.toml: the tracked
     workspace.toml stays byte-identical to main's copy so a per-machine absolute
     path can never ride into a commit."""
     wt_flow = worktree / ".flow"
@@ -410,9 +410,7 @@ def _worktree_path(main_root: Path, branch: str, override: str | None) -> Path:
     enters any worktree OUTSIDE `<repo>/.claude/worktrees/`, and the confirmation
     is not permission-mediated (no allow rule or headless bypass exists), so an
     unattended run seeded anywhere else blocks forever at the spec->do
-    transition. Read sites glob both this base and the legacy
-    `.flow/worktrees/` so pre-relocation
-    worktrees stay discoverable until reaped.
+    transition.
     """
     if override:
         return Path(override).expanduser().resolve()
@@ -449,15 +447,9 @@ def _parse_worktree_list(porcelain: str) -> list[tuple[str, str | None]]:
 
 
 def is_ticket_branch(short_branch: str, ticket: str) -> bool:
-    """True when `short_branch` is this ticket's feature branch (exact or slugged).
-
-    Accepts both the current `feat/` prefix and the legacy `feature/` so worktrees
-    created before the rename still resolve.
-    """
-    return any(
-        short_branch == f"{p}{ticket}" or short_branch.startswith(f"{p}{ticket}-")
-        for p in ("feat/", "feature/")
-    )
+    """True when `short_branch` is this ticket's feature branch (exact or slugged)."""
+    prefix = f"feat/{ticket}"
+    return short_branch == prefix or short_branch.startswith(prefix + "-")
 
 
 def _ticket_siblings(ticket: str, main_root: Path, runner: Runner) -> list[tuple[Path, str]]:
@@ -564,7 +556,7 @@ def _checkpoint_dirty_worktree(ticket: str, worktree: Path, run: Runner) -> dict
     path (`.env` et al., also not gitignored in this repo). Without the exclude, a clean
     merged-orphan worktree would misfire as dirty (`.flow/tickets/<key>.md` always differs slightly
     from main's copy), and a dirty one could push a bootstrap-copied `.env` secret to a PUBLIC
-    `flow-rescue/*` ref. `flow-rescue/*` is deliberately outside the `feat/`/`feature/`
+    `flow-rescue/*` ref. `flow-rescue/*` is deliberately outside the `feat/`
     ticket-branch namespace (`is_ticket_branch` and every in-flight matcher miss it),
     so it can never mark the ticket in-flight or block a fresh relaunch.
 

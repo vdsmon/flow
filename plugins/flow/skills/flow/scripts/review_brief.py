@@ -47,7 +47,6 @@ from _runner import CwdRunner as Runner
 from _runner import cwd_default_runner
 from forge import Forge, ForgeError, PullRequest, make_forge, read_forge_config
 
-RENDERER_VERSION = 1
 CANONICAL_UNATTENDED_SKIP_REASON = "unattended run has no live human reviewer"
 _ASSET = Path(__file__).resolve().parent / "assets" / "review_brief.css"
 _SHA_RE = re.compile(r"^[0-9a-fA-F]{7,64}$")
@@ -261,7 +260,6 @@ class Receipt:
     content_path: str
     opened: bool
     warnings: list[str]
-    renderer_version: int = RENDERER_VERSION
 
 
 @dataclass(frozen=True)

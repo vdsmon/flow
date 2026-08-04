@@ -41,64 +41,39 @@ def resolve_namespace(workspace_root: Path) -> str:
 def resolve_memory_base(workspace_root: Path) -> Path:
     """Resolve the directory whose direct children are memory namespaces.
 
-    Resolution order, most specific first:
-      1. Layout v2's `.flow/runtime/memory-root`, which points at a dedicated
-         memory base such as the main checkout's `.flow/memory`.
-      2. For an unstamped v1 workspace, `.flow/memory-root`.
-      3. For an unstamped v1 workspace, `[memory].root`.
-      4. The v1 workspace-local `.flow` fallback.
-
-    Keeping the final three branches until the migration gate runs lets every
-    reader see legacy data before it is atomically moved. Newly initialized and
-    migrated workspaces are stamped v2 and never consult those paths.
+    Layout v2's `.flow/runtime/memory-root` is the only source: it points at a
+    dedicated memory base such as the main checkout's `.flow/memory`. An
+    unstamped or unreadable layout fails closed.
     """
     runtime = workspace_root / ".flow" / "runtime"
     try:
         version = (runtime / "layout-version").read_text(encoding="utf-8").strip()
     except (OSError, UnicodeError):
         version = ""
-    if version == "2":
-        try:
-            text = (runtime / "memory-root").read_text(encoding="utf-8").strip("\r\n")
-        except (OSError, UnicodeError) as exc:
-            raise _MemoryConfigError(
-                f"cannot read layout-v2 memory root at {runtime / 'memory-root'}: {exc}"
-            ) from exc
-        if text == _LOCAL_V2_MEMORY_ROOT:
-            selected = workspace_root / ".flow" / "memory"
-        else:
-            selected = Path(text).expanduser()
-        if not text or (text != _LOCAL_V2_MEMORY_ROOT and not selected.is_absolute()):
-            raise _MemoryConfigError(
-                f"layout-v2 memory root must be {_LOCAL_V2_MEMORY_ROOT!r} or an absolute path"
-            )
-        if not selected.is_dir():
-            raise _MemoryConfigError(
-                f"layout-v2 memory root is missing or not a directory: {selected}; "
-                "refusing to create a replacement that could hide existing memory"
-            )
-        return selected
-
-    sibling = workspace_root / ".flow" / "memory-root"
+    if version != "2":
+        raise _MemoryConfigError(
+            f"workspace at {workspace_root} carries no layout-v2 stamp; run Flow workspace setup"
+        )
     try:
-        text = sibling.read_text(encoding="utf-8").strip()
-    except OSError:
-        text = ""
-    if text:
-        return Path(text).expanduser()
-
-    path = workspace_root / ".flow" / "workspace.toml"
-    if path.exists():
-        try:
-            data = tomllib.loads(path.read_text(encoding="utf-8"))
-        except tomllib.TOMLDecodeError:
-            data = {}
-        memory = data.get("memory")
-        if isinstance(memory, dict):
-            root = memory.get("root")
-            if isinstance(root, str) and root:
-                return Path(root).expanduser()
-    return workspace_root / ".flow"
+        text = (runtime / "memory-root").read_text(encoding="utf-8").strip("\r\n")
+    except (OSError, UnicodeError) as exc:
+        raise _MemoryConfigError(
+            f"cannot read layout-v2 memory root at {runtime / 'memory-root'}: {exc}"
+        ) from exc
+    if text == _LOCAL_V2_MEMORY_ROOT:
+        selected = workspace_root / ".flow" / "memory"
+    else:
+        selected = Path(text).expanduser()
+    if not text or (text != _LOCAL_V2_MEMORY_ROOT and not selected.is_absolute()):
+        raise _MemoryConfigError(
+            f"layout-v2 memory root must be {_LOCAL_V2_MEMORY_ROOT!r} or an absolute path"
+        )
+    if not selected.is_dir():
+        raise _MemoryConfigError(
+            f"layout-v2 memory root is missing or not a directory: {selected}; "
+            "refusing to create a replacement that could hide existing memory"
+        )
+    return selected
 
 
 def namespace_root(workspace_root: Path, namespace: str) -> Path:

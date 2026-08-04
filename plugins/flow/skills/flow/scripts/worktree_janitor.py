@@ -1,7 +1,7 @@
 """List or reap stale Flow worktrees owned by the invoking repository.
 
 The janitor recognizes registered worktrees only under the primary checkout's `.claude/worktrees`
-and legacy `.flow/worktrees` directories. It resolves ticket, tracker, and forge evidence through
+directory. It resolves ticket, tracker, and forge evidence through
 their normalized seams and preserves a worktree whenever a probe is unavailable or inconclusive.
 
 Every removal goes through `flow_worktree.reap_worktree`, which repeats the branch ownership check,
@@ -133,10 +133,7 @@ def _confirmation_id(path: Path, branch: str, tip: str) -> str:
 
 
 def _managed(path: Path, main_root: Path) -> bool:
-    return any(
-        path.is_relative_to(base)
-        for base in (main_root / ".claude" / "worktrees", main_root / ".flow" / "worktrees")
-    )
+    return path.is_relative_to(main_root / ".claude" / "worktrees")
 
 
 def _candidate_lease_blocker(path: Path, key: str) -> tuple[str, Path] | None:

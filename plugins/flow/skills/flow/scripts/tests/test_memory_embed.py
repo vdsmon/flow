@@ -180,6 +180,7 @@ def test_reindex_empty_corpus(tmp_path: Path, stub_cmd: str) -> None:
 
 
 def test_load_index_absent_returns_empty(tmp_path: Path) -> None:
+    make_workspace(tmp_path, tracker("jira", subtable=False), memory("demo"))
     header, vectors = memory_embed.load_index(tmp_path, "demo")
     assert header == {}
     assert vectors == {}

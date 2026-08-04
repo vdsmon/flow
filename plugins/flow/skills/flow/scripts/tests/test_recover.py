@@ -16,6 +16,7 @@ import flow_friction
 import lease
 import recover
 import state
+from tests import wsfactory
 
 
 def _now() -> str:
@@ -36,6 +37,7 @@ def _identity() -> tuple[str, str]:
 def _ws(root: Path, stages: tuple[str, ...] = ("ticket", "plan")) -> Path:
     flow = root / ".flow"
     flow.mkdir()
+    wsfactory.stamp_layout_v2(flow)
     (flow / "workspace.toml").write_text(
         '[tracker]\nbackend = "jira"\n'
         '[tracker.jira]\ncloud_id = "x"\nproject_key = "FT"\n'
@@ -255,6 +257,11 @@ def test_takeover_refuses_when_corrupt_lock_becomes_live(
             "cwd": str(td),
             "acquired_at": _now(),
             "lease_expires_at": "2099-01-01T00:00:00Z",
+            "stage": "implement",
+            "pid": 4242,
+            "session_id": "",
+            "session_pid": 0,
+            "session_nonce": "",
         }
     )
     real_flock = lease.flock_blocking

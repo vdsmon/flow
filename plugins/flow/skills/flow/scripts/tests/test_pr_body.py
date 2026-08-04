@@ -19,92 +19,6 @@ def _realistic_raw_b(prose: str, *, covers=("flow-nr8c", "flow-pms6")) -> str:
     return body_b + prose
 
 
-# ─── build_body: trailer parsing ─────────────────────────────────────────────
-
-
-def test_trailer_stripped_and_closes_footer():
-    out = pr_body.build_body(_realistic_raw_b("Real prose body.\n"))
-    assert "ticket:" not in out
-    assert "files:" not in out
-    assert "create_pr.py" not in out  # files children dropped
-    assert "Real prose body." in out
-    assert out.rstrip().endswith("Closes flow-nr8c\nCloses flow-pms6")
-
-
-def test_skeleton_marker_dropped():
-    # the marker survives in %b when the author appends below it; build_body drops it.
-    raw = _realistic_raw_b("Some prose here.\n")
-    assert "fill in below" in raw
-    assert "fill in below" not in pr_body.build_body(raw)
-
-
-def test_no_trailer_prose_preserved():
-    # commitment #1: a body with no leading trailer is all prose; nothing deleted.
-    raw = "Just prose here\nwrapped across lines.\n\nSecond paragraph.\n"
-    out = pr_body.build_body(raw)
-    assert out == "Just prose here wrapped across lines.\n\nSecond paragraph."
-
-
-def test_contiguous_trailer_stops_at_blank_prose_closes_survives():
-    # a `Closes` in PROSE (after the blank) is NOT collected as a trailer footer.
-    raw = "ticket: flow-x\nCloses flow-real\n\nThis Closes the gap nicely.\n"
-    out = pr_body.build_body(raw)
-    assert "This Closes the gap nicely." in out
-    # exactly one Closes footer (the trailer one), prose Closes left in place
-    assert out.count("Closes flow-real") == 1
-    assert out.endswith("Closes flow-real")
-
-
-def test_no_closes_no_footer():
-    raw = "ticket: flow-x\nfiles:\n  - a.py\n\nBody text.\n"
-    out = pr_body.build_body(raw)
-    assert out == "Body text."
-
-
-def test_leading_indented_bullets_are_prose_not_trailer():
-    # commitment #1 adversarial case: an indented bullet with NO files: head above
-    # it is prose, not a files child; it must survive, not be eaten by the scan.
-    raw = "  - fixed the lease race\n  - added regression tests\n\nSecond paragraph.\n"
-    out = pr_body.build_body(raw)
-    assert "fixed the lease race" in out
-    assert "added regression tests" in out
-    assert "Second paragraph." in out
-
-
-def test_indented_bullet_after_non_files_trailer_ends_block():
-    # a ticket: line does not open files context; the bullet after it is prose.
-    raw = "ticket: flow-x\n  - looks like a files child but is not\n\nBody.\n"
-    out = pr_body.build_body(raw)
-    assert "looks like a files child but is not" in out
-    assert "ticket:" not in out
-
-
-# ─── build_body: prose unwrap ────────────────────────────────────────────────
-
-
-def test_hard_wraps_unwrapped_within_paragraph():
-    raw = "ticket: flow-x\n\nLine one wraps\ninto line two\ninto line three.\n"
-    assert pr_body.build_body(raw) == "Line one wraps into line two into line three."
-
-
-def test_blank_line_paragraph_break_not_reflowed():
-    raw = "ticket: flow-x\n\nPara one.\n\nPara two.\n"
-    assert pr_body.build_body(raw) == "Para one.\n\nPara two."
-
-
-def test_list_items_not_reflowed():
-    raw = "ticket: flow-x\n\n- first\n- second\n* third\n1. fourth\n"
-    out = pr_body.build_body(raw)
-    assert out == "- first\n- second\n* third\n1. fourth"
-
-
-def test_fenced_code_not_reflowed():
-    raw = "ticket: flow-x\n\nIntro.\n\n```\nline a\nline b\n```\n\nOutro.\n"
-    out = pr_body.build_body(raw)
-    assert "```\nline a\nline b\n```" in out
-    assert "line a line b" not in out
-
-
 # ─── scrub ───────────────────────────────────────────────────────────────────
 
 
@@ -177,30 +91,19 @@ def test_closes_footer_leading_bullet_ends_trailer_scan():
 # ─── totality: never raise on adversarial input ──────────────────────────────
 
 
-def test_build_and_scrub_never_raise_on_adversarial():
-    cases = [
-        "",
-        "   \n  ",
-        "ticket: flow-x",  # trailer only, no prose
-        "Just prose, no trailer at all.",
-        "```\nunterminated fence to end of body",
-        "Closes mentioned in prose\n\n# heading",
-        "\u200b� stray unicode \U0001f600",
-        "files:\n  - a\n  - b",  # trailer-only files block
-    ]
-    for c in cases:
-        assert isinstance(pr_body.build_body(c), str)
+_ADVERSARIAL = [
+    "",
+    "\x00binary\x00",
+    "```\nunclosed fence",
+    "a" * 100_000,
+    "ticket: x\nCloses y\n\n" + "wrap " * 5000,
+    "<details><summary>x</summary>",
+]
+
+
+def test_scrub_never_raises_on_adversarial():
+    for c in _ADVERSARIAL:
         assert isinstance(pr_body.scrub(c), str)
-        assert isinstance(pr_body.closes_footer(c), str)
-        # build then scrub composes without raising
-        assert isinstance(pr_body.scrub(pr_body.build_body(c)), str)
-
-
-def test_build_body_empty_is_empty():
-    assert pr_body.build_body("") == ""
-
-
-# ─── enforce_cap: forge body-size net ────────────────────────────────────────
 
 
 def _fenced(label: str, n: int) -> str:

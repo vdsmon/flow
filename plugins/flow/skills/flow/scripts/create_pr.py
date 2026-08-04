@@ -86,22 +86,16 @@ def _ok(result: subprocess.CompletedProcess[str], what: str) -> str:
     return result.stdout or ""
 
 
-def _compose_body(raw: str, subject: str, body_file: Path | None, *, flatten: bool = False) -> str:
+def _compose_body(raw: str, subject: str, body_file: Path, *, flatten: bool = False) -> str:
     """The PR body passed to open_pr.
 
-    With `body_file`: the authored markdown (de-AI scrubbed as a floor) plus the
-    deterministic `Closes` footer from the commit trailer. Without it: the
-    commit-derived fallback (build_body + scrub). Empty prose falls back to the
+    The authored markdown (de-AI scrubbed as a floor) plus the deterministic
+    `Closes` footer from the commit trailer. Empty prose falls back to the
     commit subject. With `flatten` (a bitbucket forge, which renders no raw HTML
-    in markdown), `<details>` wrappers become plain `###` headings on both paths.
-    Both real-body paths pass through `enforce_cap`, the deterministic size net so
-    an oversized `## Evidence` body cannot fail open_pr.
+    in markdown), `<details>` wrappers become plain `###` headings. The body
+    passes through `enforce_cap`, the deterministic size net so an oversized
+    `## Evidence` body cannot fail open_pr.
     """
-    if body_file is None:
-        body = pr_body.scrub(pr_body.build_body(raw)).strip()
-        if flatten:
-            body = pr_body.flatten_details(body)
-        return pr_body.enforce_cap(body or subject)
     try:
         authored = body_file.read_text()
     except OSError as exc:
@@ -120,7 +114,7 @@ def open_or_get_pr(
     *,
     base: str = "main",
     draft: bool = True,
-    body_file: Path | None = None,
+    body_file: Path,
     runner: Runner | None = None,
     forge: Forge | None = None,
 ) -> str:
@@ -205,17 +199,17 @@ def cli_main(argv: list[str]) -> int:
     )
     parser.add_argument(
         "--body-file",
-        default=None,
+        required=True,
         help=(
-            "path to an authored PR body (markdown); the Closes footer is appended "
-            "and a de-AI scrub applied. Absent = derive the body from the commit."
+            "path to the authored PR body (markdown); the Closes footer is appended "
+            "and a de-AI scrub applied."
         ),
     )
     args = parser.parse_args(argv)
     ws = Path(args.workspace_root)
     draft = args.draft if args.draft is not None else _draft_config(ws)
     base = args.base if args.base is not None else (_base_config(ws) or "main")
-    body_file = Path(args.body_file) if args.body_file else None
+    body_file = Path(args.body_file)
     try:
         url = open_or_get_pr(ws, base=base, draft=draft, body_file=body_file)
     except RefusedBranch as exc:

@@ -603,6 +603,11 @@ def _racer_lease_json(expires_at: str) -> str:
             "cwd": "/work",
             "acquired_at": NOW,
             "lease_expires_at": expires_at,
+            "stage": "implement",
+            "pid": 4242,
+            "session_id": "",
+            "session_pid": 0,
+            "session_nonce": "",
         }
     )
 
@@ -1008,27 +1013,6 @@ def test_acquire_session_id_empty_when_env_absent(
     monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
     monkeypatch.setattr(lease, "_SESSION_PID_CACHE", [0])
     ls = _acquire(tmp_path, "run-1")
-    assert ls.session_id == ""
-    assert ls.session_pid == 0
-
-
-def test_deserialize_pre_upgrade_lease_defaults_session_fields(tmp_path: Path) -> None:
-    # a lease written before these fields existed must default cleanly, not KeyError.
-    lease.run_lock_path(tmp_path).write_text(
-        json.dumps(
-            {
-                "run_id": "run-1",
-                "boot_id": "boot-A",
-                "hostname": "host-1",
-                "cwd": "/work",
-                "acquired_at": NOW,
-                "lease_expires_at": "2026-05-28T12:05:00Z",
-            }
-        ),
-        encoding="utf-8",
-    )
-    ls = lease.read_lease(tmp_path)
-    assert ls is not None
     assert ls.session_id == ""
     assert ls.session_pid == 0
 

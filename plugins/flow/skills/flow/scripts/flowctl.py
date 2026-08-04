@@ -98,7 +98,6 @@ def cli_main(argv: list[str]) -> int:
     except OSError as exc:
         parser.error(f"cannot enter workspace root {workspace_root}: {exc}")
     os.environ["FLOW_SKILL_DIR"] = str(SKILL_ROOT)
-    os.environ["CLAUDE_SKILL_DIR"] = str(SKILL_ROOT)
     os.execv(sys.executable, [sys.executable, str(script), *args.args])
     return 1
 

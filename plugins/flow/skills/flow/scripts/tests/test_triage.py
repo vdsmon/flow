@@ -104,7 +104,7 @@ _DEFER_COLON = (
 def test_non_beads_backend_short_circuits(tmp_path: Path) -> None:
     _seed_workspace(tmp_path, backend="jira")
     runner = _FakeRunner([])  # never invoked: no preflight, no bd list
-    code, out, _ = _run(["--workspace-root", str(tmp_path)], runner)
+    code, out, _ = _run(["list", "--workspace-root", str(tmp_path)], runner)
     assert code == 0
     assert "beads concept" in out
     assert runner.calls == []
@@ -114,7 +114,7 @@ def test_no_deferred_prints_sentinel(tmp_path: Path) -> None:
     _seed_workspace(tmp_path, backend="beads")
     # deferred list empty, blocked list empty
     runner = _FakeRunner([_version_ok(), _cp(stdout="[]"), _cp(stdout="[]")])
-    code, out, _ = _run(["--workspace-root", str(tmp_path)], runner)
+    code, out, _ = _run(["list", "--workspace-root", str(tmp_path)], runner)
     assert code == 0
     assert "(no deferred tickets)" in out
 
@@ -129,7 +129,7 @@ def test_one_deferred_surfaces_title_and_defer_comment(tmp_path: Path) -> None:
         "comments": [_comment(_DEFER_REAL, "2026-06-01T10:00:00Z")],
     }
     runner = _FakeRunner([_version_ok(), _cp(stdout=list_json), _cp(stdout="[]"), _show(issue)])
-    code, out, _ = _run(["--workspace-root", str(tmp_path)], runner)
+    code, out, _ = _run(["list", "--workspace-root", str(tmp_path)], runner)
     assert code == 0
     assert "flow-wo5" in out
     assert "Serialize the drain" in out
@@ -150,7 +150,7 @@ def test_stem_match_beats_later_plain_human_comment(tmp_path: Path) -> None:
         ],
     }
     runner = _FakeRunner([_version_ok(), _cp(stdout=list_json), _cp(stdout="[]"), _show(issue)])
-    code, out, _ = _run(["--workspace-root", str(tmp_path)], runner)
+    code, out, _ = _run(["list", "--workspace-root", str(tmp_path)], runner)
     assert code == 0
     assert "HOT lease/mutex machinery" in out
     assert "just a human note" not in out
@@ -177,7 +177,7 @@ def test_redefer_picks_last_stem_comment(tmp_path: Path) -> None:
         ],
     }
     runner = _FakeRunner([_version_ok(), _cp(stdout=list_json), _cp(stdout="[]"), _show(issue)])
-    code, out, _ = _run(["--workspace-root", str(tmp_path)], runner)
+    code, out, _ = _run(["list", "--workspace-root", str(tmp_path)], runner)
     assert code == 0
     assert "NEW question" in out
     assert "OLD question" not in out
@@ -193,7 +193,7 @@ def test_colon_format_matches(tmp_path: Path) -> None:
         "comments": [_comment(_DEFER_COLON, "2026-06-01T10:00:00Z")],
     }
     runner = _FakeRunner([_version_ok(), _cp(stdout=list_json), _cp(stdout="[]"), _show(issue)])
-    code, out, _ = _run(["--workspace-root", str(tmp_path)], runner)
+    code, out, _ = _run(["list", "--workspace-root", str(tmp_path)], runner)
     assert code == 0
     assert "which backend should win the tie" in out
 
@@ -203,7 +203,7 @@ def test_zero_comment_deferred_shows_placeholder(tmp_path: Path) -> None:
     list_json = json.dumps([{"id": "flow-z", "title": "Quiet bead"}])
     issue = {"id": "flow-z", "title": "Quiet bead", "status": "deferred", "comments": []}
     runner = _FakeRunner([_version_ok(), _cp(stdout=list_json), _cp(stdout="[]"), _show(issue)])
-    code, out, _ = _run(["--workspace-root", str(tmp_path)], runner)
+    code, out, _ = _run(["list", "--workspace-root", str(tmp_path)], runner)
     assert code == 0
     assert "flow-z" in out
     assert "(no open-question comment)" in out
@@ -222,14 +222,14 @@ def test_two_deferred_both_json_shapes(tmp_path: Path) -> None:
     runner = _FakeRunner(
         [_version_ok(), _cp(stdout=list_bare), _cp(stdout="[]"), _show(issue_a), _show(issue_b)]
     )
-    code, out, _ = _run(["--workspace-root", str(tmp_path)], runner)
+    code, out, _ = _run(["list", "--workspace-root", str(tmp_path)], runner)
     assert code == 0
     assert "flow-a" in out
     assert "flow-b" in out
 
     list_wrap = json.dumps({"issues": [{"id": "flow-a", "title": "Alpha"}]})
     runner2 = _FakeRunner([_version_ok(), _cp(stdout=list_wrap), _cp(stdout="[]"), _show(issue_a)])
-    code2, out2, _ = _run(["--workspace-root", str(tmp_path)], runner2)
+    code2, out2, _ = _run(["list", "--workspace-root", str(tmp_path)], runner2)
     assert code2 == 0
     assert "flow-a" in out2
 
@@ -244,7 +244,7 @@ def test_json_flag_emits_raw_structure(tmp_path: Path) -> None:
         "comments": [_comment(_DEFER_COLON, "2026-06-01T10:00:00Z")],
     }
     runner = _FakeRunner([_version_ok(), _cp(stdout=list_json), _cp(stdout="[]"), _show(issue)])
-    code, out, _ = _run(["--workspace-root", str(tmp_path), "--json"], runner)
+    code, out, _ = _run(["list", "--workspace-root", str(tmp_path), "--json"], runner)
     assert code == 0
     payload = json.loads(out)
     assert payload[0]["key"] == "flow-j"
@@ -255,13 +255,13 @@ def test_json_flag_emits_raw_structure(tmp_path: Path) -> None:
 
 def test_workspace_not_initialized_exits_1(tmp_path: Path) -> None:
     runner = _FakeRunner([])
-    code, _, err = _run(["--workspace-root", str(tmp_path)], runner)
+    code, _, err = _run(["list", "--workspace-root", str(tmp_path)], runner)
     assert code == 1
     assert "FLOW workspace setup" in err
     assert runner.calls == []
 
 
-# ─── list: subcommand back-compat + blocked-bead surfacing ───────────────────
+# ─── list: blocked-bead surfacing ───────────────────
 
 
 def test_list_explicit_subcommand_matches_bare(tmp_path: Path) -> None:
@@ -317,7 +317,7 @@ def test_list_surfaces_blocked_with_stem_not_bare_blocked(tmp_path: Path) -> Non
             _show(issue_dag),
         ]
     )
-    code, out, _ = _run(["--workspace-root", str(tmp_path), "--json"], runner)
+    code, out, _ = _run(["list", "--workspace-root", str(tmp_path), "--json"], runner)
     assert code == 0
     payload = json.loads(out)
     keys = {row["key"]: row["status"] for row in payload}
@@ -340,7 +340,7 @@ def test_list_ready_adds_ready_rows(tmp_path: Path) -> None:
     runner = _FakeRunner(
         [_version_ok(), _cp(stdout="[]"), _cp(stdout="[]"), _cp(stdout=ready_json)]
     )
-    code, out, _ = _run(["--workspace-root", str(tmp_path), "--ready", "--json"], runner)
+    code, out, _ = _run(["list", "--workspace-root", str(tmp_path), "--ready", "--json"], runner)
     assert code == 0
     payload = json.loads(out)
     rows = {r["key"]: r for r in payload}
@@ -354,7 +354,7 @@ def test_list_ready_adds_ready_rows(tmp_path: Path) -> None:
 def test_list_default_makes_no_ready_call(tmp_path: Path) -> None:
     _seed_workspace(tmp_path, backend="beads")
     runner = _FakeRunner([_version_ok(), _cp(stdout="[]"), _cp(stdout="[]")])
-    code, _, _ = _run(["--workspace-root", str(tmp_path)], runner)
+    code, _, _ = _run(["list", "--workspace-root", str(tmp_path)], runner)
     assert code == 0
     assert not any("ready" in c[0] for c in runner.calls)
 
@@ -384,7 +384,7 @@ def test_deferred_and_blocked_rows_carry_status(tmp_path: Path) -> None:
             _show(issue_hb),
         ]
     )
-    code, out, _ = _run(["--workspace-root", str(tmp_path), "--json"], runner)
+    code, out, _ = _run(["list", "--workspace-root", str(tmp_path), "--json"], runner)
     assert code == 0
     payload = json.loads(out)
     statuses = {row["key"]: row["status"] for row in payload}
@@ -397,7 +397,7 @@ def test_list_ready_wrapper_shape(tmp_path: Path) -> None:
     runner = _FakeRunner(
         [_version_ok(), _cp(stdout="[]"), _cp(stdout="[]"), _cp(stdout=ready_wrap)]
     )
-    code, out, _ = _run(["--workspace-root", str(tmp_path), "--ready", "--json"], runner)
+    code, out, _ = _run(["list", "--workspace-root", str(tmp_path), "--ready", "--json"], runner)
     assert code == 0
     payload = json.loads(out)
     assert len(payload) == 1

@@ -911,16 +911,6 @@ def run_init(
     # validation must not leave a `.initializing` marker that would then refuse
     # a plain re-run with the corrected config.
     _validate_config(config)
-    # Upgrade a legacy workspace before reconfiguration snapshots launcher
-    # metadata or creates the selected namespace. This is intentionally a
-    # separate, forward-only data migration: a later configuration failure
-    # restores configuration/runtime files but never moves memory back to v1.
-    if (
-        reconfigure
-        and _workspace_toml_path(root).is_file()
-        and not flow_launcher.runtime_layout.is_v2(root)
-    ):
-        _install_launcher(root)
 
     # Back up every file this run may replace. `.initialized` stays in place until finalize swaps
     # it; on failure the other prior files are restored.

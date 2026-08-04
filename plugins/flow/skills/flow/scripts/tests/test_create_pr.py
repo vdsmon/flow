@@ -147,10 +147,16 @@ def _ran(calls: Recorder, prefix: list[str]) -> bool:
     return any(c[: len(prefix)] == prefix for c in calls)
 
 
+def _bf(tmp_path):
+    p = tmp_path / "authored_body.md"
+    p.write_text("Authored body.\n")
+    return p
+
+
 def test_creates_when_no_existing_pr(tmp_path):
     run, calls = _git_runner()
     fg = _FakeForge(existing=None)
-    url = cp.open_or_get_pr(tmp_path, base="main", runner=run, forge=fg)
+    url = cp.open_or_get_pr(tmp_path, base="main", runner=run, forge=fg, body_file=_bf(tmp_path))
     assert url == "https://github.com/o/r/pull/42"
     assert len(fg.opened) == 1
     assert _ran(calls, ["git", "push"])
@@ -159,7 +165,7 @@ def test_creates_when_no_existing_pr(tmp_path):
 def test_push_uses_explicit_refspec(tmp_path):
     run, calls = _git_runner()
     fg = _FakeForge(existing=None)
-    cp.open_or_get_pr(tmp_path, base="main", runner=run, forge=fg)
+    cp.open_or_get_pr(tmp_path, base="main", runner=run, forge=fg, body_file=_bf(tmp_path))
     assert [
         "git",
         "push",
@@ -173,7 +179,7 @@ def test_push_uses_explicit_refspec(tmp_path):
 def test_idempotent_reuses_existing_pr(tmp_path):
     run, _ = _git_runner()
     fg = _FakeForge(existing="https://github.com/o/r/pull/7")
-    url = cp.open_or_get_pr(tmp_path, base="main", runner=run, forge=fg)
+    url = cp.open_or_get_pr(tmp_path, base="main", runner=run, forge=fg, body_file=_bf(tmp_path))
     assert url == "https://github.com/o/r/pull/7"
     assert fg.opened == []  # never double-open
 
@@ -181,21 +187,21 @@ def test_idempotent_reuses_existing_pr(tmp_path):
 def test_refuses_protected_branch(tmp_path):
     run, _ = _git_runner(branch="main")
     with pytest.raises(cp.RefusedBranch):
-        cp.open_or_get_pr(tmp_path, runner=run, forge=_FakeForge())
+        cp.open_or_get_pr(tmp_path, runner=run, forge=_FakeForge(), body_file=_bf(tmp_path))
 
 
 def test_refuses_detached_head(tmp_path):
     # a detached HEAD rev-parses to the literal "HEAD"; never push refs/heads/HEAD.
     run, calls = _git_runner(branch="HEAD")
     with pytest.raises(cp.RefusedBranch):
-        cp.open_or_get_pr(tmp_path, runner=run, forge=_FakeForge())
+        cp.open_or_get_pr(tmp_path, runner=run, forge=_FakeForge(), body_file=_bf(tmp_path))
     assert not _ran(calls, ["git", "push"])
 
 
 def test_push_failure_is_tool_error(tmp_path):
     run, _ = _git_runner(push_rc=1)
     with pytest.raises(cp.ToolError):
-        cp.open_or_get_pr(tmp_path, runner=run, forge=_FakeForge())
+        cp.open_or_get_pr(tmp_path, runner=run, forge=_FakeForge(), body_file=_bf(tmp_path))
 
 
 def test_forge_error_is_tool_error(tmp_path):
@@ -203,20 +209,22 @@ def test_forge_error_is_tool_error(tmp_path):
     fg = _FakeForge()
     fg.raise_on_open = ForgeError("gh pr create failed")
     with pytest.raises(cp.ToolError):
-        cp.open_or_get_pr(tmp_path, runner=run, forge=fg)
+        cp.open_or_get_pr(tmp_path, runner=run, forge=fg, body_file=_bf(tmp_path))
 
 
 def test_open_draft_by_default(tmp_path):
     run, _ = _git_runner()
     fg = _FakeForge()
-    cp.open_or_get_pr(tmp_path, base="main", runner=run, forge=fg)
+    cp.open_or_get_pr(tmp_path, base="main", runner=run, forge=fg, body_file=_bf(tmp_path))
     assert fg.opened[0]["draft"] is True
 
 
 def test_open_ready_when_draft_false(tmp_path):
     run, _ = _git_runner()
     fg = _FakeForge()
-    cp.open_or_get_pr(tmp_path, base="main", draft=False, runner=run, forge=fg)
+    cp.open_or_get_pr(
+        tmp_path, base="main", draft=False, runner=run, forge=fg, body_file=_bf(tmp_path)
+    )
     assert fg.opened[0]["draft"] is False
 
 
@@ -225,7 +233,18 @@ def test_cli_prints_pr_url_token(tmp_path, monkeypatch, capsys):
     fg = _FakeForge(existing="https://github.com/o/r/pull/5")
     monkeypatch.setattr(cp, "_default_runner", lambda _repo: run)
     monkeypatch.setattr(cp, "_resolve_forge", lambda _ws: fg)
-    rc = cp.cli_main(["--workspace-root", str(tmp_path), "--base", "main", "--ticket", "flow-x"])
+    rc = cp.cli_main(
+        [
+            "--workspace-root",
+            str(tmp_path),
+            "--base",
+            "main",
+            "--ticket",
+            "flow-x",
+            "--body-file",
+            str(_bf(tmp_path)),
+        ]
+    )
     assert rc == 0
     assert "PR_URL=https://github.com/o/r/pull/5" in capsys.readouterr().out
 
@@ -234,14 +253,18 @@ def test_cli_missing_forge_block_is_tool_error(tmp_path, monkeypatch):
     run, _ = _git_runner(branch="feature/flow-x")
     monkeypatch.setattr(cp, "_default_runner", lambda _repo: run)
     # no [forge] block in tmp_path -> _resolve_forge raises ToolError -> exit 2
-    rc = cp.cli_main(["--workspace-root", str(tmp_path), "--base", "main"])
+    rc = cp.cli_main(
+        ["--workspace-root", str(tmp_path), "--base", "main", "--body-file", str(_bf(tmp_path))]
+    )
     assert rc == 2
 
 
 def test_cli_refused_protected_branch(tmp_path, monkeypatch):
     run, _ = _git_runner(branch="main")
     monkeypatch.setattr(cp, "_default_runner", lambda _repo: run)
-    rc = cp.cli_main(["--workspace-root", str(tmp_path), "--base", "main"])
+    rc = cp.cli_main(
+        ["--workspace-root", str(tmp_path), "--base", "main", "--body-file", str(_bf(tmp_path))]
+    )
     assert rc == 3
 
 
@@ -294,7 +317,7 @@ def test_cli_base_from_config(tmp_path, monkeypatch):
     fg = _FakeForge(existing=None)
     monkeypatch.setattr(cp, "_default_runner", lambda _repo: run)
     monkeypatch.setattr(cp, "_resolve_forge", lambda _ws: fg)
-    rc = cp.cli_main(["--workspace-root", str(tmp_path)])
+    rc = cp.cli_main(["--workspace-root", str(tmp_path), "--body-file", str(_bf(tmp_path))])
     assert rc == 0
     assert fg.opened[0]["base"] == "dev"
 
@@ -308,7 +331,9 @@ def test_cli_explicit_base_beats_config(tmp_path, monkeypatch):
     fg = _FakeForge(existing=None)
     monkeypatch.setattr(cp, "_default_runner", lambda _repo: run)
     monkeypatch.setattr(cp, "_resolve_forge", lambda _ws: fg)
-    rc = cp.cli_main(["--workspace-root", str(tmp_path), "--base", "main"])
+    rc = cp.cli_main(
+        ["--workspace-root", str(tmp_path), "--base", "main", "--body-file", str(_bf(tmp_path))]
+    )
     assert rc == 0
     assert fg.opened[0]["base"] == "main"
 
@@ -318,39 +343,22 @@ def test_cli_base_defaults_to_main(tmp_path, monkeypatch):
     fg = _FakeForge(existing=None)
     monkeypatch.setattr(cp, "_default_runner", lambda _repo: run)
     monkeypatch.setattr(cp, "_resolve_forge", lambda _ws: fg)
-    rc = cp.cli_main(["--workspace-root", str(tmp_path)])
+    rc = cp.cli_main(["--workspace-root", str(tmp_path), "--body-file", str(_bf(tmp_path))])
     assert rc == 0
     assert fg.opened[0]["base"] == "main"
-
-
-def test_built_scrubbed_body_reaches_open_pr(tmp_path):
-    # the raw %b (trailer + marker + wrapped prose) is built into a clean body:
-    # trailer dropped, marker gone, prose unwrapped, Closes footer kept.
-    run, _ = _git_runner()
-    fg = _FakeForge(existing=None)
-    cp.open_or_get_pr(tmp_path, base="main", runner=run, forge=fg)
-    opened = fg.opened[0]
-    body = opened["body"]
-    assert "ticket:" not in body
-    assert "fill in below" not in body
-    assert "This change builds a real PR body from the commit, cleanly." in body
-    assert "—" not in body  # scrub ran in the chain (em-dash gone)
-    assert body.rstrip().endswith("Closes flow-nr8c")
-    # title stays the raw commit subject, untouched by the body transform
-    assert opened["title"] == "chore: add coverage"
 
 
 def test_reviewers_set_on_open(tmp_path):
     run, _ = _git_runner()
     fg = _FakeForge(existing=None)
-    cp.open_or_get_pr(tmp_path, base="main", runner=run, forge=fg)
+    cp.open_or_get_pr(tmp_path, base="main", runner=run, forge=fg, body_file=_bf(tmp_path))
     assert fg.reviewers_set == ["1"]  # pr id from _pr()
 
 
 def test_reviewers_not_set_on_existing_pr(tmp_path):
     run, _ = _git_runner()
     fg = _FakeForge(existing="https://github.com/o/r/pull/7")
-    cp.open_or_get_pr(tmp_path, base="main", runner=run, forge=fg)
+    cp.open_or_get_pr(tmp_path, base="main", runner=run, forge=fg, body_file=_bf(tmp_path))
     assert fg.reviewers_set == []  # early-return on existing PR; set-on-open only
 
 
@@ -358,7 +366,7 @@ def test_not_supported_reviewers_degrades(tmp_path):
     run, _ = _git_runner()
     fg = _FakeForge(existing=None)
     fg.raise_on_reviewers = NotSupported("github has no default reviewers")
-    url = cp.open_or_get_pr(tmp_path, base="main", runner=run, forge=fg)
+    url = cp.open_or_get_pr(tmp_path, base="main", runner=run, forge=fg, body_file=_bf(tmp_path))
     assert url == "https://github.com/o/r/pull/42"  # PR still returned
     assert len(fg.opened) == 1
 
@@ -367,17 +375,9 @@ def test_generic_forge_error_reviewers_degrades(tmp_path):
     run, _ = _git_runner()
     fg = _FakeForge(existing=None)
     fg.raise_on_reviewers = ForgeError("reviewer API hiccup")
-    url = cp.open_or_get_pr(tmp_path, base="main", runner=run, forge=fg)
+    url = cp.open_or_get_pr(tmp_path, base="main", runner=run, forge=fg, body_file=_bf(tmp_path))
     assert url == "https://github.com/o/r/pull/42"  # hiccup never fails an open PR
     assert len(fg.opened) == 1
-
-
-def test_empty_prose_body_falls_back_to_subject(tmp_path):
-    # a %b that is trailer-only (no prose) -> built body is empty -> subject used.
-    run, _ = _git_runner(subject="chore: subj only", raw_body="ticket: flow-x\n")
-    fg = _FakeForge(existing=None)
-    cp.open_or_get_pr(tmp_path, base="main", runner=run, forge=fg)
-    assert fg.opened[0]["body"] == "chore: subj only"
 
 
 # ─── authored body via --body-file ───────────────────────────────────────────
@@ -446,27 +446,6 @@ def test_authored_oversized_body_is_capped(tmp_path):
     assert "<summary>run: ok</summary>" in body
 
 
-def test_fallback_oversized_body_is_capped(tmp_path):
-    # the no-body-file path is capped too. The oversized %b block must be FENCED:
-    # build_body unwraps prose but preserves fenced code, so a fenced block is what
-    # actually reaches enforce_cap on this path.
-    huge = "\n".join(f"log {i}" for i in range(20000))
-    raw = "ticket: flow-x\nCloses flow-nr8c\n\nWhy this change.\n\n```\n" + huge + "\n```\n"
-    run, _ = _git_runner(branch="feature/flow-x", subject="chore: big body", raw_body=raw)
-
-    fg = _FakeForge(existing=None)
-    cp.open_or_get_pr(tmp_path, base="main", runner=run, forge=fg)
-    body = fg.opened[0]["body"]
-    assert len(body) > 0
-    assert len(body) <= pr_body._FORGE_BODY_CAP
-    # tier-1 structured trim, not the hard-truncate backstop: marker present,
-    # fence head and tail survive, and the Closes footer is intact.
-    assert "lines trimmed" in body
-    assert "log 0" in body
-    assert "log 19999" in body
-    assert "Closes flow-nr8c" in body
-
-
 # ─── bitbucket flatten: no raw HTML in bitbucket markdown ────────────────────
 
 
@@ -506,23 +485,6 @@ def test_github_authored_body_details_untouched(tmp_path):
     body = fg.opened[0]["body"]
     assert "<details>" in body
     assert "<summary>run: 3 passed (1s)</summary>" in body
-
-
-def test_bitbucket_fallback_body_details_flattened(tmp_path):
-    # the no-body-file (commit-derived) path flattens too.
-    raw = (
-        "ticket: flow-x\nCloses flow-nr8c\n\nWhy.\n\n<details>\n<summary>run: ok</summary>\n\n"
-        "```\nline a\n```\n\n</details>\n"
-    )
-    run, _ = _git_runner(branch="feature/flow-x", subject="chore: subj", raw_body=raw)
-
-    fg = _FakeBitbucketForge(existing=None)
-    cp.open_or_get_pr(tmp_path, base="main", runner=run, forge=fg)
-    body = fg.opened[0]["body"]
-    assert "<details>" not in body
-    assert "<summary>" not in body
-    assert "### run: ok" in body
-    assert "Closes flow-nr8c" in body
 
 
 def test_cli_passes_body_file(tmp_path, monkeypatch):

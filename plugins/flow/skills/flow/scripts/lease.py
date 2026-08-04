@@ -80,7 +80,7 @@ class Lease:
     pid: int = 0  # informational only; never used for liveness gating
     session_id: str = ""  # informational; the owning Claude session UUID
     session_pid: int = 0  # informational; nearest claude-comm ancestor pid
-    session_nonce: str = ""  # per-acquire; "" only for a pre-upgrade lease
+    session_nonce: str = ""  # per-acquire
 
 
 class LeaseError(Exception):
@@ -213,18 +213,20 @@ def _deserialize(raw: str) -> Lease:
     data = json.loads(raw)
     if not isinstance(data, dict):
         raise LeaseError("run.lock root is not an object")
+    # The serializer writes every field (asdict), so every field reads strictly;
+    # a missing key is corruption, not an older record shape.
     return Lease(
         run_id=str(data["run_id"]),
-        boot_id=str(data.get("boot_id", "")),
-        hostname=str(data.get("hostname", "")),
-        cwd=str(data.get("cwd", "")),
+        boot_id=str(data["boot_id"]),
+        hostname=str(data["hostname"]),
+        cwd=str(data["cwd"]),
         acquired_at=str(data["acquired_at"]),
         lease_expires_at=str(data["lease_expires_at"]),
-        stage=data.get("stage"),
-        pid=int(data.get("pid", 0)),
-        session_id=str(data.get("session_id", "")),
-        session_pid=int(data.get("session_pid", 0)),
-        session_nonce=str(data.get("session_nonce", "")),
+        stage=data["stage"],
+        pid=int(data["pid"]),
+        session_id=str(data["session_id"]),
+        session_pid=int(data["session_pid"]),
+        session_nonce=str(data["session_nonce"]),
     )
 
 
@@ -394,9 +396,9 @@ def refresh(
 
     The nonce is checked both-non-empty (mirrors the boot_id rule): a rotated
     on-disk nonce against our carried one means a force/takeover happened and we
-    lost the lease. An empty nonce on either side (a pre-upgrade lease, or a
-    caller that lost its nonce across a compaction) falls back to run_id-only.
-    The on-disk nonce is preserved across the refresh.
+    lost the lease. An empty nonce on either side (a caller that lost its nonce
+    across a compaction) falls back to run_id-only. The on-disk nonce is
+    preserved across the refresh.
 
     Raises:
         LeaseLost, LeaseError

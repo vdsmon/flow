@@ -148,7 +148,7 @@ def test_sweep_scopes_to_primary_repo_managed_dirs_and_skips_invoking_checkout(
 ):
     main = tmp_path / "repo"
     invoking = main / ".claude" / "worktrees" / "feat-flow-run"
-    managed = main / ".flow" / "worktrees" / "feat-flow-old"
+    managed = main / ".claude" / "worktrees" / "feat-flow-old"
     foreign = tmp_path / "elsewhere" / "feat-flow-outside"
     entries = [
         (main, "main", "default-sha"),
@@ -173,7 +173,7 @@ def test_sweep_scopes_to_primary_repo_managed_dirs_and_skips_invoking_checkout(
 
 def test_open_pr_is_always_preserved(monkeypatch, tmp_path):
     main = tmp_path / "repo"
-    wt = main / ".flow" / "worktrees" / "feat-FT-10"
+    wt = main / ".claude" / "worktrees" / "feat-FT-10"
     branch = "feat/FT-10-x"
     _runner, forge, _lease, reap_calls, _order = _wire(
         monkeypatch,
@@ -330,8 +330,8 @@ def test_terminal_no_pr_requires_verified_default_and_zero_unique_commits(monkey
 
 def test_probe_failures_are_bucketed_per_candidate_and_preserved(monkeypatch, tmp_path):
     main = tmp_path / "repo"
-    tracker_fail = main / ".flow" / "worktrees" / "tracker-fail"
-    forge_fail = main / ".flow" / "worktrees" / "forge-fail"
+    tracker_fail = main / ".claude" / "worktrees" / "tracker-fail"
+    forge_fail = main / ".claude" / "worktrees" / "forge-fail"
     _runner, _forge, _lease, reap_calls, _order = _wire(
         monkeypatch,
         tmp_path,
@@ -356,8 +356,8 @@ def test_probe_failures_are_bucketed_per_candidate_and_preserved(monkeypatch, tm
 
 def test_live_and_corrupt_exact_leases_are_preserved(monkeypatch, tmp_path):
     main = tmp_path / "repo"
-    live = main / ".flow" / "worktrees" / "live"
-    corrupt = main / ".flow" / "worktrees" / "corrupt"
+    live = main / ".claude" / "worktrees" / "live"
+    corrupt = main / ".claude" / "worktrees" / "corrupt"
     _runner, _forge, _lease, reap_calls, _order = _wire(
         monkeypatch,
         tmp_path,
@@ -379,7 +379,7 @@ def test_live_and_corrupt_exact_leases_are_preserved(monkeypatch, tmp_path):
 
 def test_live_revision_lease_is_preserved_in_preview(monkeypatch, tmp_path):
     main = tmp_path / "repo"
-    wt = main / ".flow" / "worktrees" / "revision"
+    wt = main / ".claude" / "worktrees" / "revision"
     revision = wt / ".flow" / "runs" / "FT-10" / "revisions" / "r1"
     revision.mkdir(parents=True)
     _runner, _forge, _lease, reap_calls, _order = _wire(
@@ -399,7 +399,7 @@ def test_live_revision_lease_is_preserved_in_preview(monkeypatch, tmp_path):
 
 def test_dry_run_never_observes_or_reaps(monkeypatch, tmp_path):
     main = tmp_path / "repo"
-    wt = main / ".flow" / "worktrees" / "orphan"
+    wt = main / ".claude" / "worktrees" / "orphan"
     _runner, _forge, _lease, reap_calls, order = _wire(
         monkeypatch,
         tmp_path,
@@ -417,7 +417,7 @@ def test_dry_run_never_observes_or_reaps(monkeypatch, tmp_path):
 
 def test_real_sweep_never_reaps_candidate_that_was_not_confirmed(monkeypatch, tmp_path):
     main = tmp_path / "repo"
-    wt = main / ".flow" / "worktrees" / "orphan"
+    wt = main / ".claude" / "worktrees" / "orphan"
     branch = "feat/FT-10-x"
     _runner, forge, _lease, reap_calls, _order = _wire(
         monkeypatch,

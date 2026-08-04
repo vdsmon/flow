@@ -21,6 +21,7 @@ import _memory_paths
 import memory_append
 import observe_ship_event
 import recall_pending
+from tests import wsfactory
 
 _NS = "demo"
 
@@ -29,6 +30,7 @@ def _make_main(tmp_path: Path) -> Path:
     main = tmp_path / "main"
     flow = main / ".flow"
     flow.mkdir(parents=True)
+    wsfactory.stamp_layout_v2(flow)
     (flow / "workspace.toml").write_text(
         "\n".join(
             [
@@ -52,7 +54,7 @@ def _make_worktree(tmp_path: Path, main: Path, name: str) -> Path:
     flow = worktree / ".flow"
     flow.mkdir(parents=True)
     shutil.copy2(main / ".flow" / "workspace.toml", flow / "workspace.toml")
-    (flow / "memory-root").write_text(str(main / ".flow") + "\n", encoding="utf-8")
+    wsfactory.stamp_layout_v2(flow, memory_base=main / ".flow")
     return worktree
 
 

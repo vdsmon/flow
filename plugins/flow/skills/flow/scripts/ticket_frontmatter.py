@@ -258,15 +258,13 @@ def _coerce_value(raw: str) -> Any:
         return int(raw)
     if _LIST_RE.match(raw):
         try:
-            parsed = tomllib.loads("_v = " + raw)["_v"]
+            return tomllib.loads("_v = " + raw)["_v"]
         except tomllib.TOMLDecodeError:
-            # legacy bare-word lists like `[a, b, c]` aren't valid TOML; fall
-            # back to naive comma split so they keep working.
-            inner = raw[1:-1].strip()
-            if not inner:
-                return []
-            return [item.strip() for item in inner.split(",")]
-        return parsed
+            sys.stderr.write(
+                f"ticket-frontmatter: value {raw!r} is not a TOML array; stored as a plain "
+                "string (quote each element for a list)\n"
+            )
+            return raw
     if "," in raw:
         # a bare `a,b,c` silently stores as ONE string, drifting array fields
         # like planned_files off the shape the bootstrap writes (flow-2wa)

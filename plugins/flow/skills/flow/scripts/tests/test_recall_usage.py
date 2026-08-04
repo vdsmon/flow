@@ -10,7 +10,7 @@ import _memory_paths
 import memory_embed
 import metric
 import recall_usage
-import state
+from tests import wsfactory
 
 
 def _stub_embedder_cmd(tmp_path: Path) -> str:
@@ -51,6 +51,7 @@ def _seed_workspace(
             f'model = "{model}"\nthreshold = 0.0\nembedder = "{embedder}"\n'
         )
     (flow / "workspace.toml").write_text(toml, encoding="utf-8")
+    wsfactory.stamp_layout_v2(flow)
     if initialized:
         (flow / ".initialized").write_text("", encoding="utf-8")
 
@@ -86,7 +87,6 @@ def _write_state(root: Path, ticket: str, run_id: str, started_at: str) -> Path:
     (td / "state.json").write_text(
         json.dumps(
             {
-                "schema_version": state.SCHEMA_VERSION,
                 "ticket": ticket,
                 "run_id": run_id,
                 "backend": "jira",

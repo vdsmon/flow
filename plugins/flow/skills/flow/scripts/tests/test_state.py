@@ -322,7 +322,6 @@ def test_quarantine_on_unexpected_stage_record_key(tmp_path: Path) -> None:
     (tmp_path / "state.json").write_text(
         json.dumps(
             {
-                "schema_version": 1,
                 "ticket": "FT-1234",
                 "run_id": "0123456789abcdef",
                 "backend": "jira",
@@ -363,30 +362,8 @@ def test_unrecoverable_when_all_baks_also_corrupt(tmp_path: Path) -> None:
 # ─── Schema validation on read ───────────────────────────────────────────────
 
 
-def test_read_rejects_wrong_schema_version(tmp_path: Path) -> None:
-    (tmp_path / "state.json").write_text(
-        json.dumps(
-            {
-                "schema_version": 999,
-                "ticket": "FT-1",
-                "run_id": "abc",
-                "backend": "jira",
-                "started_at": "x",
-                "stages": {},
-            }
-        ),
-        encoding="utf-8",
-    )
-    # No .bak available; quarantine + exit 2.
-    loaded, exit_code = state.read(tmp_path)
-    assert exit_code == 2
-    assert loaded is None
-
-
 def test_read_rejects_missing_top_level_keys(tmp_path: Path) -> None:
-    (tmp_path / "state.json").write_text(
-        json.dumps({"schema_version": 1, "ticket": "FT-1"}), encoding="utf-8"
-    )
+    (tmp_path / "state.json").write_text(json.dumps({"ticket": "FT-1"}), encoding="utf-8")
     loaded, exit_code = state.read(tmp_path)
     assert exit_code == 2
     assert loaded is None

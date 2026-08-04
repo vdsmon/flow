@@ -1,19 +1,13 @@
-"""Build + scrub a PR body from the run's HEAD commit body.
+"""Scrub, cap, and footer helpers for the authored PR body.
 
 Library module (no shebang, no PEP 723 inline deps, no CLI). The only caller is the
 inline `create_pr` handler via `import pr_body`.
 
-The PR body is derived from `git log -1 --format=%b`, which at PR time is the
-`compose_commit.py` skeleton's body section: a contiguous leading trailer block
-(`ticket: KEY`, zero+ `Closes <KEY>`, an optional `files:` list with indented
-`  - ...` children), then a blank line, then the prose the commit stage authored
-(which may still carry the `# body - fill in below this line` skeleton marker if the
-author appended below it rather than overwriting).
-
-`build_body` strips the trailer noise, keeps the `Closes` lines as a footer, and
-unwraps commit-style hard wraps within prose paragraphs. `scrub` runs a
-deterministic de-AI pass over the result. Both are TOTAL: they never raise on
-adversarial input; they degrade to passthrough.
+The body itself is authored (stage-create_pr.md) and passed via `--body-file`;
+this module supplies `closes_footer` (extracted from the HEAD commit's trailer
+block), the deterministic de-AI `scrub` floor, `flatten_details` for forges that
+render no raw HTML, and the `enforce_cap` size net. All are TOTAL: they never
+raise on adversarial input; they degrade to passthrough.
 """
 
 from __future__ import annotations
@@ -24,8 +18,6 @@ _CLOSES_RE = re.compile(r"^Closes\s+\S+\s*$")
 _TICKET_RE = re.compile(r"^ticket:\s")
 _FILES_HEAD_RE = re.compile(r"^files:\s*$")
 _FILES_CHILD_RE = re.compile(r"^\s+[-*]\s")
-_LIST_ITEM_RE = re.compile(r"^\s*([-*]|\d+\.)\s")
-_SKELETON_MARKER_RE = re.compile(r"^#\s*body\s*[—-]\s*fill in below this line\s*$")
 _FENCE_RE = re.compile(r"^\s*```")
 
 
@@ -34,7 +26,7 @@ def _scan_trailer(lines: list[str]) -> tuple[int, list[str]]:
 
     An indented bullet counts as a trailer line only directly under a `files:`
     head (or another files child); with no such context it is prose and ends the
-    block, honoring build_body's no-deletion commitment.
+    block.
     """
     closes: list[str] = []
     i = 0
@@ -54,90 +46,10 @@ def _scan_trailer(lines: list[str]) -> tuple[int, list[str]]:
     return i, closes
 
 
-def build_body(raw_commit_body: str) -> str:
-    """Build a PR body from `git log -1 --format=%b`.
-
-    Parses ONLY the contiguous LEADING trailer block (lines that match a trailer
-    shape: `ticket:`, `Closes <KEY>`, `files:`, and indented `  - `/`  * ` children
-    directly under a `files:` head), stopping at the first non-trailer or blank
-    line. `Closes` lines become a footer;
-    `ticket:`/`files:` are dropped. The remaining prose is unwrapped (hard wraps
-    within a paragraph joined) but never reflowed across blank-line paragraph breaks,
-    never across list items, never inside a fenced code block. A stray skeleton
-    marker line is dropped. TOTAL: never raises; passthrough on adversarial input.
-
-    Crucially, a body with NO leading trailer is treated as all-prose: the first
-    line not matching a trailer shape ends the (possibly empty) trailer block, so
-    prose is never mistaken for trailer and deleted.
-    """
-    try:
-        return _build_body(raw_commit_body)
-    except Exception:
-        return raw_commit_body
-
-
-def _build_body(raw: str) -> str:
-    lines = raw.splitlines()
-    i, closes = _scan_trailer(lines)
-    # skip the single blank line separating the trailer from the prose.
-    if i < len(lines) and not lines[i].strip():
-        i += 1
-
-    prose_lines = lines[i:]
-    prose = _unwrap_prose(prose_lines)
-
-    parts: list[str] = []
-    if prose.strip():
-        parts.append(prose.rstrip())
-    if closes:
-        parts.append("\n".join(closes))
-    return "\n\n".join(parts)
-
-
-def _unwrap_prose(lines: list[str]) -> str:
-    """Join hard-wrapped lines within prose paragraphs; preserve structure.
-
-    Consecutive non-blank prose lines join into one. A blank line, a list item, or
-    a fenced code block boundary breaks the join. Lines inside a fenced ``` block
-    pass through verbatim. A stray skeleton marker is dropped.
-    """
-    out: list[str] = []
-    buf: list[str] = []
-    in_fence = False
-
-    def flush() -> None:
-        if buf:
-            out.append(" ".join(s.strip() for s in buf))
-            buf.clear()
-
-    for line in lines:
-        if _FENCE_RE.match(line):
-            flush()
-            in_fence = not in_fence
-            out.append(line)
-            continue
-        if in_fence:
-            out.append(line)
-            continue
-        if _SKELETON_MARKER_RE.match(line):
-            continue
-        if not line.strip():
-            flush()
-            out.append("")
-            continue
-        if _LIST_ITEM_RE.match(line):
-            flush()
-            out.append(line.rstrip())
-            continue
-        buf.append(line)
-    flush()
-    return "\n".join(out)
-
-
 def closes_footer(raw_commit_body: str) -> str:
     """Extract the `Closes <KEY>` lines from the leading trailer block.
 
-    Same trailer scan as build_body: walk the contiguous leading trailer lines,
+    Trailer scan: walk the contiguous leading trailer lines,
     collect the `Closes` ones, stop at the first blank or non-trailer line. Returns
     the newline-joined footer, or "". A `Closes` in the prose (after the blank) is
     NOT a trailer footer. TOTAL: never raises.
@@ -325,4 +237,4 @@ def _sentence_case(text: str) -> str:
     return " ".join(result)
 
 
-__all__ = ["build_body", "closes_footer", "enforce_cap", "flatten_details", "scrub"]
+__all__ = ["closes_footer", "enforce_cap", "flatten_details", "scrub"]

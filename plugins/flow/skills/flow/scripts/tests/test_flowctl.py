@@ -77,14 +77,12 @@ def test_sets_cwd_environment_and_forwards_arguments(tmp_path: Path, monkeypatch
             argv=argv,
             cwd=Path.cwd(),
             flow_skill=os.environ.get("FLOW_SKILL_DIR"),
-            claude_skill=os.environ.get("CLAUDE_SKILL_DIR"),
         )
         raise RuntimeError("exec intercepted")
 
     monkeypatch.setattr(flowctl, "resolve_command", lambda command: script)
     monkeypatch.setattr(flowctl.os, "execv", fake_execv)
     monkeypatch.setenv("FLOW_SKILL_DIR", "/stale/flow")
-    monkeypatch.setenv("CLAUDE_SKILL_DIR", "/stale/claude")
     try:
         with pytest.raises(RuntimeError, match="exec intercepted"):
             flowctl.cli_main(
@@ -97,5 +95,4 @@ def test_sets_cwd_environment_and_forwards_arguments(tmp_path: Path, monkeypatch
         "argv": [sys.executable, str(script), "--ticket", "FT-1"],
         "cwd": tmp_path.resolve(),
         "flow_skill": str(flowctl.SKILL_ROOT),
-        "claude_skill": str(flowctl.SKILL_ROOT),
     }

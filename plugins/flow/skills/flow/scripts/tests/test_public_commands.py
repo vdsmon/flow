@@ -339,7 +339,6 @@ def test_registry_validation_rejects_duplicate_routes(tmp_path: Path) -> None:
     registry = tmp_path / "public-commands.toml"
     registry.write_text(
         """
-schema_version = 1
 static_namespaces = ["help"]
 
 [[command]]
@@ -370,7 +369,6 @@ def test_registry_validation_requires_cockpit_and_target_routes(tmp_path: Path) 
     registry = tmp_path / "public-commands.toml"
     registry.write_text(
         """
-schema_version = 1
 static_namespaces = ["help"]
 
 [[command]]
