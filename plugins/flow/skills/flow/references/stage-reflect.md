@@ -266,7 +266,7 @@ The taxonomy is closed:
      The value MUST match `^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$` (`observe_ship_event.py` rejects anything else).
      If `evidence.closed_at` is present but not in that exact form, normalize it to UTC `...Z` seconds precision before use.
    - Build the evidence JSON.
-     The shape MUST be exactly these three top-level keys (`observe_ship_event.py` rejects any extra key; it owns `observed_at`, `observed_by_run_id`, `flow_attribution`, `arm`, `tier`, `acceptance_invariant`, `lane`, and `plugin_version`):
+     The shape MUST be exactly these three top-level keys (`observe_ship_event.py` rejects any extra key; it owns `observed_at`, `observed_by_run_id`, `flow_attribution`, `tier`, `acceptance_invariant`, `lane`, and `plugin_version`):
      ```json
      {
        "ticket": "<KEY>",

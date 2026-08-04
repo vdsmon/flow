@@ -52,6 +52,7 @@ import sys
 from pathlib import Path
 from typing import Any, TypedDict
 
+import _runner
 import state
 import ticket_frontmatter
 from _atomicio import atomic_write_text
@@ -95,14 +96,9 @@ class _IgnoredPlannedFile(_BaselineMissing):
 
 
 def _git(args: list[str], cwd: Path, runner: Runner) -> str:
-    # core.quotePath=false so non-ASCII paths come back literal (UTF-8) instead of
-    # C-quoted/octal-escaped. The porcelain/ls-files/numstat parsers below compare
-    # raw output against planned paths; an escaped "caf\303\251.py" never matches
-    # "café.py" and the ownership gate false-flags a legit file as unowned.
-    result = runner(["git", "-c", "core.quotePath=false", *args], cwd)
-    if result.returncode != 0:
-        raise _GitError(f"git {' '.join(args)} failed: {result.stderr.strip()}")
-    return result.stdout
+    # core.quotePath=false: see _runner.git_text (the parsers below compare raw
+    # output against planned paths).
+    return _runner.git_text(args, cwd, runner, _GitError, quote_path_off=True)
 
 
 _PORCELAIN_ESCAPES = {
@@ -210,14 +206,8 @@ def _staged_deletions(files: list[str], cwd: Path, runner: Runner) -> list[str]:
 
 
 def _gitignored(files: list[str], cwd: Path, runner: Runner) -> list[str]:
-    """Return the subset of `files` git ignores. check-ignore exits 0 when a path
-    is ignored, 1 when none are, so it bypasses `_git` (which raises on non-zero)."""
-    if not files:
-        return []
-    result = runner(["git", "check-ignore", "--", *files], cwd)
-    if result.returncode not in (0, 1):
-        raise _GitError(f"git check-ignore failed: {result.stderr.strip()}")
-    return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    """Return the subset of `files` git ignores (shared body: _runner.gitignored)."""
+    return _runner.gitignored(files, cwd, runner, _GitError)
 
 
 # ─── since / since-stage ─────────────────────────────────────────────────────

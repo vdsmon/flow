@@ -45,6 +45,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
+import _runner
 import lease
 from _runner import Runner, default_runner
 from _timeutil import utcnow_iso
@@ -66,11 +67,7 @@ class SeatError(Exception):
 
 
 def _run(runner: Runner, args: list[str], cwd: Path, what: str) -> str:
-    result = runner(args, cwd)
-    if result.returncode != 0:
-        detail = (result.stderr or result.stdout or "unknown error").strip()
-        raise SeatError(f"{what} failed: {detail}")
-    return result.stdout.strip()
+    return _runner.checked(runner(args, cwd), what, SeatError, strip=True)
 
 
 def _primary_checkout(runner: Runner, invoking: Path) -> tuple[Path, list[dict[str, str | None]]]:

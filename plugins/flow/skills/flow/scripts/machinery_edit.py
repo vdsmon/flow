@@ -58,6 +58,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import _workspace
 from _atomicio import atomic_write_text
 from _locking import flock_blocking
 
@@ -65,7 +66,7 @@ from _locking import flock_blocking
 _SNAPSHOT_PINNED = {"stage-registry.toml"}
 
 # A machinery commit must never land on one of these (human-merge keystone).
-_PROTECTED = {"main", "master", "dev", "develop"}
+_PROTECTED = _workspace.PROTECTED_BRANCHES
 
 # NUL-prefixed: cannot collide with a real branch, _PROTECTED, "HEAD", or "".
 # Signals "git failed while a repo is present" -> apply_edit fails closed.

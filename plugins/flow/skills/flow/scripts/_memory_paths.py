@@ -6,9 +6,10 @@ reflect_inputs / observe_ship_event.
 
 from __future__ import annotations
 
-import tomllib
 from pathlib import Path
 from typing import Any
+
+import _workspace
 
 _LOCAL_V2_MEMORY_ROOT = ".flow/memory"
 
@@ -22,13 +23,10 @@ def resolve_namespace(workspace_root: Path) -> str:
 
     Raises `_MemoryConfigError` if workspace.toml missing or malformed.
     """
-    path = workspace_root / ".flow" / "workspace.toml"
-    if not path.exists():
-        raise _MemoryConfigError(f"no workspace.toml at {path}")
     try:
-        data = tomllib.loads(path.read_text(encoding="utf-8"))
-    except tomllib.TOMLDecodeError as exc:
-        raise _MemoryConfigError(f"workspace.toml does not parse: {exc}") from exc
+        data = _workspace.load_workspace_toml(workspace_root)
+    except _workspace.WorkspaceConfigError as exc:
+        raise _MemoryConfigError(str(exc)) from exc
     memory = data.get("memory")
     if not isinstance(memory, dict):
         raise _MemoryConfigError("workspace.toml missing [memory] block")
@@ -98,10 +96,9 @@ def load_semantic_config(workspace_root: Path) -> dict[str, Any]:
     Keys: `enabled` (bool), `model` (str), `threshold` (float), `embedder` (str).
     Any read/parse error returns {} so callers stay on the BM25 path.
     """
-    path = workspace_root / ".flow" / "workspace.toml"
     try:
-        data = tomllib.loads(path.read_text(encoding="utf-8"))
-    except (OSError, tomllib.TOMLDecodeError):
+        data = _workspace.load_workspace_toml(workspace_root)
+    except _workspace.WorkspaceConfigError:
         return {}
     memory = data.get("memory")
     if not isinstance(memory, dict):

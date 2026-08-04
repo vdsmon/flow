@@ -22,7 +22,6 @@ import re
 import shlex
 import subprocess
 import sys
-import tomllib
 from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
@@ -1142,10 +1141,9 @@ def docs_over_stage_doc_citation_limit(
     stage-docs it cites (intersection, so a non-registry stage-*.md token can
     not inflate). Returns {doc.name: count} for docs citing >= limit.
     """
-    data = tomllib.loads(registry_path.read_text(encoding="utf-8"))
     registry_basenames: set[str] = set()
-    for stage in data.get("stage", []):
-        registry_basenames |= set(_STAGE_DOC_RE.findall(stage.get("reference_doc", "")))
+    for entry in load_registry(registry_path):
+        registry_basenames |= set(_STAGE_DOC_RE.findall(entry.reference_doc or ""))
     if docs is None:
         docs = docs_to_check()
     out: dict[str, int] = {}
@@ -1254,12 +1252,7 @@ def descriptor_key_drift(
 
 def registry_roles(registry_path: Path = SKILL_ROOT / "stage-registry.toml") -> set[str]:
     """Union of every `roles` array across the registry's stages."""
-    data = tomllib.loads(registry_path.read_text(encoding="utf-8"))
-    roles: set[str] = set()
-    for stage in data.get("stage", []):
-        for r in stage.get("roles", []) or []:
-            roles.add(str(r))
-    return roles
+    return {str(r) for entry in load_registry(registry_path) for r in entry.roles}
 
 
 def prose_role_citations(text: str) -> list[tuple[int, str]]:

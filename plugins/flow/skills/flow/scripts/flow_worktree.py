@@ -60,6 +60,7 @@ from typing import Any, cast
 import _atomicio
 import _locking
 import _memory_paths
+import _runner
 import _workspace
 import flow_launcher
 import lease
@@ -106,26 +107,11 @@ class _HitlBead(Exception):
 
 
 def _git(args: list[str], cwd: Path, runner: Runner) -> str:
-    result = runner(["git", *args], cwd)
-    if result.returncode != 0:
-        raise _GitError(f"git {' '.join(args)} failed: {result.stderr.strip()}")
-    return result.stdout.strip()
+    return _runner.git_text(args, cwd, runner, _GitError, strip=True)
 
 
 def _gitignored(files: list[str], cwd: Path, runner: Runner) -> list[str]:
-    """Return the subset of `files` that git ignores in `cwd`.
-
-    `git check-ignore` exits 0 when at least one path is ignored, 1 when none
-    are, 128 on real error, so it cannot go through `_git` (which raises on any
-    non-zero). check-ignore evaluates rules against the path string, so the
-    files need not exist yet (planned files are usually about to be created).
-    """
-    if not files:
-        return []
-    result = runner(["git", "check-ignore", "--", *files], cwd)
-    if result.returncode not in (0, 1):
-        raise _GitError(f"git check-ignore failed: {result.stderr.strip()}")
-    return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    return _runner.gitignored(files, cwd, runner, _GitError)
 
 
 def _typo_planned(files: list[str], cwd: Path) -> list[str]:
