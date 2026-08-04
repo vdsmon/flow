@@ -90,6 +90,7 @@ def _wire(
     tracker: _Tracker | None = None,
     forge: _Forge | None = None,
     lease_blocker: tuple[str, Path] | None = None,
+    observe_result: dict | None = None,
 ):
     main = tmp_path / "repo"
     entries = entries if entries is not None else []
@@ -118,7 +119,7 @@ def _wire(
     def observe(_root, k, worktree):
         order.append("observe")
         observed.append((k, worktree))
-        return {"action": "observed"}
+        return dict(observe_result) if observe_result is not None else {"action": "observed"}
 
     monkeypatch.setattr(fz.observe_at_close, "observe_at_close", observe)
     reaped: list[dict] = []
@@ -324,6 +325,87 @@ def test_delete_branch_failure_still_reaps(monkeypatch, tmp_path):
     assert code == fz.EXIT_OK
     assert report["steps"]["delete_remote_branch"]["action"] == "failed_or_absent"
     assert len(reaped) == 1
+
+
+def test_failed_observe_refuses_before_destructive_steps(monkeypatch, tmp_path):
+    main = tmp_path / "repo"
+    entry = _worktree_entry(main)
+    _, _, _, order, _, reaped = _wire(
+        monkeypatch,
+        tmp_path,
+        entries=[entry],
+        prs={("feat/FT-1-x", "merged"): {"id": "7", "head_sha": "head-sha"}},
+        observe_result={"action": "failed", "reason": "gate: JiraAdapter requires env vars"},
+    )
+    with pytest.raises(fz.FinalizeRefused, match="ship event not frozen"):
+        fz.finalize(main, "FT-1")
+    assert order == ["transition", "observe"]
+    assert reaped == []
+
+
+def test_not_shipped_skip_refuses_before_destructive_steps(monkeypatch, tmp_path):
+    main = tmp_path / "repo"
+    entry = _worktree_entry(main)
+    _, _, _, order, _, reaped = _wire(
+        monkeypatch,
+        tmp_path,
+        entries=[entry],
+        prs={("feat/FT-1-x", "merged"): {"id": "7", "head_sha": "head-sha"}},
+        observe_result={"action": "skipped", "reason": "not_shipped"},
+    )
+    with pytest.raises(fz.FinalizeRefused, match="not_shipped"):
+        fz.finalize(main, "FT-1")
+    assert order == ["transition", "observe"]
+    assert reaped == []
+
+
+def test_no_run_state_skip_still_finalizes(monkeypatch, tmp_path):
+    main = tmp_path / "repo"
+    entry = _worktree_entry(main)
+    _, _, _, order, _, _ = _wire(
+        monkeypatch,
+        tmp_path,
+        entries=[entry],
+        prs={("feat/FT-1-x", "merged"): {"id": "7", "head_sha": "head-sha"}},
+        observe_result={"action": "skipped", "reason": "no_run_state"},
+    )
+    code, _ = fz.finalize(main, "FT-1")
+    assert code == fz.EXIT_OK
+    assert order == ["transition", "observe", "delete_branch", "reap"]
+
+
+def test_already_observed_skip_still_finalizes(monkeypatch, tmp_path):
+    main = tmp_path / "repo"
+    entry = _worktree_entry(main)
+    _, _, _, order, _, _ = _wire(
+        monkeypatch,
+        tmp_path,
+        entries=[entry],
+        prs={("feat/FT-1-x", "merged"): {"id": "7", "head_sha": "head-sha"}},
+        observe_result={"action": "skipped", "reason": "already_observed", "path": "x"},
+    )
+    code, _ = fz.finalize(main, "FT-1")
+    assert code == fz.EXIT_OK
+    assert order == ["transition", "observe", "delete_branch", "reap"]
+
+
+def test_sweep_reports_unfrozen_observe_as_refused(monkeypatch, tmp_path):
+    main = tmp_path / "repo"
+    entry = _worktree_entry(main)
+    run_dir = entry[0] / ".flow" / "runs" / "FT-1"
+    run_dir.mkdir(parents=True)
+    _wire(
+        monkeypatch,
+        tmp_path,
+        entries=[entry],
+        prs={("feat/FT-1-x", "merged"): {"id": "7", "head_sha": "head-sha"}},
+        observe_result={"action": "failed", "reason": "gate: no credentials"},
+    )
+    code, report = fz.finalize_all(main)
+    assert code == fz.EXIT_OK
+    assert report["refused"] == ["FT-1"]
+    assert report["finalized"] == []
+    assert "ship event not frozen" in report["per_key"]["FT-1"]["refused"]
 
 
 def test_dry_run_probes_but_writes_nothing(monkeypatch, tmp_path):
