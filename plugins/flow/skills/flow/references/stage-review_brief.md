@@ -119,9 +119,10 @@ Review brief mode: compact
 stage without authoring or rendering. This is plan output, not new ticket
 frontmatter and not a public-command grammar. With `auto`, use `compact` for a small,
 linear change that can be understood from motivation + invariants + one or two
-excerpts. Use `full` when the change crosses boundaries, alters a workflow, carries
-meaningful risk, needs before/after scenarios, or needs a system map. When uncertain,
-choose `full`: the reviewer is assumed not to know this subsystem.
+excerpts. Use `full` only when the change crosses boundaries, alters a workflow, or
+genuinely needs before/after scenarios or a system map to be legible. When uncertain,
+choose `compact`: a reviewer who wants more depth has the full diff in Forge, and a
+short brief that gets read beats a complete one that gets skimmed.
 
 Do not include an estimated reading time.
 
@@ -132,42 +133,18 @@ diff against the PR base, `code_review.out`, `e2e.out`, and CI/review-loop resul
 Inspect enough surrounding code to explain the relevant system slice; do not merely
 rephrase filenames or commit messages.
 
-Schema version 1:
+The schema, shown as the lean compact shape most changes need:
 
 ```json
 {
-  "schema_version": 1,
-  "mode": "full",
+  "mode": "compact",
   "title": "Outcome-oriented title",
   "outcome": "One-sentence description of what is true now.",
   "risk": "low",
-  "change_shape": "Linear | Cross-cutting | Workflow | Safety boundary",
   "motivation": {
     "observed_problem": "Concrete behavior before this change.",
     "why_it_matters": "User, operator, or system consequence."
   },
-  "scenarios": [
-    {
-      "name": "A concrete situation",
-      "before_label": "what could happen",
-      "after_label": "what happens now",
-      "before_steps": ["Cause", "Old path", "Old outcome"],
-      "after_steps": ["Cause", "New path", "New outcome"]
-    }
-  ],
-  "system_map": {
-    "caption": "Why these are the only relevant components.",
-    "nodes": [
-      {"id": "boundary", "label": "Workspace", "kind": "Boundary", "changed": true}
-    ],
-    "edges": []
-  },
-  "decisions": [
-    {"title": "A deliberate choice", "body": "Constraint or tradeoff and why."}
-  ],
-  "invariants": [
-    {"title": "What must remain true", "body": "The reviewer-verifiable guarantee."}
-  ],
   "code_evidence": [
     {
       "claim": "What these lines prove",
@@ -179,21 +156,20 @@ Schema version 1:
   ],
   "verification": [
     {"claim": "Behavior verified", "evidence": "Exact test/probe result.", "status": "passed"}
-  ],
-  "limitations": ["Known residual risk or deliberately out-of-scope behavior."],
-  "reviewer_prompts": ["The highest-value question to pressure-test."]
+  ]
 }
 ```
+
+Four optional sections exist for changes that need them, all omitted above and all rendered only when present: `scenarios` (before/after step lists: `name`, `before_label`, `after_label`, `before_steps`, `after_steps`), `system_map` (`caption` plus `nodes`/`edges`, each node `{id, label, kind, changed}`), `decisions` (`{title, body}` items), and `invariants` (`{title, body}` items). Full mode needs at least one scenario, map, or decision; that is what full mode is for.
 
 `risk` is `low|medium|high`; verification status is
 `passed|pending|failed`. Paths are repository-relative and excerpt lines refer to the
 snapshot file, not a pasted diff. The renderer rejects unknown fields, unsafe paths,
-out-of-range excerpts, unknown/cyclic map edges, and unescaped-data hazards. Full
-mode needs at least one scenario, map, or decision. Every mode needs motivation,
-focused code evidence, and verification.
+out-of-range excerpts, unknown/cyclic map edges, and unescaped-data hazards.
 
 Authoring rules:
 
+- The structure adapts to the change, never the reverse. A section with nothing real to say is omitted, not filled: an empty array renders nothing, and a sentence written to satisfy the format is a defect. Residual risks were settled or accepted at plan time; when one genuinely survives and a reviewer should weigh it, it belongs in the PR body's Notes section, its single home, not here.
 - Write plainly and briefly. Short sentences, everyday words, no run or pipeline
   jargon (stage names, handler terms, ticket keys as prose). The reader knows the
   repository, not this run and possibly not this subsystem. Cut any sentence that
@@ -205,7 +181,6 @@ Authoring rules:
 - Choose a few decisive excerpts. The full diff belongs in Forge.
 - Separate observed verification from assertion. Carry pending/failed evidence
   visibly; never turn it green in prose.
-- Name limitations honestly. The brief should increase confidence, not manufacture it.
 - Keep every field plain text. The renderer escapes authored and source content.
 
 ## 4. Render, publish, and continue

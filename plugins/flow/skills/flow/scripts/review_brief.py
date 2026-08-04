@@ -48,7 +48,6 @@ from _runner import cwd_default_runner
 from forge import Forge, ForgeError, PullRequest, make_forge, read_forge_config
 
 RENDERER_VERSION = 1
-SCHEMA_VERSION = 1
 CANONICAL_UNATTENDED_SKIP_REASON = "unattended run has no live human reviewer"
 _ASSET = Path(__file__).resolve().parent / "assets" / "review_brief.css"
 _SHA_RE = re.compile(r"^[0-9a-fA-F]{7,64}$")
@@ -59,12 +58,10 @@ _MODE = {"auto", "compact", "full"}
 _STATUS = {"passed", "pending", "failed"}
 _HUNK_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 _ROOT_FIELDS = {
-    "schema_version",
     "mode",
     "title",
     "outcome",
     "risk",
-    "change_shape",
     "motivation",
     "scenarios",
     "system_map",
@@ -72,8 +69,6 @@ _ROOT_FIELDS = {
     "invariants",
     "code_evidence",
     "verification",
-    "limitations",
-    "reviewer_prompts",
 }
 
 _COPY: dict[str, dict[str, str]] = {
@@ -109,9 +104,6 @@ _COPY: dict[str, dict[str, str]] = {
         "open_lines": "Open exact lines in Forge ↗",
         "verification": "Verification & risk",
         "verification_note": "Evidence over assertion",
-        "limitations": "Limits & unknowns",
-        "prompts": "Questions worth pressure-testing",
-        "prompts_note": "A starting point, not a checklist",
         "why_nav": "Why this changed",
         "scenarios_nav": "Before and after",
         "map_nav": "System map",
@@ -119,8 +111,6 @@ _COPY: dict[str, dict[str, str]] = {
         "invariants_nav": "Invariants",
         "evidence_nav": "Code evidence",
         "verification_nav": "Verification & risk",
-        "limitations_nav": "Limits & unknowns",
-        "prompts_nav": "Review prompts",
     },
     "pt-BR": {
         "brand": "Resumo de revisão do Flow",
@@ -154,9 +144,6 @@ _COPY: dict[str, dict[str, str]] = {
         "open_lines": "Abrir linhas exatas no Forge ↗",
         "verification": "Verificação e risco",
         "verification_note": "Evidências acima de afirmações",
-        "limitations": "Limites e incertezas",
-        "prompts": "Perguntas que merecem ser testadas",
-        "prompts_note": "Um ponto de partida, não uma lista de verificação",
         "why_nav": "Por que isso mudou",
         "scenarios_nav": "Antes e depois",
         "map_nav": "Mapa do sistema",
@@ -164,8 +151,6 @@ _COPY: dict[str, dict[str, str]] = {
         "invariants_nav": "Invariantes",
         "evidence_nav": "Evidências de código",
         "verification_nav": "Verificação e risco",
-        "limitations_nav": "Limites e incertezas",
-        "prompts_nav": "Perguntas para revisão",
     },
 }
 
@@ -575,9 +560,6 @@ def validate_content(value: Any) -> dict[str, Any]:
     """Validate authored JSON and return a deterministic normalized shape."""
     root = _object(value, "review brief")
     _keys(root, _ROOT_FIELDS, "review brief")
-    version = _integer(root.get("schema_version"), "schema_version")
-    if version != SCHEMA_VERSION:
-        _fail(f"schema_version must be {SCHEMA_VERSION}")
     mode = _text(root.get("mode", "auto"), "mode").lower()
     if mode not in _MODE:
         _fail(f"mode must be one of {sorted(_MODE)}")
@@ -585,12 +567,10 @@ def validate_content(value: Any) -> dict[str, Any]:
     if risk not in _RISK:
         _fail(f"risk must be one of {sorted(_RISK)}")
     normalized: dict[str, Any] = {
-        "schema_version": version,
         "mode": mode,
         "title": _text(root.get("title"), "title"),
         "outcome": _text(root.get("outcome"), "outcome"),
         "risk": risk,
-        "change_shape": _text(root.get("change_shape"), "change_shape"),
         "motivation": _normalize_motivation(root.get("motivation")),
         "scenarios": _normalize_scenarios(root.get("scenarios", [])),
         "system_map": _normalize_map(root.get("system_map")),
@@ -598,8 +578,6 @@ def validate_content(value: Any) -> dict[str, Any]:
         "invariants": _normalize_claims(root.get("invariants", []), "invariants"),
         "code_evidence": _normalize_evidence(root.get("code_evidence")),
         "verification": _normalize_verification(root.get("verification")),
-        "limitations": _text_list(root.get("limitations", []), "limitations"),
-        "reviewer_prompts": _text_list(root.get("reviewer_prompts", []), "reviewer_prompts"),
     }
     if mode == "full" and not (
         normalized["scenarios"] or normalized["system_map"] or normalized["decisions"]
@@ -620,7 +598,7 @@ def _resolved_mode(content: Mapping[str, Any]) -> Literal["compact", "full"]:
 
 def _authored_prose(content: Mapping[str, Any]) -> str:
     """Collect reviewer-authored prose while excluding source paths and code."""
-    values: list[str] = [content["title"], content["outcome"], content["change_shape"]]
+    values: list[str] = [content["title"], content["outcome"]]
     values.extend(content["motivation"].values())
     for scenario in content["scenarios"]:
         values.extend(
@@ -644,8 +622,6 @@ def _authored_prose(content: Mapping[str, Any]) -> str:
         values.extend([item["claim"], item["explanation"]])
     for item in content["verification"]:
         values.extend([item["claim"], item["evidence"]])
-    values.extend(content["limitations"])
-    values.extend(content["reviewer_prompts"])
     return " ".join(values)
 
 
@@ -1152,17 +1128,6 @@ def _render_list_section(
     )
 
 
-def _render_prompts(items: Sequence[str], copy: Mapping[str, str], *, unfolded: bool) -> str:
-    if not items:
-        return ""
-    rows = "".join(f'<li class="panel"><span>{_e(item)}</span></li>' for item in items)
-    head = (
-        f'<div class="section-head"><h2>{_e(copy["prompts"])}</h2>'
-        f"<span>{_e(copy['prompts_note'])}</span></div>"
-    )
-    return _section("prompts", head, f'<ol class="prompt-list">{rows}</ol>', unfolded=unfolded)
-
-
 def _navigation(content: Mapping[str, Any], copy: Mapping[str, str]) -> list[tuple[str, str]]:
     links: list[tuple[str, str]] = [("why", copy["why_nav"])]
     optional = [
@@ -1172,8 +1137,6 @@ def _navigation(content: Mapping[str, Any], copy: Mapping[str, str]) -> list[tup
         ("invariants", copy["invariants_nav"], content["invariants"]),
         ("evidence", copy["evidence_nav"], content["code_evidence"]),
         ("verification", copy["verification_nav"], content["verification"]),
-        ("limitations", copy["limitations_nav"], content["limitations"]),
-        ("prompts", copy["prompts_nav"], content["reviewer_prompts"]),
     ]
     links.extend((section_id, label) for section_id, label, value in optional if value)
     return links
@@ -1215,10 +1178,6 @@ def _document(
         _render_guarantees(content["invariants"], copy, unfolded=unfolded),
         _render_evidence(excerpts, snapshot.pr_url, copy, unfolded=unfolded),
         _render_verification(content["verification"], copy, unfolded=unfolded or attention),
-        _render_list_section(
-            "limitations", copy["limitations"], content["limitations"], unfolded=unfolded
-        ),
-        _render_prompts(content["reviewer_prompts"], copy, unfolded=unfolded),
     ]
     risk_label = copy[f"risk_{content['risk']}"]
     favicon = (

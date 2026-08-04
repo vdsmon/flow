@@ -81,12 +81,10 @@ class GitRunner:
 
 def _content(*, mode: str = "full") -> dict:
     return {
-        "schema_version": 1,
         "mode": mode,
         "title": "Cleanup that cannot escape its workspace",
         "outcome": "The invoking workspace is now the hard boundary for cleanup.",
         "risk": "high",
-        "change_shape": "Cross-cutting safety change",
         "motivation": {
             "observed_problem": "Cleanup could derive scope from unrelated maintainer state.",
             "why_it_matters": "A destructive candidate set could include another repository.",
@@ -134,8 +132,6 @@ def _content(*, mode: str = "full") -> dict:
                 "status": "passed",
             }
         ],
-        "limitations": ["The Forge remains the source of truth for the full diff."],
-        "reviewer_prompts": ["Does every destructive path receive the same scope?"],
     }
 
 
@@ -240,13 +236,10 @@ def test_portuguese_authored_prose_localizes_renderer_copy(tmp_path):
         {
             "title": "Rebaixamento de grau sem perder o controle",
             "outcome": "O modelo mantém a posição e o extrato consistentes para o administrador.",
-            "change_shape": "Alteração focada no domínio",
             "motivation": {
                 "observed_problem": "A conciliação podia produzir dados inconsistentes.",
                 "why_it_matters": "O administrador precisa confiar na posição do fundo.",
             },
-            "limitations": ["A revisão completa continua disponível no Forge."],
-            "reviewer_prompts": ["As regras do domínio continuam claras?"],
         }
     )
     content["scenarios"] = [
@@ -342,8 +335,6 @@ def test_auto_mode_uses_compact_for_a_small_linear_change(tmp_path):
     content["scenarios"] = []
     content["system_map"] = None
     content["decisions"] = []
-    content["limitations"] = []
-    content["reviewer_prompts"] = []
 
     receipt = rb.render(
         _request(tmp_path, _write_content(tmp_path, content)),
@@ -372,8 +363,6 @@ def test_full_mode_folds_topic_sections_and_compact_mode_unfolds_them(tmp_path):
         "invariants",
         "evidence",
         "verification",
-        "limitations",
-        "prompts",
     ):
         assert f'<section id="{section_id}" class="fold"><details><summary>' in document
     assert "<details open>" not in document
