@@ -2571,7 +2571,6 @@ def _bootstrap_proc(main_str: str, plan_str: str, branch: str) -> None:
             base="main",
             branch=branch,
             main_root=Path(main_str),
-            mise_trust=False,
         )
     except fw._DuplicateClaim:
         sys.exit(4)

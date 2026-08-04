@@ -17,6 +17,7 @@ Required-field defaults baked into stage-registry.toml:
     by this helper; not declared per-stage in the registry).
   - implement.required_fields  = ["planned_files"]
   - commit.required_fields     = ["commit_type", "commit_summary"]
+  - e2e.required_fields        = ["e2e_recipe"]
 
 Exit codes:
   0 = continue

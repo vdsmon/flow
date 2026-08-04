@@ -119,14 +119,6 @@ def test_observe_monotonic_dupe_n(tmp_path: Path) -> None:
     assert p3.name.endswith(".dupe.2.json")
 
 
-def test_dupe_record_has_superseded_field(tmp_path: Path) -> None:
-    _seed_workspace(tmp_path)
-    observe_ship_event.observe(tmp_path, "FT-1", _payload(), "abcdef0123456789")
-    p_dupe, _ = observe_ship_event.observe(tmp_path, "FT-1", _payload(), "abcdef0123456789")
-    data = json.loads(p_dupe.read_text(encoding="utf-8"))
-    assert data["superseded_by_dupe"] is False
-
-
 # ─── observe() concurrency ───────────────────────────────────────────────────
 
 

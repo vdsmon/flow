@@ -8,7 +8,6 @@ Subcommands:
       git diff --numstat <ref>..HEAD; emits {files_touched, insertions,
       deletions, binary} JSON.
 
-  since-stage --stage <name> --ticket <key> --ticket-dir <dir>
       Reads <ticket-dir>/state.json for stages.<name>.started_at_sha; if absent
       exits 1. Then runs `since` mode with that sha.
 
@@ -638,12 +637,6 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Git diff capture for /flow stages.")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
-    p_stage = sub.add_parser("since-stage", help="diff since stage started_at_sha.")
-    p_stage.add_argument("--stage", required=True)
-    p_stage.add_argument("--ticket", required=True)
-    p_stage.add_argument("--ticket-dir", required=True)
-    p_stage.add_argument("--cwd", default=".")
-
     p_record = sub.add_parser("record-baseline", help="write baseline.json for the stage.")
     p_record.add_argument("--stage", required=True)
     p_record.add_argument("--ticket", required=True)
@@ -675,12 +668,6 @@ def cli_main(argv: list[str]) -> int:
     cwd = Path(args.cwd).resolve()
 
     try:
-        if args.cmd == "since-stage":
-            ticket_dir = Path(args.ticket_dir).resolve()
-            payload = diff_since_stage(args.stage, ticket_dir, cwd)
-            sys.stdout.write(json.dumps(payload, indent=2, sort_keys=True) + "\n")
-            return 0
-
         if args.cmd == "record-baseline":
             ticket_dir = Path(args.ticket_dir).resolve()
             files: list[str] = []

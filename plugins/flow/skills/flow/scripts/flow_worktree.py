@@ -8,7 +8,7 @@ harness-level choice (`/bg`), not this script's concern.
   1. resolve the approved base, then git worktree add -b <branch> <worktree> <base>
   2. copy gitignored dev config main->worktree; ensure .flow/.initialized + workspace.toml exist (a
      git worktree only materializes committed files)
-  3. mise trust the worktree (toolchain) unless --no-mise-trust
+  3. mise trust the worktree (toolchain)
   4. redirect the worktree's memory store to the main checkout's resolved memory base (its own
      `.flow/runtime/memory-root` / `[memory].root` honored) via runtime metadata
      (shared store, so per-ticket worktrees don't fragment the compounding-knowledge layer; tracked
@@ -1269,7 +1269,6 @@ def bootstrap(
     commit_summary: str | None = None,
     e2e_recipe: str | None = None,
     lane: str | None = None,
-    mise_trust: bool = True,
     auto: bool = False,
     recover_spill: bool = False,
     runner: Runner | None = None,
@@ -1425,9 +1424,7 @@ def bootstrap(
             copied = _copy_config(main_root, worktree)
             _ensure_flow_config(main_root, worktree, _shared_memory_base(main_root))
 
-            if mise_trust and (
-                (worktree / "mise.toml").exists() or (worktree / ".mise.toml").exists()
-            ):
+            if (worktree / "mise.toml").exists() or (worktree / ".mise.toml").exists():
                 result = run(["mise", "trust"], worktree)
                 if result.returncode != 0:
                     warnings.append(
@@ -1524,7 +1521,6 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         "nothing would run anything else. Seeds frontmatter e2e_recipe so the e2e stage "
         "runs unattended",
     )
-    p.add_argument("--no-mise-trust", action="store_true")
     p.add_argument(
         "--recover-spill",
         action="store_true",
@@ -1631,7 +1627,6 @@ def cli_main(argv: list[str]) -> int:
             commit_summary=args.commit_summary,
             e2e_recipe=args.e2e_recipe,
             lane=args.lane,
-            mise_trust=not args.no_mise_trust,
             auto=args.auto,
             recover_spill=args.recover_spill,
         )

@@ -238,7 +238,7 @@ markers are overwritten. `—` = none.
 <!-- flow:module-map:begin -->
 | Script | Subcommands | Imported by |
 |--------|-------------|-------------|
-| `_atomicio.py` | — | `diff_extract`, `dispatch_stage`, `flow_launcher`, `flow_worktree`, `init`, `lease`, `machinery_edit`, `memory_embed`, `pending_mutations`, `recall_pending`, `review_brief`, `runtime_layout`, `snapshot`, `state`, `ticket_frontmatter` |
+| `_atomicio.py` | — | `diff_extract`, `flow_launcher`, `flow_worktree`, `init`, `lease`, `machinery_edit`, `memory_embed`, `pending_mutations`, `recall_pending`, `review_brief`, `runtime_layout`, `snapshot`, `state`, `ticket_frontmatter` |
 | `_harness.py` | — | `dispatch_stage`, `flow_launcher`, `flowctl`, `init`, `model_resolve` |
 | `_jsonl.py` | — | `friction_recurrence`, `memory_append`, `memory_embed`, `metric`, `pending_mutations`, `recall`, `recall_pending`, `recall_usage`, `reflect_inputs`, `sweep_knowledge` |
 | `_locking.py` | — | `dispatch_stage`, `flow_friction`, `flow_worktree`, `lease`, `machinery_edit`, `memory_append`, `memory_embed`, `observe_ship_event`, `pending_mutations`, `recall_pending`, `recall_usage`, `state`, `ticket_frontmatter` |
@@ -252,7 +252,7 @@ markers are overwritten. `—` = none.
 | `cockpit_cli.py` | `render` | — |
 | `compose_commit.py` | — | — |
 | `create_pr.py` | — | — |
-| `diff_extract.py` | `capture-implement-diff` `capture-review-diff` `check-ownership` `record-baseline` `since-stage` | `reflect_inputs` |
+| `diff_extract.py` | `capture-implement-diff` `capture-review-diff` `check-ownership` `record-baseline` | `reflect_inputs` |
 | `dispatch_stage.py` | `advance` `init` `next` `release` `revise-open` | — |
 | `embedder_fastembed.py` | — | — |
 | `finalize.py` | — | — |

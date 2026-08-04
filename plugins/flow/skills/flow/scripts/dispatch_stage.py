@@ -42,7 +42,6 @@ import lease
 import recall_pending
 import state
 import validate_workspace as vw
-from _atomicio import atomic_write_text
 from _harness import HarnessError, flow_harness
 from _registry import CODEX_HANDLERS, StageEntry, registry_by_name
 from _timeutil import utcnow_iso
@@ -719,14 +718,12 @@ def cmd_next(
     stage_meta = registry_by_name(registry_path).get(next_stage)
     handler_descriptor = _parse_handler(snapshot.handlers[next_stage])
     output_path = td / "stages" / f"{next_stage}.out"
-    descriptor_path = td / "stages" / f"{next_stage}.descriptor.json"
     payload: dict[str, Any] = {
         "done": False,
         "stage": next_stage,
         "head_sha": head_sha,
         "ticket_dir": str(td),
         "output_path": str(output_path),
-        "descriptor_path": str(descriptor_path),
         "roles": stage_meta.roles if stage_meta else [],
         **handler_descriptor,
     }
@@ -762,8 +759,6 @@ def cmd_next(
     if lease_error is not None:
         return lease_error
 
-    descriptor_path.parent.mkdir(parents=True, exist_ok=True)
-    atomic_write_text(descriptor_path, json.dumps(payload, indent=2, sort_keys=True) + "\n")
     try:
         state.begin_stage(td, next_stage, head_sha)
     except ValueError as exc:

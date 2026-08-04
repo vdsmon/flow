@@ -269,7 +269,6 @@ def observe(
     try:
         with flock_retry(dupe_lock):
             dupe_path = _next_dupe_path(primary)
-            record["superseded_by_dupe"] = False
             try:
                 _write_o_excl(dupe_path, _serialize(record))
             except FileExistsError:

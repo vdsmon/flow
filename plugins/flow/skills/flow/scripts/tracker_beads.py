@@ -332,9 +332,7 @@ class BeadsAdapter:
                 "name": f"to {t}",
                 "to_state": t,
                 "to_normalized_state": cast("Any", _BD_TO_NORMALIZED.get(t, "open")),
-                "required_fields": [],
                 "available": True,
-                "unavailable_reason": None,
             }
             for t in targets
         ]
@@ -567,50 +565,6 @@ class BeadsAdapter:
         raise NotSupported("BeadsAdapter does not support attachments")
 
     # ─── Postcondition + git helpers ─────────────────────────────────────
-
-    def _verify_field(self, key: str, field_name: str, expected: Any) -> None:
-        """Re-read after a mutation; fail loud if the field did not change.
-
-        Field-specific normalization: labels list vs comma-string, priority
-        int vs "P<n>" string, assignee "" vs None.
-        """
-        raw = self._unwrap_show(self._run_json(["show", key]))
-        if raw is None:
-            raise TrackerError(f"bd show {key} --json (post-write) returned non-object")
-        actual = raw.get(field_name)
-        if field_name == "labels":
-            actual_set = set(actual or [])
-            expected_set = set(expected or [])
-            if actual_set != expected_set:
-                raise TrackerError(
-                    f"postcondition: labels mismatch on {key}: "
-                    f"expected={sorted(expected_set)!r} actual={sorted(actual_set)!r}"
-                )
-            return
-        if field_name == "assignee":
-            actual_n = actual or None
-            expected_n = expected or None
-            if actual_n != expected_n:
-                raise TrackerError(
-                    f"postcondition: assignee mismatch on {key}: "
-                    f"expected={expected_n!r} actual={actual_n!r}"
-                )
-            return
-        if field_name == "priority":
-            actual_int = (
-                int(actual) if isinstance(actual, (int, str)) and str(actual).isdigit() else actual
-            )
-            if actual_int != expected:
-                raise TrackerError(
-                    f"postcondition: priority mismatch on {key}: "
-                    f"expected={expected!r} actual={actual!r}"
-                )
-            return
-        if actual != expected:
-            raise TrackerError(
-                f"postcondition: {field_name} mismatch on {key}: "
-                f"expected={expected!r} actual={actual!r}"
-            )
 
     def _default_ref(self) -> str:
         """The default-branch remote-tracking ref to gate ships against.
