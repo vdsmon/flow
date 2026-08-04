@@ -27,9 +27,10 @@ snapshot binding, HTML rendering, publication, and freshness. No authoring agent
 render, publish, open a browser, or mutate source.
 
 The registry default handler is `inline`, so initialized workspaces receive the
-stage. When `create_pr` is `none`, no `[forge]` block
-exists, or `[review_brief].mode = "off"`, complete as an explicit no-op: there is no
-PR snapshot to explain. A workspace using Flow's native PR pipeline, including Flow's
+stage. When `create_pr` is `none` or no `[forge]` block
+exists, complete as an explicit no-op: there is no
+PR snapshot to explain. A workspace that wants no brief omits the stage from
+`pipeline.stages`; that wiring is the one off switch. A workspace using Flow's native PR pipeline, including Flow's
 dogfood workspace, renders the artifact.
 
 On a genuinely unattended run there is no live reviewer to author the brief for, so
@@ -104,7 +105,7 @@ Workspace defaults live under:
 
 ```toml
 [review_brief]
-mode = "auto"   # auto | compact | full | off
+mode = "auto"   # auto | compact | full
 open = true
 ```
 
@@ -114,8 +115,7 @@ An explicit line in the approved `plan.out` wins for this run:
 Review brief mode: compact
 ```
 
-`compact`, `full`, `auto`, and `off` are valid stage selections; `off` completes the
-stage without authoring or rendering. This is plan output, not new ticket
+`compact`, `full`, and `auto` are the valid stage selections. This is plan output, not new ticket
 frontmatter and not a public-command grammar. With `auto`, use `compact` for a small,
 linear change that can be understood from motivation + invariants + one or two
 excerpts. Use `full` only when the change crosses boundaries, alters a workflow, or

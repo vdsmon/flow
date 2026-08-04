@@ -7,7 +7,6 @@ a tracked file vanishing mid-verify -> fail-closed abort.
 
 from __future__ import annotations
 
-import hashlib
 import json
 from pathlib import Path
 
@@ -328,53 +327,6 @@ def test_classify_drift_plugin_reinstall_race_fails_closed(
     assert detail
     assert detail != "no snapshot to verify"
     assert current is None
-
-
-# ─── _tree_hash single-walk == old 4-glob algorithm ────────────────────────────
-
-
-def _old_tree_hash(plugin_root: Path) -> str:
-    """The pre-optimization implementation (one rglob per glob), kept as the oracle."""
-    entries: list[tuple[str, str]] = []
-    seen: set[Path] = set()
-    for glob in ("*.py", "*.sh", "*.md", "*.toml"):
-        for path in plugin_root.rglob(glob):
-            if not path.is_file():
-                continue
-            resolved = path.resolve()
-            if resolved in seen:
-                continue
-            seen.add(resolved)
-            relpath = path.relative_to(plugin_root).as_posix()
-            entries.append((relpath, hashlib.sha256(path.read_bytes()).hexdigest()))
-    entries.sort()
-    payload = json.dumps({"tree": entries}, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
-
-
-def test_tree_hash_matches_old_four_glob_algorithm(tmp_path: Path) -> None:
-    root = tmp_path / "plugin"
-    _write(root / "a.py", "print(1)\n")
-    _write(root / "run.sh", "#!/bin/sh\n")
-    _write(root / "docs" / "README.md", "# readme\n")
-    _write(root / "conf" / "deep" / "settings.toml", "[x]\ny = 1\n")
-    _write(root / ".hidden.md", "hidden but tracked\n")
-    _write(root / "notes.txt", "excluded suffix\n")
-    _write(root / "__pycache__" / "a.cpython-313.pyc", "excluded bytecode\n")
-    (root / "dir.py").mkdir()
-    _write(root / "dir.py" / "inner.md", "tracked file under a .py-named dir\n")
-
-    assert snapshot._tree_hash(root) == _old_tree_hash(root)
-
-
-def test_tree_hash_oracle_detects_content_change(tmp_path: Path) -> None:
-    # guard the guard: the oracle comparison is not vacuously equal.
-    root = tmp_path / "plugin"
-    _write(root / "a.py", "print(1)\n")
-    before = snapshot._tree_hash(root)
-    _write(root / "a.py", "print(2)\n")
-    assert snapshot._tree_hash(root) != before
-    assert snapshot._tree_hash(root) == _old_tree_hash(root)
 
 
 # ─── write_snapshot with a precomputed snapshot ────────────────────────────────

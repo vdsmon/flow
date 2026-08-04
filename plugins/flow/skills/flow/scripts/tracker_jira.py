@@ -34,7 +34,6 @@ from tracker import (
     Attachment,
     Comment,
     Content,
-    FieldSpec,
     Link,
     NotSupported,
     ShipState,
@@ -512,44 +511,19 @@ class JiraAdapter:
         resp = self._request(
             "GET",
             f"/issue/{urllib.parse.quote(key)}/transitions",
-            query={"expand": "transitions.fields"},
         )
         out: list[Transition] = []
         for tr in resp.get("transitions") or []:
             target_status = (tr.get("to") or {}).get("name", "")
             target_cat = ((tr.get("to") or {}).get("statusCategory") or {}).get("key")
             target_normalized, _ = _normalize_state(target_status, target_cat, None)
-            req_fields_raw = tr.get("fields") or {}
-            req_fields: list[FieldSpec] = []
-            for fkey, fspec in req_fields_raw.items():
-                if fspec.get("required"):
-                    schema = fspec.get("schema") or {}
-                    raw_type = schema.get("type", "string")
-                    if raw_type in ("string", "user", "date", "datetime", "number"):
-                        ftype: str = raw_type
-                    elif raw_type == "option":
-                        ftype = "enum"
-                    else:
-                        ftype = "string"
-                    allowed = fspec.get("allowedValues") or []
-                    enum_values = [str(v.get("value") or v.get("name") or "") for v in allowed]
-                    req_fields.append(
-                        {
-                            "key": fkey,
-                            "type": cast("Any", ftype),
-                            "enum_values": enum_values or None,
-                            "required": True,
-                        }
-                    )
             out.append(
                 {
                     "id": str(tr.get("id", "")),
                     "name": tr.get("name", ""),
                     "to_state": target_status,
                     "to_normalized_state": cast("Any", target_normalized),
-                    "required_fields": req_fields,
                     "available": bool(tr.get("isAvailable", True)),
-                    "unavailable_reason": None,
                 }
             )
         return out

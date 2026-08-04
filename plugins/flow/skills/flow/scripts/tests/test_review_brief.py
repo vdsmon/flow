@@ -596,18 +596,6 @@ def test_attended_normal_render_remains_current(tmp_path: Path):
     assert result.status == "current"
 
 
-def test_freshness_disabled_flag_unaffected_by_skip_authorization(tmp_path: Path):
-    # The `enabled=False` shape (workspace mode=off) short-circuits before the skip
-    # cross-check even when a completed review_brief skip receipt exists on disk.
-    ticket_dir = _seed_review_brief_skip(tmp_path)
-    _seed_frontmatter(tmp_path, unattended=False)
-
-    result = rb.freshness(rb.FreshnessRequest(tmp_path, ticket_dir, "42", enabled=False))
-
-    assert result.status == "disabled"
-    assert result.reason == "review brief is disabled"
-
-
 # ─── wiring authorization (flow-7vnm) ──────────────────────────────────────────
 
 

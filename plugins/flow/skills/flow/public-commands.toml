@@ -152,7 +152,7 @@ options = [
 [[command]]
 id = "measure"
 path = ["measure"]
-usage = "FLOW measure <throughput|lead-time|friction|reverts|trend|memory-health|recall-quality|fix-efficacy> [--since <date>] [--until <date>]"
+usage = "FLOW measure <throughput|lead-time|friction|reverts|trend|memory-health|recall-quality|fix-efficacy> [--since <date>] [--until <date>] [--json]"
 summary = "Measure delivery, quality, or memory outcomes."
 effect = "read"
 workspace = "required"

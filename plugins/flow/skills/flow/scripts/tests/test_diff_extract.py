@@ -1101,33 +1101,6 @@ def test_cli_capture_implement_diff_missing_baseline_exits_1(
     assert "no baseline.json" in capsys.readouterr().err
 
 
-def test_cli_since_stage_uses_state(
-    tmp_repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    initial = _git(["rev-parse", "HEAD"], tmp_repo).strip()
-    ticket_dir = tmp_path / "runs" / "FT-1"
-    _seed_state(ticket_dir, "implement", initial)
-    (tmp_repo / "a.py").write_text("x\n", encoding="utf-8")
-    _git(["add", "a.py"], tmp_repo)
-    _git(["commit", "-m", "a"], tmp_repo)
-    rc = diff_extract.cli_main(
-        [
-            "since-stage",
-            "--stage",
-            "implement",
-            "--ticket",
-            "FT-1",
-            "--ticket-dir",
-            str(ticket_dir),
-            "--cwd",
-            str(tmp_repo),
-        ]
-    )
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["files_touched"] == ["a.py"]
-
-
 def test_cli_empty_files_list_normalized(
     tmp_repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

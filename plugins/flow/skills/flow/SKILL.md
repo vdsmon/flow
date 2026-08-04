@@ -129,7 +129,7 @@ FLOW ticket finalize (<ticket> | --all) [--dry-run]
 FLOW memory search [<query>] [--ticket <key>]... [--label <facet:value>] [--digest] [--semantic] [--threshold <float>] [--branch <branch>] [--limit <n>]
 FLOW memory prune
 FLOW memory rebuild [--full]
-FLOW measure <throughput|lead-time|friction|reverts|trend|memory-health|recall-quality|fix-efficacy> [--since <date>] [--until <date>]
+FLOW measure <throughput|lead-time|friction|reverts|trend|memory-health|recall-quality|fix-efficacy> [--since <date>] [--until <date>] [--json]
 FLOW workspace setup
 FLOW workspace inspect [<target>] [--json]
 FLOW workspace repair [<target>]

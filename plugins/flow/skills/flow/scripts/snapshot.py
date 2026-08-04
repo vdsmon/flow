@@ -73,40 +73,6 @@ def _sha256_text(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def _tree_hash(plugin_root: Path) -> str:
-    """Content hash over sorted (relpath, sha256(bytes)) for tracked files.
-
-    Tracked = *.py / *.sh / *.md / *.toml under plugin_root. The .toml glob
-    excludes nothing relevant; compiled .pyc live in __pycache__ and are not
-    matched. snapshot.json lives under workspace_root, never plugin_root, so
-    writing it can't perturb this hash.
-    """
-    # Single tree walk instead of one rglob per glob (compute_snapshot runs on
-    # the do-loop hot path). Grouping by suffix in _TREE_GLOBS order preserves
-    # the old per-glob dedup priority for paths resolving to the same file, so
-    # the hash stays byte-identical to the 4-glob implementation.
-    matched: dict[str, list[Path]] = {suffix: [] for suffix in _TREE_SUFFIXES}
-    for path in plugin_root.rglob("*"):
-        for suffix in _TREE_SUFFIXES:
-            if path.name.endswith(suffix):
-                matched[suffix].append(path)
-                break
-    entries: list[tuple[str, str]] = []
-    seen: set[Path] = set()
-    for suffix in _TREE_SUFFIXES:
-        for path in matched[suffix]:
-            if not path.is_file():
-                continue
-            resolved = path.resolve()
-            if resolved in seen:
-                continue
-            seen.add(resolved)
-            relpath = path.relative_to(plugin_root).as_posix()
-            entries.append((relpath, hashlib.sha256(path.read_bytes()).hexdigest()))
-    entries.sort()
-    return _sha256_text(_canonical_json({"tree": entries}))
-
-
 _PROTECTED_BRANCHES = frozenset({"main", "master", "dev", "develop"})
 
 

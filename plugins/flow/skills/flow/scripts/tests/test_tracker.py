@@ -211,15 +211,6 @@ class _FakeAdapter:
     def board_rank(self, key: str, after_key: str | None) -> None:  # pragma: no cover
         raise t.NotSupported
 
-    def set_custom_field(
-        self,
-        key: str,
-        field_key: str,
-        value: Any,
-        schema: t.FieldSpec,
-    ) -> None:  # pragma: no cover
-        raise t.NotSupported
-
     def get_attachments(self, key: str) -> list[t.Attachment]:  # pragma: no cover
         raise t.NotSupported
 
@@ -265,7 +256,6 @@ def test_public_surface_in_dunder_all() -> None:
         "TransitionResult",
         "ShipState",
         "Content",
-        "FieldSpec",
         "TrackerError",
         "NotSupported",
         "TrackerConfigError",

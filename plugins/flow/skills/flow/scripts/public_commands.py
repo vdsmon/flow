@@ -72,7 +72,6 @@ class OptionSpec:
     cardinality: Cardinality
     choices: tuple[str, ...] = ()
     conflicts: frozenset[str] = frozenset()
-    requires: frozenset[str] = frozenset()
     allowed_argument_values: frozenset[str] = frozenset()
     forbidden_argument_values: frozenset[str] = frozenset()
 
@@ -90,7 +89,6 @@ class CommandSpec:
     effect: Effect
     workspace: WorkspaceRequirement
     reference: str
-    additional_usages: tuple[str, ...] = ()
     arguments: tuple[ArgumentSpec, ...] = ()
     options: tuple[OptionSpec, ...] = ()
 
@@ -179,7 +177,6 @@ def _parse_option(raw: object, *, command_id: str) -> OptionSpec:
         cardinality=cast(Cardinality, cardinality),
         choices=_strings(raw.get("choices"), field=f"{command_id}.{name}.choices"),
         conflicts=frozenset(_strings(raw.get("conflicts"), field=f"{command_id}.{name}.conflicts")),
-        requires=frozenset(_strings(raw.get("requires"), field=f"{command_id}.{name}.requires")),
         allowed_argument_values=frozenset(
             _strings(
                 raw.get("allowed_argument_values"),
@@ -238,9 +235,6 @@ def _parse_command(raw: object, *, logical_trigger: str) -> CommandSpec:
         effect=cast(Effect, effect),
         workspace=cast(WorkspaceRequirement, workspace),
         reference=reference,
-        additional_usages=_strings(
-            raw.get("additional_usages"), field=f"{command_id}.additional_usages"
-        ),
         arguments=arguments,
         options=options,
     )
@@ -251,7 +245,7 @@ def _validate_command_options(command: CommandSpec) -> None:
     if len(option_by_name) != len(command.options):
         raise RegistryError(f"{command.id}: duplicate option")
     for option in command.options:
-        unknown = (option.conflicts | option.requires) - option_by_name.keys()
+        unknown = option.conflicts - option_by_name.keys()
         if unknown:
             raise RegistryError(f"{command.id}: {option.name} references unknown option")
         for conflict in option.conflicts:
@@ -628,9 +622,6 @@ def _validate_seen_options(command: CommandSpec, positionals: list[str], seen: l
         if conflict:
             other = sorted(conflict)[0]
             raise RegistryError(f"{command.id}: option {name} conflicts with {other}")
-        missing = option.requires - seen_set
-        if missing:
-            raise RegistryError(f"{command.id}: option {name} requires {sorted(missing)[0]}")
         if option.allowed_argument_values and first_argument not in option.allowed_argument_values:
             raise RegistryError(f"{command.id}: option {name} is not valid for {first_argument!r}")
         if first_argument in option.forbidden_argument_values:
@@ -751,7 +742,7 @@ def render_help(registry: Registry, topic: str | None = None) -> str:
     if topic is None:
         lines.append(f"  {registry.logical_trigger}")
     for command in commands:
-        lines.extend(f"  {usage}" for usage in (command.usage, *command.additional_usages))
+        lines.append(f"  {command.usage}")
         lines.append(f"      {command.summary}")
     return "\n".join(lines).rstrip() + "\n"
 
@@ -759,9 +750,7 @@ def render_help(registry: Registry, topic: str | None = None) -> str:
 def render_grammar_block(registry: Registry) -> str:
     """Render the complete managed grammar block embedded in ``SKILL.md``."""
 
-    usages: list[str] = []
-    for command in registry.commands:
-        usages.extend((command.usage, *command.additional_usages))
+    usages: list[str] = [command.usage for command in registry.commands]
     return (
         "<!-- flow:public-grammar:begin -->\n"
         "```text\n" + "\n".join(usages) + "\n```\n"

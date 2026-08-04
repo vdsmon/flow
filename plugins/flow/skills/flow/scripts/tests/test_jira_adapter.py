@@ -335,46 +335,6 @@ def test_list_assigned_open_filter(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "statusCategory != Done" in body["jql"]
 
 
-def test_list_transitions_marks_required_fields(monkeypatch: pytest.MonkeyPatch) -> None:
-    http = _FakeHttp(
-        [
-            _Response(
-                {
-                    "transitions": [
-                        {
-                            "id": "31",
-                            "name": "Done",
-                            "to": {
-                                "name": "Done",
-                                "statusCategory": {"key": "done"},
-                            },
-                            "isAvailable": True,
-                            "fields": {
-                                "resolution": {
-                                    "required": True,
-                                    "schema": {"type": "option"},
-                                    "allowedValues": [
-                                        {"value": "Done"},
-                                        {"value": "Won't Do"},
-                                    ],
-                                }
-                            },
-                        }
-                    ]
-                }
-            )
-        ]
-    )
-    adapter = _make_adapter(monkeypatch, http)
-    trans = adapter.list_transitions("FT-1")
-    assert trans[0]["id"] == "31"
-    assert trans[0]["to_normalized_state"] == "done"
-    required = trans[0]["required_fields"]
-    assert required
-    assert required[0]["key"] == "resolution"
-    assert required[0]["enum_values"] == ["Done", "Won't Do"]
-
-
 def test_transition_success_returns_new_state(monkeypatch: pytest.MonkeyPatch) -> None:
     http = _FakeHttp(
         [

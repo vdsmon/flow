@@ -184,12 +184,15 @@ never claim it ran.
 FLOW_HARNESS="<harness>" "<facade>" dispatch advance \
   --workspace-root . --ticket "<ticket>" --session-nonce "<nonce>" \
   --stage "<stage>" --status "<completed|failed>" \
-  [--output-path "<absolute-existing-artifact>"]
+  [--output-path "<absolute-existing-artifact>"] \
+  [--failure-detail "<one-line cause>"]
 ```
 
 An artifact path must exist before advance. If it does not, write it and retry the
 same advance; the stage has not finished. A failed advance returns a blocking
-descriptor.
+descriptor. On `--status failed`, pass `--failure-detail` with the one-line cause:
+it becomes the blocked descriptor's `reason`, which otherwise reads only
+`stage failed`.
 
 ## Safety markers and exit handling
 

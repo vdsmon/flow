@@ -78,19 +78,6 @@ class Content(TypedDict):
     fmt: Literal["md", "adf", "plain"]
 
 
-class FieldSpec(TypedDict, total=False):
-    """Typed field spec for transitions, custom fields, and create/edit payloads.
-
-    `enum_values` is required iff `type == "enum"`. `required` defaults to False
-    when omitted.
-    """
-
-    key: str
-    type: Literal["string", "user", "enum", "date", "datetime", "number", "content"]
-    enum_values: list[str] | None
-    required: bool
-
-
 class Comment(TypedDict):
     id: str
     author: str
@@ -167,9 +154,7 @@ class Transition(TypedDict):
     name: str
     to_state: str
     to_normalized_state: NORMALIZED_STATES
-    required_fields: list[FieldSpec]
     available: bool
-    unavailable_reason: str | None
 
 
 class TransitionResult(TypedDict):
@@ -320,7 +305,6 @@ __all__ = [
     "Attachment",
     "Comment",
     "Content",
-    "FieldSpec",
     "Link",
     "NotSupported",
     "ShipSource",
