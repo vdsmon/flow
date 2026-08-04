@@ -20,12 +20,17 @@ Probe (no writes):
   4. Refuse on a live or corrupt run lease, and on a merged-head/worktree-tip mismatch (the
      worktree may hold a newer generation than the PR that merged).
 
-Finalize (each step best-effort once the probe passes; order mirrors the evolve-drain reap):
+Finalize (order mirrors the evolve-drain reap):
   a. transition the ticket to done through the tracker seam (skip when already terminal);
   b. freeze the ship event (`observe_at_close`) before the run state it reads is destroyed;
   c. delete the remote branch through the forge seam;
   d. reap the local worktree + branch (`reap_worktree`: lease-gated, checkpoints dirty work to a
      rescue ref before removal).
+Steps a, c, and d are best-effort, but c and d run only after b actually froze the event (or had
+nothing to freeze: an ad-hoc worktree with no run state, or an event already on disk). Any other
+observe outcome refuses before the destructive steps, because the reap destroys the only state
+observe reads; a finalize invoked without the tracker's credentials must land in "refused", never
+silently discard the ship event and report "finalized" (witnessed FT-1499, 2026-08-04).
 
 Idempotent: every step skips when its outcome already holds, so re-running converges and a
 finalized ticket exits 0 as a no-op.
@@ -42,8 +47,8 @@ Exit codes:
   0 = finalized (or already finalized); for --all, sweep completed with no probe errors
   2 = workspace/config/probe error
   3 = not merged yet (open PR or no PR; no writes; single-key form only)
-  4 = refused (invoked from the doomed worktree, live/corrupt lease, or head mismatch;
-      single-key form only)
+  4 = refused (invoked from the doomed worktree, live/corrupt lease, head mismatch, or ship
+      event not frozen; single-key form only)
 """
 
 from __future__ import annotations
@@ -211,6 +216,16 @@ def finalize(
         steps["transition"] = {"action": "failed", "reason": str(exc)}
 
     steps["observe"] = observe_at_close.observe_at_close(main_root, key, wt_path)
+    action = steps["observe"].get("action")
+    reason = str(steps["observe"].get("reason") or "")
+    frozen = action == "observed" or (
+        action == "skipped" and reason in ("already_observed", "no_run_state")
+    )
+    if not frozen:
+        raise FinalizeRefused(
+            f"ship event not frozen ({action}: {reason or 'no reason'}); "
+            "worktree and run state preserved so a re-run can still observe it"
+        )
 
     try:
         forge.delete_branch(branch)

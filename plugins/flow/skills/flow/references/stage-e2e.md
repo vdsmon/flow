@@ -73,6 +73,17 @@ Your job is to run it exactly, not to reinterpret it.
    command the recipe specifies. Only when a genuinely interactive step cannot
    complete unattended do you stop and report the blocker.
 
+   The pass signal the recipe declares must come from a test that actually
+   EXECUTED. A skip of the very test the recipe names is a stage failure, not a
+   green: a runner whose fixture is unreachable in its declared environment
+   reports "1 skipped" and exits 0, which reads exactly like a pass (witnessed
+   twice on 2026-08-04: the R21 golden runner resolves its fixture from an
+   absolute HOME path that does not exist inside the devcontainer, so the bare
+   recipe skipped silently in both FT-1500 and FT-1499). Read the pass/skip
+   counts, not the exit code; if the named test skipped, fix the environment so
+   it runs (or report the blocker), and record the mismatch as friction so the
+   recipe gets corrected.
+
    After the verdict and evidence capture, run the recipe's env-teardown, pass
    or fail: whatever env-prep started, this stage stops, so a container or
    service brought up for verification never outlives the run. Teardown is
