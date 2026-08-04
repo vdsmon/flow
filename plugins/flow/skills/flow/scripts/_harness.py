@@ -22,13 +22,11 @@ class HarnessError(ValueError):
 
 
 def flow_harness() -> str:
-    """Return the selected adapter, preserving the legacy unset behavior.
-
-    Before Flow exposed adapters, plugin lookup searched Claude Code's install
-    locations. An unset (or empty) selector therefore continues to mean
-    ``claude-code``. Any other name fails loudly.
+    """Return the selected adapter. An unset, empty, or unknown selector fails loudly:
+    the adapter supplies the value call-locally on every invocation (SKILL.md's entry
+    contract), so a missing one is a caller defect, never a default.
     """
-    harness = os.environ.get("FLOW_HARNESS") or "claude-code"
+    harness = os.environ.get("FLOW_HARNESS") or ""
     if harness not in _FLOW_HARNESSES:
         allowed = ", ".join(_FLOW_HARNESSES)
         raise HarnessError(f"FLOW_HARNESS must be one of: {allowed}; got {harness!r}")

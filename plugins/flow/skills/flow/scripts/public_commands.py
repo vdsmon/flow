@@ -17,7 +17,6 @@ from pathlib import Path
 from typing import Literal, cast
 from urllib.parse import urlparse
 
-SCHEMA_VERSION = 1
 DEFAULT_REGISTRY = Path(__file__).resolve().parent.parent / "public-commands.toml"
 STATIC_NAMESPACES = ("ticket", "memory", "measure", "workspace", "maintain", "help")
 
@@ -98,7 +97,6 @@ class CommandSpec:
 
 @dataclass(frozen=True)
 class Registry:
-    schema_version: int
     logical_trigger: str
     static_namespaces: tuple[str, ...]
     forbidden_root_tokens: frozenset[str]
@@ -313,11 +311,8 @@ def load_registry(path: Path = DEFAULT_REGISTRY) -> Registry:
             raw = tomllib.load(handle)
     except (OSError, tomllib.TOMLDecodeError) as exc:
         raise RegistryError(f"cannot load command registry {path}: {exc}") from exc
-    schema_version = raw.get("schema_version")
-    if schema_version != SCHEMA_VERSION:
-        raise RegistryError(
-            f"unsupported command registry schema {schema_version!r}; expected {SCHEMA_VERSION}"
-        )
+    if "schema_version" in raw:
+        raise RegistryError("the command registry carries no schema_version field; remove it")
     logical_trigger = raw.get("logical_trigger", "FLOW")
     if not isinstance(logical_trigger, str) or not logical_trigger:
         raise RegistryError("logical_trigger must be a non-empty string")
@@ -335,7 +330,6 @@ def load_registry(path: Path = DEFAULT_REGISTRY) -> Registry:
         raise RegistryError("command must be an array of tables")
     commands = tuple(_parse_command(item, logical_trigger=logical_trigger) for item in commands_raw)
     registry = Registry(
-        schema_version=schema_version,
         logical_trigger=logical_trigger,
         static_namespaces=static_namespaces,
         forbidden_root_tokens=forbidden_root_tokens,

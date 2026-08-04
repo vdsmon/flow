@@ -41,11 +41,11 @@ ambient `claude-code` name at the boundary where configuration uses `claude_code
 Both plugin manifests expose the same `skills/` tree. Claude Code and Codex both discover Flow
 natively; there is no managed repository-guidance fallback.
 
-The launcher bootstrap (SKILL.md §Entry contract) installs or migrates
+The launcher bootstrap (SKILL.md §Entry contract) installs or repairs
 `.flow/runtime/{flow,skill-root,memory-root,layout-version}`. It never searches arbitrary plugin
 caches. The generated facade reads its sibling `skill-root`, enters its own workspace, and
-executes only an allowlisted internal command. It supplies compatibility environment variables to
-child processes; those variables are engine details, not driver state.
+executes only an allowlisted internal command. It exports `FLOW_SKILL_DIR` to child processes;
+that variable is an engine detail, not driver state.
 
 Fresh setup calls the loaded setup script directly because no facade exists.
 

@@ -41,11 +41,10 @@ _RUN_ID_RE = re.compile(r"^[0-9a-f]{16}$")
 _SHIPPED_AT_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 _ACCEPTANCE_STEM = "ACCEPTANCE-INVARIANT:"
 
-# worktree-dir form (branch `/` becomes `-`); both accepted while legacy dirs survive
-_WORKTREE_PREFIXES = ("feat-", "feature-")
-# pool bases relative to the repo root, newest first (`.claude/worktrees` mint,
-# `.flow/worktrees` legacy; see flow_worktree._worktree_path)
-_WORKTREE_BASES = (Path(".claude") / "worktrees", Path(".flow") / "worktrees")
+# worktree-dir form (branch `/` becomes `-`)
+_WORKTREE_PREFIXES = ("feat-",)
+# pool base relative to the repo root (see flow_worktree._worktree_path)
+_WORKTREE_BASES = (Path(".claude") / "worktrees",)
 
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────

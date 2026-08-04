@@ -2,7 +2,6 @@
 # harness parity, and effect metadata. Runtime script names deliberately do not
 # appear here: they are implementation details behind these intent-level commands.
 
-schema_version = 1
 logical_trigger = "FLOW"
 static_namespaces = ["ticket", "memory", "measure", "workspace", "scrutinize", "help"]
 forbidden_root_tokens = [

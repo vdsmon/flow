@@ -11,17 +11,11 @@ observe_ship_event.py. Each primary file is `<ticket>.json`; dupes, corruptions,
 suffixed names and are skipped here. Files that fail to parse or lack `shipped_at` are quarantined-
 skip (logged to a sidecar, never counted) so a single bad file cannot abort the metric.
 
-Attribution is stamp-first. observe_ship_event.py stamps an owned `flow_attribution` block
+Attribution is stamp-only. observe_ship_event.py stamps an owned `flow_attribution` block
 (plan_started + create_pr_finished iso timestamps) onto the durable ship event at observe time,
 while the run's state.json is still alive. A ship event carrying a well-formed stamp is
-`shipped_via_flow` directly; the run's worktree (and its state.json) is reaped after merge, so the
-legacy join below cannot resolve a recently-shipped ticket. Forward-only: tickets shipped before
-stamping landed have no stamp and a reaped state, so they stay `shipped_backend_not_attributed`.
-
-Legacy fallback (no stamp): joins each ship event to its per-ticket state.json at
-`.flow/runs/<ticket>/state.json`. A ticket is `shipped_via_flow` iff that state exists, its `ticket`
-matches, its `run_id` matches the ship event's observing run id (`observed_by_run_id`), and its
-`reflect` stage status is `completed`.
+`shipped_via_flow`; anything else is `shipped_backend_not_attributed` (the run's worktree and its
+state.json are reaped after merge, so no other join can resolve a shipped ticket).
 
 Window defaults: until = now; since = 14 days before now, floored to 00:00 UTC.
 
@@ -144,10 +138,6 @@ def load_ship_events(workspace_root: Path, namespace: str) -> list[dict[str, Any
 # ─── Attribution ─────────────────────────────────────────────────────────────
 
 
-def _state_path(workspace_root: Path, ticket: str) -> Path:
-    return workspace_root / ".flow" / "runs" / ticket / "state.json"
-
-
 def _read_stamp(ship_event: dict[str, Any]) -> tuple[datetime, datetime] | None:
     """Parse a ship event's `flow_attribution` stamp into (plan_started, create_pr_finished).
 
@@ -165,48 +155,21 @@ def _read_stamp(ship_event: dict[str, Any]) -> tuple[datetime, datetime] | None:
     return plan_started, create_pr_finished
 
 
-def classify_attribution(workspace_root: Path, ship_event: dict[str, Any]) -> str:
+def classify_attribution(ship_event: dict[str, Any]) -> str:
     """Attribute one ship event to flow or backend.
 
-    Stamp-first: a WELL-FORMED `flow_attribution` block (a dict whose two iso
-    fields both parse) is direct evidence a flow run observed this ship at reflect
-    time and returns ATTR_VIA_FLOW. The stamp supersedes the reaped-state.json
-    proxy; the run's worktree is torn down after merge, so the legacy join below
-    cannot resolve a recently-shipped ticket.
-
-    Legacy fallback (no stamp / malformed stamp): ATTR_VIA_FLOW iff
-    `.flow/runs/<ticket>/state.json` exists AND its `ticket` matches the ship
-    event's ticket AND its `run_id` matches the ship event's observing-run-id
-    (`observed_by_run_id`) AND its `reflect` stage status is `completed`.
-    Otherwise ATTR_NOT_ATTRIBUTED. A malformed or unreadable state.json yields
-    ATTR_NOT_ATTRIBUTED (never count flow-attribution without a clean join).
-
-    Forward-only: tickets shipped before stamping landed have no stamp and a
-    reaped state, so they stay ATTR_NOT_ATTRIBUTED.
+    A WELL-FORMED `flow_attribution` block (a dict whose two iso fields both
+    parse) is direct evidence a flow run observed this ship at reflect time and
+    returns ATTR_VIA_FLOW. Anything else is ATTR_NOT_ATTRIBUTED: the run's
+    worktree is torn down after merge, so no other join can resolve a shipped
+    ticket.
     """
     ticket = ship_event.get("ticket")
     if not isinstance(ticket, str) or not ticket:
         return ATTR_NOT_ATTRIBUTED
     if _read_stamp(ship_event) is not None:
         return ATTR_VIA_FLOW
-    state_path = _state_path(workspace_root, ticket)
-    try:
-        state = json.loads(state_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return ATTR_NOT_ATTRIBUTED
-    if not isinstance(state, dict):
-        return ATTR_NOT_ATTRIBUTED
-    if state.get("ticket") != ticket:
-        return ATTR_NOT_ATTRIBUTED
-    if state.get("run_id") != ship_event.get("observed_by_run_id"):
-        return ATTR_NOT_ATTRIBUTED
-    stages = state.get("stages")
-    if not isinstance(stages, dict):
-        return ATTR_NOT_ATTRIBUTED
-    reflect = stages.get("reflect")
-    if not isinstance(reflect, dict) or reflect.get("status") != "completed":
-        return ATTR_NOT_ATTRIBUTED
-    return ATTR_VIA_FLOW
+    return ATTR_NOT_ATTRIBUTED
 
 
 # ─── Compute ─────────────────────────────────────────────────────────────────
@@ -243,7 +206,7 @@ def compute(
         shipped_at = parse_iso(str(event.get("shipped_at")))
         if shipped_at is None or not (since <= shipped_at < until):
             continue
-        attribution = classify_attribution(workspace_root, event)
+        attribution = classify_attribution(event)
         shipped += 1
         if attribution == ATTR_VIA_FLOW:
             via_flow += 1
@@ -306,46 +269,14 @@ def compute_time_to_pr(
         shipped_at = parse_iso(str(event.get("shipped_at")))
         if shipped_at is None or not (since <= shipped_at < until):
             continue
-        if classify_attribution(workspace_root, event) != ATTR_VIA_FLOW:
-            continue
         ticket = event.get("ticket")
         stamp = _read_stamp(event)
-        if stamp is not None:
-            plan_started, create_pr_finished = stamp
-            plan_started_raw = event["flow_attribution"]["plan_started_at_iso"]
-            create_pr_finished_raw = event["flow_attribution"]["create_pr_finished_at_iso"]
-        else:
-            try:
-                state = json.loads(
-                    _state_path(workspace_root, str(ticket)).read_text(encoding="utf-8")
-                )
-            except (OSError, json.JSONDecodeError):
-                skipped.append({"ticket": ticket, "reason": "unreadable state.json"})
-                continue
-            if not isinstance(state, dict):
-                skipped.append({"ticket": ticket, "reason": "unreadable state.json"})
-                continue
-            stages = state.get("stages", {})
-            plan_stage = stages.get("plan") if isinstance(stages.get("plan"), dict) else {}
-            create_pr_stage = (
-                stages.get("create_pr") if isinstance(stages.get("create_pr"), dict) else {}
-            )
-            plan_started_raw = plan_stage.get("started_at_iso")
-            create_pr_finished_raw = create_pr_stage.get("finished_at_iso")
-            plan_started = (
-                parse_iso(plan_started_raw) if isinstance(plan_started_raw, str) else None
-            )
-            create_pr_finished = (
-                parse_iso(create_pr_finished_raw)
-                if isinstance(create_pr_finished_raw, str)
-                else None
-            )
-        if plan_started is None:
-            skipped.append({"ticket": ticket, "reason": "missing plan.started_at_iso"})
+        if stamp is None:
+            # No (or malformed) stamp means not attributed to flow; excluded, not skipped.
             continue
-        if create_pr_finished is None:
-            skipped.append({"ticket": ticket, "reason": "missing create_pr.finished_at_iso"})
-            continue
+        plan_started, create_pr_finished = stamp
+        plan_started_raw = event["flow_attribution"]["plan_started_at_iso"]
+        create_pr_finished_raw = event["flow_attribution"]["create_pr_finished_at_iso"]
         duration = (create_pr_finished - plan_started).total_seconds() / 3600.0
         if duration < 0:
             skipped.append({"ticket": ticket, "reason": "negative duration"})
@@ -1046,7 +977,7 @@ def compute_revert_rate(
             skipped.append({"ticket": ticket, "reason": "reopened_not_yet_reclosed"})
             continue
 
-        attribution = classify_attribution(workspace_root, event)
+        attribution = classify_attribution(event)
         shipped += 1
         if reverted:
             n_reverts += 1

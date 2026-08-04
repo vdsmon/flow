@@ -4,7 +4,7 @@ Workspace commands manage Flow's local installation, health, repairs, queued tra
 writes, and runtime layout. The loaded skill directory is the only trusted source for
 installing or repairing runtime metadata. Never search arbitrary plugin caches.
 
-## Runtime layout and automatic migration
+## Runtime layout
 
 Initialized workspaces converge on:
 
@@ -18,22 +18,19 @@ Initialized workspaces converge on:
 .flow/memory/<namespace>/
 ```
 
-Before any workspace-dependent command, run the loaded runtime migrator exactly as
-specified by `SKILL.md`'s entry contract. Migration
-acquires its own lock, refuses while a base or revision lease is live, hashes and
-backs up legacy memory, atomically moves it under `.flow/memory`, writes runtime
-metadata, verifies relative paths/sizes/SHA-256, and only then removes legacy
-metadata. Interrupted work resumes forward from its journal. If both legacy and v2
-stores are non-empty, preserve both and stop. Never choose one by timestamp or size.
+Before any workspace-dependent command, run the loaded launcher exactly as
+specified by `SKILL.md`'s entry contract: it installs or repairs the runtime
+pointers from the loaded skill and refuses a rebind that would hide a namespace
+already holding data.
 
 ## `FLOW workspace setup`
 
 Setup is convergent. It initializes a new workspace, continues an interrupted setup,
-migrates an older layout, repairs runtime files from the loaded skill, or validates an
-already healthy workspace. Rerunning it after a normal plugin upgrade is
-unnecessary: entry migration is automatic.
+repairs runtime files from the loaded skill, or validates an already healthy
+workspace. Rerunning it after a normal plugin upgrade is unnecessary: the entry
+launcher repairs runtime files automatically.
 
-1. Bind `task_root` absolutely and inspect initialization and migration markers.
+1. Bind `task_root` absolutely and inspect the initialization marker.
 2. For an uninitialized workspace, collect:
 
    - tracker backend: Jira or beads;
@@ -54,7 +51,7 @@ unnecessary: entry migration is automatic.
 
 4. If setup was interrupted, use its durable marker to continue the same
    transaction. Do not discard partial state or start a second initialization.
-5. In an initialized workspace, invoke the loaded launcher installer/migrator from
+5. In an initialized workspace, invoke the loaded launcher installer from
    `skill_root`, then validate through the resulting absolute runtime facade. Do not
    rerun the configuration transaction.
 6. Remove the temporary answer file on every exit where its path is known.
@@ -132,8 +129,6 @@ actions justified by observed evidence. The operator confirms every write. Read
 Workspace-level repairs include:
 
 - reinstall missing/stale runtime files from the currently loaded `skill_root`;
-- continue a journaled layout migration;
-- validate memory after migration without changing the corpus;
 - target-specific takeover, retry, skip, abort, or snapshot reload;
 - checkpoint and remove a safe stale worktree.
 
@@ -161,7 +156,7 @@ replayable entries.
 
 Sweep worktrees owned by the invoking workspace only. Resolve the absolute primary
 checkout from the first `git worktree list --porcelain` stanza and recognize only
-registered worktrees beneath its `.claude/worktrees` or legacy `.flow/worktrees`
+registered worktrees beneath its `.claude/worktrees`
 directory. Never consider the invoking checkout itself.
 
 A candidate is removable only when its normalized tracker state is `done` or

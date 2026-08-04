@@ -81,6 +81,15 @@ def make_workspace(
         raise ValueError("pass either blocks or body, not both")
     flow = root / ".flow"
     flow.mkdir(parents=True, exist_ok=True)
+    # Stamp layout v2 with the memory base aimed at `.flow` itself (a legitimate
+    # absolute base), so fixture paths like `.flow/<namespace>/...` resolve
+    # through the one real v2 pointer.
+    runtime = flow / "runtime"
+    runtime.mkdir(parents=True, exist_ok=True)
+    version_file = runtime / "layout-version"
+    if not version_file.exists():
+        version_file.write_text("2\n", encoding="utf-8")
+        (runtime / "memory-root").write_text(str(flow.resolve()) + "\n", encoding="utf-8")
     if namespace_dir is not None:
         (flow / namespace_dir).mkdir(parents=True, exist_ok=True)
     if initialized:
@@ -88,6 +97,16 @@ def make_workspace(
     text = body if body is not None else render_toml(*blocks)
     (flow / "workspace.toml").write_text(text, encoding="utf-8")
     return root
+
+
+def stamp_layout_v2(flow: Path, memory_base: Path | None = None) -> None:
+    """Stamp a hand-rolled `.flow` dir as layout v2 pointing at `memory_base` (default: `.flow`)."""
+    runtime = flow / "runtime"
+    runtime.mkdir(parents=True, exist_ok=True)
+    (runtime / "layout-version").write_text("2\n", encoding="utf-8")
+    (runtime / "memory-root").write_text(
+        str((memory_base or flow).resolve()) + "\n", encoding="utf-8"
+    )
 
 
 def write_lease(run_dir: Path, *, expired: bool = False) -> None:

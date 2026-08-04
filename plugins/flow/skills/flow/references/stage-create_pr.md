@@ -4,7 +4,7 @@ Opens a PR for the run's feature branch — a draft by default, or ready for rev
 
 **No `pr_title` gate.** Unlike the commit stage, do NOT call `lint_ticket` for a field. Nothing populates `pr_title`; the PR title comes from the HEAD (work) commit subject, which the commit stage built from `commit_summary`.
 
-**The PR body is authored, not derived from the commit.** A great commit message and a great PR description have different jobs, so they are decoupled: the commit stays a clean conventional commit, and you author a separate, human-first PR body here (steps 1-3), then hand it to the script via `--body-file`. The script appends the deterministic `Closes` footer, runs a de-AI `scrub` floor, and on first open attaches the repo's default reviewers (Bitbucket supports it, GitHub degrades cleanly; a reviewer-API failure never fails an open PR). With no `--body-file` the script falls back to the old commit-derived body.
+**The PR body is authored, not derived from the commit.** A great commit message and a great PR description have different jobs, so they are decoupled: the commit stays a clean conventional commit, and you author a separate, human-first PR body here (steps 1-3), then hand it to the script via `--body-file`, which is required. The script appends the deterministic `Closes` footer, runs a de-AI `scrub` floor, and on first open attaches the repo's default reviewers (Bitbucket supports it, GitHub degrades cleanly; a reviewer-API failure never fails an open PR).
 
 ## The template
 
@@ -71,7 +71,7 @@ flow opens a pull request at the end of each run. Until now its description was 
 
 ## Changes
 - `scripts/create_pr.py`: accept an authored `--body-file`; append the deterministic Closes footer + scrub floor.
-- `scripts/pr_body.py`: add `closes_footer`; keep `build_body` as the no-`--body-file` fallback.
+- `scripts/pr_body.py`: add `closes_footer` extracted from the commit trailer block.
 - `references/stage-create_pr.md`: author + humanize the body, then pass it to the script.
 
 ## Decisions

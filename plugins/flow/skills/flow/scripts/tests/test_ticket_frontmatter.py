@@ -127,7 +127,7 @@ def test_update_overwrites_existing_key(tmp_path: Path) -> None:
             {"draft": "true", "merged": "false"}, {"draft": True, "merged": False}, id="bool"
         ),
         pytest.param({"version": "42", "neg": "-7"}, {"version": 42, "neg": -7}, id="int"),
-        pytest.param({"labels": "[a, b, c]"}, {"labels": ["a", "b", "c"]}, id="list"),
+        pytest.param({"labels": '["a", "b", "c"]'}, {"labels": ["a", "b", "c"]}, id="list"),
         pytest.param({"labels": "[]"}, {"labels": []}, id="empty_list"),
         # naive comma-split would tear "a,b" apart and keep the quote chars; the
         # tomllib-backed parse yields exactly two elements with the comma intact.
@@ -167,12 +167,21 @@ def test_update_bare_comma_list_warns_but_stores_string(
     assert "wrap in [ ] for a TOML array" in capsys.readouterr().err
 
 
-def test_update_bracketed_list_does_not_warn(
+def test_update_quoted_list_does_not_warn(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     p = tmp_path / "FT-30.md"
-    ticket_frontmatter.update(p, {"planned_files": "[a.py, b.py]"})
+    ticket_frontmatter.update(p, {"planned_files": '["a.py", "b.py"]'})
     assert capsys.readouterr().err == ""
+
+
+def test_update_bare_word_list_warns_and_stores_string(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    p = tmp_path / "FT-31.md"
+    ticket_frontmatter.update(p, {"planned_files": "[a.py, b.py]"})
+    assert "not a TOML array" in capsys.readouterr().err
+    assert ticket_frontmatter.read(p)["planned_files"] == "[a.py, b.py]"
 
 
 # ─── [O] key quoting on emit ─────────────────────────────────────────────────

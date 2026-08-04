@@ -433,14 +433,6 @@ def _validate_memory_block(data: dict[str, Any], result: ValidationResult) -> bo
         result.add("memory.namespace", "missing or not a non-empty string")
     if not isinstance(memory.get("compounding"), bool):
         result.add("memory.compounding", "missing or not a bool")
-    root = memory.get("root")
-    if root is not None:
-        # Optional shared-store path. A relative root would break the cross-worktree
-        # share guarantee, so reject it; a not-yet-existing absolute dir is fine.
-        if not isinstance(root, str) or not root:
-            result.add("memory.root", "present but not a non-empty string")
-        elif not Path(root).expanduser().is_absolute():
-            result.add("memory.root", "must be an absolute path")
     # Optional facet-tagging convention (which recall.py --label to write).
     # Validated only when present, same "no default enforcement" pattern as root.
     label_facets = memory.get("label_facets")

@@ -9,6 +9,7 @@ import pytest
 
 import _memory_paths
 import recall
+from tests import wsfactory
 from tests.wsfactory import make_workspace, memory, tracker
 
 
@@ -522,6 +523,7 @@ def test_semantic_disabled_flag_off_no_embed_call(
     """A workspace with semantic enabled=false never touches the embedder."""
     flow = tmp_path / ".flow"
     flow.mkdir(parents=True)
+    wsfactory.stamp_layout_v2(flow)
     (flow / "workspace.toml").write_text(
         '[tracker]\nbackend = "jira"\n[tracker.jira]\ncloud_id = "x"\nproject_key = "FT"\n\n'
         '[memory]\nnamespace = "demo"\n\n[memory.semantic]\nenabled = false\n',
@@ -540,6 +542,7 @@ def test_malformed_config_threshold_semantic_off_still_ranks(
     """A workspace.toml threshold typo must not kill recall, even with semantic off."""
     flow = tmp_path / ".flow"
     flow.mkdir(parents=True)
+    wsfactory.stamp_layout_v2(flow)
     (flow / "workspace.toml").write_text(
         '[tracker]\nbackend = "jira"\n[tracker.jira]\ncloud_id = "x"\nproject_key = "FT"\n\n'
         '[memory]\nnamespace = "demo"\n\n'
@@ -558,6 +561,7 @@ def test_malformed_config_threshold_semantic_on_falls_back_to_bm25(
 ) -> None:
     flow = tmp_path / ".flow"
     flow.mkdir(parents=True)
+    wsfactory.stamp_layout_v2(flow)
     (flow / "workspace.toml").write_text(
         '[tracker]\nbackend = "jira"\n[tracker.jira]\ncloud_id = "x"\nproject_key = "FT"\n\n'
         '[memory]\nnamespace = "demo"\n\n'

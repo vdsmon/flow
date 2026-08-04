@@ -379,25 +379,6 @@ def _cmd_lane(args: argparse.Namespace, runner: Any) -> int:
     return 0
 
 
-def _default_to_list(argv: list[str]) -> list[str]:
-    """Prepend `list` when the first non-flag token is not a known subcommand.
-
-    Keeps the legacy `triage.py --workspace-root .` call (and all existing
-    prose/tests) working with the restructured subparser layout. A top-level
-    `-h`/`--help` is left untouched so the parser shows the subcommand group
-    (the seam checker discovers `{list,decided}` from that usage line).
-    """
-    for tok in argv:
-        if tok in ("-h", "--help"):
-            return argv
-        if tok.startswith("-"):
-            continue
-        if tok in ("list", "decided", "lane"):
-            return argv
-        break
-    return ["list", *argv]
-
-
 def cli_main(argv: list[str], runner: Any = None) -> int:
     parser = argparse.ArgumentParser(description="bare FLOW cockpit: list deferred beads.")
     sub = parser.add_subparsers(dest="command")
@@ -422,7 +403,7 @@ def cli_main(argv: list[str], runner: Any = None) -> int:
     p_lane.add_argument("--workspace-root", default=".")
     p_lane.add_argument("--key", required=True)
 
-    args = parser.parse_args(_default_to_list(argv))
+    args = parser.parse_args(argv)
 
     if args.command == "decided":
         return _cmd_decided(args, runner)

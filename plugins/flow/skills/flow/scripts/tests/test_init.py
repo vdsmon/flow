@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import dataclasses
 import json
-import shutil
 import subprocess
 import tomllib
 from pathlib import Path
@@ -137,23 +136,6 @@ def test_reconfigure_clears_prior_markers(tmp_path: Path) -> None:
     assert result.namespace == "FT"
 
 
-def test_reconfigure_migrates_legacy_flow_namespace_before_writing(tmp_path: Path) -> None:
-    config = dataclasses.replace(_jira_config(tmp_path), memory_namespace="flow")
-    initmod.run_init(config)
-    runtime = tmp_path / ".flow" / "runtime"
-    legacy = tmp_path / ".flow" / "flow"
-    shutil.rmtree(runtime)
-    (tmp_path / ".flow" / "memory" / "flow").rename(legacy)
-    (legacy / "knowledge.jsonl").write_text("preserve me\n", encoding="utf-8")
-
-    initmod.run_init(config, reconfigure=True)
-
-    migrated = tmp_path / ".flow" / "memory" / "flow" / "knowledge.jsonl"
-    assert migrated.read_text(encoding="utf-8") == "preserve me\n"
-    assert (runtime / "layout-version").read_text(encoding="utf-8") == "2\n"
-    assert (runtime / "flow").stat().st_mode & 0o111
-
-
 # ─── Bare happy paths ────────────────────────────────────────────────────────
 
 
@@ -191,7 +173,6 @@ def test_init_uses_executing_skill_dir_not_ambient_env(tmp_path: Path, monkeypat
     (installed / "scripts").mkdir(parents=True)
     (installed / "scripts" / "flowctl.py").touch()
     monkeypatch.setenv("FLOW_SKILL_DIR", str(installed))
-    monkeypatch.setenv("CLAUDE_SKILL_DIR", str(installed))
     initmod.run_init(_jira_config(tmp_path))
     skill_dir = tmp_path / ".flow" / "runtime" / "skill-root"
     assert skill_dir.read_text(encoding="utf-8").strip() == str(

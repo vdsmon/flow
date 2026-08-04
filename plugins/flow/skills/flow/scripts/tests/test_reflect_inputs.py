@@ -13,6 +13,7 @@ import memory_append
 import reflect_inputs
 import state
 import ticket_frontmatter
+from tests import wsfactory
 
 
 def _git(args: list[str], cwd: Path) -> str:
@@ -225,6 +226,7 @@ def test_cli_includes_frontmatter_when_flagged(
 
 def test_bundle_includes_friction_for_this_run_only(tmp_repo: Path, tmp_path: Path) -> None:
     (tmp_repo / ".flow").mkdir(exist_ok=True)
+    wsfactory.stamp_layout_v2(tmp_repo / ".flow")
     (tmp_repo / ".flow" / "workspace.toml").write_text(
         '[tracker]\nbackend = "jira"\n[memory]\nnamespace = "demo"\n', encoding="utf-8"
     )
@@ -249,6 +251,7 @@ def test_bundle_includes_friction_for_this_run_only(tmp_repo: Path, tmp_path: Pa
 
 def _write_workspace(tmp_repo: Path, reflect_block: str = "") -> None:
     (tmp_repo / ".flow").mkdir(exist_ok=True)
+    wsfactory.stamp_layout_v2(tmp_repo / ".flow")
     (tmp_repo / ".flow" / "workspace.toml").write_text(
         '[tracker]\nbackend = "jira"\n[memory]\nnamespace = "demo"\n' + reflect_block,
         encoding="utf-8",
@@ -716,6 +719,8 @@ def test_bundle_recurrence_capped_worst_first(
     head = _git(["rev-parse", "HEAD"], tmp_repo).strip()
     ticket_dir = tmp_path / "runs" / "FT-1"
     _seed_state(ticket_dir, head)
+    (tmp_repo / ".flow").mkdir(exist_ok=True)
+    wsfactory.stamp_layout_v2(tmp_repo / ".flow")
 
     classes = [
         {
@@ -762,6 +767,7 @@ def test_bundle_label_facets_set(tmp_repo: Path, tmp_path: Path) -> None:
 
 def test_bundle_label_facets_empty_when_malformed(tmp_repo: Path, tmp_path: Path) -> None:
     (tmp_repo / ".flow").mkdir(exist_ok=True)
+    wsfactory.stamp_layout_v2(tmp_repo / ".flow")
     (tmp_repo / ".flow" / "workspace.toml").write_text(
         "this is not = valid [ toml", encoding="utf-8"
     )

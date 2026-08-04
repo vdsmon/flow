@@ -12,15 +12,16 @@ import pytest
 import _harness
 
 
-def test_unset_harness_defaults_to_claude_code(monkeypatch: pytest.MonkeyPatch) -> None:
-    # Legacy behavior: before Flow exposed adapters, lookup assumed Claude Code.
+def test_unset_harness_fails_loudly(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("FLOW_HARNESS", raising=False)
-    assert _harness.flow_harness() == "claude-code"
+    with pytest.raises(_harness.HarnessError, match=r"FLOW_HARNESS"):
+        _harness.flow_harness()
 
 
-def test_empty_harness_reads_as_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_empty_harness_fails_loudly(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("FLOW_HARNESS", "")
-    assert _harness.flow_harness() == "claude-code"
+    with pytest.raises(_harness.HarnessError, match=r"FLOW_HARNESS"):
+        _harness.flow_harness()
 
 
 @pytest.mark.parametrize("value", ["codex", "claude-code"])

@@ -26,9 +26,8 @@ returns only the validated content model. `review_brief.py` retains deterministi
 snapshot binding, HTML rendering, publication, and freshness. No authoring agent may
 render, publish, open a browser, or mutate source.
 
-The registry default handler is `inline`, so newly initialized and explicitly
-reconfigured workspaces receive the stage. Existing workspaces that omit the optional
-stage keep their current behavior. When `create_pr` is `none`, no `[forge]` block
+The registry default handler is `inline`, so initialized workspaces receive the
+stage. When `create_pr` is `none`, no `[forge]` block
 exists, or `[review_brief].mode = "off"`, complete as an explicit no-op: there is no
 PR snapshot to explain. A workspace using Flow's native PR pipeline, including Flow's
 dogfood workspace, renders the artifact.

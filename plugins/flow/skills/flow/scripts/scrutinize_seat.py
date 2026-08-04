@@ -182,8 +182,7 @@ def _classify_run(
         raw = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
         stages = raw["stages"]
         if (
-            raw.get("schema_version") != 1
-            or not isinstance(raw.get("run_id"), str)
+            not isinstance(raw.get("run_id"), str)
             or not isinstance(stages, dict)
             or any(not isinstance(record, dict) for record in stages.values())
         ):

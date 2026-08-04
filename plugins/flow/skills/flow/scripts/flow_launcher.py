@@ -102,7 +102,6 @@ def main() -> int:
         )
 
     os.environ["FLOW_SKILL_DIR"] = str(skill_dir)
-    os.environ["CLAUDE_SKILL_DIR"] = str(skill_dir)
     os.execv(
         str(runtime_python),
         [str(runtime_python), str(flowctl), "--workspace-root", str(workspace_root), *sys.argv[1:]],
@@ -316,7 +315,7 @@ def install(
     skill_dir: Path | None = None,
     memory_base: Path | None = None,
 ) -> tuple[Path, Path]:
-    """Migrate layout v2, then atomically install ``skill_dir`` and the shim."""
+    """Publish layout v2, then atomically install ``skill_dir`` and the shim."""
     root = workspace_root.expanduser().resolve()
     resolved_skill = Path(stabilize_skill_dir(str(skill_dir or executing_skill_dir()))).resolve()
     if not resolved_skill.is_dir():

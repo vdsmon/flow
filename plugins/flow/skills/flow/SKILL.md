@@ -65,7 +65,7 @@ on a prior `export` or `cd`. After creating or adopting a worktree, immediately
 replace both `run_root` and `facade` with the returned absolute paths. Never fall
 back to `task_root` after that binding.
 
-Before the first workspace-dependent operation, install or migrate the runtime from
+Before the first workspace-dependent operation, install or repair the runtime from
 the loaded skill with one call rooted at `task_root`:
 
 ```bash
@@ -76,11 +76,8 @@ FLOW_HARNESS="<codex|claude-code>" \
 
 Skip that call only when routing fresh `workspace setup` and no
 `.flow/workspace.toml` exists yet. On success, bind `run_root=task_root` and
-`facade=<task_root>/.flow/runtime/flow`. The launcher migrates an initialized v1
-workspace to runtime layout v2 before any other workspace command. Migration is
-journaled and forward-resumable. A live base or revision lease, corrupt evidence,
-or two non-empty memory stores is a hard stop; preserve both stores and report the
-conflict. A normal upgrade needs no new workspace setup.
+`facade=<task_root>/.flow/runtime/flow`. A normal upgrade needs no new workspace
+setup.
 
 After a successful launcher call on an initialized workspace, read
 `<run_root>/.flow/runtime/skill-root`. When it names a different directory than the

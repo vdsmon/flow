@@ -140,10 +140,10 @@ def _run(tmp: Path, main: Path, **kw):
 # ─── bootstrap ────────────────────────────────────────────────────────────────
 
 
-def test_is_ticket_branch_accepts_both_prefixes() -> None:
+def test_is_ticket_branch_matches_feat_prefix() -> None:
     assert fw.is_ticket_branch("feat/FT-1", "FT-1")
     assert fw.is_ticket_branch("feat/FT-1-some-slug", "FT-1")
-    assert fw.is_ticket_branch("feature/FT-1-some-slug", "FT-1")  # legacy
+    assert not fw.is_ticket_branch("feature/FT-1-some-slug", "FT-1")
     assert not fw.is_ticket_branch("feat/FT-10-other", "FT-1")  # no prefix-bleed
 
 
@@ -242,14 +242,17 @@ def test_memory_redirect_honors_main_memory_root(tmp_path: Path) -> None:
     # point at THAT store, not literally at main/.flow, or every run worktree
     # writes to a store no main-checkout read ever consults.
     main = _main_checkout(tmp_path)
-    shared = tmp_path / "shared-flow"
-    ws = main / ".flow" / "workspace.toml"
-    ws.write_text(ws.read_text(encoding="utf-8") + f'root = "{shared}"\n', encoding="utf-8")
+    shared = tmp_path / "shared-flow" / "memory"
+    shared.mkdir(parents=True)
+    runtime = main / ".flow" / "runtime"
+    runtime.mkdir(parents=True, exist_ok=True)
+    (runtime / "layout-version").write_text("2\n", encoding="utf-8")
+    (runtime / "memory-root").write_text(str(shared) + "\n", encoding="utf-8")
     res = _run(tmp_path, main)
     sibling = (Path(res["worktree"]) / ".flow" / "runtime" / "memory-root").read_text(
         encoding="utf-8"
     )
-    assert sibling.strip() == str(shared / "memory")
+    assert sibling.strip() == str(shared)
 
 
 def test_prepopulates_commit_frontmatter(tmp_path: Path) -> None:
@@ -1347,19 +1350,18 @@ def test_reap_removes_worktree_and_branch_when_free(tmp_path: Path) -> None:
     assert any(c[:3] == ["git", "branch", "-D"] for c in calls)
 
 
-def test_reap_locates_legacy_feature_prefix_worktree(tmp_path: Path) -> None:
-    # a worktree created before the feat/ rename still resolves by ticket
-    wt = tmp_path / "main" / ".flow" / "worktrees" / "feature-FT-1-thing"
+def test_reap_locates_slugged_feat_worktree(tmp_path: Path) -> None:
+    wt = tmp_path / "main" / ".claude" / "worktrees" / "feat-FT-1-thing"
     wt.mkdir(parents=True)
     calls: list = []
     runner = _reap_runner(
-        worktrees=_porcelain([(str(tmp_path / "main"), "main"), (str(wt), "feature/FT-1-thing")]),
+        worktrees=_porcelain([(str(tmp_path / "main"), "main"), (str(wt), "feat/FT-1-thing")]),
         calls=calls,
     )
     receipt = fw.reap_worktree(ticket="FT-1", main_root=tmp_path / "main", runner=runner)
     assert receipt["worktree_removed"] is True
     assert receipt["branch_deleted"] is True
-    assert receipt["branch"] == "feature/FT-1-thing"
+    assert receipt["branch"] == "feat/FT-1-thing"
 
 
 def test_reap_skips_when_lease_live(tmp_path: Path) -> None:
@@ -2702,9 +2704,12 @@ def test_reseed_memory_redirect_honors_main_memory_root(tmp_path: Path) -> None:
     # same [memory].root contract as bootstrap: a reseeded revision worktree
     # must share main's configured store, not fragment into main/.flow.
     main = _main_checkout(tmp_path)
-    shared = tmp_path / "shared-flow"
-    ws = main / ".flow" / "workspace.toml"
-    ws.write_text(ws.read_text(encoding="utf-8") + f'root = "{shared}"\n', encoding="utf-8")
+    shared = tmp_path / "shared-flow" / "memory"
+    shared.mkdir(parents=True)
+    runtime = main / ".flow" / "runtime"
+    runtime.mkdir(parents=True, exist_ok=True)
+    (runtime / "layout-version").write_text("2\n", encoding="utf-8")
+    (runtime / "memory-root").write_text(str(shared) + "\n", encoding="utf-8")
     runner = _locate_runner(worktree_list=_porcelain([(str(main), "main")]), calls=[], main=main)
     result = fw.locate_or_reseed(
         ticket="FT-1", branch="feat/FT-1-thing", main_root=main, runner=runner
@@ -2712,7 +2717,7 @@ def test_reseed_memory_redirect_honors_main_memory_root(tmp_path: Path) -> None:
     wt = Path(result["worktree"])
     assert result["reseeded"] is True
     assert (wt / ".flow" / "runtime" / "memory-root").read_text(encoding="utf-8").strip() == str(
-        shared / "memory"
+        shared
     )
 
 

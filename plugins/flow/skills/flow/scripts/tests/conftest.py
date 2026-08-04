@@ -6,6 +6,7 @@ without packaging the module.
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -40,3 +41,12 @@ def _hermetic_git(tmp_path_factory: pytest.TempPathFactory):
         mp.setenv("GIT_CONFIG_GLOBAL", str(config))
         mp.setenv("GIT_CONFIG_NOSYSTEM", "1")
         yield
+
+
+@pytest.fixture(autouse=True)
+def _default_harness(monkeypatch: pytest.MonkeyPatch):
+    """Every production invocation carries FLOW_HARNESS (the selector has no
+    default); mirror that here so tests exercise contracts, not the missing-env
+    refusal. Tests asserting the refusal delenv explicitly."""
+    if not os.environ.get("FLOW_HARNESS"):
+        monkeypatch.setenv("FLOW_HARNESS", "claude-code")

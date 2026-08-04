@@ -33,6 +33,8 @@ def _write_ship_event(
     observed_by_run_id: str = "abcdef0123456789",
     namespace: str = "demo",
     filename: str | None = None,
+    plan_started_at_iso: str | None = None,
+    create_pr_finished_at_iso: str | None = None,
 ) -> Path:
     record = {
         "ticket": ticket,
@@ -41,43 +43,15 @@ def _write_ship_event(
         "observed_at": "2026-05-20T10:00:00Z",
         "observed_by_run_id": observed_by_run_id,
     }
+    if plan_started_at_iso is not None and create_pr_finished_at_iso is not None:
+        record["flow_attribution"] = {
+            "plan_started_at_iso": plan_started_at_iso,
+            "create_pr_finished_at_iso": create_pr_finished_at_iso,
+        }
     ship_dir = root / ".flow" / namespace / "ship-events"
     ship_dir.mkdir(parents=True, exist_ok=True)
     path = ship_dir / (filename or f"{ticket}.json")
     path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    return path
-
-
-def _write_state(
-    root: Path,
-    ticket: str,
-    *,
-    run_id: str,
-    reflect_status: str | None = "completed",
-    plan_started_at_iso: str | None = None,
-    create_pr_finished_at_iso: str | None = None,
-) -> Path:
-    stages: dict = {
-        "implement": {"status": "completed"},
-    }
-    if reflect_status is not None:
-        stages["reflect"] = {"status": reflect_status}
-    if plan_started_at_iso is not None:
-        stages["plan"] = {"started_at_iso": plan_started_at_iso}
-    if create_pr_finished_at_iso is not None:
-        stages["create_pr"] = {"finished_at_iso": create_pr_finished_at_iso}
-    state = {
-        "schema_version": 1,
-        "ticket": ticket,
-        "run_id": run_id,
-        "backend": "jira",
-        "started_at": "2026-05-19T09:00:00Z",
-        "stages": stages,
-    }
-    state_dir = root / ".flow" / "runs" / ticket
-    state_dir.mkdir(parents=True, exist_ok=True)
-    path = state_dir / "state.json"
-    path.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return path
 
 
@@ -143,60 +117,44 @@ def test_load_ship_events_quarantines_malformed(tmp_path: Path) -> None:
 
 
 def test_load_ship_events_no_dir(tmp_path: Path) -> None:
+    make_workspace(tmp_path, tracker("jira", subtable=False), memory("demo"))
     assert metric.load_ship_events(tmp_path, "demo") == []
 
 
 # ─── classify_attribution ────────────────────────────────────────────────────
 
 
-def test_classify_via_flow_when_state_matches(tmp_path: Path) -> None:
+def test_classify_via_flow_when_stamped(tmp_path: Path) -> None:
     _seed_workspace(tmp_path)
     _write_ship_event(
-        tmp_path, "FT-1", shipped_at="2026-05-20T10:00:00Z", observed_by_run_id="run-aaa"
+        tmp_path,
+        "FT-1",
+        shipped_at="2026-05-20T10:00:00Z",
+        plan_started_at_iso="2026-05-20T00:00:00Z",
+        create_pr_finished_at_iso="2026-05-20T10:00:00Z",
     )
-    _write_state(tmp_path, "FT-1", run_id="run-aaa", reflect_status="completed")
     event = metric.load_ship_events(tmp_path, "demo")[0]
-    assert metric.classify_attribution(tmp_path, event) == metric.ATTR_VIA_FLOW
+    assert metric.classify_attribution(event) == metric.ATTR_VIA_FLOW
 
 
-def test_classify_not_attributed_run_id_mismatch(tmp_path: Path) -> None:
-    _seed_workspace(tmp_path)
-    _write_ship_event(
-        tmp_path, "FT-1", shipped_at="2026-05-20T10:00:00Z", observed_by_run_id="run-aaa"
-    )
-    _write_state(tmp_path, "FT-1", run_id="run-zzz", reflect_status="completed")
-    event = metric.load_ship_events(tmp_path, "demo")[0]
-    assert metric.classify_attribution(tmp_path, event) == metric.ATTR_NOT_ATTRIBUTED
-
-
-def test_classify_not_attributed_reflect_not_completed(tmp_path: Path) -> None:
-    _seed_workspace(tmp_path)
-    _write_ship_event(
-        tmp_path, "FT-1", shipped_at="2026-05-20T10:00:00Z", observed_by_run_id="run-aaa"
-    )
-    _write_state(tmp_path, "FT-1", run_id="run-aaa", reflect_status="in_progress")
-    event = metric.load_ship_events(tmp_path, "demo")[0]
-    assert metric.classify_attribution(tmp_path, event) == metric.ATTR_NOT_ATTRIBUTED
-
-
-def test_classify_not_attributed_no_reflect_stage(tmp_path: Path) -> None:
-    _seed_workspace(tmp_path)
-    _write_ship_event(
-        tmp_path, "FT-1", shipped_at="2026-05-20T10:00:00Z", observed_by_run_id="run-aaa"
-    )
-    _write_state(tmp_path, "FT-1", run_id="run-aaa", reflect_status=None)
-    event = metric.load_ship_events(tmp_path, "demo")[0]
-    assert metric.classify_attribution(tmp_path, event) == metric.ATTR_NOT_ATTRIBUTED
-
-
-def test_classify_not_attributed_corrupt_state(tmp_path: Path) -> None:
+def test_classify_not_attributed_without_stamp(tmp_path: Path) -> None:
     _seed_workspace(tmp_path)
     _write_ship_event(tmp_path, "FT-1", shipped_at="2026-05-20T10:00:00Z")
-    state_dir = tmp_path / ".flow" / "runs" / "FT-1"
-    state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / "state.json").write_text("{broken", encoding="utf-8")
     event = metric.load_ship_events(tmp_path, "demo")[0]
-    assert metric.classify_attribution(tmp_path, event) == metric.ATTR_NOT_ATTRIBUTED
+    assert metric.classify_attribution(event) == metric.ATTR_NOT_ATTRIBUTED
+
+
+def test_classify_not_attributed_malformed_stamp(tmp_path: Path) -> None:
+    _seed_workspace(tmp_path)
+    _write_ship_event(
+        tmp_path,
+        "FT-1",
+        shipped_at="2026-05-20T10:00:00Z",
+        plan_started_at_iso="not-a-date",
+        create_pr_finished_at_iso="2026-05-20T10:00:00Z",
+    )
+    event = metric.load_ship_events(tmp_path, "demo")[0]
+    assert metric.classify_attribution(event) == metric.ATTR_NOT_ATTRIBUTED
 
 
 # ─── compute: window + attribution mix ───────────────────────────────────────
@@ -204,12 +162,15 @@ def test_classify_not_attributed_corrupt_state(tmp_path: Path) -> None:
 
 def test_compute_counts_two_attributions(tmp_path: Path) -> None:
     _seed_workspace(tmp_path)
-    # FT-1: reflect completed + matching run id -> shipped_via_flow
+    # FT-1: stamped -> shipped_via_flow
     _write_ship_event(
-        tmp_path, "FT-1", shipped_at="2026-05-20T10:00:00Z", observed_by_run_id="run-1"
+        tmp_path,
+        "FT-1",
+        shipped_at="2026-05-20T10:00:00Z",
+        plan_started_at_iso="2026-05-20T00:00:00Z",
+        create_pr_finished_at_iso="2026-05-20T10:00:00Z",
     )
-    _write_state(tmp_path, "FT-1", run_id="run-1", reflect_status="completed")
-    # FT-2: no state -> shipped_backend_not_attributed
+    # FT-2: no stamp -> shipped_backend_not_attributed
     _write_ship_event(tmp_path, "FT-2", shipped_at="2026-05-21T11:00:00Z")
     result = _compute(tmp_path)
     assert result["shipped"] == 2
@@ -337,16 +298,12 @@ def _compute_ttp(root: Path, namespace: str = "demo") -> dict:
 
 def test_ttp_happy_single(tmp_path: Path) -> None:
     _seed_workspace(tmp_path)
-    _write_ship_event(
-        tmp_path, "FT-1", shipped_at="2026-05-20T10:00:00Z", observed_by_run_id="run-1"
-    )
-    _write_state(
+    _write_stamped_ship_event(
         tmp_path,
         "FT-1",
-        run_id="run-1",
-        reflect_status="completed",
-        plan_started_at_iso="2026-05-20T00:00:00Z",
-        create_pr_finished_at_iso="2026-05-20T12:00:00Z",
+        shipped_at="2026-05-20T10:00:00Z",
+        plan_started="2026-05-20T00:00:00Z",
+        create_pr_finished="2026-05-20T12:00:00Z",
     )
     result = _compute_ttp(tmp_path)
     assert result["n_measured"] == 1
@@ -409,56 +366,42 @@ def test_ttp_excludes_not_attributed(tmp_path: Path) -> None:
 
 def test_ttp_excludes_out_of_window(tmp_path: Path) -> None:
     _seed_workspace(tmp_path)
-    _write_ship_event(
-        tmp_path, "FT-OLD", shipped_at="2026-05-13T23:59:59Z", observed_by_run_id="run-old"
-    )
-    _write_state(
+    _write_stamped_ship_event(
         tmp_path,
         "FT-OLD",
-        run_id="run-old",
-        reflect_status="completed",
-        plan_started_at_iso="2026-05-13T00:00:00Z",
-        create_pr_finished_at_iso="2026-05-13T12:00:00Z",
+        shipped_at="2026-05-13T23:59:59Z",
+        plan_started="2026-05-13T00:00:00Z",
+        create_pr_finished="2026-05-13T12:00:00Z",
     )
     result = _compute_ttp(tmp_path)
     assert result["n_measured"] == 0
     assert result["tickets"] == []
 
 
-def test_ttp_skips_missing_timestamp(tmp_path: Path) -> None:
+def test_ttp_partial_stamp_is_excluded_not_measured(tmp_path: Path) -> None:
     _seed_workspace(tmp_path)
     _write_ship_event(
-        tmp_path, "FT-1", shipped_at="2026-05-20T10:00:00Z", observed_by_run_id="run-1"
-    )
-    # attributed but plan.started_at_iso absent -> skip-and-record
-    _write_state(
         tmp_path,
         "FT-1",
-        run_id="run-1",
-        reflect_status="completed",
-        create_pr_finished_at_iso="2026-05-20T12:00:00Z",
+        shipped_at="2026-05-20T10:00:00Z",
+        plan_started_at_iso=None,
+        create_pr_finished_at_iso=None,
     )
     result = _compute_ttp(tmp_path)
     assert result["n_measured"] == 0
-    assert result["n_skipped"] == 1
-    assert result["median_hours"] == 0.0
-    assert result["skipped"][0]["ticket"] == "FT-1"
-    assert "plan" in result["skipped"][0]["reason"]
+    assert result["n_skipped"] == 0
+    assert result["tickets"] == []
 
 
 def test_ttp_skips_negative_duration(tmp_path: Path) -> None:
     _seed_workspace(tmp_path)
-    _write_ship_event(
-        tmp_path, "FT-1", shipped_at="2026-05-20T10:00:00Z", observed_by_run_id="run-1"
-    )
     # create_pr finishes before plan started -> negative duration -> skip
-    _write_state(
+    _write_stamped_ship_event(
         tmp_path,
         "FT-1",
-        run_id="run-1",
-        reflect_status="completed",
-        plan_started_at_iso="2026-05-20T12:00:00Z",
-        create_pr_finished_at_iso="2026-05-20T00:00:00Z",
+        shipped_at="2026-05-20T10:00:00Z",
+        plan_started="2026-05-20T12:00:00Z",
+        create_pr_finished="2026-05-20T00:00:00Z",
     )
     result = _compute_ttp(tmp_path)
     assert result["n_measured"] == 0
@@ -469,27 +412,19 @@ def test_ttp_skips_negative_duration(tmp_path: Path) -> None:
 def test_ttp_multi_percentile(tmp_path: Path) -> None:
     _seed_workspace(tmp_path)
     # FT-A: 10h, FT-B: 20h -> median (p50) == 15.0 via linear interpolation
-    _write_ship_event(
-        tmp_path, "FT-A", shipped_at="2026-05-20T10:00:00Z", observed_by_run_id="run-a"
-    )
-    _write_state(
+    _write_stamped_ship_event(
         tmp_path,
         "FT-A",
-        run_id="run-a",
-        reflect_status="completed",
-        plan_started_at_iso="2026-05-20T00:00:00Z",
-        create_pr_finished_at_iso="2026-05-20T10:00:00Z",
+        shipped_at="2026-05-20T10:00:00Z",
+        plan_started="2026-05-20T00:00:00Z",
+        create_pr_finished="2026-05-20T10:00:00Z",
     )
-    _write_ship_event(
-        tmp_path, "FT-B", shipped_at="2026-05-21T10:00:00Z", observed_by_run_id="run-b"
-    )
-    _write_state(
+    _write_stamped_ship_event(
         tmp_path,
         "FT-B",
-        run_id="run-b",
-        reflect_status="completed",
-        plan_started_at_iso="2026-05-21T00:00:00Z",
-        create_pr_finished_at_iso="2026-05-21T20:00:00Z",
+        shipped_at="2026-05-21T10:00:00Z",
+        plan_started="2026-05-21T00:00:00Z",
+        create_pr_finished="2026-05-21T20:00:00Z",
     )
     result = _compute_ttp(tmp_path)
     assert result["n_measured"] == 2
@@ -509,43 +444,14 @@ def test_ttp_empty(tmp_path: Path) -> None:
     assert result["tickets"] == []
 
 
-def test_ttp_non_dict_plan_stage_skips_not_crashes(tmp_path: Path) -> None:
-    _seed_workspace(tmp_path)
-    _write_ship_event(
-        tmp_path, "FT-1", shipped_at="2026-05-20T10:00:00Z", observed_by_run_id="run-1"
-    )
-    # attributed via flow, but state carries a null `plan` stage (not a dict)
-    state = {
-        "schema_version": 1,
-        "ticket": "FT-1",
-        "run_id": "run-1",
-        "backend": "jira",
-        "stages": {
-            "reflect": {"status": "completed"},
-            "plan": None,
-            "create_pr": {"finished_at_iso": "2026-05-20T12:00:00Z"},
-        },
-    }
-    state_dir = tmp_path / ".flow" / "runs" / "FT-1"
-    state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / "state.json").write_text(json.dumps(state), encoding="utf-8")
-    result = _compute_ttp(tmp_path)
-    assert result["n_measured"] == 0
-    assert result["n_skipped"] == 1
-
-
 def test_ttp_cli_happy(tmp_path: Path, capsys) -> None:
     _seed_workspace(tmp_path)
-    _write_ship_event(
-        tmp_path, "FT-1", shipped_at="2026-05-20T10:00:00Z", observed_by_run_id="run-1"
-    )
-    _write_state(
+    _write_stamped_ship_event(
         tmp_path,
         "FT-1",
-        run_id="run-1",
-        reflect_status="completed",
-        plan_started_at_iso="2026-05-20T00:00:00Z",
-        create_pr_finished_at_iso="2026-05-20T12:00:00Z",
+        shipped_at="2026-05-20T10:00:00Z",
+        plan_started="2026-05-20T00:00:00Z",
+        create_pr_finished="2026-05-20T12:00:00Z",
     )
     rc = metric.cli_main(
         [
@@ -614,7 +520,7 @@ def test_classify_via_flow_from_stamp_no_state(tmp_path: Path) -> None:
         create_pr_finished="2026-05-20T12:00:00Z",
     )
     event = metric.load_ship_events(tmp_path, "demo")[0]
-    assert metric.classify_attribution(tmp_path, event) == metric.ATTR_VIA_FLOW
+    assert metric.classify_attribution(event) == metric.ATTR_VIA_FLOW
 
 
 def test_classify_malformed_stamp_falls_back_not_attributed(tmp_path: Path) -> None:
@@ -629,7 +535,7 @@ def test_classify_malformed_stamp_falls_back_not_attributed(tmp_path: Path) -> N
         create_pr_finished="2026-05-20T12:00:00Z",
     )
     event = metric.load_ship_events(tmp_path, "demo")[0]
-    assert metric.classify_attribution(tmp_path, event) == metric.ATTR_NOT_ATTRIBUTED
+    assert metric.classify_attribution(event) == metric.ATTR_NOT_ATTRIBUTED
 
 
 def test_ttp_measures_from_stamp_no_state(tmp_path: Path) -> None:

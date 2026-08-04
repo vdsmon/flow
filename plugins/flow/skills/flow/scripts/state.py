@@ -31,8 +31,6 @@ from _atomicio import atomic_write_text
 from _locking import flock_blocking
 from _timeutil import ts_token, utcnow_iso
 
-SCHEMA_VERSION = 1
-
 StageStatus = Literal["pending", "in_progress", "completed", "failed"]
 
 BACKUP_RETENTION = 5
@@ -56,7 +54,6 @@ class StageRecord:
 
 @dataclass(frozen=True)
 class TicketState:
-    schema_version: int
     ticket: str
     run_id: str
     backend: str
@@ -101,10 +98,6 @@ def _deserialize(raw: str) -> TicketState:
     data = json.loads(raw)
     if not isinstance(data, dict):
         raise ValueError("state.json root is not an object")
-    if data.get("schema_version") != SCHEMA_VERSION:
-        raise ValueError(
-            f"state.json schema_version={data.get('schema_version')!r}, expected {SCHEMA_VERSION}"
-        )
     required = {"ticket", "run_id", "backend", "started_at"}
     missing = required - data.keys()
     if missing:
@@ -114,7 +107,6 @@ def _deserialize(raw: str) -> TicketState:
         raise ValueError("state.json `stages` is not an object")
     stages = {name: StageRecord(**entry) for name, entry in stages_raw.items()}
     return TicketState(
-        schema_version=int(data["schema_version"]),
         ticket=str(data["ticket"]),
         run_id=str(data["run_id"]),
         backend=str(data["backend"]),
@@ -199,7 +191,6 @@ def init(
     run_id: str | None = None,
 ) -> TicketState:
     state = TicketState(
-        schema_version=SCHEMA_VERSION,
         ticket=ticket,
         run_id=run_id or secrets.token_hex(8),
         backend=backend,
@@ -355,7 +346,6 @@ def _update(ticket_dir: Path, mutate_fn: Callable[[TicketState], TicketState]) -
 
 __all__ = [
     "BACKUP_RETENTION",
-    "SCHEMA_VERSION",
     "StageRecord",
     "StageStatus",
     "StateUnrecoverable",
