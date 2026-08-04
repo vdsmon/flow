@@ -214,6 +214,7 @@ reference doc); this table is for finding a doc, not for wiring.
 | `references/harness.md` | Claude Code and Codex are the two hosts for the same Flow engine and public grammar. |
 | `references/revision-triage-board.md` | The revision board is the disposition step of an attended same-PR revision sub-run: the human decides which unresolved comments to fix now… |
 | `references/robustness.md` | The threat → file → witnessed-failure index that AGENTS.md's "Robustness (do not erode)" paragraph points at. |
+| `references/scrutinize-lenses.md` | The lens registry for the seat's sweep (references/scrutinize.md §The sweep owns when a sweep runs; this file owns what it looks through). |
 | `references/scrutinize.md` | Scrutiny is flow's post-hoc maintenance verb. |
 | `references/self-evolution.md` | Flow improves itself through the same ticket-to-PR lifecycle it applies to delivery work. |
 | `references/stage-code_review.md` | Have one fresh reviewer challenge the implementation before commit. |
