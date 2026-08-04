@@ -95,7 +95,7 @@ called review-clean.
 Only unresolved Critical or Major threads are actionable. Minor and nit findings stay
 open and are listed in the report.
 
-For a revision run with no `dispositions.json` (the interactive board never opened —
+For a revision run with no `dispositions.json` (triage never produced one;
 `references/revision-triage-board.md`), apply the configured plain-comment severity
 floor before selecting actionable threads. Capture-then-check: piping
 `review-threads` straight into the floor would swallow a probe error and read a

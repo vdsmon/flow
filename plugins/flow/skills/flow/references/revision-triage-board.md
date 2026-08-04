@@ -1,79 +1,36 @@
-# Revision triage board (Lavish planning surface)
+# Revision triage board
 
-The revision board is the one review-adjacent use of Lavish; the planning-gate use
-lives in `references/plan-surface.md`. It is a
-planning and disposition surface opened before a same-PR revision sub-run: the human
-decides which unresolved comments to fix now, defer, or dismiss and why. It is not
+The revision board is the disposition step of an attended same-PR revision sub-run:
+the human decides which unresolved comments to fix now, defer, or dismiss and why.
+It runs natively in the driver conversation through the host's input capability
+(Claude Code's native question surface; Codex's plain question and wait). It is not
 the ordinary review companion, not a second Forge diff, and not part of the original
 run's `review_loop` tail.
 
 This document is self-contained. It does not inherit behavior from the retired
 ordinary review packet.
 
-## Gate and degradation
+## Gate and fallback
 
-Open the board only in attended revision mode, after `revise-open` created the
-revision directory and before its first stage is dispatched. Run the presence check
-as the first board action:
+Run triage only in attended revision mode, after `revise-open` created the
+revision directory and before its first stage is dispatched. If no disposition set
+is produced (the human is absent, declines to triage, or the revision is
+unattended), fall back to the stage-review-loop severity floor and say why. A
+missing disposition set never blocks the revision and never changes the target PR.
 
-```bash
-npx -y lavish-axi@0.1.35 --help >/dev/null
-```
-
-Use the pinned version for every `open`, `poll`, and `end` operation in the session.
-If the check or any later Lavish action fails, say
-`Lavish revision triage: skipped — <reason>` or
-`Lavish revision triage: degraded mid-loop — <reason>`, then fall back to the
-stage-review-loop severity floor. A board failure never blocks the revision, changes
-the target PR, or becomes a friction event merely because Lavish is unavailable.
-
-## Author and open
+## Fetch and present
 
 Fetch the open PR's unresolved threads through the forge seam. Capture the command's
 exit code before parsing; a forge error is not an empty thread list. Read the current
 merge-base diff with local Git for anchoring and interdiffs.
 
-Author `${TMPDIR:-/tmp}/flow-lavish-$KEY/revise.html` with every unresolved thread as
-a card containing `id`, `file`, `line`, `severity`, `title`, `body`, and `author`.
-Render per-thread `input`-playbook controls for `fix`, `defer`, or `dismiss`; defer and
-dismiss require a reason. A thread with `file: null`, `line: null`, or a stale anchor
-goes into a visible **Unanchored threads** section. Never silently drop it. An
-instruction-driven revision with no threads may still open the board as an interdiff
-and convergence surface.
-
-Whenever the board opens, quote the open output's `url:` field verbatim in the chat
-message announcing it, exactly as `plan-surface.md` mandates for the plan surface:
-browser auto-open can fail silently from a sandboxed session, and the quoted URL is
-the safety net.
-
-Paste this layout net verbatim into `<head>`; the board contains dense authored text
-and must remain sendable at narrow widths:
-
-```html
-<style>
-  *, *::before, *::after { box-sizing: border-box; }
-  :where(.grid, .flex, .layout-grid, .layout-flex) > *,
-  :where([style*="display: grid"], [style*="display:grid"], [style*="display: flex"], [style*="display:flex"]) > * {
-    min-width: 0;
-  }
-  :where(p, h1, h2, h3, h4, h5, h6, li, dd, blockquote, figcaption, td, th, .badge, .label) {
-    overflow-wrap: anywhere;
-  }
-  :where(img, svg, video, canvas, iframe) {
-    max-width: 100%;
-    height: auto;
-  }
-</style>
-```
-
-Open once, then run one persistent poll owned by the orchestration session for the
-whole board. Claude Code may use a background task; Codex keeps the long-running
-command session and waits/polls it. Do not delegate continuation to a child agent.
-Lavish live-reloads the same file, so do not kill/re-arm the poll on every render.
-Strip `dom_snapshot` from poll reads and batch annotations into one send.
-
-If the open-time curtain hangs or the iframe send path dies, restart the Lavish
-server and reopen with `--no-gate` as a degradation-recovery path, not the default.
+Present every unresolved thread as one triage item carrying `id`, `file`, `line`,
+`severity`, `title`, `body`, and `author`, and collect a per-thread disposition of
+`fix`, `defer`, or `dismiss`; defer and dismiss require a reason. A thread with
+`file: null`, `line: null`, or a stale anchor is presented in a visible
+**Unanchored threads** group. Never silently drop it. An instruction-driven revision
+with no unresolved threads has nothing to triage: the persisted instruction is the
+fix source and triage records an explicit empty set only if the human asks for one.
 
 ## Durable disposition artifact
 
@@ -123,17 +80,17 @@ Contract:
 
 ## Rounds and audit trail
 
-Wait for the first poll return before dispatching the revision's implement stage so
-round-one dispositions exist before work begins. A mid-session batch is one fix
-round. Record `ROUND_SHA=$(git rev-parse HEAD)`, persist the batch, apply its fix pile,
+Collect round-one dispositions before dispatching the revision's implement stage so
+they exist before work begins. One answered triage batch is one fix round. Record
+`ROUND_SHA=$(git rev-parse HEAD)`, persist the batch, apply its fix pile,
 verify, commit, and push. The review loop then re-greens CI, replies to fixed threads,
 and resolves them through the forge seam only after verification. Deferred/dismissed
 threads receive the recorded reason as a reply and stay open.
 
 Rounds after the first use the review-loop delegated-fix recipe. Human-requested
-rounds are exempt from its unattended three-cycle cap. Re-render only the local Git
-interdiff `git diff "$ROUND_SHA"..HEAD`; never depend on a Forge review-round API.
-Out-of-set changes still run the normal widening reconcile.
+rounds are exempt from its unattended three-cycle cap. Present only the local Git
+interdiff `git diff "$ROUND_SHA"..HEAD` between rounds; never depend on a Forge
+review-round API. Out-of-set changes still run the normal widening reconcile.
 
 ## Lease heartbeat
 
@@ -142,8 +99,8 @@ all-pending revision would begin implement before dispositions exist. The
 `revise-open` lease may outlive its initial TTL; refresh-past-expiry is legal for the
 same lease holder and the first real `next --revision` re-covers it.
 
-Once a revision stage is in progress, refresh on every poll return and whenever
-control returns to the driver:
+Once a revision stage is in progress, refresh after every answered triage batch and
+whenever control returns to the driver:
 
 ```bash
 FLOW_HARNESS="<harness>" "<facade>" dispatch next \
@@ -155,16 +112,16 @@ Discard the resumed descriptor. Exit 1/7 routes to normal workspace repair.
 
 ## Convergence
 
-Lavish's built-in end-session signal is the verdict; there is no custom approve
-button. **Send to Agent** persists a mid-session batch and keeps the board alive.
-**Send & end session** is terminal:
+The human's explicit word in the conversation is the verdict; there is no separate
+approve control. A mid-revision batch persists its dispositions and keeps triage
+open for further rounds. When the human declares triage complete:
 
-- If its batch contains a `fix`, apply it as one last round, push, post the audit
-  replies/resolutions, and deliver the interdiff in-thread. Do not re-render/reopen.
+- If the final batch contains a `fix`, apply it as one last round, push, post the
+  audit replies/resolutions, and deliver the interdiff in-thread.
 - If it contains only defer/dismiss or nothing, persist the set and continue the
   revision. An explicit empty set remains authoritative.
-- A malformed ended batch is degradation, never guessed approval.
+- An ambiguous closing answer is a question to resolve, never guessed approval.
 
-Mark the PR ready through the capability-gated forge command only when the ended
+Mark the PR ready through the capability-gated forge command only when the final
 batch has no fix and `detect-pr --branch <pr-branch>` still reports `draft`. Merge remains human on Forge.
-A human-ended session is terminal: never reopen without an explicit request.
+A completed triage is terminal: never reopen without an explicit request.

@@ -229,14 +229,14 @@ too, quoted in the human's own words, beside the plan. The approved evidence the
 grant the autonomous tail depends on, so delivery does not stop at a denied push after the gate
 has closed.
 
-Present through the Lavish plan surface when its gate passes (`references/plan-surface.md`); on
-a failed gate, fall back to this plain presentation plus one visible
-`Lavish plan surface: skipped — <reason>` line, never silently. From presentation onward,
-revision is strictly between the human and the driver: annotations revise the plan and the
-surface re-renders, and nothing re-enters the assessment loop; the displayed evidence stays as
-assessed. After the surface's end-session signal, fetch the default branch once more: unchanged
-or proven-disjoint movement proceeds to approval; movement in a planned or behaviorally
-relevant path is shown to the human as a plan delta and settled directly, without an assessor.
+Present through the host's native plan gate (SKILL.md's approval-gate section: Claude Code's
+plan mode and its exit boundary; Codex's native Plan mode when active, otherwise the complete
+plan at a turn boundary awaiting explicit approval). From presentation onward, revision is
+strictly between the human and the driver: feedback revises the plan and the revised plan is
+re-presented, and nothing re-enters the assessment loop; the displayed evidence stays as
+assessed. After revision converges, fetch the default branch once more: unchanged or
+proven-disjoint movement proceeds to approval; movement in a planned or behaviorally relevant
+path is shown to the human as a plan delta and settled directly, without an assessor.
 
 The human approves that exact plan and evidence. No branch, worktree, run state, or approval
 artifact exists before explicit approval; the ticket status claim made when planning began is
