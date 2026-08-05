@@ -82,6 +82,38 @@ def test_underfill_flagged_once_per_block(tmp_path):
     assert findings[0].line == 1
 
 
+def test_underfill_wrap_inside_floor_band_passes(tmp_path):
+    # Wraps at col 89 with a next word that still fits within the 100 limit: under the
+    # pre-floor rule this flagged, but a break past 88 is a natural fill, not a hand-wrap.
+    block = (
+        "# the lease holder writes the state file under the flock and "
+        "every reader retries onwards\n"
+        "# contention until the holder releases it, and the quarantine path covers a corrupt read\n"
+        "x = 1\n"
+    )
+    assert _lint(tmp_path, "a.py", block, limit=100) == []
+
+
+def test_underfill_floor_never_exceeds_limit(tmp_path):
+    # At a limit under the floor the old behavior holds unchanged: wrap at 60 with the
+    # next word fitting inside limit=72 still flags.
+    block = (
+        "# the lease holder writes the state file under a lock and\n"
+        "# every reader retries on contention until it is released\n"
+        "x = 1\n"
+    )
+    findings = _lint(tmp_path, "a.py", block, limit=72)
+    assert [f.category for f in findings] == ["under-fill"]
+    # And a block genuinely filled to that lower limit passes: a floor stuck at 88 would
+    # demand lines the long-line rule forbids.
+    filled = (
+        "# the lease holder writes the state file under one flock and waits on\n"
+        "# contention until the holder releases it and readers can proceed\n"
+        "x = 1\n"
+    )
+    assert _lint(tmp_path, "a.py", filled, limit=72) == []
+
+
 def test_sentence_final_breaks_pass(tmp_path):
     block = (
         "# the lease holder writes the state file under the configured flock.\n"
