@@ -41,16 +41,17 @@ Your job is to run it exactly, not to reinterpret it.
 2. Read the `e2e_recipe` value. Handle the two sentinel forms first:
    - `skip: <reason>` → the plan consciously declared no e2e for this ticket.
      Report the skip + the reason and finish the stage **completed**. Do not run
-     anything. This is the one case that emits NO evidence block: the skip line is
-     the whole report, with no sentinel (create_pr then draws `## Evidence` from
-     the implement verify tail alone, omitting the section when that too is empty).
+     anything. The skip line is the whole report, with no sentinel; the PR body
+     then carries no `## Evidence` section at all (evidence is e2e-only).
    - `test-ci-only` → there is no separate runnable E2E surface. Treat the exact
      green test command and result already recorded in `implement.out` as the
      verification of record; do not execute the suite again. Emit the rung-1
      evidence block from step 4, naming `implement` as the evidence source and
-     stating that remote CI remains pending until `review_loop` observes it. If
-     `implement.out` does not contain a concrete green command and result, fail the
-     stage rather than inventing evidence.
+     stating that remote CI remains pending until `review_loop` observes it. That
+     report is INTERNAL (`e2e.out`) only: it is a rehash of the implement gate,
+     so it never lands on the PR description, whose `## Evidence` section renders
+     real e2e runs alone. If `implement.out` does not contain a concrete green
+     command and result, fail the stage rather than inventing evidence.
    - anything else → a real recipe; go to step 3.
 
    A unit-test or CI command is not a real E2E recipe. Those checks belong to the
@@ -176,7 +177,7 @@ Your job is to run it exactly, not to reinterpret it.
 A workspace may order its pipeline with `commit` and `create_pr` BEFORE this stage (the early tail), so CI and the PR review bot work on the pushed head while the recipe executes instead of waiting for it. Everything above holds unchanged; two duties extend the contract, and both are conditional on that order, detected by `stages/create_pr.out` already existing:
 
 - **A code fix pushes.** A fix stays bounded exactly as in a classic run (one cycle, planned files only, run the checks the fix touches), but it no longer waits for a later commit stage: land it as a follow-up conventional commit through the same machinery `stage-commit.md` owns, and push, so the open PR's CI re-runs on the fixed head. An env or fixture failure changes no code and pushes nothing, exactly as before.
-- **The evidence lands on the PR.** The PR opened without an `## Evidence` section for this stage (the PR-body degrade rule omits what does not exist yet). After writing the report, append the evidence section, built by the same rules the create_pr reference states for it, to the authored body file `$TICKET_DIR/stages/pr_body.md`, then push the updated description:
+- **The evidence lands on the PR, real runs only.** The PR opened without an `## Evidence` section for this stage (the PR-body degrade rule omits what does not exist yet). After writing the report, and ONLY when this run executed a real recipe (a `skip:` or `test-ci-only` run appends nothing and pushes nothing; its report stays in `e2e.out`), append the evidence section, built by the same rules the create_pr reference states for it (summary line + fenced transcript only; report prose written for the pipeline stays internal), to the authored body file `$TICKET_DIR/stages/pr_body.md`, then push the updated description:
 
 ```bash
 FLOW_HARNESS="<harness>" "<facade>" forge --workspace-root . update-body \

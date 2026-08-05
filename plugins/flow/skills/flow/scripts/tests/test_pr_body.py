@@ -254,3 +254,33 @@ def test_flatten_details_idempotent_and_still_capped():
     capped = pr_body.enforce_cap(flat, cap=400)
     assert len(capped) <= 400
     assert "### run: ok" in capped
+
+
+# ─── compose ─────────────────────────────────────────────────────────────────
+
+
+def test_compose_scrubs_footers_and_keeps_structure():
+    raw = _realistic_raw_b("")
+    out = pr_body.compose("## The Change Log\n\nprose — with a dash", raw)
+    assert out.startswith("## The change log")
+    assert "—" not in out
+    assert out.endswith("Closes flow-nr8c\nCloses flow-pms6")
+
+
+def test_compose_flatten_flag_rewrites_details():
+    body = "<details>\n<summary>run: 3 passed (2s)</summary>\n\nx\n</details>"
+    flat = pr_body.compose(body, "", flatten=True)
+    assert "<details>" not in flat
+    assert "### run: 3 passed (2s)" in flat
+    kept = pr_body.compose(body, "", flatten=False)
+    assert "<details>" in kept
+
+
+def test_compose_empty_authored_returns_empty():
+    assert pr_body.compose("", _realistic_raw_b("")) == ""
+    assert pr_body.compose("   \n\n", "") == ""
+
+
+def test_compose_always_caps():
+    out = pr_body.compose("x" * 40_000, "")
+    assert len(out) <= 32_000

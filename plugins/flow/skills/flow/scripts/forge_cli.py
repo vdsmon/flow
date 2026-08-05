@@ -39,10 +39,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
 
+import pr_body
 from forge import ForgeConfigError, ForgeError, NotSupported, make_forge, read_forge_config
 
 
@@ -101,9 +103,34 @@ def _cmd_mark_ready(forge: Any, args: argparse.Namespace) -> int:
     return _emit({"ok": True})
 
 
+def _head_commit_body(workspace_root: Path) -> str:
+    """HEAD commit body (`%b`), best-effort: "" on any git failure."""
+    try:
+        out = subprocess.run(
+            ["git", "log", "-1", "--format=%b"],
+            cwd=workspace_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        return out.stdout if out.returncode == 0 else ""
+    except OSError:
+        return ""
+
+
 def _cmd_update_body(forge: Any, args: argparse.Namespace) -> int:
-    body = Path(args.body_file).read_text(encoding="utf-8")
-    forge.update_pr_body(args.pr, body)
+    # Same compose path as create_pr's first open: without it a bitbucket description pushed here
+    # renders literal <details> tags and loses the Closes footer (the authored body file never
+    # contains the footer).
+    workspace_root = Path(args.workspace_root).resolve()
+    try:
+        config = read_forge_config(workspace_root) or {}
+    except ForgeConfigError:
+        config = {}
+    authored = Path(args.body_file).read_text(encoding="utf-8")
+    raw = _head_commit_body(workspace_root)
+    body = pr_body.compose(authored, raw, flatten=config.get("backend") == "bitbucket")
+    forge.update_pr_body(args.pr, body or authored)
     return _emit({"ok": True})
 
 

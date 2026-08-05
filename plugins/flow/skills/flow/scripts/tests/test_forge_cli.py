@@ -256,6 +256,57 @@ def test_update_body_missing_file_is_loud(ws, tmp_path):
         _run(["update-body", "--pr", "7", "--body-file", str(tmp_path / "absent.md")], ws)
 
 
+def test_update_body_composes_like_create_pr(ws, capsys, tmp_path):
+    # The e2e early-tail push must not bypass the compose path: scrub applies.
+    body = tmp_path / "pr-body.md"
+    body.write_text("lead — with a dash\n", encoding="utf-8")
+    rc, fake = _run(["update-body", "--pr", "7", "--body-file", str(body)], ws)
+    assert rc == 0
+    assert ("update_pr_body", "7", "lead, with a dash") in fake.calls
+
+
+def test_update_body_flattens_details_on_bitbucket(tmp_path, capsys):
+    (tmp_path / ".flow").mkdir()
+    (tmp_path / ".flow" / "workspace.toml").write_text(
+        '[forge]\nbackend = "bitbucket"\n[forge.bitbucket]\n', encoding="utf-8"
+    )
+    body = tmp_path / "pr-body.md"
+    body.write_text(
+        "## Evidence\n\n<details>\n<summary>run: 3 passed (2s)</summary>\n\nx\n</details>\n",
+        encoding="utf-8",
+    )
+    rc, fake = _run(["update-body", "--pr", "7", "--body-file", str(body)], tmp_path)
+    assert rc == 0
+    sent = next(c[2] for c in fake.calls if c[0] == "update_pr_body")
+    assert "<details>" not in sent
+    assert "### run: 3 passed (2s)" in sent
+
+
+def test_update_body_reappends_closes_footer_from_head_commit(ws, capsys, tmp_path):
+    # create_pr appends the footer at send time; the authored body file never has it, so a raw
+    # replace would drop the ticket link from the description.
+    import subprocess
+
+    def git(*argv):
+        subprocess.run(
+            ["git", "-c", "user.name=t", "-c", "user.email=t@t", *argv],
+            cwd=ws,
+            check=True,
+            capture_output=True,
+        )
+
+    git("init", "-q")
+    (ws / "f.txt").write_text("x", encoding="utf-8")
+    git("add", "f.txt")
+    git("commit", "-q", "-m", "feat: x\n\nticket: flow-ho6f\nCloses flow-ho6f")
+    body = tmp_path / "pr-body.md"
+    body.write_text("lead\n\n## Changes\n\n- `f.txt`: x\n", encoding="utf-8")
+    rc, fake = _run(["update-body", "--pr", "7", "--body-file", str(body)], ws)
+    assert rc == 0
+    sent = next(c[2] for c in fake.calls if c[0] == "update_pr_body")
+    assert sent.endswith("Closes flow-ho6f")
+
+
 def test_factory_error_returns_2(ws, capsys):
     def bad_factory(_cfg):
         raise RuntimeError("boom")
