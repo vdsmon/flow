@@ -26,6 +26,8 @@ Return: a JSON list in the shared finding schema, nothing else
 
 **The shared finding schema.** Every agent returns a JSON list of findings, each with exactly these fields: `lens` (its own name); `claim` (one present-tense sentence); `witnesses` (list of `{ts, anchor}` where the anchor is a session id, a store path, or a PR/ticket key, never a run directory); `validity` (`still-true` | `stale` | `unprobed`, from re-checking the claim against the present: a read-only machine probe, a config re-read, or `unprobed` when checking would mutate); `remedied_check` (what `git log origin/main --since=<window start>` and the read-only probes said about a fix having already landed); `class` (`defect` | `papercut` | `proposal` | `verified-fix` | `expected-stale`); `suggested_routing` (`bead` | `ledger` | `ruling` | `watch` | `none`). The witness bar, the routing hierarchy, and every filing decision stay owned by `scrutinize.md` §Friction handling; an agent's `suggested_routing` is input to the seat's triage, nothing more. Improvement ideas that are not defects ride the same schema as `class: proposal` and face the §Pickup overengineering filter at triage.
 
+**Shell hygiene for gather agents.** Never put a backtick inside a `python3 -c` string: the outer shell substitutes it as a command, and the first live sweep watched one execute an unintended `claude plugin marketplace update` that way. Write a `.py` file and run it instead.
+
 **Short-circuit rule.** Before spawning, the seat checks each lens's cheap precondition (listed per lens below). A lens with empty sources for the window is skipped without an agent, and the skip appears in the sweep report; a lens skipped silently reads as "covered and clean" when it was neither.
 
 ## Lens: close-out integrity
@@ -54,7 +56,7 @@ The per-tool-call waste audit, formalized from the 2026-08-04 tool-call sweeps. 
 
 Sources: the trace's `flow_calls` and `tool_errors` per session.
 
-Checks: every tool error classified as env (missing binary, credential, sandbox), grammar-guess (a spelling the registry or a seam-checked card already answers), contract-error (an engine error code like `invalid_evidence`, traced to driver fault vs a contract gap), or host-rule (Write-before-Read, blocked sleep); duplicate identical commands run twice for one answer; `--help` reads that a reference card already covers; poll shapes where a watch or notification should wake the driver; per-run facade-call count against the dispatch-spine baseline of roughly seven calls from worktree create to implement launch, with the excess named.
+Checks: every tool error classified as env (missing binary, credential, sandbox), grammar-guess (a spelling the registry or a seam-checked card already answers), contract-error (an engine error code like `invalid_evidence`, traced to driver fault vs a contract gap), or host-rule (Write-before-Read, blocked sleep); duplicate identical commands run twice for one answer; `--help` reads that a reference card already covers; poll shapes where a watch or notification should wake the driver; per-run facade-call count against the dispatch-spine baseline of roughly nine calls from worktree create to implement launch (measured 8 to 10 across twelve runs, 2026-08-04, with `recall` and `validate` as the legitimate additions to the original seven), with the excess named.
 
 ## Lens: env and credential
 
@@ -76,7 +78,7 @@ Checks: thread count and class per PR (money-path Major, cosmetic Major, minor, 
 
 Memory used versus knowledge re-derived. Earned by FT-1554 burning three MariaDB errors in five minutes re-guessing a prod schema that a knowledge entry could have carried. Precondition: any window run.
 
-Sources: `recall-usage.jsonl` in the memory namespace, the knowledge store, `metric recall-quality` and `metric memory-health` over the window, and trace evidence of re-derivation (repeated schema probing, repeated environment discovery, a question the store already answers).
+Sources: `recall-usage.jsonl` in the memory namespace, the knowledge store, `metric recall-hit-rate` and `metric corpus-health` over the window (the INTERNAL metric names; the public `measure` grammar spells these `recall-quality` and `memory-health`, and the first live sweep burned a failed call on exactly that mismatch), and trace evidence of re-derivation (repeated schema probing, repeated environment discovery, a question the store already answers).
 
 Checks: each run's recall hits and whether they shaped a decision; incidents where a run re-derived something the store already held, named with the store entry it should have hit; store health (growth, prune debt, dead entries contradicted by later evidence); a knowledge entry that a run contradicted without correcting.
 
