@@ -80,7 +80,11 @@ The applied patch comes from the recorded `implement.diff` — NOT from `git add
 4. Fill in the body.
    Step 3 created the commit skeleton via a shell redirect. Read the resolved absolute
    skeleton path first; this also satisfies hosts that require a file to be read before
-   their exact writer may replace it.
+   their exact writer may replace it. The Read is LOAD-BEARING, not a nicety: drivers
+   that skipped it tripped the host's write guard in a third of one window's runs
+   (2026-08-04 census, 4 witnesses) and burned two recovery calls each time. When you
+   would rather not Read first, append via a shell heredoc (`cat >> "<path>" <<'EOF'`)
+   instead of the host file-writer; the shell path has no read-first requirement.
    Then append a body section describing *why* (not what — the diff shows what), referencing any failing-tests-now-green progress from implement stage.
    When the body needs to MENTION a CI-skip marker, spell it out WITHOUT brackets (write `skip ci`, never the bracketed form): GitHub honors a bracketed CI-skip token anywhere in the commit message and would suppress all CI for the push.
    Then use the adapter's exact file-write primitive to replace that same path.

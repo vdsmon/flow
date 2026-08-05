@@ -204,6 +204,13 @@ probe error occurred.
 FLOW_HARNESS="<harness>" "<facade>" finalize --workspace-root . --all [--dry-run]
 ```
 
+Run it ONCE and capture the full JSON to a scratch file, then parse that file for
+every view you need. The sweep re-probes tracker, forge, and worktrees per candidate,
+so re-executing it just to re-pipe the same output doubles real work: three drivers
+in one day ran the identical command twice within ten seconds, once through `tail`
+and once through a JSON parser (2026-08-04 census), and a truncated first read has
+already hidden failed close-out steps until the damage surfaced in a metric.
+
 The sweep exists because merged runs were witnessed parking unfinalized for days
 (2026-08-03: two merged deliveries still held claims, worktrees, and no frozen ship
 event, and the time-to-pr measure was blind to both), with close-out depending on a

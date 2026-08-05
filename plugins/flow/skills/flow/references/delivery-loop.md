@@ -49,6 +49,15 @@ before commit, each time wrapping up with a status summary instead of advancing,
 each time a human nudge was what resumed a healthy run. If there is a wrap-up worth
 writing, write it AND issue the next loop step in the same turn.
 
+**Never wait with a blocking sleep, at ANY wait site.** A spawned agent, a background
+task, or an external check notifies the driver when it finishes; a `sleep N; check`
+Bash call is blocked by the host every time and the result was usually already
+available (2026-08-04 census: four blocked sleeps across four runs, at an assessor
+verdict wait, a background install, and an e2e confirm, none of them the review_loop
+CI waits the earlier fix covered; two drivers stripped the sleep, retried, and got
+the answer instantly). Waiting means ending the motion and letting the notification
+or a Monitor watch wake the turn, exactly as `stage-review_loop.md` prescribes for CI.
+
 Descriptor cases:
 
 - `done: true`: exit cleanly;
