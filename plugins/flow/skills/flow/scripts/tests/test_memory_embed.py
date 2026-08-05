@@ -116,6 +116,43 @@ def test_reindex_incremental_embeds_only_missing(tmp_path: Path, stub_cmd: str) 
     assert summary["kept"] == 1
 
 
+def test_reindex_chunks_long_body_into_suffixed_ids(tmp_path: Path, stub_cmd: str) -> None:
+    _seed_workspace(tmp_path)
+    long_body = "\n\n".join(f"paragraph {i} " + "x" * 300 for i in range(8))
+    _write_entries(tmp_path, "demo", [_entry("a" * 16, long_body), _entry("b" * 16, "short")])
+    summary = memory_embed.reindex(tmp_path, "demo", embedder=stub_cmd)
+    assert summary["live"] == 2
+    assert summary["embedded"] == 2
+    _, vectors = memory_embed.load_index(tmp_path, "demo")
+    long_ids = [iid for iid in vectors if memory_embed._base_id(iid) == "a" * 16]
+    assert "a" * 16 in long_ids
+    assert len(long_ids) > 1
+    assert [iid for iid in vectors if memory_embed._base_id(iid) == "b" * 16] == ["b" * 16]
+    grouped = memory_embed.grouped_vectors(vectors)
+    assert len(grouped["a" * 16]) == len(long_ids)
+    assert len(grouped["b" * 16]) == 1
+
+
+def test_reindex_incremental_keeps_all_chunks_of_live_entry(tmp_path: Path, stub_cmd: str) -> None:
+    _seed_workspace(tmp_path)
+    long_body = "\n\n".join(f"paragraph {i} " + "x" * 300 for i in range(8))
+    _write_entries(tmp_path, "demo", [_entry("a" * 16, long_body)])
+    memory_embed.reindex(tmp_path, "demo", embedder=stub_cmd)
+    _, before = memory_embed.load_index(tmp_path, "demo")
+    _write_entries(tmp_path, "demo", [_entry("a" * 16, long_body), _entry("b" * 16, "two")])
+    summary = memory_embed.reindex(tmp_path, "demo", embedder=stub_cmd)
+    assert summary["embedded"] == 1
+    assert summary["kept"] == 1
+    _, after = memory_embed.load_index(tmp_path, "demo")
+    for iid, vec in before.items():
+        assert after[iid] == vec
+
+
+def test_entry_chunks_short_body_is_single_untouched_text() -> None:
+    entry = _entry("c" * 16, "short body")
+    assert memory_embed._entry_chunks(entry) == [memory_embed._entry_text(entry)]
+
+
 def test_reindex_second_run_embeds_zero(tmp_path: Path, stub_cmd: str) -> None:
     _seed_workspace(tmp_path)
     _write_entries(tmp_path, "demo", [_entry("a" * 16, "one"), _entry("b" * 16, "two")])

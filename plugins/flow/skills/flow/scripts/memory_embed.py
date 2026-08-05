@@ -176,6 +176,56 @@ def _entry_text(entry: dict[str, Any]) -> str:
     return f"{etype}: {body}".strip(": ").strip() if etype else body
 
 
+_CHUNK_CHARS = 800
+
+
+def _base_id(indexed_id: str) -> str:
+    """Sidecar ids are `<entry-id>` (chunk 0) or `<entry-id>#<n>`; entry ids never contain '#'."""
+    return indexed_id.split("#", 1)[0]
+
+
+def grouped_vectors(indexed: dict[str, list[float]]) -> dict[str, list[list[float]]]:
+    """Sidecar vectors grouped per entry id; query-time consumers max-pool over the group."""
+    grouped: dict[str, list[list[float]]] = {}
+    for iid in sorted(indexed):
+        grouped.setdefault(_base_id(iid), []).append(indexed[iid])
+    return grouped
+
+
+def _entry_chunks(entry: dict[str, Any]) -> list[str]:
+    """Embed texts for one entry: the whole text when short, paragraph-aligned ~_CHUNK_CHARS
+    chunks when long.
+
+    One vector over a long multi-fact body dilutes against a short focused query and never
+    ranks (2026-08-04 finding: 0/21 consolidated MIGRATED entries ever surfaced while three
+    sessions re-derived a schema one of them held). Per-chunk vectors let one fact inside a
+    long body match on its own; a paragraph longer than 2x the budget is hard-sliced so a
+    single wall of text cannot smuggle the dilution back in.
+    """
+    text = _entry_text(entry)
+    if len(text) <= _CHUNK_CHARS:
+        return [text]
+    chunks: list[str] = []
+    current = ""
+    for para in text.split("\n\n"):
+        tail = para
+        while len(tail) > 2 * _CHUNK_CHARS:
+            if current:
+                chunks.append(current)
+                current = ""
+            chunks.append(tail[:_CHUNK_CHARS])
+            tail = tail[_CHUNK_CHARS:]
+        candidate = f"{current}\n\n{tail}" if current else tail
+        if len(candidate) > _CHUNK_CHARS and current:
+            chunks.append(current)
+            current = tail
+        else:
+            current = candidate
+    if current:
+        chunks.append(current)
+    return chunks
+
+
 def _write_index(
     path: Path,
     lock_path: Path,
@@ -212,24 +262,29 @@ def reindex(
     kpath = _memory_paths.knowledge_path(workspace_root, namespace)
     sidecar = kpath.with_name(f"{kpath.name}.quarantine.{ts_token()}")
     entries = recall.filter_superseded(list(iter_jsonl(kpath, sidecar))) if kpath.exists() else []
-    live = {str(e["id"]): _entry_text(e) for e in entries if isinstance(e.get("id"), str)}
+    live = {str(e["id"]): e for e in entries if isinstance(e.get("id"), str)}
 
     header, indexed = load_index(workspace_root, namespace)
     model_mismatch = header.get("model") != model
     full = (not incremental) or model_mismatch
 
     if full:
-        to_embed = dict(live)
         kept: dict[str, list[float]] = {}
     else:
-        kept = {eid: vec for eid, vec in indexed.items() if eid in live}
-        to_embed = {eid: text for eid, text in live.items() if eid not in kept}
+        kept = {iid: vec for iid, vec in indexed.items() if _base_id(iid) in live}
+    kept_bases = {_base_id(iid) for iid in kept}
+    to_embed = {eid: _entry_chunks(e) for eid, e in live.items() if eid not in kept_bases}
 
     embedded: dict[str, list[float]] = {}
     if to_embed:
-        ids = list(to_embed)
-        vectors = embed([to_embed[i] for i in ids], model=model, embedder=embedder)
-        embedded = dict(zip(ids, vectors, strict=True))
+        flat_ids: list[str] = []
+        flat_texts: list[str] = []
+        for eid, chunks in to_embed.items():
+            for i, chunk in enumerate(chunks):
+                flat_ids.append(eid if i == 0 else f"{eid}#{i}")
+                flat_texts.append(chunk)
+        vectors = embed(flat_texts, model=model, embedder=embedder)
+        embedded = dict(zip(flat_ids, vectors, strict=True))
 
     merged = {**kept, **embedded}
     dim = len(next(iter(merged.values()))) if merged else header.get("dim", 0)
@@ -244,8 +299,8 @@ def reindex(
         "model": model,
         "dim": dim,
         "live": len(live),
-        "embedded": len(embedded),
-        "kept": len(kept),
+        "embedded": len(to_embed),
+        "kept": len(kept_bases),
         "full": full,
     }
 

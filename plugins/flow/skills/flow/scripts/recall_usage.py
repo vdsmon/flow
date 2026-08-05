@@ -283,7 +283,9 @@ def detect_misses(
     # a stale indexed vector for it must never be blamed as a miss.
     live_ids = {e["id"] for e in live if isinstance(e.get("id"), str)}
     candidates = [
-        (eid, vec) for eid, vec in indexed.items() if eid in live_ids and eid not in new_ids
+        (eid, vecs)
+        for eid, vecs in memory_embed.grouped_vectors(indexed).items()
+        if eid in live_ids and eid not in new_ids
     ]
     if not candidates:
         return []
@@ -301,8 +303,8 @@ def detect_misses(
     records: list[dict[str, Any]] = []
     for entry, vec in zip(new_entries, new_vecs, strict=True):
         best_id, best_sim = "", -1.0
-        for cand_id, cand_vec in candidates:
-            sim = recall._cosine(vec, cand_vec)
+        for cand_id, cand_vecs in candidates:
+            sim = max(recall._cosine(vec, cand_vec) for cand_vec in cand_vecs)
             if sim > best_sim:
                 best_id, best_sim = cand_id, sim
         if best_sim >= threshold and best_id not in surfaced:

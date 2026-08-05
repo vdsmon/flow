@@ -1287,6 +1287,22 @@ def _seed_similar_workspace(
     memory_embed.reindex(tmp_path, "demo", model=model, embedder=embedder)
 
 
+def test_similar_entries_max_pools_chunked_long_entry(tmp_path: Path) -> None:
+    """One focused fact inside a long multi-topic body must match on its own chunk.
+
+    Pre-chunking, the single full-body vector mixes bins 1 and 3 and tops out near
+    cosine 0.81 against a pure bin-3 query, so the 0.9 floor filters it out; with
+    per-chunk vectors and query-time max-pooling the bin-3 paragraph scores 1.0
+    (the 2026-08-04 MIGRATED-batch finding: 0/21 long consolidated entries ever
+    surfaced while runs re-derived facts they held)."""
+    embedder = _stub_embedder_cmd(tmp_path)
+    long_body = ("isolated " * 100).strip() + "\n\n" + ("fsync " * 140).strip()
+    _seed_similar_workspace(tmp_path, [_make_entry("a" * 16, long_body)], embedder=embedder)
+    hits = recall.similar_entries(tmp_path, "fsync fsync fsync", top_n=3, threshold=0.9)
+    assert [h["id"] for h in hits] == ["a" * 16]
+    assert hits[0]["score"] == 1.0
+
+
 def test_similar_entries_returns_hit_above_floor(tmp_path: Path) -> None:
     embedder = _stub_embedder_cmd(tmp_path)
     _seed_similar_workspace(tmp_path, [_make_entry("a" * 16, _BIN1)], embedder=embedder)
