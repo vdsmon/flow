@@ -89,24 +89,15 @@ def _ok(result: subprocess.CompletedProcess[str], what: str) -> str:
 def _compose_body(raw: str, subject: str, body_file: Path, *, flatten: bool = False) -> str:
     """The PR body passed to open_pr.
 
-    The authored markdown (de-AI scrubbed as a floor) plus the deterministic
-    `Closes` footer from the commit trailer. Empty prose falls back to the
-    commit subject. With `flatten` (a bitbucket forge, which renders no raw HTML
-    in markdown), `<details>` wrappers become plain `###` headings. The body
-    passes through `enforce_cap`, the deterministic size net so an oversized
-    `## Evidence` body cannot fail open_pr.
+    Delegates to `pr_body.compose`, the one compose path shared with `forge update-body`: scrub
+    floor, `<details>` flatten on a bitbucket forge, the deterministic `Closes` footer from the
+    commit trailer, and the `enforce_cap` size net. Empty prose falls back to the commit subject.
     """
     try:
         authored = body_file.read_text()
     except OSError as exc:
         raise ToolError(f"--body-file {body_file} unreadable: {exc}") from exc
-    body = pr_body.scrub(authored).strip()
-    if flatten:
-        body = pr_body.flatten_details(body)
-    if not body:
-        return subject
-    footer = pr_body.closes_footer(raw)
-    return pr_body.enforce_cap(f"{body}\n\n{footer}" if footer else body)
+    return pr_body.compose(authored, raw, flatten=flatten) or subject
 
 
 def open_or_get_pr(

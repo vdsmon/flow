@@ -172,6 +172,25 @@ def flatten_details(body: str) -> str:
         return body
 
 
+def compose(authored: str, raw_commit_body: str, *, flatten: bool = False) -> str:
+    """The one compose path for a PR description: scrub, flatten, footer, cap.
+
+    Shared by `create_pr` (first open) and `forge update-body` (the e2e early-tail description push)
+    so the two surfaces cannot drift: both apply the de-AI `scrub` floor, flatten `<details>` on a
+    forge that renders no raw HTML, re-append the deterministic `Closes` footer from the HEAD
+    commit's trailer block, and pass through `enforce_cap`. Returns "" when the authored prose
+    scrubs to nothing; the caller owns any fallback. TOTAL: every helper here degrades to
+    passthrough rather than raising.
+    """
+    body = scrub(authored).strip()
+    if flatten:
+        body = flatten_details(body)
+    if not body:
+        return ""
+    footer = closes_footer(raw_commit_body)
+    return enforce_cap(f"{body}\n\n{footer}" if footer else body)
+
+
 def _fenced_blocks(lines: list[str]) -> list[tuple[int, int]]:
     """(open_fence_index, close_fence_index) for each closed fenced block."""
     blocks: list[tuple[int, int]] = []
@@ -237,4 +256,4 @@ def _sentence_case(text: str) -> str:
     return " ".join(result)
 
 
-__all__ = ["closes_footer", "enforce_cap", "flatten_details", "scrub"]
+__all__ = ["closes_footer", "compose", "enforce_cap", "flatten_details", "scrub"]
