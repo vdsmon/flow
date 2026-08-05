@@ -333,15 +333,16 @@ def _semantic_rank(
 
     query_vec = memory_embed.embed([query], model=model, embedder=embedder)[0]
 
+    grouped = memory_embed.grouped_vectors(indexed)
     sims: list[tuple[str, float]] = []
     for entry in entries:
         eid = entry.get("id")
         if not isinstance(eid, str):
             continue
-        vec = indexed.get(eid)
-        if vec is None:
+        vecs = grouped.get(eid)
+        if not vecs:
             continue
-        sim = _cosine(query_vec, vec)
+        sim = max(_cosine(query_vec, v) for v in vecs)
         if sim > threshold:
             sims.append((eid, sim))
     sims.sort(key=lambda kv: -kv[1])
@@ -456,16 +457,17 @@ def similar_entries(
         sys.stderr.write(f"recall: similar-entries embedder unavailable: {exc}\n")
         return []
 
+    grouped = memory_embed.grouped_vectors(indexed)
     scored: list[tuple[float, dict[str, Any]]] = []
     near_miss: tuple[float, str] | None = None
     for entry in entries:
         eid = entry.get("id")
         if not isinstance(eid, str):
             continue
-        vec = indexed.get(eid)
-        if vec is None:
+        vecs = grouped.get(eid)
+        if not vecs:
             continue
-        sim = _cosine(query_vec, vec)
+        sim = max(_cosine(query_vec, v) for v in vecs)
         if sim >= threshold:
             scored.append((sim, entry))
         elif sim >= _NEAR_MISS_FLOOR and (near_miss is None or sim > near_miss[0]):

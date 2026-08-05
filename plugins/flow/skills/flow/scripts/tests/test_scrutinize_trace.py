@@ -145,6 +145,71 @@ def test_mine_session_joins_subagent_spans(tmp_path):
     assert span["description"] == "Implement the fix"
 
 
+def test_subagent_spans_carry_their_own_flow_calls_and_errors(tmp_path):
+    path = _sample_session(tmp_path)
+    sub_dir = tmp_path / path.stem / "subagents"
+    sub_dir.mkdir(parents=True)
+    lines = [
+        _event(
+            "2026-08-03T10:05:00Z",
+            "assistant",
+            [
+                _tool_use(
+                    "s1",
+                    "Bash",
+                    {"command": "FLOW_HARNESS=x ./.flow/runtime/flow preflight probe"},
+                )
+            ],
+        ),
+        _event(
+            "2026-08-03T10:05:30Z",
+            "assistant",
+            [_tool_use("s2", "Bash", {"command": "false"})],
+        ),
+        _event(
+            "2026-08-03T10:05:40Z",
+            "user",
+            [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "s2",
+                    "is_error": True,
+                    "content": [{"type": "text", "text": "Exit code 1 stage boom"}],
+                }
+            ],
+        ),
+    ]
+    (sub_dir / "agent-e2e.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    (span,) = st.mine_session(path)["subagents"]
+    assert [c["sub"] for c in span["flow_calls"]] == ["preflight"]
+    assert len(span["tool_errors"]) == 1
+    assert "stage boom" in span["tool_errors"][0]["error"]
+
+
+def test_subagent_signals_respect_since_window(tmp_path):
+    path = _sample_session(tmp_path)
+    sub_dir = tmp_path / path.stem / "subagents"
+    sub_dir.mkdir(parents=True)
+    (sub_dir / "agent-old.jsonl").write_text(
+        _event(
+            "2026-08-01T09:00:00Z",
+            "assistant",
+            [
+                _tool_use(
+                    "o1",
+                    "Bash",
+                    {"command": "FLOW_HARNESS=x ./.flow/runtime/flow preflight probe"},
+                )
+            ],
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (span,) = st.mine_session(path, since="2026-08-03T00:00:00Z")["subagents"]
+    assert span["flow_calls"] == []
+    assert span["first"] == "2026-08-01T09:00:00Z"
+
+
 def test_mine_dir_drops_sessions_entirely_before_window(tmp_path):
     _sample_session(tmp_path, "old")
     fresh = _write_session(

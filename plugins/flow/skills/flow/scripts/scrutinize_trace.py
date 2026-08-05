@@ -11,7 +11,8 @@ loading a transcript whole, emitting the four signal families the charter's lens
   - human messages (the nudge lens reads mid-run ones; Skill invocations render as user
     turns too, so each message carries an `is_skill` flag rather than being dropped);
   - agent spawns, joined against `<session>/subagents/agent-*.jsonl` spans when present
-    (per-stage wall clock lives there, not in the driver transcript);
+    (per-stage wall clock lives there, not in the driver transcript), each span carrying
+    the subagent's own facade calls and tool errors mined by the same rules;
   - tool errors (`is_error` results), with the originating command snippet.
 
 Read-only over files outside any workspace; writes nothing anywhere.
@@ -59,7 +60,63 @@ def _content_list(event: dict[str, Any]) -> list[Any]:
     return content if isinstance(content, list) else []
 
 
-def _mine_subagents(session_dir: Path) -> list[dict[str, Any]]:
+def _record_tool_item(
+    item: dict[str, Any],
+    stamp: str,
+    in_window: bool,
+    pending: dict[str, tuple[str, str, str]],
+    flow_calls: list[dict[str, Any]],
+    tool_errors: list[dict[str, Any]],
+    agent_spawns: list[dict[str, Any]] | None = None,
+) -> None:
+    """One tool_use/tool_result content item into the shared signal shapes.
+
+    Used by the driver pass and the per-subagent pass so stage-side facade calls and
+    errors mine identically; span-only subagent records left the env lens unable to
+    verify the pre-e2e credential probe (2026-08-04 sweep)."""
+    kind = item.get("type")
+    if kind == "tool_use":
+        name = item.get("name") or ""
+        tool_input = item.get("input") or {}
+        snippet = ""
+        if name == "Bash":
+            snippet = str(tool_input.get("command") or "")
+            match = _FLOW_CALL.search(snippet)
+            if match and in_window:
+                flow_calls.append(
+                    {"ts": stamp, "sub": match.group(1), "command": _short(snippet, 140)}
+                )
+        elif name in ("Task", "Agent"):
+            snippet = str(tool_input.get("description") or "")
+            if agent_spawns is not None and in_window:
+                agent_spawns.append(
+                    {
+                        "ts": stamp,
+                        "type": str(tool_input.get("subagent_type") or ""),
+                        "description": _short(snippet, 80),
+                    }
+                )
+        else:
+            snippet = json.dumps(tool_input, default=str)
+        pending[str(item.get("id"))] = (stamp, name, _short(snippet, 140))
+    elif kind == "tool_result" and item.get("is_error"):
+        spawn_ts, name, snippet = pending.get(str(item.get("tool_use_id")), ("", "?", ""))
+        if not in_window:
+            return
+        body = item.get("content")
+        if isinstance(body, list):
+            body = " ".join(str(part.get("text", "")) for part in body if isinstance(part, dict))
+        tool_errors.append(
+            {
+                "ts": stamp or spawn_ts,
+                "tool": name,
+                "command": snippet,
+                "error": _short(str(body), 240),
+            }
+        )
+
+
+def _mine_subagents(session_dir: Path, *, since: str | None = None) -> list[dict[str, Any]]:
     spans: list[dict[str, Any]] = []
     sub_dir = session_dir / "subagents"
     if not sub_dir.is_dir():
@@ -67,12 +124,21 @@ def _mine_subagents(session_dir: Path) -> list[dict[str, Any]]:
     for transcript in sorted(sub_dir.glob("agent-*.jsonl")):
         first = last = None
         lines = 0
+        pending: dict[str, tuple[str, str, str]] = {}
+        flow_calls: list[dict[str, Any]] = []
+        tool_errors: list[dict[str, Any]] = []
         for event in _iter_events(transcript):
             lines += 1
             stamp = event.get("timestamp")
             if stamp:
                 first = first or stamp
                 last = stamp
+            in_window = not since or not stamp or stamp >= since
+            for item in _content_list(event):
+                if isinstance(item, dict):
+                    _record_tool_item(
+                        item, stamp or "", in_window, pending, flow_calls, tool_errors
+                    )
         description = ""
         meta_path = transcript.with_name(transcript.name.replace(".jsonl", ".meta.json"))
         if meta_path.is_file():
@@ -88,6 +154,8 @@ def _mine_subagents(session_dir: Path) -> list[dict[str, Any]]:
                 "first": first,
                 "last": last,
                 "lines": lines,
+                "flow_calls": flow_calls,
+                "tool_errors": tool_errors,
             }
         )
     return spans
@@ -136,48 +204,17 @@ def mine_session(path: Path, *, since: str | None = None) -> dict[str, Any]:
                         "text": _short(text, 200),
                     }
                 )
-            elif kind == "tool_use":
-                name = item.get("name") or ""
-                tool_input = item.get("input") or {}
-                snippet = ""
-                if name == "Bash":
-                    snippet = str(tool_input.get("command") or "")
-                    match = _FLOW_CALL.search(snippet)
-                    if match and in_window:
-                        report["flow_calls"].append(
-                            {"ts": stamp, "sub": match.group(1), "command": _short(snippet, 140)}
-                        )
-                elif name in ("Task", "Agent"):
-                    snippet = str(tool_input.get("description") or "")
-                    if in_window:
-                        report["agent_spawns"].append(
-                            {
-                                "ts": stamp,
-                                "type": str(tool_input.get("subagent_type") or ""),
-                                "description": _short(snippet, 80),
-                            }
-                        )
-                else:
-                    snippet = json.dumps(tool_input, default=str)
-                pending[str(item.get("id"))] = (stamp, name, _short(snippet, 140))
-            elif kind == "tool_result" and item.get("is_error"):
-                spawn_ts, name, snippet = pending.get(str(item.get("tool_use_id")), ("", "?", ""))
-                if not in_window:
-                    continue
-                body = item.get("content")
-                if isinstance(body, list):
-                    body = " ".join(
-                        str(part.get("text", "")) for part in body if isinstance(part, dict)
-                    )
-                report["tool_errors"].append(
-                    {
-                        "ts": stamp or spawn_ts,
-                        "tool": name,
-                        "command": snippet,
-                        "error": _short(str(body), 240),
-                    }
+            else:
+                _record_tool_item(
+                    item,
+                    stamp,
+                    in_window,
+                    pending,
+                    report["flow_calls"],
+                    report["tool_errors"],
+                    agent_spawns=report["agent_spawns"],
                 )
-    report["subagents"] = _mine_subagents(path.parent / path.stem)
+    report["subagents"] = _mine_subagents(path.parent / path.stem, since=since)
     return report
 
 
