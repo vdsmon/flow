@@ -147,6 +147,56 @@ def test_is_ticket_branch_matches_feat_prefix() -> None:
     assert not fw.is_ticket_branch("feat/FT-10-other", "FT-1")  # no prefix-bleed
 
 
+def _configure_preflight(main: Path, *, check: str | None = None, probe: str | None = None) -> None:
+    lines = ["[preflight]"]
+    if check is not None:
+        lines.append(f'credential_check = "{check}"')
+    if probe is not None:
+        lines.append(f'credential_probe = "{probe}"')
+    toml = main / ".flow" / "workspace.toml"
+    toml.write_text(toml.read_text(encoding="utf-8") + "\n".join(lines) + "\n", encoding="utf-8")
+
+
+def test_bootstrap_refuses_on_failed_preflight_check(tmp_path: Path) -> None:
+    # flow-wr1r: the attended check was a documented manual step and two of the three
+    # runs after brinta configured it skipped it; the bootstrap chokepoint enforces it.
+    main = _main_checkout(tmp_path)
+    _configure_preflight(main, check="false")
+    with pytest.raises(fw._PreflightFailed, match="credential preflight \\(check\\)"):
+        _run(tmp_path, main)
+    assert not (tmp_path / "wt").exists()
+
+
+def test_bootstrap_records_preflight_on_success(tmp_path: Path) -> None:
+    main = _main_checkout(tmp_path)
+    _configure_preflight(main, check="true")
+    res = _run(tmp_path, main)
+    assert res["preflight"]["status"] == "ok"
+    assert res["preflight"]["mode"] == "check"
+
+
+def test_bootstrap_unconfigured_preflight_is_noop(tmp_path: Path) -> None:
+    main = _main_checkout(tmp_path)
+    res = _run(tmp_path, main)
+    assert res["preflight"] is None
+
+
+def test_refuse_failed_preflight_selects_probe_when_unattended(monkeypatch, tmp_path: Path) -> None:
+    # Unattended launches must never go interactive: probe, not check.
+    import preflight as pf
+
+    modes: list[str] = []
+
+    def fake_run(_root, mode, dry_run=False):
+        modes.append(mode)
+        return {"status": "ok", "mode": mode}
+
+    monkeypatch.setattr(pf, "run_preflight", fake_run)
+    fw._refuse_failed_preflight(main_root=tmp_path, unattended=True)
+    fw._refuse_failed_preflight(main_root=tmp_path, unattended=False)
+    assert modes == ["probe", "check"]
+
+
 def test_bootstrap_refuses_non_feat_branch(tmp_path: Path) -> None:
     # flow-t0vv: a fix/<key> branch minted a worktree invisible to reap/drain;
     # the contract is enforced at the one mint site instead of widening parsers.

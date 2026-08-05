@@ -94,6 +94,10 @@ class _DuplicateClaim(Exception):
     """a live sibling run already holds this ticket. Exit code 4."""
 
 
+class _PreflightFailed(Exception):
+    """The workspace's configured credential preflight failed at the bootstrap chokepoint."""
+
+
 class _TerminalBead(Exception):
     """the bead is already closed/done/cancelled. Exit code 6."""
 
@@ -1075,6 +1079,36 @@ def _refuse_terminal_bead(*, ticket: str, main_root: Path) -> None:
         )
 
 
+def _refuse_failed_preflight(*, main_root: Path, unattended: bool) -> dict[str, Any] | None:
+    """Run the workspace's configured credential preflight before any mutation.
+
+    Wired at this chokepoint on the 2026-08-04 ruling: delivery-plan section 1 documented
+    the attended check as a manual step and two of the three runs after brinta configured
+    it skipped it, surviving on warm SSO only. Attended launches run the interactive-
+    capable `check` (browser flow only on expiry; the human is present, this is the
+    approval moment). Unattended launches run the silent `probe`, which never prompts, so
+    an expired credential refuses here instead of hanging a stage agent in an interactive
+    login mid-run (the FT-1560 shape). Unconfigured workspaces skip at zero cost, and a
+    refusal happens before `git worktree add`, so nothing needs cleanup.
+    """
+    import preflight
+
+    mode = "probe" if unattended else "check"
+    try:
+        result = preflight.run_preflight(main_root, mode)
+    except preflight.PreflightConfigError as exc:
+        raise _ConfigError(f"[preflight] misconfigured: {exc}") from exc
+    if result.get("status") == "unconfigured":
+        return None
+    if result.get("status") != "ok":
+        raise _PreflightFailed(
+            f"credential preflight ({mode}) failed before worktree create: {result!r}. "
+            "Refresh the credential (run the workspace's [preflight] credential_check "
+            "attended, e.g. mise sso) and re-run; nothing was created."
+        )
+    return result
+
+
 def _refuse_epic_bead(*, ticket: str, main_root: Path) -> None:
     """Refuse (exit 7) to bootstrap an epic (a container, not a single-PR unit).
 
@@ -1294,6 +1328,8 @@ def bootstrap(
     # lose the `@default` drain-launch signal review_brief.freshness() later authorizes against.
     unattended = auto or base.strip() == "@default"
 
+    preflight_result = _refuse_failed_preflight(main_root=main_root, unattended=unattended)
+
     plan_text = plan_from.read_text(encoding="utf-8")
     worktree = _worktree_path(main_root, branch, worktree_override)
     warnings: list[str] = []
@@ -1457,6 +1493,7 @@ def bootstrap(
         "run_id": run_id,
         "copied": copied,
         "warnings": warnings,
+        "preflight": preflight_result,
     }
 
 
@@ -1628,6 +1665,9 @@ def cli_main(argv: list[str]) -> int:
     except _TerminalBead as exc:
         sys.stderr.write(f"flow-worktree: {exc}\n")
         return 6
+    except _PreflightFailed as exc:
+        sys.stderr.write(f"flow-worktree: {exc}\n")
+        return 9
     except _EpicBead as exc:
         sys.stderr.write(f"flow-worktree: {exc}\n")
         return 7
