@@ -21,10 +21,12 @@ Categories:
   - narration   : reviewer-directed narration markers (`_NARRATION_RES`).
   - long-line   : a full-line comment or docstring line over the configured limit (formatters
                   wrap code, never comment prose, so these survive them).
-  - under-fill  : a hand-wrapped block narrower than the configured limit. Flagged when a line
-                  breaks mid-sentence even though the next line's first word would fit within the
-                  limit; sentence-final breaks, list/table lines, and code fences never count. At
-                  most one finding per block.
+  - under-fill  : a hand-wrapped block narrower than the fill floor (88, or the limit when that
+                  is lower). Flagged when a line breaks mid-sentence even though the next line's
+                  first word would still fit under the floor; a wrap between the floor and the
+                  limit is accepted as filled, since writers and models trained on black-formatted
+                  code break near 88 naturally. Sentence-final breaks, list/table lines, and code
+                  fences never count. At most one finding per block.
 
 The limit comes from `--line-length`, else per-file discovery: the nearest pyproject.toml
 `[tool.ruff]`/`[tool.black]` line-length, ruff.toml/.ruff.toml, or .editorconfig max_line_length,
@@ -226,7 +228,14 @@ def _fence_mask(block: list[_ProseLine]) -> list[bool]:
     return mask
 
 
+# Writers (humans on black-formatted code, and models trained on it) naturally break prose near
+# 88 even when the configured limit is wider. A wrap inside [_FILL_FLOOR, limit] is therefore
+# accepted as filled; under-fill fires only when the next word would still fit under the floor.
+_FILL_FLOOR = 88
+
+
 def _underfill_findings(path: str, block: list[_ProseLine], limit: int) -> list[Finding]:
+    floor = min(limit, _FILL_FLOOR)
     fenced = _fence_mask(block)
     for i in range(len(block) - 1):
         cur, nxt = block[i], block[i + 1]
@@ -238,10 +247,10 @@ def _underfill_findings(path: str, block: list[_ProseLine], limit: int) -> list[
         if stripped and stripped[-1] in ".!?:;":
             continue
         word = _first_word(nxt.text)
-        if word and cur.end_col + 1 + len(word) <= limit:
+        if word and cur.end_col + 1 + len(word) <= floor:
             msg = (
-                f"block hand-wrapped at col {cur.end_col}; the next word fits within {limit} "
-                f"(fill comment prose to the configured line length)"
+                f"block hand-wrapped at col {cur.end_col}; the next word fits within {floor} "
+                f"(fill comment prose to at least the fill floor; lines may run to {limit})"
             )
             return [Finding(path, cur.line, "under-fill", msg)]
     return []
