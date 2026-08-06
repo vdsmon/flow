@@ -1,6 +1,6 @@
 ---
 name: flow
-description: State-aware ticket-to-PR delivery and workspace operations. Use FLOW for a cockpit, a ticket or PR target, or the ticket, memory, measure, workspace, scrutinize namespaces.
+description: State-aware ticket-to-PR delivery and workspace operations. Use FLOW for a cockpit, a ticket or PR target, or the ticket, memory, measure, workspace, scrutinize, investigate namespaces.
 allowed-tools: Bash(.flow/runtime/flow:*), Bash(*/.flow/runtime/flow:*), Bash(python3:*), Bash(git:*), Bash(bd:*), Bash(jq:*), Bash(gh:*), Read, Write, Edit, Agent, Skill, AskUserQuestion, PushNotification, EnterWorktree
 ---
 
@@ -111,7 +111,7 @@ static routes still resolve, and explicit `ticket:<key>` remains available.
 <!-- flow:public-router:begin -->
 Interpret the invocation through `public-commands.toml`.
 Static namespaces win over target parsing.
-Static roots: `ticket | memory | measure | workspace | scrutinize | help`.
+Static roots: `ticket | memory | measure | workspace | scrutinize | investigate | help`.
 Bare `FLOW` is the read-only cockpit; a recognized target enters the lifecycle reducer.
 Unknown tokens stop. Never reinterpret removed commands as ticket keys.
 <!-- flow:public-router:end -->
@@ -136,6 +136,7 @@ FLOW workspace repair [<target>]
 FLOW workspace sync
 FLOW workspace worktrees clean [--dry-run]
 FLOW scrutinize [<workspace>]
+FLOW investigate [<report> ...]
 FLOW help [ticket|memory|measure|workspace]
 ```
 <!-- flow:public-grammar:end -->
