@@ -287,7 +287,7 @@ markers are overwritten. `—` = none.
 | `observe_ship_event.py` | — | `metric`, `observe_at_close` |
 | `pending_mutations.py` | — | `sync`, `tracker_cli` |
 | `pr_body.py` | — | `create_pr`, `forge_cli` |
-| `preflight.py` | `check` `probe` | `flow_worktree` |
+| `preflight.py` | `check` `probe` | `dispatch_stage`, `flow_worktree` |
 | `public_commands.py` | — | `module_map`, `public_commands_check`, `public_commands_cli` |
 | `public_commands_check.py` | — | — |
 | `public_commands_cli.py` | `help` `route` | — |

@@ -647,6 +647,60 @@ def _reconcile_post_lease(
     return None, {}
 
 
+def _refuse_failed_probe(workspace_root: Path, next_stage: str) -> dict[str, Any] | None:
+    """Silent credential probe before the e2e descriptor is emitted.
+
+    The worktree-create bootstrap enforces the attended check mechanically, but the
+    stage-side probe lived only as prose in stage-e2e.md, and the first run under the
+    bootstrap enforcement skipped it (FT-1576, 2026-08-06; the cost class is FT-1560's
+    interactive mid-stage sso login). Runs before any state mutation: on failure the
+    stage stays pending and the same `next`/`advance` converges once the credential is
+    refreshed. An unconfigured probe is silence."""
+    if next_stage != "e2e":
+        return None
+    import preflight
+
+    try:
+        if preflight.configured_command(workspace_root, "probe") is None:
+            return None
+        result = preflight.run_preflight(workspace_root, "probe")
+    except preflight.PreflightConfigError as exc:
+        return {"done": False, "blocked_by": "e2e", "reason": f"[preflight] misconfigured: {exc}"}
+    if result.get("status") in ("ok", "unconfigured"):
+        return None
+    return {
+        "done": False,
+        "blocked_by": "e2e",
+        "reason": (
+            f"credential probe failed before e2e dispatch: {result!r}. Refresh the "
+            "credential (the workspace's [preflight] credential_check command), then "
+            "re-run next/advance; the stage is still pending."
+        ),
+    }
+
+
+def _pick_dispatchable(
+    ts: Any, snap: Any, workspace_root: Path, recovery: dict[str, Any]
+) -> tuple[dict[str, Any] | None, str | None]:
+    """Resolve the next dispatchable stage, or the terminal/blocked payload instead."""
+    failed = state.find_failed(ts)
+    if failed is not None:
+        record = ts.stages[failed]
+        return {
+            "done": False,
+            "blocked_by": failed,
+            "reason": record.failure_detail or "stage failed",
+            **recovery,
+        }, None
+    next_stage = state.pick_next_pending(ts, snap.stages)
+    if next_stage is None:
+        return None, None
+    probe_block = _refuse_failed_probe(workspace_root, next_stage)
+    if probe_block is not None:
+        return {**probe_block, **recovery}, None
+    return None, next_stage
+
+
 def cmd_next(
     workspace_root: Path,
     ticket: str,
@@ -696,19 +750,9 @@ def cmd_next(
     if reconcile_err is not None:
         return reconcile_err
 
-    failed = state.find_failed(ts)
-    if failed is not None:
-        record = ts.stages[failed]
-        return 0, {
-            "done": False,
-            "blocked_by": failed,
-            "reason": record.failure_detail or "stage failed",
-            **recovery,
-        }
-
-    next_stage = state.pick_next_pending(ts, snapshot.stages)
-    if next_stage is None:
-        return 0, {"done": True, **recovery}
+    early, next_stage = _pick_dispatchable(ts, snapshot, workspace_root, recovery)
+    if early is not None or next_stage is None:
+        return 0, early or {"done": True, **recovery}
 
     head_sha = _git_head_sha(workspace_root)
 

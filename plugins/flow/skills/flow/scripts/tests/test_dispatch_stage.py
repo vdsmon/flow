@@ -1744,3 +1744,80 @@ def test_next_refreshes_lease_with_multiplied_ttl(
     assert expires is not None
     remaining = (expires - datetime.now(UTC)).total_seconds()
     assert remaining > 50 * 60, remaining
+
+
+# ─── e2e credential probe gate ───────────────────────────────────────────────
+
+
+def _append_preflight_probe(root: Path, command: str) -> None:
+    # Must land before cmd_init: the canonical snapshot hashes workspace.toml.
+    toml = root / ".flow" / "workspace.toml"
+    toml.write_text(
+        toml.read_text(encoding="utf-8") + f"[preflight]\ncredential_probe = '{command}'\n",
+        encoding="utf-8",
+    )
+
+
+def _walk_to_e2e(root: Path) -> None:
+    ds.cmd_init(root, "FT-1")
+    ds.cmd_next(root, "FT-1")
+    ds.cmd_finish(root, "FT-1", "ticket", "completed")
+
+
+def test_next_blocks_e2e_dispatch_on_failed_probe(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import preflight
+
+    _write_workspace(tmp_path, stages=["ticket", "e2e"], compounding=False)
+    _append_preflight_probe(tmp_path, "aws sts get-caller-identity")
+    _stub_git_head(monkeypatch)
+    _walk_to_e2e(tmp_path)
+    monkeypatch.setattr(
+        preflight,
+        "run_preflight",
+        lambda root, mode: {"status": "failed", "mode": mode, "exit_code": 1},
+    )
+    rc, payload = ds.cmd_next(tmp_path, "FT-1")
+    assert rc == 0
+    assert payload["blocked_by"] == "e2e"
+    assert "credential probe failed" in payload["reason"]
+    # The stage stays pending: nothing was marked in_progress by the refusal.
+    ts, _ = state.read(tmp_path / ".flow" / "runs" / "FT-1")
+    assert ts is not None
+    assert ts.stages["e2e"].status == "pending"
+
+
+def test_next_emits_e2e_descriptor_when_probe_ok(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import preflight
+
+    _write_workspace(tmp_path, stages=["ticket", "e2e"], compounding=False)
+    _append_preflight_probe(tmp_path, "aws sts get-caller-identity")
+    _stub_git_head(monkeypatch)
+    _walk_to_e2e(tmp_path)
+    monkeypatch.setattr(
+        preflight, "run_preflight", lambda root, mode: {"status": "ok", "mode": mode}
+    )
+    rc, payload = ds.cmd_next(tmp_path, "FT-1")
+    assert rc == 0
+    assert payload.get("stage") == "e2e"
+
+
+def test_next_skips_probe_when_unconfigured(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import preflight
+
+    _write_workspace(tmp_path, stages=["ticket", "e2e"], compounding=False)
+    _stub_git_head(monkeypatch)
+    _walk_to_e2e(tmp_path)
+
+    def _boom(root: Path, mode: str) -> dict[str, Any]:
+        raise AssertionError("run_preflight must not run without a configured probe")
+
+    monkeypatch.setattr(preflight, "run_preflight", _boom)
+    rc, payload = ds.cmd_next(tmp_path, "FT-1")
+    assert rc == 0
+    assert payload.get("stage") == "e2e"

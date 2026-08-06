@@ -59,7 +59,7 @@ Your job is to run it exactly, not to reinterpret it.
    without running them a third time. If the ticket has no runnable behavior at
    all, the plan must use `skip: <reason>` instead.
 
-3. When the workspace configures `[preflight] credential_probe` (workspace.toml), run the silent credential probe before anything else in this step:
+3. When the workspace configures `[preflight] credential_probe` (workspace.toml), the dispatcher has already run the silent probe before emitting this stage's descriptor and refused dispatch on failure (the stage stays pending until the credential is refreshed), so a descriptor in hand means the credential answered moments ago. Re-run the probe yourself only when meaningful time passed since dispatch, and before any long or destructive recipe step:
 
    ```bash
    FLOW_HARNESS="<harness>" "<facade>" preflight probe --workspace-root .
