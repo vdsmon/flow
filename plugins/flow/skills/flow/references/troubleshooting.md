@@ -30,6 +30,7 @@ Machine/tool sharp edges that repeatedly burn fresh sessions. None of these are 
 ## zsh
 
 - **`${VAR:+--flag "$VAR"}` expands as ONE word** in zsh (no word-splitting), silently gluing the flag to its value. Use an array: `args=(); [[ -n $VAR ]] && args+=(--flag "$VAR")`.
+- **`(eval):1: == not found` from an `echo` separator.** A bare word starting with `=` (the classic is a `===` visual divider between chained commands) is parsed by zsh as the `=cmd` PATH-expansion form, aborting the compound command and silently discarding every command after the separator, so the second half of an investigation never runs (four witnesses across brinta sessions and this seat, 2026-08-05/06). Quote it (`echo "==="`) or use a word separator like `echo ---`.
 - **`read-only variable: status` error from a shell recipe.** zsh reserves `status` as a read-only alias for `$?`, plus dozens of other special-parameter names (the full list and its derivation live in `seam_check.py`), so binding one inside a recipe aborts the whole call, not just that line. `seam_check.py`'s `zsh_unsafe_binding_problems` check gates this shape in flow's own prose recipes; rename the local, the way `stage-review_loop.md` renamed its poll variable to `ci_status`. Every unsafe name stays in prose or in a flagless inline span on this line deliberately: an inline span carrying a long option counts as an executable recipe, so demonstrating a real binding here would trip the very check this bullet explains.
 
 ## ty / ruff
