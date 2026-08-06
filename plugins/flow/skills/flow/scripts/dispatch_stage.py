@@ -672,9 +672,10 @@ def _refuse_failed_probe(workspace_root: Path, next_stage: str) -> dict[str, Any
         "done": False,
         "blocked_by": "e2e",
         "reason": (
-            f"credential probe failed before e2e dispatch: {result!r}. Refresh the "
-            "credential (the workspace's [preflight] credential_check command), then "
-            "re-run next/advance; the stage is still pending."
+            f"credential probe failed before e2e dispatch: {result!r}. Refresh via the "
+            "attended check (the workspace's [preflight] credential_check command; the "
+            "probe itself is never interactive), then re-run next/advance; the stage "
+            "is still pending."
         ),
     }
 
