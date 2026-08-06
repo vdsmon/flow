@@ -236,3 +236,86 @@ def test_cli_missing_dir_exits_2_and_json_round_trips(tmp_path, capsys):
     assert st.cli_main(["--transcript-dir", str(tmp_path), "--json"]) == 0
     parsed = json.loads(capsys.readouterr().out)
     assert parsed[0]["flow_calls"][0]["sub"] == "status"
+
+
+def test_mine_dir_counts_forked_shared_prefix_once(tmp_path):
+    # A forked session repeats its parent's transcript verbatim before diverging
+    # (witnessed 2026-08-06: 693 shared lines, 10 double-counted errors).
+    parent = _sample_session(tmp_path, "parent")
+    shared = parent.read_text(encoding="utf-8")
+    fork_tail = [
+        _event(
+            "2026-08-03T11:00:00Z",
+            "assistant",
+            [_tool_use("f1", "Bash", {"command": "true"})],
+        ),
+        _event(
+            "2026-08-03T11:00:10Z",
+            "user",
+            [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "f1",
+                    "is_error": True,
+                    "content": [{"type": "text", "text": "Exit code 1  fork-only"}],
+                }
+            ],
+        ),
+    ]
+    fork = tmp_path / "fork.jsonl"
+    fork.write_text(shared + "\n".join(fork_tail) + "\n", encoding="utf-8")
+    import os
+    import time
+
+    now = time.time()
+    os.utime(parent, (now - 100, now - 100))
+    os.utime(fork, (now, now))
+    reports = {r["session"]: r for r in st.mine_dir(tmp_path)}
+    total_errors = sum(len(r["tool_errors"]) for r in reports.values())
+    assert total_errors == 2
+    assert len(reports["parent"]["tool_errors"]) == 1
+    fork_report = reports["fork"]
+    assert len(fork_report["tool_errors"]) == 1
+    assert "fork-only" in fork_report["tool_errors"][0]["error"]
+    assert fork_report["shared_prefix_lines"] == reports["parent"]["lines"]
+    assert fork_report["first"] == "2026-08-03T11:00:00Z"
+
+
+def test_mine_dir_fork_result_joins_prefix_tool_use(tmp_path):
+    # The error result lands after the fork point but its tool_use sits in the
+    # shared prefix; the join must survive the dedup.
+    lines = [
+        _event(
+            "2026-08-03T10:00:00Z",
+            "assistant",
+            [_tool_use("x1", "Bash", {"command": "slowcmd"})],
+        ),
+    ]
+    parent = _write_session(tmp_path, "p2", lines)
+    fork = tmp_path / "f2.jsonl"
+    fork.write_text(
+        parent.read_text(encoding="utf-8")
+        + _event(
+            "2026-08-03T10:05:00Z",
+            "user",
+            [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "x1",
+                    "is_error": True,
+                    "content": [{"type": "text", "text": "Exit code 1  late"}],
+                }
+            ],
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    import os
+    import time
+
+    now = time.time()
+    os.utime(parent, (now - 100, now - 100))
+    os.utime(fork, (now, now))
+    reports = {r["session"]: r for r in st.mine_dir(tmp_path)}
+    (error,) = reports["f2"]["tool_errors"]
+    assert error["command"] == "slowcmd"

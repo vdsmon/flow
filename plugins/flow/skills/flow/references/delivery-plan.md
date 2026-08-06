@@ -67,6 +67,8 @@ FLOW_HARNESS="<harness>" "<facade>" preflight check --workspace-root .
 
 `status: unconfigured` is silence and costs nothing. The configured command should be a check-then-login wrapper (brinta's `mise sso` verifies in about a second while the session is valid and opens the interactive login only on expiry), which is exactly why it runs here and never after the gate: the human completes the browser round-trip in seconds while present, where a stage agent discovering the same expiry mid-run can only stop and wait. A failed or timed-out check is reported to the human and never blocks planning by itself. This plan-time run is the courtesy, not the enforcement: `worktree create` runs the same preflight itself at the bootstrap chokepoint and refuses (exit 9, nothing created) when it fails, using the attended check on interactive launches and the silent probe on unattended ones (wired 2026-08-04 after two of the three runs following brinta's config skipped the documented manual step). Running it here just means the credential is warm before the approval moment instead of pausing it.
 
+On Claude Code, enter native plan mode now, before reading the ticket: load the plan tools once with ToolSearch (`select:EnterPlanMode,ExitPlanMode`), then call EnterPlanMode. Plan mode is what keeps grounding read-only, and its exit surface is the gate itself (section 5): the human annotates the presented plan natively, which a chat-text presentation cannot offer. A plan presented as plain chat text is a gate defect, not a style choice; the Lavish removal (PR #637) retired the old presentation surface without this recipe, and FT-1576 and FT-1593 both crossed the gate in plain chat before it was written. Codex sessions use native Plan mode when active and otherwise the turn boundary, per section 5.
+
 The driver reads the ticket, relevant repository files, and directly applicable project
 instructions. Fetch the default branch and record its SHA. Resolve factual questions read-only.
 When the data already in hand shows a coupled small sibling, the fetched ticket's own links or a ready-ticket list a recall pass already loaded, say so to the human in one line before the gate ("FT-xxxx looks coupled and small; group it?"); never make an extra tracker call to go looking, and no sibling in hand means no mention. Grouping stays the human's call because it changes run identity and review shape.
@@ -237,9 +239,13 @@ too, quoted in the human's own words, beside the plan. The approved evidence the
 grant the autonomous tail depends on, so delivery does not stop at a denied push after the gate
 has closed.
 
-Present through the host's native plan gate (SKILL.md's approval-gate section: Claude Code's
-plan mode and its exit boundary; Codex's native Plan mode when active, otherwise the complete
-plan at a turn boundary awaiting explicit approval). From presentation onward, revision is
+Present through the host's native plan gate (SKILL.md's approval-gate section). On Claude
+Code the presentation IS an ExitPlanMode call carrying the plan: its approval is the gate,
+and its rejection returns the human's native annotations into revision. A plan pasted into
+chat has not been presented; if the session is somehow not in plan mode by now, run the
+section 1 recipe (ToolSearch, then EnterPlanMode) before presenting rather than falling back
+to chat text. Codex uses native Plan mode when active, otherwise the complete plan at a turn
+boundary awaiting explicit approval. From presentation onward, revision is
 strictly between the human and the driver: feedback revises the plan and the revised plan is
 re-presented, and nothing re-enters the assessment loop; the displayed evidence stays as
 assessed. After revision converges, fetch the default branch once more: unchanged or

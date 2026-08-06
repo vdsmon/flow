@@ -50,7 +50,7 @@ def _iter_events(path: Path):
     with path.open(encoding="utf-8", errors="replace") as handle:
         for line in handle:
             try:
-                yield json.loads(line)
+                yield line, json.loads(line)
             except ValueError:
                 continue
 
@@ -127,7 +127,7 @@ def _mine_subagents(session_dir: Path, *, since: str | None = None) -> list[dict
         pending: dict[str, tuple[str, str, str]] = {}
         flow_calls: list[dict[str, Any]] = []
         tool_errors: list[dict[str, Any]] = []
-        for event in _iter_events(transcript):
+        for _line, event in _iter_events(transcript):
             lines += 1
             stamp = event.get("timestamp")
             if stamp:
@@ -161,26 +161,43 @@ def _mine_subagents(session_dir: Path, *, since: str | None = None) -> list[dict
     return spans
 
 
-def mine_session(path: Path, *, since: str | None = None) -> dict[str, Any]:
-    """One incremental pass over a session transcript; returns the signal families."""
+def mine_session(
+    path: Path, *, since: str | None = None, seen: set[int] | None = None
+) -> dict[str, Any]:
+    """One incremental pass over a session transcript; returns the signal families.
+
+    `seen` dedups byte-identical lines across files: a forked session's transcript
+    repeats its parent's full prefix verbatim (witnessed 2026-08-06: two brinta files
+    sharing a 693-line, 10-error prefix under one embedded sessionId, inflating the
+    census 27 errors vs 17 unique). A repeated line still feeds `pending` so tool
+    use/result joins survive the fork boundary, but contributes no signals and no
+    span, so a shared line counts once, attributed to whichever file is mined first."""
     report: dict[str, Any] = {
         "session": path.stem,
         "first": None,
         "last": None,
         "lines": 0,
+        "shared_prefix_lines": 0,
         "user_messages": [],
         "flow_calls": [],
         "agent_spawns": [],
         "tool_errors": [],
     }
     pending: dict[str, tuple[str, str, str]] = {}
-    for event in _iter_events(path):
+    for line, event in _iter_events(path):
         report["lines"] += 1
+        duplicate = False
+        if seen is not None:
+            key = hash(line)
+            duplicate = key in seen
+            seen.add(key)
+            if duplicate:
+                report["shared_prefix_lines"] += 1
         stamp = event.get("timestamp") or ""
-        if stamp:
+        if stamp and not duplicate:
             report["first"] = report["first"] or stamp
             report["last"] = stamp
-        in_window = not since or not stamp or stamp >= since
+        in_window = (not since or not stamp or stamp >= since) and not duplicate
         is_user = event.get("type") == "user"
         raw_content = (event.get("message") or {}).get("content")
         if is_user and in_window and isinstance(raw_content, str) and raw_content.strip():
@@ -224,10 +241,11 @@ def mine_dir(
     """Mine every session transcript in the window, newest last."""
     wanted = set(sessions or [])
     reports = []
+    seen: set[int] = set()
     for path in sorted(transcript_dir.glob("*.jsonl"), key=lambda p: p.stat().st_mtime):
         if wanted and path.stem not in wanted:
             continue
-        report = mine_session(path, since=since)
+        report = mine_session(path, since=since, seen=seen)
         if since and report["last"] and report["last"] < since:
             continue
         reports.append(report)
