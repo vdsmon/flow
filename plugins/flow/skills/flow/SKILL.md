@@ -214,7 +214,9 @@ human may skip the assessment entirely for a ticket that is one defect, one call
 site, one test. One disclosed replacement assessor is allowed if the original context
 is lost. Read `references/delivery-plan.md` for the full contract.
 
-- Claude Code uses native plan mode and its exit boundary.
+- Claude Code enters native plan mode at planning start (ToolSearch
+  `select:EnterPlanMode,ExitPlanMode`, then EnterPlanMode) and presents the gate as an
+  ExitPlanMode call carrying the plan; a plan pasted into chat has not been presented.
 - Codex uses native Plan mode when active; otherwise present the complete plan, end
   the turn, and wait for explicit approval.
 
