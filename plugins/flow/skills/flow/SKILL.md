@@ -248,8 +248,9 @@ The hot path is:
 
 Steps 3-4 are one unbroken motion: the turn that captures an artifact also issues the
 advance, and the turn that receives a descriptor executes it. A driver turn ends mid-run
-only on `done`, a durable stop, or a question only the human can answer; a progress
-summary is not a stopping point (`references/delivery-loop.md`).
+only on `done`, a durable stop, or a question only the human can answer; neither a
+progress summary nor an inline sub-skill's return is a stopping point
+(`references/delivery-loop.md`).
 
 Resource pressure changes topology, never the loop. Under a host usage-guard warning
 against spawning agents, run an agent-handler stage in the driver instead

@@ -49,6 +49,18 @@ before commit, each time wrapping up with a status summary instead of advancing,
 each time a human nudge was what resumed a healthy run. If there is a wrap-up worth
 writing, write it AND issue the next loop step in the same turn.
 
+**An inline sub-skill's return is not a stopping point either.** Some stages invoke an
+installed skill inline in the driver conversation (the create_pr stage's humanize pass
+is the primary instance), and a skill's own instructions often end
+with "output the result", which reads like a turn boundary. It is not one: the skill ran
+as a step INSIDE a stage, so the reply that carries its result also carries the rest of
+the stage and the `advance`, exactly like any other mid-stage tool return. This rule
+earned its fourth witness on the fixed engine (FT-1576, 2026-08-06: implement advanced,
+the driver invoked humanize for the PR body, then idled 37 minutes until a human nudge;
+flow-qyyq reopened). Two corollaries: never end the turn on a sub-skill's output, and
+never let a sub-skill's chat-facing output contract override a stage's quieter one — the
+stage says what reaches the conversation, the skill only transforms content.
+
 **Never wait with a blocking sleep, at ANY wait site.** A spawned agent, a background
 task, or an external check notifies the driver when it finishes; a `sleep N; check`
 Bash call is blocked by the host every time and the result was usually already
