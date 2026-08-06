@@ -3,7 +3,7 @@
 # appear here: they are implementation details behind these intent-level commands.
 
 logical_trigger = "FLOW"
-static_namespaces = ["ticket", "memory", "measure", "workspace", "scrutinize", "help"]
+static_namespaces = ["ticket", "memory", "measure", "workspace", "scrutinize", "investigate", "help"]
 forbidden_root_tokens = [
   "spec",
   "do",
@@ -235,6 +235,18 @@ workspace = "required"
 reference = "references/scrutinize.md"
 arguments = [
   { name = "workspace", value_type = "text", cardinality = "zero_or_one" },
+]
+
+[[command]]
+id = "investigate"
+path = ["investigate"]
+usage = "FLOW investigate [<report> ...]"
+summary = "Root-cause a reported error or incident from real evidence, propose a fix, and offer the ticket pipeline. Read-only; raises unreachable sources instead of guessing."
+effect = "read"
+workspace = "optional"
+reference = "references/investigate.md"
+arguments = [
+  { name = "report", value_type = "text", cardinality = "zero_or_more" },
 ]
 
 [[command]]

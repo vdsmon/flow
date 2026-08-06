@@ -212,6 +212,7 @@ reference doc); this table is for finding a doc, not for wiring.
 | `references/delivery-revision.md` | A lifecycle revise action updates a delivered run's open PR. |
 | `references/e2e-recipes.md` | Read this at plan time — delivery-plan.md's recipe-settling step — the moment you settle a ticket's e2e_recipe. |
 | `references/harness.md` | Claude Code and Codex are the two hosts for the same Flow engine and public grammar. |
+| `references/investigate.md` | FLOW investigate [<report> ...] root-causes a reported error or incident from real evidence, then proposes a fix and offers the ticket… |
 | `references/revision-triage-board.md` | The revision board is the disposition step of an attended same-PR revision sub-run: the human decides which unresolved comments to fix now… |
 | `references/robustness.md` | The threat → file → witnessed-failure index that AGENTS.md's "Robustness (do not erode)" paragraph points at. |
 | `references/scrutinize-lenses.md` | The lens registry for the seat's sweep (references/scrutinize.md §The sweep owns when a sweep runs; this file owns what it looks through). |
