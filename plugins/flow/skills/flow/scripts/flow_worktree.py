@@ -293,7 +293,9 @@ def _shared_memory_base(main_root: Path) -> Path:
     return _memory_paths.resolve_memory_base(main_root)
 
 
-def _seed_state(worktree: Path, ticket: str, plan_text: str, head_sha: str) -> str:
+def _seed_state(
+    worktree: Path, ticket: str, plan_text: str, head_sha: str, hotfix: bool = False
+) -> str:
     """Seed state.json: plan completed (with plan.out as its output_path); ticket
     left pending so the tail self-fetches it. Returns the run_id."""
     data = _workspace.load_workspace_toml(worktree)
@@ -306,7 +308,7 @@ def _seed_state(worktree: Path, ticket: str, plan_text: str, head_sha: str) -> s
 
     ticket_dir = worktree / ".flow" / "runs" / ticket
     run_id = secrets.token_hex(8)
-    state.init(ticket_dir, ticket, backend, [str(s) for s in stages], run_id=run_id)
+    state.init(ticket_dir, ticket, backend, [str(s) for s in stages], run_id=run_id, hotfix=hotfix)
 
     if "plan" in stages:
         state.begin_stage(ticket_dir, "plan", head_sha)
@@ -437,9 +439,14 @@ def _parse_worktree_list(porcelain: str) -> list[tuple[str, str | None]]:
 
 
 def is_ticket_branch(short_branch: str, ticket: str) -> bool:
-    """True when `short_branch` is this ticket's feature branch (exact or slugged)."""
-    prefix = f"feat/{ticket}"
-    return short_branch == prefix or short_branch.startswith(prefix + "-")
+    """True when `short_branch` is this ticket's run branch (exact or slugged).
+
+    Two namespaces: `feat/` for ordinary runs and `hotfix/` for hotfix-lane runs.
+    Both live here so every matcher (reap, janitor, finalize, in-flight refs)
+    tracks hotfix branches through the one shared predicate.
+    """
+    prefixes = (f"feat/{ticket}", f"hotfix/{ticket}")
+    return any(short_branch == p or short_branch.startswith(p + "-") for p in prefixes)
 
 
 def _ticket_siblings(ticket: str, main_root: Path, runner: Runner) -> list[tuple[Path, str]]:
@@ -1231,6 +1238,7 @@ def _stamp_run_frontmatter(
     e2e_recipe: str | None,
     unattended: bool,
     lane: str | None = None,
+    hotfix: bool = False,
 ) -> None:
     """Seed the run frontmatter the unattended tail reads so it never pauses to ask.
 
@@ -1256,22 +1264,29 @@ def _stamp_run_frontmatter(
         fm_updates["e2e_recipe"] = e2e_recipe
     if lane:
         fm_updates["lane"] = lane
+    if hotfix:
+        # Stage prose branches on this (create_pr opens ready against the remote
+        # default; review_loop merges on green). Stamped only when set, like the
+        # other optional fields.
+        fm_updates["hotfix"] = "true"
     ticket_frontmatter.update(worktree / ".flow" / "tickets" / f"{ticket}.md", fm_updates)
 
 
-def _refuse_offcontract_branch(*, ticket: str, branch: str) -> None:
-    """Keep every downstream matcher on the shared `feat/<key>-<slug>` branch contract.
+def _refuse_offcontract_branch(*, ticket: str, branch: str, hotfix: bool = False) -> None:
+    """Keep every downstream matcher on the shared branch contract at the one mint site.
 
+    Ordinary runs mint `feat/<key>-<slug>`; hotfix-lane runs mint `hotfix/<key>-<slug>`.
     The matchers include `is_ticket_branch`, the worktree-pool prefixes, in-flight refs,
     reap eligibility, janitor PR joins, and `branch_ticket` parsing. A run that minted
     `fix/<key>-...` produced a worktree invisible to reap (witnessed 2026-07-09). Refuse
     the deviation at the one mint site instead of widening every parser.
     """
-    if not branch.startswith(f"feat/{ticket}"):
+    expected = f"hotfix/{ticket}" if hotfix else f"feat/{ticket}"
+    if not branch.startswith(expected):
         raise _ConfigError(
-            f"branch {branch!r} violates the feat/<ticket>-<slug> contract "
-            f"(expected a 'feat/{ticket}' prefix); the reap/drain/select "
-            f"machinery only tracks feat/ branches"
+            f"branch {branch!r} violates the {expected.split('/')[0]}/<ticket>-<slug> "
+            f"contract (expected a {expected!r} prefix); the reap/drain/select "
+            f"machinery only tracks feat/ and hotfix/ branches"
         )
 
 
@@ -1289,6 +1304,7 @@ def bootstrap(
     commit_summary: str | None = None,
     e2e_recipe: str | None = None,
     lane: str | None = None,
+    hotfix: bool = False,
     auto: bool = False,
     recover_spill: bool = False,
     runner: Runner | None = None,
@@ -1301,7 +1317,7 @@ def bootstrap(
     # `skip:` sentinel.
     e2e_recipe = (e2e_recipe or "").strip() or None
 
-    _refuse_offcontract_branch(ticket=ticket, branch=branch)
+    _refuse_offcontract_branch(ticket=ticket, branch=branch, hotfix=hotfix)
 
     _refuse_unrunnable_e2e(main_root=main_root, e2e_recipe=e2e_recipe)
 
@@ -1455,7 +1471,7 @@ def bootstrap(
                     )
 
             head_sha = _git(["rev-parse", "HEAD"], worktree, run)
-            run_id = _seed_state(worktree, ticket, plan_text, head_sha)
+            run_id = _seed_state(worktree, ticket, plan_text, head_sha, hotfix=hotfix)
 
             # An unattended run derives its lane from the bead's tier labels (per the CLI help +
             # delivery-plan.md).
@@ -1475,6 +1491,7 @@ def bootstrap(
                 e2e_recipe=e2e_recipe,
                 unattended=unattended,
                 lane=effective_lane,
+                hotfix=hotfix,
             )
 
             # Last step: the run is fully seeded, so carrying spilled edits in (and
@@ -1543,6 +1560,15 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         "handler. Where no e2e stage is wired, only 'skip: <reason>' is accepted, because "
         "nothing would run anything else. Seeds frontmatter e2e_recipe so the e2e stage "
         "runs unattended",
+    )
+    p.add_argument(
+        "--hotfix",
+        action="store_true",
+        help="hotfix-lane run: the branch must carry the hotfix/<ticket> prefix (cut it "
+        "off '@default' so it bases on the fresh remote default), the dispatcher runs "
+        "subagent-wired stages inline in the driver, and the PR opens ready for review "
+        "against the remote default branch. Verification-lane rules are unchanged: the "
+        "hot clamp to full still applies",
     )
     p.add_argument(
         "--recover-spill",
@@ -1650,6 +1676,7 @@ def cli_main(argv: list[str]) -> int:
             commit_summary=args.commit_summary,
             e2e_recipe=args.e2e_recipe,
             lane=args.lane,
+            hotfix=args.hotfix,
             auto=args.auto,
             recover_spill=args.recover_spill,
         )

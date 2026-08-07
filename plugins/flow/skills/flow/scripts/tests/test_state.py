@@ -396,3 +396,33 @@ def test_concurrent_writers_serialize_via_flock(tmp_path: Path) -> None:
     assert ts is not None
     assert ts.stages["plan"].status == "in_progress"
     assert ts.stages["implement"].status == "in_progress"
+
+
+# ─── hotfix marker (flow-bhyl) ───────────────────────────────────────────────
+
+
+def test_init_hotfix_roundtrips(tmp_path: Path) -> None:
+    state.init(tmp_path, ticket="FT-1", backend="jira", stages=["ticket"], hotfix=True)
+    loaded, exit_code = state.read(tmp_path)
+    assert exit_code == 0
+    assert loaded is not None
+    assert loaded.hotfix is True
+
+
+def test_init_defaults_hotfix_off(tmp_path: Path) -> None:
+    _seed(tmp_path)
+    loaded, _ = state.read(tmp_path)
+    assert loaded is not None
+    assert loaded.hotfix is False
+
+
+def test_legacy_state_without_hotfix_key_reads_off(tmp_path: Path) -> None:
+    # state.json written before the field existed must load, not raise.
+    _seed(tmp_path)
+    raw = json.loads((tmp_path / "state.json").read_text(encoding="utf-8"))
+    raw.pop("hotfix")
+    (tmp_path / "state.json").write_text(json.dumps(raw), encoding="utf-8")
+    loaded, exit_code = state.read(tmp_path)
+    assert exit_code == 0
+    assert loaded is not None
+    assert loaded.hotfix is False

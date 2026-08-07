@@ -4,10 +4,12 @@ This reference owns ticket authoring, grouping, and splitting. All tracker reads
 writes go through the tracker seam exposed by the absolute workspace facade. Do not
 use a vendor-specific connector behind the seam.
 
-## `FLOW ticket create [--request "<problem>"]`
+## `FLOW ticket create [--request "<problem>"] [--hotfix]`
 
 Capture the problem, create a rich tracker ticket, then offer to deliver it. This
 command does not design the solution; delivery planning belongs to the target path.
+`--hotfix` marks the problem as a live production incident: creation is unchanged,
+and the offer at the end names the hotfix lane.
 
 1. Read the available leaf types and parent tickets:
 
@@ -46,7 +48,10 @@ command does not design the solution; delivery planning belongs to the target pa
    ```
 7. Print `Created <KEY>: <summary>` and offer to run `FLOW <KEY>` immediately. A yes
    enters the ordinary target lifecycle in the same conversation; it does not bypass
-   planning or approval.
+   planning or approval. When `--hotfix` was passed, offer `FLOW <KEY> --hotfix`
+   instead (the production-incident lane, `references/command-target.md`
+   §Target options); the plan gate still holds there, collapsed to a short
+   confirmation.
 
 On partial failure, report the created key and precisely which optional operation
 failed. Never create a second ticket as retry compensation.

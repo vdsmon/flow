@@ -1821,3 +1821,72 @@ def test_next_skips_probe_when_unconfigured(
     rc, payload = ds.cmd_next(tmp_path, "FT-1")
     assert rc == 0
     assert payload.get("stage") == "e2e"
+
+
+# ─── hotfix handler coercion (flow-bhyl) ─────────────────────────────────────
+
+
+def _seed_hotfix_state(root: Path, stages: list[str]) -> None:
+    td = root / ".flow" / "runs" / "FT-1"
+    state.init(td, "FT-1", "jira", stages, run_id="deadbeefdeadbeef", hotfix=True)
+
+
+def test_hotfix_run_coerces_subagent_handler_inline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_workspace(
+        tmp_path,
+        handlers={"ticket": "subagent:general-purpose"},
+        stages=["ticket"],
+        compounding=False,
+    )
+    _stub_git_head(monkeypatch)
+    _seed_hotfix_state(tmp_path, ["ticket"])
+    ds.cmd_init(tmp_path, "FT-1")
+    rc, payload = ds.cmd_next(tmp_path, "FT-1")
+    assert rc == 0
+    assert payload["handler_type"] == "inline"
+    assert "subagent_type" not in payload
+
+
+def test_hotfix_run_keeps_none_handler_skipped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Only the subagent -> inline downgrade; a disabled stage stays disabled.
+    _write_workspace(tmp_path, handlers={"ticket": "none"}, stages=["ticket"], compounding=False)
+    _stub_git_head(monkeypatch)
+    _seed_hotfix_state(tmp_path, ["ticket"])
+    ds.cmd_init(tmp_path, "FT-1")
+    rc, payload = ds.cmd_next(tmp_path, "FT-1")
+    assert rc == 0
+    assert payload["handler_type"] == "none"
+
+
+def test_ordinary_run_keeps_subagent_handler(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_workspace(
+        tmp_path,
+        handlers={"ticket": "subagent:general-purpose"},
+        stages=["ticket"],
+        compounding=False,
+    )
+    _stub_git_head(monkeypatch)
+    ds.cmd_init(tmp_path, "FT-1")
+    rc, payload = ds.cmd_next(tmp_path, "FT-1")
+    assert rc == 0
+    assert payload["handler_type"] == "subagent"
+    assert payload["subagent_type"] == "general-purpose"
+
+
+def test_force_reinit_preserves_hotfix_marker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_workspace(tmp_path, handlers={"ticket": "inline"}, stages=["ticket"], compounding=False)
+    _stub_git_head(monkeypatch)
+    _seed_hotfix_state(tmp_path, ["ticket"])
+    rc, _payload = ds.cmd_init(tmp_path, "FT-1", force=True)
+    assert rc == 0
+    ts, _ = state.read(tmp_path / ".flow" / "runs" / "FT-1")
+    assert ts is not None
+    assert ts.hotfix is True

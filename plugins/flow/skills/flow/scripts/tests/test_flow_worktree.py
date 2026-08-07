@@ -2799,3 +2799,53 @@ def test_locate_or_reseed_cli_locate(tmp_path: Path, monkeypatch, capsys) -> Non
     out = json.loads(capsys.readouterr().out)
     assert out["reseeded"] is False
     assert out["worktree"] == str(wt)
+
+
+# ─── hotfix lane (flow-bhyl) ──────────────────────────────────────────────────
+
+
+def test_is_ticket_branch_matches_hotfix_prefix() -> None:
+    assert fw.is_ticket_branch("hotfix/FT-1", "FT-1")
+    assert fw.is_ticket_branch("hotfix/FT-1-prod-fix", "FT-1")
+    assert not fw.is_ticket_branch("hotfix/FT-10-other", "FT-1")  # no prefix-bleed
+
+
+def test_bootstrap_refuses_hotfix_branch_without_hotfix_mode(tmp_path: Path) -> None:
+    main = _main_checkout(tmp_path)
+    with pytest.raises(fw._ConfigError, match="feat/<ticket>-<slug>"):
+        _run(tmp_path, main, branch="hotfix/FT-1-thing")
+    assert not (tmp_path / "wt").exists()
+
+
+def test_bootstrap_refuses_feat_branch_in_hotfix_mode(tmp_path: Path) -> None:
+    main = _main_checkout(tmp_path)
+    with pytest.raises(fw._ConfigError, match="hotfix/<ticket>-<slug>"):
+        _run(tmp_path, main, branch="feat/FT-1-thing", hotfix=True)
+    assert not (tmp_path / "wt").exists()
+
+
+def test_hotfix_bootstrap_seeds_state_and_frontmatter(tmp_path: Path) -> None:
+    import ticket_frontmatter
+
+    main = _main_checkout(tmp_path)
+    res = _run(tmp_path, main, branch="hotfix/FT-1-thing", hotfix=True)
+    td = Path(res["worktree"]) / ".flow" / "runs" / "FT-1"
+    ts, code = state.read(td)
+    assert code == 0
+    assert ts is not None
+    assert ts.hotfix is True
+    fm = ticket_frontmatter.read(Path(res["worktree"]) / ".flow" / "tickets" / "FT-1.md")
+    assert fm["hotfix"] is True
+
+
+def test_ordinary_bootstrap_stamps_no_hotfix_key(tmp_path: Path) -> None:
+    import ticket_frontmatter
+
+    main = _main_checkout(tmp_path)
+    res = _run(tmp_path, main)
+    td = Path(res["worktree"]) / ".flow" / "runs" / "FT-1"
+    ts, _ = state.read(td)
+    assert ts is not None
+    assert ts.hotfix is False
+    fm = ticket_frontmatter.read(Path(res["worktree"]) / ".flow" / "tickets" / "FT-1.md")
+    assert "hotfix" not in fm

@@ -123,7 +123,7 @@ The driver writes and revises one canonical plan containing:
 - the verification lane the driver proposes (express, light, or full) with a one-line class rationale, unless the invocation already fixed one with `--verify`; and
 - the default-branch SHA used for inspection.
 
-The lane comes from the ticket's class, not from optimism. Express is for a ticket that is one defect, one call site, one test; light is the default for bounded work on known patterns; full is for cross-cutting, novel, or hot work. Hot changes clamp to full, and so does any change on a path the workspace treats as high-stakes (in a tax-forms workspace, the money arithmetic), whatever its size. When in doubt between two lanes, propose the slower one; the human demotes with one word at the gate.
+The lane comes from the ticket's class, not from optimism. Express is for a ticket that is one defect, one call site, one test; light is the default for bounded work on known patterns; full is for cross-cutting, novel, or hot work. Hot changes clamp to full, and so does any change on a path the workspace treats as high-stakes (in a tax-forms workspace, the money arithmetic), whatever its size. When in doubt between two lanes, propose the slower one; the human demotes with one word at the gate. A hotfix-lane run (`--hotfix`) proposes express with the incident as its class rationale and keeps its plan to the root cause, the fix, the planned files, and the verification; both clamps in this paragraph still apply to it, so a hotfix on a hot or high-stakes path runs the full lane regardless of the incident pressure.
 
 Write the plan in basic English: simple words, short sentences, as brief as completeness
 allows, for a reader arriving with little context. Name files and behaviors explicitly, spell
@@ -275,13 +275,16 @@ FLOW_HARNESS="<harness>" "<facade>" worktree create \
   --e2e-recipe "<recipe or skip: reason>"
 ```
 
+A hotfix-lane run adds `--hotfix`, names `--branch "hotfix/<ticket-slug>"`, and passes `--base "@default"` so the branch cuts from the freshly-fetched remote default; bootstrap refuses a prefix that does not match the mode in either direction. The flag lands in state.json and the run frontmatter, which is what the dispatcher's inline coercion and the create_pr/review_loop hotfix behavior read.
+
 `--lane` carries the lane the human confirmed at the gate (section 2's lane bullet) into durable run state: bootstrap persists it in the ticket frontmatter, a hot change still clamps to full there, and the sweep's lane watch splits its metrics on that recorded field rather than on plan text.
 
 `--branch` must begin with `feat/<ticket>` even when the repository normally uses
-`fix/`, `bugfix/`, `chore/`, or another type prefix. Flow's finalize, janitor sweep,
-and revision discovery identify newly minted ticket worktrees through that stable
-prefix; `--commit-type` carries the actual change type. Do not translate a bug-fix
-commit into a non-`feat/` Flow branch.
+`fix/`, `bugfix/`, `chore/`, or another type prefix (a hotfix-lane run is the one
+exception: it mints `hotfix/<ticket>` and both prefixes are tracked). Flow's
+finalize, janitor sweep, and revision discovery identify newly minted ticket
+worktrees through those stable prefixes; `--commit-type` carries the actual change
+type. Do not translate a bug-fix commit into any other Flow branch prefix.
 
 Do not pass `--recover-spill` automatically; it is an explicit operator recovery action.
 

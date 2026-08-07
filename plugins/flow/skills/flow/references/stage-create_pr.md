@@ -125,10 +125,10 @@ mise run test   # scripts pytest root green
    FLOW_HARNESS="<harness>" "<facade>" create-pr \
      --workspace-root . --ticket "$KEY" --body-file "$TICKET_DIR/stages/pr_body.md"
    ```
-   The base branch resolves from `[create_pr] base` in `workspace.toml`, default `main`; an explicit `--base` overrides both.
+   The base branch resolves from `[create_pr] base` in `workspace.toml`, default `main`; an explicit `--base` overrides both. When the run frontmatter carries `hotfix = true`, add `--hotfix`: the PR opens ready for review against the remote default branch, ignoring the `[create_pr]` base and draft settings, because a hotfix always targets what production builds from.
    - Exit 0 → prints `PR_URL=<url>`. Branch pushed, PR open (draft by default; idempotent: an existing open PR for the branch is reused, never double-opened on resume).
    - Exit 2 → git or forge error (incl. a missing `[forge]` block, or an unreadable `--body-file`); surface stderr, set `STATUS=failed`.
-   - Exit 3 → refused (current branch is a protected/integration branch). Should never happen inside a run on a `feat/...` branch; surface and set `STATUS=failed`.
+   - Exit 3 → refused (current branch is a protected/integration branch). Should never happen inside a run on a `feat/...` or `hotfix/...` branch; surface and set `STATUS=failed`.
 
 5. **Capture the output.** Write the script's stdout (the `PR_URL=<url>` line) to `$TICKET_DIR/stages/create_pr.out` and pass `--output-path "$TICKET_DIR/stages/create_pr.out"` on `advance`. The final summary and the `review_loop` notification read the `PR_URL=` token from that file.
 

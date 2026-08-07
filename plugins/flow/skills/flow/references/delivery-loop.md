@@ -76,6 +76,11 @@ Descriptor cases:
 - `blocked_by`: surface the failed stage and stop the loop;
 - otherwise: execute the declared stage descriptor.
 
+A hotfix-lane run's descriptors never carry a subagent handler: the dispatcher reads
+`hotfix` from state.json and downgrades `subagent:*` wiring to `inline` for the whole
+run, so every stage executes in the driver. Only that downgrade; `none` stays
+skipped, and inline or skill wiring is untouched.
+
 If `roles` contains `records_diff_baseline`, record the planned-file baseline with
 blob capture before the handler; a non-zero exit marks the stage failed. The
 baseline and planned-file list are the commit ownership boundary:

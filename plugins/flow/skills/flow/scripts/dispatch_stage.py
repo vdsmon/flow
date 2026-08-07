@@ -345,7 +345,16 @@ def cmd_init(
             **recovery,
         }
 
-    state.init(td, ticket, ws.backend, ws.stages, run_id=run_id)
+    # A --force reset keeps the run's hotfix marker: the lane was chosen at the
+    # gate, not by whichever init happened to write state.json last.
+    state.init(
+        td,
+        ticket,
+        ws.backend,
+        ws.stages,
+        run_id=run_id,
+        hotfix=existing.hotfix if have_valid else False,
+    )
     _promote_recall_log(workspace_root, ticket)
     return 0, {
         "ticket": ticket,
@@ -448,7 +457,9 @@ def cmd_revise_open(
         rev_id = _allocate_rev_id(orig_td)
         rev_dir = run_dir(workspace_root, ticket, rev_id)
         run_id = secrets.token_hex(8)
-        state.init(rev_dir, ticket, ws.backend, subset, run_id=run_id)
+        # A revision of a hotfix run inherits the lane: its handlers coerce
+        # inline and its green PR update merges the same way.
+        state.init(rev_dir, ticket, ws.backend, subset, run_id=run_id, hotfix=orig.hotfix)
         acquired = lease.acquire(
             rev_dir,
             run_id,
@@ -761,7 +772,14 @@ def cmd_next(
     # must stay pending rather than be stuck in_progress.
     registry_path = _skill_root_from_script() / _STAGE_REGISTRY_RELATIVE
     stage_meta = registry_by_name(registry_path).get(next_stage)
-    handler_descriptor = _parse_handler(snapshot.handlers[next_stage])
+    handler_value = snapshot.handlers[next_stage]
+    # Hotfix-lane run: subagent-wired stages run inline in the driver (the human is
+    # present mid-incident and spawn latency is the cost being cut). Only the
+    # subagent -> inline downgrade; `none` stays skipped and `inline`/skill wiring is
+    # untouched, so a lane still never re-enables a stage the workspace disabled.
+    if ts.hotfix and handler_value.startswith("subagent:"):
+        handler_value = "inline"
+    handler_descriptor = _parse_handler(handler_value)
     output_path = td / "stages" / f"{next_stage}.out"
     payload: dict[str, Any] = {
         "done": False,
@@ -776,7 +794,7 @@ def cmd_next(
     # [pipeline.handlers] later and disagree with the handler already dispatched. A
     # reconfigure between this descriptor and the agent's `model` call would otherwise
     # hand a Codex model name to a native launcher, or the reverse.
-    launcher_harness = _launcher_harness_for(snapshot.handlers[next_stage])
+    launcher_harness = _launcher_harness_for(handler_value)
     if launcher_harness:
         payload["launcher_harness"] = launcher_harness
     # Attach reference_doc regardless of handler type so the do-loop can pass it

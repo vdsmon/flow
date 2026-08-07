@@ -99,9 +99,11 @@ def test_target_options_encode_conflicts_and_cardinality() -> None:
 
     assert target.arguments[0].name == "target"
     assert target.arguments[0].cardinality == "one_or_more"
-    assert options["--unattended"].conflicts == frozenset({"--verify"})
+    assert options["--unattended"].conflicts == frozenset({"--verify", "--hotfix"})
     assert options["--verify"].conflicts == frozenset({"--unattended"})
     assert options["--verify"].choices == ("express", "light", "full")
+    assert options["--hotfix"].conflicts == frozenset({"--unattended"})
+    assert options["--hotfix"].value_type == "boolean"
     assert options["--request"].value_type == "text"
 
 
