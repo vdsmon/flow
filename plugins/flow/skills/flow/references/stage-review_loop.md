@@ -185,3 +185,13 @@ Complete when CI is green and every Critical or Major thread is addressed. Write
 
 Stop on probe exhaustion, failed CI after the fix pass, or an unaddressed
 Critical/Major finding. Do not exceed one fix pass.
+
+## Hotfix merge
+
+A hotfix-lane run (run frontmatter `hotfix = true`) does not park its green PR for a later merge decision: the human approved the expedited delivery at the plan gate, so reaching the completion bar above IS the merge moment. Two conditions still hold, in order. First, when the diff touches a guard file (a HOT change), run the guard-property review of `references/scrutinize.md` §Merging before merging and stop on any property regression; a hotfix never drops a safety property on green alone. Second, an open human thread carrying a disagreement blocks the merge exactly as it blocks a seat merge; incident pressure does not resolve it. When both hold, merge through the forge seam and record the merged state and PR id in `review_loop.out`:
+
+```bash
+FLOW_HARNESS="<harness>" "<facade>" forge --workspace-root . merge --pr "$PR_ID"
+```
+
+After the run completes, `FLOW ticket finalize <KEY>` closes out the merged delivery as usual. A non-hotfix run never merges here; its green PR parks for the human or the scrutinize seat.

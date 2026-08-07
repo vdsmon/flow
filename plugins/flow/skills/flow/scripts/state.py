@@ -59,6 +59,10 @@ class TicketState:
     backend: str
     started_at: str
     stages: dict[str, StageRecord] = field(default_factory=dict)
+    # Hotfix-lane run: the dispatcher coerces subagent handlers to inline and the
+    # PR opens ready against the remote default branch. Absent in older state.json
+    # files, so deserialization defaults it off.
+    hotfix: bool = False
 
 
 class StateUnrecoverable(Exception):
@@ -112,6 +116,7 @@ def _deserialize(raw: str) -> TicketState:
         backend=str(data["backend"]),
         started_at=str(data["started_at"]),
         stages=stages,
+        hotfix=bool(data.get("hotfix", False)),
     )
 
 
@@ -189,6 +194,7 @@ def init(
     backend: str,
     stages: list[str],
     run_id: str | None = None,
+    hotfix: bool = False,
 ) -> TicketState:
     state = TicketState(
         ticket=ticket,
@@ -196,6 +202,7 @@ def init(
         backend=backend,
         started_at=utcnow_iso(),
         stages={name: StageRecord() for name in stages},
+        hotfix=hotfix,
     )
     _write(ticket_dir, state)
     return state

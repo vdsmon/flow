@@ -35,7 +35,7 @@ reference = "references/command-target.md"
 [[command]]
 id = "target"
 path = ["<target>"]
-usage = "FLOW <target> [<target> ...] [--unattended] [--together] [--verify express|light|full] [--e2e <recipe>] [--request <additional-intent>]"
+usage = "FLOW <target> [<target> ...] [--unattended] [--together] [--hotfix] [--verify express|light|full] [--e2e <recipe>] [--request <additional-intent>]"
 summary = "Start, answer, resume, repair, revise, or show work from its current state."
 effect = "confirm"
 workspace = "required"
@@ -44,8 +44,9 @@ arguments = [
   { name = "target", value_type = "target", cardinality = "one_or_more" },
 ]
 options = [
-  { name = "--unattended", value_type = "boolean", cardinality = "zero_or_one", conflicts = ["--verify"] },
+  { name = "--unattended", value_type = "boolean", cardinality = "zero_or_one", conflicts = ["--verify", "--hotfix"] },
   { name = "--together", value_type = "boolean", cardinality = "zero_or_one" },
+  { name = "--hotfix", value_type = "boolean", cardinality = "zero_or_one", conflicts = ["--unattended"] },
   { name = "--verify", value_type = "choice", cardinality = "zero_or_one", choices = ["express", "light", "full"], conflicts = ["--unattended"] },
   { name = "--e2e", value_type = "text", cardinality = "zero_or_one" },
   { name = "--request", value_type = "text", cardinality = "zero_or_one" },
@@ -54,13 +55,14 @@ options = [
 [[command]]
 id = "ticket.create"
 path = ["ticket", "create"]
-usage = "FLOW ticket create [--request <problem>]"
+usage = "FLOW ticket create [--request <problem>] [--hotfix]"
 summary = "Capture a problem, create a tracker ticket, and offer to run it."
 effect = "confirm"
 workspace = "required"
 reference = "references/command-ticket.md"
 options = [
   { name = "--request", value_type = "text", cardinality = "zero_or_one" },
+  { name = "--hotfix", value_type = "boolean", cardinality = "zero_or_one" },
 ]
 
 [[command]]

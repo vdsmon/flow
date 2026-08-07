@@ -500,3 +500,83 @@ def test_cli_passes_body_file(tmp_path, monkeypatch):
     rc = cp.cli_main(["--workspace-root", str(tmp_path), "--body-file", str(bf)])
     assert rc == 0
     assert str(captured["body_file"]) == str(bf)
+
+
+# ─── hotfix lane (flow-bhyl) ──────────────────────────────────────────────────
+
+
+def test_remote_default_branch_reads_origin_head(tmp_path):
+    def run(args: list[str]) -> subprocess.CompletedProcess[str]:
+        assert args == ["git", "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"]
+        return subprocess.CompletedProcess(args, 0, "origin/trunk\n", "")
+
+    assert cp._remote_default_branch(tmp_path, run) == "trunk"
+
+
+def test_remote_default_branch_falls_back_to_main(tmp_path):
+    def run(args: list[str]) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(args, 1, "", "")
+
+    assert cp._remote_default_branch(tmp_path, run) == "main"
+
+
+def _hotfix_workspace(tmp_path):
+    # [create_pr] base/draft are the ordinary-run settings --hotfix must ignore.
+    (tmp_path / ".flow").mkdir()
+    (tmp_path / ".flow" / "workspace.toml").write_text(
+        '[create_pr]\nbase = "dev"\ndraft = true\n', encoding="utf-8"
+    )
+
+
+def _default_head_runner(inner):
+    def run(args: list[str]) -> subprocess.CompletedProcess[str]:
+        if args == ["git", "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"]:
+            return subprocess.CompletedProcess(args, 0, "origin/main\n", "")
+        return inner(args)
+
+    return run
+
+
+def test_cli_hotfix_opens_ready_against_remote_default(tmp_path, monkeypatch):
+    _hotfix_workspace(tmp_path)
+    inner, _ = _git_runner(branch="hotfix/flow-x-fix")
+    fg = _FakeForge()
+    monkeypatch.setattr(cp, "_default_runner", lambda _repo: _default_head_runner(inner))
+    monkeypatch.setattr(cp, "_resolve_forge", lambda _ws: fg)
+    rc = cp.cli_main(
+        [
+            "--workspace-root",
+            str(tmp_path),
+            "--ticket",
+            "flow-x",
+            "--hotfix",
+            "--body-file",
+            str(_bf(tmp_path)),
+        ]
+    )
+    assert rc == 0
+    assert fg.opened[0]["base"] == "main"
+    assert fg.opened[0]["draft"] is False
+
+
+def test_cli_hotfix_explicit_base_and_draft_still_win(tmp_path, monkeypatch):
+    _hotfix_workspace(tmp_path)
+    inner, _ = _git_runner(branch="hotfix/flow-x-fix")
+    fg = _FakeForge()
+    monkeypatch.setattr(cp, "_default_runner", lambda _repo: _default_head_runner(inner))
+    monkeypatch.setattr(cp, "_resolve_forge", lambda _ws: fg)
+    rc = cp.cli_main(
+        [
+            "--workspace-root",
+            str(tmp_path),
+            "--base",
+            "release/1.2",
+            "--draft",
+            "--hotfix",
+            "--body-file",
+            str(_bf(tmp_path)),
+        ]
+    )
+    assert rc == 0
+    assert fg.opened[0]["base"] == "release/1.2"
+    assert fg.opened[0]["draft"] is True

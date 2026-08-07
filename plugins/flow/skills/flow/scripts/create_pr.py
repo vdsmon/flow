@@ -19,10 +19,15 @@ Prints `PR_URL=<url>` on stdout; the do-loop captures that into
 notification read the `PR_URL=` token.
 
 CLI:
-  create_pr.py --workspace-root <dir> [--base BRANCH] [--ticket KEY] [--draft] [--body-file PATH]
+  create_pr.py --workspace-root <dir> [--base BRANCH] [--ticket KEY] [--draft] [--hotfix]
+               [--body-file PATH]
 
 The base branch resolves as: explicit `--base`, else `[create_pr] base` in
-`workspace.toml`, else `main`.
+`workspace.toml`, else `main`. `--hotfix` (hotfix-lane run) instead opens ready for
+review against the remote default branch, ignoring the `[create_pr]` base and draft
+settings: a hotfix always targets what production builds from, even in a workspace
+whose ordinary PRs stack on an integration branch. An explicit `--base`/`--draft`
+still wins over `--hotfix`.
 
 Exit codes:
   0 = ok (prints PR_URL=<url>)
@@ -72,6 +77,20 @@ def _base_config(workspace_root: Path) -> str | None:
         return None
     value = section.get("base")
     return value if isinstance(value, str) and value else None
+
+
+def _remote_default_branch(workspace_root: Path, runner: Runner | None = None) -> str:
+    """The short remote default branch name (`origin/HEAD` minus the prefix), else `main`.
+
+    The hotfix base: what production builds from. No fetch here; the run's worktree
+    was cut off a freshly-fetched `@default`, so the local `origin/HEAD` ref is at
+    most minutes old, and a wrong-but-plausible fallback of `main` fails loudly at
+    PR open on repos that use another name.
+    """
+    run = runner or _default_runner(workspace_root)
+    result = run(["git", "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"])
+    name = result.stdout.strip() if result.returncode == 0 else ""
+    return name.removeprefix("origin/") or "main"
 
 
 class ToolError(Exception):
@@ -189,6 +208,14 @@ def cli_main(argv: list[str]) -> int:
         help="open a draft PR (overrides the [create_pr] draft workspace setting).",
     )
     parser.add_argument(
+        "--hotfix",
+        action="store_true",
+        help=(
+            "hotfix-lane run: open ready for review against the remote default branch, "
+            "ignoring the [create_pr] base/draft settings (explicit --base/--draft still win)."
+        ),
+    )
+    parser.add_argument(
         "--body-file",
         required=True,
         help=(
@@ -198,8 +225,12 @@ def cli_main(argv: list[str]) -> int:
     )
     args = parser.parse_args(argv)
     ws = Path(args.workspace_root)
-    draft = args.draft if args.draft is not None else _draft_config(ws)
-    base = args.base if args.base is not None else (_base_config(ws) or "main")
+    if args.hotfix:
+        draft = args.draft if args.draft is not None else False
+        base = args.base if args.base is not None else _remote_default_branch(ws)
+    else:
+        draft = args.draft if args.draft is not None else _draft_config(ws)
+        base = args.base if args.base is not None else (_base_config(ws) or "main")
     body_file = Path(args.body_file)
     try:
         url = open_or_get_pr(ws, base=base, draft=draft, body_file=body_file)

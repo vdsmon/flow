@@ -121,8 +121,8 @@ The complete public grammar is generated from the registry:
 <!-- flow:public-grammar:begin -->
 ```text
 FLOW
-FLOW <target> [<target> ...] [--unattended] [--together] [--verify express|light|full] [--e2e <recipe>] [--request <additional-intent>]
-FLOW ticket create [--request <problem>]
+FLOW <target> [<target> ...] [--unattended] [--together] [--hotfix] [--verify express|light|full] [--e2e <recipe>] [--request <additional-intent>]
+FLOW ticket create [--request <problem>] [--hotfix]
 FLOW ticket group (<ticket> ... | --mine) [--state open]
 FLOW ticket split <ticket>
 FLOW ticket finalize (<ticket> | --all) [--dry-run]
