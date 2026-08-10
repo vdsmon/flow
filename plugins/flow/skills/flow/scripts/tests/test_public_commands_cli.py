@@ -119,6 +119,55 @@ def test_route_derives_jira_and_beads_patterns_from_workspace(tmp_path, capsys) 
     assert json.loads(capsys.readouterr().out)["command_id"] == "target"
 
 
+def test_route_refuses_stale_skill_root_with_both_paths_named(tmp_path, capsys) -> None:
+    _write_jira_workspace(tmp_path)
+    other = tmp_path / "other-skill"
+    other.mkdir()
+    runtime = tmp_path / ".flow" / "runtime"
+    runtime.mkdir(parents=True)
+    (runtime / "skill-root").write_text(f"{other}\n", encoding="utf-8")
+
+    rc = public_commands_cli.cli_main(["route", "--workspace-root", str(tmp_path), "--", "FT-12"])
+
+    assert rc == 7
+    err = capsys.readouterr().err
+    assert "stale skill_root" in err
+    assert str(other.resolve()) in err
+    assert "re-bind" in err
+
+
+def test_route_passes_when_pin_matches_own_skill_root(tmp_path, capsys) -> None:
+    _write_jira_workspace(tmp_path)
+    runtime = tmp_path / ".flow" / "runtime"
+    runtime.mkdir(parents=True)
+    own = Path(public_commands_cli.__file__).resolve().parents[1]
+    (runtime / "skill-root").write_text(f"{own}\n", encoding="utf-8")
+
+    rc = public_commands_cli.cli_main(["route", "--workspace-root", str(tmp_path), "--", "FT-12"])
+
+    assert rc == 0
+    capsys.readouterr()
+
+
+def test_route_ignores_absent_or_dangling_skill_root_pin(tmp_path, capsys) -> None:
+    _write_jira_workspace(tmp_path)
+    rc = public_commands_cli.cli_main(["route", "--workspace-root", str(tmp_path), "--", "FT-12"])
+    assert rc == 0
+    capsys.readouterr()
+
+    runtime = tmp_path / ".flow" / "runtime"
+    runtime.mkdir(parents=True)
+    (runtime / "skill-root").write_text(str(tmp_path / "gone"), encoding="utf-8")
+    rc = public_commands_cli.cli_main(["route", "--workspace-root", str(tmp_path), "--", "FT-12"])
+    assert rc == 0
+    capsys.readouterr()
+
+    (runtime / "skill-root").write_text("\n", encoding="utf-8")
+    rc = public_commands_cli.cli_main(["route", "--workspace-root", str(tmp_path), "--", "FT-12"])
+    assert rc == 0
+    capsys.readouterr()
+
+
 def test_route_rejects_relative_workspace(tmp_path, capsys) -> None:
     del tmp_path
     assert public_commands_cli.cli_main(["route", "--workspace-root", ".", "--", "FT-1"]) == 2

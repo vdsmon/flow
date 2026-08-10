@@ -1803,6 +1803,9 @@ def test_next_emits_e2e_descriptor_when_probe_ok(
     rc, payload = ds.cmd_next(tmp_path, "FT-1")
     assert rc == 0
     assert payload.get("stage") == "e2e"
+    # A passing probe leaves proof it ran: without this marker the only post-hoc
+    # evidence of probe execution is timing correlation (2026-08-10 sweep).
+    assert payload.get("preflight") == {"status": "ok", "mode": "probe"}
 
 
 def test_next_skips_probe_when_unconfigured(

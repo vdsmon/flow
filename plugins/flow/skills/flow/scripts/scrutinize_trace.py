@@ -41,6 +41,11 @@ _WS = re.compile(r"\s+")
 
 _SKILL_MARKERS = ("<command-message>", "Base directory for this skill:")
 
+# Carryover forks (compaction/resume) rewrite every carried line under the new file's
+# own sessionId, so byte-identical events differ between the files; strip the stamp
+# before hashing or the cross-file dedup never fires on that fork shape.
+_SESSION_ID_STAMP = re.compile(r'"sessionId"\s*:\s*"[^"]*"')
+
 
 def _short(text: str, limit: int) -> str:
     return _WS.sub(" ", text or "").strip()[:limit]
@@ -166,12 +171,15 @@ def mine_session(
 ) -> dict[str, Any]:
     """One incremental pass over a session transcript; returns the signal families.
 
-    `seen` dedups byte-identical lines across files: a forked session's transcript
-    repeats its parent's full prefix verbatim (witnessed 2026-08-06: two brinta files
-    sharing a 693-line, 10-error prefix under one embedded sessionId, inflating the
-    census 27 errors vs 17 unique). A repeated line still feeds `pending` so tool
-    use/result joins survive the fork boundary, but contributes no signals and no
-    span, so a shared line counts once, attributed to whichever file is mined first."""
+    `seen` dedups repeated lines across files: a forked session's transcript repeats
+    its parent's full prefix verbatim (witnessed 2026-08-06: two brinta files sharing
+    a 693-line, 10-error prefix under one embedded sessionId, inflating the census 27
+    errors vs 17 unique), and a carryover fork repeats the same events re-stamped with
+    its own sessionId (witnessed 2026-08-10: 916ae98d/d96a2316, ms-identical errors
+    counted 13 vs 10 unique), so lines hash with the sessionId stamp stripped. A
+    repeated line still feeds `pending` so tool use/result joins survive the fork
+    boundary, but contributes no signals and no span, so a shared line counts once,
+    attributed to whichever file is mined first."""
     report: dict[str, Any] = {
         "session": path.stem,
         "first": None,
@@ -188,7 +196,7 @@ def mine_session(
         report["lines"] += 1
         duplicate = False
         if seen is not None:
-            key = hash(line)
+            key = hash(_SESSION_ID_STAMP.sub("", line))
             duplicate = key in seen
             seen.add(key)
             if duplicate:

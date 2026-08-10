@@ -658,7 +658,9 @@ def _reconcile_post_lease(
     return None, {}
 
 
-def _refuse_failed_probe(workspace_root: Path, next_stage: str) -> dict[str, Any] | None:
+def _refuse_failed_probe(
+    workspace_root: Path, next_stage: str
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
     """Silent credential probe before the e2e descriptor is emitted.
 
     The worktree-create bootstrap enforces the attended check mechanically, but the
@@ -666,19 +668,25 @@ def _refuse_failed_probe(workspace_root: Path, next_stage: str) -> dict[str, Any
     bootstrap enforcement skipped it (FT-1576, 2026-08-06; the cost class is FT-1560's
     interactive mid-stage sso login). Runs before any state mutation: on failure the
     stage stays pending and the same `next`/`advance` converges once the credential is
-    refreshed. An unconfigured probe is silence."""
+    refreshed. An unconfigured probe is silence. A passing probe returns its result
+    record so the descriptor carries proof it ran (the 2026-08-10 sweep could only
+    infer execution from merge-timing correlation); returns (block, probe_result)."""
     if next_stage != "e2e":
-        return None
+        return None, None
     import preflight
 
     try:
         if preflight.configured_command(workspace_root, "probe") is None:
-            return None
+            return None, None
         result = preflight.run_preflight(workspace_root, "probe")
     except preflight.PreflightConfigError as exc:
-        return {"done": False, "blocked_by": "e2e", "reason": f"[preflight] misconfigured: {exc}"}
+        return {
+            "done": False,
+            "blocked_by": "e2e",
+            "reason": f"[preflight] misconfigured: {exc}",
+        }, None
     if result.get("status") in ("ok", "unconfigured"):
-        return None
+        return None, result
     return {
         "done": False,
         "blocked_by": "e2e",
@@ -688,29 +696,36 @@ def _refuse_failed_probe(workspace_root: Path, next_stage: str) -> dict[str, Any
             "probe itself is never interactive), then re-run next/advance; the stage "
             "is still pending."
         ),
-    }
+    }, None
 
 
 def _pick_dispatchable(
     ts: Any, snap: Any, workspace_root: Path, recovery: dict[str, Any]
-) -> tuple[dict[str, Any] | None, str | None]:
-    """Resolve the next dispatchable stage, or the terminal/blocked payload instead."""
+) -> tuple[dict[str, Any] | None, str | None, dict[str, Any]]:
+    """Resolve the next dispatchable stage, or the terminal/blocked payload instead.
+
+    The third element is descriptor markers from the pick itself (today: the passing
+    e2e probe's result record under "preflight"), merged into the payload unconditionally."""
     failed = state.find_failed(ts)
     if failed is not None:
         record = ts.stages[failed]
-        return {
-            "done": False,
-            "blocked_by": failed,
-            "reason": record.failure_detail or "stage failed",
-            **recovery,
-        }, None
+        return (
+            {
+                "done": False,
+                "blocked_by": failed,
+                "reason": record.failure_detail or "stage failed",
+                **recovery,
+            },
+            None,
+            {},
+        )
     next_stage = state.pick_next_pending(ts, snap.stages)
     if next_stage is None:
-        return None, None
-    probe_block = _refuse_failed_probe(workspace_root, next_stage)
+        return None, None, {}
+    probe_block, probe_result = _refuse_failed_probe(workspace_root, next_stage)
     if probe_block is not None:
-        return {**probe_block, **recovery}, None
-    return None, next_stage
+        return {**probe_block, **recovery}, None, {}
+    return None, next_stage, {"preflight": probe_result} if probe_result is not None else {}
 
 
 def cmd_next(
@@ -762,7 +777,7 @@ def cmd_next(
     if reconcile_err is not None:
         return reconcile_err
 
-    early, next_stage = _pick_dispatchable(ts, snapshot, workspace_root, recovery)
+    early, next_stage, pick_markers = _pick_dispatchable(ts, snapshot, workspace_root, recovery)
     if early is not None or next_stage is None:
         return 0, early or {"done": True, **recovery}
 
@@ -803,6 +818,7 @@ def cmd_next(
         payload["reference_doc"] = stage_meta.reference_doc
     if owned_reconcile:
         payload["reconciled_drift"] = owned_reconcile
+    payload.update(pick_markers)
     payload.update(engine_markers)
     if exit_code == 1:
         payload["state_recovered_from_backup"] = True
