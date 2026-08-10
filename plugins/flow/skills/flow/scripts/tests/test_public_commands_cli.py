@@ -162,6 +162,11 @@ def test_route_ignores_absent_or_dangling_skill_root_pin(tmp_path, capsys) -> No
     assert rc == 0
     capsys.readouterr()
 
+    (runtime / "skill-root").write_text("\n", encoding="utf-8")
+    rc = public_commands_cli.cli_main(["route", "--workspace-root", str(tmp_path), "--", "FT-12"])
+    assert rc == 0
+    capsys.readouterr()
+
 
 def test_route_rejects_relative_workspace(tmp_path, capsys) -> None:
     del tmp_path

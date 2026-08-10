@@ -50,9 +50,14 @@ def _stale_skill_root(workspace_root: Path) -> tuple[Path, Path] | None:
     """
     pin = workspace_root / ".flow" / "runtime" / "skill-root"
     try:
-        pinned = Path(pin.read_text(encoding="utf-8").strip())
+        text = pin.read_text(encoding="utf-8").strip()
     except OSError:
         return None
+    # An empty pin means "run workspace setup" (the launcher's reading); Path("")
+    # would resolve to the CWD and over-refuse with a nonsense pair of paths.
+    if not text:
+        return None
+    pinned = Path(text)
     if not pinned.is_dir():
         return None
     own = Path(__file__).resolve().parents[1]
