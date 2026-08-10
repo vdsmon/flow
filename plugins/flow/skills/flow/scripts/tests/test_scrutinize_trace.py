@@ -281,6 +281,32 @@ def test_mine_dir_counts_forked_shared_prefix_once(tmp_path):
     assert fork_report["first"] == "2026-08-03T11:00:00Z"
 
 
+def test_mine_dir_counts_carryover_fork_once_despite_new_session_id(tmp_path):
+    # A carryover fork re-stamps every carried line with its own sessionId
+    # (witnessed 2026-08-10: 916ae98d/d96a2316, ms-identical errors counted twice).
+    def _stamped(name: str) -> list[str]:
+        stamped = []
+        for line in _sample_session(tmp_path, "tmp").read_text(encoding="utf-8").splitlines():
+            payload = json.loads(line)
+            payload["sessionId"] = name
+            stamped.append(json.dumps(payload))
+        return stamped
+
+    parent = _write_session(tmp_path, "parent", _stamped("parent"))
+    fork = _write_session(tmp_path, "fork", _stamped("fork"))
+    (tmp_path / "tmp.jsonl").unlink()
+    import os
+    import time
+
+    now = time.time()
+    os.utime(parent, (now - 100, now - 100))
+    os.utime(fork, (now, now))
+    reports = {r["session"]: r for r in st.mine_dir(tmp_path)}
+    assert len(reports["parent"]["tool_errors"]) == 1
+    assert reports["fork"]["tool_errors"] == []
+    assert reports["fork"]["shared_prefix_lines"] == reports["parent"]["lines"]
+
+
 def test_mine_dir_fork_result_joins_prefix_tool_use(tmp_path):
     # The error result lands after the fork point but its tool_use sits in the
     # shared prefix; the join must survive the dedup.
