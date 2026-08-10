@@ -106,7 +106,10 @@ shell string from free text. The JSON result supplies `command_id`, `effect`,
 `workspace`, `reference`, parsed positionals, and option names. Pass `--workspace-root`
 for an initialized workspace so the router derives the Jira or beads key grammar from
 `workspace.toml`; do not invent a regex in prose. For setup/help outside a workspace,
-static routes still resolve, and explicit `ticket:<key>` remains available.
+static routes still resolve, and explicit `ticket:<key>` remains available. The router
+refuses with exit 7 when it is executing from a skill tree that disagrees with the
+workspace's `.flow/runtime/skill-root` pin, naming both paths: re-bind `skill_root` to
+the pinned path and re-route from there instead of retrying the stale copy.
 
 <!-- flow:public-router:begin -->
 Interpret the invocation through `public-commands.toml`.

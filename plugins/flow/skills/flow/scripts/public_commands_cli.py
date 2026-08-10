@@ -3,6 +3,10 @@
 ``route`` lets skill prose hand a logical invocation to the deterministic
 registry before it performs any orchestration. ``help`` emits the same logical
 FLOW vocabulary for both harness adapters.
+
+``route`` exits 7 when this script is executing from a skill tree that disagrees
+with the workspace's ``.flow/runtime/skill-root`` pin; the error names both paths
+and the remedy is re-binding to the pinned path, never retrying the stale copy.
 """
 
 from __future__ import annotations
@@ -33,6 +37,29 @@ def _parser() -> argparse.ArgumentParser:
     help_parser = subparsers.add_parser("help", help="Render logical FLOW help.")
     help_parser.add_argument("topic", nargs="?")
     return parser
+
+
+def _stale_skill_root(workspace_root: Path) -> tuple[Path, Path] | None:
+    """The pin decides which engine's registry answers a route.
+
+    Witnessed 2026-08-07, twice: a session read the fresh workspace pin, then routed
+    from its stale invocation cache in the same shell command; the cache's registry
+    lacked a verb the pinned engine already carried, and the session fell back to
+    ad-hoc work outside every flow covenant. An absent or dangling pin stays routable
+    so setup and repair paths never deadlock.
+    """
+    pin = workspace_root / ".flow" / "runtime" / "skill-root"
+    try:
+        pinned = Path(pin.read_text(encoding="utf-8").strip())
+    except OSError:
+        return None
+    if not pinned.is_dir():
+        return None
+    own = Path(__file__).resolve().parents[1]
+    pinned = pinned.resolve()
+    if own == pinned:
+        return None
+    return own, pinned
 
 
 def _help_reference(registry: Registry, topic: str) -> str:
@@ -96,6 +123,15 @@ def cli_main(argv: list[str]) -> int:
                 workspace_root = Path(args.workspace_root).expanduser()
                 if not workspace_root.is_absolute():
                     raise RegistryError("--workspace-root must be an absolute path")
+                stale = _stale_skill_root(workspace_root)
+                if stale is not None:
+                    own, pinned = stale
+                    sys.stderr.write(
+                        f"commands: stale skill_root: this router runs from {own} "
+                        f"but the workspace pins {pinned}; re-bind skill_root to "
+                        "the pinned path and re-route from there\n"
+                    )
+                    return 7
                 patterns = tracker_key_patterns_from_workspace(workspace_root)
             payload = _route_payload(registry, tokens, list(patterns))
             sys.stdout.write(json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n")
