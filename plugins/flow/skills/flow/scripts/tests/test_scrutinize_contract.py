@@ -12,9 +12,10 @@ def _seating() -> str:
     return text.split("## Seating", 1)[1].split("## Pickup", 1)[0]
 
 
-def test_seating_has_an_open_direction_boundary_without_a_queue_scan() -> None:
+def test_seating_flows_into_the_sweep_without_asking() -> None:
     seating = _seating()
-    assert "What would you like to do?" in seating
+    assert "invoking scrutinize IS the direction" in seating
+    assert "What would you like to do?" not in seating
     assert "Read `bd ready`" not in seating
     assert "ranked shortlist" not in seating
     assert "parked PR whose gate is met" not in seating
@@ -23,7 +24,7 @@ def test_seating_has_an_open_direction_boundary_without_a_queue_scan() -> None:
 
 def test_remote_reads_are_deferred_until_the_user_selects_work() -> None:
     seating = _seating()
-    boundary = seating.index("After the human chooses a direction")
+    boundary = seating.index("The human can name a different direction")
     before_choice = seating[:boundary]
     after_choice = seating[boundary:]
     for forbidden in (

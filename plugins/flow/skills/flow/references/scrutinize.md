@@ -44,25 +44,30 @@ Seating runs a mechanical half and a judgment half, in this order:
    primary checkout and re-parks a clean, detached, behind-only bench only when
    `local_runs` is empty. It never resumes a run or discards a commit during seating.
 
-3. **Report, then ask.** Report Git posture, configured tracker and forge, and any
-   `local_runs`. Do not load seat memory, the ledger, tracker tickets, pull
-   requests, CI, reviews, or comments. Do not suggest a menu or rank work before the
-   human names a direction. End the initial seating response with exactly:
-   “What would you like to do?”
+3. **Report and sweep.** Report Git posture, configured tracker and forge, and any
+   `local_runs`, then proceed straight into §The sweep: invoking scrutinize IS the direction,
+   and a clean seating never stops to ask what to do (witnessed 2026-08-10: the
+   seat ended a scoped `FLOW scrutinize <workspace>` seating with a question, and
+   the human's whole reply was “why are you asking me what to do?”). A workspace
+   argument scopes the sweep; the bare form covers every workspace. Only step 2's
+   unsafe posture stops for the human; a non-terminal `local_runs` entry is
+   surfaced, left alone, and its evidence deferred to the next window. Seat
+   memory, the ledger, and the sweep cursor load when the sweep starts, not
+   during seating.
 
-After the human chooses a direction, load only the context needed for it. “My
-tickets” calls `tracker list-assigned --filter open`; select from its compact key,
-summary, status, and priority rows, then call `tracker get` only for the chosen
-ticket. “My PRs” calls `forge list-authored --state open`; select from its compact
-title, draft, update-time, and URL rows, then fetch CI, reviews, and comments only
-for the chosen PR. Load relevant seat memory and ledger context only after the
-choice. A ticket named after seating is the human's to run directly in a fresh
-session; the seat does not run tickets, and a general queue scan still waits for
-the human to ask for one.
+The human can name a different direction instead, before or during the sweep, and
+the seat loads only the context it needs. “My tickets” calls
+`tracker list-assigned --filter open`; select from its compact key, summary,
+status, and priority rows, then call `tracker get` only for the chosen ticket.
+“My PRs” calls `forge list-authored --state open`; select from its compact title,
+draft, update-time, and URL rows, then fetch CI, reviews, and comments only for
+the chosen PR. A ticket named after seating is the human's to run directly in a
+fresh session; the seat does not run tickets, and a general queue scan still
+waits for the human to ask for one.
 
 ## Pickup
 
-The seat is the consumer of the machinery backlog: the `machinery`-labelled beads its own scrutiny minted (§Friction handling), alongside every other ready ticket. Between runs: read `bd ready` and triage with veto power. The triage and the sequencing are the seat's; the decision to start is the human's, so the queue is presented, not consumed (§Seating step 3), and a surviving machinery bead is the seat's to implement inline (§Friction handling) once the human names it; any other surviving ticket is handed back as a recommendation to run directly, never spawned, and routes through an ordinary session when the human starts it.
+The seat is the consumer of the machinery backlog: the `machinery`-labelled beads its own scrutiny minted (§Friction handling), alongside every other ready ticket. Between runs: read `bd ready` and triage with veto power. The triage and the sequencing are the seat's; the decision to start is the human's, so the queue is presented, not consumed (§Seating), and a surviving machinery bead is the seat's to implement inline (§Friction handling) once the human names it; any other surviving ticket is handed back as a recommendation to run directly, never spawned, and routes through an ordinary session when the human starts it.
 
 Triage is a filter against overengineering, not a queue pump. Before working any bead: was it witnessed more than once, or once with real cost? Is the lesson already recorded where its audience looks? Does the fix add standing surface a workaround avoids? Is the fix bigger than the lifetime cost of the friction? A bead that fails these is vetoed and closed, with the reasoning; a closed bead permanently blocks the dedup net from refiling it, so close only what should stay dead and defer the maybe-laters instead. When a bead survives, prefer deletion over a doc line over a new moving part. Group or merge related beads via `bd` parent links or close-as-dup with the surviving bead's scope widened, and group only on shared root cause or shared surface: one plan, one diff, one PR; grouping for tidiness manufactures scope. Vetoing is a first-class act, not a failure to act.
 
@@ -97,7 +102,7 @@ list rather than guessing. Discover them by finding
 `.flow/workspace.toml` under the human's project roots (the 2026-07-28 sweep's
 whole-home find is the precedent); each workspace's evidence lives where its own
 layout puts it, so resolve per workspace rather than assuming one shared root.
-After runs finish (a drain, a morning pickup, or whenever the human asks), sweep
+After runs finish (a drain, a morning pickup, or straight from a clean seating), sweep
 the durable evidence and synthesize. The sources, all passive and all survivable
 past the run:
 
