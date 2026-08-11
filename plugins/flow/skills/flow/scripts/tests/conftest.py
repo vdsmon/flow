@@ -6,8 +6,10 @@ without packaging the module.
 
 from __future__ import annotations
 
+import json
 import os
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -50,3 +52,33 @@ def _default_harness(monkeypatch: pytest.MonkeyPatch):
     refusal. Tests asserting the refusal delenv explicitly."""
     if not os.environ.get("FLOW_HARNESS"):
         monkeypatch.setenv("FLOW_HARNESS", "claude-code")
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _hermetic_brinta_store(tmp_path_factory: pytest.TempPathFactory):
+    """Cut the suite off from the developer's real brinta-ai credential store.
+
+    The Jira adapter reads `<config-dir>/git-credentials.json` (its only
+    credential source); pointing BRINTA_CONFIG_DIR at an empty dir makes
+    absent-credentials the hermetic default. Tests that need credentials call
+    `seed_brinta_store`.
+    """
+    empty = tmp_path_factory.mktemp("brinta-config-empty")
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("BRINTA_CONFIG_DIR", str(empty))
+        yield
+
+
+def seed_brinta_store(
+    monkeypatch: pytest.MonkeyPatch,
+    email: str = "you@example.com",
+    token: str = "tok",
+) -> Path:
+    """Point BRINTA_CONFIG_DIR at a fresh store carrying fake Atlassian creds."""
+    store_dir = Path(tempfile.mkdtemp(prefix="brinta-store-"))
+    (store_dir / "git-credentials.json").write_text(
+        json.dumps({"schema_version": 1, "atlassian": {"email": email, "api_token": token}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("BRINTA_CONFIG_DIR", str(store_dir))
+    return store_dir
