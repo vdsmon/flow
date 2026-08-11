@@ -44,7 +44,7 @@ from _registry import (
 from model_resolve import OFF_VALUES
 
 KNOWN_BACKENDS: tuple[str, ...] = ("jira", "beads")
-KNOWN_FORGE_BACKENDS: tuple[str, ...] = ("github", "bitbucket")
+KNOWN_FORGE_BACKENDS: tuple[str, ...] = ("github", "bitbucket", "brinta")
 
 
 @dataclass
@@ -142,6 +142,24 @@ def _validate_forge_block(data: dict[str, Any], result: ValidationResult) -> Non
                 "forge.bitbucket",
                 "bkt CLI not found on PATH; install it with: "
                 "brew install avivsinai/tap/bitbucket-cli",
+            )
+    if backend == "brinta":
+        # Same Bitbucket host as the bkt backend, transported through the
+        # brinta-ai proxy; needs the same repo coordinates plus the CLI itself
+        # (credentials come from `brinta-ai setup`, probed at call time).
+        bb = forge.get("brinta")
+        if not isinstance(bb, dict):
+            result.add("forge.brinta", "missing or not a table")
+        else:
+            for key in ("workspace", "repo_slug"):
+                if not isinstance(bb.get(key), str) or not bb[key]:
+                    result.add(f"forge.brinta.{key}", "missing or not a non-empty string")
+        if shutil.which("brinta-ai") is None:
+            result.add(
+                "forge.brinta",
+                "brinta-ai CLI not found on PATH; install it with: "
+                "npm install -g @brinta/ai-config "
+                "--registry=https://nexus.brinta.com/repository/nodejs-group/",
             )
 
 

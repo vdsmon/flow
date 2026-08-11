@@ -105,6 +105,15 @@ Validation probes PATH for the binary and fails with that install command when i
 is missing, so a run cannot start against a Bitbucket forge the machine cannot
 reach.
 
+Bitbucket has a second transport: `backend = "brinta"` serves the same host
+through the `brinta-ai bitbucket` proxy, for machines already provisioned by
+Brinta tooling (one credential store from `brinta-ai setup`, no `bkt` install).
+It takes the same `workspace` + `repo_slug` keys under `[forge.brinta]`, and
+validation probes PATH for `brinta-ai` instead. The backend is an explicit
+operator opt-in (a bitbucket.org remote still derives `bitbucket`), but once a
+stored block says `brinta`, reconfigure keeps the choice and refreshes only the
+coordinates from the remote; a move to a GitHub remote drops it.
+
 ## `FLOW workspace inspect [<target>] [--json]`
 
 Inspection is read-only. With no target, report every run, stage progress, lease,

@@ -68,6 +68,7 @@ Pluggable PR-host seam, structural twin of the tracker seam. The `create_pr` and
 | `forge_cli.py` | CLI wrapper around the Protocol (the only forge surface the prose calls); `list-authored` returns compact open PR rows, and cap-gated subcommands degrade to `{"supported": false}` exit 0. `detect-pr` accepts `--state open\|merged`. | subcommand names in §Derived surfaces |
 | `forge_github.py` (lib) | GitHub `gh` adapter: detect/open PR, CI rollup (`statusCheckRollup`), mark-ready/merge/delete-branch, and commit-pinned `blob/<sha>/<path>#Lx-Ly` source URLs. review_threads/post_reply/resolve_thread supported via gh api graphql. `set_default_reviewers` raises `NotSupported` (solo repo, CODEOWNERS covers reviewers). | — |
 | `forge_bitbucket.py` (lib) | Bitbucket `bkt` adapter (absorbs ship-it): detect/open PR, CI rollup from `bkt pr checks`, commit-pinned `src/<sha>/<path>#lines-x:y` source URLs, CodeRabbit review-thread fetch + verified resolve (`.resolution != null`), `set_default_reviewers` (GET `2.0/user` author + GET `default-reviewers`, drop author by `account_id`, PUT `{reviewers:[{uuid}]}`). | — |
+| `forge_brinta.py` (lib) | Bitbucket adapter over the `brinta-ai bitbucket` proxy (subclasses `forge_bitbucket`): same host and normalization, transport swapped to the Brinta CLI (one credential store, no `bkt`), `2.0/` prefix stripped for the proxy root, bodyless `(HTTP …)` successes mapped to None, and `ci_rollup`/`bot_review_present` re-read from the PR commit-status endpoint instead of `bkt pr checks` text. | — |
 | `review_brief.py` | Deep, stdlib-only review-companion renderer. Strictly validates the motivation-first JSON model, binds local and PR heads to one full SHA, extracts source from that commit, builds responsive/CSP-protected self-contained HTML with exact Forge links, publishes atomically, and records/probes freshness. | writes `<ticket-dir>/stages/review_brief/<sha>/{brief.json,review-brief-*.html,receipt.json}` |
 
 ### Adding a tracker/forge backend
@@ -263,8 +264,9 @@ markers are overwritten. `—` = none.
 | `flow_launcher.py` | — | `flow_worktree`, `init` |
 | `flow_worktree.py` | `create` `locate-or-reseed` `reap` | `finalize`, `worktree_janitor` |
 | `flowctl.py` | — | `seam_check` |
-| `forge.py` | — | `create_pr`, `finalize`, `forge_bitbucket`, `forge_cli`, `forge_github`, `review_brief`, `revise_config`, `worktree_janitor` |
-| `forge_bitbucket.py` | — | `forge` |
+| `forge.py` | — | `create_pr`, `finalize`, `forge_bitbucket`, `forge_brinta`, `forge_cli`, `forge_github`, `review_brief`, `revise_config`, `worktree_janitor` |
+| `forge_bitbucket.py` | — | `forge`, `forge_brinta` |
+| `forge_brinta.py` | — | `forge` |
 | `forge_cli.py` | `ci-rollup` `delete-branch` `detect-pr` `list-authored` `mark-ready` `merge` `post-reply` `resolve-thread` `review-status` `review-threads` `update-body` | — |
 | `forge_github.py` | — | `forge` |
 | `friction_escalate.py` | `escalate` | — |
