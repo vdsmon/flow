@@ -4,12 +4,16 @@ Stdlib-only. Transport is `urllib.request.urlopen` by default; tests inject a
 fake via the `http` constructor parameter.
 
 Base URL: `https://api.atlassian.com/ex/jira/{cloud_id}` (basic auth tolerated
-on this OAuth-style host). Email + API token taken from environment:
+on this OAuth-style host). Email + API token come from the brinta-ai credential
+store: `<config-dir>/git-credentials.json`, keys `.atlassian.email` /
+`.atlassian.api_token`, written by `brinta-ai setup`. The config dir is
+`$BRINTA_CONFIG_DIR` when set (the same override brinta-ai honors; tests point
+it at a tmp dir), else `~/.config/brinta` (`%APPDATA%\\brinta` on Windows).
+There is no env-var credential path: every machine that runs flow's jira
+backend is provisioned by brinta-ai, so the store is the single source.
 
-- `ATLASSIAN_EMAIL`
-- `ATLASSIAN_API_TOKEN`
-
-Adapter raises `TrackerConfigError` at construction if either is missing.
+Adapter raises `TrackerConfigError` at construction when the store is missing
+or incomplete.
 
 See `inventory.md` (sibling file) for the full call-site map, HTTP error
 classification table, ADF policy, board strategy, and epic-link probe.
@@ -28,6 +32,7 @@ import urllib.request
 from collections.abc import Callable
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
+from pathlib import Path
 from typing import Any, cast
 
 from tracker import (
@@ -102,6 +107,37 @@ HttpFn = Callable[[urllib.request.Request], Any]
 def _basic_auth_header(email: str, token: str) -> str:
     raw = f"{email}:{token}".encode()
     return "Basic " + base64.b64encode(raw).decode("ascii")
+
+
+def _brinta_config_dir() -> Path:
+    override = os.environ.get("BRINTA_CONFIG_DIR", "").strip()
+    if override:
+        return Path(override)
+    if os.name == "nt":
+        appdata = os.environ.get("APPDATA", "").strip()
+        base = Path(appdata) if appdata else Path.home() / "AppData" / "Roaming"
+        return base / "brinta"
+    return Path.home() / ".config" / "brinta"
+
+
+def _brinta_store_credentials() -> tuple[str, str]:
+    """Atlassian email + API token from the brinta-ai store, or ("", "").
+
+    A missing, unreadable, or malformed store reads as absent credentials; the
+    constructor turns that into the one `TrackerConfigError` with the setup hint,
+    so this stays a pure read with no error surface of its own.
+    """
+    path = _brinta_config_dir() / "git-credentials.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return "", ""
+    atlassian = data.get("atlassian") if isinstance(data, dict) else None
+    if not isinstance(atlassian, dict):
+        return "", ""
+    email = str(atlassian.get("email") or "").strip()
+    token = str(atlassian.get("api_token") or "").strip()
+    return email, token
 
 
 def _retry_after_seconds(value: str | None, default: float) -> float:
@@ -266,11 +302,12 @@ class JiraAdapter:
         self.project_key: str = project_key
         self.assignee_account_id: str | None = config.get("assignee_account_id")
 
-        email = os.environ.get("ATLASSIAN_EMAIL", "").strip()
-        token = os.environ.get("ATLASSIAN_API_TOKEN", "").strip()
+        email, token = _brinta_store_credentials()
         if not email or not token:
             raise TrackerConfigError(
-                "JiraAdapter requires ATLASSIAN_EMAIL and ATLASSIAN_API_TOKEN env vars"
+                "JiraAdapter needs the brinta-ai credential store: run `brinta-ai setup` "
+                "(expects <config-dir>/git-credentials.json with .atlassian.email and "
+                ".atlassian.api_token; config dir is $BRINTA_CONFIG_DIR or ~/.config/brinta)"
             )
         self._auth_header = _basic_auth_header(email, token)
         self._http: HttpFn = http if http is not None else urllib.request.urlopen
@@ -321,7 +358,7 @@ class JiraAdapter:
 
         if status == 401:
             raise TrackerConfigError(
-                "invalid credentials: check ATLASSIAN_EMAIL/ATLASSIAN_API_TOKEN"
+                "invalid credentials: refresh the Atlassian token with `brinta-ai setup`"
             ) from e
         if status == 404:
             msg = parsed_body.get("errorMessages") or [f"endpoint not found: {path}"]

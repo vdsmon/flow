@@ -8,8 +8,8 @@ Strategy:
   `urlopen`-shaped responses. The adapter's `http` constructor parameter is the
   injection point.
 
-No live Jira hits. No `ATLASSIAN_*` env vars expected at test time (we set
-them via monkeypatch).
+No live Jira hits. Credentials come from a seeded tmp brinta-ai store
+(`seed_brinta_store`); the session fixture keeps the real one unreachable.
 """
 
 from __future__ import annotations
@@ -28,6 +28,7 @@ import pytest
 
 import tracker as t
 import tracker_jira as tj
+from tests.conftest import seed_brinta_store
 
 # ─── Fake HTTP plumbing ─────────────────────────────────────────────────────
 
@@ -93,8 +94,7 @@ def _body_dict(req: urllib.request.Request) -> dict[str, Any]:
 def _make_adapter(
     monkeypatch: pytest.MonkeyPatch, http: tj.HttpFn, **config_overrides: Any
 ) -> tj.JiraAdapter:
-    monkeypatch.setenv("ATLASSIAN_EMAIL", "you@example.com")
-    monkeypatch.setenv("ATLASSIAN_API_TOKEN", "tok")
+    seed_brinta_store(monkeypatch)
     cfg: dict[str, Any] = {
         "backend": "jira",
         "cloud_id": "cloud-xyz",
@@ -108,16 +108,14 @@ def _make_adapter(
 
 
 def test_construction_rejects_missing_cloud_id(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("ATLASSIAN_EMAIL", "you@example.com")
-    monkeypatch.setenv("ATLASSIAN_API_TOKEN", "tok")
+    seed_brinta_store(monkeypatch)
     with pytest.raises(t.TrackerConfigError, match="cloud_id"):
         tj.JiraAdapter({"backend": "jira", "project_key": "FT"})
 
 
-def test_construction_rejects_missing_token(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("ATLASSIAN_EMAIL", "you@example.com")
-    monkeypatch.delenv("ATLASSIAN_API_TOKEN", raising=False)
-    with pytest.raises(t.TrackerConfigError, match="ATLASSIAN_API_TOKEN"):
+def test_construction_rejects_incomplete_store(monkeypatch: pytest.MonkeyPatch) -> None:
+    seed_brinta_store(monkeypatch, token="")
+    with pytest.raises(t.TrackerConfigError, match="brinta-ai setup"):
         tj.JiraAdapter({"backend": "jira", "cloud_id": "c", "project_key": "FT"})
 
 

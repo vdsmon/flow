@@ -88,10 +88,12 @@ No heuristic md→ADF conversion; markdown syntax (headings, lists, code fences)
 ## Authentication
 
 **Basic auth with API token**, per the human's decision.
-Adapter reads:
+Adapter reads the brinta-ai credential store `<config-dir>/git-credentials.json`
+(config dir: `$BRINTA_CONFIG_DIR` when set, else `~/.config/brinta`; written by
+`brinta-ai setup`):
 
-- `ATLASSIAN_EMAIL` — Atlassian account email (the username for basic auth)
-- `ATLASSIAN_API_TOKEN` — token from `https://id.atlassian.com/manage-profile/security/api-tokens`
+- `.atlassian.email` — Atlassian account email (the username for basic auth)
+- `.atlassian.api_token` — token from `https://id.atlassian.com/manage-profile/security/api-tokens`
 
 Auth header: `Authorization: Basic base64(email:token)`.
 
@@ -108,7 +110,7 @@ This table is the contract — every Jira REST call returns one of these outcome
 | Status | Endpoint family            | Body signal                                                | Outcome                                                                                  |
 |--------|----------------------------|------------------------------------------------------------|------------------------------------------------------------------------------------------|
 | 2xx    | any                        | —                                                          | success — return parsed JSON                                                             |
-| 401    | any                        | —                                                          | raise `TrackerConfigError("invalid credentials: check ATLASSIAN_EMAIL/ATLASSIAN_API_TOKEN")` |
+| 401    | any                        | —                                                          | raise `TrackerConfigError("invalid credentials: refresh the Atlassian token with `brinta-ai setup`")` |
 | 403    | `/transitions` (POST)      | —                                                          | return `TransitionResult{success=False, failure_kind="permission_denied", failure_detail=msg}` |
 | 403    | other                      | —                                                          | raise `TrackerError("forbidden: {endpoint}: {msg}")`                                     |
 | 404    | `/issue/{key}` (any)       | —                                                          | raise `TrackerError("ticket not found: {key}")`                                          |

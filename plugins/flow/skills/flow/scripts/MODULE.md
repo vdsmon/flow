@@ -55,7 +55,7 @@ The fifth run-safety mechanism, the content-ownership commit gate, is `diff_extr
 |--------|------|----------------|
 | `tracker.py` (lib) | Tracker Protocol base + `make_tracker()` factory. Adapters load lazily inside `make_tracker`; `flow_worktree` imports lazily in `_refuse_terminal_bead`. | — |
 | `tracker_cli.py` | CLI wrapper around the Protocol (the only tracker surface the prose calls). `list-assigned` exposes compact cross-backend assigned-ticket reads with a default non-terminal filter. `is-shipped` consults the frozen ship-event file before the adapter (state=shipped / source=frozen_event_file when one exists), so the live backend query runs only for a never-observed ticket. | subcommand names in §Derived surfaces |
-| `tracker_jira.py` (lib) | Jira Cloud REST v3 + Agile/1.0 adapter (Basic auth via `ATLASSIAN_EMAIL`/`ATLASSIAN_API_TOKEN`). | — |
+| `tracker_jira.py` (lib) | Jira Cloud REST v3 + Agile/1.0 adapter (Basic auth from the brinta-ai credential store, `$BRINTA_CONFIG_DIR`-relocatable `git-credentials.json`). | — |
 | `tracker_beads.py` (lib) | Beads `bd` CLI adapter (local-only tracker). | — |
 
 ## Forge (PR host)

@@ -15,6 +15,7 @@ from typing import Any
 import pytest
 
 import tracker as t
+from tests.conftest import seed_brinta_store
 
 # ─── Factory dispatch ───────────────────────────────────────────────────────
 
@@ -34,9 +35,8 @@ def test_make_tracker_rejects_none_backend() -> None:
         t.make_tracker({"backend": None})
 
 
-def test_make_tracker_jira_constructs_with_env_vars(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("ATLASSIAN_EMAIL", "you@example.com")
-    monkeypatch.setenv("ATLASSIAN_API_TOKEN", "fake-token")
+def test_make_tracker_jira_constructs_from_brinta_store(monkeypatch: pytest.MonkeyPatch) -> None:
+    seed_brinta_store(monkeypatch, token="fake-token")
     adapter = t.make_tracker({"backend": "jira", "cloud_id": "x", "project_key": "FT"})
     assert adapter.backend == "jira"
 
@@ -44,9 +44,9 @@ def test_make_tracker_jira_constructs_with_env_vars(monkeypatch: pytest.MonkeyPa
 def test_make_tracker_jira_without_creds_raises_config_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.delenv("ATLASSIAN_EMAIL", raising=False)
-    monkeypatch.delenv("ATLASSIAN_API_TOKEN", raising=False)
-    with pytest.raises(t.TrackerConfigError, match="ATLASSIAN_EMAIL"):
+    # The session-wide hermetic BRINTA_CONFIG_DIR points at an empty dir,
+    # so no seeding means absent credentials.
+    with pytest.raises(t.TrackerConfigError, match="brinta-ai setup"):
         t.make_tracker({"backend": "jira", "cloud_id": "x", "project_key": "FT"})
 
 
@@ -85,8 +85,7 @@ def test_known_backends_enum_matches_factory_branches(monkeypatch: pytest.Monkey
     # If KNOWN_BACKENDS grows, the factory MUST grow with it. This test catches
     # a future drift where a new backend is added to the enum but not wired in.
     # Stub credentials + runners so the live preflight doesn't escape the test.
-    monkeypatch.setenv("ATLASSIAN_EMAIL", "x@x")
-    monkeypatch.setenv("ATLASSIAN_API_TOKEN", "fake")
+    seed_brinta_store(monkeypatch, email="x@x", token="fake")
 
     import subprocess
 

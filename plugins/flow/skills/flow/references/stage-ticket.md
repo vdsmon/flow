@@ -64,7 +64,7 @@ Subsequent stages depend on `<ticket-dir>/ticket.json` being present.
      download-attachments --key <KEY> --out <ticket-dir>/attachments
    ```
    - Exit 0 → JSON `{supported, key, downloaded[]}`. `supported=false` (beads) or an empty `downloaded[]` is normal — continue. Each entry is `{filename, size, path}`, or `{filename, size, skipped}` when over the 25 MiB cap. Note the saved paths so later stages can read them.
-   - The Atlassian MCP has **no** attachment-download tool, so this always uses the REST adapter, which needs `ATLASSIAN_EMAIL` / `ATLASSIAN_API_TOKEN`. If those are absent, log a `MISSING_TOOL` friction entry and continue — attachment download is **best-effort**, never a stage blocker.
+   - The Atlassian MCP has **no** attachment-download tool, so this always uses the REST adapter, which reads the brinta-ai credential store (`<config-dir>/git-credentials.json`, provisioned by `brinta-ai setup`). If the store is absent or incomplete, log a `MISSING_TOOL` friction entry and continue — attachment download is **best-effort**, never a stage blocker.
 
 3. Stamp ticket frontmatter `status` + `started_at`:
    ```bash

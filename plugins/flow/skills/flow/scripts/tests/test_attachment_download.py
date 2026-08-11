@@ -17,6 +17,7 @@ import tracker as t
 import tracker_beads as tb
 import tracker_cli
 import tracker_jira as tj
+from tests.conftest import seed_brinta_store
 from tests.wsfactory import make_workspace, memory, tracker
 from tracker import NotSupported, TrackerError
 
@@ -57,8 +58,7 @@ def _att(**over: Any) -> t.Attachment:
 
 
 def _jira(monkeypatch: pytest.MonkeyPatch, http: tj.HttpFn) -> tj.JiraAdapter:
-    monkeypatch.setenv("ATLASSIAN_EMAIL", "you@example.com")
-    monkeypatch.setenv("ATLASSIAN_API_TOKEN", "tok")
+    seed_brinta_store(monkeypatch)
     return tj.JiraAdapter({"backend": "jira", "cloud_id": "c", "project_key": "FT"}, http=http)
 
 
