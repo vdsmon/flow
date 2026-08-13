@@ -378,6 +378,47 @@ def test_next_surfaces_roles_for_stage_with_roles(
     assert payload["roles"] == ["records_diff_baseline"]
 
 
+def test_next_descriptor_carries_the_driver_obligation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """flow-qyyq witness 5: the continuation rule rides the descriptor, not only the prose.
+
+    Names the stage so the obligation cannot be mistaken for boilerplate, and says what
+    ending the turn costs, because five witnesses ended their turn holding a healthy
+    descriptor."""
+    _write_workspace(
+        tmp_path,
+        handlers={"ticket": "inline", "implement": "subagent:general-purpose"},
+        stages=["ticket", "implement"],
+        compounding=False,
+    )
+    _stub_git_head(monkeypatch, "abc123")
+    ds.cmd_init(tmp_path, "FT-1")
+    ds.cmd_next(tmp_path, "FT-1")
+    ds.cmd_finish(tmp_path, "FT-1", "ticket", "completed")
+    rc, payload = ds.cmd_next(tmp_path, "FT-1")
+    assert rc == 0
+    obligation = payload["driver_obligation"]
+    assert "implement" in obligation
+    assert "same turn" in obligation
+    assert "advance" in obligation
+
+
+def test_terminal_and_blocked_branches_carry_no_obligation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A finished run has nothing to continue; an obligation there would read as a stage."""
+    _write_workspace(tmp_path, handlers={"ticket": "inline"}, stages=["ticket"], compounding=False)
+    _stub_git_head(monkeypatch, "abc123")
+    ds.cmd_init(tmp_path, "FT-1")
+    ds.cmd_next(tmp_path, "FT-1")
+    ds.cmd_finish(tmp_path, "FT-1", "ticket", "completed")
+    rc, payload = ds.cmd_next(tmp_path, "FT-1")
+    assert rc == 0
+    assert payload["done"] is True
+    assert "driver_obligation" not in payload
+
+
 def test_next_surfaces_empty_roles_for_stage_without(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

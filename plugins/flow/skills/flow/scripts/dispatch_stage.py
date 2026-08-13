@@ -818,6 +818,15 @@ def cmd_next(
         payload["reference_doc"] = stage_meta.reference_doc
     if owned_reconcile:
         payload["reconciled_drift"] = owned_reconcile
+    # The continuation obligation, carried BY the descriptor rather than only by the prose
+    # the driver read at session start. Five witnesses across five weeks (flow-qyyq) show
+    # drivers idling at both edges of a stage with a healthy descriptor in hand, twice on
+    # engines whose SKILL.md and delivery-loop.md already said this in full. Prose the
+    # driver can read past becomes a field it must read to find `stage`.
+    payload["driver_obligation"] = (
+        f"Execute the {next_stage} handler now, in this same turn, then call advance. "
+        "Ending your turn here strands the run: nothing resumes it but a human nudge."
+    )
     payload.update(pick_markers)
     payload.update(engine_markers)
     if exit_code == 1:
