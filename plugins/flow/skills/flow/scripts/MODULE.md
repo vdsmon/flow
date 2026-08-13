@@ -311,7 +311,7 @@ markers are overwritten. `—` = none.
 | `status.py` | — | — |
 | `sweep_knowledge.py` | `apply` `apply-cluster` `cluster` `propose` | — |
 | `sync.py` | — | — |
-| `ticket_frontmatter.py` | `read` `update` | `diff_extract`, `flow_worktree`, `lint_ticket`, `observe_at_close`, `reflect_inputs`, `review_brief` |
+| `ticket_frontmatter.py` | `read` `update` | `diff_extract`, `finalize`, `flow_worktree`, `lint_ticket`, `observe_at_close`, `reflect_inputs`, `review_brief` |
 | `tier_policy.py` | — | `flow_worktree`, `triage` |
 | `tracker.py` | — | `finalize`, `flow_worktree`, `group_candidates`, `group_persist`, `observe_at_close`, `sync`, `tracker_beads`, `tracker_cli`, `tracker_jira`, `worktree_janitor` |
 | `tracker_beads.py` | — | `tracker`, `triage` |

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
+from typing import override
 
 import pytest
 
@@ -580,3 +581,136 @@ def test_cli_key_and_all_are_mutually_exclusive(monkeypatch, tmp_path, capsys):
     with pytest.raises(SystemExit) as exc:
         fz.cli_main(["--workspace-root", str(tmp_path)])
     assert exc.value.code == 2
+
+
+class _KeyedTracker(_Tracker):
+    """Records which KEY each transition targeted, alongside the transition id."""
+
+    def __init__(self, state: str = "in_review"):
+        super().__init__(state)
+        self.keys: list[str] = []
+
+    @override
+    def transition(self, key, transition_id, fields=None):
+        self.keys.append(key)
+        return super().transition(key, transition_id, fields)
+
+
+def _write_covers(main: Path, key: str, covers: list[str]) -> None:
+    wt = main / ".claude" / "worktrees" / f"feat-{key}-x"
+    tickets = wt / ".flow" / "tickets"
+    tickets.mkdir(parents=True, exist_ok=True)
+    rendered = ", ".join(f'"{c}"' for c in covers)
+    (tickets / f"{key}.md").write_text(
+        f'+++\nticket = "{key}"\ncovers = [{rendered}]\n+++\n\nbody\n', encoding="utf-8"
+    )
+
+
+def test_finalize_closes_the_covered_siblings_with_the_lead(monkeypatch, tmp_path):
+    # FT-1602/FT-1605 (2026-08-11): the lead closed, FT-1605 stayed in Review, and the reap
+    # then destroyed the frontmatter naming it, so no later sweep could ever find it.
+    main = tmp_path / "repo"
+    entry = _worktree_entry(main)
+    tracker = _KeyedTracker()
+    _write_covers(main, "FT-1", ["FT-2", "FT-3"])
+    _, _, _, _, _, _ = _wire(
+        monkeypatch,
+        tmp_path,
+        entries=[entry],
+        tracker=tracker,
+        prs={("feat/FT-1-x", "merged"): {"id": "9", "head_sha": "head-sha"}},
+    )
+    code, report = fz.finalize(main, "FT-1")
+    assert code == fz.EXIT_OK
+    assert report["covers"] == ["FT-2", "FT-3"]
+    assert tracker.keys == ["FT-1", "FT-2", "FT-3"]
+    covers_step = report["steps"]["transition_covers"]
+    assert covers_step["FT-2"]["action"] == "transitioned"
+    assert covers_step["FT-3"]["action"] == "transitioned"
+
+
+def test_covers_are_read_before_the_reap_destroys_them(monkeypatch, tmp_path):
+    # Ordering is the load-bearing half: the frontmatter lives inside the worktree the reap
+    # removes, so a fan-out sequenced after it would read an empty list and report success.
+    main = tmp_path / "repo"
+    entry = _worktree_entry(main)
+    tracker = _KeyedTracker()
+    _write_covers(main, "FT-1", ["FT-2"])
+    _, _, _, order, _, _ = _wire(
+        monkeypatch,
+        tmp_path,
+        entries=[entry],
+        tracker=tracker,
+        prs={("feat/FT-1-x", "merged"): {"id": "9", "head_sha": "head-sha"}},
+    )
+    code, _report = fz.finalize(main, "FT-1")
+    assert code == fz.EXIT_OK
+    # Two transitions (lead, then cover) both land before observe, and the reap is last.
+    assert order == ["transition", "transition", "observe", "delete_branch", "reap"]
+
+
+def test_a_failing_cover_transition_is_recorded_not_swallowed(monkeypatch, tmp_path):
+    # Best-effort must not mean invisible: after the reap the report is the only place the
+    # miss can still be seen.
+    main = tmp_path / "repo"
+    entry = _worktree_entry(main)
+    tracker = _KeyedTracker()
+    _write_covers(main, "FT-1", ["FT-2"])
+    _wire(
+        monkeypatch,
+        tmp_path,
+        entries=[entry],
+        tracker=tracker,
+        prs={("feat/FT-1-x", "merged"): {"id": "9", "head_sha": "head-sha"}},
+    )
+
+    real_transition = fz._transition_to_done
+
+    def flaky(root, key):
+        if key == "FT-2":
+            raise RuntimeError("tracker 401")
+        return real_transition(root, key)
+
+    monkeypatch.setattr(fz, "_transition_to_done", flaky)
+    code, report = fz.finalize(main, "FT-1")
+    assert code == fz.EXIT_OK
+    assert report["steps"]["transition_covers"]["FT-2"] == {
+        "action": "failed",
+        "reason": "tracker 401",
+    }
+
+
+def test_dry_run_names_the_covers_it_would_close(monkeypatch, tmp_path):
+    main = tmp_path / "repo"
+    entry = _worktree_entry(main)
+    tracker = _KeyedTracker()
+    _write_covers(main, "FT-1", ["FT-2"])
+    _wire(
+        monkeypatch,
+        tmp_path,
+        entries=[entry],
+        tracker=tracker,
+        prs={("feat/FT-1-x", "merged"): {"id": "9", "head_sha": "head-sha"}},
+    )
+    code, report = fz.finalize(main, "FT-1", dry_run=True)
+    assert code == fz.EXIT_OK
+    assert report["steps"]["transition_covers"] == {"action": "would_run", "keys": ["FT-2"]}
+    assert tracker.keys == []
+
+
+def test_branch_only_finalize_reports_no_covers(monkeypatch, tmp_path):
+    # No worktree means no frontmatter to read; guessing from commit trailers would be a
+    # different source of truth than the one the fan-out is specified against.
+    main = tmp_path / "repo"
+    tracker = _KeyedTracker()
+    _wire(
+        monkeypatch,
+        tmp_path,
+        tracker=tracker,
+        local_branches=["feat/FT-1-x"],
+        prs={("feat/FT-1-x", "merged"): {"id": "9"}},
+    )
+    code, report = fz.finalize(main, "FT-1")
+    assert code == fz.EXIT_OK
+    assert report["covers"] == []
+    assert tracker.keys == ["FT-1"]
