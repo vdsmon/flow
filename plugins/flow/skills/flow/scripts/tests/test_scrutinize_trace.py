@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import time
 from pathlib import Path
 
 import scrutinize_trace as st
@@ -301,10 +303,14 @@ def test_mine_dir_counts_carryover_fork_once_despite_new_session_id(tmp_path):
     now = time.time()
     os.utime(parent, (now - 100, now - 100))
     os.utime(fork, (now, now))
-    reports = {r["session"]: r for r in st.mine_dir(tmp_path)}
+    mined = st.mine_dir(tmp_path)
+    reports = {r["session"]: r for r in mined}
     assert len(reports["parent"]["tool_errors"]) == 1
-    assert reports["fork"]["tool_errors"] == []
-    assert reports["fork"]["shared_prefix_lines"] == reports["parent"]["lines"]
+    # The fork carried nothing of its own, so it is no longer a report a caller could
+    # count as a session; it survives as provenance on the parent it repeats.
+    assert "fork" not in reports
+    assert len(mined) == 1
+    assert reports["parent"]["fork_files"] == ["fork"]
 
 
 def test_mine_dir_fork_result_joins_prefix_tool_use(tmp_path):
@@ -345,3 +351,44 @@ def test_mine_dir_fork_result_joins_prefix_tool_use(tmp_path):
     reports = {r["session"]: r for r in st.mine_dir(tmp_path)}
     (error,) = reports["f2"]["tool_errors"]
     assert error["command"] == "slowcmd"
+
+
+def test_mine_dir_names_the_parent_of_a_partial_fork(tmp_path):
+    # A fork that continues past the shared prefix keeps its own report, because its later
+    # events are real and counted nowhere else. What it gains is the linkage: a seat reading
+    # 14 reports for 10 sessions (2026-08-13) had no way to see which files were two halves
+    # of one run.
+    prefix = [
+        _event(
+            "2026-08-03T10:00:00Z",
+            "assistant",
+            [_tool_use("x1", "Bash", {"command": "shared"})],
+        ),
+    ]
+    tail = [
+        _event(
+            "2026-08-03T11:00:00Z",
+            "assistant",
+            [_tool_use("x2", "Bash", {"command": "fork-only"})],
+        ),
+    ]
+    parent = _write_session(tmp_path, "p9", prefix)
+    fork = _write_session(tmp_path, "f9", prefix + tail)
+    now = time.time()
+    os.utime(parent, (now - 100, now - 100))
+    os.utime(fork, (now, now))
+
+    reports = {r["session"]: r for r in st.mine_dir(tmp_path)}
+    assert reports["p9"]["fork_parent"] is None
+    assert reports["f9"]["fork_parent"] == "p9"
+    # Both stay: the partial fork owns its tail, so folding it would lose events.
+    assert len(reports) == 2
+
+
+def test_mine_dir_keeps_an_independently_empty_session(tmp_path):
+    # A session that genuinely did nothing shares no prefix with anyone. Folding on "no
+    # signals" alone would erase it; folding requires every line to be a duplicate first.
+    _write_session(tmp_path, "quiet", [_event("2026-08-03T10:00:00Z", "assistant", [])])
+    reports = {r["session"]: r for r in st.mine_dir(tmp_path)}
+    assert "quiet" in reports
+    assert reports["quiet"]["fork_parent"] is None
