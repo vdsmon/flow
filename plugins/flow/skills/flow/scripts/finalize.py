@@ -14,14 +14,16 @@ Probe (no writes):
   1. Enumerate worktrees; the primary checkout is the target root. Refuse when invoked FROM the
      ticket's own worktree (the driver must re-invoke from the primary checkout before the reap).
   2. Locate the ticket's branch: the managed worktree's checked-out branch, else the unique local
-     `feat/<key>*` branch.
+     `feat/<key>*` branch. Read `covers` from the worktree's ticket frontmatter here, while it
+     still exists: step (d) reaps the worktree that holds it.
   3. Require merged-PR proof through the forge seam. An open PR, or no PR, is "not merged yet" and
      exits 3 with zero writes, so a host-owned watch can simply re-invoke until exit 0.
   4. Refuse on a live or corrupt run lease, and on a merged-head/worktree-tip mismatch (the
      worktree may hold a newer generation than the PR that merged).
 
 Finalize (order mirrors the evolve-drain reap):
-  a. transition the ticket to done through the tracker seam (skip when already terminal);
+  a. transition the ticket to done through the tracker seam (skip when already terminal), then
+     fan out the same transition to the `covers` siblings read during the probe;
   b. freeze the ship event (`observe_at_close`) before the run state it reads is destroyed;
   c. delete the remote branch through the forge seam;
   d. reap the local worktree + branch (`reap_worktree`: lease-gated, checkpoints dirty work to a
@@ -62,6 +64,7 @@ from typing import Any
 import _runner
 import branch_ticket
 import observe_at_close
+import ticket_frontmatter
 from _runner import CwdRunner as Runner
 from _runner import cwd_default_runner as _default_runner
 from flow_worktree import is_ticket_branch, reap_worktree
@@ -147,6 +150,40 @@ def _transition_to_done(main_root: Path, key: str) -> dict[str, Any]:
     return {"action": "transitioned", "from": normalized}
 
 
+def _read_covers(wt_path: Path | None, key: str) -> list[str]:
+    """The lead's co-delivered siblings, read from the run's own ticket frontmatter.
+
+    Read during the probe, never later: the frontmatter lives inside the worktree that
+    step (d) reaps, so after the reap there is no local evidence the siblings were ever
+    co-delivered and no sweep can recover them (FT-1602/FT-1605, 2026-08-11, the run's
+    own MAJOR friction entry). A branch-only finalize has no frontmatter to read and
+    reports no covers rather than guessing from commit trailers.
+    """
+    if wt_path is None:
+        return []
+    fm = ticket_frontmatter.read(wt_path / ".flow" / "tickets" / f"{key}.md")
+    covers = fm.get("covers") if isinstance(fm, dict) else None
+    if isinstance(covers, str):
+        covers = [covers]
+    return [str(c).strip() for c in covers or [] if str(c).strip()]
+
+
+def _transition_covers(main_root: Path, covers: list[str]) -> dict[str, Any]:
+    """Close the lead's co-delivered siblings, one recorded outcome per key.
+
+    Best-effort like the lead's own transition, but never silent: a miss here is
+    unrecoverable once the reap removes the frontmatter that named these keys, so the
+    report is the only place the failure can still be seen.
+    """
+    results: dict[str, Any] = {}
+    for cover in covers:
+        try:
+            results[cover] = _transition_to_done(main_root, cover)
+        except Exception as exc:
+            results[cover] = {"action": "failed", "reason": str(exc)}
+    return results
+
+
 def finalize(
     workspace_root: Path, key: str, *, dry_run: bool = False
 ) -> tuple[int, dict[str, Any]]:
@@ -170,10 +207,11 @@ def finalize(
                 "re-invoke from the primary checkout so the reap does not remove the cwd"
             )
         report.update({"worktree": str(wt_path), "branch": branch, "tip": tip})
+        report["covers"] = _read_covers(wt_path, key)
     else:
         wt_path, tip = None, None
         branch = _local_ticket_branch(runner, key)
-        report.update({"worktree": None, "branch": branch, "tip": None})
+        report.update({"worktree": None, "branch": branch, "tip": None, "covers": []})
         if branch is None:
             raise FinalizeError(f"no worktree or local branch belongs to {key}; nothing to prove")
 
@@ -204,16 +242,20 @@ def finalize(
 
     steps: dict[str, Any] = {}
     report["steps"] = steps
+    covers: list[str] = report["covers"]
     if dry_run:
         steps["transition"] = steps["observe"] = steps["delete_remote_branch"] = steps["reap"] = {
             "action": "would_run"
         }
+        steps["transition_covers"] = {"action": "would_run", "keys": covers}
         return EXIT_OK, report
 
     try:
         steps["transition"] = _transition_to_done(main_root, key)
     except Exception as exc:
         steps["transition"] = {"action": "failed", "reason": str(exc)}
+
+    steps["transition_covers"] = _transition_covers(main_root, covers)
 
     steps["observe"] = observe_at_close.observe_at_close(main_root, key, wt_path)
     action = steps["observe"].get("action")
