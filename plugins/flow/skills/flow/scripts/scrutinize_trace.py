@@ -1,8 +1,10 @@
 """Transcript trace miner for the scrutinize sweep.
 
 Library + thin CLI behind the `scrutinize-trace` facade command. The seat's sweep reads
-session transcripts under `~/.claude/projects/<workspace-slug>/` for the performance and
-nudge lenses; before this script every seat rebuilt the same ad-hoc miner from scratch
+session transcripts under `<config-root>/projects/<workspace-slug>/` for the performance
+and nudge lenses, once per config root since `CLAUDE_CONFIG_DIR` gives a non-default
+profile its own tree; before this script every seat rebuilt the same ad-hoc miner from
+scratch
 (witnessed 2026-08-03: a fresh ~90-line one-off, doing what the previous sweep's one-off
 did). This is that miner, made durable: one incremental pass per session file, never
 loading a transcript whole, emitting the four signal families the charter's lenses read:

@@ -106,11 +106,19 @@ After runs finish (a drain, a morning pickup, or straight from a clean seating),
 the durable evidence and synthesize. The sources, all passive and all survivable
 past the run:
 
-- **Session transcripts** under `~/.claude/projects/<workspace-slug>/`, keyed by the
-  session's working directory (the slug moves with cwd, so resolve it fresh, never
-  from a cached path). Mine them with the engine's miner rather than a fresh one-off
-  (every seat before it rebuilt the same ~90-line script from scratch); it parses
-  incrementally and never loads a transcript whole:
+- **Session transcripts**, one directory per workspace slug under a Claude Code config
+  root: `~/.claude/projects/<workspace-slug>/` for the default profile, plus
+  `<profile-root>/projects/<workspace-slug>/` for every other profile the human runs.
+  `CLAUDE_CONFIG_DIR` relocates the whole tree, so a work profile launched with it
+  (`~/.claude-work` on this machine, wired as a shell wrapper) keeps its own
+  `projects/`, and a delivery workspace's runs can live entirely there. Enumerate the
+  roots first (`~/.claude` and its sibling profile roots) and mine the slug under each;
+  a slug missing from one root is normal and never means the workspace had no runs, so
+  do not read its absence as an empty census. The slug is keyed by the session's working
+  directory and moves with cwd, so resolve it fresh, never from a cached path. Mine each
+  with the engine's miner rather than a fresh one-off (every seat before it rebuilt the
+  same ~90-line script from scratch); it parses incrementally and never loads a
+  transcript whole, and takes one root per invocation:
 
   ```bash
   FLOW_HARNESS="<harness>" "<facade>" scrutinize-trace \
