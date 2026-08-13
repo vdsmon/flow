@@ -335,6 +335,51 @@ def test_ttp_attended_split_from_planning_stamp(tmp_path: Path) -> None:
     assert row["attended_hours"] == 1.0
 
 
+def test_ttp_rolls_up_the_attended_half(tmp_path: Path) -> None:
+    # The headline covers plan gate to PR. Attended time exceeded it in four of six runs
+    # on the brinta window and held ~55% of the total, and reading that balance used to
+    # mean rebuilding it from transcripts by hand (flow-ns39).
+    _seed_workspace(tmp_path)
+    for ticket, planning, plan, pr in (
+        ("FT-1", "2026-05-19T20:00:00Z", "2026-05-20T00:00:00Z", "2026-05-20T02:00:00Z"),
+        ("FT-2", "2026-05-19T18:00:00Z", "2026-05-20T00:00:00Z", "2026-05-20T06:00:00Z"),
+    ):
+        path = _write_stamped_ship_event(
+            tmp_path,
+            ticket,
+            shipped_at="2026-05-20T10:00:00Z",
+            plan_started=plan,
+            create_pr_finished=pr,
+        )
+        record = json.loads(path.read_text(encoding="utf-8"))
+        record["flow_attribution"]["planning_started_at_iso"] = planning
+        path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+    result = _compute_ttp(tmp_path)
+    assert result["n_attended"] == 2
+    # attended 4h and 6h; machine 2h and 6h.
+    assert result["median_attended_hours"] == 5.0
+    assert result["median_total_hours"] == 9.0
+    assert result["attended_share"] == round(10 / 18, 6)
+
+
+def test_ttp_attended_rollup_is_zero_when_nothing_is_stamped(tmp_path: Path) -> None:
+    # A workspace whose events predate the planning stamp reports no attended half rather
+    # than a share computed from an empty set.
+    _seed_workspace(tmp_path)
+    _write_stamped_ship_event(
+        tmp_path,
+        "FT-1",
+        shipped_at="2026-05-20T10:00:00Z",
+        plan_started="2026-05-20T00:00:00Z",
+        create_pr_finished="2026-05-20T12:00:00Z",
+    )
+    result = _compute_ttp(tmp_path)
+    assert result["n_attended"] == 0
+    assert result["attended_share"] == 0
+    assert result["median_hours"] == 12.0
+
+
 def test_ttp_unparseable_planning_stamp_adds_no_attended_keys(tmp_path: Path) -> None:
     _seed_workspace(tmp_path)
     path = _write_stamped_ship_event(

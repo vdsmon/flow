@@ -303,6 +303,15 @@ def compute_time_to_pr(
         tickets.append(row)
 
     tickets.sort(key=lambda t: (t["time_to_pr_hours"], str(t["ticket"])))
+    # The headline figure covers plan gate to PR, which is not where most of a ticket's
+    # wall clock goes: measured over the 2026-08-10..13 brinta window, attended time
+    # exceeded it in four of six runs and held roughly 55% of the total. Per-ticket
+    # `attended_hours` was already recorded here, but nothing aggregated it, so seeing the
+    # balance meant rebuilding it from transcripts by hand (flow-ns39). These roll it up
+    # beside the existing figures rather than replacing them, because the machine span is
+    # still the one flow controls end to end.
+    attended = [t["attended_hours"] for t in tickets if "attended_hours" in t]
+    totals = [t["attended_hours"] + t["time_to_pr_hours"] for t in tickets if "attended_hours" in t]
     return {
         "since": since_iso,
         "until": until_iso,
@@ -310,12 +319,32 @@ def compute_time_to_pr(
         "n_skipped": len(skipped),
         "median_hours": percentile(hours, 50.0),
         "p90_hours": percentile(hours, 90.0),
+        "n_attended": len(attended),
+        "median_attended_hours": percentile(attended, 50.0),
+        "p90_attended_hours": percentile(attended, 90.0),
+        "median_total_hours": percentile(totals, 50.0),
+        "attended_share": (
+            round(sum(attended) / sum(totals), 6) if attended and sum(totals) > 0 else 0
+        ),
         "tickets": tickets,
         "skipped": skipped,
     }
 
 
 # ─── Friction per run ────────────────────────────────────────────────────────
+
+
+def _shipped_run_ids(workspace_root: Path, namespace: str, *, since: Any, until: Any) -> set[str]:
+    """Run ids of ship events frozen in the window, for denominators that need clean runs."""
+    ids: set[str] = set()
+    for event in load_ship_events(workspace_root, namespace):
+        shipped_at = parse_iso(str(event.get("shipped_at")))
+        if shipped_at is None or not (since <= shipped_at < until):
+            continue
+        run_id = event.get("observed_by_run_id")
+        if isinstance(run_id, str) and run_id:
+            ids.add(run_id)
+    return ids
 
 
 def compute_friction_per_run(
@@ -364,13 +393,21 @@ def compute_friction_per_run(
         if isinstance(severity, str):
             by_severity[severity] = by_severity.get(severity, 0) + 1
 
-    run_count = len(runs)
+    # A run that logged nothing is the outcome this measure exists to reward, so the
+    # denominator cannot be "runs that logged friction": that set is exactly the runs with
+    # at least one event, which floors events_per_run at 1.0 and makes the metric unable to
+    # report its own success. Ship events supply the runs that finished clean; the union is
+    # every run the window has evidence for, whether or not it complained.
+    shipped_runs = _shipped_run_ids(workspace_root, namespace, since=since, until=until)
+    all_runs = runs | shipped_runs
+    run_count = len(all_runs)
     events_per_run = round(total_events / run_count, 6) if run_count > 0 else 0
     return {
         "since": since_iso,
         "until": until_iso,
         "total_events": total_events,
         "runs": run_count,
+        "runs_with_friction": len(runs),
         "events_per_run": events_per_run,
         "by_type": by_type,
         "by_severity": by_severity,

@@ -223,3 +223,93 @@ def test_cli_no_flow_dir(tmp_path: Path, capsys) -> None:
     )
     assert rc == 1
     assert "no .flow" in capsys.readouterr().err
+
+
+def _write_ship_event(root: Path, ticket: str, run_id: str, *, namespace: str = "demo") -> None:
+    ship_dir = root / ".flow" / namespace / "ship-events"
+    ship_dir.mkdir(parents=True, exist_ok=True)
+    (ship_dir / f"{ticket}.json").write_text(
+        json.dumps(
+            {
+                "ticket": ticket,
+                "shipped_at": "2026-05-20T10:00:00Z",
+                "evidence": {"merged": True},
+                "observed_at": "2026-05-20T10:00:00Z",
+                "observed_by_run_id": run_id,
+            },
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def test_clean_runs_count_in_the_denominator(tmp_path):
+    # Denominator = runs the window has evidence for, not runs that complained. Counting
+    # only complaining runs floors events_per_run at 1.0, so the measure could never show
+    # flow getting better (flow-qlwe).
+    _seed_workspace(tmp_path)
+    _write_friction(
+        tmp_path,
+        [
+            {"id": "a", "ts": "2026-05-20T09:00:00Z", "run_id": "noisy", "type": "DRIFT"},
+            {"id": "b", "ts": "2026-05-20T09:30:00Z", "run_id": "noisy", "type": "DRIFT"},
+        ],
+    )
+    _write_ship_event(tmp_path, "FT-1", "noisy")
+    _write_ship_event(tmp_path, "FT-2", "clean-1")
+    _write_ship_event(tmp_path, "FT-3", "clean-2")
+
+    result = metric.compute_friction_per_run(
+        tmp_path, "demo", since_iso="2026-05-14T00:00:00Z", until_iso="2026-05-28T12:00:00Z"
+    )
+    assert result["total_events"] == 2
+    assert result["runs"] == 3
+    assert result["runs_with_friction"] == 1
+    assert result["events_per_run"] < 1.0
+
+
+def test_a_run_with_friction_but_no_ship_event_still_counts_once(tmp_path):
+    # An open PR has no frozen ship event, so its run is known only through its friction.
+    # Union, not replacement: dropping it would hide in-flight cost entirely.
+    _seed_workspace(tmp_path)
+    _write_friction(
+        tmp_path,
+        [{"id": "a", "ts": "2026-05-20T09:00:00Z", "run_id": "in-flight", "type": "DRIFT"}],
+    )
+    _write_ship_event(tmp_path, "FT-1", "in-flight")
+    _write_ship_event(tmp_path, "FT-2", "shipped")
+
+    result = metric.compute_friction_per_run(
+        tmp_path, "demo", since_iso="2026-05-14T00:00:00Z", until_iso="2026-05-28T12:00:00Z"
+    )
+    assert result["runs"] == 2
+    assert result["events_per_run"] == 0.5
+
+
+def test_ship_events_outside_the_window_do_not_pad_the_denominator(tmp_path):
+    _seed_workspace(tmp_path)
+    _write_friction(
+        tmp_path,
+        [{"id": "a", "ts": "2026-05-20T09:00:00Z", "run_id": "noisy", "type": "DRIFT"}],
+    )
+    _write_ship_event(tmp_path, "FT-1", "noisy")
+    ship_dir = tmp_path / ".flow" / "demo" / "ship-events"
+    (ship_dir / "FT-OLD.json").write_text(
+        json.dumps(
+            {
+                "ticket": "FT-OLD",
+                "shipped_at": "2026-01-01T10:00:00Z",
+                "evidence": {"merged": True},
+                "observed_at": "2026-01-01T10:00:00Z",
+                "observed_by_run_id": "ancient",
+            },
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    result = metric.compute_friction_per_run(
+        tmp_path, "demo", since_iso="2026-05-14T00:00:00Z", until_iso="2026-05-28T12:00:00Z"
+    )
+    assert result["runs"] == 1
