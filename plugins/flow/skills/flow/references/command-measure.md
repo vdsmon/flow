@@ -44,10 +44,14 @@ to Flow. Do not infer shipment from a closed tracker ticket alone.
 For Flow-attributed ship events, measure plan start through PR creation. Report sample
 size with median and p90 so a tiny sample is not presented as stable trend.
 
+Report the attended half alongside it, never instead of it: `median_attended_hours`, `p90_attended_hours`, `median_total_hours`, and `attended_share` cover planning start through the plan gate, the span the headline figure deliberately excludes because flow does not control it. Excluding it from the headline is right; leaving it unaggregated was not. Attended time exceeded the machine span in four of six runs on the 2026-08-10..13 delivery window and held roughly 55% of each ticket's wall clock, and reading that balance meant rebuilding it from transcripts by hand. A workspace whose events predate the planning stamp reports `n_attended: 0` and a zero share rather than a ratio over an empty set.
+
 ### Friction
 
 Read the namespaced friction log. Report total events, distinct runs, events per run,
 and breakdowns by stage/type/severity.
+
+The denominator counts every run the window has evidence for, which is the friction log's run ids unioned with the run ids of ship events frozen in the window. Counting only the runs that logged something makes the denominator identical to the set of runs with at least one event, which floors events per run at 1.0 and leaves the measure unable to report its own success; a window where half the runs went clean would read the same as one where none did. `runs_with_friction` stays in the report so the two populations remain separable, and a run with friction but no ship event (an open PR, no frozen event) still counts once rather than being dropped.
 
 ### Reverts
 
