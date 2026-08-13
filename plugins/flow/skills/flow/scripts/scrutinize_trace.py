@@ -169,7 +169,11 @@ def _mine_subagents(session_dir: Path, *, since: str | None = None) -> list[dict
 
 
 def mine_session(
-    path: Path, *, since: str | None = None, seen: set[int] | None = None
+    path: Path,
+    *,
+    since: str | None = None,
+    seen: set[int] | None = None,
+    owners: dict[int, str] | None = None,
 ) -> dict[str, Any]:
     """One incremental pass over a session transcript; returns the signal families.
 
@@ -181,19 +185,27 @@ def mine_session(
     counted 13 vs 10 unique), so lines hash with the sessionId stamp stripped. A
     repeated line still feeds `pending` so tool use/result joins survive the fork
     boundary, but contributes no signals and no span, so a shared line counts once,
-    attributed to whichever file is mined first."""
+    attributed to whichever file is mined first.
+
+    `owners` records which session first claimed each line hash, which is what turns the
+    dedup into a visible relationship: the report gains `fork_parent` naming the session
+    it repeats. Without it the dedup is correct but invisible, and a caller summing one
+    report per FILE still over-counts sessions even though every event counts once
+    (witnessed 2026-08-13: 14 reports for 10 real sessions)."""
     report: dict[str, Any] = {
         "session": path.stem,
         "first": None,
         "last": None,
         "lines": 0,
         "shared_prefix_lines": 0,
+        "fork_parent": None,
         "user_messages": [],
         "flow_calls": [],
         "agent_spawns": [],
         "tool_errors": [],
     }
     pending: dict[str, tuple[str, str, str]] = {}
+    parents: dict[str, int] = {}
     for line, event in _iter_events(path):
         report["lines"] += 1
         duplicate = False
@@ -203,6 +215,10 @@ def mine_session(
             seen.add(key)
             if duplicate:
                 report["shared_prefix_lines"] += 1
+                if owners is not None and (parent := owners.get(key)):
+                    parents[parent] = parents.get(parent, 0) + 1
+            elif owners is not None:
+                owners[key] = path.stem
         stamp = event.get("timestamp") or ""
         if stamp and not duplicate:
             report["first"] = report["first"] or stamp
@@ -241,6 +257,8 @@ def mine_session(
                     report["tool_errors"],
                     agent_spawns=report["agent_spawns"],
                 )
+    if parents:
+        report["fork_parent"] = max(parents.items(), key=lambda item: item[1])[0]
     report["subagents"] = _mine_subagents(path.parent / path.stem, since=since)
     return report
 
@@ -248,18 +266,40 @@ def mine_session(
 def mine_dir(
     transcript_dir: Path, *, since: str | None = None, sessions: list[str] | None = None
 ) -> list[dict[str, Any]]:
-    """Mine every session transcript in the window, newest last."""
+    """Mine every session transcript in the window, newest last.
+
+    A transcript whose every line was already claimed by an earlier file carries no
+    signal of its own: it is a fork stub, and returning it as a report invites a caller
+    to count it as a session. Those fold into their parent's `fork_files` and drop out.
+    A partial fork keeps its report, because it does carry events past the shared prefix,
+    and names its origin in `fork_parent` so the relationship survives into the caller.
+    """
     wanted = set(sessions or [])
     reports = []
     seen: set[int] = set()
+    owners: dict[int, str] = {}
     for path in sorted(transcript_dir.glob("*.jsonl"), key=lambda p: p.stat().st_mtime):
         if wanted and path.stem not in wanted:
             continue
-        report = mine_session(path, since=since, seen=seen)
+        report = mine_session(path, since=since, seen=seen, owners=owners)
         if since and report["last"] and report["last"] < since:
             continue
         reports.append(report)
-    return reports
+    return _fold_fork_stubs(reports)
+
+
+def _fold_fork_stubs(reports: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Drop wholly-duplicate reports, recording each on the parent it repeats."""
+    by_session = {report["session"]: report for report in reports}
+    kept: list[dict[str, Any]] = []
+    for report in reports:
+        stub = report["lines"] > 0 and report["shared_prefix_lines"] == report["lines"]
+        parent = by_session.get(report["fork_parent"] or "")
+        if stub and parent is not None:
+            parent.setdefault("fork_files", []).append(report["session"])
+            continue
+        kept.append(report)
+    return kept
 
 
 def _render(reports: list[dict[str, Any]]) -> str:

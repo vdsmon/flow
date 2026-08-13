@@ -13,6 +13,8 @@ FLOW_HARNESS="<harness>" "<facade>" scrutinize-trace \
 
 Capture that JSON to a scratch file. It carries, per session: `flow_calls` (timestamped facade calls with subcommand), `tool_errors`, `user_messages`, `agent_spawns`, and `subagents` (the per-agent spans whose wall clock lives nowhere else).
 
+One report is not one session, and the difference is now visible in the report rather than left for the seat to notice. A resumed or compacted session forks its transcript into a second file that repeats the first verbatim; every event still counts exactly once, because lines hash with the sessionId stamp stripped, but the FILES remain two. A fork that carried nothing of its own is folded into the parent it repeats and named in the parent's `fork_files`; a fork that continued past the shared prefix keeps its own report, because its tail is real, and names its origin in `fork_parent`. So a report carrying `fork_parent` is half of a run you are already counting, and summing per-session counts across every report over-counts sessions, not events. The 2026-08-13 sweep handed its gather agents a census built by summing 14 reports for 10 real sessions; a lens caught it, which is the wrong place for that to be caught.
+
 **The gather-agent contract.** One read-only agent per lens, spawned through the host Agent tool with a sonnet model hint, all in parallel. Agents gather and summarize; the seat judges. An agent NEVER mints a bead, never writes a store or tracker, never runs a mutating probe, and never loads seat memory; one minting seat plus file-anchored dedup keys is what keeps one defect one bead, and that property dies the moment a gatherer files anything. Each agent prompt carries this rooted field block plus the one lens section it executes:
 
 ```text
