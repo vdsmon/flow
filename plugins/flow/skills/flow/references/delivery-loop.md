@@ -27,6 +27,8 @@ unrecoverable state, or workspace violation returns to the target lifecycle as
 `running` or `repair`. If acquisition failed, do not release because this driver never
 held the lease.
 
+4. Re-pin the session on the run root before the first command that writes there. On Claude Code that is `EnterWorktree` with the absolute `run_root` path; hosts without a native switch skip this step. Do it proactively, at adoption, rather than waiting for the refusal: the host blocks the first confined write with "this command is too complex to verify that it stays inside the worktree" or "This session is isolated in the worktree", and every blocked call is a wasted round trip at a stage boundary. That block was the single largest error class in the 2026-08-10..13 delivery window, 18 of 71 tool errors across three runs, all of them rediscovering a re-pin that costs one call up front (flow-l6lk). The pin is per attempt, not durable, so §Handler downgrade's rule still stands for a refusal that arrives later in the run.
+
 ## Iterate
 
 Request the first descriptor:
@@ -48,6 +50,8 @@ narrating progress is none of them. This line exists on three same-day witnesses
 before commit, each time wrapping up with a status summary instead of advancing, and
 each time a human nudge was what resumed a healthy run. If there is a wrap-up worth
 writing, write it AND issue the next loop step in the same turn.
+
+**The descriptor now carries the obligation itself, because prose alone has not held.** Every dispatchable descriptor includes a `driver_obligation` string naming the stage to execute in this turn and stating that ending the turn strands the run. It is deliberate redundancy with the paragraph above: the rule has been rewritten three times and re-witnessed each time, twice on engines that already carried the current wording, so the fix stopped being about what the prose says and became about where the driver meets it. A field sitting beside `stage` in the JSON the driver just parsed is read; a paragraph read once at session start is not. The fifth witness (2026-08-11, FT-1602 on a delivery workspace) is the plainest of the five: the dispatcher advanced to implement, the driver recorded the diff baseline, and then nothing happened for 34 minutes until a human typed a bare "continue", after which the implement agent started 34 seconds later. Two more of the same shape sat in the same window, at both edges of implement (FT-1629 idled 27 minutes before the spawn, FT-1607 idled 53 minutes after the return against a 12.6-minute agent), which is what settled that no narrative wrap-up and no sub-skill return is required to trigger it: the plain descriptor boundary is enough.
 
 **An inline sub-skill's return is not a stopping point either.** Some stages invoke an
 installed skill inline in the driver conversation (the create_pr stage's humanize pass

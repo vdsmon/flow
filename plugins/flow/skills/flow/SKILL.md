@@ -266,7 +266,9 @@ reflect. The run is done when the dispatcher returns done, not when a PR exists.
 Parse the returned branches structurally: `{"done": true}` is complete, while
 `{"done": false, "blocked_by": "<stage>", "reason": "<text>"}` is a durable
 stop. Otherwise expect a handler descriptor with `stage`, `handler_type`, `head_sha`,
-`ticket_dir`, `output_path`, and `roles`. If `descriptor.roles` includes `"records_diff_baseline"`,
+`ticket_dir`, `output_path`, `roles`, and `driver_obligation`. That last field states the
+continuation this loop owes in the driver's own turn; it repeats the rule above because
+five witnesses show the rule being read past. If `descriptor.roles` includes `"records_diff_baseline"`,
 capture the owned-file baseline before the handler. The driver follows
 `references/delivery-plan.md`.
 
