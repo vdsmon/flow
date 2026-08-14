@@ -1290,6 +1290,22 @@ def _refuse_offcontract_branch(*, ticket: str, branch: str, hotfix: bool = False
         )
 
 
+def _refuse_offcontract_hotfix_base(*, base: str) -> None:
+    """A hotfix cuts from the freshly-fetched remote default, never a workspace base.
+
+    The lane contract is `--base "@default"` (delivery-plan.md); enforced here so no
+    caller can substitute the workspace integration branch. Witnessed 2026-08-14: a
+    driver read a workspace's "PRs always target dev" convention as overriding the
+    lane, moved a hotfix branch onto origin/dev before the first commit, and the fix
+    had to be re-cut off the default branch with a force-push cleanup.
+    """
+    if base.strip() != _DEFAULT_BASE:
+        raise _ConfigError(
+            f"hotfix-lane bootstrap refuses base {base!r}: a hotfix always cuts from "
+            f"the freshly-fetched remote default branch; pass --base {_DEFAULT_BASE!r}"
+        )
+
+
 def bootstrap(
     *,
     ticket: str,
@@ -1318,6 +1334,9 @@ def bootstrap(
     e2e_recipe = (e2e_recipe or "").strip() or None
 
     _refuse_offcontract_branch(ticket=ticket, branch=branch, hotfix=hotfix)
+
+    if hotfix:
+        _refuse_offcontract_hotfix_base(base=base)
 
     _refuse_unrunnable_e2e(main_root=main_root, e2e_recipe=e2e_recipe)
 
@@ -1564,8 +1583,9 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument(
         "--hotfix",
         action="store_true",
-        help="hotfix-lane run: the branch must carry the hotfix/<ticket> prefix (cut it "
-        "off '@default' so it bases on the fresh remote default), the dispatcher runs "
+        help="hotfix-lane run: the branch must carry the hotfix/<ticket> prefix and "
+        "--base must be '@default' (any other base is refused: a hotfix always cuts "
+        "from the fresh remote default), the dispatcher runs "
         "subagent-wired stages inline in the driver, and the PR opens ready for review "
         "against the remote default branch. Verification-lane rules are unchanged: the "
         "hot clamp to full still applies",

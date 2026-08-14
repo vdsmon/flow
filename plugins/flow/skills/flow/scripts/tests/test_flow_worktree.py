@@ -2824,11 +2824,22 @@ def test_bootstrap_refuses_feat_branch_in_hotfix_mode(tmp_path: Path) -> None:
     assert not (tmp_path / "wt").exists()
 
 
+def test_bootstrap_refuses_hotfix_off_workspace_base(tmp_path: Path) -> None:
+    # 2026-08-14: a hotfix branch got moved onto the workspace integration branch
+    # because "PRs always target dev" was read as overriding the lane. The base is
+    # a lane constant now: anything but "@default" refuses before any git mutation.
+    main = _main_checkout(tmp_path)
+    for bad in ("dev", "origin/dev", "main"):
+        with pytest.raises(fw._ConfigError, match="hotfix always cuts from"):
+            _run(tmp_path, main, branch="hotfix/FT-1-thing", hotfix=True, base=bad)
+    assert not (tmp_path / "wt").exists()
+
+
 def test_hotfix_bootstrap_seeds_state_and_frontmatter(tmp_path: Path) -> None:
     import ticket_frontmatter
 
     main = _main_checkout(tmp_path)
-    res = _run(tmp_path, main, branch="hotfix/FT-1-thing", hotfix=True)
+    res = _run(tmp_path, main, branch="hotfix/FT-1-thing", hotfix=True, base="@default")
     td = Path(res["worktree"]) / ".flow" / "runs" / "FT-1"
     ts, code = state.read(td)
     assert code == 0

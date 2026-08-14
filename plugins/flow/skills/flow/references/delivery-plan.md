@@ -275,7 +275,7 @@ FLOW_HARNESS="<harness>" "<facade>" worktree create \
   --e2e-recipe "<recipe or skip: reason>"
 ```
 
-A hotfix-lane run adds `--hotfix`, names `--branch "hotfix/<ticket-slug>"`, and passes `--base "@default"` so the branch cuts from the freshly-fetched remote default; bootstrap refuses a prefix that does not match the mode in either direction. The flag lands in state.json and the run frontmatter, which is what the dispatcher's inline coercion and the create_pr/review_loop hotfix behavior read.
+A hotfix-lane run adds `--hotfix`, names `--branch "hotfix/<ticket-slug>"`, and passes `--base "@default"` so the branch cuts from the freshly-fetched remote default; bootstrap refuses a prefix that does not match the mode in either direction, and refuses any other `--base` in hotfix mode (the workspace's integration-branch convention never applies to a hotfix, and the branch is never moved onto it later by hand). The flag lands in state.json and the run frontmatter, which is what the dispatcher's inline coercion and the create_pr/review_loop hotfix behavior read.
 
 `--lane` carries the lane the human confirmed at the gate (section 2's lane bullet) into durable run state: bootstrap persists it in the ticket frontmatter, a hot change still clamps to full there, and the sweep's lane watch splits its metrics on that recorded field rather than on plan text.
 
