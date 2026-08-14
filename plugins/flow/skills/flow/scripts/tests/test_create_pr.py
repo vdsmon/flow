@@ -559,7 +559,30 @@ def test_cli_hotfix_opens_ready_against_remote_default(tmp_path, monkeypatch):
     assert fg.opened[0]["draft"] is False
 
 
-def test_cli_hotfix_explicit_base_and_draft_still_win(tmp_path, monkeypatch):
+def test_cli_hotfix_refuses_explicit_base(tmp_path, monkeypatch, capsys):
+    # 2026-08-14: a driver "corrected" a hotfix PR onto the workspace integration
+    # branch; the pair now fails loudly instead of letting --base win.
+    _hotfix_workspace(tmp_path)
+    fg = _FakeForge()
+    monkeypatch.setattr(cp, "_resolve_forge", lambda _ws: fg)
+    with pytest.raises(SystemExit) as exc:
+        cp.cli_main(
+            [
+                "--workspace-root",
+                str(tmp_path),
+                "--base",
+                "dev",
+                "--hotfix",
+                "--body-file",
+                str(_bf(tmp_path)),
+            ]
+        )
+    assert exc.value.code == 2
+    assert "--base conflicts with --hotfix" in capsys.readouterr().err
+    assert fg.opened == []
+
+
+def test_cli_hotfix_explicit_draft_still_wins(tmp_path, monkeypatch):
     _hotfix_workspace(tmp_path)
     inner, _ = _git_runner(branch="hotfix/flow-x-fix")
     fg = _FakeForge()
@@ -569,8 +592,6 @@ def test_cli_hotfix_explicit_base_and_draft_still_win(tmp_path, monkeypatch):
         [
             "--workspace-root",
             str(tmp_path),
-            "--base",
-            "release/1.2",
             "--draft",
             "--hotfix",
             "--body-file",
@@ -578,5 +599,5 @@ def test_cli_hotfix_explicit_base_and_draft_still_win(tmp_path, monkeypatch):
         ]
     )
     assert rc == 0
-    assert fg.opened[0]["base"] == "release/1.2"
+    assert fg.opened[0]["base"] == "main"
     assert fg.opened[0]["draft"] is True

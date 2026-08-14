@@ -26,8 +26,10 @@ The base branch resolves as: explicit `--base`, else `[create_pr] base` in
 `workspace.toml`, else `main`. `--hotfix` (hotfix-lane run) instead opens ready for
 review against the remote default branch, ignoring the `[create_pr]` base and draft
 settings: a hotfix always targets what production builds from, even in a workspace
-whose ordinary PRs stack on an integration branch. An explicit `--base`/`--draft`
-still wins over `--hotfix`.
+whose ordinary PRs stack on an integration branch. `--base` with `--hotfix` is
+refused outright (a hotfix base is not negotiable; witnessed 2026-08-14, a driver
+"corrected" a hotfix PR onto the workspace integration branch and the fix had to be
+re-cut). An explicit `--draft` still wins over `--hotfix`.
 
 Exit codes:
   0 = ok (prints PR_URL=<url>)
@@ -212,7 +214,8 @@ def cli_main(argv: list[str]) -> int:
         action="store_true",
         help=(
             "hotfix-lane run: open ready for review against the remote default branch, "
-            "ignoring the [create_pr] base/draft settings (explicit --base/--draft still win)."
+            "ignoring the [create_pr] base/draft settings (--base is refused, explicit "
+            "--draft still wins)."
         ),
     )
     parser.add_argument(
@@ -226,8 +229,14 @@ def cli_main(argv: list[str]) -> int:
     args = parser.parse_args(argv)
     ws = Path(args.workspace_root)
     if args.hotfix:
+        if args.base is not None:
+            # A hotfix targets what production builds from, full stop. A workspace
+            # "PRs target the integration branch" convention never applies to it.
+            parser.error(
+                "--base conflicts with --hotfix: a hotfix always targets the remote default branch"
+            )
         draft = args.draft if args.draft is not None else False
-        base = args.base if args.base is not None else _remote_default_branch(ws)
+        base = _remote_default_branch(ws)
     else:
         draft = args.draft if args.draft is not None else _draft_config(ws)
         base = args.base if args.base is not None else (_base_config(ws) or "main")
