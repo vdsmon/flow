@@ -8,14 +8,12 @@ Opens a PR for the run's feature branch — a draft by default, or ready for rev
 
 ## The template
 
-Human-first: skimmable, short prose, rich markdown, a natural top-to-bottom flow. A reviewer lands cold on the diff, so the body orients them fast. Shape:
+Human-first: skimmable, short prose, rich markdown, a natural top-to-bottom flow. A reviewer lands cold on the diff, so the body orients them fast. The shape below is a scaffold, not a script: the marked-mandatory headings and their order hold, but every sentence inside them is written fresh for this change. Never lift phrasing from this file or from an earlier PR; a sentence opener that repeats across PRs reads as machine output, which is what this stage exists to avoid. Usual shape:
 
 ````
 <lead: what thing changed and why, 2-5 short sentences, plain prose, no header>
 
 ## Changes
-
-Start with `path`: <the heart of the change>; the rest follows from it.
 
 - `path/area`: what + why, 1-2 short sentences
 - ...
@@ -52,9 +50,11 @@ Rules:
   as a continuation of that paragraph, gluing every bullet into one block with literal
   dashes; the blank line is a rendering requirement, not style.
 - `## Changes` and `## How to verify` are mandatory.
-- The `Start with` line under `## Changes` is optional: use it when the diff spans more than
-  about three files, to point at the file that carries the real change so the reviewer reads the
-  rest as fallout. Omit it on small diffs.
+- On a diff that spans more than about three files, point the reviewer at the file that carries
+  the real change so they read the rest as fallout. Say it wherever it lands naturally: a clause
+  in the lead, a sentence before the bullets, or by ordering the bullets so the heart comes
+  first. No set phrasing exists for this pointer, and a stock opener repeated across PRs (a
+  "Start with ..." line on every one) is the failure mode. Skip the pointer on small diffs.
 - An optional `## Decisions` section, right after `## Changes`, lists the settled design
   choices and the reason for each, one sentence per choice, sourced from planning. Only real
   choices earn a bullet: a path taken over a concrete alternative that a reviewer might
@@ -64,12 +64,12 @@ Rules:
 - In an early-tail workspace (stage order places this stage before e2e), the PR simply opens with no `## Evidence` section; the e2e stage later appends its evidence to `stages/pr_body.md` and pushes the updated description through `forge update-body` (`stage-e2e.md` owns that recipe). Do not placehold the missing run here.
 - An optional `## Notes` (edge cases, risk, follow-ups) goes last. OMIT it entirely when empty, never placehold. Reach for `<details>` only on genuine overflow (a long migration list, verbose logs) — authored regardless of forge here too; the script flattens it on Bitbucket.
 - No open-decision section. The code_review stage resolves its ask-user findings with the human in the conversation before it completes, so by the time this stage runs there is nothing left to ask; a PR with open decisions is not ready for review.
-- Size the body to the change. A small change (about three files or fewer, no behavior surprise) gets the minimum: a 1-3 sentence lead, `## Changes` bullets of one short clause each, `## How to verify`, and nothing else. The optional sections exist for changes that earn them; reaching for every section on a routine fix is the failure mode, not thoroughness.
+- Size the body to the change. A small change (about three files or fewer, no behavior surprise) gets the minimum: a 1-3 sentence lead, `## Changes`, `## How to verify`, and nothing else. On a one- or two-file diff, `## Changes` may be two or three plain sentences instead of bullets when prose reads better. The optional sections exist for changes that earn them; reaching for every section on a routine fix is the failure mode, not thoroughness.
 - Keep prose short: people skip walls of text, which defeats the point. Lead 2-5 short sentences, each change bullet 1-2 short sentences, and paragraph breaks wherever a block runs past three sentences. Detail a reviewer only needs while reading the diff belongs in the code or the review brief, not here.
 - Basic English: simple words, short sentences, written for a reader with little context. Spell out abbreviations on first use. No run or pipeline jargon (stage names, handler terms, internal file paths like `plan.out`): the reader knows the repository, not this run. No compound coinages that read as machine writing and cost a non-native reader a second parse: "load-bearing", "quote-bearing" and other "-bearing" forms, "hand-rolled", "battle-tested"; say it plainly ("other code depends on it", "written from scratch"). If a bullet needs a second reading, rewrite it.
 - Do NOT write the `Closes` footer; the script appends it.
 
-A worked example (this same change would render as):
+A worked example (this same change would render as; imitate its length and structure, not its sentences):
 
 ````
 flow opens a pull request at the end of each run. Until now its description was a scrubbed copy of the commit message, which capped it at plain-text quality.
