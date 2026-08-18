@@ -324,3 +324,44 @@ def test_missing_observed_at_goes_stale(tmp_path: Path) -> None:
     assert recall_pending.list_pending(tmp_path) == []
     assert len(_stale_lines(tmp_path)) == 1
     assert json.loads(_stale_lines(tmp_path)[0])["pending_id"] == "deadbeefdeadbeef"
+
+
+# ─── promote: ticket-bound plan-phase entries, and a log rooted elsewhere ────────
+
+
+def test_ticket_bound_entry_promotes_on_ticket_alone_into_log_root(tmp_path: Path) -> None:
+    # The plan-phase recall records from the MAIN checkout with no branch, before the worktree
+    # exists; init in the worktree reads that root and writes the log into its own run dir.
+    main, wt = tmp_path / "main", tmp_path / "wt"
+    _append(main, branch="", cwd=str(main), hook_time_resolved_ticket="FT-1", head_sha="")
+    promoted = recall_pending.promote_matching(
+        main,
+        ticket="FT-1",
+        branch="feat/FT-1-x",
+        head_sha="deadbeef",
+        cwd=str(wt),
+        now_iso=_NOW_ISO,
+        runner=_fake_runner(1),  # the ancestor check would fail; ticket-bound never asks it
+        log_root=wt,
+    )
+    assert len(promoted) == 1
+    log_path = wt / ".flow" / "runs" / "FT-1" / "recall-log.jsonl"
+    assert log_path.exists()
+    assert not (main / ".flow" / "runs" / "FT-1" / "recall-log.jsonl").exists()
+    assert recall_pending.list_pending(main) == []
+
+
+def test_ticket_bound_entry_for_another_ticket_is_kept(tmp_path: Path) -> None:
+    _append(tmp_path, branch="", hook_time_resolved_ticket="FT-999")
+    promoted = _promote(tmp_path, _fake_runner(0))
+    assert promoted == []
+    assert len(recall_pending.list_pending(tmp_path)) == 1
+
+
+def test_unbound_branchless_entry_still_needs_the_full_match(tmp_path: Path) -> None:
+    # An empty ticket AND an empty branch is not ticket-bound: it falls back to the five rules,
+    # and with no branch to match it stays pending rather than leaking into every run.
+    _append(tmp_path, branch="", hook_time_resolved_ticket="")
+    promoted = _promote(tmp_path, _fake_runner(0))
+    assert promoted == []
+    assert len(recall_pending.list_pending(tmp_path)) == 1

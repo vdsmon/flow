@@ -296,7 +296,7 @@ markers are overwritten. `—` = none.
 | `public_commands_cli.py` | `help` `route` | — |
 | `recall.py` | — | `flow_friction`, `memory_embed`, `metric`, `recall_usage`, `reflect_inputs`, `sweep_knowledge` |
 | `recall_pending.py` | — | `dispatch_stage`, `recall` |
-| `recall_usage.py` | `detect-misses` `record-usage` | `metric`, `sweep_knowledge` |
+| `recall_usage.py` | `detect-misses` `record-usage` | `dispatch_stage`, `metric`, `sweep_knowledge` |
 | `recover.py` | `abort` `detect` `reload-snapshot` `retry` `skip` `takeover` | — |
 | `reflect_inputs.py` | — | — |
 | `review_brief.py` | `freshness` `render` | — |
