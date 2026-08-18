@@ -37,10 +37,14 @@ silently discard the ship event and report "finalized" (witnessed FT-1499, 2026-
 Idempotent: every step skips when its outcome already holds, so re-running converges and a
 finalized ticket exits 0 as a no-op.
 
-Sweep (`--all`): enumerate every managed worktree that carries a `.flow/runs/<key>` run dir and
-run the same per-key probe/close-out on each, isolating failures so one refused ticket never
-stops the rest. Worktrees without a run dir (a human's ad-hoc worktree) are never swept; they
-stay explicit-key-only. Exit 3 keys are normal sweep output ("still parked"), not failures.
+Sweep (`--all`): enumerate every managed worktree that carries a `.flow/runs/<key>` run dir, plus
+every ticket with a pending ship-event precursor in the store (`ship-events/pending/<key>.json`,
+recorded by the dispatcher at create_pr), and run the same per-key probe/close-out on each,
+isolating failures so one refused ticket never stops the rest. Worktrees without a run dir (a
+human's ad-hoc worktree) are never swept; they stay explicit-key-only. Exit 3 keys are normal
+sweep output ("still parked"), not failures. The precursor is what lets a run whose worktree was
+removed by hand still close out: it names the branch the merged-PR probe needs and carries the
+attribution the event needs (FT-1607 and FT-1681, 2026-08-18, shipped with neither).
 
 CLI:
   finalize.py --workspace-root <root> (--key <key> | --all) [--dry-run]
@@ -61,9 +65,11 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import _memory_paths
 import _runner
 import branch_ticket
 import observe_at_close
+import observe_ship_event
 import ticket_frontmatter
 from _runner import CwdRunner as Runner
 from _runner import cwd_default_runner as _default_runner
@@ -129,6 +135,20 @@ def _local_ticket_branch(runner: Runner, key: str) -> str | None:
     if len(matches) > 1:
         raise FinalizeRefused(f"multiple local branches belong to {key}: {', '.join(matches)}")
     return matches[0].strip() if matches else None
+
+
+def _branch_without_worktree(runner: Runner, main_root: Path, key: str) -> tuple[str, str]:
+    """`(branch, source)` for a key whose worktree is gone: the unique local branch, else the
+    branch its pending ship-event precursor recorded. Raises FinalizeError when neither exists."""
+    branch = _local_ticket_branch(runner, key)
+    if branch is not None:
+        return branch, "local"
+    branch = _pending_branch(main_root, key)
+    if branch is not None:
+        return branch, "pending"
+    raise FinalizeError(
+        f"no worktree, local branch, or pending ship event belongs to {key}; nothing to prove"
+    )
 
 
 def _transition_to_done(main_root: Path, key: str) -> dict[str, Any]:
@@ -210,10 +230,10 @@ def finalize(
         report["covers"] = _read_covers(wt_path, key)
     else:
         wt_path, tip = None, None
-        branch = _local_ticket_branch(runner, key)
+        branch, source = _branch_without_worktree(runner, main_root, key)
         report.update({"worktree": None, "branch": branch, "tip": None, "covers": []})
-        if branch is None:
-            raise FinalizeError(f"no worktree or local branch belongs to {key}; nothing to prove")
+        if source == "pending":
+            report["branch_source"] = source
 
     forge_config = read_forge_config(main_root)
     if forge_config is None:
@@ -284,11 +304,36 @@ def finalize(
     return EXIT_OK, report
 
 
+def _pending_branch(main_root: Path, key: str) -> str | None:
+    """The branch a pending ship-event precursor recorded for `key`, else None."""
+    try:
+        namespace = _memory_paths.resolve_namespace(main_root)
+    except Exception:
+        return None
+    pending = observe_ship_event.read_pending(main_root, namespace, key)
+    branch = pending.get("branch") if pending else None
+    return branch if isinstance(branch, str) and branch else None
+
+
+def _pending_keys(main_root: Path) -> list[str]:
+    """Ticket keys with a pending ship-event precursor in the store, sorted."""
+    try:
+        namespace = _memory_paths.resolve_namespace(main_root)
+        pending_dir = _memory_paths.ship_events_dir(main_root, namespace) / "pending"
+    except Exception:
+        return []
+    if not pending_dir.is_dir():
+        return []
+    return sorted(p.stem for p in pending_dir.glob("*.json"))
+
+
 def _sweep_candidates(workspace_root: Path) -> list[str]:
-    """Ticket keys of managed worktrees that carry a `.flow/runs/<key>` run dir.
+    """Ticket keys of managed worktrees that carry a `.flow/runs/<key>` run dir, plus every
+    key with a pending ship-event precursor in the store.
 
     Only run-carrying worktrees qualify: a worktree without one belongs to a human's
-    ad-hoc work and is finalized only by explicit key.
+    ad-hoc work and is finalized only by explicit key. A precursor qualifies on its own,
+    because it exists precisely for the run whose worktree is already gone.
     """
     invoking = workspace_root.expanduser().resolve()
     runner = _default_runner(invoking)
@@ -316,6 +361,9 @@ def _sweep_candidates(workspace_root: Path) -> list[str]:
             continue
         if resolved not in keys:
             keys.append(resolved)
+    for key in _pending_keys(main_root):
+        if key not in keys:
+            keys.append(key)
     return keys
 
 

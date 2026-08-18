@@ -1934,3 +1934,56 @@ def test_force_reinit_preserves_hotfix_marker(
     ts, _ = state.read(tmp_path / ".flow" / "runs" / "FT-1")
     assert ts is not None
     assert ts.hotfix is True
+
+
+def test_completed_finish_records_the_ship_event_precursor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # flow-ln9g: the precursor rides every completed advance of the base run so a worktree
+    # removed by hand after create_pr still leaves finalize enough to freeze the event. The
+    # dispatcher only hands record_pending the run's state path, branch, lane and main root;
+    # record_pending itself no-ops until create_pr has finished.
+    _write_workspace(tmp_path, stages=["ticket", "plan"], compounding=False)
+    _stub_git_head(monkeypatch)
+    calls: list[dict] = []
+
+    def fake_record(root, ticket, *, state_path, branch, lane="", main_root=None):
+        calls.append(
+            {
+                "root": root,
+                "ticket": ticket,
+                "state_path": state_path,
+                "branch": branch,
+                "lane": lane,
+            }
+        )
+
+    monkeypatch.setattr(ds.observe_ship_event, "record_pending", fake_record)
+    monkeypatch.setattr(ds, "_git_branch", lambda _root: "feat/FT-1-x")
+    monkeypatch.setattr(ds, "_git_main_root", lambda _root: tmp_path)
+    tickets = tmp_path / ".flow" / "tickets"
+    tickets.mkdir(parents=True, exist_ok=True)
+    (tickets / "FT-1.md").write_text(
+        '+++\nticket = "FT-1"\nlane = "light"\n+++\n', encoding="utf-8"
+    )
+
+    rc, first = ds.cmd_init(tmp_path, "FT-1")
+    assert rc == 0
+    nonce = first["session_nonce"]
+    ds.cmd_next(tmp_path, "FT-1", nonce)
+    rc, _ = ds.cmd_finish(tmp_path, "FT-1", "ticket", "completed", session_nonce=nonce)
+    assert rc == 0
+    assert calls == [
+        {
+            "root": tmp_path,
+            "ticket": "FT-1",
+            "state_path": tmp_path / ".flow" / "runs" / "FT-1" / "state.json",
+            "branch": "feat/FT-1-x",
+            "lane": "light",
+        }
+    ]
+
+    # a failed finish records nothing: there is no ship to attribute yet
+    ds.cmd_next(tmp_path, "FT-1", nonce)
+    ds.cmd_finish(tmp_path, "FT-1", "plan", "failed", failure_detail="x", session_nonce=nonce)
+    assert len(calls) == 1

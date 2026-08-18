@@ -12,12 +12,16 @@ Sequence (`observe_at_close`):
   2. is_shipped gate: only `not_yet_observed` observes. Anything else (shipped, not_shipped,
      indeterminate) skips. The gate is PR#277's measurement-integrity property; this path only calls
      it post-close, never loosens it. Closed-unmerged reads `indeterminate` and is never observed.
-  3. Capture run_id from the doomed worktree's state.json (validated 16-hex).
+  3. Capture run_id from the doomed worktree's state.json (validated 16-hex). When no run state
+     is left (the worktree was removed before this ran), fall back to the pending precursor
+     `ship-events/pending/<key>.json` that the dispatcher recorded at create_pr; only when both
+     are absent is there nothing to freeze.
   4. Gather tier / acceptance_invariant (from the tracker) + lane (from the worktree's ticket
-     frontmatter), all best-effort.
+     frontmatter, or the precursor), all best-effort.
   5. Synthesize shipped_at from the is_shipped evidence's `closed_at`, else now.
   6. Write via `observe_ship_event.observe`, stamping attribution from the doomed worktree's
-     state.json (state_path override) while the event itself writes against the MAIN root's store.
+     state.json (state_path override) or the precursor's stamp, while the event itself writes
+     against the MAIN root's store; then discard the precursor.
 
 Never raises: returns `{"action": "observed"|"skipped"|"failed", "reason", ...}`.
 """
@@ -155,6 +159,7 @@ def observe_at_close(
         namespace = _memory_paths.resolve_namespace(workspace_root)
         frozen = _memory_paths.ship_event_path(workspace_root, namespace, key)
         if frozen.exists():
+            observe_ship_event.discard_pending(workspace_root, namespace, key)
             return {"action": "skipped", "reason": "already_observed", "path": str(frozen)}
 
         config = _read_tracker_config(workspace_root)
@@ -164,16 +169,27 @@ def observe_at_close(
         if state != "not_yet_observed":
             return {"action": "skipped", "reason": str(state)}
 
+        # The live run state is the first source; the pending precursor recorded at
+        # create_pr is the second, for a worktree that was removed before this ran.
         run_dir = _resolve_run_dir(workspace_root, key, worktree)
-        if run_dir is None:
-            return {"action": "skipped", "reason": "no_run_state"}
-        state_path = run_dir / "state.json"
-        run_id = _read_run_id(state_path)
+        state_path = run_dir / "state.json" if run_dir is not None else None
+        run_id = _read_run_id(state_path) if state_path is not None else None
+        pending = None
         if run_id is None:
-            return {"action": "skipped", "reason": "no_run_state"}
+            pending = observe_ship_event.read_pending(workspace_root, namespace, key)
+            if pending is None:
+                return {"action": "skipped", "reason": "no_run_state"}
+            run_id = str(pending["run_id"])
+            state_path = None
 
         tier, acceptance_invariant = _tracker_stamps(tracker, key)
-        lane = _read_lane(run_dir.parents[2], key)
+        if pending is None and run_dir is not None:
+            lane = _read_lane(run_dir.parents[2], key)
+            attribution = None
+        else:
+            lane = str(pending.get("lane") or "") if pending else ""
+            raw_stamp = pending.get("flow_attribution") if pending else None
+            attribution = raw_stamp if isinstance(raw_stamp, dict) else None
 
         evidence = ship.get("evidence") or {}
         shipped_at = _synthesize_shipped_at(evidence.get("closed_at"))
@@ -188,8 +204,13 @@ def observe_at_close(
             acceptance_invariant=acceptance_invariant,
             lane=lane,
             state_path=state_path,
+            attribution=attribution,
         )
-        return {"action": "observed", "path": str(path), "is_dupe": is_dupe}
+        observe_ship_event.discard_pending(workspace_root, namespace, key)
+        result = {"action": "observed", "path": str(path), "is_dupe": is_dupe}
+        if pending is not None:
+            result["source"] = "pending"
+        return result
     except (_WorkspaceConfigError, TrackerError) as exc:
         return {"action": "failed", "reason": f"gate: {exc}"}
     except Exception as exc:

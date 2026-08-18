@@ -32,6 +32,18 @@ Backend-only observations (no live state) carry no stamp. Forward-only: tickets
 shipped before this lands have no stamp and a reaped state, so they stay
 backend-not-attributed.
 
+Pending precursor (`ship-events/pending/<ticket>.json`): the stamp above is read
+from the run's state.json, which lives inside the ticket worktree until finalize
+freezes the event; every path that removes the worktree first (a hand `rm`, `git
+worktree remove`, a host cleanup) destroyed the only copy (FT-1499 2026-08-04,
+FT-1607 and FT-1681 2026-08-18: merged deliveries with no event and no state left).
+`record_pending` writes run_id, branch, lane, and the attribution stamp into the
+main store the moment create_pr has finished, refreshed on every later completed
+advance, so `observe_at_close` can still freeze the event from the store alone. It
+lives in a subdirectory on purpose: metric.py reads `ship-events/*.json` and must
+never count a precursor as a ship. It is overwritable (atomic replace) because it is
+not evidence yet; only the frozen event is immutable.
+
 Exit codes:
   0 = primary write succeeded
   1 = evidence JSON invalid, or run_id not 16 hex chars
@@ -216,6 +228,81 @@ def _attribution_stamp(
     return stamp
 
 
+# ─── Pending precursor ───────────────────────────────────────────────────────
+
+
+def pending_event_path(workspace_root: Path, namespace: str, ticket: str) -> Path:
+    return _memory_paths.ship_events_dir(workspace_root, namespace) / "pending" / f"{ticket}.json"
+
+
+def record_pending(
+    workspace_root: Path,
+    ticket: str,
+    *,
+    state_path: Path,
+    branch: str,
+    lane: str = "",
+    main_root: Path | None = None,
+) -> Path | None:
+    """Freeze everything a ship event needs except `shipped_at`, outside the worktree.
+
+    Returns the path written, or None when the run is not yet attributable (no coherent
+    plan + create_pr stamp in `state_path`) or the store cannot be resolved. Reads the
+    planning-started marker from `main_root` when given, since that marker lives beside
+    the claim in the main checkout, not in the worktree. Never raises: this is a
+    precursor, and a failure here must never stop an advance.
+    """
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        run_id = state.get("run_id") if isinstance(state, dict) else None
+        if not isinstance(run_id, str) or not _RUN_ID_RE.match(run_id):
+            return None
+        stamp = _attribution_stamp(
+            main_root or workspace_root, ticket, run_id, state_path=state_path
+        )
+        if stamp is None:
+            return None
+        namespace = _memory_paths.resolve_namespace(workspace_root)
+        path = pending_event_path(workspace_root, namespace, ticket)
+        record = {
+            "ticket": ticket,
+            "run_id": run_id,
+            "branch": branch,
+            "lane": lane,
+            "flow_attribution": stamp,
+            "recorded_at": utcnow_iso(),
+            "plugin_version": plugin_version(),
+        }
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(f"{path.name}.tmp.{os.getpid()}")
+        tmp.write_text(_serialize(record), encoding="utf-8")
+        os.replace(tmp, path)
+        return path
+    except Exception:
+        return None
+
+
+def read_pending(workspace_root: Path, namespace: str, ticket: str) -> dict[str, Any] | None:
+    """The pending precursor for `ticket`, or None when absent or malformed."""
+    path = pending_event_path(workspace_root, namespace, ticket)
+    try:
+        record = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(record, dict):
+        return None
+    run_id = record.get("run_id")
+    if not isinstance(run_id, str) or not _RUN_ID_RE.match(run_id):
+        return None
+    return record
+
+
+def discard_pending(workspace_root: Path, namespace: str, ticket: str) -> None:
+    """Remove the precursor once the event is frozen. Best-effort."""
+    with contextlib.suppress(OSError):
+        pending_event_path(workspace_root, namespace, ticket).unlink()
+
+
 # ─── Public API ──────────────────────────────────────────────────────────────
 
 
@@ -228,8 +315,12 @@ def observe(
     acceptance_invariant: str = "",
     lane: str = "",
     state_path: Path | None = None,
+    attribution: dict[str, str] | None = None,
 ) -> tuple[Path, bool]:
     """Write a ship-event evidence file.
+
+    `attribution` supplies the stamp directly (a pending precursor recorded while the
+    run state was still alive); when None the stamp is read from `state_path`.
 
     Returns `(path_written, is_dupe)`.
 
@@ -250,7 +341,11 @@ def observe(
     record["acceptance_invariant"] = acceptance_invariant
     record["lane"] = lane
     record["plugin_version"] = plugin_version()
-    stamp = _attribution_stamp(workspace_root, ticket, run_id, state_path=state_path)
+    stamp = (
+        dict(attribution)
+        if attribution
+        else _attribution_stamp(workspace_root, ticket, run_id, state_path=state_path)
+    )
     if stamp is not None:
         record["flow_attribution"] = stamp
     content = _serialize(record)

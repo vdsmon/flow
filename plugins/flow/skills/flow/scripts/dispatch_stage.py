@@ -39,8 +39,10 @@ from typing import Any, cast
 
 import _locking
 import lease
+import observe_ship_event
 import recall_pending
 import state
+import ticket_frontmatter
 import validate_workspace as vw
 from _harness import HarnessError, flow_harness
 from _registry import CODEX_HANDLERS, StageEntry, registry_by_name
@@ -177,6 +179,44 @@ def _git_head_sha(workspace_root: Path) -> str:
 
 def _git_branch(workspace_root: Path) -> str:
     return _git_stdout(workspace_root, ["branch", "--show-current"])
+
+
+def _git_main_root(workspace_root: Path) -> Path | None:
+    """The primary checkout of the repository `workspace_root` belongs to, or None.
+
+    A linked worktree's common dir is `<main>/.git`; the planning-started marker the
+    ship-event stamp reads lives beside the claim under that main checkout.
+    """
+    common = _git_stdout(
+        workspace_root, ["rev-parse", "--path-format=absolute", "--git-common-dir"]
+    )
+    if not common:
+        return None
+    return Path(common).parent
+
+
+def _record_ship_pending(workspace_root: Path, ticket: str, td: Path) -> None:
+    """Freeze the ship-event precursor into the store once create_pr has finished.
+
+    Best-effort and silent: `record_pending` no-ops before the run is attributable and
+    never raises, so a completed advance is never blocked by it. Refreshed on every
+    later completed advance so the lane and stamp stay current until finalize freezes
+    the event, and survives a worktree removed by hand before finalize (flow-ln9g).
+    """
+    with contextlib.suppress(Exception):
+        lane = ""
+        with contextlib.suppress(Exception):
+            fm = ticket_frontmatter.read(workspace_root / ".flow" / "tickets" / f"{ticket}.md")
+            raw_lane = fm.get("lane", "")
+            lane = raw_lane if isinstance(raw_lane, str) else ""
+        observe_ship_event.record_pending(
+            workspace_root,
+            ticket,
+            state_path=td / "state.json",
+            branch=_git_branch(workspace_root),
+            lane=lane,
+            main_root=_git_main_root(workspace_root),
+        )
 
 
 def _promote_recall_log(workspace_root: Path, ticket: str) -> None:
@@ -903,6 +943,9 @@ def cmd_finish(
         )
     except (ValueError, state.StateUnrecoverable) as exc:
         return 1, {"error": str(exc), **recovery}
+
+    if status_value == "completed" and revision is None:
+        _record_ship_pending(workspace_root, ticket, td)
 
     _, snapshot = vw.validate(workspace_root)
     next_pending: str | None = None

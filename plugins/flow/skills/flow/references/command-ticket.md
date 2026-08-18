@@ -171,7 +171,8 @@ FLOW_HARNESS="<harness>" "<facade>" finalize --workspace-root . --key <KEY> [--d
 ```
 
 The probe writes nothing: it locates the ticket's managed worktree (or its unique
-local branch when the worktree is already gone) and requires a merged PR for that
+local branch when the worktree is already gone, or the branch named by the pending
+ship-event precursor when both are gone) and requires a merged PR for that
 branch through the forge seam. An open PR, or no PR, exits 3 with zero writes. A live
 or corrupt run lease, or a worktree tip that does not match the merged PR head,
 refuses with exit 4 and preserves everything.
@@ -182,7 +183,10 @@ and best-effort once the probe passes:
 1. transition the ticket to its done state through the tracker seam (skipped when
    already terminal);
 2. freeze the ship event (`observe_at_close`) before the run state it reads is
-   destroyed;
+   destroyed; when that state is already gone, the event is frozen from the
+   pending precursor the dispatcher recorded in the store at create_pr, so a
+   worktree removed by hand after the merge no longer loses the ship (FT-1607 and
+   FT-1681, 2026-08-18, shipped with neither state nor event);
 3. delete the remote branch through the forge seam (a forge that auto-deleted it at
    merge reports failed_or_absent, which is fine);
 4. reap the local worktree and branch (lease-gated; dirty work is checkpointed to a
@@ -198,7 +202,8 @@ single-shot command is the whole contract.
 ### The sweep form
 
 `--all` runs the same per-key probe and close-out over every managed worktree that
-carries a `.flow/runs/<key>` run dir, isolating failures so one refused ticket never
+carries a `.flow/runs/<key>` run dir, plus every ticket with a pending ship-event
+precursor in the store, isolating failures so one refused ticket never
 stops the rest. A worktree without a run dir belongs to a human's ad-hoc work and is
 never swept; finalize it by explicit key when you mean it. The report buckets every
 candidate into `finalized`, `not_merged` (still parked, normal, zero writes),
