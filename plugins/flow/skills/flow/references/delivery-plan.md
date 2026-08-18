@@ -93,11 +93,16 @@ one. Write the ticket's intent plus its text to a temporary file and query:
 ```bash
 FLOW_HARNESS="<harness>" "<facade>" recall \
   --query-file "<absolute-intent-file>" [--semantic] \
-  --top-n 5 --workspace-root .
+  --top-n 5 --ticket "<KEY>" --workspace-root .
 ```
 
-Weave genuinely relevant entries into the plan's approach and risks, citing their ids.
-An empty result is normal. Further memory or history reads are useful only when they
+`--ticket` binds the surfaced set to the run before any branch or worktree exists: the
+engine records it as pending here in the main checkout and `dispatch init` promotes it into
+the run's recall-log from that root, so reflect sees what the plan saw and the precision
+record follows without a second recall call (2026-08-18: three runs in a row reached
+reflect with an empty recalled_entries because the post-worktree re-record never
+happened). Weave genuinely relevant entries into the plan's approach and risks, citing
+their ids. An empty result is normal. Further memory or history reads are useful only when they
 answer a concrete planning question; do not expand planning into a general repository
 audit.
 
@@ -288,19 +293,10 @@ type. Do not translate a bug-fix commit into any other Flow branch prefix.
 
 Do not pass `--recover-spill` automatically; it is an explicit operator recovery action.
 
-If grounding recalled entries that shaped the plan, record them right after the
-worktree exists — rooted at the NEW run root and reusing §1's exact query file, so
-the recorded surfaced set is the one the plan actually saw and the dispatcher's
-init-time promotion (which joins on the run root and branch) can pick it up:
-
-```bash
-FLOW_HARNESS="<harness>" "<facade>" recall \
-  --query-file "<absolute-intent-file>" [--semantic] --top-n 5 \
-  --record-pending --branch "feat/<ticket-slug>" --ticket "<KEY>" \
-  --workspace-root "<worktree>"
-```
-
-Best-effort, never blocking: a failed record costs recall observability, not the run.
+The §1 recall already recorded its surfaced set as pending under the ticket; nothing needs
+re-running here, `dispatch init` promotes it into the run's recall-log from the main
+checkout. A recall issued only now, inside the worktree, records the same way when it
+names `--ticket`.
 
 For a grouped run whose cover set was persisted earlier (`FLOW ticket group`), derive
 it back and pass it as `--covers`:

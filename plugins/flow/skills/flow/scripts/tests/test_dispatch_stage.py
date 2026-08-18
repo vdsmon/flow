@@ -1987,3 +1987,72 @@ def test_completed_finish_records_the_ship_event_precursor(
     ds.cmd_next(tmp_path, "FT-1", nonce)
     ds.cmd_finish(tmp_path, "FT-1", "plan", "failed", failure_detail="x", session_nonce=nonce)
     assert len(calls) == 1
+
+
+def test_init_promotes_from_the_main_root_too(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The plan-phase recall's pending file lives in the main checkout; a run initialized in a
+    # worktree must read that root as well, writing the log into its own run root.
+    _write_workspace(tmp_path, stages=["ticket"], compounding=False)
+    _stub_git_head(monkeypatch, "abc123")
+    main = tmp_path / "main"
+    main.mkdir()
+    monkeypatch.setattr(ds, "_git_main_root", lambda _root: main)
+    calls: list[dict[str, Any]] = []
+
+    def fake_promote(workspace_root: Path, **kwargs: Any) -> list[dict[str, Any]]:
+        calls.append({"root": workspace_root, **kwargs})
+        return []
+
+    monkeypatch.setattr(ds.recall_pending, "promote_matching", fake_promote)
+    rc, _ = ds.cmd_init(tmp_path, "FT-1")
+    assert rc == 0
+    assert [c["root"] for c in calls] == [tmp_path, main]
+    assert all(c["log_root"] == tmp_path for c in calls)
+
+
+def test_reflect_completion_records_recall_usage_from_the_artifact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # flow-rjv8: usage is recorded where the driver meets the dispatcher. The ids the reflect
+    # artifact names are the used subset of what the run's recall-log surfaced.
+    _write_workspace(tmp_path, stages=["reflect"], compounding=False)
+    _stub_git_head(monkeypatch)
+    monkeypatch.setattr(ds, "_record_ship_pending", lambda *a, **k: None)
+    monkeypatch.setattr(
+        ds.recall_usage, "_surfaced_ids", lambda _root, _t: ["a" * 16, "b" * 16, "c" * 16]
+    )
+    recorded: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        ds.recall_usage,
+        "record_usage",
+        lambda root, *, ticket, ticket_dir, used_ids: recorded.append(
+            {"ticket": ticket, "ticket_dir": ticket_dir, "used_ids": used_ids}
+        ),
+    )
+    misses: list[str] = []
+    monkeypatch.setattr(
+        ds.recall_usage,
+        "detect_misses",
+        lambda root, *, ticket, ticket_dir: misses.append(ticket),
+    )
+    artifact = tmp_path / "reflect.out"
+    artifact.write_text(f"leaned on {'b' * 16} for the diagnosis; superseded {'c' * 16}\n")
+
+    rc, first = ds.cmd_init(tmp_path, "FT-1")
+    assert rc == 0
+    nonce = first["session_nonce"]
+    ds.cmd_next(tmp_path, "FT-1", nonce)
+    rc, _ = ds.cmd_finish(
+        tmp_path, "FT-1", "reflect", "completed", output_path=str(artifact), session_nonce=nonce
+    )
+    assert rc == 0
+    assert recorded == [
+        {
+            "ticket": "FT-1",
+            "ticket_dir": tmp_path / ".flow" / "runs" / "FT-1",
+            "used_ids": ["b" * 16, "c" * 16],
+        }
+    ]
+    assert misses == ["FT-1"]

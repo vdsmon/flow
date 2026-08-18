@@ -41,6 +41,7 @@ import _locking
 import lease
 import observe_ship_event
 import recall_pending
+import recall_usage
 import state
 import ticket_frontmatter
 import validate_workspace as vw
@@ -192,7 +193,10 @@ def _git_main_root(workspace_root: Path) -> Path | None:
     )
     if not common:
         return None
-    return Path(common).parent
+    root = Path(common).parent
+    if not root.is_absolute() or not root.is_dir():
+        return None
+    return root
 
 
 def _record_ship_pending(workspace_root: Path, ticket: str, td: Path) -> None:
@@ -221,17 +225,53 @@ def _record_ship_pending(workspace_root: Path, ticket: str, td: Path) -> None:
 
 def _promote_recall_log(workspace_root: Path, ticket: str) -> None:
     # Best-effort: fold any matching recall-pending entries (written by the
-    # plan-phase recall --record-pending) into the per-ticket recall-log on run
-    # start. A promotion failure must never abort init.
+    # plan-phase recall) into the per-ticket recall-log on run start. The plan-phase
+    # recall runs in the MAIN checkout before the worktree exists, so its pending file
+    # lives there; read that root too, writing the log into this run root. A promotion
+    # failure must never abort init.
+    roots = [workspace_root]
+    main_root = _git_main_root(workspace_root)
+    if main_root is not None and main_root.resolve() != workspace_root.resolve():
+        roots.append(main_root)
+    for root in roots:
+        with contextlib.suppress(Exception):
+            recall_pending.promote_matching(
+                root,
+                ticket=ticket,
+                branch=_git_branch(workspace_root),
+                head_sha=_git_head_sha(workspace_root),
+                cwd=str(workspace_root),
+                now_iso=utcnow_iso(),
+                log_root=workspace_root,
+            )
+
+
+def _record_recall_usage(
+    workspace_root: Path, ticket: str, td: Path, output_path: str | None
+) -> None:
+    """Record recall precision at the reflect advance, from the ids the artifact names.
+
+    The surfaced set is the run's recall-log; an id the reflect artifact cites is one the
+    run leaned on (a supersede, a decision, a diagnosis), the rest are unused. Recording
+    here, where the driver already meets the dispatcher, replaces the prose-only
+    record-usage / detect-misses steps that three consecutive runs skipped (flow-rjv8).
+    Best-effort and silent: observability never blocks an advance.
+    """
     with contextlib.suppress(Exception):
-        recall_pending.promote_matching(
-            workspace_root,
-            ticket=ticket,
-            branch=_git_branch(workspace_root),
-            head_sha=_git_head_sha(workspace_root),
-            cwd=str(workspace_root),
-            now_iso=utcnow_iso(),
-        )
+        surfaced = recall_usage._surfaced_ids(workspace_root, ticket)
+        if not surfaced:
+            return
+        text = ""
+        if output_path:
+            p = Path(output_path).expanduser()
+            if not p.is_absolute():
+                p = workspace_root / p
+            with contextlib.suppress(OSError):
+                text = p.read_text(encoding="utf-8", errors="replace")
+        used = [rid for rid in surfaced if rid in text]
+        recall_usage.record_usage(workspace_root, ticket=ticket, ticket_dir=td, used_ids=used)
+        with contextlib.suppress(Exception):
+            recall_usage.detect_misses(workspace_root, ticket=ticket, ticket_dir=td)
 
 
 # ─── Public API ──────────────────────────────────────────────────────────────
@@ -946,6 +986,8 @@ def cmd_finish(
 
     if status_value == "completed" and revision is None:
         _record_ship_pending(workspace_root, ticket, td)
+        if stage_name == "reflect":
+            _record_recall_usage(workspace_root, ticket, td, output_path)
 
     _, snapshot = vw.validate(workspace_root)
     next_pending: str | None = None

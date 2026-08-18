@@ -202,6 +202,7 @@ def promote_matching(
     cwd: str,
     now_iso: str,
     runner: Runner | None = None,
+    log_root: Path | None = None,
 ) -> list[dict[str, Any]]:
     """Promote matching pending entries into the per-ticket recall log.
 
@@ -211,6 +212,12 @@ def promote_matching(
     (stamped recalled_at=now_iso); else -> kept. Durability order under the lock:
     append promoted, append stale, then atomic-rewrite the pending file to the
     kept set. Returns the promoted entries (each with recalled_at).
+
+    A ticket-bound entry (explicit `hook_time_resolved_ticket == ticket` with an
+    empty `branch`) is the plan-phase recall from the main checkout, recorded before
+    any branch or worktree existed; it matches on the ticket alone. `log_root` is
+    where the run's recall-log lives (the ticket worktree) when the pending file being
+    read belongs to a different root (the main checkout); default is `workspace_root`.
 
     Raises:
         LockContention
@@ -234,7 +241,12 @@ def promote_matching(
             if _is_stale(entry, cutoff):
                 stale.append(entry)
                 continue
-            matches = (
+            ticket_bound = (
+                entry.get("hook_time_resolved_ticket") == ticket
+                and bool(ticket)
+                and not entry.get("branch")
+            )
+            matches = ticket_bound or (
                 entry.get("branch") == branch
                 and entry.get("cwd") == cwd
                 and entry.get("hook_time_resolved_ticket") in ("", ticket)
@@ -248,7 +260,7 @@ def promote_matching(
                 kept.append(entry)
 
         if promoted:
-            log_path = _recall_log_path(workspace_root, ticket)
+            log_path = _recall_log_path(log_root or workspace_root, ticket)
             for stamped in promoted:
                 _append_line(log_path, stamped)
         _append_stale_capped(workspace_root, stale)

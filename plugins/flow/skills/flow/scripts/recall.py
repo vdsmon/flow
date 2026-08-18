@@ -585,7 +585,11 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("query", nargs="?", default=None)
     parser.add_argument("--branch", default=None)
     parser.add_argument("--tickets", default=None, help="comma-separated ticket keys.")
-    parser.add_argument("--ticket", default=None, help="ticket key for --record-pending.")
+    parser.add_argument(
+        "--ticket",
+        default=None,
+        help="ticket key this recall serves; records the surfaced set as pending for the run.",
+    )
     parser.add_argument(
         "--label",
         default=None,
@@ -682,9 +686,9 @@ def cli_main(argv: list[str]) -> int:
             sub.append("--full")
         return memory_embed.cli_main(sub)
 
-    if args.record_pending and (not args.branch or not args.ticket):
+    if args.record_pending and not args.ticket:
         # validate before incurring any embedding cost
-        sys.stderr.write("recall: --record-pending needs --branch and --ticket\n")
+        sys.stderr.write("recall: --record-pending needs --ticket\n")
         return 1
 
     try:
@@ -751,10 +755,14 @@ def cli_main(argv: list[str]) -> int:
             top_n=top_n,
         )
 
-    if args.record_pending:
+    # A ticket-bound recall is a run-bound recall: naming the ticket records the surfaced
+    # set as pending so dispatch init can promote it into the run's recall-log without a
+    # second, prose-only recall call after the worktree exists (2026-08-18: three runs in a
+    # row reached reflect with an empty recalled_entries and no usage record).
+    if args.ticket:
         _record_pending(
             workspace_root,
-            branch=args.branch,
+            branch=args.branch or "",
             ticket=args.ticket,
             query=query,
             results=results,

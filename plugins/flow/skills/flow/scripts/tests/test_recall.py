@@ -773,14 +773,30 @@ def test_record_pending_appends(tmp_path: Path, capsys: pytest.CaptureFixture[st
     assert "a" * 16 in pending[0]["returned_ids"]
 
 
-def test_record_pending_requires_branch_and_ticket(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_record_pending_requires_ticket(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     _seed_workspace(tmp_path)
     _write_entries(tmp_path, "demo", [_make_entry("a" * 16, "fsync")])
     rc = recall.cli_main(["fsync", "--record-pending", "--workspace-root", str(tmp_path)])
     assert rc == 1
-    assert "needs --branch and --ticket" in capsys.readouterr().err
+    assert "needs --ticket" in capsys.readouterr().err
+
+
+def test_ticket_alone_records_pending_with_empty_branch(tmp_path: Path) -> None:
+    # The plan-phase recall runs in the main checkout before any branch exists; naming the
+    # ticket is what binds it to the run, so it records pending on its own (2026-08-18: three
+    # runs reached reflect with an empty recalled_entries because the second, prose-only
+    # record-pending call after worktree create never happened).
+    import recall_pending
+
+    _seed_workspace(tmp_path)
+    _write_entries(tmp_path, "demo", [_make_entry("a" * 16, "fsync")])
+    rc = recall.cli_main(["fsync", "--ticket", "FT-1", "--workspace-root", str(tmp_path)])
+    assert rc == 0
+    pending = recall_pending.list_pending(tmp_path)
+    assert pending
+    assert pending[0]["hook_time_resolved_ticket"] == "FT-1"
+    assert pending[0]["branch"] == ""
+    assert "a" * 16 in pending[0]["returned_ids"]
 
 
 def test_query_file_read(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
