@@ -328,3 +328,182 @@ def test_auto_resolution_absent_pool_skips_no_run_state(tmp_path, monkeypatch):
 
 
 # ─── 8. CLI: JSON shape + exit codes ─────────────────────────────────────────
+
+
+# ─── 7. pending precursor: freeze without run state ──────────────────────────
+
+
+def _seed_pending(main: Path, key: str, *, lane: str = "hotfix") -> Path | None:
+    import observe_ship_event
+
+    return observe_ship_event.record_pending(
+        main,
+        key,
+        state_path=main / "elsewhere" / "state.json",
+        branch=f"feat/{key}-x",
+        lane=lane,
+        main_root=main,
+    )
+
+
+def test_record_pending_writes_precursor_with_stamp_from_state_and_marker(tmp_path):
+    import observe_ship_event
+
+    main, wt = tmp_path / "main", tmp_path / "wt"
+    _seed_workspace(main)
+    _seed_state(wt, "flow-p")
+    (main / ".flow" / "tickets").mkdir(parents=True)
+    (main / ".flow" / "tickets" / "flow-p.planning-started").write_text(
+        "2026-05-27T23:00:00Z\n", encoding="utf-8"
+    )
+    path = observe_ship_event.record_pending(
+        main,
+        "flow-p",
+        state_path=wt / ".flow" / "runs" / "flow-p" / "state.json",
+        branch="feat/flow-p-x",
+        lane="light",
+        main_root=main,
+    )
+    assert path is not None
+    # the precursor lives in a subdirectory the metric reader's `*.json` glob never sees
+    assert path.parent == _ship_events_dir(main) / "pending"
+    record = json.loads(path.read_text(encoding="utf-8"))
+    assert record["run_id"] == "abcdef0123456789"
+    assert record["branch"] == "feat/flow-p-x"
+    assert record["lane"] == "light"
+    assert record["flow_attribution"] == {
+        "plan_started_at_iso": "2026-05-28T00:00:00Z",
+        "create_pr_finished_at_iso": "2026-05-28T12:00:00Z",
+        "planning_started_at_iso": "2026-05-27T23:00:00Z",
+    }
+    # refreshing overwrites in place: a precursor is not evidence yet
+    again = observe_ship_event.record_pending(
+        main,
+        "flow-p",
+        state_path=wt / ".flow" / "runs" / "flow-p" / "state.json",
+        branch="feat/flow-p-x",
+        lane="full",
+        main_root=main,
+    )
+    assert again == path
+    assert json.loads(path.read_text(encoding="utf-8"))["lane"] == "full"
+
+
+def test_record_pending_noops_before_create_pr_finished(tmp_path):
+    import observe_ship_event
+
+    main, wt = tmp_path / "main", tmp_path / "wt"
+    _seed_workspace(main)
+    _seed_state(wt, "flow-p", create_pr_finished=None)
+    path = observe_ship_event.record_pending(
+        main,
+        "flow-p",
+        state_path=wt / ".flow" / "runs" / "flow-p" / "state.json",
+        branch="feat/flow-p-x",
+    )
+    assert path is None
+    assert not (_ship_events_dir(main) / "pending").exists()
+
+
+def test_pending_precursor_freezes_event_when_run_state_is_gone(tmp_path, monkeypatch):
+    # FT-1607 / FT-1681 (2026-08-18): the worktree was removed by hand before finalize, so
+    # there is no state.json anywhere; the precursor recorded at create_pr is the only copy of
+    # run_id, lane, and attribution, and it is enough to freeze the event.
+    main = tmp_path / "main"
+    _seed_workspace(main)
+    (main / "elsewhere").mkdir()
+    (main / "elsewhere" / "state.json").write_text(
+        json.dumps(
+            {
+                "ticket": "flow-g",
+                "run_id": "0123456789abcdef",
+                "stages": {
+                    "plan": {"started_at_iso": "2026-05-28T00:00:00Z"},
+                    "create_pr": {"finished_at_iso": "2026-05-28T12:00:00Z"},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    pending = _seed_pending(main, "flow-g", lane="hotfix")
+    assert pending is not None
+    (main / "elsewhere" / "state.json").unlink()  # the run state is now gone for good
+    _install_tracker(monkeypatch, _FakeTracker(_ship()))
+
+    result = observe_at_close.observe_at_close(main, "flow-g", None)
+
+    assert result["action"] == "observed"
+    assert result["source"] == "pending"
+    data = json.loads(Path(result["path"]).read_text(encoding="utf-8"))
+    assert data["observed_by_run_id"] == "0123456789abcdef"
+    assert data["lane"] == "hotfix"
+    assert data["flow_attribution"] == {
+        "plan_started_at_iso": "2026-05-28T00:00:00Z",
+        "create_pr_finished_at_iso": "2026-05-28T12:00:00Z",
+    }
+    # the precursor is consumed once the event is frozen
+    assert not pending.exists()
+
+
+def test_live_run_state_wins_over_pending_and_pending_is_discarded(tmp_path, monkeypatch):
+    main, wt = tmp_path / "main", tmp_path / "wt"
+    _seed_workspace(main)
+    _seed_state(wt, "flow-a")
+    _seed_frontmatter(wt, "flow-a", lane="light")
+    (main / "elsewhere").mkdir()
+    (main / "elsewhere" / "state.json").write_text(
+        json.dumps(
+            {
+                "ticket": "flow-a",
+                "run_id": "abcdef0123456789",
+                "stages": {
+                    "plan": {"started_at_iso": "2026-01-01T00:00:00Z"},
+                    "create_pr": {"finished_at_iso": "2026-01-01T01:00:00Z"},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    pending = _seed_pending(main, "flow-a", lane="hotfix")
+    _install_tracker(monkeypatch, _FakeTracker(_ship()))
+
+    result = observe_at_close.observe_at_close(main, "flow-a", wt)
+
+    assert result["action"] == "observed"
+    assert "source" not in result
+    data = json.loads(Path(result["path"]).read_text(encoding="utf-8"))
+    assert data["lane"] == "light"
+    assert data["flow_attribution"]["plan_started_at_iso"] == "2026-05-28T00:00:00Z"
+    assert pending is not None
+    assert not pending.exists()
+
+
+def test_already_observed_discards_a_stale_pending(tmp_path, monkeypatch):
+    main = tmp_path / "main"
+    _seed_workspace(main)
+    (main / "elsewhere").mkdir()
+    (main / "elsewhere" / "state.json").write_text(
+        json.dumps(
+            {
+                "ticket": "flow-z",
+                "run_id": "0123456789abcdef",
+                "stages": {
+                    "plan": {"started_at_iso": "2026-05-28T00:00:00Z"},
+                    "create_pr": {"finished_at_iso": "2026-05-28T12:00:00Z"},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    pending = _seed_pending(main, "flow-z")
+    frozen_dir = _ship_events_dir(main)
+    frozen_dir.mkdir(parents=True, exist_ok=True)
+    (frozen_dir / "flow-z.json").write_text("{}", encoding="utf-8")
+    _install_tracker(monkeypatch, _FakeTracker(_ship()))
+
+    result = observe_at_close.observe_at_close(main, "flow-z", None)
+
+    assert result["action"] == "skipped"
+    assert result["reason"] == "already_observed"
+    assert pending is not None
+    assert not pending.exists()

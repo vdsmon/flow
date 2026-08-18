@@ -457,8 +457,32 @@ def test_ambiguous_local_branches_refuse(monkeypatch, tmp_path):
 def test_no_branch_evidence_errors(monkeypatch, tmp_path):
     main = tmp_path / "repo"
     _wire(monkeypatch, tmp_path, entries=[], local_branches=["main"])
-    with pytest.raises(fz.FinalizeError, match="no worktree or local branch"):
+    with pytest.raises(fz.FinalizeError, match="no worktree, local branch, or pending"):
         fz.finalize(main, "FT-1")
+
+
+def test_missing_worktree_and_branch_finalizes_via_pending_precursor(monkeypatch, tmp_path):
+    # FT-1607 / FT-1681 (2026-08-18): the worktree and its local branch were removed by hand
+    # before finalize ran, so the only thing left naming the branch is the precursor the
+    # dispatcher recorded at create_pr. It is enough to reach the merged-PR proof.
+    main = tmp_path / "repo"
+    _, _, _, order, observed, _ = _wire(
+        monkeypatch,
+        tmp_path,
+        entries=[],
+        local_branches=["main"],
+        prs={("feat/FT-1-x", "merged"): {"id": "7", "head_sha": "head-sha"}},
+    )
+    monkeypatch.setattr(
+        fz, "_pending_branch", lambda _root, key: "feat/FT-1-x" if key == "FT-1" else None
+    )
+    code, report = fz.finalize(main, "FT-1")
+    assert code == fz.EXIT_OK
+    assert report["worktree"] is None
+    assert report["branch"] == "feat/FT-1-x"
+    assert report["branch_source"] == "pending"
+    assert order == ["transition", "observe", "delete_branch", "reap"]
+    assert observed == [("FT-1", None)]
 
 
 def test_cli_exit_codes(monkeypatch, tmp_path):
@@ -495,6 +519,37 @@ def test_sweep_skips_worktrees_without_run_dir(monkeypatch, tmp_path):
     _wire(monkeypatch, tmp_path, entries=[with_run, without_run])
     monkeypatch.setattr(fz.branch_ticket, "resolve", _resolve_from_branch)
     assert fz._sweep_candidates(main) == ["FT-1"]
+
+
+def test_pending_branch_must_belong_to_the_key(monkeypatch, tmp_path):
+    # forge.delete_branch runs before reap_worktree's own foreign-branch check, so a precursor
+    # naming a branch that is not the ticket's must never reach the merged-PR probe.
+    main = tmp_path / "repo"
+    monkeypatch.setattr(fz._memory_paths, "resolve_namespace", lambda _root: "demo")
+    monkeypatch.setattr(
+        fz.observe_ship_event,
+        "read_pending",
+        lambda _root, _ns, key: {"run_id": "0123456789abcdef", "branch": "feat/FT-2-other"},
+    )
+    assert fz._pending_branch(main, "FT-1") is None
+    monkeypatch.setattr(
+        fz.observe_ship_event,
+        "read_pending",
+        lambda _root, _ns, key: {"run_id": "0123456789abcdef", "branch": "feat/FT-1-x"},
+    )
+    assert fz._pending_branch(main, "FT-1") == "feat/FT-1-x"
+
+
+def test_sweep_includes_pending_precursors_without_a_worktree(monkeypatch, tmp_path):
+    # A precursor qualifies on its own: it exists precisely for the run whose worktree is gone,
+    # and a sweep that only enumerated worktrees could never close that run out.
+    main = tmp_path / "repo"
+    with_run = _worktree_entry(main, "FT-1")
+    _mkrun(with_run, "FT-1")
+    _wire(monkeypatch, tmp_path, entries=[with_run])
+    monkeypatch.setattr(fz.branch_ticket, "resolve", _resolve_from_branch)
+    monkeypatch.setattr(fz, "_pending_keys", lambda _root: ["FT-1", "FT-9"])
+    assert fz._sweep_candidates(main) == ["FT-1", "FT-9"]
 
 
 def test_sweep_finalizes_merged_and_reports_parked(monkeypatch, tmp_path):

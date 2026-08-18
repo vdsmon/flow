@@ -245,7 +245,7 @@ markers are overwritten. `—` = none.
 | `_harness.py` | — | `dispatch_stage`, `flow_launcher`, `flowctl`, `init`, `model_resolve` |
 | `_jsonl.py` | — | `friction_recurrence`, `memory_append`, `memory_embed`, `metric`, `pending_mutations`, `recall`, `recall_pending`, `recall_usage`, `reflect_inputs`, `sweep_knowledge` |
 | `_locking.py` | — | `dispatch_stage`, `flow_friction`, `flow_worktree`, `lease`, `machinery_edit`, `memory_append`, `memory_embed`, `observe_ship_event`, `pending_mutations`, `recall_pending`, `recall_usage`, `state`, `ticket_frontmatter` |
-| `_memory_paths.py` | — | `flow_friction`, `flow_worktree`, `friction_escalate`, `friction_recurrence`, `memory_append`, `memory_embed`, `metric`, `observe_at_close`, `observe_ship_event`, `recall`, `recall_usage`, `reflect_inputs`, `sweep_knowledge`, `tracker_cli` |
+| `_memory_paths.py` | — | `finalize`, `flow_friction`, `flow_worktree`, `friction_escalate`, `friction_recurrence`, `memory_append`, `memory_embed`, `metric`, `observe_at_close`, `observe_ship_event`, `recall`, `recall_usage`, `reflect_inputs`, `sweep_knowledge`, `tracker_cli` |
 | `_registry.py` | — | `dispatch_stage`, `init`, `lint_ticket`, `model_resolve`, `seam_check`, `validate_workspace` |
 | `_runner.py` | — | `branch_ticket`, `create_pr`, `diff_extract`, `finalize`, `flow_beads_create`, `flow_worktree`, `forge_bitbucket`, `forge_github`, `friction_escalate`, `init`, `recall_pending`, `review_brief`, `scrutinize_seat`, `tracker_beads`, `version`, `worktree_janitor` |
 | `_timeutil.py` | — | `dispatch_stage`, `flow_friction`, `flow_worktree`, `init`, `lease`, `memory_append`, `memory_embed`, `metric`, `observe_at_close`, `observe_ship_event`, `recall`, `recall_pending`, `recall_usage`, `recover`, `scrutinize_seat`, `state`, `status`, `sweep_knowledge`, `ticket_frontmatter`, `tracker_cli`, `worktree_janitor` |
@@ -287,7 +287,7 @@ markers are overwritten. `—` = none.
 | `model_resolve.py` | — | `validate_workspace` |
 | `module_map.py` | — | `seam_check` |
 | `observe_at_close.py` | — | `finalize`, `worktree_janitor` |
-| `observe_ship_event.py` | — | `metric`, `observe_at_close` |
+| `observe_ship_event.py` | — | `dispatch_stage`, `finalize`, `metric`, `observe_at_close` |
 | `pending_mutations.py` | — | `sync`, `tracker_cli` |
 | `pr_body.py` | — | `create_pr`, `forge_cli` |
 | `preflight.py` | `check` `probe` | `dispatch_stage`, `flow_worktree` |
@@ -311,7 +311,7 @@ markers are overwritten. `—` = none.
 | `status.py` | — | — |
 | `sweep_knowledge.py` | `apply` `apply-cluster` `cluster` `propose` | — |
 | `sync.py` | — | — |
-| `ticket_frontmatter.py` | `read` `update` | `diff_extract`, `finalize`, `flow_worktree`, `lint_ticket`, `observe_at_close`, `reflect_inputs`, `review_brief` |
+| `ticket_frontmatter.py` | `read` `update` | `diff_extract`, `dispatch_stage`, `finalize`, `flow_worktree`, `lint_ticket`, `observe_at_close`, `reflect_inputs`, `review_brief` |
 | `tier_policy.py` | — | `flow_worktree`, `triage` |
 | `tracker.py` | — | `finalize`, `flow_worktree`, `group_candidates`, `group_persist`, `observe_at_close`, `sync`, `tracker_beads`, `tracker_cli`, `tracker_jira`, `worktree_janitor` |
 | `tracker_beads.py` | — | `tracker`, `triage` |
