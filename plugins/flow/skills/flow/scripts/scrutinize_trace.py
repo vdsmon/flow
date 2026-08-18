@@ -191,7 +191,14 @@ def mine_session(
     dedup into a visible relationship: the report gains `fork_parent` naming the session
     it repeats. Without it the dedup is correct but invisible, and a caller summing one
     report per FILE still over-counts sessions even though every event counts once
-    (witnessed 2026-08-13: 14 reports for 10 real sessions)."""
+    (witnessed 2026-08-13: 14 reports for 10 real sessions).
+
+    Only timestamped lines are fork evidence. The host writes a few untimestamped
+    housekeeping lines (`mode`, `permission-mode`, `last-prompt`) that are byte-identical
+    across every session once the sessionId stamp is stripped, so counting them named the
+    first-mined file as every later session's parent, and a session repeating its own
+    housekeeping line named itself (witnessed 2026-08-18: 13 of 13 window reports carried
+    a `fork_parent`, 9 of them self-referential). A session never parents itself."""
     report: dict[str, Any] = {
         "session": path.stem,
         "first": None,
@@ -208,18 +215,18 @@ def mine_session(
     parents: dict[str, int] = {}
     for line, event in _iter_events(path):
         report["lines"] += 1
+        stamp = event.get("timestamp") or ""
         duplicate = False
         if seen is not None:
             key = hash(_SESSION_ID_STAMP.sub("", line))
             duplicate = key in seen
             seen.add(key)
-            if duplicate:
+            if duplicate and stamp:
                 report["shared_prefix_lines"] += 1
-                if owners is not None and (parent := owners.get(key)):
+                if owners is not None and (parent := owners.get(key)) and parent != path.stem:
                     parents[parent] = parents.get(parent, 0) + 1
-            elif owners is not None:
+            elif owners is not None and not duplicate:
                 owners[key] = path.stem
-        stamp = event.get("timestamp") or ""
         if stamp and not duplicate:
             report["first"] = report["first"] or stamp
             report["last"] = stamp
@@ -293,7 +300,9 @@ def _fold_fork_stubs(reports: list[dict[str, Any]]) -> list[dict[str, Any]]:
     by_session = {report["session"]: report for report in reports}
     kept: list[dict[str, Any]] = []
     for report in reports:
-        stub = report["lines"] > 0 and report["shared_prefix_lines"] == report["lines"]
+        # `first` is stamped only by a non-duplicate timestamped line, so a file that shared
+        # every one of its events has none: that, and not the raw line count, is a stub.
+        stub = report["shared_prefix_lines"] > 0 and report["first"] is None
         parent = by_session.get(report["fork_parent"] or "")
         if stub and parent is not None:
             parent.setdefault("fork_files", []).append(report["session"])

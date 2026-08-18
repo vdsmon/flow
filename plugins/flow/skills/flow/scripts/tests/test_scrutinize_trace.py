@@ -385,6 +385,32 @@ def test_mine_dir_names_the_parent_of_a_partial_fork(tmp_path):
     assert len(reports) == 2
 
 
+def test_mine_dir_ignores_untimestamped_housekeeping_lines_as_fork_evidence(tmp_path):
+    # Every session starts with the host's untimestamped housekeeping lines, identical
+    # across sessions once the sessionId stamp is stripped. Counted as shared prefix they
+    # named the first-mined file as everyone's parent and a self-repeated line named the
+    # session itself (2026-08-18: 13 of 13 window reports carried a fork_parent).
+    housekeeping = [
+        json.dumps({"type": "mode", "mode": "normal", "sessionId": "SID"}),
+        json.dumps({"type": "permission-mode", "permissionMode": "auto", "sessionId": "SID"}),
+    ]
+    one = _event("2026-08-03T10:00:00Z", "assistant", [_tool_use("a", "Bash", {"command": "one"})])
+    two = _event("2026-08-03T11:00:00Z", "assistant", [_tool_use("b", "Bash", {"command": "two"})])
+    first = _write_session(tmp_path, "first", [*housekeeping, one])
+    later = _write_session(tmp_path, "later", [*housekeeping, two, housekeeping[0]])
+    now = time.time()
+    os.utime(first, (now - 100, now - 100))
+    os.utime(later, (now, now))
+
+    reports = {r["session"]: r for r in st.mine_dir(tmp_path)}
+    assert set(reports) == {"first", "later"}
+    assert reports["first"]["fork_parent"] is None
+    assert reports["later"]["fork_parent"] is None
+    assert reports["later"]["shared_prefix_lines"] == 0
+    assert len(reports["later"]["flow_calls"]) == 0
+    assert reports["later"]["first"] == "2026-08-03T11:00:00Z"
+
+
 def test_mine_dir_keeps_an_independently_empty_session(tmp_path):
     # A session that genuinely did nothing shares no prefix with anyone. Folding on "no
     # signals" alone would erase it; folding requires every line to be a duplicate first.
