@@ -521,6 +521,25 @@ def test_sweep_skips_worktrees_without_run_dir(monkeypatch, tmp_path):
     assert fz._sweep_candidates(main) == ["FT-1"]
 
 
+def test_pending_branch_must_belong_to_the_key(monkeypatch, tmp_path):
+    # forge.delete_branch runs before reap_worktree's own foreign-branch check, so a precursor
+    # naming a branch that is not the ticket's must never reach the merged-PR probe.
+    main = tmp_path / "repo"
+    monkeypatch.setattr(fz._memory_paths, "resolve_namespace", lambda _root: "demo")
+    monkeypatch.setattr(
+        fz.observe_ship_event,
+        "read_pending",
+        lambda _root, _ns, key: {"run_id": "0123456789abcdef", "branch": "feat/FT-2-other"},
+    )
+    assert fz._pending_branch(main, "FT-1") is None
+    monkeypatch.setattr(
+        fz.observe_ship_event,
+        "read_pending",
+        lambda _root, _ns, key: {"run_id": "0123456789abcdef", "branch": "feat/FT-1-x"},
+    )
+    assert fz._pending_branch(main, "FT-1") == "feat/FT-1-x"
+
+
 def test_sweep_includes_pending_precursors_without_a_worktree(monkeypatch, tmp_path):
     # A precursor qualifies on its own: it exists precisely for the run whose worktree is gone,
     # and a sweep that only enumerated worktrees could never close that run out.

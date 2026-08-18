@@ -312,7 +312,12 @@ def _pending_branch(main_root: Path, key: str) -> str | None:
         return None
     pending = observe_ship_event.read_pending(main_root, namespace, key)
     branch = pending.get("branch") if pending else None
-    return branch if isinstance(branch, str) and branch else None
+    if not isinstance(branch, str) or not is_ticket_branch(branch, key):
+        # The precursor names whatever branch the run root had checked out at create_pr;
+        # only a branch that belongs to `key` may drive delete_branch, same as the local
+        # branch and worktree paths.
+        return None
+    return branch
 
 
 def _pending_keys(main_root: Path) -> list[str]:
