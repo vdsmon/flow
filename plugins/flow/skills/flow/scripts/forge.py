@@ -123,7 +123,7 @@ class Forge(Protocol):
     raise `NotSupported` on a host that cannot do it.
     """
 
-    backend: str  # "github" | "bitbucket" | "brinta"
+    backend: str  # "github" | "bitbucket"
 
     def detect_pr(self, branch: str, state: PR_STATE = "open") -> PullRequest | None: ...
     def list_authored(self, state: PR_STATE = "open") -> list[PullRequest]: ...
@@ -146,7 +146,7 @@ class Forge(Protocol):
 
 # ─── Factory + config ────────────────────────────────────────────────────────
 
-KNOWN_BACKENDS: tuple[str, ...] = ("github", "bitbucket", "brinta")
+KNOWN_BACKENDS: tuple[str, ...] = ("github", "bitbucket")
 
 
 def make_forge(config: dict[str, Any]) -> Forge:
@@ -176,10 +176,6 @@ def make_forge(config: dict[str, Any]) -> Forge:
         from forge_bitbucket import BitbucketAdapter
 
         return BitbucketAdapter(config)
-    if backend == "brinta":
-        from forge_brinta import BrintaAdapter
-
-        return BrintaAdapter(config)
 
     # Unreachable per the membership check above; kept as a typing safety net.
     raise ForgeConfigError(f"forge.backend={backend!r} not handled by factory")

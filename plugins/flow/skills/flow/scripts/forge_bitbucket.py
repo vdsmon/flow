@@ -1,9 +1,17 @@
-"""Bitbucket forge adapter (`bkt` CLI).
+"""Bitbucket forge adapter, transported through the `brinta-ai bitbucket` proxy.
 
-Implements the `Forge` Protocol for Bitbucket workspaces. This is the home of the
-logic that used to live in the external ship-it bundle: PR open/detect, CI rollup
-from `bkt pr checks`, and the CodeRabbit review-thread fetch + resolve. The hard-won
-endpoint facts are ported verbatim-in-spirit (see `resolve_thread`).
+Implements the `Forge` Protocol for Bitbucket Cloud workspaces. This is the home of the
+logic that used to live in the external ship-it bundle: PR open/detect, CI rollup,
+and the CodeRabbit review-thread fetch + resolve. The hard-won endpoint facts are
+ported verbatim-in-spirit (see `resolve_thread`).
+
+Every REST call goes through `brinta-ai bitbucket <METHOD> <path> [body]`, the
+authenticated proxy the Brinta marketplace plugins already depend on. One credential
+store (`~/.config/brinta/git-credentials.json`, written by `brinta-ai setup`) then
+serves flow and the Brinta tooling alike. `_base()` builds `2.0/...` paths; `_api`
+strips that prefix before shelling out, since the proxy is already rooted at the v2
+API. `ci_rollup` and `bot_review_present` read the PR commit-status endpoint as
+structured JSON rather than parsing CLI text output.
 
 Config requires `workspace` + `repo_slug` (the Bitbucket API path needs both).
 
@@ -13,6 +21,11 @@ Resolve gotchas (learned the hard way in ship-it, do NOT re-derive):
 - Success returns a `comment_resolution` object with NO top-level `resolved:true`.
   Judge success by re-fetching the comment and testing `.resolution != null`.
 - Only top-level inline comments (`parent == null`) can be resolved; replies cannot.
+
+Proxy contract (brinta-ai >= 0.2.31, `bitbucket` is Tier 2 in
+brinta-ai/docs/cli-contract.md):
+- stdout is the raw response body; a bodyless success prints `(HTTP <n>, no body)`.
+- non-2xx exits 1 with the body on stdout and one stderr line.
 """
 
 from __future__ import annotations
@@ -36,7 +49,7 @@ from forge import (
     ReviewThread,
 )
 
-_CI_STATE_RE = re.compile(r"INPROGRESS|SUCCESSFUL|FAILED|STOPPED|ERROR", re.IGNORECASE)
+_TERMINAL = ("SUCCESSFUL", "FAILED", "STOPPED", "ERROR")
 
 
 class BitbucketAdapter:
@@ -71,15 +84,21 @@ class BitbucketAdapter:
         method: str | None = None,
         payload: dict[str, Any] | None = None,
     ) -> Any:
-        args = ["bkt", "api", path]
-        if method:
-            args += ["-X", method]
+        # `_base()` builds `2.0/...` paths; the proxy already roots at the v2 API,
+        # so strip the prefix. Full URLs pass through unchanged.
+        proxy_path = path.removeprefix("2.0/")
+        args = ["brinta-ai", "bitbucket", method or "GET", proxy_path]
         if payload is not None:
-            args += ["-d", json.dumps(payload)]
-        args.append("--json")
-        raw = self._run_text(args, what)
+            args.append(json.dumps(payload))
+        result = self._run(args)
+        text = (result.stdout or "").strip()
+        if result.returncode != 0:
+            detail = (result.stderr or "").strip() or text
+            raise ForgeError(f"{what} failed: {detail}")
+        if not text or text.startswith("(HTTP"):
+            return None  # bodyless success (204-style writes)
         try:
-            return json.loads(raw or "null")
+            return json.loads(text)
         except json.JSONDecodeError as exc:
             raise ForgeError(f"{what}: bad JSON: {exc}") from exc
 
@@ -125,7 +144,7 @@ class BitbucketAdapter:
         while True:
             data = self._api(
                 f"{self._base()}/pullrequests?q={query}&pagelen=50&page={page}",
-                "bkt pr list",
+                "pr list",
             )
             data = data or {}
             for item in data.get("values") or []:
@@ -137,16 +156,16 @@ class BitbucketAdapter:
             page += 1
 
     def list_authored(self, state: PR_STATE = "open") -> list[PullRequest]:
-        me = self._api("2.0/user", "bkt whoami") or {}
+        me = self._api("2.0/user", "whoami") or {}
         author_uuid = str(me.get("uuid") or "")
         if not author_uuid:
-            raise ForgeError("bkt whoami returned no uuid")
+            raise ForgeError("whoami returned no uuid")
         prs: list[PullRequest] = []
         page = 1
         while True:
             data = self._api(
                 f"{self._base()}/pullrequests?state={state.upper()}&pagelen=50&page={page}",
-                "bkt pr list authored",
+                "pr list authored",
             )
             data = data or {}
             prs.extend(
@@ -166,9 +185,9 @@ class BitbucketAdapter:
     def pr_info(self, pr_id: str) -> PullRequest | None:
         # PR-id -> PR reverse lookup. Reads ANY state (no state filter), so `revise`
         # can detect a MERGED PR. `_api` returns None on an empty ("null") body and
-        # raises on a non-zero `bkt` exit (an absent PR), so None means empty, not
+        # raises on a non-zero proxy exit (an absent PR), so None means empty, not
         # error (matches the github adapter's shape).
-        data = self._api(f"{self._base()}/pullrequests/{pr_id}", "bkt pr view")
+        data = self._api(f"{self._base()}/pullrequests/{pr_id}", "pr view")
         if not isinstance(data, dict) or not data:
             return None
         return self._pr_from_api(data)
@@ -182,17 +201,41 @@ class BitbucketAdapter:
             "draft": draft,
         }
         data = self._api(
-            f"{self._base()}/pullrequests", "bkt pr create", method="POST", payload=payload
+            f"{self._base()}/pullrequests", "pr create", method="POST", payload=payload
         )
         return self._pr_from_api(data or {})
 
+    def _statuses(self, pr_id: str, what: str) -> list[dict[str, Any]]:
+        data = self._api(
+            f"{self._base()}/pullrequests/{pr_id}/statuses?pagelen=100",
+            what,
+        )
+        return list((data or {}).get("values") or [])
+
+    @staticmethod
+    def _status_ident(entry: dict[str, Any]) -> str:
+        raw = f"{entry.get('name') or ''}{entry.get('key') or ''}"
+        return raw.lower().replace(" ", "")
+
     def ci_rollup(self, pr_id: str) -> CIStatus:
-        text = self._run_text(["bkt", "pr", "checks", pr_id], "bkt pr checks")
-        pipeline_line = next((ln for ln in text.splitlines() if "pipeline" in ln.lower()), "")
-        m = _CI_STATE_RE.search(pipeline_line)
-        state = m.group(0).upper() if m else ""
+        entry = next(
+            (
+                s
+                for s in self._statuses(pr_id, "pr statuses")
+                if "pipeline" in self._status_ident(s)
+            ),
+            None,
+        )
+        state = str((entry or {}).get("state") or "").upper()
         checks: list[CICheck] = (
-            [{"name": "Pipeline", "status": state, "conclusion": state, "url": None}]
+            [
+                {
+                    "name": "Pipeline",
+                    "status": state,
+                    "conclusion": state,
+                    "url": (entry or {}).get("url"),
+                }
+            ]
             if state
             else []
         )
@@ -206,7 +249,7 @@ class BitbucketAdapter:
     def mark_ready(self, pr_id: str) -> None:
         self._api(
             f"{self._base()}/pullrequests/{pr_id}",
-            "bkt pr ready",
+            "pr ready",
             method="PUT",
             payload={"draft": False},
         )
@@ -214,7 +257,7 @@ class BitbucketAdapter:
     def update_pr_body(self, pr_id: str, body: str) -> None:
         self._api(
             f"{self._base()}/pullrequests/{pr_id}",
-            "bkt pr body",
+            "pr body",
             method="PUT",
             payload={"description": body},
         )
@@ -223,7 +266,7 @@ class BitbucketAdapter:
         payload = {"merge_strategy": "squash"} if squash else {}
         self._api(
             f"{self._base()}/pullrequests/{pr_id}/merge",
-            "bkt pr merge",
+            "pr merge",
             method="POST",
             payload=payload,
         )
@@ -238,9 +281,9 @@ class BitbucketAdapter:
         workspace+repo), reads the repo `default-reviewers`, drops the author by
         `account_id`, then PUTs `{"reviewers": [{"uuid": ...}, ...]}` onto the PR
         (the Bitbucket reviewer shape ported from ship-it)."""
-        me = self._api("2.0/user", "bkt whoami")
+        me = self._api("2.0/user", "whoami")
         my_account_id = (me or {}).get("account_id")
-        data = self._api(f"{self._base()}/default-reviewers", "bkt default-reviewers")
+        data = self._api(f"{self._base()}/default-reviewers", "default reviewers")
         reviewers = [
             {"uuid": v["uuid"]}
             for v in ((data or {}).get("values") or [])
@@ -248,7 +291,7 @@ class BitbucketAdapter:
         ]
         self._api(
             f"{self._base()}/pullrequests/{pr_id}",
-            "bkt set reviewers",
+            "set reviewers",
             method="PUT",
             payload={"reviewers": reviewers},
         )
@@ -270,7 +313,7 @@ class BitbucketAdapter:
         while True:
             data = self._api(
                 f"{self._base()}/pullrequests/{pr_id}/comments?page={page}&pagelen=100",
-                "bkt pr comments",
+                "pr comments",
             )
             data = data or {}
             comments.extend(data.get("values") or [])
@@ -315,29 +358,34 @@ class BitbucketAdapter:
     def bot_review_present(self, pr_id: str) -> bool:
         """True once CodeRabbit's review CHECK has reached a terminal state.
 
-        CR registers a commit status (a `CodeRabbit` line in `bkt pr checks`,
-        the same source `ci_rollup` reads for the pipeline) that goes
-        INPROGRESS -> SUCCESSFUL independent of the finding count. That is the
-        reliable completion signal: on a CLEAN review CR posts only a Walkthrough
-        and NO `Actionable comments posted: N` comment, so a comment-marker gate
-        would never fire and would burn the full wait on every clean PR (verified
-        on brinta-data-platform: zero-finding PRs carry `CodeRabbit: SUCCESSFUL`
-        but no count comment). Comment markers are also unreliable as a START vs
-        DONE signal, the Walkthrough is posted at review start (flow-arva).
+        CR registers a commit status (the same source `ci_rollup` reads for the
+        pipeline) that goes INPROGRESS -> SUCCESSFUL independent of the finding
+        count. That is the reliable completion signal: on a CLEAN review CR posts
+        only a Walkthrough and NO `Actionable comments posted: N` comment, so a
+        comment-marker gate would never fire and would burn the full wait on every
+        clean PR (verified on brinta-data-platform: zero-finding PRs carry a
+        `CodeRabbit` status of `SUCCESSFUL` but no count comment). Comment markers
+        are also unreliable as a START vs DONE signal, the Walkthrough is posted at
+        review start (flow-arva).
 
-        Absent line (CR not registered yet) or INPROGRESS -> not done; any
+        Absent entry (CR not registered yet) or INPROGRESS -> not done; any
         terminal state (incl. FAILED) means CR has stopped, so waiting longer
         will not surface more threads."""
-        text = self._run_text(["bkt", "pr", "checks", pr_id], "bkt pr checks")
-        line = next((ln for ln in text.splitlines() if "coderabbit" in ln.lower()), "")
-        m = _CI_STATE_RE.search(line)
-        state = m.group(0).upper() if m else ""
-        return state in ("SUCCESSFUL", "FAILED", "STOPPED", "ERROR")
+        entry = next(
+            (
+                s
+                for s in self._statuses(pr_id, "pr statuses")
+                if "coderabbit" in self._status_ident(s)
+            ),
+            None,
+        )
+        state = str((entry or {}).get("state") or "").upper()
+        return state in _TERMINAL
 
     def post_reply(self, pr_id: str, thread_id: str, body: str) -> None:
         self._api(
             f"{self._base()}/pullrequests/{pr_id}/comments",
-            "bkt pr comment",
+            "pr comment",
             method="POST",
             payload={"content": {"raw": body}, "parent": {"id": int(thread_id)}},
         )
@@ -349,12 +397,12 @@ class BitbucketAdapter:
         `resolved` flag (which the resolve response does not carry)."""
         self._api(
             f"{self._base()}/pullrequests/{pr_id}/comments/{thread_id}/resolve",
-            "bkt resolve",
+            "resolve",
             method="POST",
         )
         check = self._api(
             f"{self._base()}/pullrequests/{pr_id}/comments/{thread_id}",
-            "bkt resolve verify",
+            "resolve verify",
         )
         return bool((check or {}).get("resolution") is not None)
 

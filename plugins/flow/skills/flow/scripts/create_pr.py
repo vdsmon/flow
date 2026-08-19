@@ -3,7 +3,7 @@
 The `create_pr` stage handler. Git mechanics (push, protected-branch refusal, title
 from the HEAD commit) live here; the host calls (detect/open PR) go through the
 pluggable forge seam (`forge.py`), so this same handler serves GitHub (`gh`) and
-Bitbucket (`bkt`) workspaces. Wired as `create_pr = "inline"` in the dogfood
+Bitbucket (`brinta-ai`) workspaces. Wired as `create_pr = "inline"` in the dogfood
 workspace and requires a `[forge]` block; other workspaces keep `create_pr = "none"`.
 PRs open as drafts by default; set `[create_pr] draft = false` in
 `workspace.toml` to open ready for review (`--draft` forces a draft).

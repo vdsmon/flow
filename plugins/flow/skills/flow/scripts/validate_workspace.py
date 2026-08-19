@@ -44,7 +44,7 @@ from _registry import (
 from model_resolve import OFF_VALUES
 
 KNOWN_BACKENDS: tuple[str, ...] = ("jira", "beads")
-KNOWN_FORGE_BACKENDS: tuple[str, ...] = ("github", "bitbucket", "brinta")
+KNOWN_FORGE_BACKENDS: tuple[str, ...] = ("github", "bitbucket")
 
 
 @dataclass
@@ -115,9 +115,10 @@ def _validate_forge_block(data: dict[str, Any], result: ValidationResult) -> Non
 
     Unlike `[tracker]`, an absent `[forge]` is NOT a violation (a workspace that
     keeps create_pr/review_loop at `none` needs no forge). github requires no
-    sub-keys; bitbucket requires `workspace` + `repo_slug` plus the `bkt` CLI on
-    PATH, probed here so a missing binary surfaces at the dispatch gate with its
-    install command instead of as a mid-run ForgeError.
+    sub-keys; bitbucket requires `workspace` + `repo_slug` plus the `brinta-ai`
+    CLI on PATH, probed here so a missing binary surfaces at the dispatch gate
+    with its install command instead of as a mid-run ForgeError. Credentials
+    themselves come from `brinta-ai setup` and are probed at call time, not here.
     """
     forge = data.get("forge")
     if forge is None:
@@ -137,26 +138,9 @@ def _validate_forge_block(data: dict[str, Any], result: ValidationResult) -> Non
             for key in ("workspace", "repo_slug"):
                 if not isinstance(bb.get(key), str) or not bb[key]:
                     result.add(f"forge.bitbucket.{key}", "missing or not a non-empty string")
-        if shutil.which("bkt") is None:
-            result.add(
-                "forge.bitbucket",
-                "bkt CLI not found on PATH; install it with: "
-                "brew install avivsinai/tap/bitbucket-cli",
-            )
-    if backend == "brinta":
-        # Same Bitbucket host as the bkt backend, transported through the
-        # brinta-ai proxy; needs the same repo coordinates plus the CLI itself
-        # (credentials come from `brinta-ai setup`, probed at call time).
-        bb = forge.get("brinta")
-        if not isinstance(bb, dict):
-            result.add("forge.brinta", "missing or not a table")
-        else:
-            for key in ("workspace", "repo_slug"):
-                if not isinstance(bb.get(key), str) or not bb[key]:
-                    result.add(f"forge.brinta.{key}", "missing or not a non-empty string")
         if shutil.which("brinta-ai") is None:
             result.add(
-                "forge.brinta",
+                "forge.bitbucket",
                 "brinta-ai CLI not found on PATH; install it with: "
                 "npm install -g @brinta/ai-config "
                 "--registry=https://nexus.brinta.com/repository/nodejs-group/",
@@ -166,9 +150,9 @@ def _validate_forge_block(data: dict[str, Any], result: ValidationResult) -> Non
 def _validate_codex_cli(handlers: dict[str, str] | None, result: ValidationResult) -> None:
     """Probe the codex CLI when any stage is wired to a Codex-backed handler.
 
-    Same contract as the bkt probe in `_validate_forge_block`: the wiring quietly
-    assumes a machine-level binary, so a missing install must surface here with its
-    install command instead of as a mid-run exit 127 at the wired stage.
+    Same contract as the brinta-ai probe in `_validate_forge_block`: the wiring
+    quietly assumes a machine-level binary, so a missing install must surface here
+    with its install command instead of as a mid-run exit 127 at the wired stage.
     """
     if not handlers:
         return

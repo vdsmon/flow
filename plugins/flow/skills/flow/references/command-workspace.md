@@ -95,24 +95,17 @@ github.com remote writes `backend = "github"`, a bitbucket.org remote writes
 any other remote derives nothing. The derived block wins on reconfigure, so the
 workspace converges after a repository move; a hand-authored block (the escape
 hatch for exotic remotes) is preserved only while the remote stays underivable.
-A Bitbucket forge reaches the host through the `bkt` CLI, so install it first:
+A Bitbucket forge reaches the host through the `brinta-ai bitbucket` proxy, the
+authenticated transport the Brinta marketplace plugins already depend on (one
+credential store from `brinta-ai setup`). Install it first:
 
 ```bash
-brew install avivsinai/tap/bitbucket-cli
+npm install -g @brinta/ai-config --registry=https://nexus.brinta.com/repository/nodejs-group/
 ```
 
 Validation probes PATH for the binary and fails with that install command when it
 is missing, so a run cannot start against a Bitbucket forge the machine cannot
 reach.
-
-Bitbucket has a second transport: `backend = "brinta"` serves the same host
-through the `brinta-ai bitbucket` proxy, for machines already provisioned by
-Brinta tooling (one credential store from `brinta-ai setup`, no `bkt` install).
-It takes the same `workspace` + `repo_slug` keys under `[forge.brinta]`, and
-validation probes PATH for `brinta-ai` instead. The backend is an explicit
-operator opt-in (a bitbucket.org remote still derives `bitbucket`), but once a
-stored block says `brinta`, reconfigure keeps the choice and refreshes only the
-coordinates from the remote; a move to a GitHub remote drops it.
 
 ## `FLOW workspace inspect [<target>] [--json]`
 

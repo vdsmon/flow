@@ -11,24 +11,46 @@ from forge_bitbucket import BitbucketAdapter
 CONFIG = {"workspace": "ws", "repo_slug": "rs", "workspace_root": "."}
 
 
-def _adapter(handler) -> tuple[BitbucketAdapter, list[list[str]]]:
+def _adapter(handler, rc: int = 0, stderr: str = "") -> tuple[BitbucketAdapter, list[list[str]]]:
     calls: list[list[str]] = []
 
     def run(args: list[str]) -> subprocess.CompletedProcess[str]:
         calls.append(args)
         out = handler(args)
-        return subprocess.CompletedProcess(args, 0, out, "")
+        return subprocess.CompletedProcess(args, rc, out, stderr)
 
     return BitbucketAdapter(CONFIG, runner=run), calls
 
 
-def _api_path(args: list[str]) -> str:
-    return args[2] if args[:2] == ["bkt", "api"] else ""
+def _proxy_path(args: list[str]) -> str:
+    return args[3] if args[:2] == ["brinta-ai", "bitbucket"] else ""
 
 
 def test_requires_workspace_and_repo():
     with pytest.raises(ForgeConfigError):
         BitbucketAdapter({"workspace_root": "."})
+
+
+def test_api_calls_go_through_brinta_ai_with_2_0_prefix_stripped():
+    fg, calls = _adapter(lambda a: "null")
+    fg.detect_pr("feat/flow-x")
+    assert calls, "no proxy call made"
+    assert calls[0][:3] == ["brinta-ai", "bitbucket", "GET"]
+    path = _proxy_path(calls[0])
+    assert path.startswith("repositories/ws/rs/pullrequests?"), path
+    assert "2.0/" not in path
+
+
+def test_bodyless_success_returns_none_instead_of_json_error():
+    fg, _ = _adapter(lambda a: "(HTTP 204, no body)\n")
+    # update_pr_body returns None on success; must not raise on the sentinel line.
+    assert fg.update_pr_body("3", "new body") is None
+
+
+def test_proxy_failure_raises_forge_error_with_stderr():
+    fg, _ = _adapter(lambda a: '{"error": {"message": "nope"}}', rc=1, stderr="HTTP 403")
+    with pytest.raises(ForgeError, match="HTTP 403"):
+        fg.pr_info("3")
 
 
 def test_detect_pr_filters_by_source_branch():
@@ -46,7 +68,7 @@ def test_detect_pr_filters_by_source_branch():
         ]
     }
     fg, _ = _adapter(
-        lambda a: json.dumps(listing) if "state%20%3D%20%22OPEN%22" in _api_path(a) else "null"
+        lambda a: json.dumps(listing) if "state%20%3D%20%22OPEN%22" in _proxy_path(a) else "null"
     )
     pr = fg.detect_pr("feature/flow-x")
     assert pr is not None
@@ -64,7 +86,7 @@ def test_detect_pr_sends_server_side_branch_and_state_filter():
     fg, calls = _adapter(lambda _a: json.dumps({"values": []}))
     assert fg.detect_pr("feature/flow-x", state="merged") is None
     (call,) = calls
-    path = _api_path(call)
+    path = _proxy_path(call)
     assert "q=source.branch.name%20%3D%20%22feature%2Fflow-x%22" in path
     assert "state%20%3D%20%22MERGED%22" in path
     assert "state=MERGED&" not in path
@@ -107,7 +129,7 @@ def test_detect_pr_selects_merged_state_and_emits_head_sha():
 
     assert pr is not None
     assert pr["head_sha"] == "merged-head"
-    assert any("state%20%3D%20%22MERGED%22" in _api_path(call) for call in calls)
+    assert any("state%20%3D%20%22MERGED%22" in _proxy_path(call) for call in calls)
 
 
 def test_source_url_is_commit_pinned_and_encodes_path():
@@ -136,7 +158,7 @@ def test_detect_pr_follows_pagination():
     }
 
     def h(args):
-        path = _api_path(args)
+        path = _proxy_path(args)
         if "page=1" in path:
             return json.dumps(page1)
         if "page=2" in path:
@@ -147,7 +169,7 @@ def test_detect_pr_follows_pagination():
     pr = fg.detect_pr("feature/flow-x")
     assert pr is not None
     assert pr["id"] == "9"
-    assert len([c for c in calls if "state%20%3D%20%22OPEN%22" in _api_path(c)]) == 2
+    assert len([c for c in calls if "state%20%3D%20%22OPEN%22" in _proxy_path(c)]) == 2
 
 
 def test_detect_pr_no_match_stops_at_last_page():
@@ -185,8 +207,8 @@ def test_list_authored_filters_current_user_follows_pages_and_sorts_newest_first
     }
 
     def h(args):
-        path = _api_path(args)
-        if path == "2.0/user":
+        path = _proxy_path(args)
+        if path == "user":
             return json.dumps({"uuid": "{me}"})
         if "page=1" in path:
             return json.dumps(page1)
@@ -199,7 +221,7 @@ def test_list_authored_filters_current_user_follows_pages_and_sorts_newest_first
     assert [pr["number"] for pr in prs] == [8, 7]
     assert prs[0]["title"] == "Newest"
     assert prs[0]["updated_at"] == "2026-07-28T12:00:00Z"
-    list_calls = [call for call in calls if "pullrequests?state=OPEN" in _api_path(call)]
+    list_calls = [call for call in calls if "pullrequests?state=OPEN" in _proxy_path(call)]
     assert len(list_calls) == 2
 
 
@@ -222,7 +244,7 @@ def _pr_view(state: str = "OPEN") -> dict:
 
 def test_pr_info_reads_pr_by_id():
     fg, _ = _adapter(
-        lambda a: json.dumps(_pr_view()) if _api_path(a).endswith("/pullrequests/9") else "null"
+        lambda a: json.dumps(_pr_view()) if _proxy_path(a).endswith("/pullrequests/9") else "null"
     )
     pr = fg.pr_info("9")
     assert pr is not None
@@ -237,7 +259,7 @@ def test_pr_info_reads_merged_state():
     fg, _ = _adapter(
         lambda a: (
             json.dumps(_pr_view(state="MERGED"))
-            if _api_path(a).endswith("/pullrequests/9")
+            if _proxy_path(a).endswith("/pullrequests/9")
             else "null"
         )
     )
@@ -263,40 +285,44 @@ def test_open_pr_posts_payload():
     fg, calls = _adapter(lambda a: json.dumps(created))
     pr = fg.open_pr("main", "feature/flow-x", "feat: x", "body", draft=True)
     assert pr["number"] == 42
-    post = next(c for c in calls if "-X" in c and "POST" in c)
-    payload = json.loads(post[post.index("-d") + 1])
+    assert calls[0][2] == "POST"
+    payload = json.loads(calls[0][4])
     assert payload["draft"] is True
     assert payload["source"]["branch"]["name"] == "feature/flow-x"
     assert payload["destination"]["branch"]["name"] == "main"
 
 
-def _checks(state: str):
-    def h(args):
-        if args[:3] == ["bkt", "pr", "checks"]:
-            return f"  Pipeline    {state}\n  CodeRabbit  SUCCESSFUL\n"
-        return "null"
+def test_ci_rollup_reads_commit_statuses():
+    statuses = {
+        "values": [
+            {"key": "BITBUCKET-PIPELINES", "name": "Pipeline #7", "state": "SUCCESSFUL"},
+            {"key": "coderabbit", "name": "CodeRabbit", "state": "INPROGRESS"},
+        ]
+    }
+    fg, calls = _adapter(lambda a: json.dumps(statuses))
+    rollup = fg.ci_rollup("9")
+    assert rollup["status"] == "green"
+    assert "/pullrequests/9/statuses" in _proxy_path(calls[0])
 
-    return h
+
+def test_ci_rollup_pending_when_no_pipeline_entry():
+    fg, _ = _adapter(lambda a: json.dumps({"values": []}))
+    assert fg.ci_rollup("9")["status"] == "pending"
 
 
-def test_ci_rollup_green():
-    fg, _ = _adapter(_checks("SUCCESSFUL"))
-    assert fg.ci_rollup("9")["status"] == "green"
-
-
-def test_ci_rollup_failed():
-    fg, _ = _adapter(_checks("FAILED"))
+def test_ci_rollup_failed_states():
+    statuses = {"values": [{"key": "BITBUCKET-PIPELINES", "name": "p", "state": "FAILED"}]}
+    fg, _ = _adapter(lambda a: json.dumps(statuses))
     assert fg.ci_rollup("9")["status"] == "failed"
 
 
-def test_ci_rollup_pending_inprogress():
-    fg, _ = _adapter(_checks("INPROGRESS"))
-    assert fg.ci_rollup("9")["status"] == "pending"
-
-
-def test_ci_rollup_pending_when_no_pipeline_line():
-    fg, _ = _adapter(lambda a: "  CodeRabbit  SUCCESSFUL\n")
-    assert fg.ci_rollup("9")["status"] == "pending"
+def test_bot_review_present_only_on_terminal_coderabbit_state():
+    inprogress = {"values": [{"key": "x", "name": "CodeRabbit", "state": "INPROGRESS"}]}
+    done = {"values": [{"key": "x", "name": "CodeRabbit", "state": "SUCCESSFUL"}]}
+    fg, _ = _adapter(lambda a: json.dumps(inprogress))
+    assert fg.bot_review_present("9") is False
+    fg, _ = _adapter(lambda a: json.dumps(done))
+    assert fg.bot_review_present("9") is True
 
 
 def _comment(cid, *, raw, resolved=False, author="coderabbit", inline=True, parent=None):
@@ -330,7 +356,7 @@ def test_review_threads_filters_and_normalizes_with_pagination():
     }
 
     def h(args):
-        path = _api_path(args)
+        path = _proxy_path(args)
         if "page=1" in path:
             return json.dumps(page1)
         if "page=2" in path:
@@ -364,7 +390,7 @@ def test_review_threads_surfaces_coderabbit_emoji_pipe_format():
     page = {"values": [_comment(1, raw=_CR_MAJOR_HEADER)]}
 
     def h(args):
-        path = _api_path(args)
+        path = _proxy_path(args)
         if "page=1" in path:
             return json.dumps(page)
         return "null"
@@ -405,44 +431,10 @@ def test_is_actionable_inline_rejects_non_actionable_inline():
     assert _is_actionable_inline(_comment(2, raw="**bold only, no pipe**")) is False
 
 
-def _bot_checks(coderabbit_state: str | None):
-    # `bkt pr checks` output with the pipeline still in progress, so the test
-    # proves bot_review_present keys on the CodeRabbit line, not the pipeline.
-    cr = f"  CodeRabbit  {coderabbit_state}\n" if coderabbit_state else ""
-
-    def h(args):
-        if args[:3] == ["bkt", "pr", "checks"]:
-            return f"  Pipeline    INPROGRESS\n{cr}"
-        return "null"
-
-    return h
-
-
-def test_bot_review_present_true_when_check_terminal():
-    # Terminal CodeRabbit check = review done, regardless of finding count. On a
-    # CLEAN review CR posts no "Actionable comments posted" comment, so the gate
-    # must rely on the check-state, not a comment marker (flow-arva).
-    fg, _ = _adapter(_bot_checks("SUCCESSFUL"))
-    assert fg.bot_review_present("9") is True
-
-
-def test_bot_review_present_false_when_check_inprogress():
-    fg, _ = _adapter(_bot_checks("INPROGRESS"))
-    assert fg.bot_review_present("9") is False
-
-
-def test_bot_review_present_false_when_check_absent():
-    # CR not registered yet: must not read "no line" as done (the bug: an empty
-    # thread list at CI-green looked review-clean before CR ran).
-    fg, _ = _adapter(_bot_checks(None))
-    assert fg.bot_review_present("9") is False
-
-
 def test_post_reply_parent_id_is_int():
     fg, calls = _adapter(lambda a: "null")
     fg.post_reply("9", "1", "Fixed in abc123.")
-    post = next(c for c in calls if "-d" in c)
-    payload = json.loads(post[post.index("-d") + 1])
+    payload = json.loads(calls[0][4])
     assert payload["parent"]["id"] == 1
     assert payload["content"]["raw"].startswith("Fixed in")
 
@@ -451,7 +443,7 @@ def test_resolve_thread_judges_by_resolution_not_resolved_flag():
     # The resolve POST returns a comment_resolution object with NO top-level
     # resolved flag; success must be judged by re-fetching .resolution != null.
     def h(args):
-        path = _api_path(args)
+        path = _proxy_path(args)
         if path.endswith("/resolve"):
             return json.dumps({"type": "comment_resolution"})  # no `resolved` key
         if path.endswith("/comments/1"):
@@ -464,7 +456,7 @@ def test_resolve_thread_judges_by_resolution_not_resolved_flag():
 
 def test_resolve_thread_false_when_still_unresolved():
     def h(args):
-        path = _api_path(args)
+        path = _proxy_path(args)
         if path.endswith("/resolve"):
             return json.dumps({"type": "comment_resolution"})
         if path.endswith("/comments/1"):
@@ -476,9 +468,9 @@ def test_resolve_thread_false_when_still_unresolved():
 
 
 def _payload_for_path(calls: list[list[str]], path: str) -> dict:
-    # select by API path, not the first -d: mark_ready's -d precedes merge's.
-    c = next(c for c in calls if _api_path(c) == path)
-    return json.loads(c[c.index("-d") + 1])
+    # select by API path, not the first payload: mark_ready's precedes merge's.
+    c = next(c for c in calls if _proxy_path(c) == path)
+    return json.loads(c[4])
 
 
 def _ran_prefix(calls: list[list[str]], prefix: list[str]) -> bool:
@@ -491,14 +483,14 @@ def test_mark_ready_merge_delete_argv():
     fg.merge("9", squash=True)
     fg.delete_branch("feature/flow-x")
 
-    base = "2.0/repositories/ws/rs"
+    base = "repositories/ws/rs"
 
-    ready = next(c for c in calls if _api_path(c) == f"{base}/pullrequests/9")
-    assert ready[ready.index("-X") + 1] == "PUT"
+    ready = next(c for c in calls if _proxy_path(c) == f"{base}/pullrequests/9")
+    assert ready[2] == "PUT"
     assert _payload_for_path(calls, f"{base}/pullrequests/9") == {"draft": False}
 
-    merge = next(c for c in calls if _api_path(c) == f"{base}/pullrequests/9/merge")
-    assert merge[merge.index("-X") + 1] == "POST"
+    merge = next(c for c in calls if _proxy_path(c) == f"{base}/pullrequests/9/merge")
+    assert merge[2] == "POST"
     assert _payload_for_path(calls, f"{base}/pullrequests/9/merge") == {"merge_strategy": "squash"}
 
     assert _ran_prefix(calls, ["git", "push", "origin", "--delete", "feature/flow-x"])
@@ -508,21 +500,21 @@ def test_update_pr_body_puts_description():
     fg, calls = _adapter(lambda a: "null")
     fg.update_pr_body("9", "## Evidence\ngreen")
 
-    path = "2.0/repositories/ws/rs/pullrequests/9"
-    put = next(c for c in calls if _api_path(c) == path)
-    assert put[put.index("-X") + 1] == "PUT"
+    path = "repositories/ws/rs/pullrequests/9"
+    put = next(c for c in calls if _proxy_path(c) == path)
+    assert put[2] == "PUT"
     assert _payload_for_path(calls, path) == {"description": "## Evidence\ngreen"}
 
 
 def test_merge_no_squash_emits_empty_payload():
-    # squash=False sends {} (still carried as -d "{}" since {} is not None).
+    # squash=False sends {} (still carried as an argument since {} is not None).
     fg, calls = _adapter(lambda a: "null")
     fg.merge("9", squash=False)
-    assert _payload_for_path(calls, "2.0/repositories/ws/rs/pullrequests/9/merge") == {}
+    assert _payload_for_path(calls, "repositories/ws/rs/pullrequests/9/merge") == {}
 
 
 def test_set_default_reviewers_filters_author_and_puts():
-    base = "2.0/repositories/ws/rs"
+    base = "repositories/ws/rs"
     me = {"account_id": "AUTHOR", "uuid": "{author-uuid}"}
     default_reviewers = {
         "values": [
@@ -533,8 +525,8 @@ def test_set_default_reviewers_filters_author_and_puts():
     }
 
     def handler(a):
-        path = _api_path(a)
-        if path == "2.0/user":
+        path = _proxy_path(a)
+        if path == "user":
             return json.dumps(me)
         if path == f"{base}/default-reviewers":
             return json.dumps(default_reviewers)
@@ -546,20 +538,20 @@ def test_set_default_reviewers_filters_author_and_puts():
     fg.set_default_reviewers("9")
 
     # GET /user then GET default-reviewers then PUT the PR, author filtered out.
-    assert _api_path(calls[0]) == "2.0/user"
-    assert _api_path(calls[1]) == f"{base}/default-reviewers"
-    put = next(c for c in calls if _api_path(c) == f"{base}/pullrequests/9")
-    assert put[put.index("-X") + 1] == "PUT"
-    payload = json.loads(put[put.index("-d") + 1])
+    assert _proxy_path(calls[0]) == "user"
+    assert _proxy_path(calls[1]) == f"{base}/default-reviewers"
+    put = next(c for c in calls if _proxy_path(c) == f"{base}/pullrequests/9")
+    assert put[2] == "PUT"
+    payload = json.loads(put[4])
     assert payload == {"reviewers": [{"uuid": "{r1-uuid}"}, {"uuid": "{r2-uuid}"}]}
 
 
 def test_set_default_reviewers_empty_when_only_author():
-    base = "2.0/repositories/ws/rs"
+    base = "repositories/ws/rs"
 
     def handler(a):
-        path = _api_path(a)
-        if path == "2.0/user":
+        path = _proxy_path(a)
+        if path == "user":
             return json.dumps({"account_id": "AUTHOR", "uuid": "{a}"})
         if path == f"{base}/default-reviewers":
             return json.dumps({"values": [{"account_id": "AUTHOR", "uuid": "{a}"}]})

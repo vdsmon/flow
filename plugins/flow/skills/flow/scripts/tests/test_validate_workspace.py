@@ -16,9 +16,10 @@ import validate_workspace as vw
 
 @pytest.fixture(autouse=True)
 def _clis_on_path(monkeypatch):
-    """Pin the CLI probes: CI runners carry neither bkt nor codex while dev machines
-    may carry both, and these tests assert config semantics, not host state. A test
-    exercising a missing binary overrides this stub with its own setattr."""
+    """Pin the CLI probes: CI runners carry neither brinta-ai nor codex while dev
+    machines may carry both, and these tests assert config semantics, not host
+    state. A test exercising a missing binary overrides this stub with its own
+    setattr."""
     monkeypatch.setattr(vw.shutil, "which", lambda name: f"/stub/bin/{name}")
 
 
@@ -405,7 +406,7 @@ def test_forge_bitbucket_valid(tmp_path: Path, monkeypatch) -> None:
         root,
         '[forge]\nbackend = "bitbucket"\n[forge.bitbucket]\nworkspace = "ws"\nrepo_slug = "rs"\n',
     )
-    monkeypatch.setattr(vw.shutil, "which", lambda name: "/opt/homebrew/bin/bkt")
+    monkeypatch.setattr(vw.shutil, "which", lambda name: "/opt/homebrew/bin/brinta-ai")
     result, _ = vw.validate(root)
     assert result.ok
 
@@ -413,14 +414,14 @@ def test_forge_bitbucket_valid(tmp_path: Path, monkeypatch) -> None:
 def test_forge_bitbucket_missing_keys_fails(tmp_path: Path, monkeypatch) -> None:
     root = _make_workspace(tmp_path, backend="beads")
     _append_forge(root, '[forge]\nbackend = "bitbucket"\n[forge.bitbucket]\n')
-    monkeypatch.setattr(vw.shutil, "which", lambda name: "/opt/homebrew/bin/bkt")
+    monkeypatch.setattr(vw.shutil, "which", lambda name: "/opt/homebrew/bin/brinta-ai")
     result, _ = vw.validate(root)
     assert not result.ok
     assert any("forge.bitbucket.workspace" in v for v in result.violations)
     assert any("forge.bitbucket.repo_slug" in v for v in result.violations)
 
 
-def test_forge_bitbucket_missing_bkt_cli_fails(tmp_path: Path, monkeypatch) -> None:
+def test_forge_bitbucket_missing_brinta_ai_cli_fails(tmp_path: Path, monkeypatch) -> None:
     root = _make_workspace(tmp_path, backend="beads")
     _append_forge(
         root,
@@ -429,10 +430,10 @@ def test_forge_bitbucket_missing_bkt_cli_fails(tmp_path: Path, monkeypatch) -> N
     monkeypatch.setattr(vw.shutil, "which", lambda name: None)
     result, _ = vw.validate(root)
     assert not result.ok
-    assert any("brew install avivsinai/tap/bitbucket-cli" in v for v in result.violations)
+    assert any("npm install -g @brinta/ai-config" in v for v in result.violations)
 
 
-def test_forge_github_needs_no_bkt(tmp_path: Path, monkeypatch) -> None:
+def test_forge_github_needs_no_brinta_ai(tmp_path: Path, monkeypatch) -> None:
     root = _make_workspace(tmp_path, backend="beads")
     _append_forge(root, '[forge]\nbackend = "github"\n[forge.github]\n')
     monkeypatch.setattr(vw.shutil, "which", lambda name: None)
