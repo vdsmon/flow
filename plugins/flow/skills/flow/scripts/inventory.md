@@ -157,22 +157,22 @@ Pluggable PR-host seam (`forge.py` Protocol + `forge_cli.py` + `forge_github.py`
 
 `create_pr` takes an authored PR body from the stage (`references/stage-create_pr.md`) via `--body-file`: it runs `pr_body.scrub` (em-dash → punctuation, sentence-case `# Heading`, flatten `- **Term:**` bullets) as a de-AI floor, on a bitbucket forge flattens `<details>` wrappers to `###` headings (`pr_body.flatten_details`; Bitbucket renders no raw HTML in markdown) and appends the deterministic `Closes` footer (`pr_body.closes_footer`, extracted from the HEAD commit trailer), then runs `pr_body.enforce_cap` as a deterministic size net (shrink largest fenced blocks → drop `<details>` bodies keeping `<summary>` → hard-truncate; cap ~32000, the stricter forge floor) so an oversized `## Evidence` body can never fail `open_pr`. With no `--body-file` it falls back to the old commit-derived body (`pr_body.build_body`: strip the `ticket:`/`files:` trailer, keep `Closes <KEY>` as a footer, unwrap prose hard-wraps). On first open it calls `set_default_reviewers` (swallowing `NotSupported` + any `ForgeError` so a reviewer hiccup never fails an open PR). Bitbucket implements it; GitHub raises `NotSupported`.
 
-### Operation surface (forge_cli subcommand → gh / bkt)
+### Operation surface (forge_cli subcommand → gh / brinta-ai)
 
-| Op (Protocol / `forge_cli`) | GitHub (`gh`) | Bitbucket (`bkt`) |
+| Op (Protocol / `forge_cli`) | GitHub (`gh`) | Bitbucket (`brinta-ai bitbucket`) |
 |------|------|------|
-| `detect_pr` / `detect-pr` | `gh pr list --head B --state open --json number,url,isDraft,baseRefName,headRefName,state` | `bkt api 2.0/repositories/WS/RS/pullrequests?state=OPEN` + filter `source.branch.name` |
-| `pr_info` / `pr-info` | `gh pr view PR --json number,url,isDraft,baseRefName,headRefName,state` (PR-number reverse lookup, ANY state — revise reads `head`+`state`/detects MERGED; None on empty/garbage JSON, ForgeError on absent PR) | `bkt api .../pullrequests/PR` → `_pr_from_api` (None on empty body) |
-| `open_pr` (lib-only; no forge_cli subcommand — create_pr.py drives it) | `gh pr create --base --head --title --body [--draft]` | `bkt api .../pullrequests -X POST -d {title,source,destination,draft,description}` |
-| `ci_rollup` / `ci-rollup` | `gh pr view PR --json statusCheckRollup` (green = non-empty + every check COMPLETED-SUCCESS) | `bkt pr checks PR` → Pipeline line state (SUCCESSFUL→green, INPROGRESS→pending, FAILED/STOPPED/ERROR→failed) |
+| `detect_pr` / `detect-pr` | `gh pr list --head B --state open --json number,url,isDraft,baseRefName,headRefName,state` | `brinta-ai bitbucket GET repositories/WS/RS/pullrequests?state=OPEN` + filter `source.branch.name` |
+| `pr_info` / `pr-info` | `gh pr view PR --json number,url,isDraft,baseRefName,headRefName,state` (PR-number reverse lookup, ANY state — revise reads `head`+`state`/detects MERGED; None on empty/garbage JSON, ForgeError on absent PR) | `brinta-ai bitbucket GET .../pullrequests/PR` → `_pr_from_api` (None on empty body) |
+| `open_pr` (lib-only; no forge_cli subcommand — create_pr.py drives it) | `gh pr create --base --head --title --body [--draft]` | `brinta-ai bitbucket POST .../pullrequests '{title,source,destination,draft,description}'` |
+| `ci_rollup` / `ci-rollup` | `gh pr view PR --json statusCheckRollup` (green = non-empty + every check COMPLETED-SUCCESS) | `brinta-ai bitbucket GET .../pullrequests/PR/statuses` → Pipeline entry state (SUCCESSFUL→green, INPROGRESS→pending, FAILED/STOPPED/ERROR→failed) |
 | `review_threads` / `review-threads` | `gh api graphql` — unresolved threads, normalized (drops resolved) | CodeRabbit actionable inline findings via paginated `.../comments`, unresolved only |
-| `bot_review_present` / `review-status` | **NotSupported** (no review bot on the GitHub self-target; degrades to `{"supported": false}`) | `bkt pr checks` CodeRabbit line → true on any terminal state (SUCCESSFUL/FAILED/STOPPED/ERROR = the review bot has finished); the mandatory pre-thread-poll gate in `stage-review_loop.md` §3 |
-| `post_reply` / `post-reply` | `gh api graphql addPullRequestReviewThreadReply` | `bkt api .../comments -X POST -d {content.raw, parent.id}` |
+| `bot_review_present` / `review-status` | **NotSupported** (no review bot on the GitHub self-target; degrades to `{"supported": false}`) | `.../pullrequests/PR/statuses` CodeRabbit entry → true on any terminal state (SUCCESSFUL/FAILED/STOPPED/ERROR = the review bot has finished); the mandatory pre-thread-poll gate in `stage-review_loop.md` §3 |
+| `post_reply` / `post-reply` | `gh api graphql addPullRequestReviewThreadReply` | `brinta-ai bitbucket POST .../comments '{content.raw, parent.id}'` |
 | `resolve_thread` / `resolve-thread` | `gh api graphql resolveReviewThread`; returns bool `isResolved` | `POST .../comments/CID/resolve` then re-fetch + verify `.resolution != null` |
-| `mark_ready` / `mark-ready` | `gh pr ready PR` | `bkt api .../pullrequests/PR -X PUT -d {draft:false}` |
-| `merge` / `merge` | `gh pr merge PR --squash` | `bkt api .../pullrequests/PR/merge -X POST -d {merge_strategy:squash}` |
+| `mark_ready` / `mark-ready` | `gh pr ready PR` | `brinta-ai bitbucket PUT .../pullrequests/PR '{draft:false}'` |
+| `merge` / `merge` | `gh pr merge PR --squash` | `brinta-ai bitbucket POST .../pullrequests/PR/merge '{merge_strategy:squash}'` |
 | `delete_branch` / `delete-branch` | `git push origin --delete B` | `git push origin --delete B` |
-| `set_default_reviewers` (no `forge_cli` subcommand; `create_pr` calls the adapter directly) | **NotSupported** (solo repo, CODEOWNERS covers reviewers) | `GET 2.0/user` (resolve author) + `GET .../default-reviewers`, drop author by `account_id`, `PUT .../pullrequests/PR -d {reviewers:[{uuid}...]}` |
+| `set_default_reviewers` (no `forge_cli` subcommand; `create_pr` calls the adapter directly) | **NotSupported** (solo repo, CODEOWNERS covers reviewers) | `GET user` (resolve author) + `GET .../default-reviewers`, drop author by `account_id`, `PUT .../pullrequests/PR '{reviewers:[{uuid}...]}'` |
 
 Cap-gated ops (`review-threads`/`review-status`/`post-reply`/`resolve-thread`/`mark-ready`/`delete-branch`) degrade on `NotSupported` to `{"supported": false}` exit 0. Exit codes: 0 ok / 1 transient forge error / 2 config invalid (incl. no `[forge]`) or malformed argv (argparse) / 3 adapter-rejected argument value.
 

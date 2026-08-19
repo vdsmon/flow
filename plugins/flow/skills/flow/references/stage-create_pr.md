@@ -1,6 +1,6 @@
 # create_pr stage (inline)
 
-Opens a PR for the run's feature branch — a draft by default, or ready for review when `[create_pr] draft = false` in `workspace.toml` (`create_pr.py` reads it; `--draft` forces a draft). Git mechanics (push, protected-branch refusal, title from the HEAD commit) stay in the script; the host calls (detect/open PR) go through the **forge seam**, so the same handler serves GitHub (`gh`) and Bitbucket (`bkt`). The inline handler requires a `[forge]` block (flow's own dogfood wires `create_pr = "inline"` + `[forge] backend = "github"`); the bare plugin default stays `none`.
+Opens a PR for the run's feature branch — a draft by default, or ready for review when `[create_pr] draft = false` in `workspace.toml` (`create_pr.py` reads it; `--draft` forces a draft). Git mechanics (push, protected-branch refusal, title from the HEAD commit) stay in the script; the host calls (detect/open PR) go through the **forge seam**, so the same handler serves GitHub (`gh`) and Bitbucket (`brinta-ai`). The inline handler requires a `[forge]` block (flow's own dogfood wires `create_pr = "inline"` + `[forge] backend = "github"`); the bare plugin default stays `none`.
 
 **No `pr_title` gate.** Unlike the commit stage, do NOT call `lint_ticket` for a field. Nothing populates `pr_title`; the PR title comes from the HEAD (work) commit subject, which the commit stage built from `commit_summary`.
 

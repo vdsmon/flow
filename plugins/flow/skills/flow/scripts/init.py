@@ -512,37 +512,6 @@ def _derive_forge_toml(config: InitConfig, runner: Runner) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _reconcile_forge_backend(derived_toml: str, stored_toml_text: str | None) -> str:
-    """Keep an operator's `backend = "brinta"` opt-in across reconfigures.
-
-    `brinta` is the same Bitbucket host behind the brinta-ai transport, so a
-    bitbucket.org remote legitimately derives EITHER backend. The remote stays
-    the source of truth for the coordinates (workspace/repo_slug refresh from
-    the derived block), but the transport choice is the operator's: when the
-    stored block says `brinta` and the remote derives `bitbucket`, re-emit the
-    derived coordinates under `[forge.brinta]` instead of silently reverting
-    the workspace to bkt. Every other combination returns the derived block
-    unchanged (including a repository move to GitHub, which drops the opt-in
-    because brinta cannot serve a GitHub remote).
-    """
-    if not derived_toml or not stored_toml_text:
-        return derived_toml
-    try:
-        stored = tomllib.loads(stored_toml_text)
-        derived = tomllib.loads(derived_toml)
-    except tomllib.TOMLDecodeError:
-        return derived_toml
-    stored_backend = (stored.get("forge") or {}).get("backend")
-    if stored_backend != "brinta" or (derived.get("forge") or {}).get("backend") != "bitbucket":
-        return derived_toml
-    sub = (derived.get("forge") or {}).get("bitbucket") or {}
-    lines = ["[forge]", 'backend = "brinta"', "", "[forge.brinta]"]
-    lines.extend(
-        f"{key} = {_toml_escape(value)}" for key, value in sub.items() if isinstance(value, str)
-    )
-    return "\n".join(lines) + "\n"
-
-
 # ─── Handler composition ────────────────────────────────────────────────────
 
 
@@ -1085,10 +1054,7 @@ def _run_init_phases(
             pipeline_stages,
             handlers,
             models_toml=models_toml,
-            forge_toml=_reconcile_forge_backend(
-                _derive_forge_toml(config, runner), preserved_forge_toml
-            )
-            or preserved_forge_toml,
+            forge_toml=_derive_forge_toml(config, runner) or preserved_forge_toml,
         )
         atomic_write_text(_workspace_toml_path(root), content)
         return None
