@@ -9,6 +9,10 @@ Machine/tool sharp edges that repeatedly burn fresh sessions. None of these are 
 - **`gh pr list --json commits,files` rejected at scale.** GraphQL node-cost limit (~500k) fails the bulk query. Fetch heavyweight fields per-PR instead of in the list call.
 - **A just-pushed PR's CI shows `CANCELLED`.** Same-SHA concurrency cancellation from a rapid re-push, not a failure; re-check after the newer run finishes.
 
+## Bitbucket
+
+- **Comments collection shows `resolution` empty on every comment.** The pull request comments list endpoint omits resolution state, so a thread the bot already resolved still reads as open there. Check the individual comment (`.../comments/<id>`), where `resolution.user` is populated; a `resolve-thread` HTTP 409 on such a thread means it was already resolved, not that the call failed.
+
 ## mise
 
 - **`python3` shim suddenly broken ("missing lib directory").** The mise-managed python was rebuilt/moved under the shim. Remedy: reinstall the tool (`mise uninstall python && mise install`), or bridge with the system `python3` — flow's runtime scripts are stdlib-only precisely so the bare system interpreter always works.

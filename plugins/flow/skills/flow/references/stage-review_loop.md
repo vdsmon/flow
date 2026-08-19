@@ -92,8 +92,9 @@ in-progress marker clears. Only when a completion signal never arrives does the 
 continue with the explicit `automated review incomplete` caveat, and that state is never
 called review-clean.
 
-Only unresolved Critical or Major threads are actionable. Minor and nit findings stay
-open and are listed in the report.
+Only unresolved Critical or Major threads are actionable: they are the only ones that can send work to the fixer (section 3), and the only ones whose unaddressed state fails this stage. Minor and nit findings do neither, and are listed in the report.
+
+Actionability is not the thread lifecycle, and this is the sentence that gets misread as if it were (witnessed 2026-08-19, brinta PR 3221: a driver read "not actionable" as "leave the thread standing", left two Minor bot threads open, and answered them in a top-level pull request comment). Every thread this stage reads gets its reply IN the thread and reaches the end state section 4 sets for its author, whatever its severity: a Minor bot thread is still a bot thread, so its end state is resolved. Not actionable means no code change and no stage failure, never leave it open and move on.
 
 For a revision run with no `dispositions.json` (triage never produced one;
 `references/revision-triage-board.md`), apply the configured plain-comment severity
@@ -134,7 +135,9 @@ Re-run the bounded CI wait once and re-read threads once. There is no second fix
 If CI is still red or a Critical/Major thread is unaddressed (section 4), fail the
 stage and return the evidence to the human.
 
-For each thread you fixed, reply and resolve only after the fix commit is pushed:
+Every thread gets its reply inside that thread, through `post-reply`. A top-level pull request comment is not a reply to a thread: it does not appear on the thread, and a review bot that reads only its own threads never sees it, so the finding stays unanswered however well the comment argued it.
+
+For a thread you fixed, reply and resolve only after the fix commit is pushed:
 
 ```bash
 FIX_SHA=$(git rev-parse --short HEAD)
@@ -144,11 +147,15 @@ FLOW_HARNESS="<harness>" "<facade>" forge --workspace-root . resolve-thread \
   --pr "$PR_ID" --thread "<CID>"
 ```
 
+For a thread you did not fix (a disagreement, a deferral, or a finding the code already covers), the same `post-reply` call carries the reasoned reply, with no `FIX_SHA`. A run that changed no code still owes every thread its reply.
+
+`resolve-thread` answering HTTP 409 on a bot thread usually means the bot resolved it first, seconds after reading the reply, which is the concession the disagreement path waits for. Confirm on the individual comment (`.../comments/<id>`), never on the comments collection, whose `resolution` is empty for every comment (`references/troubleshooting.md`). A populated `resolution.user` naming the bot is the concession, so treat that 409 as already settled rather than as a failure.
+
 A disagreed finding gets a reasoned reply that names what was checked and what that showed; a reply that only asserts disagreement addresses nothing. That reply is what addresses the finding, and what happens to the thread afterwards depends on who authored it (section 4): a bot-authored thread is resolved only after the bot concedes, and a human reviewer's thread stays open for its author.
 
 ## 4. Complete
 
-Addressed is not the same as resolved in the forge, and the resolution rule depends on the thread's author. A bot-authored thread is one authored by the review bot that section 2 identified by activity on this pull request; every other thread belongs to a human reviewer. The end state for bot-authored threads is zero open threads (human ruling, brinta PR 3119, 2026-07-31): a bot thread left open is a question still standing, so it is resolved the moment its ask is settled, and the only settled state that stays open is a disagreement the bot has not conceded. A Critical or Major thread is addressed when this stage did one of these:
+Addressed is not the same as resolved in the forge, and the resolution rule depends on the thread's author. A bot-authored thread is one authored by the review bot that section 2 identified by activity on this pull request; every other thread belongs to a human reviewer. The end state for bot-authored threads is zero open threads (human ruling, brinta PR 3119, 2026-07-31): a bot thread left open is a question still standing, so it is resolved the moment its ask is settled, and the only settled state that stays open is a disagreement the bot has not conceded. That end state is severity-independent: a Minor or nit bot thread reaches it too, because severity decides only what section 2 says it decides, whether a finding can reach the fixer and fail this stage. A Critical or Major thread is addressed when this stage did one of these:
 
 - fixed it: the fix commit is pushed, the reply names it, and the thread is resolved (section 3);
 - disagreed with it: a posted reply names what was checked and what that showed; on a bot-authored thread, keep polling for the bot's response in the same bounded five-minute shape as section 2's sign-of-life probe, resolve on a concession, and leave the thread open and reported on a push-back or on silence; a human reviewer's thread always stays open, because its author owns the concession;
